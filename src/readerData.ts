@@ -1,0 +1,375 @@
+import type { Category, FeedSource, Source, Topic } from './types';
+
+export const readerDataVersion = 1;
+
+export interface TopicRecord {
+  topic: Topic;
+  savedAt: string;
+  tags?: string[];
+  note?: string;
+  visitCount?: number;
+}
+
+export interface ReadingProgressRecord {
+  topic: Topic;
+  percent: number;
+  scrollY: number;
+  updatedAt: string;
+}
+
+export interface SavedSearchRecord {
+  id: string;
+  query: string;
+  source: FeedSource;
+  savedAt: string;
+}
+
+export interface CategorySubscriptionRecord {
+  source: Source;
+  id: string;
+  name: string;
+  subscribedAt: string;
+}
+
+export interface ReaderSettings {
+  trackedKeywords: string[];
+  blockedKeywords: string[];
+  blockedUsers: string[];
+  blockedCategories: string[];
+  listDensity: 'compact' | 'standard' | 'loose';
+  theme: 'system' | 'light' | 'dark';
+  palette: 'sage' | 'coral' | 'blue' | 'mint' | 'berry' | 'noir';
+  background: 'warm' | 'white' | 'gray';
+  fontScale: number;
+  lineHeight: 'compact' | 'standard' | 'loose';
+  contentWidth: 'narrow' | 'standard' | 'wide';
+  fontFamily: 'sans' | 'serif';
+}
+
+export interface ReaderData {
+  version: 1;
+  favorites: Record<string, TopicRecord>;
+  history: Record<string, TopicRecord>;
+  later: Record<string, TopicRecord>;
+  progress: Record<string, ReadingProgressRecord>;
+  subscriptions: Record<string, CategorySubscriptionRecord>;
+  savedSearches: SavedSearchRecord[];
+  settings: ReaderSettings;
+}
+
+const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek']);
+const validFeedSources = new Set<FeedSource>(['all', 'v2ex', 'linuxdo', 'nodeseek']);
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function isSource(value: unknown): value is Source {
+  return typeof value === 'string' && validSources.has(value as Source);
+}
+
+function isFeedSource(value: unknown): value is FeedSource {
+  return typeof value === 'string' && validFeedSources.has(value as FeedSource);
+}
+
+function isTopic(value: unknown): value is Topic {
+  const item = value as Partial<Topic>;
+  return Boolean(item && isSource(item.source) && item.id && item.title);
+}
+
+function topicSummary(topic: Topic): Topic {
+  return {
+    source: topic.source,
+    id: String(topic.id),
+    title: topic.title,
+    author: topic.author || '',
+    authorAvatar: topic.authorAvatar,
+    category: topic.category,
+    url: topic.url,
+    createdAt: topic.createdAt,
+    lastReplyAt: topic.lastReplyAt,
+    replyCount: Number(topic.replyCount || 0),
+    viewCount: topic.viewCount,
+    excerpt: topic.excerpt
+  };
+}
+
+function clampPercent(value: unknown) {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function normalizeStringList(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      continue;
+    }
+    const clean = item.trim();
+    const key = clean.toLowerCase();
+    if (clean && !seen.has(key)) {
+      seen.add(key);
+      result.push(clean);
+    }
+  }
+  return result.slice(0, 100);
+}
+
+export function createEmptyReaderData(): ReaderData {
+  return {
+    version: readerDataVersion,
+    favorites: {},
+    history: {},
+    later: {},
+    progress: {},
+    subscriptions: {},
+    savedSearches: [],
+    settings: {
+      trackedKeywords: [],
+      blockedKeywords: [],
+      blockedUsers: [],
+      blockedCategories: [],
+      listDensity: 'standard',
+      theme: 'system',
+      palette: 'sage',
+      background: 'warm',
+      fontScale: 1,
+      lineHeight: 'standard',
+      contentWidth: 'standard',
+      fontFamily: 'sans'
+    }
+  };
+}
+
+export function topicKey(topic: Pick<Topic, 'source' | 'id'>) {
+  return `${topic.source}:${topic.id}`;
+}
+
+export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
+  return `${category.source}:${category.id}`;
+}
+
+function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const next: Record<string, TopicRecord> = {};
+  for (const record of Object.values(value)) {
+    const candidate = record as Partial<TopicRecord>;
+    if (!candidate.topic || !isTopic(candidate.topic)) {
+      continue;
+    }
+    const topic = topicSummary(candidate.topic);
+    next[topicKey(topic)] = {
+      topic,
+      savedAt: typeof candidate.savedAt === 'string' ? candidate.savedAt : nowIso(),
+      tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
+      note: typeof candidate.note === 'string' ? candidate.note : undefined,
+      visitCount: typeof candidate.visitCount === 'number' && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
+    };
+  }
+  return next;
+}
+
+function normalizeProgress(value: unknown): Record<string, ReadingProgressRecord> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const next: Record<string, ReadingProgressRecord> = {};
+  for (const record of Object.values(value)) {
+    const candidate = record as Partial<ReadingProgressRecord>;
+    if (!candidate.topic || !isTopic(candidate.topic)) {
+      continue;
+    }
+    const topic = topicSummary(candidate.topic);
+    next[topicKey(topic)] = {
+      topic,
+      percent: clampPercent(candidate.percent),
+      scrollY: typeof candidate.scrollY === 'number' && candidate.scrollY > 0 ? Math.round(candidate.scrollY) : 0,
+      updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : nowIso()
+    };
+  }
+  return next;
+}
+
+function normalizeSubscriptions(value: unknown): Record<string, CategorySubscriptionRecord> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const next: Record<string, CategorySubscriptionRecord> = {};
+  for (const record of Object.values(value)) {
+    const candidate = record as Partial<CategorySubscriptionRecord>;
+    if (!isSource(candidate.source) || !candidate.id || !candidate.name) {
+      continue;
+    }
+    const subscription = {
+      source: candidate.source,
+      id: String(candidate.id),
+      name: candidate.name,
+      subscribedAt: typeof candidate.subscribedAt === 'string' ? candidate.subscribedAt : nowIso()
+    };
+    next[categoryKey(subscription)] = subscription;
+  }
+  return next;
+}
+
+function normalizeSavedSearches(value: unknown): SavedSearchRecord[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((item) => item && typeof item.query === 'string' && isFeedSource(item.source))
+    .map((item) => ({
+      id: typeof item.id === 'string' ? item.id : `${item.source}:${item.query}`,
+      query: item.query,
+      source: item.source,
+      savedAt: typeof item.savedAt === 'string' ? item.savedAt : nowIso()
+    }))
+    .slice(0, 30);
+}
+
+function normalizeSettings(value: unknown): ReaderSettings {
+  const base = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const fontScale = typeof base.fontScale === 'number' && Number.isFinite(base.fontScale)
+    ? Math.max(0.9, Math.min(1.25, Math.round(base.fontScale * 100) / 100))
+    : 1;
+  return {
+    trackedKeywords: normalizeStringList(base.trackedKeywords),
+    blockedKeywords: normalizeStringList(base.blockedKeywords),
+    blockedUsers: normalizeStringList(base.blockedUsers),
+    blockedCategories: normalizeStringList(base.blockedCategories),
+    listDensity: base.listDensity === 'compact' || base.listDensity === 'loose' ? base.listDensity : 'standard',
+    theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : 'system',
+    palette: base.palette === 'coral' || base.palette === 'blue' || base.palette === 'mint' || base.palette === 'berry' || base.palette === 'noir' ? base.palette : 'sage',
+    background: base.background === 'white' || base.background === 'gray' ? base.background : 'warm',
+    fontScale,
+    lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'loose' ? base.lineHeight : 'standard',
+    contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'wide' ? base.contentWidth : 'standard',
+    fontFamily: base.fontFamily === 'serif' ? 'serif' : 'sans'
+  };
+}
+
+export function sanitizeReaderData(value: unknown): ReaderData {
+  if (!value || typeof value !== 'object' || (value as Partial<ReaderData>).version !== readerDataVersion) {
+    return createEmptyReaderData();
+  }
+  const data = value as Partial<ReaderData>;
+  return {
+    version: readerDataVersion,
+    favorites: normalizeRecordMap(data.favorites),
+    history: normalizeRecordMap(data.history),
+    later: normalizeRecordMap(data.later),
+    progress: normalizeProgress(data.progress),
+    subscriptions: normalizeSubscriptions(data.subscriptions),
+    savedSearches: normalizeSavedSearches(data.savedSearches),
+    settings: normalizeSettings(data.settings)
+  };
+}
+
+export function recordHistory(data: ReaderData, topic: Topic) {
+  const summary = topicSummary(topic);
+  const key = topicKey(summary);
+  const existing = data.history[key];
+  return {
+    ...data,
+    history: {
+      ...data.history,
+      [key]: {
+        topic: summary,
+        savedAt: nowIso(),
+        visitCount: (existing?.visitCount || 0) + 1
+      }
+    }
+  };
+}
+
+export function toggleFavorite(data: ReaderData, topic: Topic) {
+  const summary = topicSummary(topic);
+  const key = topicKey(summary);
+  const next = { ...data.favorites };
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = { topic: summary, savedAt: nowIso() };
+  }
+  return { ...data, favorites: next };
+}
+
+export function toggleLater(data: ReaderData, topic: Topic) {
+  const summary = topicSummary(topic);
+  const key = topicKey(summary);
+  const next = { ...data.later };
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = { topic: summary, savedAt: nowIso() };
+  }
+  return { ...data, later: next };
+}
+
+export function updateProgress(data: ReaderData, topic: Topic, progress: { percent: number; scrollY: number }) {
+  const summary = topicSummary(topic);
+  return {
+    ...data,
+    progress: {
+      ...data.progress,
+      [topicKey(summary)]: {
+        topic: summary,
+        percent: clampPercent(progress.percent),
+        scrollY: Math.max(0, Math.round(progress.scrollY)),
+        updatedAt: nowIso()
+      }
+    }
+  };
+}
+
+export function toggleSubscription(data: ReaderData, category: Pick<Category, 'source' | 'id' | 'name'>) {
+  const key = categoryKey(category);
+  const next = { ...data.subscriptions };
+  if (next[key]) {
+    delete next[key];
+  } else {
+    next[key] = {
+      source: category.source,
+      id: category.id,
+      name: category.name,
+      subscribedAt: nowIso()
+    };
+  }
+  return { ...data, subscriptions: next };
+}
+
+export function addSavedSearch(data: ReaderData, query: string, source: FeedSource) {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) {
+    return data;
+  }
+  const id = `${source}:${cleanQuery.toLowerCase()}`;
+  return {
+    ...data,
+    savedSearches: [
+      { id, query: cleanQuery, source, savedAt: nowIso() },
+      ...data.savedSearches.filter((item) => item.id !== id)
+    ].slice(0, 30)
+  };
+}
+
+export function isFavorite(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
+  return Boolean(data.favorites[topicKey(topic)]);
+}
+
+export function isLater(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
+  return Boolean(data.later[topicKey(topic)]);
+}
+
+export function isSubscribed(data: ReaderData, category: Pick<Category, 'source' | 'id'>) {
+  return Boolean(data.subscriptions[categoryKey(category)]);
+}
