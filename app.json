@@ -18,6 +18,7 @@
       }
     },
     "plugins": [
+      "./plugins/withAndroidCleartextTraffic",
       "expo-secure-store"
     ]
   }

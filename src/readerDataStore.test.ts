@@ -75,4 +75,22 @@ describe('reader data store', () => {
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('reader-data');
   });
+
+  it('replaces damaged AsyncStorage data with a clean reader data object', async () => {
+    asyncStorage.__store.set('reader-data', '{bad json');
+
+    const data = await loadReaderData();
+
+    expect(data).toEqual(createEmptyReaderData());
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(createEmptyReaderData()));
+  });
+
+  it('rewrites structurally invalid AsyncStorage data as clean reader data', async () => {
+    asyncStorage.__store.set('reader-data', JSON.stringify({ version: 1, favorites: 'bad' }));
+
+    const data = await loadReaderData();
+
+    expect(data).toEqual(createEmptyReaderData());
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(createEmptyReaderData()));
+  });
 });

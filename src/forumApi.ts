@@ -5,18 +5,93 @@ import type {
   FeedResponse,
   RepliesResponse,
   SearchResponse,
+  Category,
   Reply,
   Source,
   TopicDetail
 } from './types';
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+type Validator<T> = (data: unknown) => data is T;
 
-async function fetchJson<T>(url: string, fetcher: Fetcher = fetch) {
+const DATA_FORMAT_ERROR = '服务器返回数据格式不正确';
+const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isSource(value: unknown): value is Source {
+  return isString(value) && validSources.has(value as Source);
+}
+
+function isTopic(value: unknown) {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return isSource(value.source)
+    && isString(value.id)
+    && isString(value.title)
+    && isString(value.author)
+    && isString(value.url)
+    && isString(value.createdAt)
+    && typeof value.replyCount === 'number';
+}
+
+function isReply(value: unknown): value is Reply {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return isString(value.author)
+    && isString(value.contentHtml)
+    && isString(value.createdAt);
+}
+
+function isCategory(value: unknown): value is Category {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return isSource(value.source)
+    && isString(value.id)
+    && isString(value.name);
+}
+
+const isFeedResponse: Validator<FeedResponse> = (data): data is FeedResponse => (
+  isRecord(data) && Array.isArray(data.items) && data.items.every(isTopic)
+);
+
+const isCategoriesResponse: Validator<CategoriesResponse> = (data): data is CategoriesResponse => (
+  isRecord(data) && Array.isArray(data.items) && data.items.every(isCategory)
+);
+
+const isTopicDetail: Validator<TopicDetail> = (data): data is TopicDetail => (
+  isTopic(data)
+    && isRecord(data)
+    && isString(data.contentHtml)
+    && Array.isArray(data.replies)
+    && data.replies.every(isReply)
+);
+
+const isRepliesResponse: Validator<RepliesResponse> = (data): data is RepliesResponse => (
+  isRecord(data) && Array.isArray(data.items) && data.items.every(isReply)
+);
+
+const isSearchResponse: Validator<SearchResponse> = (data): data is SearchResponse => (
+  isRecord(data) && Array.isArray(data.items) && data.items.every(isTopic)
+);
+
+async function fetchJson<T>(url: string, fetcher: Fetcher = fetch, validator?: Validator<T>) {
   const response = await fetcher(url);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || `HTTP ${response.status}`);
+  }
+  if (validator && !validator(data)) {
+    throw new Error(DATA_FORMAT_ERROR);
   }
   return data as T;
 }
@@ -54,7 +129,7 @@ export function getFeed({
   if (nocache) {
     params.set('nocache', '1');
   }
-  return fetchJson<FeedResponse>(`${normalizeServerUrl(serverUrl)}/api/feed?${params.toString()}`, fetcher);
+  return fetchJson<FeedResponse>(`${normalizeServerUrl(serverUrl)}/api/feed?${params.toString()}`, fetcher, isFeedResponse);
 }
 
 export function getCategories({
@@ -67,7 +142,7 @@ export function getCategories({
   fetcher?: Fetcher;
 }) {
   const params = new URLSearchParams({ source });
-  return fetchJson<CategoriesResponse>(`${normalizeServerUrl(serverUrl)}/api/categories?${params.toString()}`, fetcher);
+  return fetchJson<CategoriesResponse>(`${normalizeServerUrl(serverUrl)}/api/categories?${params.toString()}`, fetcher, isCategoriesResponse);
 }
 
 export function getTopic({
@@ -88,7 +163,7 @@ export function getTopic({
     params.set('nocache', '1');
   }
   const query = params.toString() ? `?${params.toString()}` : '';
-  return fetchJson<TopicDetail>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}${query}`, fetcher);
+  return fetchJson<TopicDetail>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}${query}`, fetcher, isTopicDetail);
 }
 
 export function getReplies({
@@ -120,7 +195,7 @@ export function getReplies({
   if (nocache) {
     params.set('nocache', '1');
   }
-  return fetchJson<RepliesResponse>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies?${params.toString()}`, fetcher);
+  return fetchJson<RepliesResponse>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies?${params.toString()}`, fetcher, isRepliesResponse);
 }
 
 export function getReply({
@@ -143,7 +218,7 @@ export function getReply({
     params.set('nocache', '1');
   }
   const query = params.toString() ? `?${params.toString()}` : '';
-  return fetchJson<Reply>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies/${encodeURIComponent(String(floor))}${query}`, fetcher);
+  return fetchJson<Reply>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies/${encodeURIComponent(String(floor))}${query}`, fetcher, isReply);
 }
 
 export function searchTopics({
@@ -164,7 +239,7 @@ export function searchTopics({
     source,
     limit: String(limit)
   });
-  return fetchJson<SearchResponse>(`${normalizeServerUrl(serverUrl)}/api/search?${params.toString()}`, fetcher);
+  return fetchJson<SearchResponse>(`${normalizeServerUrl(serverUrl)}/api/search?${params.toString()}`, fetcher, isSearchResponse);
 }
 
 export function getNodeSeekFeed(options: Omit<Parameters<typeof getFeed>[0], 'source'>) {

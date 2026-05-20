@@ -31,6 +31,14 @@ export interface CategorySubscriptionRecord {
   subscribedAt: string;
 }
 
+export interface DeletedRecords {
+  favorites: Record<string, string>;
+  history: Record<string, string>;
+  later: Record<string, string>;
+  subscriptions: Record<string, string>;
+  savedSearches: Record<string, string>;
+}
+
 export interface ReaderSettings {
   trackedKeywords: string[];
   blockedKeywords: string[];
@@ -54,6 +62,7 @@ export interface ReaderData {
   progress: Record<string, ReadingProgressRecord>;
   subscriptions: Record<string, CategorySubscriptionRecord>;
   savedSearches: SavedSearchRecord[];
+  deletedRecords: DeletedRecords;
   settings: ReaderSettings;
 }
 
@@ -121,6 +130,16 @@ function normalizeStringList(value: unknown) {
   return result.slice(0, 100);
 }
 
+function createEmptyDeletedRecords(): DeletedRecords {
+  return {
+    favorites: {},
+    history: {},
+    later: {},
+    subscriptions: {},
+    savedSearches: {}
+  };
+}
+
 export function createEmptyReaderData(): ReaderData {
   return {
     version: readerDataVersion,
@@ -130,6 +149,7 @@ export function createEmptyReaderData(): ReaderData {
     progress: {},
     subscriptions: {},
     savedSearches: [],
+    deletedRecords: createEmptyDeletedRecords(),
     settings: {
       trackedKeywords: [],
       blockedKeywords: [],
@@ -234,6 +254,32 @@ function normalizeSavedSearches(value: unknown): SavedSearchRecord[] {
     .slice(0, 30);
 }
 
+function normalizeDeletedRecordMap(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const next: Record<string, string> = {};
+  for (const [key, deletedAt] of Object.entries(value)) {
+    if (typeof key === 'string' && key && typeof deletedAt === 'string' && dateValue(deletedAt) > 0) {
+      next[key] = deletedAt;
+    }
+  }
+  return next;
+}
+
+function normalizeDeletedRecords(value: unknown): DeletedRecords {
+  const base = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Partial<DeletedRecords>
+    : {};
+  return {
+    favorites: normalizeDeletedRecordMap(base.favorites),
+    history: normalizeDeletedRecordMap(base.history),
+    later: normalizeDeletedRecordMap(base.later),
+    subscriptions: normalizeDeletedRecordMap(base.subscriptions),
+    savedSearches: normalizeDeletedRecordMap(base.savedSearches)
+  };
+}
+
 function normalizeSettings(value: unknown): ReaderSettings {
   const base = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -270,8 +316,131 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     progress: normalizeProgress(data.progress),
     subscriptions: normalizeSubscriptions(data.subscriptions),
     savedSearches: normalizeSavedSearches(data.savedSearches),
+    deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
   };
+}
+
+function dateValue(value: string | undefined) {
+  const time = value ? Date.parse(value) : 0;
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeTimedMap<T>(local: Record<string, T>, remote: Record<string, T>, getTime: (record: T) => string | undefined) {
+  const merged = { ...local };
+  for (const [key, remoteRecord] of Object.entries(remote)) {
+    const localRecord = merged[key];
+    if (!localRecord || dateValue(getTime(remoteRecord)) > dateValue(getTime(localRecord))) {
+      merged[key] = remoteRecord;
+    }
+  }
+  return merged;
+}
+
+function mergeDeletedMap(local: Record<string, string>, remote: Record<string, string>) {
+  const merged = { ...local };
+  for (const [key, remoteDeletedAt] of Object.entries(remote)) {
+    if (dateValue(remoteDeletedAt) > dateValue(merged[key])) {
+      merged[key] = remoteDeletedAt;
+    }
+  }
+  return merged;
+}
+
+function mergeTimedMapWithDeleted<T>(
+  local: Record<string, T>,
+  remote: Record<string, T>,
+  localDeleted: Record<string, string>,
+  remoteDeleted: Record<string, string>,
+  getTime: (record: T) => string | undefined
+) {
+  const records = mergeTimedMap(local, remote, getTime);
+  const deleted = mergeDeletedMap(localDeleted, remoteDeleted);
+  for (const [key, record] of Object.entries(records)) {
+    if (dateValue(deleted[key]) >= dateValue(getTime(record))) {
+      delete records[key];
+    } else {
+      delete deleted[key];
+    }
+  }
+  return { records, deleted };
+}
+
+function mergeSavedSearchesWithDeleted(local: ReaderData, remote: ReaderData) {
+  const records = new Map<string, SavedSearchRecord>();
+  const deleted = mergeDeletedMap(local.deletedRecords.savedSearches, remote.deletedRecords.savedSearches);
+  for (const record of [...local.savedSearches, ...remote.savedSearches]) {
+    const existing = records.get(record.id);
+    if (!existing || dateValue(record.savedAt) > dateValue(existing.savedAt)) {
+      records.set(record.id, record);
+    }
+  }
+  for (const [key, record] of records) {
+    if (dateValue(deleted[key]) >= dateValue(record.savedAt)) {
+      records.delete(key);
+    } else {
+      delete deleted[key];
+    }
+  }
+  return {
+    records: Array.from(records.values())
+      .sort((a, b) => dateValue(b.savedAt) - dateValue(a.savedAt))
+      .slice(0, 30),
+    deleted
+  };
+}
+
+function markDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string, deletedAt = nowIso()): DeletedRecords {
+  return {
+    ...deletedRecords,
+    [section]: {
+      ...deletedRecords[section],
+      [key]: deletedAt
+    }
+  };
+}
+
+function clearDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string): DeletedRecords {
+  const next = { ...deletedRecords[section] };
+  delete next[key];
+  return {
+    ...deletedRecords,
+    [section]: next
+  };
+}
+
+export function mergeReaderData(localValue: unknown, remoteValue: unknown): ReaderData {
+  const local = sanitizeReaderData(localValue);
+  const remote = sanitizeReaderData(remoteValue);
+  const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, (record) => record.savedAt);
+  const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, (record) => record.savedAt);
+  const later = mergeTimedMapWithDeleted(local.later, remote.later, local.deletedRecords.later, remote.deletedRecords.later, (record) => record.savedAt);
+  const subscriptions = mergeTimedMapWithDeleted(
+    local.subscriptions,
+    remote.subscriptions,
+    local.deletedRecords.subscriptions,
+    remote.deletedRecords.subscriptions,
+    (record) => record.subscribedAt
+  );
+  const savedSearches = mergeSavedSearchesWithDeleted(local, remote);
+
+  return sanitizeReaderData({
+    version: readerDataVersion,
+    favorites: favorites.records,
+    history: history.records,
+    later: later.records,
+    progress: mergeTimedMap(local.progress, remote.progress, (record) => record.updatedAt),
+    subscriptions: subscriptions.records,
+    savedSearches: savedSearches.records,
+    deletedRecords: {
+      favorites: favorites.deleted,
+      history: history.deleted,
+      later: later.deleted,
+      subscriptions: subscriptions.deleted,
+      savedSearches: savedSearches.deleted
+    },
+    settings: local.settings
+  });
 }
 
 export function recordHistory(data: ReaderData, topic: Topic) {
@@ -287,7 +456,8 @@ export function recordHistory(data: ReaderData, topic: Topic) {
         savedAt: nowIso(),
         visitCount: (existing?.visitCount || 0) + 1
       }
-    }
+    },
+    deletedRecords: clearDeleted(data.deletedRecords, 'history', key)
   };
 }
 
@@ -295,24 +465,30 @@ export function toggleFavorite(data: ReaderData, topic: Topic) {
   const summary = topicSummary(topic);
   const key = topicKey(summary);
   const next = { ...data.favorites };
+  let deletedRecords = data.deletedRecords;
   if (next[key]) {
     delete next[key];
+    deletedRecords = markDeleted(deletedRecords, 'favorites', key);
   } else {
     next[key] = { topic: summary, savedAt: nowIso() };
+    deletedRecords = clearDeleted(deletedRecords, 'favorites', key);
   }
-  return { ...data, favorites: next };
+  return { ...data, favorites: next, deletedRecords };
 }
 
 export function toggleLater(data: ReaderData, topic: Topic) {
   const summary = topicSummary(topic);
   const key = topicKey(summary);
   const next = { ...data.later };
+  let deletedRecords = data.deletedRecords;
   if (next[key]) {
     delete next[key];
+    deletedRecords = markDeleted(deletedRecords, 'later', key);
   } else {
     next[key] = { topic: summary, savedAt: nowIso() };
+    deletedRecords = clearDeleted(deletedRecords, 'later', key);
   }
-  return { ...data, later: next };
+  return { ...data, later: next, deletedRecords };
 }
 
 export function updateProgress(data: ReaderData, topic: Topic, progress: { percent: number; scrollY: number }) {
@@ -334,8 +510,10 @@ export function updateProgress(data: ReaderData, topic: Topic, progress: { perce
 export function toggleSubscription(data: ReaderData, category: Pick<Category, 'source' | 'id' | 'name'>) {
   const key = categoryKey(category);
   const next = { ...data.subscriptions };
+  let deletedRecords = data.deletedRecords;
   if (next[key]) {
     delete next[key];
+    deletedRecords = markDeleted(deletedRecords, 'subscriptions', key);
   } else {
     next[key] = {
       source: category.source,
@@ -343,8 +521,9 @@ export function toggleSubscription(data: ReaderData, category: Pick<Category, 's
       name: category.name,
       subscribedAt: nowIso()
     };
+    deletedRecords = clearDeleted(deletedRecords, 'subscriptions', key);
   }
-  return { ...data, subscriptions: next };
+  return { ...data, subscriptions: next, deletedRecords };
 }
 
 export function addSavedSearch(data: ReaderData, query: string, source: FeedSource) {
@@ -358,7 +537,8 @@ export function addSavedSearch(data: ReaderData, query: string, source: FeedSour
     savedSearches: [
       { id, query: cleanQuery, source, savedAt: nowIso() },
       ...data.savedSearches.filter((item) => item.id !== id)
-    ].slice(0, 30)
+    ].slice(0, 30),
+    deletedRecords: clearDeleted(data.deletedRecords, 'savedSearches', id)
   };
 }
 

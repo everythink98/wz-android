@@ -1,10 +1,16 @@
 import 'expo-dev-client';
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ComponentProps, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
+  FlatList,
   Image,
+  KeyboardAvoidingView,
+  type ListRenderItem,
   Linking,
   Modal,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Platform,
   Pressable,
   SafeAreaView,
@@ -13,6 +19,7 @@ import {
   StatusBar as NativeStatusBar,
   Text,
   TextInput,
+  ToastAndroid,
   useColorScheme,
   useWindowDimensions,
   View
@@ -21,13 +28,21 @@ import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import RenderHTML, { IMGElement, useIMGElementProps, type CustomBlockRenderer } from 'react-native-render-html';
+import RenderHTML, {
+  IMGElement,
+  RenderHTMLConfigProvider,
+  RenderHTMLSource,
+  TRenderEngineProvider,
+  useIMGElementProps,
+  type CustomBlockRenderer
+} from 'react-native-render-html';
 import {
   Activity,
   BookMarked,
   CheckCircle,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Clock3,
   ExternalLink,
   Heart,
@@ -72,6 +87,7 @@ import {
   isFavorite,
   isLater,
   isSubscribed,
+  mergeReaderData,
   recordHistory,
   sanitizeReaderData,
   toggleFavorite,
@@ -86,6 +102,8 @@ import { loadReaderData, saveReaderData } from './src/readerDataStore';
 import { normalizeServerUrl, readReaderData as pullReaderData, writeReaderData as pushReaderData } from './src/syncClient';
 import type { Category, FeedSource, Reply, Source, Topic, TopicDetail } from './src/types';
 import { createImagePreviewList, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { shouldShowFeedFloatingActions } from './src/feedFloatingActions';
+import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
 
 type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
 type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['ignoredStyles']>;
@@ -99,6 +117,29 @@ const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const SERVER_URL_STORAGE_KEY = 'server-url';
 const SYNC_CODE_STORAGE_KEY = 'sync-code';
 const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek'];
+const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
+const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
+const FEED_LIST_PERFORMANCE_PROPS = {
+  initialNumToRender: 12,
+  maxToRenderPerBatch: 8,
+  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
+  updateCellsBatchingPeriod: 50,
+  windowSize: 7
+};
+const TOPIC_LIST_PERFORMANCE_PROPS = {
+  initialNumToRender: 10,
+  maxToRenderPerBatch: 8,
+  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
+  updateCellsBatchingPeriod: 50,
+  windowSize: 7
+};
+const REPLY_LIST_PERFORMANCE_PROPS = {
+  initialNumToRender: 6,
+  maxToRenderPerBatch: 5,
+  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
+  updateCellsBatchingPeriod: 50,
+  windowSize: 7
+};
 
 const NODESEEK_LOGIN_PROBE_SCRIPT = `
 (() => {
@@ -138,9 +179,62 @@ interface ReaderTheme {
   success: string;
 }
 
+const MemoizedHtmlContent = memo(HtmlContent);
+
+const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
+  if (
+    previous.actionBusy !== next.actionBusy
+    || previous.canWrite !== next.canWrite
+    || previous.contentWidth !== next.contentWidth
+    || previous.onInteract !== next.onInteract
+    || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
+    || previous.reply !== next.reply
+    || previous.replyFloor !== next.replyFloor
+    || previous.styles !== next.styles
+    || previous.theme !== next.theme
+  ) {
+    return false;
+  }
+
+  const quotedFloors = new Set([...(previous.reply.quotedFloors || []), ...(next.reply.quotedFloors || [])]);
+  for (const quotedFloor of quotedFloors) {
+    const previousKey = `${previous.replyFloor}:${quotedFloor}`;
+    const nextKey = `${next.replyFloor}:${quotedFloor}`;
+    if (
+      Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey])
+      || Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey])
+      || previous.loadedQuotedReplies[quotedFloor] !== next.loadedQuotedReplies[quotedFloor]
+      || previous.repliesByFloor.get(quotedFloor) !== next.repliesByFloor.get(quotedFloor)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+});
+
+const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
+  previous.topic === next.topic
+  && previous.styles === next.styles
+  && previous.theme === next.theme
+  && previous.onOpenTopic === next.onOpenTopic
+  && previous.onToggleFavorite === next.onToggleFavorite
+  && previous.onToggleLater === next.onToggleLater
+  && topicListItemStatesEqual(previous.readerState, next.readerState)
+));
+
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const webLoginDetectedRef = useRef(false);
+  const saveQueueRef = useRef(Promise.resolve());
+  const feedRequestIdRef = useRef(0);
+  const feedLoadingRef = useRef(false);
+  const searchRequestIdRef = useRef(0);
+  const topicRequestIdRef = useRef(0);
+  const loadingMoreRepliesRef = useRef(false);
+  const currentTopicKeyRef = useRef<string | null>(null);
+  const topicScrollRef = useRef<FlatList<Reply>>(null);
+  const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const systemScheme = useColorScheme();
   const { width } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
@@ -148,18 +242,21 @@ export default function App() {
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
-  const [status, setStatus] = useState('填写服务器地址后即可读取三站；NodeSeek Cookie 只保存在本机。');
+  const [, setStatus] = useState('填写服务器地址后即可读取三站；NodeSeek Cookie 只保存在本机。');
   const [cookieNames, setCookieNames] = useState<string[]>([]);
   const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [serverUrl, setServerUrl] = useState('http://10.0.2.2:3000');
   const [syncCode, setSyncCode] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
+  const readerDataRef = useRef<ReaderData>(readerData);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [feedItems, setFeedItems] = useState<Topic[]>([]);
   const [feedPage, setFeedPage] = useState(1);
   const [feedNextCursor, setFeedNextCursor] = useState<string | undefined>();
   const [feedHasMore, setFeedHasMore] = useState(false);
+  const [feedRefreshing, setFeedRefreshing] = useState(false);
+  const [loadingMoreFeed, setLoadingMoreFeed] = useState(false);
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
@@ -171,12 +268,15 @@ export default function App() {
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
+  const [topicError, setTopicError] = useState('');
   const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
   const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
   const [replyNextOffset, setReplyNextOffset] = useState<number | null>(null);
   const [replyHasMore, setReplyHasMore] = useState(false);
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
+  const [replyComposerOpen, setReplyComposerOpen] = useState(false);
+  const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [loadedQuotedReplies, setLoadedQuotedReplies] = useState<Record<number, Reply>>({});
   const [loadingQuotedFloors, setLoadingQuotedFloors] = useState<Record<string, boolean>>({});
@@ -185,14 +285,18 @@ export default function App() {
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [healthSummary, setHealthSummary] = useState('');
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
+  readerDataRef.current = readerData;
+  const currentTopic = topicDetail || selectedTopic;
+  currentTopicKeyRef.current = currentTopic ? topicKey(currentTopic) : null;
 
   const theme = useMemo(() => createTheme(readerData.settings, systemScheme), [readerData.settings, systemScheme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings), [readerData.settings, theme]);
   const htmlBaseStyle = useMemo<HtmlBaseStyle>(() => ({
     color: theme.ink,
+    fontFamily: fontFamilyValue(readerData.settings.fontFamily),
     fontSize: Math.round(15 * readerData.settings.fontScale),
     lineHeight: Math.round(15 * readerData.settings.fontScale * lineHeightMultiplier(readerData.settings.lineHeight))
-  }), [readerData.settings.fontScale, readerData.settings.lineHeight, theme.ink]);
+  }), [readerData.settings.fontFamily, readerData.settings.fontScale, readerData.settings.lineHeight, theme.ink]);
   const htmlTagsStyles = useMemo<HtmlTagsStyles>(() => ({
     body: {
       color: theme.ink,
@@ -351,16 +455,18 @@ export default function App() {
     ...topicReplies.map((reply) => reply.contentHtml || ''),
     ...Object.values(loadedQuotedReplies).map((reply) => reply.contentHtml || '')
   ].filter(Boolean), [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]);
+  const topicHtmlPartsRef = useRef<string[]>(topicHtmlParts);
+  topicHtmlPartsRef.current = topicHtmlParts;
   const openImagePreview = useCallback((url: string) => {
     const nextPreview = createImagePreviewList({
       tappedUrl: url,
-      htmlParts: topicHtmlParts,
+      htmlParts: topicHtmlPartsRef.current,
       serverUrl
     });
     if (nextPreview.urls.length > 0) {
       setImagePreview(nextPreview);
     }
-  }, [serverUrl, topicHtmlParts]);
+  }, [serverUrl]);
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
   const showPreviousImage = useCallback(() => {
     setImagePreview((current) => current && current.urls.length > 1 ? {
@@ -406,13 +512,53 @@ export default function App() {
     }
   }), [openImagePreview]);
 
+  const notify = useCallback((message: string) => {
+    setStatus(message);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+    }
+  }, []);
+
   const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
     setReaderData((current) => {
-      const next = sanitizeReaderData(updater(current));
-      void saveReaderData(next).catch((error) => setStatus(errorMessage(error)));
+      const next = sanitizeReaderData(updater(readerDataRef.current || current));
+      readerDataRef.current = next;
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(() => saveReaderData(next))
+        .then((saved) => {
+          setReaderData((latest) => {
+            if (latest !== next) {
+              return latest;
+            }
+            readerDataRef.current = saved;
+            return saved;
+          });
+        })
+        .catch((error) => notify(errorMessage(error)));
       return next;
     });
-  }, []);
+  }, [notify]);
+
+  const replaceReaderData = useCallback((nextValue: ReaderData) => {
+    const next = sanitizeReaderData(nextValue);
+    readerDataRef.current = next;
+    setReaderData(next);
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() => saveReaderData(next))
+      .then((saved) => {
+        setReaderData((latest) => {
+          if (latest !== next) {
+            return latest;
+          }
+          readerDataRef.current = saved;
+          return saved;
+        });
+      })
+      .catch((error) => notify(errorMessage(error)));
+    return saveQueueRef.current;
+  }, [notify]);
 
   useEffect(() => {
     void (async () => {
@@ -431,10 +577,10 @@ export default function App() {
       }
       if (savedCookie) {
         setHasNodeSeekCookie(true);
-        setStatus('已找到本机保存的 NodeSeek Cookie。');
+        notify('已找到本机保存的 NodeSeek Cookie。');
       }
-    })();
-  }, []);
+    })().catch((error) => notify(errorMessage(error)));
+  }, [notify]);
 
   const saveServerSettings = useCallback(async () => {
     try {
@@ -442,11 +588,11 @@ export default function App() {
       await SecureStore.setItemAsync(SERVER_URL_STORAGE_KEY, cleanServerUrl);
       await SecureStore.setItemAsync(SYNC_CODE_STORAGE_KEY, syncCode.trim());
       setServerUrl(cleanServerUrl);
-      setStatus('服务器地址和同步码已保存在本机。');
+      notify('服务器地址和同步码已保存在本机。');
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
     }
-  }, [serverUrl, syncCode]);
+  }, [notify, serverUrl, syncCode]);
 
   const loadCategories = useCallback(async () => {
     if (!serverUrl.trim()) {
@@ -457,12 +603,12 @@ export default function App() {
       setCategories(data.items);
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
-        setStatus(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
+        notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
     }
-  }, [serverUrl]);
+  }, [notify, serverUrl]);
 
   const loadFeed = useCallback(async ({
     page = 1,
@@ -480,8 +626,19 @@ export default function App() {
     nocache?: boolean;
   } = {}) => {
     if (!serverUrl.trim()) {
-      setStatus('请输入服务器地址');
+      notify('请输入服务器地址');
       return;
+    }
+    if (feedLoadingRef.current && (!reset || nocache)) {
+      return;
+    }
+    feedLoadingRef.current = true;
+    const requestId = ++feedRequestIdRef.current;
+    const isLoadMore = !reset && page > 1;
+    if (isLoadMore) {
+      setLoadingMoreFeed(true);
+    } else if (nocache) {
+      setFeedRefreshing(true);
     }
     setBusy(true);
     try {
@@ -494,22 +651,32 @@ export default function App() {
         category: category || undefined,
         nocache
       });
+      if (requestId !== feedRequestIdRef.current) {
+        return;
+      }
       setFeedItems((current) => reset ? data.items : mergeTopics(current, data.items));
-      setFeedPage(page);
+      setFeedPage(data.nextPage ? data.nextPage - 1 : page);
       setFeedNextCursor(data.nextCursor ?? undefined);
-      setFeedHasMore(Boolean(data.hasMore && data.nextPage));
+      setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
-        setStatus(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
+        notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
       } else {
-        setStatus(category ? `已读取 ${sourceLabel(source)}「${category}」` : `已读取 ${sourceLabel(source)}主题`);
+        notify(category ? `已读取 ${sourceLabel(source)}「${category}」` : `已读取 ${sourceLabel(source)}主题`);
       }
     } catch (error) {
-      setStatus(errorMessage(error));
+      if (requestId === feedRequestIdRef.current) {
+        notify(errorMessage(error));
+      }
     } finally {
-      setBusy(false);
+      if (requestId === feedRequestIdRef.current) {
+        setBusy(false);
+        setFeedRefreshing(false);
+        setLoadingMoreFeed(false);
+        feedLoadingRef.current = false;
+      }
     }
-  }, [categoryFilter, feedSource, serverUrl]);
+  }, [categoryFilter, feedSource, notify, serverUrl]);
 
   useEffect(() => {
     void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter });
@@ -520,42 +687,65 @@ export default function App() {
   }, [loadCategories]);
 
   const refreshFeed = useCallback(() => {
+    if (feedLoadingRef.current) {
+      notify('正在刷新，请稍候');
+      return;
+    }
+    notify('正在刷新主题');
     void loadFeed({ reset: true, page: 1, nocache: true });
     void loadCategories();
-  }, [loadCategories, loadFeed]);
+  }, [loadCategories, loadFeed, notify]);
 
   const runSearch = useCallback(async () => {
     const query = searchQuery.trim();
     if (!query) {
-      setStatus('请输入搜索词');
+      notify('请输入搜索词');
       return;
     }
+    const requestId = ++searchRequestIdRef.current;
     setBusy(true);
     try {
       if (searchScope === 'local') {
+        if (requestId !== searchRequestIdRef.current) {
+          return;
+        }
         setSearchItems(searchLocal(readerData, query, searchSource));
-        setStatus('本地搜索完成');
+        notify('本地搜索完成');
       } else {
         const data = await searchTopics({ serverUrl, query, source: searchSource, limit: 30 });
+        if (requestId !== searchRequestIdRef.current) {
+          return;
+        }
         setSearchItems(data.items);
         commitReaderData((current) => addSavedSearch(current, query, searchSource));
         const errors = Object.entries(data.errors || {});
-        setStatus(errors.length
+        notify(errors.length
           ? errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；')
           : `搜索完成：${data.items.length} 条结果`);
       }
     } catch (error) {
-      setStatus(errorMessage(error));
+      if (requestId === searchRequestIdRef.current) {
+        notify(errorMessage(error));
+      }
     } finally {
-      setBusy(false);
+      if (requestId === searchRequestIdRef.current) {
+        setBusy(false);
+      }
     }
-  }, [commitReaderData, readerData, searchQuery, searchScope, searchSource, serverUrl]);
+  }, [commitReaderData, notify, readerData, searchQuery, searchScope, searchSource, serverUrl]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
+    if (screen !== 'topic') {
+      topicReturnScreenRef.current = screen;
+    }
+    const requestId = ++topicRequestIdRef.current;
+    currentTopicKeyRef.current = topicKey(topic);
     setSelectedTopic(topic);
     setTopicDetail(null);
+    setTopicError('');
     setTopicReplies([]);
     setReplyContent('');
+    setReplyComposerOpen(false);
     setReplyFilter('all');
     setExpandedQuotes({});
     setLoadedQuotedReplies({});
@@ -564,25 +754,41 @@ export default function App() {
     setBusy(true);
     try {
       const detail = await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache });
+      if (requestId !== topicRequestIdRef.current) {
+        return;
+      }
       setTopicDetail(detail);
       setTopicReplies(detail.replies || []);
       setReplyHasMore(Boolean(detail.replyHasMore && detail.replyNextPage));
       setReplyNextPage(detail.replyNextPage ?? null);
       setReplyNextOffset(detail.replyNextOffset ?? null);
       commitReaderData((current) => recordHistory(current, detail));
-      setStatus('主题已读取');
+      const progress = readerDataRef.current.progress[topicKey(detail)];
+      if (progress?.scrollY) {
+        setTimeout(() => topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false }), 180);
+      }
+      notify('主题已读取');
     } catch (error) {
-      setStatus(errorMessage(error));
+      if (requestId === topicRequestIdRef.current) {
+        const message = errorMessage(error);
+        setTopicError(message);
+        notify(message);
+      }
     } finally {
-      setBusy(false);
+      if (requestId === topicRequestIdRef.current) {
+        setBusy(false);
+      }
     }
-  }, [commitReaderData, serverUrl]);
+  }, [commitReaderData, notify, screen, serverUrl]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
-    if (!detail || !replyNextPage) {
+    if (!detail || !replyNextPage || loadingMoreRepliesRef.current) {
       return;
     }
+    const requestTopicKey = topicKey(detail);
+    loadingMoreRepliesRef.current = true;
+    setLoadingMoreReplies(true);
     setBusy(true);
     try {
       const data = await getReplies({
@@ -593,17 +799,57 @@ export default function App() {
         limit: 30,
         offset: replyNextOffset
       });
-      setTopicReplies((current) => [...current, ...data.items]);
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
+      setTopicReplies((current) => mergeReplies(current, data.items));
       setReplyHasMore(Boolean(data.hasMore && data.nextPage));
       setReplyNextPage(data.nextPage ?? null);
       setReplyNextOffset(data.nextOffset ?? null);
-      setStatus(`已加载 ${data.items.length} 条回复`);
+      notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
-      setStatus(errorMessage(error));
+      if (currentTopicKeyRef.current === requestTopicKey) {
+        notify(errorMessage(error));
+      }
     } finally {
-      setBusy(false);
+      loadingMoreRepliesRef.current = false;
+      setLoadingMoreReplies(false);
+      if (currentTopicKeyRef.current === requestTopicKey) {
+        setBusy(false);
+      }
     }
-  }, [replyNextOffset, replyNextPage, selectedTopic, serverUrl, topicDetail]);
+  }, [notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, topicDetail]);
+
+  const refreshTopic = useCallback(() => {
+    const detail = topicDetail || selectedTopic;
+    if (detail) {
+      void openTopic(detail, true);
+    }
+  }, [openTopic, selectedTopic, topicDetail]);
+
+  const goBackFromTopic = useCallback(() => {
+    setScreen(topicReturnScreenRef.current);
+  }, []);
+
+  const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const detail = topicDetail || selectedTopic;
+    if (!detail) {
+      return;
+    }
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    const scrollY = Math.max(0, contentOffset.y);
+    const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
+    const percent = Math.min(100, Math.max(0, Math.round((scrollY / scrollable) * 100)));
+    const next = sanitizeReaderData(updateProgress(readerDataRef.current, detail, { percent, scrollY }));
+    readerDataRef.current = next;
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() => saveReaderData(next))
+      .then((saved) => {
+        readerDataRef.current = saved;
+      })
+      .catch((error) => notify(errorMessage(error)));
+  }, [notify, selectedTopic, topicDetail]);
 
   const toggleQuotedFloor = useCallback(async ({
     replyFloor,
@@ -627,10 +873,11 @@ export default function App() {
 
     const detail = topicDetail || selectedTopic;
     if (!detail || detail.source !== 'linuxdo') {
-      setStatus('引用楼层未加载');
+      notify('引用楼层未加载');
       setExpandedQuotes((current) => ({ ...current, [key]: true }));
       return;
     }
+    const requestTopicKey = topicKey(detail);
 
     setLoadingQuotedFloors((current) => ({ ...current, [key]: true }));
     try {
@@ -640,17 +887,24 @@ export default function App() {
         id: detail.id,
         floor: quotedFloor
       });
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
       if (loaded.floor) {
         setLoadedQuotedReplies((current) => ({ ...current, [loaded.floor as number]: loaded }));
       }
       setExpandedQuotes((current) => ({ ...current, [key]: true }));
-      setStatus(`已读取引用 #${quotedFloor}`);
+      notify(`已读取引用 #${quotedFloor}`);
     } catch (error) {
-      setStatus(errorMessage(error));
+      if (currentTopicKeyRef.current === requestTopicKey) {
+        notify(errorMessage(error));
+      }
     } finally {
-      setLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
+      if (currentTopicKeyRef.current === requestTopicKey) {
+        setLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
+      }
     }
-  }, [expandedQuotes, loadedQuotedReplies, selectedTopic, serverUrl, topicDetail]);
+  }, [expandedQuotes, loadedQuotedReplies, notify, selectedTopic, serverUrl, topicDetail]);
 
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -689,28 +943,39 @@ export default function App() {
       if (canStoreNodeSeekCookieHeader(typedCookies, webLoginDetectedRef.current) && cookieHeader) {
         await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
         setHasNodeSeekCookie(true);
-        setStatus('已检测到 NodeSeek 登录 Cookie，已保存在本机。');
+        notify('已检测到 NodeSeek 登录 Cookie，已保存在本机。');
       } else {
-        setStatus('没有检测到明确的 NodeSeek 登录 Cookie。请确认已经登录后再试。');
+        notify('没有检测到明确的 NodeSeek 登录 Cookie。请确认已经登录后再试。');
       }
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
     } finally {
       setChecking(false);
     }
-  }, [probeLoginPage]);
+  }, [notify, probeLoginPage]);
 
   const clearLogin = useCallback(async () => {
     await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
+    try {
+      await CookieManager.clearAll(true);
+    } catch {
+      await CookieManager.clearAll(false);
+    }
+    await CookieManager.flush();
+    webLoginDetectedRef.current = false;
     setHasNodeSeekCookie(false);
     setCookieNames([]);
     setWebLoginUserId(null);
-    setStatus('已清除本机保存的 NodeSeek Cookie。');
-  }, []);
+    notify('已清除本机保存的 NodeSeek Cookie。');
+  }, [notify]);
 
-  const runNodeSeekRequest = useCallback(async (requestFactory: () => NodeSeekActionRequest, success: string) => {
+  const runNodeSeekRequest = useCallback(async (
+    requestFactory: () => NodeSeekActionRequest,
+    success: string,
+    options: { refreshTopic?: boolean } = {}
+  ) => {
     if (!hasNodeSeekCookie) {
-      setStatus('请先在“更多”里登录并检测 NodeSeek Cookie。');
+      notify('请先在“更多”里登录并检测 NodeSeek Cookie。');
       return false;
     }
     setActionBusy(true);
@@ -720,22 +985,26 @@ export default function App() {
         cookieHeader: cookieHeader || '',
         request: requestFactory()
       });
-      setStatus(success);
-      if (topicDetail?.source === 'nodeseek') {
+      notify(success);
+      if (options.refreshTopic !== false && topicDetail?.source === 'nodeseek') {
         await openTopic(topicDetail, true);
       }
       return true;
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
       return false;
     } finally {
       setActionBusy(false);
     }
-  }, [hasNodeSeekCookie, openTopic, topicDetail]);
+  }, [hasNodeSeekCookie, notify, openTopic, topicDetail]);
 
   const submitReply = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail || detail.source !== 'nodeseek') {
+      return;
+    }
+    if (!replyContent.trim()) {
+      notify('请输入回复内容');
       return;
     }
     const submitted = await runNodeSeekRequest(
@@ -744,51 +1013,56 @@ export default function App() {
     );
     if (submitted) {
       setReplyContent('');
+      setReplyComposerOpen(false);
     }
-  }, [replyContent, runNodeSeekRequest, selectedTopic, topicDetail]);
+  }, [notify, replyContent, runNodeSeekRequest, selectedTopic, topicDetail]);
 
   const checkIn = useCallback(async () => {
     await runNodeSeekRequest(
       () => buildNodeSeekAttendanceRequest({ random: false }),
-      '签到请求已提交'
+      '签到请求已提交',
+      { refreshTopic: false }
     );
   }, [runNodeSeekRequest]);
 
   const interact = useCallback(async (type: 'upvote' | 'like', commentId?: number) => {
     if (!commentId) {
-      setStatus('当前内容缺少评论 id，刷新主题后再试。');
+      notify('当前内容缺少评论 id，刷新主题后再试。');
       return;
     }
     await runNodeSeekRequest(
       () => buildNodeSeekInteractionRequest({ type, commentId }),
       type === 'upvote' ? '点赞请求已提交' : '感谢请求已提交'
     );
-  }, [runNodeSeekRequest]);
+  }, [notify, runNodeSeekRequest]);
 
   const pullSync = useCallback(async () => {
     setBusy(true);
     try {
-      const data = sanitizeReaderData(await pullReaderData(serverUrl, syncCode));
-      setReaderData(await saveReaderData(data));
-      setStatus('同步读取成功。');
+      await saveQueueRef.current.catch(() => undefined);
+      const remote = sanitizeReaderData(await pullReaderData(serverUrl, syncCode));
+      const merged = mergeReaderData(readerDataRef.current, remote);
+      await replaceReaderData(merged);
+      notify('同步读取成功，已合并本机和云端资料。');
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
     } finally {
       setBusy(false);
     }
-  }, [serverUrl, syncCode]);
+  }, [notify, replaceReaderData, serverUrl, syncCode]);
 
   const pushSync = useCallback(async () => {
     setBusy(true);
     try {
-      await pushReaderData(serverUrl, syncCode, sanitizeReaderData(readerData));
-      setStatus('同步保存成功。');
+      await saveQueueRef.current.catch(() => undefined);
+      await pushReaderData(serverUrl, syncCode, sanitizeReaderData(readerDataRef.current));
+      notify('同步保存成功。');
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
     } finally {
       setBusy(false);
     }
-  }, [readerData, serverUrl, syncCode]);
+  }, [notify, serverUrl, syncCode]);
 
   const checkHealth = useCallback(async () => {
     setBusy(true);
@@ -800,13 +1074,52 @@ export default function App() {
       }
       const sourceStatus = sources.map((source) => `${sourceLabel(source)} ${data.sources?.[source]?.ok ? '可用' : '不可用'}`).join(' · ');
       setHealthSummary(sourceStatus);
-      setStatus('状态检查完成。');
+      notify('状态检查完成。');
     } catch (error) {
-      setStatus(errorMessage(error));
+      notify(errorMessage(error));
     } finally {
       setBusy(false);
     }
-  }, [serverUrl]);
+  }, [notify, serverUrl]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (imagePreview) {
+        closeImagePreview();
+        return true;
+      }
+      if (showLoginPanel) {
+        setShowLoginPanel(false);
+        return true;
+      }
+      if (showCategoriesPanel) {
+        setShowCategoriesPanel(false);
+        return true;
+      }
+      if (showSettingsPanel) {
+        setShowSettingsPanel(false);
+        return true;
+      }
+      if (screen === 'topic') {
+        goBackFromTopic();
+        return true;
+      }
+      if (screen !== 'feed') {
+        setScreen('feed');
+        return true;
+      }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [
+    closeImagePreview,
+    goBackFromTopic,
+    imagePreview,
+    screen,
+    showCategoriesPanel,
+    showLoginPanel,
+    showSettingsPanel
+  ]);
 
   function updateSettings(patch: Partial<ReaderSettings>) {
     commitReaderData((current) => ({
@@ -824,53 +1137,77 @@ export default function App() {
     setScreen('feed');
   }
 
+  const changeFeedSource = useCallback((source: FeedSource) => {
+    setFeedSource(source);
+    setCategoryFilter('');
+  }, []);
+
+  const toggleTopicFavorite = useCallback((topic: Topic) => {
+    commitReaderData((current) => toggleFavorite(current, topic));
+  }, [commitReaderData]);
+
+  const toggleTopicLater = useCallback((topic: Topic) => {
+    commitReaderData((current) => toggleLater(current, topic));
+  }, [commitReaderData]);
+
+  const removeLibraryTopic = useCallback((topic: Topic) => {
+    commitReaderData((current) => removeRecord(current, libraryTab, topic));
+  }, [commitReaderData, libraryTab]);
+
   return (
-    <SafeAreaView style={styles.screen}>
-      <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
-      {screen === 'topic' ? (
-        <TopicScreen
-          actionBusy={actionBusy}
-          canUseNodeSeekActions={hasNodeSeekCookie}
-          contentWidth={contentWidth}
-          htmlBaseStyle={htmlBaseStyle}
-          htmlIgnoredStyles={htmlIgnoredStyles}
-          htmlRenderers={htmlRenderers}
-          htmlRenderersProps={htmlRenderersProps}
-          htmlTagsStyles={htmlTagsStyles}
-          expandedQuotes={expandedQuotes}
-          loadedQuotedReplies={loadedQuotedReplies}
-          loadingQuotedFloors={loadingQuotedFloors}
-          readerData={readerData}
-          replyContent={replyContent}
-          replyFilter={replyFilter}
-          replyHasMore={replyHasMore}
-          replies={filteredReplies}
-          selectedTopic={selectedTopic}
-          sourceReplies={topicReplies}
-          styles={styles}
-          theme={theme}
-          topic={topicDetail}
-          onBack={() => setScreen('feed')}
-          onInteract={interact}
-          onLoadMoreReplies={loadMoreReplies}
-          onOpenOriginal={(url) => void Linking.openURL(url)}
-          onReplyContentChange={setReplyContent}
-          onReplyFilterChange={setReplyFilter}
-          onSubmitReply={submitReply}
-          onToggleQuotedFloor={toggleQuotedFloor}
-          onBlockAuthor={(author) => updateSettings({ blockedUsers: appendUnique(settingsList(readerData.settings.blockedUsers), author) })}
-          onBlockCategory={(category) => {
-            const source = topicDetail?.source || selectedTopic?.source;
-            if (source) {
-              updateSettings({ blockedCategories: appendUnique(settingsList(readerData.settings.blockedCategories), `${source}:${category.replace(/^#/, '')}`) });
-            }
-          }}
-          onToggleFavorite={(topic) => commitReaderData((current) => toggleFavorite(current, topic))}
-          onToggleLater={(topic) => commitReaderData((current) => toggleLater(current, topic))}
-        />
-      ) : (
-        <>
-          <ScrollView style={styles.content} contentContainerStyle={styles.contentInner}>
+    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <SafeAreaView style={styles.screen}>
+        <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
+        {screen === 'topic' ? (
+          <TopicScreen
+            actionBusy={actionBusy}
+            canUseNodeSeekActions={hasNodeSeekCookie}
+            contentWidth={contentWidth}
+            htmlBaseStyle={htmlBaseStyle}
+            htmlIgnoredStyles={htmlIgnoredStyles}
+            htmlRenderers={htmlRenderers}
+            htmlRenderersProps={htmlRenderersProps}
+            htmlTagsStyles={htmlTagsStyles}
+            expandedQuotes={expandedQuotes}
+            loadedQuotedReplies={loadedQuotedReplies}
+            loadingMoreReplies={loadingMoreReplies}
+            loadingQuotedFloors={loadingQuotedFloors}
+            readerData={readerData}
+            replyComposerOpen={replyComposerOpen}
+            replyContent={replyContent}
+            replyFilter={replyFilter}
+            replyHasMore={replyHasMore}
+            replies={filteredReplies}
+            selectedTopic={selectedTopic}
+            sourceReplies={topicReplies}
+            styles={styles}
+            theme={theme}
+            topic={topicDetail}
+            topicError={topicError}
+            topicScrollRef={topicScrollRef}
+            onBack={goBackFromTopic}
+            onInteract={interact}
+            onLoadMoreReplies={loadMoreReplies}
+            onOpenOriginal={(url) => void Linking.openURL(url)}
+            onReplyComposerOpenChange={setReplyComposerOpen}
+            onReplyContentChange={setReplyContent}
+            onReplyFilterChange={setReplyFilter}
+            onRefreshTopic={refreshTopic}
+            onSubmitReply={submitReply}
+            onTopicScroll={handleTopicScroll}
+            onToggleQuotedFloor={toggleQuotedFloor}
+            onBlockAuthor={(author) => updateSettings({ blockedUsers: appendUnique(settingsList(readerData.settings.blockedUsers), author) })}
+            onBlockCategory={(category) => {
+              const source = topicDetail?.source || selectedTopic?.source;
+              if (source) {
+                updateSettings({ blockedCategories: appendUnique(settingsList(readerData.settings.blockedCategories), `${source}:${category.replace(/^#/, '')}`) });
+              }
+            }}
+            onToggleFavorite={toggleTopicFavorite}
+            onToggleLater={toggleTopicLater}
+          />
+        ) : (
+          <>
             {screen === 'feed' ? (
               <FeedScreen
                 busy={busy || actionBusy}
@@ -879,26 +1216,25 @@ export default function App() {
                 feedItems={shownFeedItems}
                 feedPage={feedPage}
                 feedSource={feedSource}
+                loadingMore={loadingMoreFeed}
                 readerData={readerData}
                 readingFilter={readingFilter}
-                status={status}
+                refreshing={feedRefreshing}
                 styles={styles}
                 theme={theme}
                 onCategoryClear={() => setCategoryFilter('')}
-                onFeedSourceChange={(source) => {
-                  setFeedSource(source);
-                  setCategoryFilter('');
-                }}
+                onFeedSourceChange={changeFeedSource}
                 onLoadMore={() => loadFeed({ page: feedPage + 1, cursor: feedSource === 'all' ? feedNextCursor : undefined })}
                 onOpenTopic={openTopic}
                 onReadingFilterChange={setReadingFilter}
                 onRefresh={refreshFeed}
-                onToggleFavorite={(topic) => commitReaderData((current) => toggleFavorite(current, topic))}
-                onToggleLater={(topic) => commitReaderData((current) => toggleLater(current, topic))}
+                onToggleFavorite={toggleTopicFavorite}
+                onToggleLater={toggleTopicLater}
               />
             ) : null}
             {screen === 'search' ? (
               <SearchScreen
+                busy={busy}
                 query={searchQuery}
                 readerData={readerData}
                 results={visibleSearchItems}
@@ -924,59 +1260,61 @@ export default function App() {
                 theme={theme}
                 topics={libraryTopics}
                 onOpenTopic={openTopic}
-                onRemove={(topic) => commitReaderData((current) => removeRecord(current, libraryTab, topic))}
+                onRemove={removeLibraryTopic}
                 onTabChange={setLibraryTab}
               />
             ) : null}
             {screen === 'more' ? (
-              <MoreScreen
-                categories={categories}
-                checking={checking}
-                hasNodeSeekCookie={hasNodeSeekCookie}
-                healthSummary={healthSummary}
-                loginState={loginState}
-                loadingLoginPage={loadingLoginPage}
-                readerData={readerData}
-                serverUrl={serverUrl}
-                showCategoriesPanel={showCategoriesPanel}
-                showLoginPanel={showLoginPanel}
-                showSettingsPanel={showSettingsPanel}
-                styles={styles}
-                syncCode={syncCode}
-                theme={theme}
-                webViewRef={webViewRef}
-                onCheckHealth={checkHealth}
-                onCheckIn={checkIn}
-                onCheckLogin={checkLogin}
-                onClearLogin={clearLogin}
-                onHandleLoginMessage={handleLoginMessage}
-                onPullSync={pullSync}
-                onPushSync={pushSync}
-                onRefreshCategories={loadCategories}
-                onSaveServerSettings={saveServerSettings}
-                onSelectCategory={selectCategory}
-                onServerUrlChange={setServerUrl}
-                onSetLoadingLoginPage={setLoadingLoginPage}
-                onShowCategoriesPanelChange={setShowCategoriesPanel}
-                onShowLoginPanelChange={setShowLoginPanel}
-                onShowSettingsPanelChange={setShowSettingsPanel}
-                onSyncCodeChange={setSyncCode}
-                onToggleSubscription={(category) => commitReaderData((current) => toggleSubscription(current, category))}
-                onUpdateSettings={updateSettings}
-              />
+              <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+                <MoreScreen
+                  categories={categories}
+                  checking={checking}
+                  hasNodeSeekCookie={hasNodeSeekCookie}
+                  healthSummary={healthSummary}
+                  loginState={loginState}
+                  loadingLoginPage={loadingLoginPage}
+                  readerData={readerData}
+                  serverUrl={serverUrl}
+                  showCategoriesPanel={showCategoriesPanel}
+                  showLoginPanel={showLoginPanel}
+                  showSettingsPanel={showSettingsPanel}
+                  styles={styles}
+                  syncCode={syncCode}
+                  theme={theme}
+                  webViewRef={webViewRef}
+                  onCheckHealth={checkHealth}
+                  onCheckIn={checkIn}
+                  onCheckLogin={checkLogin}
+                  onClearLogin={clearLogin}
+                  onHandleLoginMessage={handleLoginMessage}
+                  onPullSync={pullSync}
+                  onPushSync={pushSync}
+                  onRefreshCategories={loadCategories}
+                  onSaveServerSettings={saveServerSettings}
+                  onSelectCategory={selectCategory}
+                  onServerUrlChange={setServerUrl}
+                  onSetLoadingLoginPage={setLoadingLoginPage}
+                  onShowCategoriesPanelChange={setShowCategoriesPanel}
+                  onShowLoginPanelChange={setShowLoginPanel}
+                  onShowSettingsPanelChange={setShowSettingsPanel}
+                  onSyncCodeChange={setSyncCode}
+                  onToggleSubscription={(category) => commitReaderData((current) => toggleSubscription(current, category))}
+                  onUpdateSettings={updateSettings}
+                />
+              </ScrollView>
             ) : null}
-          </ScrollView>
-          <NavBar active={screen} styles={styles} theme={theme} onChange={setScreen} />
-        </>
-      )}
-      <ImagePreviewModal
-        preview={imagePreview}
-        styles={styles}
-        onClose={closeImagePreview}
-        onNext={showNextImage}
-        onPrevious={showPreviousImage}
-      />
-    </SafeAreaView>
+            <NavBar active={screen} styles={styles} theme={theme} onChange={setScreen} />
+          </>
+        )}
+        <ImagePreviewModal
+          preview={imagePreview}
+          styles={styles}
+          onClose={closeImagePreview}
+          onNext={showNextImage}
+          onPrevious={showPreviousImage}
+        />
+      </SafeAreaView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -987,9 +1325,10 @@ function FeedScreen({
   feedItems,
   feedPage,
   feedSource,
+  loadingMore,
   readerData,
   readingFilter,
-  status,
+  refreshing,
   styles,
   theme,
   onCategoryClear,
@@ -1007,9 +1346,10 @@ function FeedScreen({
   feedItems: Topic[];
   feedPage: number;
   feedSource: FeedSource;
+  loadingMore: boolean;
   readerData: ReaderData;
   readingFilter: ReadingFilter;
-  status: string;
+  refreshing: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onCategoryClear: () => void;
@@ -1021,18 +1361,36 @@ function FeedScreen({
   onToggleFavorite: (topic: Topic) => void;
   onToggleLater: (topic: Topic) => void;
 }) {
-  return (
+  const listRef = useRef<FlatList<Topic>>(null);
+  const [showFloatingActions, setShowFloatingActions] = useState(false);
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const nextVisible = shouldShowFeedFloatingActions(event.nativeEvent.contentOffset.y);
+    setShowFloatingActions((current) => current === nextVisible ? current : nextVisible);
+  }, []);
+
+  useEffect(() => {
+    setShowFloatingActions(false);
+  }, [categoryFilter, feedSource, readingFilter]);
+
+  const scrollToTop = useCallback(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    setShowFloatingActions(false);
+  }, []);
+
+  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
+    <MemoizedTopicCard
+      readerState={getTopicListItemState(readerData, topic)}
+      styles={styles}
+      theme={theme}
+      topic={topic}
+      onOpenTopic={onOpenTopic}
+      onToggleFavorite={onToggleFavorite}
+      onToggleLater={onToggleLater}
+    />
+  ), [onOpenTopic, onToggleFavorite, onToggleLater, readerData, styles, theme]);
+
+  const header = (
     <View style={styles.stack}>
-      <View style={styles.homeHeader}>
-        <View style={styles.flex}>
-          <View style={styles.homeTitleRow}>
-            <Text style={styles.homeTitle}>{categoryFilter ? `节点：${categoryFilter}` : '阅坛'}</Text>
-            {busy ? <ActivityIndicator color={theme.primary} /> : null}
-          </View>
-          <Text style={styles.status}>{status}</Text>
-        </View>
-        <IconButton icon={RefreshCw} label="刷新" styles={styles} theme={theme} onPress={onRefresh} />
-      </View>
       <PillRail
         variant="tabs"
         items={[
@@ -1061,26 +1419,45 @@ function FeedScreen({
         onChange={(value) => onReadingFilterChange(value as ReadingFilter)}
       />
       {categoryFilter ? <AppButton label="清除节点筛选" variant="ghost" styles={styles} onPress={onCategoryClear} /> : null}
-      <View style={styles.feedList}>
-        {feedItems.length ? feedItems.map((topic) => (
-          <TopicCard
-            key={topicKey(topic)}
-            readerData={readerData}
+    </View>
+  );
+
+  return (
+    <View style={styles.content}>
+      <FlatList
+        ref={listRef}
+        style={styles.content}
+        contentContainerStyle={styles.contentInner}
+        data={feedItems}
+        keyExtractor={topicKey}
+        keyboardShouldPersistTaps="handled"
+        onScroll={handleScroll}
+        scrollEventThrottle={64}
+        {...FEED_LIST_PERFORMANCE_PROPS}
+        ListHeaderComponent={header}
+        ListEmptyComponent={<EmptyText text="暂无主题" styles={styles} />}
+        ListFooterComponent={feedHasMore ? (
+          <AppButton
+            label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
             styles={styles}
-            theme={theme}
-            topic={topic}
-            onOpen={() => onOpenTopic(topic)}
-            onToggleFavorite={() => onToggleFavorite(topic)}
-            onToggleLater={() => onToggleLater(topic)}
+            disabled={busy || loadingMore}
+            onPress={onLoadMore}
           />
-        )) : <EmptyText text="暂无主题" styles={styles} />}
-      </View>
-      {feedHasMore ? <AppButton label={`加载第 ${feedPage + 1} 页`} styles={styles} onPress={onLoadMore} /> : null}
+        ) : null}
+        renderItem={renderTopicItem}
+      />
+      {showFloatingActions ? (
+        <View style={styles.feedFloatingActions}>
+          <FloatingIconButton icon={RefreshCw} label="刷新" styles={styles} theme={theme} loading={refreshing} disabled={refreshing} onPress={onRefresh} />
+          <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={scrollToTop} />
+        </View>
+      ) : null}
     </View>
   );
 }
 
 function SearchScreen({
+  busy,
   query,
   readerData,
   results,
@@ -1097,6 +1474,7 @@ function SearchScreen({
   onSearchSourceChange,
   onSortChange
 }: {
+  busy: boolean;
   query: string;
   readerData: ReaderData;
   results: Topic[];
@@ -1113,9 +1491,22 @@ function SearchScreen({
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
 }) {
-  return (
+  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
+    <MemoizedTopicCard
+      readerState={getTopicListItemState(readerData, item)}
+      styles={styles}
+      theme={theme}
+      topic={item}
+      onOpenTopic={onOpenTopic}
+    />
+  ), [onOpenTopic, readerData, styles, theme]);
+
+  const header = (
     <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>搜索</Text>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>搜索</Text>
+        {busy ? <ActivityIndicator color={theme.primary} /> : null}
+      </View>
       <View style={styles.searchRow}>
         <TextInput
           style={[styles.input, styles.flex]}
@@ -1127,7 +1518,7 @@ function SearchScreen({
           autoCorrect={false}
           onSubmitEditing={onSearch}
         />
-        <IconButton icon={Search} label="搜索" styles={styles} theme={theme} onPress={onSearch} />
+        <IconButton icon={Search} label="搜索" styles={styles} theme={theme} disabled={busy} onPress={onSearch} />
       </View>
       <PillRail
         items={[
@@ -1169,12 +1560,21 @@ function SearchScreen({
           onChange={onQueryChange}
         />
       ) : null}
-      <View style={styles.feedList}>
-        {results.length ? results.map((topic) => (
-          <TopicCard key={topicKey(topic)} topic={topic} readerData={readerData} styles={styles} theme={theme} onOpen={() => onOpenTopic(topic)} />
-        )) : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
-      </View>
     </View>
+  );
+
+  return (
+    <FlatList
+      style={styles.content}
+      contentContainerStyle={styles.contentInner}
+      data={results}
+      keyExtractor={topicKey}
+      keyboardShouldPersistTaps="handled"
+      {...TOPIC_LIST_PERFORMANCE_PROPS}
+      ListHeaderComponent={header}
+      ListEmptyComponent={<EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
+      renderItem={renderTopicItem}
+    />
   );
 }
 
@@ -1197,7 +1597,20 @@ function LibraryScreen({
   onRemove: (topic: Topic) => void;
   onTabChange: (tab: LibraryTab) => void;
 }) {
-  return (
+  const renderLibraryItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
+    <View style={styles.libraryItem}>
+      <MemoizedTopicCard
+        readerState={getTopicListItemState(readerData, item)}
+        styles={styles}
+        theme={theme}
+        topic={item}
+        onOpenTopic={onOpenTopic}
+      />
+      <AppButton label={libraryTab === 'later' ? '完成' : '删除'} variant="ghost" styles={styles} onPress={() => onRemove(item)} />
+    </View>
+  ), [libraryTab, onOpenTopic, onRemove, readerData, styles, theme]);
+
+  const header = (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>书架</Text>
       <PillRail
@@ -1210,15 +1623,20 @@ function LibraryScreen({
         styles={styles}
         onChange={(value) => onTabChange(value as LibraryTab)}
       />
-      <View style={styles.feedList}>
-        {topics.length ? topics.map((topic) => (
-          <View key={topicKey(topic)} style={styles.libraryItem}>
-            <TopicCard topic={topic} readerData={readerData} styles={styles} theme={theme} onOpen={() => onOpenTopic(topic)} />
-            <AppButton label={libraryTab === 'later' ? '完成' : '删除'} variant="ghost" styles={styles} onPress={() => onRemove(topic)} />
-          </View>
-        )) : <EmptyText text="这里还没有内容" styles={styles} />}
-      </View>
     </View>
+  );
+
+  return (
+    <FlatList
+      style={styles.content}
+      contentContainerStyle={styles.contentInner}
+      data={topics}
+      keyExtractor={topicKey}
+      {...TOPIC_LIST_PERFORMANCE_PROPS}
+      ListHeaderComponent={header}
+      ListEmptyComponent={<EmptyText text="这里还没有内容" styles={styles} />}
+      renderItem={renderLibraryItem}
+    />
   );
 }
 
@@ -1271,7 +1689,7 @@ function MoreScreen({
   styles: ReturnType<typeof createStyles>;
   syncCode: string;
   theme: ReaderTheme;
-  webViewRef: React.RefObject<WebView | null>;
+  webViewRef: RefObject<WebView | null>;
   onCheckHealth: () => void;
   onCheckIn: () => void;
   onCheckLogin: () => void;
@@ -1376,7 +1794,7 @@ function MoreScreen({
                 <Text style={styles.panelTitle}>{sourceLabel(group.source)}</Text>
                 {group.items.length ? group.items.map((category) => (
                   <View key={categoryKey(category)} style={styles.categoryItem}>
-                    <Pressable style={styles.flex} onPress={() => onSelectCategory(category)}>
+                    <Pressable accessibilityRole="button" style={styles.flex} onPress={() => onSelectCategory(category)}>
                       <Text style={styles.categoryName}>{category.name}</Text>
                       {category.description ? <Text style={styles.meta}>{category.description}</Text> : null}
                     </Pressable>
@@ -1546,7 +1964,7 @@ function ChipList({
   return (
     <View style={styles.chipWrap}>
       {items.map((item) => (
-        <Pressable key={item} style={styles.removableChip} onPress={() => onRemove(item)}>
+        <Pressable accessibilityRole="button" key={item} style={styles.removableChip} onPress={() => onRemove(item)}>
           <Text style={styles.pillText}>{item} ×</Text>
         </Pressable>
       ))}
@@ -1565,8 +1983,10 @@ function TopicScreen({
   htmlTagsStyles,
   expandedQuotes,
   loadedQuotedReplies,
+  loadingMoreReplies,
   loadingQuotedFloors,
   readerData,
+  replyComposerOpen,
   replyContent,
   replyFilter,
   replyHasMore,
@@ -1576,13 +1996,18 @@ function TopicScreen({
   styles,
   theme,
   topic,
+  topicError,
+  topicScrollRef,
   onBack,
   onInteract,
   onLoadMoreReplies,
   onOpenOriginal,
+  onReplyComposerOpenChange,
   onReplyContentChange,
   onReplyFilterChange,
+  onRefreshTopic,
   onSubmitReply,
+  onTopicScroll,
   onToggleQuotedFloor,
   onBlockAuthor,
   onBlockCategory,
@@ -1599,8 +2024,10 @@ function TopicScreen({
   htmlTagsStyles: HtmlTagsStyles;
   expandedQuotes: Record<string, boolean>;
   loadedQuotedReplies: Record<number, Reply>;
+  loadingMoreReplies: boolean;
   loadingQuotedFloors: Record<string, boolean>;
   readerData: ReaderData;
+  replyComposerOpen: boolean;
   replyContent: string;
   replyFilter: ReplyFilter;
   replyHasMore: boolean;
@@ -1610,13 +2037,18 @@ function TopicScreen({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topic: TopicDetail | null;
+  topicError: string;
+  topicScrollRef: RefObject<FlatList<Reply> | null>;
   onBack: () => void;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
   onLoadMoreReplies: () => void;
   onOpenOriginal: (url: string) => void;
+  onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
   onReplyFilterChange: (filter: ReplyFilter) => void;
+  onRefreshTopic: () => void;
   onSubmitReply: () => void;
+  onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
   onBlockAuthor: (author: string) => void;
   onBlockCategory: (category: string) => void;
@@ -1624,115 +2056,184 @@ function TopicScreen({
   onToggleLater: (topic: Topic) => void;
 }) {
   const item = topic || selectedTopic;
+  const canWrite = Boolean(item && item.source === 'nodeseek' && canUseNodeSeekActions);
+  const repliesByFloor = useMemo(() => {
+    const next = new Map<number, Reply>();
+    sourceReplies.forEach((reply, index) => {
+      next.set(reply.floor ?? index + 1, reply);
+    });
+    Object.values(loadedQuotedReplies).forEach((reply) => {
+      if (reply.floor) {
+        next.set(reply.floor, reply);
+      }
+    });
+    return next;
+  }, [loadedQuotedReplies, sourceReplies]);
+
+  const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
+  const renderReplyItem = useCallback<ListRenderItem<Reply>>(({ item: reply, index }) => (
+    <View style={[styles.replyListItem, topicColumnStyle]}>
+      <MemoizedReplyCard
+        actionBusy={actionBusy}
+        canWrite={canWrite}
+        contentWidth={Math.max(240, contentWidth - 28)}
+        expandedQuotes={expandedQuotes}
+        loadedQuotedReplies={loadedQuotedReplies}
+        loadingQuotedFloors={loadingQuotedFloors}
+        reply={reply}
+        replyFloor={reply.floor ?? index + 1}
+        repliesByFloor={repliesByFloor}
+        styles={styles}
+        theme={theme}
+        onInteract={onInteract}
+        onToggleQuotedFloor={onToggleQuotedFloor}
+      />
+    </View>
+  ), [
+    actionBusy,
+    canWrite,
+    contentWidth,
+    expandedQuotes,
+    loadedQuotedReplies,
+    loadingQuotedFloors,
+    onInteract,
+    onToggleQuotedFloor,
+    repliesByFloor,
+    styles,
+    theme,
+    topicColumnStyle
+  ]);
+
   if (!item) {
     return <EmptyText text="未选择主题" styles={styles} />;
   }
-  const canWrite = item.source === 'nodeseek' && canUseNodeSeekActions;
-  const repliesByFloor = new Map<number, Reply>();
-  sourceReplies.forEach((reply, index) => {
-    repliesByFloor.set(reply.floor ?? index + 1, reply);
-  });
-  Object.values(loadedQuotedReplies).forEach((reply) => {
-    if (reply.floor) {
-      repliesByFloor.set(reply.floor, reply);
-    }
-  });
 
-  return (
-    <>
-      <View style={styles.topicTopBar}>
-        <IconButton icon={ChevronLeft} compact label="返回" styles={styles} theme={theme} onPress={onBack} />
-        <View style={styles.topicTopActions}>
-          <IconButton icon={Star} compact label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
-          <IconButton icon={ExternalLink} compact label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
+  const listHeader = (
+    <View style={styles.topicHeaderStack}>
+      <View style={[styles.article, topicColumnStyle]}>
+        <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
+        <Text style={styles.articleTitle}>{item.title}</Text>
+        <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)}</Text>
+        <Text style={styles.meta}>{item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
+        <View style={styles.actions}>
+          <AppButton compact label={isLater(readerData, item) ? '取消稍后读' : '稍后读'} variant="ghost" styles={styles} onPress={() => onToggleLater(item)} />
+          {item.author ? <AppButton compact label="屏蔽作者" variant="ghost" styles={styles} onPress={() => onBlockAuthor(item.author)} /> : null}
+          {item.category ? <AppButton compact label="屏蔽节点" variant="ghost" styles={styles} onPress={() => onBlockCategory(item.category as string)} /> : null}
+          {canWrite ? (
+            <>
+              <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
+              <IconButton tiny ghost icon={Heart} label={`感谢 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+            </>
+          ) : null}
         </View>
-      </View>
-      <ScrollView style={[styles.content, styles.topicContent]} contentContainerStyle={[styles.contentInner, styles.topicContentInner]}>
-        <View style={[styles.article, { maxWidth: contentWidth }]}>
-          <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
-          <Text style={styles.articleTitle}>{item.title}</Text>
-          <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)}</Text>
-          <Text style={styles.meta}>{item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
-          <View style={styles.actions}>
-            <AppButton label={isLater(readerData, item) ? '取消稍后读' : '稍后读'} variant="ghost" styles={styles} onPress={() => onToggleLater(item)} />
-            {item.author ? <AppButton label="屏蔽作者" variant="ghost" styles={styles} onPress={() => onBlockAuthor(item.author)} /> : null}
-            {item.category ? <AppButton label="屏蔽节点" variant="ghost" styles={styles} onPress={() => onBlockCategory(item.category as string)} /> : null}
-            {canWrite ? (
-              <>
-                <IconButton icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
-                <IconButton icon={Heart} label={`感谢 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
-              </>
-            ) : null}
-          </View>
-          {!canWrite ? <Text style={styles.readonlyNote}>本地只读，回复请到原站</Text> : null}
-          {topic ? (
-            <RenderHTML
-              contentWidth={contentWidth}
-              source={{ html: topic.contentHtml || '<p></p>' }}
-              baseStyle={htmlBaseStyle}
-              ignoredStyles={htmlIgnoredStyles}
-              renderers={htmlRenderers}
-              renderersProps={htmlRenderersProps}
-              tagsStyles={htmlTagsStyles}
-            />
-          ) : <ActivityIndicator color={theme.primary} />}
-        </View>
-        {canWrite ? (
-          <View style={[styles.replyBox, { maxWidth: contentWidth }]}>
-            <Text style={styles.panelTitle}>回复</Text>
-            <TextInput
-              style={[styles.input, styles.replyInput]}
-              value={replyContent}
-              onChangeText={onReplyContentChange}
-              placeholder="输入回复内容"
-              placeholderTextColor={theme.muted}
-              multiline
-            />
-            <AppButton label="发送回复" styles={styles} disabled={actionBusy} onPress={onSubmitReply} />
+        {!canWrite ? <Text style={styles.readonlyNote}>本地只读，回复请到原站</Text> : null}
+        {topicError ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{topicError}</Text>
+            <AppButton label="重试" styles={styles} onPress={onRefreshTopic} />
           </View>
         ) : null}
-        <View style={[styles.replyHeader, { maxWidth: contentWidth }]}>
-          <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{sourceReplies.length} 条</Text></Text>
-          <PillRail
-            items={[
-              { value: 'all', label: '全部' },
-              { value: 'author', label: '只看楼主' },
-              { value: 'images', label: '只看带图' },
-              { value: 'newest', label: '倒序' }
-            ]}
-            value={replyFilter}
-            styles={styles}
-            onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
-          />
-        </View>
-        <View style={[styles.replyList, { maxWidth: contentWidth }]}>
-          {replies.length ? replies.map((reply, index) => (
-            <ReplyCard
-              key={`${reply.floor ?? index}-${reply.createdAt}`}
-              actionBusy={actionBusy}
-              canWrite={canWrite}
+        {topic ? (
+          <View style={styles.articleBody}>
+            <MemoizedHtmlContent
               contentWidth={contentWidth}
-              expandedQuotes={expandedQuotes}
-              htmlBaseStyle={htmlBaseStyle}
-              htmlIgnoredStyles={htmlIgnoredStyles}
-              htmlRenderers={htmlRenderers}
-              htmlRenderersProps={htmlRenderersProps}
-              htmlTagsStyles={htmlTagsStyles}
-              loadedQuotedReplies={loadedQuotedReplies}
-              loadingQuotedFloors={loadingQuotedFloors}
-              reply={reply}
-              replyFloor={reply.floor ?? index + 1}
-              repliesByFloor={repliesByFloor}
-              styles={styles}
-              theme={theme}
-              onInteract={onInteract}
-              onToggleQuotedFloor={onToggleQuotedFloor}
+              html={topic.contentHtml}
             />
-          )) : <EmptyText text="暂无回复" styles={styles} />}
+          </View>
+        ) : topicError ? null : <ActivityIndicator color={theme.primary} />}
+      </View>
+      <View style={[styles.replyHeader, topicColumnStyle]}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{sourceReplies.length} 条</Text></Text>
+          {canWrite ? (
+            <AppButton
+              label={replyComposerOpen ? '收起回复' : '写回复'}
+              variant={replyComposerOpen ? 'ghost' : 'default'}
+              styles={styles}
+              onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
+            />
+          ) : null}
         </View>
-        {replyHasMore ? <AppButton label="加载更多回复" styles={styles} onPress={onLoadMoreReplies} /> : null}
-      </ScrollView>
-    </>
+        <PillRail
+          items={[
+            { value: 'all', label: '全部' },
+            { value: 'author', label: '只看楼主' },
+            { value: 'images', label: '只看带图' },
+            { value: 'newest', label: '倒序' }
+          ]}
+          value={replyFilter}
+          styles={styles}
+          onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
+        />
+      </View>
+      {canWrite && replyComposerOpen ? (
+        <View style={[styles.replyBox, topicColumnStyle]}>
+          <Text style={styles.panelTitle}>回复</Text>
+          <TextInput
+            style={[styles.input, styles.replyInput]}
+            value={replyContent}
+            onChangeText={onReplyContentChange}
+            placeholder="输入回复内容"
+            placeholderTextColor={theme.muted}
+            multiline
+          />
+          <AppButton label="发送回复" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
+        </View>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <TRenderEngineProvider baseStyle={htmlBaseStyle} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles}>
+      <RenderHTMLConfigProvider renderers={htmlRenderers} renderersProps={htmlRenderersProps}>
+        <View style={styles.topicTopBar}>
+          <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
+          <View style={styles.topicTopActions}>
+            <IconButton icon={Star} compact ghost iconOnly label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
+            <IconButton icon={ExternalLink} compact ghost iconOnly label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
+          </View>
+        </View>
+        <FlatList
+          ref={topicScrollRef}
+          style={[styles.content, styles.topicContent]}
+          contentContainerStyle={[styles.contentInner, styles.topicContentInner]}
+          data={replies}
+          keyExtractor={(reply, index) => `${reply.floor ?? index}-${reply.createdAt}`}
+          keyboardShouldPersistTaps="handled"
+          onMomentumScrollEnd={onTopicScroll}
+          onScrollEndDrag={onTopicScroll}
+          {...REPLY_LIST_PERFORMANCE_PROPS}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={(
+            <View style={[styles.replyListItem, topicColumnStyle]}>
+              <EmptyText text="暂无回复" styles={styles} />
+            </View>
+          )}
+          ListFooterComponent={replyHasMore ? (
+            <View style={[styles.topicFooter, topicColumnStyle]}>
+              <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={onLoadMoreReplies} />
+            </View>
+          ) : null}
+          renderItem={renderReplyItem}
+        />
+      </RenderHTMLConfigProvider>
+    </TRenderEngineProvider>
+  );
+}
+
+function HtmlContent({
+  contentWidth,
+  html
+}: {
+  contentWidth: number;
+  html: string | undefined;
+}) {
+  const source = useMemo(() => ({ html: html || '<p></p>' }), [html]);
+  return (
+    <RenderHTMLSource
+      contentWidth={contentWidth}
+      source={source}
+    />
   );
 }
 
@@ -1741,11 +2242,6 @@ function ReplyCard({
   canWrite,
   contentWidth,
   expandedQuotes,
-  htmlBaseStyle,
-  htmlIgnoredStyles,
-  htmlRenderers,
-  htmlRenderersProps,
-  htmlTagsStyles,
   loadedQuotedReplies,
   loadingQuotedFloors,
   reply,
@@ -1760,11 +2256,6 @@ function ReplyCard({
   canWrite: boolean;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
-  htmlBaseStyle: HtmlBaseStyle;
-  htmlIgnoredStyles: HtmlIgnoredStyles;
-  htmlRenderers: HtmlRenderers;
-  htmlRenderersProps: HtmlRenderersProps;
-  htmlTagsStyles: HtmlTagsStyles;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
   reply: Reply;
@@ -1775,7 +2266,7 @@ function ReplyCard({
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
-  const quotedFloors = Array.from(new Set(reply.quotedFloors || []));
+  const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   return (
     <View style={styles.replyCard}>
       <Text style={styles.replyMeta}>#{reply.floor ?? '-'} {reply.author || '未知作者'} · {formatDateTime(reply.createdAt)}</Text>
@@ -1801,14 +2292,9 @@ function ReplyCard({
                 {expanded && quotedReply ? (
                   <View style={styles.quoteBody}>
                     <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
-                    <RenderHTML
+                    <MemoizedHtmlContent
                       contentWidth={Math.max(240, contentWidth - 44)}
-                      source={{ html: quotedReply.contentHtml || '<p></p>' }}
-                      baseStyle={htmlBaseStyle}
-                      ignoredStyles={htmlIgnoredStyles}
-                      renderers={htmlRenderers}
-                      renderersProps={htmlRenderersProps}
-                      tagsStyles={htmlTagsStyles}
+                      html={quotedReply.contentHtml}
                     />
                   </View>
                 ) : null}
@@ -1817,19 +2303,14 @@ function ReplyCard({
           })}
         </View>
       ) : null}
-      <RenderHTML
+      <MemoizedHtmlContent
         contentWidth={contentWidth}
-        source={{ html: reply.contentHtml || '<p></p>' }}
-        baseStyle={htmlBaseStyle}
-        ignoredStyles={htmlIgnoredStyles}
-        renderers={htmlRenderers}
-        renderersProps={htmlRenderersProps}
-        tagsStyles={htmlTagsStyles}
+        html={reply.contentHtml}
       />
       {canWrite ? (
         <View style={styles.actions}>
-          <IconButton icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-          <IconButton icon={Heart} label={`感谢 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+          <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
+          <IconButton tiny ghost icon={Heart} label={`感谢 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
         </View>
       ) : null}
     </View>
@@ -1849,27 +2330,58 @@ function ImagePreviewModal({
   onNext: () => void;
   onPrevious: () => void;
 }) {
+  const { width, height } = useWindowDimensions();
+  const [zoomed, setZoomed] = useState(false);
+  const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
+  useEffect(() => {
+    setZoomed(false);
+  }, [previewKey]);
+
   if (!preview || preview.urls.length === 0) {
     return null;
   }
   const uri = preview.urls[preview.index] || preview.urls[0];
   const hasMany = preview.urls.length > 1;
+  const imageWidth = zoomed ? width * 1.8 : width;
+  const imageHeight = zoomed ? height * 1.8 : height;
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.imagePreviewOverlay}>
         <View style={styles.imagePreviewTopBar}>
           <Text style={styles.imagePreviewCount}>{preview.index + 1} / {preview.urls.length}</Text>
-          <Pressable accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
-            <X size={22} color="#ffffff" strokeWidth={1.8} />
-          </Pressable>
+          <View style={styles.imagePreviewTopActions}>
+            <Pressable accessibilityRole="button" accessibilityLabel={zoomed ? '还原图片' : '放大图片'} style={styles.imagePreviewTextButton} onPress={() => setZoomed((current) => !current)}>
+              <Text style={styles.imagePreviewButtonText}>{zoomed ? '还原' : '放大'}</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
+              <X size={22} color="#ffffff" strokeWidth={1.8} />
+            </Pressable>
+          </View>
         </View>
-        <Image source={{ uri }} style={styles.imagePreviewImage} resizeMode="contain" />
+        <ScrollView
+          horizontal
+          style={styles.imagePreviewScroll}
+          contentContainerStyle={styles.imagePreviewScrollContent}
+          showsHorizontalScrollIndicator={false}
+        >
+          <ScrollView
+            style={[styles.imagePreviewVerticalScroll, { width: imageWidth }]}
+            contentContainerStyle={[styles.imagePreviewVerticalContent, { minHeight: imageHeight }]}
+            showsVerticalScrollIndicator={false}
+          >
+            <Image
+              source={{ uri }}
+              style={[styles.imagePreviewImage, { width: imageWidth, height: imageHeight }]}
+              resizeMode="contain"
+            />
+          </ScrollView>
+        </ScrollView>
         {hasMany ? (
           <View style={styles.imagePreviewControls}>
-            <Pressable accessibilityLabel="上一张图片" style={styles.imagePreviewControl} onPress={onPrevious}>
+            <Pressable accessibilityRole="button" accessibilityLabel="上一张图片" style={styles.imagePreviewControl} onPress={onPrevious}>
               <ChevronLeft size={25} color="#ffffff" strokeWidth={1.8} />
             </Pressable>
-            <Pressable accessibilityLabel="下一张图片" style={styles.imagePreviewControl} onPress={onNext}>
+            <Pressable accessibilityRole="button" accessibilityLabel="下一张图片" style={styles.imagePreviewControl} onPress={onNext}>
               <ChevronRight size={25} color="#ffffff" strokeWidth={1.8} />
             </Pressable>
           </View>
@@ -1881,41 +2393,42 @@ function ImagePreviewModal({
 
 function TopicCard({
   topic,
-  readerData,
+  readerState,
   styles,
   theme,
-  onOpen,
+  onOpenTopic,
   onToggleFavorite,
   onToggleLater
 }: {
   topic: Topic;
-  readerData: ReaderData;
+  readerState: TopicListItemState;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  onOpen: () => void;
-  onToggleFavorite?: () => void;
-  onToggleLater?: () => void;
+  onOpenTopic: (topic: Topic) => void;
+  onToggleFavorite?: (topic: Topic) => void;
+  onToggleLater?: (topic: Topic) => void;
 }) {
-  const read = Boolean(readerData.history[topicKey(topic)]);
-  const tracked = includesAnyKeyword(topicText(topic), readerData.settings.trackedKeywords);
+  const openTopicPress = useCallback(() => onOpenTopic(topic), [onOpenTopic, topic]);
+  const toggleFavoritePress = useCallback(() => onToggleFavorite?.(topic), [onToggleFavorite, topic]);
+  const toggleLaterPress = useCallback(() => onToggleLater?.(topic), [onToggleLater, topic]);
   return (
-    <View style={[styles.topicCard, read && styles.topicCardRead, tracked && styles.topicCardTracked]}>
-      <Pressable onPress={onOpen}>
+    <View style={[styles.topicCard, readerState.read && styles.topicCardRead, readerState.tracked && styles.topicCardTracked]}>
+      <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} onPress={openTopicPress}>
         <View style={styles.topicCardHead}>
           <Text style={styles.sourceText}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
           <Text style={styles.timeText}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={readerData.settings.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
-        {topic.excerpt && readerData.settings.listDensity !== 'compact' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
-        {tracked ? <Text style={styles.trackedText}>追踪命中</Text> : null}
+        <Text style={styles.cardTitle} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
+        {topic.excerpt && readerState.listDensity === 'loose' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
+        {readerState.tracked ? <Text style={styles.trackedText}>追踪命中</Text> : null}
       </Pressable>
       <View style={styles.topicMetaRow}>
-        <Pressable style={styles.flex} onPress={onOpen}>
+        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={styles.flex} onPress={openTopicPress}>
           <Text style={styles.meta}>{topic.author || '未知作者'} · {topic.replyCount} 回复{topic.viewCount ? ` · ${topic.viewCount} 浏览` : ''}</Text>
         </Pressable>
         <View style={styles.topicMarks}>
-          {onToggleFavorite ? <IconButton icon={Star} compact iconOnly label={isFavorite(readerData, topic) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, topic)} onPress={onToggleFavorite} /> : null}
-          {onToggleLater ? <IconButton icon={Clock3} compact iconOnly label={isLater(readerData, topic) ? '已稍后读' : '稍后读'} styles={styles} theme={theme} active={isLater(readerData, topic)} onPress={onToggleLater} /> : null}
+          {onToggleFavorite ? <IconButton icon={Star} compact iconOnly label={readerState.favorite ? '已收藏' : '收藏'} styles={styles} theme={theme} active={readerState.favorite} onPress={toggleFavoritePress} /> : null}
+          {onToggleLater ? <IconButton icon={Clock3} compact iconOnly label={readerState.later ? '已稍后读' : '稍后读'} styles={styles} theme={theme} active={readerState.later} onPress={toggleLaterPress} /> : null}
         </View>
       </View>
     </View>
@@ -1945,7 +2458,14 @@ function NavBar({
         const Icon = item.icon;
         const selected = active === item.value;
         return (
-          <Pressable key={item.value} style={[styles.navItem, selected && styles.navItemActive]} onPress={() => onChange(item.value)}>
+          <Pressable
+            key={item.value}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            android_ripple={androidRipple(theme.primarySoft)}
+            style={[styles.navItem, selected && styles.navItemActive]}
+            onPress={() => onChange(item.value)}
+          >
             <Icon size={21} color={selected ? theme.primary : theme.muted} strokeWidth={1.8} />
             <Text style={[styles.navText, selected && styles.navTextActive]}>{item.label}</Text>
           </Pressable>
@@ -1973,7 +2493,10 @@ function PillRail({
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
       {items.map((item) => (
         <Pressable
+          hitSlop={TOUCH_HIT_SLOP}
           key={`${item.value}-${item.label}`}
+          accessibilityRole="button"
+          accessibilityState={{ selected: value === item.value }}
           style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : [styles.pill, value === item.value && styles.pillActive]}
           onPress={() => onChange(item.value)}
         >
@@ -2022,7 +2545,7 @@ function MenuButton({
 }) {
   const Icon = icon;
   return (
-    <Pressable style={styles.menuButton} onPress={onPress}>
+    <Pressable accessibilityRole="button" style={styles.menuButton} onPress={onPress}>
       <View style={styles.menuIcon}>
         <Icon size={19} color={theme.primary} strokeWidth={1.8} />
       </View>
@@ -2059,49 +2582,92 @@ function InfoRow({
   );
 }
 
+function FloatingIconButton({
+  disabled = false,
+  icon,
+  label,
+  loading = false,
+  styles,
+  theme,
+  onPress
+}: {
+  disabled?: boolean;
+  icon: LucideIcon;
+  label: string;
+  loading?: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onPress: () => void;
+}) {
+  const Icon = icon;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      android_ripple={androidRipple(theme.primarySoft, true)}
+      disabled={disabled}
+      style={[styles.floatingIconButton, disabled && styles.buttonDisabled]}
+      onPress={onPress}
+    >
+      {loading ? <ActivityIndicator color={theme.primary} size="small" /> : <Icon size={20} color={theme.primary} strokeWidth={1.9} />}
+    </Pressable>
+  );
+}
+
 function IconButton({
   active = false,
   compact = false,
   disabled = false,
+  ghost = false,
   iconOnly = false,
   icon,
   label,
   styles,
+  tiny = false,
   theme,
   onPress
 }: {
   active?: boolean;
   compact?: boolean;
   disabled?: boolean;
+  ghost?: boolean;
   iconOnly?: boolean;
   icon: LucideIcon;
   label: string;
   styles: ReturnType<typeof createStyles>;
+  tiny?: boolean;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
   const Icon = icon;
-  const iconSize = iconOnly ? 14 : compact ? 15 : 17;
+  const iconSize = tiny ? 13 : iconOnly ? 14 : compact ? 14 : 17;
   return (
     <Pressable
+      hitSlop={TOUCH_HIT_SLOP}
+      accessibilityRole="button"
       accessibilityLabel={label}
-      style={[styles.button, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, active && styles.buttonActive, disabled && styles.buttonDisabled]}
+      accessibilityState={{ disabled, selected: active }}
+      android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
+      style={[styles.button, ghost && styles.buttonGhost, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, tiny && styles.buttonTiny, active && styles.buttonActive, disabled && styles.buttonDisabled]}
       disabled={disabled}
       onPress={onPress}
     >
       <Icon size={iconSize} color={active ? theme.primary : theme.ink} strokeWidth={1.8} />
-      {iconOnly ? null : <Text style={[styles.buttonText, active && styles.buttonTextActive]}>{label}</Text>}
+      {iconOnly ? null : <Text style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
     </Pressable>
   );
 }
 
 function AppButton({
+  compact = false,
   disabled = false,
   label,
   variant = 'default',
   styles,
   onPress
 }: {
+  compact?: boolean;
   disabled?: boolean;
   label: string;
   variant?: 'default' | 'ghost';
@@ -2110,11 +2676,15 @@ function AppButton({
 }) {
   return (
     <Pressable
-      style={[styles.button, variant === 'ghost' && styles.buttonGhost, disabled && styles.buttonDisabled]}
+      hitSlop={TOUCH_HIT_SLOP}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, disabled && styles.buttonDisabled]}
       disabled={disabled}
       onPress={onPress}
     >
-      <Text style={styles.buttonText}>{label}</Text>
+      <Text style={[styles.buttonText, compact && styles.buttonTextCompact]}>{label}</Text>
     </Pressable>
   );
 }
@@ -2210,6 +2780,29 @@ function mergeTopics(current: Topic[], incoming: Topic[]) {
   return next;
 }
 
+function replyKey(reply: Reply) {
+  if (typeof reply.commentId === 'number') {
+    return `comment:${reply.commentId}`;
+  }
+  if (typeof reply.floor === 'number') {
+    return `floor:${reply.floor}`;
+  }
+  return `body:${reply.author}:${reply.createdAt}:${reply.contentHtml.slice(0, 80)}`;
+}
+
+function mergeReplies(current: Reply[], incoming: Reply[]) {
+  const seen = new Set(current.map((reply) => replyKey(reply)));
+  const next = [...current];
+  for (const reply of incoming) {
+    const key = replyKey(reply);
+    if (!seen.has(key)) {
+      seen.add(key);
+      next.push(reply);
+    }
+  }
+  return next;
+}
+
 function recordsToTopics(records: Record<string, { topic: Topic; savedAt: string }>) {
   return Object.values(records)
     .sort((left, right) => dateTime(right.savedAt) - dateTime(left.savedAt))
@@ -2217,9 +2810,20 @@ function recordsToTopics(records: Record<string, { topic: Topic; savedAt: string
 }
 
 function removeRecord(data: ReaderData, section: LibraryTab, topic: Topic) {
+  const key = topicKey(topic);
   const next = { ...data[section] };
-  delete next[topicKey(topic)];
-  return { ...data, [section]: next };
+  delete next[key];
+  return {
+    ...data,
+    [section]: next,
+    deletedRecords: {
+      ...data.deletedRecords,
+      [section]: {
+        ...data.deletedRecords[section],
+        [key]: new Date().toISOString()
+      }
+    }
+  };
 }
 
 function topicText(topic: Topic) {
@@ -2284,6 +2888,10 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : '操作失败';
 }
 
+function androidRipple(color: string, borderless = false) {
+  return Platform.OS === 'android' ? { color, borderless } : undefined;
+}
+
 function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {
   if (value === 'compact') {
     return 1.45;
@@ -2302,6 +2910,10 @@ function contentWidthValue(value: ReaderSettings['contentWidth']) {
     return 820;
   }
   return 720;
+}
+
+function fontFamilyValue(value: ReaderSettings['fontFamily']) {
+  return value === 'serif' ? Platform.select({ android: 'serif', default: 'serif' }) : undefined;
 }
 
 function settingsList(value: string[]) {
@@ -2383,34 +2995,14 @@ function createTheme(settings: ReaderSettings, systemScheme: 'light' | 'dark' | 
 
 function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontScale = settings.fontScale;
-  const listFontScale = Math.max(0.88, settings.fontScale * 0.93);
-  const densityPadding = settings.listDensity === 'compact' ? 8 : settings.listDensity === 'loose' ? 14 : 11;
+  const titleFontScale = Math.min(fontScale, 1.12);
+  const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
+  const densityPadding = settings.listDensity === 'compact' ? 10 : settings.listDensity === 'loose' ? 16 : 13;
+  const appFontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     screen: {
       flex: 1,
       backgroundColor: theme.background
-    },
-    homeHeader: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 10,
-      paddingBottom: 2
-    },
-    homeTitleRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 8
-    },
-    homeTitle: {
-      color: theme.ink,
-      fontSize: 21,
-      fontWeight: '700'
-    },
-    status: {
-      color: theme.muted,
-      fontSize: 12,
-      lineHeight: 18
     },
     content: {
       flex: 1
@@ -2419,7 +3011,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       backgroundColor: theme.surface
     },
     contentInner: {
-      gap: 12,
+      gap: 10,
       padding: 16,
       paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
       paddingBottom: Platform.OS === 'android' ? 112 : 94
@@ -2428,8 +3020,13 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       alignItems: 'center',
       paddingTop: 14
     },
+    topicHeaderStack: {
+      width: '100%',
+      alignItems: 'center',
+      gap: 10
+    },
     stack: {
-      gap: 12,
+      gap: 9,
       width: '100%'
     },
     sectionHeader: {
@@ -2440,29 +3037,48 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     sectionTitle: {
       color: theme.ink,
-      fontSize: 18,
-      fontWeight: '700'
+      fontFamily: appFontFamily,
+      fontSize: 17,
+      fontWeight: '600'
     },
     countText: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '500'
     },
     panelTitle: {
       color: theme.ink,
+      fontFamily: appFontFamily,
       fontSize: 15,
-      fontWeight: '700'
+      fontWeight: '600'
     },
     feedList: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth
+    },
+    feedFloatingActions: {
+      position: 'absolute',
+      right: 16,
+      bottom: Platform.OS === 'android' ? 92 : 78,
+      gap: 8
+    },
+    floatingIconButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface
     },
     topicCard: {
       gap: 5,
       paddingVertical: densityPadding,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.background
+      backgroundColor: 'transparent'
     },
     topicCardRead: {
       opacity: 0.62
@@ -2477,32 +3093,38 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       gap: 10
     },
     sourceText: {
-      color: theme.primary,
-      fontSize: 11,
-      fontWeight: '600'
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500'
     },
     timeText: {
       color: theme.muted,
-      fontSize: 11
+      fontFamily: appFontFamily,
+      fontSize: 12
     },
     cardTitle: {
       color: theme.ink,
+      fontFamily: appFontFamily,
       fontSize: Math.round(16 * listFontScale),
-      fontWeight: '600',
+      fontWeight: '400',
       lineHeight: Math.round(22 * listFontScale)
     },
     excerpt: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 12,
       lineHeight: 18
     },
     meta: {
       color: theme.muted,
-      fontSize: 11,
-      lineHeight: 16
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      lineHeight: 17
     },
     trackedText: {
       color: theme.primary,
+      fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '700'
     },
@@ -2518,28 +3140,29 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       gap: 8
     },
     pillRail: {
-      gap: 8,
-      paddingVertical: 1
+      gap: 4,
+      paddingVertical: 0
     },
     pill: {
-      minHeight: 28,
+      minHeight: 30,
       justifyContent: 'center',
-      backgroundColor: theme.surface2,
-      borderRadius: 999,
-      paddingHorizontal: 10,
-      paddingVertical: 4
+      backgroundColor: 'transparent',
+      borderRadius: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 3
     },
     pillActive: {
       backgroundColor: theme.mist
     },
     pillText: {
-      color: theme.ink,
-      fontSize: 11,
-      fontWeight: '500'
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '400'
     },
     pillTextActive: {
       color: theme.primary,
-      fontWeight: '700'
+      fontWeight: '500'
     },
     tabRail: {
       gap: 16,
@@ -2547,31 +3170,33 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderBottomWidth: StyleSheet.hairlineWidth
     },
     tab: {
-      minHeight: 31,
+      minHeight: 36,
       justifyContent: 'center',
       borderBottomColor: 'transparent',
       borderBottomWidth: 2,
-      paddingBottom: 6
+      paddingBottom: 4
     },
     tabActive: {
       borderBottomColor: theme.primary
     },
     tabText: {
       color: theme.muted,
-      fontSize: 12,
-      fontWeight: '500'
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      fontWeight: '400'
     },
     tabTextActive: {
       color: theme.primary,
-      fontWeight: '700'
+      fontWeight: '500'
     },
     input: {
-      minHeight: 42,
+      minHeight: 44,
       backgroundColor: theme.surface,
       borderColor: theme.lineStrong,
       borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
+      fontFamily: appFontFamily,
       fontSize: 14,
       paddingHorizontal: 12,
       paddingVertical: 9
@@ -2595,7 +3220,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       gap: 8
     },
     button: {
-      minHeight: 34,
+      minHeight: 38,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
@@ -2604,20 +3229,29 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderColor: theme.line,
       borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 11,
-      paddingVertical: 7
+      paddingHorizontal: 10,
+      paddingVertical: 5
     },
     buttonCompact: {
-      minHeight: 26,
-      paddingHorizontal: 7,
-      paddingVertical: 4
+      minHeight: 28,
+      gap: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2
     },
     buttonIconOnly: {
-      width: 24,
-      minHeight: 24,
+      width: 30,
+      minHeight: 30,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
       paddingHorizontal: 0,
+      paddingVertical: 0
+    },
+    buttonTiny: {
+      minHeight: 24,
+      gap: 3,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      paddingHorizontal: 4,
       paddingVertical: 0
     },
     buttonGhost: {
@@ -2633,14 +3267,25 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     buttonText: {
       color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '600'
+    },
+    buttonTextCompact: {
       fontSize: 12,
-      fontWeight: '700'
+      fontWeight: '500'
+    },
+    buttonTextTiny: {
+      color: theme.muted,
+      fontSize: 12,
+      fontWeight: '500'
     },
     buttonTextActive: {
       color: theme.primary
     },
     empty: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 13,
       paddingVertical: 24,
       textAlign: 'center'
@@ -2669,6 +3314,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     menuLabel: {
       color: theme.ink,
+      fontFamily: appFontFamily,
       fontSize: 15,
       fontWeight: '600'
     },
@@ -2686,6 +3332,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     categoryName: {
       color: theme.ink,
+      fontFamily: appFontFamily,
       fontSize: 14,
       fontWeight: '600'
     },
@@ -2698,7 +3345,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       gap: 8
     },
     removableChip: {
-      minHeight: 32,
+      minHeight: 44,
       justifyContent: 'center',
       backgroundColor: theme.surface2,
       borderColor: theme.line,
@@ -2733,6 +3380,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     loadingText: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 12
     },
     libraryItem: {
@@ -2753,7 +3401,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     topicTopActions: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 6
+      gap: 2
     },
     article: {
       width: '100%',
@@ -2764,19 +3412,41 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderWidth: 0,
       padding: 0
     },
+    articleBody: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      marginTop: 4,
+      paddingTop: 12
+    },
     articleTitle: {
       color: theme.ink,
-      fontSize: Math.round(20 * fontScale),
-      fontWeight: '700',
-      lineHeight: Math.round(28 * fontScale)
+      fontFamily: appFontFamily,
+      fontSize: Math.round(20 * titleFontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(28 * titleFontScale)
     },
     readonlyNote: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 13,
       lineHeight: 20,
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       paddingTop: 10
+    },
+    errorBox: {
+      gap: 8,
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
+      borderColor: alphaColor(theme.danger, 0.34),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      padding: 12
+    },
+    errorText: {
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      lineHeight: 19
     },
     replyBox: {
       width: '100%',
@@ -2789,7 +3459,10 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     replyHeader: {
       width: '100%',
-      gap: 8
+      gap: 8,
+      borderTopColor: theme.background,
+      borderTopWidth: 8,
+      paddingTop: 12
     },
     replyList: {
       width: '100%',
@@ -2799,12 +3472,20 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderWidth: 0,
       backgroundColor: 'transparent'
     },
+    replyListItem: {
+      alignSelf: 'center'
+    },
+    topicFooter: {
+      alignSelf: 'center',
+      paddingTop: 10
+    },
     replyCard: {
       gap: 8,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
-      padding: 14
+      paddingHorizontal: 0,
+      paddingVertical: 14
     },
     quoteStack: {
       gap: 8
@@ -2824,6 +3505,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     replyMeta: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 12,
       lineHeight: 18
     },
@@ -2853,6 +3535,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     navText: {
       color: theme.muted,
+      fontFamily: appFontFamily,
       fontSize: 10,
       fontWeight: '600'
     },
@@ -2863,7 +3546,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(0, 0, 0, 0.94)'
+      backgroundColor: '#000000'
     },
     imagePreviewTopBar: {
       position: 'absolute',
@@ -2875,18 +3558,54 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       flexDirection: 'row',
       justifyContent: 'space-between'
     },
+    imagePreviewTopActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10
+    },
     imagePreviewCount: {
       color: '#ffffff',
+      fontFamily: appFontFamily,
       fontSize: 13,
       fontWeight: '600'
+    },
+    imagePreviewTextButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 58,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: 'rgba(255, 255, 255, 0.14)'
+    },
+    imagePreviewButtonText: {
+      color: '#ffffff',
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '700'
     },
     imagePreviewClose: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       backgroundColor: 'rgba(255, 255, 255, 0.14)'
+    },
+    imagePreviewScroll: {
+      flex: 1,
+      width: '100%'
+    },
+    imagePreviewScrollContent: {
+      minHeight: '100%',
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    imagePreviewVerticalScroll: {
+      maxHeight: '100%'
+    },
+    imagePreviewVerticalContent: {
+      alignItems: 'center',
+      justifyContent: 'center'
     },
     imagePreviewImage: {
       width: '100%',

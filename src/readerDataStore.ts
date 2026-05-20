@@ -10,9 +10,13 @@ export async function loadReaderData() {
     return migrateSecureStoreReaderData();
   }
   try {
-    return sanitizeReaderData(JSON.parse(raw));
+    const clean = sanitizeReaderData(JSON.parse(raw));
+    if (JSON.stringify(clean) !== raw) {
+      await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, JSON.stringify(clean));
+    }
+    return clean;
   } catch {
-    return migrateSecureStoreReaderData();
+    return migrateSecureStoreReaderData(true);
   }
 }
 
@@ -22,10 +26,14 @@ export async function saveReaderData(data: ReaderData) {
   return clean;
 }
 
-async function migrateSecureStoreReaderData() {
+async function migrateSecureStoreReaderData(persistEmpty = false) {
   const raw = await SecureStore.getItemAsync(READER_DATA_STORAGE_KEY);
   if (!raw) {
-    return createEmptyReaderData();
+    const clean = createEmptyReaderData();
+    if (persistEmpty) {
+      await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, JSON.stringify(clean));
+    }
+    return clean;
   }
 
   try {
@@ -34,6 +42,10 @@ async function migrateSecureStoreReaderData() {
     await SecureStore.deleteItemAsync(READER_DATA_STORAGE_KEY);
     return clean;
   } catch {
-    return createEmptyReaderData();
+    const clean = createEmptyReaderData();
+    if (persistEmpty) {
+      await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, JSON.stringify(clean));
+    }
+    return clean;
   }
 }

@@ -14,6 +14,25 @@ import {
 } from './forumApi';
 
 describe('Android forum API client', () => {
+  const topicDetail = {
+    source: 'nodeseek',
+    id: '723704',
+    title: 'NodeSeek topic',
+    author: 'alice',
+    url: 'https://www.nodeseek.com/post-723704-1',
+    createdAt: '2026-05-20T00:00:00.000Z',
+    replyCount: 0,
+    contentHtml: '<p>body</p>',
+    replies: []
+  };
+
+  function endpointResponse(input: string) {
+    if (input.includes('/api/topic/') && !input.includes('/replies')) {
+      return topicDetail;
+    }
+    return { items: [], errors: {} };
+  }
+
   it('calls the server NodeSeek feed endpoint with pagination and category', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
 
@@ -29,7 +48,7 @@ describe('Android forum API client', () => {
   });
 
   it('calls categories, topic, replies, and search endpoints', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
+    const fetcher = vi.fn(async (input: string) => new Response(JSON.stringify(endpointResponse(input))));
 
     await getNodeSeekCategories({ serverUrl: 'http://127.0.0.1:3000', fetcher });
     await getNodeSeekTopic({ serverUrl: 'http://127.0.0.1:3000', id: '723704', fetcher });
@@ -81,7 +100,7 @@ describe('Android forum API client', () => {
   });
 
   it('calls generic categories, topic, replies, and search endpoints for any source', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
+    const fetcher = vi.fn(async (input: string) => new Response(JSON.stringify(endpointResponse(input))));
 
     await getCategories({ serverUrl: 'http://127.0.0.1:3000', source: 'all', fetcher });
     await getTopic({ serverUrl: 'http://127.0.0.1:3000', source: 'v2ex', id: '1212603', nocache: true, fetcher });
@@ -127,5 +146,66 @@ describe('Android forum API client', () => {
     });
 
     expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:3000/api/topic/linuxdo/2162836/replies/5?nocache=1');
+  });
+
+  it('rejects malformed feed responses before the UI renders them', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: {} })));
+
+    await expect(getFeed({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'all',
+      fetcher
+    })).rejects.toThrow('服务器返回数据格式不正确');
+  });
+
+  it('rejects malformed topic and reply responses before the UI renders them', async () => {
+    const topicFetcher = vi.fn(async () => new Response(JSON.stringify({
+      id: '42',
+      source: 'linuxdo',
+      title: 'bad topic'
+    })));
+    const repliesFetcher = vi.fn(async () => new Response(JSON.stringify({
+      hasMore: true,
+      nextPage: 2
+    })));
+
+    await expect(getTopic({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'linuxdo',
+      id: '42',
+      fetcher: topicFetcher
+    })).rejects.toThrow('服务器返回数据格式不正确');
+
+    await expect(getReplies({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'linuxdo',
+      id: '42',
+      page: 2,
+      fetcher: repliesFetcher
+    })).rejects.toThrow('服务器返回数据格式不正确');
+  });
+
+  it('rejects malformed category and search responses before the UI renders them', async () => {
+    const categoriesFetcher = vi.fn(async () => new Response(JSON.stringify({
+      items: [{ source: 'nodeseek', id: 'daily' }],
+      errors: {}
+    })));
+    const searchFetcher = vi.fn(async () => new Response(JSON.stringify({
+      items: [{ source: 'nodeseek', id: '1', title: 'bad' }],
+      errors: {}
+    })));
+
+    await expect(getCategories({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'all',
+      fetcher: categoriesFetcher
+    })).rejects.toThrow('服务器返回数据格式不正确');
+
+    await expect(searchTopics({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'all',
+      query: 'node',
+      fetcher: searchFetcher
+    })).rejects.toThrow('服务器返回数据格式不正确');
   });
 });
