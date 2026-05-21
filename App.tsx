@@ -18,7 +18,6 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  StatusBar as NativeStatusBar,
   Text,
   TextInput,
   ToastAndroid,
@@ -124,6 +123,44 @@ import { shouldShowFeedFloatingActions } from './src/feedFloatingActions';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
 import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from './src/listSwipeActions';
+import { fetchWithTimeout } from './src/request';
+import {
+  androidRipple,
+  contentWidthValue,
+  createStyles,
+  createTheme,
+  fontFamilyValue,
+  lineHeightMultiplier,
+  type ReaderTheme
+} from './src/theme';
+import {
+  applyFeedFilter,
+  mergeCategories,
+  mergeReplies,
+  mergeSettledFeedResponses,
+  mergeSettledSearchResponses,
+  mergeTopics,
+  recordsToTopics,
+  removeRecord,
+  searchLocal,
+  sortTopics,
+  type LibraryTab,
+  type ReadingFilter,
+  type SearchSort
+} from './src/feedLogic';
+import {
+  appendUnique,
+  errorMessage,
+  finishAbortableRequest,
+  formatDateTime,
+  formatRelativeTime,
+  isCanceledRequest,
+  isYaohuoLoginRequiredError,
+  removeString,
+  settingsList,
+  sourceLabel,
+  startAbortableRequest
+} from './src/appUtils';
 import {
   checkYaohuoLoginDirect,
   getYaohuoFeedDirect,
@@ -198,28 +235,8 @@ true;
 `;
 
 type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic';
-type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite' | 'subscribed' | 'active' | 'hot';
 type SearchScope = 'remote' | 'local';
-type SearchSort = 'relevance' | 'time' | 'reply' | 'view';
-type LibraryTab = 'favorites' | 'history';
 type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
-
-interface ReaderTheme {
-  dark: boolean;
-  background: string;
-  surface: string;
-  surface2: string;
-  line: string;
-  lineStrong: string;
-  ink: string;
-  muted: string;
-  primary: string;
-  primarySoft: string;
-  mist: string;
-  onPrimary: string;
-  danger: string;
-  success: string;
-}
 
 interface YaohuoReplyTarget {
   floor: number;
@@ -279,9 +296,17 @@ export default function App() {
   const saveQueueRef = useRef(Promise.resolve());
   const feedRequestIdRef = useRef(0);
   const feedLoadingRef = useRef(false);
+  const feedAbortRef = useRef<AbortController | null>(null);
+  const categoriesAbortRef = useRef<AbortController | null>(null);
   const searchRequestIdRef = useRef(0);
+  const searchAbortRef = useRef<AbortController | null>(null);
   const topicRequestIdRef = useRef(0);
+  const topicAbortRef = useRef<AbortController | null>(null);
+  const syncAbortRef = useRef<AbortController | null>(null);
+  const healthAbortRef = useRef<AbortController | null>(null);
+  const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingMoreRepliesRef = useRef(false);
+  const repliesAbortRef = useRef<AbortController | null>(null);
   const currentTopicKeyRef = useRef<string | null>(null);
   const topicScrollRef = useRef<FlatList<Reply>>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
@@ -293,7 +318,6 @@ export default function App() {
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
-  const [, setStatus] = useState('填写服务器地址后即可读取三站；NodeSeek Cookie 只保存在本机。');
   const [cookieNames, setCookieNames] = useState<string[]>([]);
   const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
   const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
@@ -334,6 +358,10 @@ export default function App() {
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [loadedQuotedReplies, setLoadedQuotedReplies] = useState<Record<number, Reply>>({});
   const [loadingQuotedFloors, setLoadingQuotedFloors] = useState<Record<string, boolean>>({});
+  const expandedQuotesRef = useRef(expandedQuotes);
+  const loadedQuotedRepliesRef = useRef(loadedQuotedReplies);
+  const loadingQuotedFloorsRef = useRef(loadingQuotedFloors);
+  const [quoteStateVersion, setQuoteStateVersion] = useState(0);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
   const [showCategoriesPanel, setShowCategoriesPanel] = useState(false);
@@ -343,6 +371,33 @@ export default function App() {
   readerDataRef.current = readerData;
   const currentTopic = topicDetail || selectedTopic;
   currentTopicKeyRef.current = currentTopic ? topicKey(currentTopic) : null;
+  const updateExpandedQuotes = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
+    const next = updater(expandedQuotesRef.current);
+    expandedQuotesRef.current = next;
+    setExpandedQuotes(next);
+    setQuoteStateVersion((current) => current + 1);
+  }, []);
+  const updateLoadedQuotedReplies = useCallback((updater: (current: Record<number, Reply>) => Record<number, Reply>) => {
+    const next = updater(loadedQuotedRepliesRef.current);
+    loadedQuotedRepliesRef.current = next;
+    setLoadedQuotedReplies(next);
+    setQuoteStateVersion((current) => current + 1);
+  }, []);
+  const updateLoadingQuotedFloors = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
+    const next = updater(loadingQuotedFloorsRef.current);
+    loadingQuotedFloorsRef.current = next;
+    setLoadingQuotedFloors(next);
+    setQuoteStateVersion((current) => current + 1);
+  }, []);
+  const resetQuoteState = useCallback(() => {
+    expandedQuotesRef.current = {};
+    loadedQuotedRepliesRef.current = {};
+    loadingQuotedFloorsRef.current = {};
+    setExpandedQuotes({});
+    setLoadedQuotedReplies({});
+    setLoadingQuotedFloors({});
+    setQuoteStateVersion((current) => current + 1);
+  }, []);
 
   const theme = useMemo(() => createTheme(readerData.settings, systemScheme), [readerData.settings, systemScheme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
@@ -564,7 +619,6 @@ export default function App() {
     } : current);
   }, []);
   const notify = useCallback((message: string) => {
-    setStatus(message);
     if (Platform.OS === 'android') {
       ToastAndroid.show(message, ToastAndroid.SHORT);
     }
@@ -622,6 +676,19 @@ export default function App() {
       enableExperimentalPercentWidth: true
     }
   }), [openExternalUrl, openImagePreview]);
+
+  useEffect(() => () => {
+    feedAbortRef.current?.abort();
+    categoriesAbortRef.current?.abort();
+    searchAbortRef.current?.abort();
+    topicAbortRef.current?.abort();
+    repliesAbortRef.current?.abort();
+    syncAbortRef.current?.abort();
+    healthAbortRef.current?.abort();
+    if (progressSaveTimerRef.current) {
+      clearTimeout(progressSaveTimerRef.current);
+    }
+  }, []);
 
   const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
     setReaderData((current) => {
@@ -722,9 +789,10 @@ export default function App() {
     if (!serverUrl.trim()) {
       return;
     }
+    const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const data = await getCategories({ serverUrl, source: 'all' });
-      const yaohuoData = await getCategories({ serverUrl, source: 'yaohuo' });
+      const data = await getCategories({ serverUrl, source: 'all', signal: controller.signal });
+      const yaohuoData = await getCategories({ serverUrl, source: 'yaohuo', signal: controller.signal });
       setCategories(mergeCategories(data.items, yaohuoData.items));
       const errors = Object.entries({
         ...(data.errors || {}),
@@ -737,7 +805,11 @@ export default function App() {
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
     } catch (error) {
-      notify(errorMessage(error));
+      if (!isCanceledRequest(error)) {
+        notify(errorMessage(error));
+      }
+    } finally {
+      finishAbortableRequest(categoriesAbortRef, controller);
     }
   }, [notify, serverUrl]);
 
@@ -769,6 +841,7 @@ export default function App() {
       return;
     }
     feedLoadingRef.current = true;
+    const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
     const isLoadMore = !reset && page > 1;
     if (isLoadMore) {
@@ -778,43 +851,48 @@ export default function App() {
     }
     setBusy(true);
     try {
-      let data = source === 'yaohuo'
-        ? await getYaohuoFeedDirect({
+      let data: FeedResponse;
+      if (source === 'all' && yaohuoCookie) {
+        const [baseResult, yaohuoResult] = await Promise.allSettled([
+          getFeed({
+            serverUrl,
+            source,
+            page,
+            cursor,
+            limit: 30,
+            category: category || undefined,
+            nocache,
+            signal: controller.signal
+          }),
+          getYaohuoFeedDirect({
+            serverUrl,
+            yaohuoCookie,
+            page,
+            limit: 30,
+            signal: controller.signal
+          })
+        ]);
+        data = mergeSettledFeedResponses(baseResult, yaohuoResult);
+      } else if (source === 'yaohuo') {
+        data = await getYaohuoFeedDirect({
           serverUrl,
           yaohuoCookie,
           page,
           limit: 30,
-          category: category || undefined
-        })
-        : await getFeed({
+          category: category || undefined,
+          signal: controller.signal
+        });
+      } else {
+        data = await getFeed({
           serverUrl,
           source,
           page,
           cursor,
           limit: 30,
           category: category || undefined,
-          nocache
+          nocache,
+          signal: controller.signal
         });
-      if (source === 'all' && yaohuoCookie) {
-        try {
-          const yaohuoData = await getYaohuoFeedDirect({
-            serverUrl,
-            yaohuoCookie,
-            page,
-            limit: 30
-          });
-          data = mergeFeedResponses(data, yaohuoData);
-        } catch (error) {
-          if (isYaohuoLoginRequiredError(error)) {
-            setHasYaohuoCookie(false);
-            notify('妖火登录已失效，请重新登录。');
-          } else {
-            data = mergeFeedResponses(data, {
-              items: [],
-              errors: { yaohuo: errorMessage(error) }
-            });
-          }
-        }
       }
       if (requestId !== feedRequestIdRef.current) {
         return;
@@ -839,7 +917,9 @@ export default function App() {
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
-        notify(errorMessage(error));
+        if (!isCanceledRequest(error)) {
+          notify(errorMessage(error));
+        }
       }
     } finally {
       if (requestId === feedRequestIdRef.current) {
@@ -848,6 +928,7 @@ export default function App() {
         setLoadingMoreFeed(false);
         feedLoadingRef.current = false;
       }
+      finishAbortableRequest(feedAbortRef, controller);
     }
   }, [categoryFilter, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
 
@@ -875,6 +956,7 @@ export default function App() {
       notify('请输入搜索词');
       return;
     }
+    const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
     setBusy(true);
     try {
@@ -890,24 +972,17 @@ export default function App() {
           showYaohuoLogin();
           return;
         }
-        let data = searchSource === 'yaohuo'
-          ? await searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie })
-          : await searchTopics({ serverUrl, query, source: searchSource, limit: 30 });
+        let data: SearchResponse;
         if (searchSource === 'all' && yaohuoCookie) {
-          try {
-            const yaohuoData = await searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie });
-            data = mergeSearchResponses(data, yaohuoData);
-          } catch (error) {
-            if (isYaohuoLoginRequiredError(error)) {
-              setHasYaohuoCookie(false);
-              notify('妖火登录已失效，请重新登录。');
-            } else {
-              data = mergeSearchResponses(data, {
-                items: [],
-                errors: { yaohuo: errorMessage(error) }
-              });
-            }
-          }
+          const [baseResult, yaohuoResult] = await Promise.allSettled([
+            searchTopics({ serverUrl, query, source: searchSource, limit: 30, signal: controller.signal }),
+            searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie, signal: controller.signal })
+          ]);
+          data = mergeSettledSearchResponses(baseResult, yaohuoResult);
+        } else if (searchSource === 'yaohuo') {
+          data = await searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie, signal: controller.signal });
+        } else {
+          data = await searchTopics({ serverUrl, query, source: searchSource, limit: 30, signal: controller.signal });
         }
         if (requestId !== searchRequestIdRef.current) {
           return;
@@ -929,12 +1004,15 @@ export default function App() {
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
-        notify(errorMessage(error));
+        if (!isCanceledRequest(error)) {
+          notify(errorMessage(error));
+        }
       }
     } finally {
       if (requestId === searchRequestIdRef.current) {
         setBusy(false);
       }
+      finishAbortableRequest(searchAbortRef, controller);
     }
   }, [commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
 
@@ -957,15 +1035,14 @@ export default function App() {
     setReplyComposerOpen(false);
     setYaohuoReplyTarget(null);
     setReplyFilter('all');
-    setExpandedQuotes({});
-    setLoadedQuotedReplies({});
-    setLoadingQuotedFloors({});
+    resetQuoteState();
     setScreen('topic');
     setBusy(true);
+    const controller = startAbortableRequest(topicAbortRef);
     try {
       const detail = topic.source === 'yaohuo'
-        ? await getYaohuoTopicDirect({ serverUrl, topic, yaohuoCookie, replyLimit: 30 })
-        : await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache });
+        ? await getYaohuoTopicDirect({ serverUrl, topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
+        : await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache, signal: controller.signal });
       if (requestId !== topicRequestIdRef.current) {
         return;
       }
@@ -989,14 +1066,17 @@ export default function App() {
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
-        notify(message);
+        if (!isCanceledRequest(error)) {
+          notify(message);
+        }
       }
     } finally {
       if (requestId === topicRequestIdRef.current) {
         setBusy(false);
       }
+      finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [commitReaderData, loadYaohuoCookieForSource, notify, screen, serverUrl, showYaohuoLogin]);
+  }, [commitReaderData, loadYaohuoCookieForSource, notify, resetQuoteState, screen, serverUrl, showYaohuoLogin]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -1010,6 +1090,7 @@ export default function App() {
     }
     const requestTopicKey = topicKey(detail);
     loadingMoreRepliesRef.current = true;
+    const controller = startAbortableRequest(repliesAbortRef);
     setLoadingMoreReplies(true);
     setBusy(true);
     try {
@@ -1020,7 +1101,8 @@ export default function App() {
           categoryId: detail.categoryId,
           page: replyNextPage,
           limit: 30,
-          yaohuoCookie
+          yaohuoCookie,
+          signal: controller.signal
         })
         : await getReplies({
           serverUrl,
@@ -1028,7 +1110,8 @@ export default function App() {
           id: detail.id,
           page: replyNextPage,
           limit: 30,
-          offset: replyNextOffset
+          offset: replyNextOffset,
+          signal: controller.signal
         });
       if (currentTopicKeyRef.current !== requestTopicKey) {
         return;
@@ -1045,7 +1128,9 @@ export default function App() {
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
-        notify(errorMessage(error));
+        if (!isCanceledRequest(error)) {
+          notify(errorMessage(error));
+        }
       }
     } finally {
       loadingMoreRepliesRef.current = false;
@@ -1053,6 +1138,7 @@ export default function App() {
       if (currentTopicKeyRef.current === requestTopicKey) {
         setBusy(false);
       }
+      finishAbortableRequest(repliesAbortRef, controller);
     }
   }, [loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, showYaohuoLogin, topicDetail]);
 
@@ -1076,15 +1162,22 @@ export default function App() {
     const scrollY = Math.max(0, contentOffset.y);
     const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
     const percent = Math.min(100, Math.max(0, Math.round((scrollY / scrollable) * 100)));
-    const next = sanitizeReaderData(updateProgress(readerDataRef.current, detail, { percent, scrollY }));
+    const next = updateProgress(readerDataRef.current, detail, { percent, scrollY });
     readerDataRef.current = next;
-    saveQueueRef.current = saveQueueRef.current
-      .catch(() => undefined)
-      .then(() => saveReaderData(next))
-      .then((saved) => {
-        readerDataRef.current = saved;
-      })
-      .catch((error) => notify(errorMessage(error)));
+    if (progressSaveTimerRef.current) {
+      clearTimeout(progressSaveTimerRef.current);
+    }
+    progressSaveTimerRef.current = setTimeout(() => {
+      progressSaveTimerRef.current = null;
+      saveQueueRef.current = saveQueueRef.current
+        .catch(() => undefined)
+        .then(() => saveReaderData(readerDataRef.current))
+        .then((saved) => {
+          readerDataRef.current = saved;
+          setReaderData(saved);
+        })
+        .catch((error) => notify(errorMessage(error)));
+    }, 650);
   }, [notify, selectedTopic, topicDetail]);
 
   const toggleQuotedFloor = useCallback(async ({
@@ -1097,25 +1190,25 @@ export default function App() {
     quotedReply?: Reply;
   }) => {
     const key = `${replyFloor}:${quotedFloor}`;
-    if (expandedQuotes[key]) {
-      setExpandedQuotes((current) => ({ ...current, [key]: false }));
+    if (expandedQuotesRef.current[key]) {
+      updateExpandedQuotes((current) => ({ ...current, [key]: false }));
       return;
     }
 
-    if (quotedReply || loadedQuotedReplies[quotedFloor]) {
-      setExpandedQuotes((current) => ({ ...current, [key]: true }));
+    if (quotedReply || loadedQuotedRepliesRef.current[quotedFloor]) {
+      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
       return;
     }
 
     const detail = topicDetail || selectedTopic;
     if (!detail || detail.source !== 'linuxdo') {
       notify('引用楼层未加载');
-      setExpandedQuotes((current) => ({ ...current, [key]: true }));
+      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
       return;
     }
     const requestTopicKey = topicKey(detail);
 
-    setLoadingQuotedFloors((current) => ({ ...current, [key]: true }));
+    updateLoadingQuotedFloors((current) => ({ ...current, [key]: true }));
     try {
       const loaded = await getReply({
         serverUrl,
@@ -1127,9 +1220,9 @@ export default function App() {
         return;
       }
       if (loaded.floor) {
-        setLoadedQuotedReplies((current) => ({ ...current, [loaded.floor as number]: loaded }));
+        updateLoadedQuotedReplies((current) => ({ ...current, [loaded.floor as number]: loaded }));
       }
-      setExpandedQuotes((current) => ({ ...current, [key]: true }));
+      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
       notify(`已读取引用 #${quotedFloor}`);
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey) {
@@ -1137,10 +1230,10 @@ export default function App() {
       }
     } finally {
       if (currentTopicKeyRef.current === requestTopicKey) {
-        setLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
+        updateLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
       }
     }
-  }, [expandedQuotes, loadedQuotedReplies, notify, selectedTopic, serverUrl, topicDetail]);
+  }, [notify, selectedTopic, serverUrl, topicDetail, updateExpandedQuotes, updateLoadedQuotedReplies, updateLoadingQuotedFloors]);
 
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -1418,37 +1511,46 @@ export default function App() {
   }, [runYaohuoRequest, selectedTopic, topicDetail]);
 
   const pullSync = useCallback(async () => {
+    const controller = startAbortableRequest(syncAbortRef);
     setBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
-      const remote = sanitizeReaderDataForSync(await pullReaderData(serverUrl, syncCode));
+      const remote = sanitizeReaderDataForSync(await pullReaderData(serverUrl, syncCode, { signal: controller.signal }));
       const merged = mergeReaderData(readerDataRef.current, remote);
       await replaceReaderData(merged);
       notify('同步读取成功，已合并本机和云端资料。');
     } catch (error) {
-      notify(errorMessage(error));
+      if (!isCanceledRequest(error)) {
+        notify(errorMessage(error));
+      }
     } finally {
       setBusy(false);
+      finishAbortableRequest(syncAbortRef, controller);
     }
   }, [notify, replaceReaderData, serverUrl, syncCode]);
 
   const pushSync = useCallback(async () => {
+    const controller = startAbortableRequest(syncAbortRef);
     setBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
-      await pushReaderData(serverUrl, syncCode, sanitizeReaderDataForSync(readerDataRef.current));
+      await pushReaderData(serverUrl, syncCode, sanitizeReaderDataForSync(readerDataRef.current), { signal: controller.signal });
       notify('同步保存成功。');
     } catch (error) {
-      notify(errorMessage(error));
+      if (!isCanceledRequest(error)) {
+        notify(errorMessage(error));
+      }
     } finally {
       setBusy(false);
+      finishAbortableRequest(syncAbortRef, controller);
     }
   }, [notify, serverUrl, syncCode]);
 
   const checkHealth = useCallback(async () => {
+    const controller = startAbortableRequest(healthAbortRef);
     setBusy(true);
     try {
-      const response = await fetch(`${normalizeServerUrl(serverUrl)}/api/health`);
+      const response = await fetchWithTimeout(`${normalizeServerUrl(serverUrl)}/api/health`, {}, { signal: controller.signal });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         throw new Error(data.error || `HTTP ${response.status}`);
@@ -1457,9 +1559,12 @@ export default function App() {
       setHealthSummary(sourceStatus);
       notify('状态检查完成。');
     } catch (error) {
-      notify(errorMessage(error));
+      if (!isCanceledRequest(error)) {
+        notify(errorMessage(error));
+      }
     } finally {
       setBusy(false);
+      finishAbortableRequest(healthAbortRef, controller);
     }
   }, [notify, serverUrl]);
 
@@ -1551,10 +1656,11 @@ export default function App() {
             htmlRenderers={htmlRenderers}
             htmlRenderersProps={htmlRenderersProps}
             htmlTagsStyles={htmlTagsStyles}
-            expandedQuotes={expandedQuotes}
-            loadedQuotedReplies={loadedQuotedReplies}
+            expandedQuotesRef={expandedQuotesRef}
+            loadedQuotedRepliesRef={loadedQuotedRepliesRef}
             loadingMoreReplies={loadingMoreReplies}
-            loadingQuotedFloors={loadingQuotedFloors}
+            loadingQuotedFloorsRef={loadingQuotedFloorsRef}
+            quoteStateVersion={quoteStateVersion}
             readerData={readerData}
             replyComposerOpen={replyComposerOpen}
             replyContent={replyContent}
@@ -1813,6 +1919,9 @@ function FeedScreen({
       )}
     </View>
   );
+  const feedEmptyText = readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all'
+    ? '当前筛选没有匹配主题'
+    : '暂无主题';
 
   return (
     <View style={styles.content}>
@@ -1827,7 +1936,7 @@ function FeedScreen({
         scrollEventThrottle={64}
         {...FEED_LIST_PERFORMANCE_PROPS}
         ListHeaderComponent={header}
-        ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text="暂无主题" styles={styles} />}
+        ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={feedEmptyText} styles={styles} />}
         ListFooterComponent={feedHasMore ? (
           <AppButton
             label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
@@ -2443,10 +2552,11 @@ function TopicScreen({
   htmlRenderers,
   htmlRenderersProps,
   htmlTagsStyles,
-  expandedQuotes,
-  loadedQuotedReplies,
+  expandedQuotesRef,
+  loadedQuotedRepliesRef,
   loadingMoreReplies,
-  loadingQuotedFloors,
+  loadingQuotedFloorsRef,
+  quoteStateVersion,
   readerData,
   replyComposerOpen,
   replyContent,
@@ -2486,10 +2596,11 @@ function TopicScreen({
   htmlRenderers: HtmlRenderers;
   htmlRenderersProps: HtmlRenderersProps;
   htmlTagsStyles: HtmlTagsStyles;
-  expandedQuotes: Record<string, boolean>;
-  loadedQuotedReplies: Record<number, Reply>;
+  expandedQuotesRef: RefObject<Record<string, boolean>>;
+  loadedQuotedRepliesRef: RefObject<Record<number, Reply>>;
   loadingMoreReplies: boolean;
-  loadingQuotedFloors: Record<string, boolean>;
+  loadingQuotedFloorsRef: RefObject<Record<string, boolean>>;
+  quoteStateVersion: number;
   readerData: ReaderData;
   replyComposerOpen: boolean;
   replyContent: string;
@@ -2531,13 +2642,13 @@ function TopicScreen({
     sourceReplies.forEach((reply, index) => {
       next.set(reply.floor ?? index + 1, reply);
     });
-    Object.values(loadedQuotedReplies).forEach((reply) => {
+    Object.values(loadedQuotedRepliesRef.current).forEach((reply) => {
       if (reply.floor) {
         next.set(reply.floor, reply);
       }
     });
     return next;
-  }, [loadedQuotedReplies, sourceReplies]);
+  }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
   const renderReplyItem = useCallback<ListRenderItem<Reply>>(({ item: reply, index }) => (
@@ -2546,9 +2657,9 @@ function TopicScreen({
         actionBusy={actionBusy}
         canWrite={canWrite}
         contentWidth={Math.max(240, contentWidth - 28)}
-        expandedQuotes={expandedQuotes}
-        loadedQuotedReplies={loadedQuotedReplies}
-        loadingQuotedFloors={loadingQuotedFloors}
+        expandedQuotes={expandedQuotesRef.current}
+        loadedQuotedReplies={loadedQuotedRepliesRef.current}
+        loadingQuotedFloors={loadingQuotedFloorsRef.current}
         reply={reply}
         replyFloor={reply.floor ?? index + 1}
         repliesByFloor={repliesByFloor}
@@ -2564,12 +2675,13 @@ function TopicScreen({
     actionBusy,
     canWrite,
     contentWidth,
-    expandedQuotes,
-    loadedQuotedReplies,
-    loadingQuotedFloors,
+    expandedQuotesRef,
+    loadedQuotedRepliesRef,
+    loadingQuotedFloorsRef,
     onInteract,
     onReplyToFloor,
     onToggleQuotedFloor,
+    quoteStateVersion,
     itemSource,
     repliesByFloor,
     styles,
@@ -2696,6 +2808,7 @@ function TopicScreen({
           keyboardShouldPersistTaps="handled"
           onMomentumScrollEnd={onTopicScroll}
           onScrollEndDrag={onTopicScroll}
+          extraData={quoteStateVersion}
           {...REPLY_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
           ListEmptyComponent={topicLoading ? null : (
@@ -2845,9 +2958,13 @@ function ImagePreviewModal({
 }) {
   const { width, height } = useWindowDimensions();
   const [zoomed, setZoomed] = useState(false);
+  const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
+  const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
   const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
   useEffect(() => {
     setZoomed(false);
+    setImagePreviewLoading(Boolean(preview));
+    setImagePreviewFailed(false);
   }, [previewKey]);
 
   if (!preview || preview.urls.length === 0) {
@@ -2886,7 +3003,27 @@ function ImagePreviewModal({
               source={{ uri }}
               style={[styles.imagePreviewImage, { width: imageWidth, height: imageHeight }]}
               resizeMode="contain"
+              onLoadStart={() => {
+                setImagePreviewLoading(true);
+                setImagePreviewFailed(false);
+              }}
+              onLoadEnd={() => setImagePreviewLoading(false)}
+              onError={() => {
+                setImagePreviewLoading(false);
+                setImagePreviewFailed(true);
+              }}
             />
+            {imagePreviewLoading ? (
+              <View style={styles.imagePreviewState}>
+                <ActivityIndicator color="#ffffff" />
+                <Text style={styles.imagePreviewStateText}>图片加载中...</Text>
+              </View>
+            ) : null}
+            {imagePreviewFailed ? (
+              <View style={styles.imagePreviewState}>
+                <Text style={styles.imagePreviewStateText}>图片加载失败</Text>
+              </View>
+            ) : null}
           </ScrollView>
         </ScrollView>
         {hasMany ? (
@@ -2998,9 +3135,9 @@ function TopicCard({
           <Text style={styles.cardTitle} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
           {topic.excerpt && readerState.listDensity === 'loose' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
         </Pressable>
-        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={styles.topicMetaRow} onPress={openTopicPress}>
-          <Text style={styles.meta} numberOfLines={1}>{metaParts}</Text>
-        </Pressable>
+        <View style={styles.topicMetaRow}>
+          <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>
+        </View>
       </Animated.View>
     </View>
   );
@@ -3271,1094 +3408,4 @@ function LoadingState({ text, styles, theme }: { text: string; styles: ReturnTyp
       <Text style={styles.loadingStateText}>{text}</Text>
     </View>
   );
-}
-
-function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter) {
-  const visible = items.filter((topic) => {
-    const text = topicText(topic);
-    const category = topic.category ? `${topic.source}:${topic.category.replace(/^#/, '')}`.toLowerCase() : '';
-    return !includesAnyKeyword(text, data.settings.blockedKeywords)
-      && !data.settings.blockedUsers.some((user) => topic.author?.toLowerCase() === user.toLowerCase())
-      && !data.settings.blockedCategories.some((blocked) => blocked.toLowerCase() === category);
-  });
-
-  if (filter === 'unread') {
-    return visible.filter((topic) => !data.history[topicKey(topic)]);
-  }
-  if (filter === 'read') {
-    return visible.filter((topic) => Boolean(data.history[topicKey(topic)]));
-  }
-  if (filter === 'favorite') {
-    return visible.filter((topic) => Boolean(data.favorites[topicKey(topic)]));
-  }
-  if (filter === 'subscribed') {
-    return visible.filter((topic) => topic.category && Object.values(data.subscriptions).some((subscription) => (
-      subscription.source === topic.source
-      && [subscription.id, subscription.name].includes(topic.category!.replace(/^#/, ''))
-    )));
-  }
-  if (filter === 'active') {
-    return [...visible].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
-  }
-  if (filter === 'hot') {
-    return [...visible].sort((left, right) => (right.replyCount + (right.viewCount || 0) / 100) - (left.replyCount + (left.viewCount || 0) / 100));
-  }
-  return visible;
-}
-
-function searchLocal(data: ReaderData, query: string, source: FeedSource) {
-  const records = [
-    ...Object.values(data.favorites),
-    ...Object.values(data.history)
-  ];
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const seen = new Set<string>();
-  return records
-    .filter((record) => {
-      const topic = record.topic;
-      const key = topicKey(topic);
-      if (seen.has(key) || (source !== 'all' && topic.source !== source)) {
-        return false;
-      }
-      const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''} ${record.tags?.join(' ') || ''} ${record.note || ''}`.toLowerCase();
-      const matched = terms.every((term) => text.includes(term));
-      if (matched) {
-        seen.add(key);
-      }
-      return matched;
-    })
-    .map((record) => record.topic);
-}
-
-function sortTopics(items: Topic[], sort: SearchSort) {
-  if (sort === 'reply') {
-    return [...items].sort((left, right) => right.replyCount - left.replyCount);
-  }
-  if (sort === 'view') {
-    return [...items].sort((left, right) => (right.viewCount || 0) - (left.viewCount || 0));
-  }
-  if (sort === 'time') {
-    return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
-  }
-  return items;
-}
-
-function sortTopicsByActivity(items: Topic[]) {
-  return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
-}
-
-function mergeTopics(current: Topic[], incoming: Topic[]) {
-  const seen = new Set(current.map((topic) => topicKey(topic)));
-  const next = [...current];
-  for (const topic of incoming) {
-    const key = topicKey(topic);
-    if (!seen.has(key)) {
-      seen.add(key);
-      next.push(topic);
-    }
-  }
-  return next;
-}
-
-function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
-  return {
-    ...base,
-    items: sortTopicsByActivity(mergeTopics(base.items, extra.items)),
-    errors: {
-      ...(base.errors || {}),
-      ...(extra.errors || {})
-    },
-    hasMore: Boolean(base.hasMore || extra.hasMore),
-    nextPage: base.nextPage ?? extra.nextPage ?? null,
-    nextCursor: base.nextCursor ?? undefined
-  };
-}
-
-function mergeSearchResponses(base: SearchResponse, extra: SearchResponse): SearchResponse {
-  return {
-    items: sortTopicsByActivity(mergeTopics(base.items, extra.items)),
-    errors: {
-      ...(base.errors || {}),
-      ...(extra.errors || {})
-    }
-  };
-}
-
-function mergeCategories(base: Category[], extra: Category[]) {
-  const seen = new Set<string>();
-  return [...base, ...extra].filter((category) => {
-    const key = categoryKey(category);
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-function replyKey(reply: Reply) {
-  if (typeof reply.commentId === 'number') {
-    return `comment:${reply.commentId}`;
-  }
-  if (typeof reply.floor === 'number') {
-    return `floor:${reply.floor}`;
-  }
-  return `body:${reply.author}:${reply.createdAt}:${reply.contentHtml.slice(0, 80)}`;
-}
-
-function mergeReplies(current: Reply[], incoming: Reply[]) {
-  const seen = new Set(current.map((reply) => replyKey(reply)));
-  const next = [...current];
-  for (const reply of incoming) {
-    const key = replyKey(reply);
-    if (!seen.has(key)) {
-      seen.add(key);
-      next.push(reply);
-    }
-  }
-  return next;
-}
-
-function recordsToTopics(records: Record<string, { topic: Topic; savedAt: string }>) {
-  return Object.values(records)
-    .sort((left, right) => dateTime(right.savedAt) - dateTime(left.savedAt))
-    .map((record) => record.topic);
-}
-
-function removeRecord(data: ReaderData, section: LibraryTab, topic: Topic) {
-  const key = topicKey(topic);
-  const next = { ...data[section] };
-  delete next[key];
-  return {
-    ...data,
-    [section]: next,
-    deletedRecords: {
-      ...data.deletedRecords,
-      [section]: {
-        ...data.deletedRecords[section],
-        [key]: new Date().toISOString()
-      }
-    }
-  };
-}
-
-function topicText(topic: Topic) {
-  return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
-}
-
-function includesAnyKeyword(text: string, keywords: string[]) {
-  return keywords.some((keyword) => text.includes(keyword.toLowerCase()));
-}
-
-function sourceLabel(source: Source | FeedSource) {
-  if (source === 'all') {
-    return '全部';
-  }
-  if (source === 'linuxdo') {
-    return 'linux.do';
-  }
-  if (source === 'nodeseek') {
-    return 'NodeSeek';
-  }
-  if (source === 'yaohuo') {
-    return '妖火';
-  }
-  return 'V2EX';
-}
-
-function isYaohuoLoginRequiredError(error: unknown) {
-  return Boolean(
-    error
-    && typeof error === 'object'
-    && 'loginRequired' in error
-    && (error as { loginRequired?: unknown }).loginRequired
-  );
-}
-
-function formatDateTime(value?: string) {
-  if (!value) {
-    return '';
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
-
-function formatRelativeTime(value?: string) {
-  const time = dateTime(value);
-  if (!time) {
-    return '';
-  }
-  const diff = Date.now() - time;
-  if (diff < 60_000) {
-    return '刚刚';
-  }
-  if (diff < 60 * 60_000) {
-    return `${Math.floor(diff / 60_000)} 分钟前`;
-  }
-  if (diff < 24 * 60 * 60_000) {
-    return `${Math.floor(diff / (60 * 60_000))} 小时前`;
-  }
-  return `${Math.floor(diff / (24 * 60 * 60_000))} 天前`;
-}
-
-function dateTime(value?: string) {
-  if (!value) {
-    return 0;
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : '操作失败';
-}
-
-function androidRipple(color: string, borderless = false) {
-  return Platform.OS === 'android' ? { color, borderless } : undefined;
-}
-
-function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {
-  if (value === 'compact') {
-    return 1.45;
-  }
-  if (value === 'loose') {
-    return 1.82;
-  }
-  return 1.62;
-}
-
-function contentWidthValue(value: ReaderSettings['contentWidth']) {
-  if (value === 'narrow') {
-    return 640;
-  }
-  if (value === 'wide') {
-    return 820;
-  }
-  return 720;
-}
-
-function fontFamilyValue(value: ReaderSettings['fontFamily']) {
-  return value === 'serif' ? Platform.select({ android: 'serif', default: 'serif' }) : undefined;
-}
-
-function settingsList(value: string[]) {
-  return Array.isArray(value) ? value : [];
-}
-
-function appendUnique(items: string[], value: string) {
-  const clean = value.trim();
-  if (!clean) {
-    return items;
-  }
-  return [clean, ...items.filter((item) => item.toLowerCase() !== clean.toLowerCase())].slice(0, 100);
-}
-
-function removeString(items: string[], value: string) {
-  return items.filter((item) => item !== value);
-}
-
-function alphaColor(hex: string, alpha: number) {
-  const clean = hex.replace('#', '');
-  const value = Number.parseInt(clean, 16);
-  const red = (value >> 16) & 255;
-  const green = (value >> 8) & 255;
-  const blue = value & 255;
-  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
-
-function createTheme(settings: ReaderSettings, systemScheme: 'light' | 'dark' | null | undefined): ReaderTheme {
-  const dark = settings.theme === 'dark' || (settings.theme === 'system' && systemScheme === 'dark');
-  const palette = {
-    sage: { light: '#016826', dark: '#6dc17b', lightOn: '#fbfbf9', darkOn: '#0b100c' },
-    coral: { light: '#94563e', dark: '#d39780', lightOn: '#fdfaf8', darkOn: '#130d0a' },
-    blue: { light: '#326893', dark: '#80b1da', lightOn: '#f8fbfd', darkOn: '#0a0f13' },
-    mint: { light: '#1f6954', dark: '#72b8a0', lightOn: '#f8fbfa', darkOn: '#09100d' },
-    berry: { light: '#80557c', dark: '#c899c3', lightOn: '#fcf9fc', darkOn: '#110d11' },
-    noir: { light: '#3f3723', dark: '#c4af7e', lightOn: '#f1ebdc', darkOn: '#110e08' }
-  }[settings.palette];
-  const backgrounds = {
-    warm: { background: '#f7f7f2', surface2: '#f6f6f1', line: '#e8e8e2', lineStrong: '#d7d7cf' },
-    white: { background: '#ffffff', surface2: '#f7f7f7', line: '#e5e5e5', lineStrong: '#d8d8d8' },
-    gray: { background: '#f5f5f5', surface2: '#f7f7f7', line: '#e6e6e6', lineStrong: '#d9d9d9' }
-  };
-  const background = backgrounds[settings.background];
-  if (dark) {
-    return {
-      dark: true,
-      background: '#151713',
-      surface: '#1b1d18',
-      surface2: '#22251f',
-      line: '#31342d',
-      lineStrong: '#45493f',
-      ink: '#eeeeea',
-      muted: '#aaa79f',
-      primary: palette.dark,
-      primarySoft: alphaColor(palette.dark, 0.16),
-      mist: alphaColor(palette.dark, 0.18),
-      onPrimary: palette.darkOn,
-      danger: '#da8378',
-      success: palette.dark
-    };
-  }
-  return {
-    dark: false,
-    background: background.background,
-    surface: '#ffffff',
-    surface2: background.surface2,
-    line: background.line,
-    lineStrong: background.lineStrong,
-    ink: '#191919',
-    muted: '#666666',
-    primary: palette.light,
-    primarySoft: alphaColor(palette.light, 0.07),
-    mist: alphaColor(palette.light, 0.09),
-    onPrimary: palette.lightOn,
-    danger: '#ad5349',
-    success: palette.light
-  };
-}
-
-function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
-  const fontScale = settings.fontScale;
-  const titleFontScale = Math.min(fontScale, 1.12);
-  const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
-  const densityPadding = settings.listDensity === 'compact' ? 10 : settings.listDensity === 'loose' ? 16 : 13;
-  const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)));
-  const appFontFamily = fontFamilyValue(settings.fontFamily);
-  return StyleSheet.create({
-    screen: {
-      flex: 1,
-      backgroundColor: theme.background
-    },
-    content: {
-      flex: 1
-    },
-    topicContent: {
-      backgroundColor: theme.surface
-    },
-    contentInner: {
-      gap: 10,
-      padding: 16,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
-      paddingBottom: Platform.OS === 'android' ? 112 : 94
-    },
-    topicContentInner: {
-      alignItems: 'center',
-      paddingTop: 18
-    },
-    topicHeaderStack: {
-      width: '100%',
-      alignItems: 'center',
-      gap: 18
-    },
-    stack: {
-      gap: 9,
-      width: '100%'
-    },
-    sectionHeader: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 10
-    },
-    sectionTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 17,
-      fontWeight: '600'
-    },
-    countText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500'
-    },
-    panelTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 15,
-      fontWeight: '600'
-    },
-    feedList: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth
-    },
-    feedFloatingActions: {
-      position: 'absolute',
-      right: 16,
-      bottom: Platform.OS === 'android' ? 92 : 78,
-      gap: 8
-    },
-    floatingIconButton: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface
-    },
-    topicSwipeShell: {
-      position: 'relative',
-      overflow: 'hidden',
-      backgroundColor: theme.surface
-    },
-    topicSwipeAction: {
-      position: 'absolute',
-      top: 0,
-      right: 0,
-      bottom: 0,
-      width: LIST_SWIPE_ACTION_WIDTH,
-      backgroundColor: theme.mist
-    },
-    topicSwipeActionDanger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08)
-    },
-    topicSwipeActionButton: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      paddingHorizontal: 8
-    },
-    topicSwipeActionText: {
-      color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600'
-    },
-    topicSwipeActionTextDanger: {
-      color: theme.danger
-    },
-    topicCard: {
-      gap: 5,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface
-    },
-    topicCardPressable: {
-      gap: 5,
-      paddingTop: densityPadding,
-      paddingBottom: 4
-    },
-    topicCardRead: {
-      opacity: 0.62
-    },
-    topicCardTracked: {
-      backgroundColor: theme.primarySoft
-    },
-    topicCardHead: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 10
-    },
-    sourceText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500'
-    },
-    topicCardSource: {
-      flex: 1,
-      minWidth: 0
-    },
-    timeText: {
-      flexShrink: 0,
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12
-    },
-    cardTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(16 * listFontScale),
-      fontWeight: '400',
-      lineHeight: Math.round(22 * listFontScale)
-    },
-    excerpt: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 18
-    },
-    meta: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 17
-    },
-    topicMetaRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 8,
-      paddingBottom: densityPadding
-    },
-    pillRail: {
-      gap: 4,
-      paddingVertical: 0
-    },
-    pill: {
-      minHeight: 40,
-      justifyContent: 'center',
-      backgroundColor: 'transparent',
-      borderRadius: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 3
-    },
-    pillActive: {
-      backgroundColor: theme.mist
-    },
-    pillText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '400'
-    },
-    pillTextActive: {
-      color: theme.primary,
-      fontWeight: '500'
-    },
-    tabRail: {
-      gap: 16,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
-    },
-    tab: {
-      minHeight: 40,
-      justifyContent: 'center',
-      borderBottomColor: 'transparent',
-      borderBottomWidth: 2,
-      paddingBottom: 4
-    },
-    tabActive: {
-      borderBottomColor: theme.primary
-    },
-    tabText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '400'
-    },
-    tabTextActive: {
-      color: theme.primary,
-      fontWeight: '500'
-    },
-    input: {
-      minHeight: 44,
-      backgroundColor: theme.surface,
-      borderColor: theme.lineStrong,
-      borderRadius: 6,
-      borderWidth: StyleSheet.hairlineWidth,
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      paddingHorizontal: 12,
-      paddingVertical: 9
-    },
-    replyInput: {
-      minHeight: 92,
-      textAlignVertical: 'top'
-    },
-    searchRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 8
-    },
-    flex: {
-      flex: 1
-    },
-    actions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
-    },
-    button: {
-      minHeight: 42,
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'row',
-      gap: 6,
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 6,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 5
-    },
-    buttonCompact: {
-      minHeight: 40,
-      gap: 4,
-      paddingHorizontal: 8,
-      paddingVertical: 2
-    },
-    buttonIconOnly: {
-      width: 44,
-      minHeight: 44,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderRadius: 22,
-      paddingHorizontal: 0,
-      paddingVertical: 0
-    },
-    buttonTiny: {
-      minHeight: 40,
-      gap: 3,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      paddingHorizontal: 8,
-      paddingVertical: 0
-    },
-    buttonGhost: {
-      backgroundColor: 'transparent',
-      borderColor: 'transparent'
-    },
-    buttonActive: {
-      backgroundColor: theme.mist,
-      borderColor: 'transparent'
-    },
-    buttonDisabled: {
-      opacity: 0.45
-    },
-    buttonText: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600'
-    },
-    buttonTextCompact: {
-      fontSize: 12,
-      fontWeight: '500'
-    },
-    buttonTextTiny: {
-      color: theme.muted,
-      fontSize: 12,
-      fontWeight: '500'
-    },
-    buttonTextActive: {
-      color: theme.primary
-    },
-    empty: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      paddingVertical: 24,
-      textAlign: 'center'
-    },
-    group: {
-      gap: 10,
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 12
-    },
-    menuButton: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 10,
-      minHeight: 44
-    },
-    menuIcon: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 30,
-      height: 30,
-      borderRadius: 8,
-      backgroundColor: theme.surface2
-    },
-    menuLabel: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 15,
-      fontWeight: '600'
-    },
-    categoryGroup: {
-      gap: 8,
-      paddingTop: 4
-    },
-    categoryItem: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 8,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 10
-    },
-    categoryName: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '600'
-    },
-    settingGroup: {
-      gap: 7
-    },
-    chipWrap: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
-    },
-    removableChip: {
-      minHeight: 44,
-      justifyContent: 'center',
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 999,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 11,
-      paddingVertical: 6
-    },
-    loginPanel: {
-      gap: 10
-    },
-    webViewShell: {
-      height: loginWebViewHeight,
-      overflow: 'hidden',
-      borderColor: theme.line,
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface
-    },
-    loading: {
-      position: 'absolute',
-      zIndex: 1,
-      top: 14,
-      alignSelf: 'center',
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      backgroundColor: theme.surface,
-      borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 8
-    },
-    loadingText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12
-    },
-    libraryItem: {
-      gap: 6
-    },
-    topicTopBar: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 8,
-      paddingHorizontal: 12,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 6 : 12,
-      paddingBottom: 8,
-      backgroundColor: theme.surface,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
-    },
-    topicTopHint: {
-      flex: 1,
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
-      textAlign: 'center'
-    },
-    topicTopActions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 2
-    },
-    article: {
-      width: '100%',
-      gap: 13,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      borderRadius: 0,
-      borderWidth: 0,
-      padding: 0
-    },
-    topicMetaStack: {
-      gap: 5
-    },
-    topicPrimaryActions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      paddingTop: 2
-    },
-    articleBody: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      marginTop: 8,
-      paddingTop: 18
-    },
-    articleTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(21 * titleFontScale),
-      fontWeight: '600',
-      lineHeight: Math.round(30 * titleFontScale)
-    },
-    loadingState: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      minHeight: 140,
-      paddingVertical: 28
-    },
-    loadingStateText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 13
-    },
-    errorBox: {
-      gap: 8,
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
-      borderColor: alphaColor(theme.danger, 0.34),
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 12
-    },
-    errorText: {
-      color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 19
-    },
-    replyBox: {
-      width: '100%',
-      gap: 8,
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 12
-    },
-    replyHeader: {
-      width: '100%',
-      gap: 10,
-      borderTopColor: theme.background,
-      borderTopWidth: 12,
-      paddingTop: 16
-    },
-    replyList: {
-      width: '100%',
-      overflow: 'hidden',
-      borderColor: 'transparent',
-      borderRadius: 0,
-      borderWidth: 0,
-      backgroundColor: 'transparent'
-    },
-    replyListItem: {
-      alignSelf: 'center'
-    },
-    topicFooter: {
-      alignSelf: 'center',
-      paddingTop: 14
-    },
-    replyCard: {
-      gap: 12,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      backgroundColor: 'transparent',
-      paddingHorizontal: 0,
-      paddingVertical: 20
-    },
-    replyHead: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 10
-    },
-    replyFloorBadge: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      minWidth: 38,
-      minHeight: 24,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 6,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8
-    },
-    replyFloorText: {
-      color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '700',
-      lineHeight: 16
-    },
-    replyAuthorBlock: {
-      flex: 1,
-      minWidth: 0,
-      gap: 2
-    },
-    replyAuthor: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '600',
-      lineHeight: 19
-    },
-    replyTime: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      lineHeight: 15
-    },
-    replyBody: {
-      paddingTop: 2
-    },
-    replyActionRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      justifyContent: 'flex-end',
-      paddingTop: 2
-    },
-    quoteStack: {
-      gap: 10
-    },
-    quoteBox: {
-      gap: 8,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 11
-    },
-    quoteBody: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 10
-    },
-    replyMeta: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      lineHeight: 18
-    },
-    nav: {
-      position: 'absolute',
-      right: 0,
-      bottom: 0,
-      left: 0,
-      flexDirection: 'row',
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      paddingBottom: Platform.OS === 'android' ? 18 : 8,
-      paddingHorizontal: 10,
-      paddingTop: 4
-    },
-    navItem: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 1,
-      minHeight: 48,
-      borderRadius: 6
-    },
-    navItemActive: {
-      backgroundColor: 'transparent'
-    },
-    navText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 10,
-      fontWeight: '600'
-    },
-    navTextActive: {
-      color: theme.primary
-    },
-    imagePreviewOverlay: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: '#000000'
-    },
-    imagePreviewTopBar: {
-      position: 'absolute',
-      top: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 10 : 18,
-      right: 14,
-      left: 14,
-      zIndex: 2,
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'space-between'
-    },
-    imagePreviewTopActions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 10
-    },
-    imagePreviewCount: {
-      color: '#ffffff',
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '600'
-    },
-    imagePreviewTextButton: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      minWidth: 58,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: 'rgba(255, 255, 255, 0.14)'
-    },
-    imagePreviewButtonText: {
-      color: '#ffffff',
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      fontWeight: '700'
-    },
-    imagePreviewClose: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: 'rgba(255, 255, 255, 0.14)'
-    },
-    imagePreviewScroll: {
-      flex: 1,
-      width: '100%'
-    },
-    imagePreviewScrollContent: {
-      minHeight: '100%',
-      alignItems: 'center',
-      justifyContent: 'center'
-    },
-    imagePreviewVerticalScroll: {
-      maxHeight: '100%'
-    },
-    imagePreviewVerticalContent: {
-      alignItems: 'center',
-      justifyContent: 'center'
-    },
-    imagePreviewImage: {
-      width: '100%',
-      height: '100%'
-    },
-    imagePreviewControls: {
-      position: 'absolute',
-      right: 18,
-      bottom: Platform.OS === 'android' ? 30 : 24,
-      left: 18,
-      flexDirection: 'row',
-      justifyContent: 'space-between'
-    },
-    imagePreviewControl: {
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 46,
-      height: 46,
-      borderRadius: 23,
-      backgroundColor: 'rgba(255, 255, 255, 0.14)'
-    }
-  });
 }

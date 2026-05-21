@@ -6,6 +6,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
+    "release:android": "cd android && gradlew.bat :app:clean :app:assembleRelease -I ../scripts/android-release-apk.gradle -PreactNativeArchitectures=armeabi-v7a,arm64-v8a -Pandroid.enableShrinkResourcesInReleaseBuilds=true -Pandroid.enableMinifyInReleaseBuilds=true -PEX_DEV_CLIENT_NETWORK_INSPECTOR=false",
     "typecheck": "tsc --noEmit",
     "ios": "expo run:ios"
   },
@@ -28,6 +29,9 @@
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "postcss": "8.5.15"
   },
   "expo": {
     "doctor": {

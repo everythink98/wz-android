@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createImagePreviewList,
   extractImageUrlsFromHtml,
+  isHttpOrHttpsUrl,
   isPreviewableImageUrl,
   normalizeImagePreviewUrl
 } from './htmlImages';
@@ -18,6 +19,16 @@ describe('Android HTML image preview helpers', () => {
     expect(isPreviewableImageUrl('https://cdn.example.com/a.webp?x=1')).toBe(true);
     expect(isPreviewableImageUrl('http://127.0.0.1:3000/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa')).toBe(true);
     expect(isPreviewableImageUrl('https://example.com/topic/1')).toBe(false);
+  });
+
+  it('allows external opening only for http and https URLs', () => {
+    expect(isHttpOrHttpsUrl('https://example.com/topic/1')).toBe(true);
+    expect(isHttpOrHttpsUrl('http://127.0.0.1:3000/status')).toBe(true);
+    expect(isHttpOrHttpsUrl('HTTPS://EXAMPLE.COM')).toBe(true);
+    expect(isHttpOrHttpsUrl('mailto:test@example.com')).toBe(false);
+    expect(isHttpOrHttpsUrl('javascript:alert(1)')).toBe(false);
+    expect(isHttpOrHttpsUrl('data:text/html,hello')).toBe(false);
+    expect(isHttpOrHttpsUrl('/relative/path')).toBe(false);
   });
 
   it('normalizes relative proxy URLs against the configured server', () => {

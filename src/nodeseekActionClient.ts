@@ -1,4 +1,5 @@
 import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodeseekActions';
+import { type Fetcher } from './request';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 const NODESEEK_ACTION_HEADERS = {
@@ -18,7 +19,22 @@ const NODESEEK_ACTION_HEADERS = {
   'x-requested-with': 'XMLHttpRequest'
 };
 
-export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+function isFailedActionPayload(data: unknown) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+  const record = data as Record<string, unknown>;
+  if (record.success === false) {
+    return true;
+  }
+  if (typeof record.error === 'string' && record.error.trim()) {
+    return true;
+  }
+  if (record.success !== true && typeof record.message === 'string') {
+    return /high risk|risk|fail|error|invalid|csrf|unauthorized|forbidden|拒绝|失败|错误|风险|无效|登录/i.test(record.message);
+  }
+  return false;
+}
 
 export async function runNodeSeekAction({
   cookieHeader,
@@ -43,9 +59,21 @@ export async function runNodeSeekAction({
     },
     body: request.body
   });
-  const data = await response.json().catch(() => null);
+  let data: unknown = null;
+  let parsedJson = true;
+  try {
+    data = await response.json();
+  } catch {
+    parsedJson = false;
+  }
 
   if (!response.ok) {
+    throw new Error(nodeSeekActionErrorMessage(data, response.status));
+  }
+  if (!parsedJson) {
+    throw new Error('NodeSeek 返回内容格式不正确');
+  }
+  if (isFailedActionPayload(data)) {
     throw new Error(nodeSeekActionErrorMessage(data, response.status));
   }
 

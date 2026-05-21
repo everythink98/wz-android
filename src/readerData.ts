@@ -1,6 +1,8 @@
 import type { Category, FeedSource, Source, Topic } from './types';
 
 export const readerDataVersion = 1;
+export const MAX_HISTORY_RECORDS = 1000;
+export const MAX_PROGRESS_RECORDS = 1000;
 
 export interface TopicRecord {
   topic: Topic;
@@ -199,6 +201,14 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
   return next;
 }
 
+function limitRecordMap<T>(records: Record<string, T>, limit: number, getTime: (record: T) => string | undefined) {
+  return Object.fromEntries(
+    Object.entries(records)
+      .sort(([, left], [, right]) => dateValue(getTime(right)) - dateValue(getTime(left)))
+      .slice(0, limit)
+  );
+}
+
 function normalizeProgress(value: unknown): Record<string, ReadingProgressRecord> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -313,9 +323,9 @@ export function sanitizeReaderData(value: unknown): ReaderData {
   return {
     version: readerDataVersion,
     favorites: normalizeRecordMap(data.favorites),
-    history: normalizeRecordMap(data.history),
+    history: limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
     later: normalizeRecordMap(data.later),
-    progress: normalizeProgress(data.progress),
+    progress: limitRecordMap(normalizeProgress(data.progress), MAX_PROGRESS_RECORDS, (record) => record.updatedAt),
     subscriptions: normalizeSubscriptions(data.subscriptions),
     savedSearches: normalizeSavedSearches(data.savedSearches),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),

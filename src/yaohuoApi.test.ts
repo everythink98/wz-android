@@ -42,7 +42,7 @@ describe('Android direct yaohuo API', () => {
 
   it('checks login with Android-fetched html and does not send the cookie to the server', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<html>ok</html>'));
-    const serverFetcher = vi.fn(async () => new Response(JSON.stringify({
+    const serverFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response(JSON.stringify({
       source: 'yaohuo',
       ok: true,
       loginRequired: false,
@@ -65,7 +65,32 @@ describe('Android direct yaohuo API', () => {
     expect(serverFetcher).toHaveBeenCalledWith('http://127.0.0.1:3000/api/yaohuo/parse/check-login', expect.objectContaining({
       method: 'POST'
     }));
+    expect(JSON.parse(String(serverFetcher.mock.calls[0][1]?.body)).url).toBe('https://yaohuo.me/wapindex.aspx');
     expect(JSON.stringify(serverFetcher.mock.calls[0])).not.toContain('secret');
+  });
+
+  it('passes cancellation signals through direct yaohuo fetches and parser requests', async () => {
+    const controller = new AbortController();
+    const yaohuoFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response('<html>feed</html>'));
+    const serverFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response(JSON.stringify({
+      items: [],
+      errors: {}
+    })));
+
+    await getYaohuoFeedDirect({
+      serverUrl: 'http://127.0.0.1:3000',
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher,
+      serverFetcher,
+      signal: controller.signal
+    });
+
+    expect(yaohuoFetcher.mock.calls[0][1]).toEqual(expect.objectContaining({
+      signal: expect.any(AbortSignal)
+    }));
+    expect(serverFetcher.mock.calls[0][1]).toEqual(expect.objectContaining({
+      signal: expect.any(AbortSignal)
+    }));
   });
 
   it('fetches yaohuo topic and replies from Android before server parsing', async () => {

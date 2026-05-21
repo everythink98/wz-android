@@ -4,6 +4,8 @@ import {
   createEmptyReaderData,
   isFavorite,
   isLater,
+  MAX_HISTORY_RECORDS,
+  MAX_PROGRESS_RECORDS,
   mergeReaderData,
   recordHistory,
   sanitizeReaderData,
@@ -267,5 +269,32 @@ describe('Android reader data helpers', () => {
 
     expect(synced.favorites[topicKey(topic)]?.topic.title).toBe('NodeSeek topic');
     expect(JSON.stringify(synced)).not.toContain('yaohuo');
+  });
+
+  it('limits history and reading progress to the newest records', () => {
+    const history: Record<string, unknown> = {};
+    const progress: Record<string, unknown> = {};
+    for (let index = 0; index < MAX_HISTORY_RECORDS + 20; index += 1) {
+      const item = {
+        ...topic,
+        id: String(index),
+        title: `Topic ${index}`
+      };
+      const time = new Date(Date.UTC(2026, 4, 20, 0, index)).toISOString();
+      history[topicKey(item)] = { topic: item, savedAt: time };
+      progress[topicKey(item)] = { topic: item, percent: 50, scrollY: index, updatedAt: time };
+    }
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      history,
+      progress
+    });
+
+    expect(Object.keys(data.history)).toHaveLength(MAX_HISTORY_RECORDS);
+    expect(Object.keys(data.progress)).toHaveLength(MAX_PROGRESS_RECORDS);
+    expect(data.history['nodeseek:0']).toBeUndefined();
+    expect(data.progress['nodeseek:0']).toBeUndefined();
+    expect(data.history[`nodeseek:${MAX_HISTORY_RECORDS + 19}`]?.topic.title).toBe(`Topic ${MAX_HISTORY_RECORDS + 19}`);
   });
 });

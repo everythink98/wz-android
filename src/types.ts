@@ -62,7 +62,7 @@ export interface TopicDetail extends Topic {
 
 export interface FeedResponse {
   items: Topic[];
-  errors: Partial<Record<Source, string>>;
+  errors: Partial<Record<FeedSource, string>>;
   hasMore?: boolean;
   nextPage?: number | null;
   nextCursor?: string | null;
@@ -77,10 +77,10 @@ export interface RepliesResponse {
 
 export interface CategoriesResponse {
   items: Category[];
-  errors: Partial<Record<Source, string>>;
+  errors: Partial<Record<FeedSource, string>>;
 }
 
 export interface SearchResponse {
   items: Topic[];
-  errors: Partial<Record<Source, string>>;
+  errors: Partial<Record<FeedSource, string>>;
 }

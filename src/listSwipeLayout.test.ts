@@ -16,6 +16,8 @@ describe('Android topic list swipe layout', () => {
     expect(appSource).not.toContain('topicMarks');
     expect(appSource).not.toContain('toggleFavoritePress');
     expect(appSource).not.toContain('label={readerState.favorite ?');
+    expect(appSource).not.toContain('topicInlineAction');
+    expect(appSource).not.toContain('topicMetaPressable');
   });
 
   it('keeps topic row metadata as passive reading information', () => {

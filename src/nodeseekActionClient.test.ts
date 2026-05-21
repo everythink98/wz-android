@@ -54,4 +54,46 @@ describe('runNodeSeekAction', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  it('treats HTTP 200 NodeSeek error payloads as failed write actions', async () => {
+    const failedSuccessFetcher = vi.fn(async () => jsonResponse({
+      success: false,
+      message: '今日已签到'
+    }));
+
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher: failedSuccessFetcher
+    })).rejects.toThrow('今日已签到');
+
+    const errorFetcher = vi.fn(async () => jsonResponse({ error: 'csrf invalid' }));
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher: errorFetcher
+    })).rejects.toThrow('csrf invalid');
+
+    const messageFetcher = vi.fn(async () => jsonResponse({ message: 'high risk action' }));
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher: messageFetcher
+    })).rejects.toThrow('high risk action');
+  });
+
+  it('rejects HTTP 200 non-JSON action responses', async () => {
+    const fetcher = vi.fn(async () => new Response('<html>login</html>', {
+      status: 200,
+      headers: {
+        'content-type': 'text/html'
+      }
+    }));
+
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher
+    })).rejects.toThrow('NodeSeek 返回内容格式不正确');
+  });
 });

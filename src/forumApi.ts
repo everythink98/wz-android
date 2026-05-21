@@ -1,4 +1,5 @@
 import { normalizeServerUrl } from './syncClient';
+import { fetchWithTimeout, type Fetcher } from './request';
 import type {
   CategoriesResponse,
   FeedSource,
@@ -11,8 +12,12 @@ import type {
   TopicDetail
 } from './types';
 
-type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 type Validator<T> = (data: unknown) => data is T;
+interface RequestOptions {
+  fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
 
 const DATA_FORMAT_ERROR = '服务器返回数据格式不正确';
 const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
@@ -24,9 +29,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isString(value: unknown): value is string {
   return typeof value === 'string';
 }
+function isOptionalString(value: unknown) {
+  return value === undefined || typeof value === 'string';
+}
+
+function isOptionalNumber(value: unknown) {
+  return value === undefined || typeof value === 'number';
+}
+
+function isOptionalBoolean(value: unknown) {
+  return value === undefined || typeof value === 'boolean';
+}
+
+function isNullableNumber(value: unknown) {
+  return typeof value === 'number' || value === null;
+}
+
+function isOptionalNullableNumber(value: unknown) {
+  return value === undefined || isNullableNumber(value);
+}
+
+function isOptionalNullableString(value: unknown) {
+  return value === undefined || typeof value === 'string' || value === null;
+}
 
 function isSource(value: unknown): value is Source {
   return isString(value) && validSources.has(value as Source);
+}
+
+function isErrorMap(value: unknown) {
+  return isRecord(value)
+    && Object.entries(value).every(([source, message]) => isSource(source) && isString(message));
+}
+
+function isOptionalNumberArray(value: unknown) {
+  return value === undefined
+    || (Array.isArray(value) && value.every((item) => typeof item === 'number'));
+}
+
+function isVoteOption(value: unknown) {
+  return isRecord(value)
+    && isString(value.id)
+    && isString(value.label)
+    && isOptionalNumber(value.count);
+}
+
+function isOptionalVoteOptions(value: unknown) {
+  return value === undefined
+    || (Array.isArray(value) && value.every(isVoteOption));
 }
 
 function isTopic(value: unknown) {
@@ -39,7 +89,13 @@ function isTopic(value: unknown) {
     && isString(value.author)
     && isString(value.url)
     && isString(value.createdAt)
-    && typeof value.replyCount === 'number';
+    && typeof value.replyCount === 'number'
+    && isOptionalString(value.authorAvatar)
+    && isOptionalString(value.categoryId)
+    && isOptionalString(value.category)
+    && isOptionalString(value.lastReplyAt)
+    && isOptionalNumber(value.viewCount)
+    && isOptionalString(value.excerpt);
 }
 
 function isReply(value: unknown): value is Reply {
@@ -48,7 +104,16 @@ function isReply(value: unknown): value is Reply {
   }
   return isString(value.author)
     && isString(value.contentHtml)
-    && isString(value.createdAt);
+    && isString(value.createdAt)
+    && isOptionalString(value.authorId)
+    && isOptionalString(value.authorAvatar)
+    && isOptionalNumber(value.floor)
+    && isOptionalNumberArray(value.quotedFloors)
+    && isOptionalNumber(value.commentId)
+    && isOptionalNumber(value.upvoteCount)
+    && isOptionalNumber(value.likeCount)
+    && isOptionalBoolean(value.upvoted)
+    && isOptionalBoolean(value.liked);
 }
 
 function isCategory(value: unknown): value is Category {
@@ -57,15 +122,28 @@ function isCategory(value: unknown): value is Category {
   }
   return isSource(value.source)
     && isString(value.id)
-    && isString(value.name);
+    && isString(value.name)
+    && isOptionalString(value.slug)
+    && isOptionalString(value.description)
+    && isOptionalString(value.parentCategoryId)
+    && isOptionalNumber(value.topicCount);
 }
 
 const isFeedResponse: Validator<FeedResponse> = (data): data is FeedResponse => (
-  isRecord(data) && Array.isArray(data.items) && data.items.every(isTopic)
+  isRecord(data)
+    && Array.isArray(data.items)
+    && data.items.every(isTopic)
+    && isErrorMap(data.errors)
+    && isOptionalBoolean(data.hasMore)
+    && isOptionalNullableNumber(data.nextPage)
+    && isOptionalNullableString(data.nextCursor)
 );
 
 const isCategoriesResponse: Validator<CategoriesResponse> = (data): data is CategoriesResponse => (
-  isRecord(data) && Array.isArray(data.items) && data.items.every(isCategory)
+  isRecord(data)
+    && Array.isArray(data.items)
+    && data.items.every(isCategory)
+    && isErrorMap(data.errors)
 );
 
 const isTopicDetail: Validator<TopicDetail> = (data): data is TopicDetail => (
@@ -74,18 +152,35 @@ const isTopicDetail: Validator<TopicDetail> = (data): data is TopicDetail => (
     && isString(data.contentHtml)
     && Array.isArray(data.replies)
     && data.replies.every(isReply)
+    && isOptionalVoteOptions(data.voteOptions)
+    && isOptionalBoolean(data.replyHasMore)
+    && isOptionalNullableNumber(data.replyNextPage)
+    && isOptionalNullableNumber(data.replyNextOffset)
+    && isOptionalNumber(data.commentId)
+    && isOptionalNumber(data.upvoteCount)
+    && isOptionalNumber(data.likeCount)
+    && isOptionalBoolean(data.upvoted)
+    && isOptionalBoolean(data.liked)
 );
 
 const isRepliesResponse: Validator<RepliesResponse> = (data): data is RepliesResponse => (
-  isRecord(data) && Array.isArray(data.items) && data.items.every(isReply)
+  isRecord(data)
+    && Array.isArray(data.items)
+    && data.items.every(isReply)
+    && typeof data.hasMore === 'boolean'
+    && isNullableNumber(data.nextPage)
+    && isOptionalNullableNumber(data.nextOffset)
 );
 
 const isSearchResponse: Validator<SearchResponse> = (data): data is SearchResponse => (
-  isRecord(data) && Array.isArray(data.items) && data.items.every(isTopic)
+  isRecord(data)
+    && Array.isArray(data.items)
+    && data.items.every(isTopic)
+    && isErrorMap(data.errors)
 );
 
-async function fetchJson<T>(url: string, fetcher: Fetcher = fetch, validator?: Validator<T>, init?: RequestInit) {
-  const response = init ? await fetcher(url, init) : await fetcher(url);
+async function fetchJson<T>(url: string, validator?: Validator<T>, init?: RequestInit, options: RequestOptions = {}) {
+  const response = await fetchWithTimeout(url, init, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(data.message || data.error || `HTTP ${response.status}`);
@@ -98,12 +193,33 @@ async function fetchJson<T>(url: string, fetcher: Fetcher = fetch, validator?: V
   return data as T;
 }
 
-function postJson<T>(url: string, payload: Record<string, unknown>, fetcher: Fetcher = fetch, validator?: Validator<T>) {
-  return fetchJson<T>(url, fetcher, validator, {
+function postJson<T>(url: string, payload: Record<string, unknown>, validator?: Validator<T>, options: RequestOptions = {}) {
+  return fetchJson<T>(url, validator, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload)
-  });
+  }, options);
+}
+
+function sanitizeYaohuoParserUrl(url?: string) {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(url);
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (isYaohuoSessionParam(key)) {
+        parsed.searchParams.delete(key);
+      }
+    }
+    return parsed.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function isYaohuoSessionParam(key: string) {
+  return ['sid', 'sidyaohuo', 'session', 'sessionid', 'token'].includes(key.toLowerCase());
 }
 
 export function getFeed({
@@ -114,7 +230,9 @@ export function getFeed({
   cursor,
   category,
   nocache = false,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   source: FeedSource;
@@ -124,6 +242,8 @@ export function getFeed({
   category?: string;
   nocache?: boolean;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const params = new URLSearchParams({
     source,
@@ -141,25 +261,30 @@ export function getFeed({
   }
   return fetchJson<FeedResponse>(
     `${normalizeServerUrl(serverUrl)}/api/feed?${params.toString()}`,
-    fetcher,
-    isFeedResponse
+    isFeedResponse,
+    undefined,
+    { fetcher, signal, timeoutMs }
   );
 }
-
 export function getCategories({
   serverUrl,
   source = 'all',
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   source?: FeedSource;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const params = new URLSearchParams({ source });
   return fetchJson<CategoriesResponse>(
     `${normalizeServerUrl(serverUrl)}/api/categories?${params.toString()}`,
-    fetcher,
-    isCategoriesResponse
+    isCategoriesResponse,
+    undefined,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -168,13 +293,17 @@ export function getTopic({
   source,
   id,
   nocache = false,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   source: Source;
   id: string;
   nocache?: boolean;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const params = new URLSearchParams();
   if (nocache) {
@@ -183,8 +312,9 @@ export function getTopic({
   const query = params.toString() ? `?${params.toString()}` : '';
   return fetchJson<TopicDetail>(
     `${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}${query}`,
-    fetcher,
-    isTopicDetail
+    isTopicDetail,
+    undefined,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -196,7 +326,9 @@ export function getReplies({
   limit = 20,
   offset,
   nocache = false,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   source: Source;
@@ -206,6 +338,8 @@ export function getReplies({
   offset?: number | null;
   nocache?: boolean;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const params = new URLSearchParams({
     page: String(page),
@@ -219,8 +353,9 @@ export function getReplies({
   }
   return fetchJson<RepliesResponse>(
     `${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies?${params.toString()}`,
-    fetcher,
-    isRepliesResponse
+    isRepliesResponse,
+    undefined,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -230,7 +365,9 @@ export function getReply({
   id,
   floor,
   nocache = false,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   source: Source;
@@ -238,6 +375,8 @@ export function getReply({
   floor: number;
   nocache?: boolean;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const params = new URLSearchParams();
   if (nocache) {
@@ -246,8 +385,9 @@ export function getReply({
   const query = params.toString() ? `?${params.toString()}` : '';
   return fetchJson<Reply>(
     `${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies/${encodeURIComponent(String(floor))}${query}`,
-    fetcher,
-    isReply
+    isReply,
+    undefined,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -256,13 +396,17 @@ export function searchTopics({
   source,
   query,
   limit = 20,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   source: FeedSource;
   query: string;
   limit?: number;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const params = new URLSearchParams({
     q: query.trim(),
@@ -271,8 +415,9 @@ export function searchTopics({
   });
   return fetchJson<SearchResponse>(
     `${normalizeServerUrl(serverUrl)}/api/search?${params.toString()}`,
-    fetcher,
-    isSearchResponse
+    isSearchResponse,
+    undefined,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -300,7 +445,9 @@ export function parseYaohuoFeedHtml({
   url,
   page = 1,
   limit = 20,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   html: string;
@@ -309,18 +456,20 @@ export function parseYaohuoFeedHtml({
   page?: number;
   limit?: number;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   return postJson<FeedResponse>(
     `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/feed`,
     {
       html,
       category,
-      url,
+      url: sanitizeYaohuoParserUrl(url),
       page,
       limit
     },
-    fetcher,
-    isFeedResponse
+    isFeedResponse,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -330,7 +479,9 @@ export function parseYaohuoSearchHtml({
   url,
   page = 1,
   limit = 20,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   html: string;
@@ -338,17 +489,19 @@ export function parseYaohuoSearchHtml({
   page?: number;
   limit?: number;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   return postJson<SearchResponse>(
     `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/search`,
     {
       html,
-      url,
+      url: sanitizeYaohuoParserUrl(url),
       page,
       limit
     },
-    fetcher,
-    isSearchResponse
+    isSearchResponse,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -357,23 +510,27 @@ export function parseYaohuoTopicHtml({
   html,
   id,
   url,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   html: string;
   id: string;
   url?: string;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   return postJson<TopicDetail>(
     `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/topic`,
     {
       html,
       id,
-      url
+      url: sanitizeYaohuoParserUrl(url)
     },
-    fetcher,
-    isTopicDetail
+    isTopicDetail,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -383,7 +540,9 @@ export function parseYaohuoRepliesHtml({
   url,
   page,
   limit = 20,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   html: string;
@@ -391,17 +550,19 @@ export function parseYaohuoRepliesHtml({
   page: number;
   limit?: number;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   return postJson<RepliesResponse>(
     `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/replies`,
     {
       html,
-      url,
+      url: sanitizeYaohuoParserUrl(url),
       page,
       limit
     },
-    fetcher,
-    isRepliesResponse
+    isRepliesResponse,
+    { fetcher, signal, timeoutMs }
   );
 }
 
@@ -409,40 +570,24 @@ export function parseYaohuoLoginHtml({
   serverUrl,
   html,
   url,
-  fetcher
+  fetcher,
+  signal,
+  timeoutMs
 }: {
   serverUrl: string;
   html: string;
   url?: string;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   return postJson<YaohuoLoginCheckResponse>(
     `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/check-login`,
     {
       html,
-      url
+      url: sanitizeYaohuoParserUrl(url)
     },
-    fetcher,
-    isYaohuoLoginCheckResponse
+    isYaohuoLoginCheckResponse,
+    { fetcher, signal, timeoutMs }
   );
-}
-
-export function getNodeSeekFeed(options: Omit<Parameters<typeof getFeed>[0], 'source'>) {
-  return getFeed({ ...options, source: 'nodeseek' });
-}
-
-export function getNodeSeekCategories(options: Omit<Parameters<typeof getCategories>[0], 'source'>) {
-  return getCategories({ ...options, source: 'nodeseek' });
-}
-
-export function getNodeSeekTopic(options: Omit<Parameters<typeof getTopic>[0], 'source'>) {
-  return getTopic({ ...options, source: 'nodeseek' });
-}
-
-export function getNodeSeekReplies(options: Omit<Parameters<typeof getReplies>[0], 'source'>) {
-  return getReplies({ ...options, source: 'nodeseek' });
-}
-
-export function getNodeSeekSearch(options: Omit<Parameters<typeof searchTopics>[0], 'source'>) {
-  return searchTopics({ ...options, source: 'nodeseek' });
 }

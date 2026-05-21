@@ -1,4 +1,5 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
+import { type Fetcher } from './request';
 
 const YAOHUO_BASE_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
@@ -15,8 +16,6 @@ const YAOHUO_ACTION_HEADERS = {
   'sec-fetch-site': 'same-origin',
   'user-agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
 };
-
-export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
   const error = new Error(

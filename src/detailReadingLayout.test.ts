@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+const themeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'theme.ts'), 'utf8');
 
 describe('Android topic detail reading layout', () => {
   it('uses render-html whitespace controls for cleaner native HTML output', () => {
@@ -46,16 +47,16 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('keeps native controls large enough for touch use', () => {
-    expect(appSource).toMatch(/pill:\s*\{[\s\S]*minHeight:\s*40/);
-    expect(appSource).toMatch(/tab:\s*\{[\s\S]*minHeight:\s*40/);
-    expect(appSource).toMatch(/buttonIconOnly:\s*\{[\s\S]*width:\s*44[\s\S]*minHeight:\s*44/);
-    expect(appSource).toMatch(/buttonTiny:\s*\{[\s\S]*minHeight:\s*40/);
+    expect(themeSource).toMatch(/pill:\s*\{[\s\S]*minHeight:\s*40/);
+    expect(themeSource).toMatch(/tab:\s*\{[\s\S]*minHeight:\s*40/);
+    expect(themeSource).toMatch(/buttonIconOnly:\s*\{[\s\S]*width:\s*44[\s\S]*minHeight:\s*44/);
+    expect(themeSource).toMatch(/buttonTiny:\s*\{[\s\S]*minHeight:\s*40/);
   });
 
   it('ties selected backgrounds and login panels to the current theme', () => {
-    expect(appSource).toContain('mist: alphaColor(palette.light, 0.09)');
-    expect(appSource).toContain('mist: alphaColor(palette.dark, 0.18)');
-    expect(appSource).toContain('const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)))');
-    expect(appSource).toMatch(/webViewShell:\s*\{[\s\S]*height:\s*loginWebViewHeight[\s\S]*backgroundColor:\s*theme\.surface/);
+    expect(themeSource).toContain('mist: alphaColor(palette.light, 0.09)');
+    expect(themeSource).toContain('mist: alphaColor(palette.dark, 0.18)');
+    expect(themeSource).toContain('const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)))');
+    expect(themeSource).toMatch(/webViewShell:\s*\{[\s\S]*height:\s*loginWebViewHeight[\s\S]*backgroundColor:\s*theme\.surface/);
   });
 });

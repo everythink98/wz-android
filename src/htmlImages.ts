@@ -31,6 +31,19 @@ export function isPreviewableImageUrl(url: string): boolean {
   return /\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#].*)?$/i.test(clean);
 }
 
+export function isHttpOrHttpsUrl(url: string): boolean {
+  const clean = decodeHtmlAttribute(url).trim();
+  if (!clean) {
+    return false;
+  }
+  try {
+    const protocol = new URL(clean).protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeImagePreviewUrl(url: string, serverUrl: string): string {
   const clean = decodeHtmlAttribute(url).trim();
   if (/^(?:https?:|data:)/i.test(clean)) {
