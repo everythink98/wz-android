@@ -43,12 +43,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Clock3,
   ExternalLink,
   Heart,
   Home,
   LayoutGrid,
   LogIn,
+  MessageCircle,
   MoreHorizontal,
   RefreshCw,
   Search,
@@ -66,12 +66,27 @@ import {
 } from './src/nodeseekActions';
 import { runNodeSeekAction } from './src/nodeseekActionClient';
 import {
+  buildYaohuoFavoriteRequest,
+  buildYaohuoReplyRequest,
+  buildYaohuoVoteRequest,
+  extractYaohuoSid,
+  type YaohuoActionRequest
+} from './src/yaohuoActions';
+import { runYaohuoAction } from './src/yaohuoActionClient';
+import {
   buildCookieHeader,
   canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
   summarizeNodeSeekCookies,
   type NativeCookie
 } from './src/nodeseekCookies';
+import {
+  buildYaohuoCookieHeader,
+  canStoreYaohuoCookieHeader,
+  mergeYaohuoCookies,
+  summarizeYaohuoCookies,
+  type YaohuoNativeCookie
+} from './src/yaohuoCookies';
 import {
   getCategories,
   getFeed,
@@ -85,13 +100,12 @@ import {
   categoryKey,
   createEmptyReaderData,
   isFavorite,
-  isLater,
   isSubscribed,
   mergeReaderData,
   recordHistory,
   sanitizeReaderData,
+  sanitizeReaderDataForSync,
   toggleFavorite,
-  toggleLater,
   toggleSubscription,
   topicKey,
   updateProgress,
@@ -100,12 +114,21 @@ import {
 } from './src/readerData';
 import { loadReaderData, saveReaderData } from './src/readerDataStore';
 import { normalizeServerUrl, readReaderData as pullReaderData, writeReaderData as pushReaderData } from './src/syncClient';
-import type { Category, FeedSource, Reply, Source, Topic, TopicDetail } from './src/types';
+import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source, Topic, TopicDetail } from './src/types';
 import { createImagePreviewList, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { shouldShowFeedFloatingActions } from './src/feedFloatingActions';
+import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
+import {
+  checkYaohuoLoginDirect,
+  getYaohuoFeedDirect,
+  getYaohuoRepliesDirect,
+  getYaohuoTopicDirect,
+  searchYaohuoDirect
+} from './src/yaohuoApi';
 
 type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
+type HtmlAllowedStyles = NonNullable<ComponentProps<typeof RenderHTML>['allowedStyles']>;
 type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['ignoredStyles']>;
 type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>;
 type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
@@ -113,10 +136,15 @@ type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles'
 
 const NODESEEK_URL = 'https://www.nodeseek.com';
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
+const YAOHUO_URL = 'https://yaohuo.me';
+const YAOHUO_LOGIN_URL = `${YAOHUO_URL}/waplogin.aspx?siteid=1000`;
+const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
+const YAOHUO_DEFAULT_CLASS_ID = '177';
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
+const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 const SERVER_URL_STORAGE_KEY = 'server-url';
 const SYNC_CODE_STORAGE_KEY = 'sync-code';
-const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek'];
+const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
 const FEED_LIST_PERFORMANCE_PROPS = {
@@ -140,6 +168,8 @@ const REPLY_LIST_PERFORMANCE_PROPS = {
   updateCellsBatchingPeriod: 50,
   windowSize: 7
 };
+const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'iframe', 'noscript'];
+const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 
 const NODESEEK_LOGIN_PROBE_SCRIPT = `
 (() => {
@@ -156,10 +186,10 @@ true;
 `;
 
 type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic';
-type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite' | 'later' | 'subscribed' | 'active' | 'hot';
+type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite' | 'subscribed' | 'active' | 'hot';
 type SearchScope = 'remote' | 'local';
 type SearchSort = 'relevance' | 'time' | 'reply' | 'view';
-type LibraryTab = 'favorites' | 'later' | 'history';
+type LibraryTab = 'favorites' | 'history';
 type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
 
 interface ReaderTheme {
@@ -179,6 +209,12 @@ interface ReaderTheme {
   success: string;
 }
 
+interface YaohuoReplyTarget {
+  floor: number;
+  author?: string;
+  authorId?: string;
+}
+
 const MemoizedHtmlContent = memo(HtmlContent);
 
 const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
@@ -187,9 +223,11 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
     || previous.onInteract !== next.onInteract
+    || previous.onReplyToFloor !== next.onReplyToFloor
     || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
     || previous.reply !== next.reply
     || previous.replyFloor !== next.replyFloor
+    || previous.source !== next.source
     || previous.styles !== next.styles
     || previous.theme !== next.theme
   ) {
@@ -219,12 +257,12 @@ const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.theme === next.theme
   && previous.onOpenTopic === next.onOpenTopic
   && previous.onToggleFavorite === next.onToggleFavorite
-  && previous.onToggleLater === next.onToggleLater
   && topicListItemStatesEqual(previous.readerState, next.readerState)
 ));
 
 export default function App() {
   const webViewRef = useRef<WebView>(null);
+  const yaohuoWebViewRef = useRef<WebView>(null);
   const webLoginDetectedRef = useRef(false);
   const saveQueueRef = useRef(Promise.resolve());
   const feedRequestIdRef = useRef(0);
@@ -239,12 +277,15 @@ export default function App() {
   const { width } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
+  const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [, setStatus] = useState('填写服务器地址后即可读取三站；NodeSeek Cookie 只保存在本机。');
   const [cookieNames, setCookieNames] = useState<string[]>([]);
+  const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
   const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
+  const [hasYaohuoCookie, setHasYaohuoCookie] = useState(false);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [serverUrl, setServerUrl] = useState('http://10.0.2.2:3000');
   const [syncCode, setSyncCode] = useState('');
@@ -276,11 +317,13 @@ export default function App() {
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
+  const [yaohuoReplyTarget, setYaohuoReplyTarget] = useState<YaohuoReplyTarget | null>(null);
   const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [loadedQuotedReplies, setLoadedQuotedReplies] = useState<Record<number, Reply>>({});
   const [loadingQuotedFloors, setLoadingQuotedFloors] = useState<Record<string, boolean>>({});
   const [showLoginPanel, setShowLoginPanel] = useState(false);
+  const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
   const [showCategoriesPanel, setShowCategoriesPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [healthSummary, setHealthSummary] = useState('');
@@ -294,17 +337,21 @@ export default function App() {
   const htmlBaseStyle = useMemo<HtmlBaseStyle>(() => ({
     color: theme.ink,
     fontFamily: fontFamilyValue(readerData.settings.fontFamily),
-    fontSize: Math.round(15 * readerData.settings.fontScale),
-    lineHeight: Math.round(15 * readerData.settings.fontScale * lineHeightMultiplier(readerData.settings.lineHeight))
+    fontSize: Math.round(16 * readerData.settings.fontScale),
+    lineHeight: Math.round(16 * readerData.settings.fontScale * lineHeightMultiplier(readerData.settings.lineHeight))
   }), [readerData.settings.fontFamily, readerData.settings.fontScale, readerData.settings.lineHeight, theme.ink]);
-  const htmlTagsStyles = useMemo<HtmlTagsStyles>(() => ({
+  const htmlTagsStyles = useMemo<HtmlTagsStyles>(() => {
+    const htmlParagraph = {
+      color: theme.ink,
+      marginBottom: 10,
+      marginTop: 6
+    };
+    return {
     body: {
       color: theme.ink,
       backgroundColor: 'transparent'
     },
-    p: {
-      color: theme.ink
-    },
+    p: htmlParagraph,
     div: {
       color: theme.ink
     },
@@ -314,17 +361,23 @@ export default function App() {
     h1: {
       color: theme.ink,
       fontWeight: '700',
-      lineHeight: Math.round(26 * readerData.settings.fontScale)
+      lineHeight: Math.round(28 * readerData.settings.fontScale),
+      marginBottom: 8,
+      marginTop: 18
     },
     h2: {
       color: theme.ink,
       fontWeight: '700',
-      lineHeight: Math.round(24 * readerData.settings.fontScale)
+      lineHeight: Math.round(26 * readerData.settings.fontScale),
+      marginBottom: 8,
+      marginTop: 18
     },
     h3: {
       color: theme.ink,
       fontWeight: '600',
-      lineHeight: Math.round(22 * readerData.settings.fontScale)
+      lineHeight: Math.round(24 * readerData.settings.fontScale),
+      marginBottom: 6,
+      marginTop: 16
     },
     h4: {
       color: theme.ink,
@@ -354,30 +407,37 @@ export default function App() {
       color: theme.ink
     },
     li: {
-      color: theme.ink
+      color: theme.ink,
+      marginBottom: 4
     },
     ul: {
-      color: theme.ink
+      color: theme.ink,
+      marginBottom: 10,
+      marginTop: 8
     },
     ol: {
-      color: theme.ink
+      color: theme.ink,
+      marginBottom: 10,
+      marginTop: 8
     },
     blockquote: {
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
-      borderLeftWidth: 2,
-      borderLeftColor: theme.lineStrong,
       color: theme.muted,
-      paddingHorizontal: 10,
-      paddingVertical: 8
+      marginBottom: 12,
+      marginTop: 12,
+      paddingHorizontal: 13,
+      paddingVertical: 11
     },
     pre: {
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       borderRadius: 8,
-      padding: 10
+      marginBottom: 12,
+      marginTop: 12,
+      padding: 12
     },
     code: {
       backgroundColor: 'transparent',
@@ -400,7 +460,8 @@ export default function App() {
       color: theme.ink,
       borderColor: theme.line
     }
-  }), [readerData.settings.fontScale, theme]);
+    };
+  }, [readerData.settings.fontScale, theme]);
   const htmlIgnoredStyles = useMemo<HtmlIgnoredStyles>(() => [
     'backgroundColor',
     'borderTopColor',
@@ -411,7 +472,7 @@ export default function App() {
     'outlineColor',
     'textDecorationColor'
   ], []);
-  const contentWidth = Math.min(width - 32, contentWidthValue(readerData.settings.contentWidth));
+  const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
 
   const loginState = useMemo(() => {
     if (webLoginUserId) {
@@ -426,9 +487,19 @@ export default function App() {
     return `已检测 ${cookieNames.length} 个 Cookie：${cookieNames.join(', ')}`;
   }, [cookieNames, hasNodeSeekCookie, webLoginUserId]);
 
+  const yaohuoLoginState = useMemo(() => {
+    if (!hasYaohuoCookie && yaohuoCookieNames.length === 0) {
+      return '未检测到登录 Cookie';
+    }
+    if (yaohuoCookieNames.length === 0) {
+      return '已保存妖火 Cookie';
+    }
+    return `已检测 ${yaohuoCookieNames.length} 个 Cookie：${yaohuoCookieNames.join(', ')}`;
+  }, [hasYaohuoCookie, yaohuoCookieNames]);
+
   const shownFeedItems = useMemo(
-    () => applyFeedFilter(feedItems, readerData, readingFilter),
-    [feedItems, readerData, readingFilter]
+    () => applyFeedFilter(feedItems, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
+    [feedItems, feedSource, readerData, readingFilter]
   );
   const libraryTopics = useMemo(
     () => recordsToTopics(readerData[libraryTab]),
@@ -562,11 +633,12 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      const [savedReaderData, savedServerUrl, savedSyncCode, savedCookie] = await Promise.all([
+      const [savedReaderData, savedServerUrl, savedSyncCode, savedCookie, savedYaohuoCookie] = await Promise.all([
         loadReaderData(),
         SecureStore.getItemAsync(SERVER_URL_STORAGE_KEY),
         SecureStore.getItemAsync(SYNC_CODE_STORAGE_KEY),
-        SecureStore.getItemAsync(COOKIE_STORAGE_KEY)
+        SecureStore.getItemAsync(COOKIE_STORAGE_KEY),
+        SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY)
       ]);
       setReaderData(savedReaderData);
       if (savedServerUrl) {
@@ -578,6 +650,10 @@ export default function App() {
       if (savedCookie) {
         setHasNodeSeekCookie(true);
         notify('已找到本机保存的 NodeSeek Cookie。');
+      }
+      if (savedYaohuoCookie) {
+        setHasYaohuoCookie(true);
+        notify('已找到本机保存的妖火 Cookie。');
       }
     })().catch((error) => notify(errorMessage(error)));
   }, [notify]);
@@ -594,15 +670,37 @@ export default function App() {
     }
   }, [notify, serverUrl, syncCode]);
 
+  const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source) => {
+    if (source !== 'all' && source !== 'yaohuo') {
+      return undefined;
+    }
+    const cookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+    setHasYaohuoCookie(Boolean(cookie));
+    return cookie || undefined;
+  }, []);
+
+  const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
+    setScreen('more');
+    setShowYaohuoLoginPanel(true);
+    notify(message);
+  }, [notify]);
+
   const loadCategories = useCallback(async () => {
     if (!serverUrl.trim()) {
       return;
     }
     try {
       const data = await getCategories({ serverUrl, source: 'all' });
-      setCategories(data.items);
-      const errors = Object.entries(data.errors || {});
+      const yaohuoData = await getCategories({ serverUrl, source: 'yaohuo' });
+      setCategories(mergeCategories(data.items, yaohuoData.items));
+      const errors = Object.entries({
+        ...(data.errors || {}),
+        ...(yaohuoData.errors || {})
+      });
       if (errors.length) {
+        if (errors.some(([source]) => source === 'yaohuo')) {
+          setHasYaohuoCookie(false);
+        }
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
     } catch (error) {
@@ -629,6 +727,11 @@ export default function App() {
       notify('请输入服务器地址');
       return;
     }
+    const yaohuoCookie = await loadYaohuoCookieForSource(source);
+    if (source === 'yaohuo' && !yaohuoCookie) {
+      showYaohuoLogin();
+      return;
+    }
     if (feedLoadingRef.current && (!reset || nocache)) {
       return;
     }
@@ -642,15 +745,44 @@ export default function App() {
     }
     setBusy(true);
     try {
-      const data = await getFeed({
-        serverUrl,
-        source,
-        page,
-        cursor,
-        limit: 30,
-        category: category || undefined,
-        nocache
-      });
+      let data = source === 'yaohuo'
+        ? await getYaohuoFeedDirect({
+          serverUrl,
+          yaohuoCookie,
+          page,
+          limit: 30,
+          category: category || undefined
+        })
+        : await getFeed({
+          serverUrl,
+          source,
+          page,
+          cursor,
+          limit: 30,
+          category: category || undefined,
+          nocache
+        });
+      if (source === 'all' && yaohuoCookie) {
+        try {
+          const yaohuoData = await getYaohuoFeedDirect({
+            serverUrl,
+            yaohuoCookie,
+            page,
+            limit: 30
+          });
+          data = mergeFeedResponses(data, yaohuoData);
+        } catch (error) {
+          if (isYaohuoLoginRequiredError(error)) {
+            setHasYaohuoCookie(false);
+            notify('妖火登录已失效，请重新登录。');
+          } else {
+            data = mergeFeedResponses(data, {
+              items: [],
+              errors: { yaohuo: errorMessage(error) }
+            });
+          }
+        }
+      }
       if (requestId !== feedRequestIdRef.current) {
         return;
       }
@@ -660,12 +792,20 @@ export default function App() {
       setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
+        if (errors.some(([sourceName]) => sourceName === 'yaohuo')) {
+          setHasYaohuoCookie(false);
+        }
         notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
       } else {
         notify(category ? `已读取 ${sourceLabel(source)}「${category}」` : `已读取 ${sourceLabel(source)}主题`);
       }
     } catch (error) {
       if (requestId === feedRequestIdRef.current) {
+        if (isYaohuoLoginRequiredError(error)) {
+          setHasYaohuoCookie(false);
+          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          return;
+        }
         notify(errorMessage(error));
       }
     } finally {
@@ -676,7 +816,7 @@ export default function App() {
         feedLoadingRef.current = false;
       }
     }
-  }, [categoryFilter, feedSource, notify, serverUrl]);
+  }, [categoryFilter, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
 
   useEffect(() => {
     void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter });
@@ -712,19 +852,50 @@ export default function App() {
         setSearchItems(searchLocal(readerData, query, searchSource));
         notify('本地搜索完成');
       } else {
-        const data = await searchTopics({ serverUrl, query, source: searchSource, limit: 30 });
+        const yaohuoCookie = await loadYaohuoCookieForSource(searchSource);
+        if (searchSource === 'yaohuo' && !yaohuoCookie) {
+          showYaohuoLogin();
+          return;
+        }
+        let data = searchSource === 'yaohuo'
+          ? await searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie })
+          : await searchTopics({ serverUrl, query, source: searchSource, limit: 30 });
+        if (searchSource === 'all' && yaohuoCookie) {
+          try {
+            const yaohuoData = await searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie });
+            data = mergeSearchResponses(data, yaohuoData);
+          } catch (error) {
+            if (isYaohuoLoginRequiredError(error)) {
+              setHasYaohuoCookie(false);
+              notify('妖火登录已失效，请重新登录。');
+            } else {
+              data = mergeSearchResponses(data, {
+                items: [],
+                errors: { yaohuo: errorMessage(error) }
+              });
+            }
+          }
+        }
         if (requestId !== searchRequestIdRef.current) {
           return;
         }
         setSearchItems(data.items);
         commitReaderData((current) => addSavedSearch(current, query, searchSource));
         const errors = Object.entries(data.errors || {});
+        if (errors.some(([sourceName]) => sourceName === 'yaohuo')) {
+          setHasYaohuoCookie(false);
+        }
         notify(errors.length
           ? errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；')
           : `搜索完成：${data.items.length} 条结果`);
       }
     } catch (error) {
       if (requestId === searchRequestIdRef.current) {
+        if (isYaohuoLoginRequiredError(error)) {
+          setHasYaohuoCookie(false);
+          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          return;
+        }
         notify(errorMessage(error));
       }
     } finally {
@@ -732,9 +903,14 @@ export default function App() {
         setBusy(false);
       }
     }
-  }, [commitReaderData, notify, readerData, searchQuery, searchScope, searchSource, serverUrl]);
+  }, [commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
+    const yaohuoCookie = await loadYaohuoCookieForSource(topic.source);
+    if (topic.source === 'yaohuo' && !yaohuoCookie) {
+      showYaohuoLogin();
+      return;
+    }
     if (screen !== 'topic') {
       topicReturnScreenRef.current = screen;
     }
@@ -746,6 +922,7 @@ export default function App() {
     setTopicReplies([]);
     setReplyContent('');
     setReplyComposerOpen(false);
+    setYaohuoReplyTarget(null);
     setReplyFilter('all');
     setExpandedQuotes({});
     setLoadedQuotedReplies({});
@@ -753,7 +930,9 @@ export default function App() {
     setScreen('topic');
     setBusy(true);
     try {
-      const detail = await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache });
+      const detail = topic.source === 'yaohuo'
+        ? await getYaohuoTopicDirect({ serverUrl, topic, yaohuoCookie, replyLimit: 30 })
+        : await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache });
       if (requestId !== topicRequestIdRef.current) {
         return;
       }
@@ -772,6 +951,11 @@ export default function App() {
       if (requestId === topicRequestIdRef.current) {
         const message = errorMessage(error);
         setTopicError(message);
+        if (isYaohuoLoginRequiredError(error)) {
+          setHasYaohuoCookie(false);
+          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          return;
+        }
         notify(message);
       }
     } finally {
@@ -779,11 +963,16 @@ export default function App() {
         setBusy(false);
       }
     }
-  }, [commitReaderData, notify, screen, serverUrl]);
+  }, [commitReaderData, loadYaohuoCookieForSource, notify, screen, serverUrl, showYaohuoLogin]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail || !replyNextPage || loadingMoreRepliesRef.current) {
+      return;
+    }
+    const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
+    if (detail.source === 'yaohuo' && !yaohuoCookie) {
+      showYaohuoLogin();
       return;
     }
     const requestTopicKey = topicKey(detail);
@@ -791,14 +980,23 @@ export default function App() {
     setLoadingMoreReplies(true);
     setBusy(true);
     try {
-      const data = await getReplies({
-        serverUrl,
-        source: detail.source,
-        id: detail.id,
-        page: replyNextPage,
-        limit: 30,
-        offset: replyNextOffset
-      });
+      const data = detail.source === 'yaohuo'
+        ? await getYaohuoRepliesDirect({
+          serverUrl,
+          id: detail.id,
+          categoryId: detail.categoryId,
+          page: replyNextPage,
+          limit: 30,
+          yaohuoCookie
+        })
+        : await getReplies({
+          serverUrl,
+          source: detail.source,
+          id: detail.id,
+          page: replyNextPage,
+          limit: 30,
+          offset: replyNextOffset
+        });
       if (currentTopicKeyRef.current !== requestTopicKey) {
         return;
       }
@@ -809,6 +1007,11 @@ export default function App() {
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey) {
+        if (isYaohuoLoginRequiredError(error)) {
+          setHasYaohuoCookie(false);
+          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          return;
+        }
         notify(errorMessage(error));
       }
     } finally {
@@ -818,7 +1021,7 @@ export default function App() {
         setBusy(false);
       }
     }
-  }, [notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, topicDetail]);
+  }, [loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, showYaohuoLogin, topicDetail]);
 
   const refreshTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
@@ -954,6 +1157,40 @@ export default function App() {
     }
   }, [notify, probeLoginPage]);
 
+  const checkYaohuoCookie = useCallback(async () => {
+    setChecking(true);
+    try {
+      await CookieManager.flush();
+      const cookieMaps = await Promise.all(YAOHUO_COOKIE_URLS.map(async (url) => CookieManager.get(url)));
+      const typedCookies = mergeYaohuoCookies(...cookieMaps as Array<Record<string, YaohuoNativeCookie>>);
+      const summary = summarizeYaohuoCookies(typedCookies);
+      const cookieHeader = buildYaohuoCookieHeader(typedCookies);
+      setYaohuoCookieNames(summary.names);
+      if (!canStoreYaohuoCookieHeader(typedCookies) || !cookieHeader) {
+        notify('没有检测到明确的妖火登录 Cookie。请确认已经登录后再试。');
+        return;
+      }
+      const loginState = await checkYaohuoLoginDirect({ serverUrl, yaohuoCookie: cookieHeader });
+      if (loginState.loginRequired || !loginState.ok) {
+        setHasYaohuoCookie(false);
+        notify(loginState.message || '妖火登录已失效，请重新登录。');
+        return;
+      }
+      await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);
+      setHasYaohuoCookie(true);
+      notify('已检测到妖火登录 Cookie，已保存在本机。');
+    } catch (error) {
+      if (isYaohuoLoginRequiredError(error)) {
+        setHasYaohuoCookie(false);
+        notify('妖火登录已失效，请重新登录。');
+        return;
+      }
+      notify(errorMessage(error));
+    } finally {
+      setChecking(false);
+    }
+  }, [notify, serverUrl]);
+
   const clearLogin = useCallback(async () => {
     await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
     try {
@@ -967,6 +1204,13 @@ export default function App() {
     setCookieNames([]);
     setWebLoginUserId(null);
     notify('已清除本机保存的 NodeSeek Cookie。');
+  }, [notify]);
+
+  const clearYaohuoLogin = useCallback(async () => {
+    await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+    setHasYaohuoCookie(false);
+    setYaohuoCookieNames([]);
+    notify('已清除本机保存的妖火 Cookie。');
   }, [notify]);
 
   const runNodeSeekRequest = useCallback(async (
@@ -998,13 +1242,70 @@ export default function App() {
     }
   }, [hasNodeSeekCookie, notify, openTopic, topicDetail]);
 
+  const runYaohuoRequest = useCallback(async (
+    requestFactory: (cookieHeader: string) => YaohuoActionRequest,
+    success: string,
+    options: { refreshTopic?: boolean } = {}
+  ) => {
+    const cookieHeader = await loadYaohuoCookieForSource('yaohuo');
+    if (!cookieHeader) {
+      showYaohuoLogin();
+      return false;
+    }
+    setActionBusy(true);
+    try {
+      const result = await runYaohuoAction({
+        cookieHeader,
+        request: requestFactory(cookieHeader)
+      });
+      notify(result.message === '操作已提交' ? success : result.message);
+      if (options.refreshTopic !== false && topicDetail?.source === 'yaohuo') {
+        await openTopic(topicDetail, true);
+      }
+      return true;
+    } catch (error) {
+      if (isYaohuoLoginRequiredError(error)) {
+        setHasYaohuoCookie(false);
+        showYaohuoLogin(errorMessage(error));
+        return false;
+      }
+      notify(errorMessage(error));
+      return false;
+    } finally {
+      setActionBusy(false);
+    }
+  }, [loadYaohuoCookieForSource, notify, openTopic, showYaohuoLogin, topicDetail]);
+
   const submitReply = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'nodeseek') {
+    if (!detail || (detail.source !== 'nodeseek' && detail.source !== 'yaohuo')) {
       return;
     }
     if (!replyContent.trim()) {
       notify('请输入回复内容');
+      return;
+    }
+    if (detail.source === 'yaohuo') {
+      if (yaohuoReplyTarget && !yaohuoReplyTarget.authorId) {
+        notify('当前楼层缺少用户 id，刷新主题后再试。');
+        return;
+      }
+      const submitted = await runYaohuoRequest(
+        (cookieHeader) => buildYaohuoReplyRequest({
+          topicId: detail.id,
+          classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+          content: replyContent,
+          sid: extractYaohuoSid(cookieHeader),
+          replyFloor: yaohuoReplyTarget?.floor,
+          toUserId: yaohuoReplyTarget?.authorId
+        }),
+        '回复已提交'
+      );
+      if (submitted) {
+        setReplyContent('');
+        setReplyComposerOpen(false);
+        setYaohuoReplyTarget(null);
+      }
       return;
     }
     const submitted = await runNodeSeekRequest(
@@ -1015,7 +1316,27 @@ export default function App() {
       setReplyContent('');
       setReplyComposerOpen(false);
     }
-  }, [notify, replyContent, runNodeSeekRequest, selectedTopic, topicDetail]);
+  }, [notify, replyContent, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail, yaohuoReplyTarget]);
+
+  const toggleReplyComposer = useCallback((open: boolean) => {
+    setReplyComposerOpen(open);
+    if (!open) {
+      setYaohuoReplyTarget(null);
+    }
+  }, []);
+
+  const replyToFloor = useCallback((reply: Reply) => {
+    if (!reply.floor) {
+      notify('当前楼层信息不完整，刷新主题后再试。');
+      return;
+    }
+    setYaohuoReplyTarget({
+      floor: reply.floor,
+      author: reply.author,
+      authorId: reply.authorId
+    });
+    setReplyComposerOpen(true);
+  }, [notify]);
 
   const checkIn = useCallback(async () => {
     await runNodeSeekRequest(
@@ -1036,11 +1357,41 @@ export default function App() {
     );
   }, [notify, runNodeSeekRequest]);
 
+  const favoriteOnYaohuoSite = useCallback(async () => {
+    const detail = topicDetail || selectedTopic;
+    if (!detail || detail.source !== 'yaohuo') {
+      return;
+    }
+    await runYaohuoRequest(
+      () => buildYaohuoFavoriteRequest({
+        topicId: detail.id,
+        classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
+      }),
+      '原站收藏已提交',
+      { refreshTopic: false }
+    );
+  }, [runYaohuoRequest, selectedTopic, topicDetail]);
+
+  const voteYaohuo = useCallback(async (voteId: string) => {
+    const detail = topicDetail || selectedTopic;
+    if (!detail || detail.source !== 'yaohuo') {
+      return;
+    }
+    await runYaohuoRequest(
+      () => buildYaohuoVoteRequest({
+        topicId: detail.id,
+        classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+        voteId
+      }),
+      '投票已提交'
+    );
+  }, [runYaohuoRequest, selectedTopic, topicDetail]);
+
   const pullSync = useCallback(async () => {
     setBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
-      const remote = sanitizeReaderData(await pullReaderData(serverUrl, syncCode));
+      const remote = sanitizeReaderDataForSync(await pullReaderData(serverUrl, syncCode));
       const merged = mergeReaderData(readerDataRef.current, remote);
       await replaceReaderData(merged);
       notify('同步读取成功，已合并本机和云端资料。');
@@ -1055,7 +1406,7 @@ export default function App() {
     setBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
-      await pushReaderData(serverUrl, syncCode, sanitizeReaderData(readerDataRef.current));
+      await pushReaderData(serverUrl, syncCode, sanitizeReaderDataForSync(readerDataRef.current));
       notify('同步保存成功。');
     } catch (error) {
       notify(errorMessage(error));
@@ -1092,6 +1443,10 @@ export default function App() {
         setShowLoginPanel(false);
         return true;
       }
+      if (showYaohuoLoginPanel) {
+        setShowYaohuoLoginPanel(false);
+        return true;
+      }
       if (showCategoriesPanel) {
         setShowCategoriesPanel(false);
         return true;
@@ -1118,6 +1473,7 @@ export default function App() {
     screen,
     showCategoriesPanel,
     showLoginPanel,
+    showYaohuoLoginPanel,
     showSettingsPanel
   ]);
 
@@ -1146,10 +1502,6 @@ export default function App() {
     commitReaderData((current) => toggleFavorite(current, topic));
   }, [commitReaderData]);
 
-  const toggleTopicLater = useCallback((topic: Topic) => {
-    commitReaderData((current) => toggleLater(current, topic));
-  }, [commitReaderData]);
-
   const removeLibraryTopic = useCallback((topic: Topic) => {
     commitReaderData((current) => removeRecord(current, libraryTab, topic));
   }, [commitReaderData, libraryTab]);
@@ -1162,6 +1514,7 @@ export default function App() {
           <TopicScreen
             actionBusy={actionBusy}
             canUseNodeSeekActions={hasNodeSeekCookie}
+            canUseYaohuoActions={hasYaohuoCookie}
             contentWidth={contentWidth}
             htmlBaseStyle={htmlBaseStyle}
             htmlIgnoredStyles={htmlIgnoredStyles}
@@ -1176,6 +1529,7 @@ export default function App() {
             replyComposerOpen={replyComposerOpen}
             replyContent={replyContent}
             replyFilter={replyFilter}
+            replyTarget={yaohuoReplyTarget}
             replyHasMore={replyHasMore}
             replies={filteredReplies}
             selectedTopic={selectedTopic}
@@ -1187,30 +1541,26 @@ export default function App() {
             topicScrollRef={topicScrollRef}
             onBack={goBackFromTopic}
             onInteract={interact}
+            onYaohuoFavorite={favoriteOnYaohuoSite}
+            onYaohuoVote={voteYaohuo}
             onLoadMoreReplies={loadMoreReplies}
             onOpenOriginal={(url) => void Linking.openURL(url)}
-            onReplyComposerOpenChange={setReplyComposerOpen}
+            onReplyComposerOpenChange={toggleReplyComposer}
             onReplyContentChange={setReplyContent}
             onReplyFilterChange={setReplyFilter}
+            onReplyToFloor={replyToFloor}
             onRefreshTopic={refreshTopic}
             onSubmitReply={submitReply}
             onTopicScroll={handleTopicScroll}
             onToggleQuotedFloor={toggleQuotedFloor}
-            onBlockAuthor={(author) => updateSettings({ blockedUsers: appendUnique(settingsList(readerData.settings.blockedUsers), author) })}
-            onBlockCategory={(category) => {
-              const source = topicDetail?.source || selectedTopic?.source;
-              if (source) {
-                updateSettings({ blockedCategories: appendUnique(settingsList(readerData.settings.blockedCategories), `${source}:${category.replace(/^#/, '')}`) });
-              }
-            }}
             onToggleFavorite={toggleTopicFavorite}
-            onToggleLater={toggleTopicLater}
           />
         ) : (
           <>
             {screen === 'feed' ? (
               <FeedScreen
                 busy={busy || actionBusy}
+                categories={categories}
                 categoryFilter={categoryFilter}
                 feedHasMore={feedHasMore}
                 feedItems={shownFeedItems}
@@ -1222,14 +1572,13 @@ export default function App() {
                 refreshing={feedRefreshing}
                 styles={styles}
                 theme={theme}
-                onCategoryClear={() => setCategoryFilter('')}
+                onCategoryChange={setCategoryFilter}
                 onFeedSourceChange={changeFeedSource}
                 onLoadMore={() => loadFeed({ page: feedPage + 1, cursor: feedSource === 'all' ? feedNextCursor : undefined })}
                 onOpenTopic={openTopic}
                 onReadingFilterChange={setReadingFilter}
                 onRefresh={refreshFeed}
                 onToggleFavorite={toggleTopicFavorite}
-                onToggleLater={toggleTopicLater}
               />
             ) : null}
             {screen === 'search' ? (
@@ -1270,22 +1619,29 @@ export default function App() {
                   categories={categories}
                   checking={checking}
                   hasNodeSeekCookie={hasNodeSeekCookie}
+                  hasYaohuoCookie={hasYaohuoCookie}
                   healthSummary={healthSummary}
                   loginState={loginState}
                   loadingLoginPage={loadingLoginPage}
+                  loadingYaohuoLoginPage={loadingYaohuoLoginPage}
                   readerData={readerData}
                   serverUrl={serverUrl}
                   showCategoriesPanel={showCategoriesPanel}
                   showLoginPanel={showLoginPanel}
+                  showYaohuoLoginPanel={showYaohuoLoginPanel}
                   showSettingsPanel={showSettingsPanel}
                   styles={styles}
                   syncCode={syncCode}
                   theme={theme}
                   webViewRef={webViewRef}
+                  yaohuoLoginState={yaohuoLoginState}
+                  yaohuoWebViewRef={yaohuoWebViewRef}
                   onCheckHealth={checkHealth}
                   onCheckIn={checkIn}
                   onCheckLogin={checkLogin}
+                  onCheckYaohuoLogin={checkYaohuoCookie}
                   onClearLogin={clearLogin}
+                  onClearYaohuoLogin={clearYaohuoLogin}
                   onHandleLoginMessage={handleLoginMessage}
                   onPullSync={pullSync}
                   onPushSync={pushSync}
@@ -1294,8 +1650,10 @@ export default function App() {
                   onSelectCategory={selectCategory}
                   onServerUrlChange={setServerUrl}
                   onSetLoadingLoginPage={setLoadingLoginPage}
+                  onSetLoadingYaohuoLoginPage={setLoadingYaohuoLoginPage}
                   onShowCategoriesPanelChange={setShowCategoriesPanel}
                   onShowLoginPanelChange={setShowLoginPanel}
+                  onShowYaohuoLoginPanelChange={setShowYaohuoLoginPanel}
                   onShowSettingsPanelChange={setShowSettingsPanel}
                   onSyncCodeChange={setSyncCode}
                   onToggleSubscription={(category) => commitReaderData((current) => toggleSubscription(current, category))}
@@ -1320,6 +1678,7 @@ export default function App() {
 
 function FeedScreen({
   busy,
+  categories,
   categoryFilter,
   feedHasMore,
   feedItems,
@@ -1331,16 +1690,16 @@ function FeedScreen({
   refreshing,
   styles,
   theme,
-  onCategoryClear,
+  onCategoryChange,
   onFeedSourceChange,
   onLoadMore,
   onOpenTopic,
   onReadingFilterChange,
   onRefresh,
-  onToggleFavorite,
-  onToggleLater
+  onToggleFavorite
 }: {
   busy: boolean;
+  categories: Category[];
   categoryFilter: string;
   feedHasMore: boolean;
   feedItems: Topic[];
@@ -1352,14 +1711,13 @@ function FeedScreen({
   refreshing: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  onCategoryClear: () => void;
+  onCategoryChange: (categoryId: string) => void;
   onFeedSourceChange: (source: FeedSource) => void;
   onLoadMore: () => void;
   onOpenTopic: (topic: Topic) => void;
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
   onToggleFavorite: (topic: Topic) => void;
-  onToggleLater: (topic: Topic) => void;
 }) {
   const listRef = useRef<FlatList<Topic>>(null);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
@@ -1385,40 +1743,37 @@ function FeedScreen({
       topic={topic}
       onOpenTopic={onOpenTopic}
       onToggleFavorite={onToggleFavorite}
-      onToggleLater={onToggleLater}
     />
-  ), [onOpenTopic, onToggleFavorite, onToggleLater, readerData, styles, theme]);
+  ), [onOpenTopic, onToggleFavorite, readerData, styles, theme]);
+  const categoryItems = useMemo(
+    () => feedCategoryItems(categories, feedSource),
+    [categories, feedSource]
+  );
 
   const header = (
     <View style={styles.stack}>
       <PillRail
         variant="tabs"
-        items={[
-          { value: 'all', label: '全部' },
-          { value: 'v2ex', label: 'V2EX' },
-          { value: 'linuxdo', label: 'linux.do' },
-          { value: 'nodeseek', label: 'NodeSeek' }
-        ]}
+        items={feedSourceItems}
         value={feedSource}
         styles={styles}
         onChange={(value) => onFeedSourceChange(value as FeedSource)}
       />
-      <PillRail
-        items={[
-          { value: 'all', label: '全部' },
-          { value: 'unread', label: '未读' },
-          { value: 'read', label: '已读' },
-          { value: 'favorite', label: '收藏' },
-          { value: 'later', label: '稍后读' },
-          { value: 'subscribed', label: '我的订阅' },
-          { value: 'active', label: '最近活跃' },
-          { value: 'hot', label: '热门' }
-        ]}
-        value={readingFilter}
-        styles={styles}
-        onChange={(value) => onReadingFilterChange(value as ReadingFilter)}
-      />
-      {categoryFilter ? <AppButton label="清除节点筛选" variant="ghost" styles={styles} onPress={onCategoryClear} /> : null}
+      {shouldUseReadingFilter(feedSource) ? (
+        <PillRail
+          items={feedReadingFilterItems}
+          value={readingFilter}
+          styles={styles}
+          onChange={(value) => onReadingFilterChange(value as ReadingFilter)}
+        />
+      ) : (
+        <PillRail
+          items={categoryItems}
+          value={categoryFilter}
+          styles={styles}
+          onChange={onCategoryChange}
+        />
+      )}
     </View>
   );
 
@@ -1435,7 +1790,7 @@ function FeedScreen({
         scrollEventThrottle={64}
         {...FEED_LIST_PERFORMANCE_PROPS}
         ListHeaderComponent={header}
-        ListEmptyComponent={<EmptyText text="暂无主题" styles={styles} />}
+        ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text="暂无主题" styles={styles} />}
         ListFooterComponent={feedHasMore ? (
           <AppButton
             label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
@@ -1500,6 +1855,14 @@ function SearchScreen({
       onOpenTopic={onOpenTopic}
     />
   ), [onOpenTopic, readerData, styles, theme]);
+  const savedSearchItems = useMemo(
+    () => readerData.savedSearches.map((item) => ({ value: item.id, label: item.query })),
+    [readerData.savedSearches]
+  );
+  const selectSavedSearch = useCallback((id: string) => {
+    const saved = readerData.savedSearches.find((item) => item.id === id);
+    onQueryChange(saved?.query || id);
+  }, [onQueryChange, readerData.savedSearches]);
 
   const header = (
     <View style={styles.stack}>
@@ -1534,7 +1897,8 @@ function SearchScreen({
           { value: 'all', label: '全部' },
           { value: 'v2ex', label: 'V2EX' },
           { value: 'linuxdo', label: 'linux.do' },
-          { value: 'nodeseek', label: 'NodeSeek' }
+          { value: 'nodeseek', label: 'NodeSeek' },
+          { value: 'yaohuo', label: '妖火' }
         ]}
         value={searchSource}
         styles={styles}
@@ -1554,10 +1918,10 @@ function SearchScreen({
       <AppButton label="保存搜索" variant="ghost" styles={styles} onPress={onSaveSearch} />
       {readerData.savedSearches.length ? (
         <PillRail
-          items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}
+          items={savedSearchItems}
           value=""
           styles={styles}
-          onChange={onQueryChange}
+          onChange={selectSavedSearch}
         />
       ) : null}
     </View>
@@ -1572,7 +1936,9 @@ function SearchScreen({
       keyboardShouldPersistTaps="handled"
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
-      ListEmptyComponent={<EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
+      ListEmptyComponent={busy && query.trim()
+        ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
+        : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
       renderItem={renderTopicItem}
     />
   );
@@ -1606,9 +1972,9 @@ function LibraryScreen({
         topic={item}
         onOpenTopic={onOpenTopic}
       />
-      <AppButton label={libraryTab === 'later' ? '完成' : '删除'} variant="ghost" styles={styles} onPress={() => onRemove(item)} />
+      <AppButton label="删除" variant="ghost" styles={styles} onPress={() => onRemove(item)} />
     </View>
-  ), [libraryTab, onOpenTopic, onRemove, readerData, styles, theme]);
+  ), [onOpenTopic, onRemove, readerData, styles, theme]);
 
   const header = (
     <View style={styles.stack}>
@@ -1616,7 +1982,6 @@ function LibraryScreen({
       <PillRail
         items={[
           { value: 'favorites', label: '收藏' },
-          { value: 'later', label: '稍后读' },
           { value: 'history', label: '历史' }
         ]}
         value={libraryTab}
@@ -1644,22 +2009,29 @@ function MoreScreen({
   categories,
   checking,
   hasNodeSeekCookie,
+  hasYaohuoCookie,
   healthSummary,
   loginState,
   loadingLoginPage,
+  loadingYaohuoLoginPage,
   readerData,
   serverUrl,
   showCategoriesPanel,
   showLoginPanel,
+  showYaohuoLoginPanel,
   showSettingsPanel,
   styles,
   syncCode,
   theme,
   webViewRef,
+  yaohuoLoginState,
+  yaohuoWebViewRef,
   onCheckHealth,
   onCheckIn,
   onCheckLogin,
+  onCheckYaohuoLogin,
   onClearLogin,
+  onClearYaohuoLogin,
   onHandleLoginMessage,
   onPullSync,
   onPushSync,
@@ -1668,8 +2040,10 @@ function MoreScreen({
   onSelectCategory,
   onServerUrlChange,
   onSetLoadingLoginPage,
+  onSetLoadingYaohuoLoginPage,
   onShowCategoriesPanelChange,
   onShowLoginPanelChange,
+  onShowYaohuoLoginPanelChange,
   onShowSettingsPanelChange,
   onSyncCodeChange,
   onToggleSubscription,
@@ -1678,22 +2052,29 @@ function MoreScreen({
   categories: Category[];
   checking: boolean;
   hasNodeSeekCookie: boolean;
+  hasYaohuoCookie: boolean;
   healthSummary: string;
   loginState: string;
   loadingLoginPage: boolean;
+  loadingYaohuoLoginPage: boolean;
   readerData: ReaderData;
   serverUrl: string;
   showCategoriesPanel: boolean;
   showLoginPanel: boolean;
+  showYaohuoLoginPanel: boolean;
   showSettingsPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   syncCode: string;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
+  yaohuoLoginState: string;
+  yaohuoWebViewRef: RefObject<WebView | null>;
   onCheckHealth: () => void;
   onCheckIn: () => void;
   onCheckLogin: () => void;
+  onCheckYaohuoLogin: () => void;
   onClearLogin: () => void;
+  onClearYaohuoLogin: () => void;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
   onPullSync: () => void;
   onPushSync: () => void;
@@ -1702,15 +2083,16 @@ function MoreScreen({
   onSelectCategory: (category: Category) => void;
   onServerUrlChange: (value: string) => void;
   onSetLoadingLoginPage: (value: boolean) => void;
+  onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onShowCategoriesPanelChange: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
+  onShowYaohuoLoginPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
   onSyncCodeChange: (value: string) => void;
   onToggleSubscription: (category: Category) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   const favoriteCount = Object.keys(readerData.favorites).length;
-  const laterCount = Object.keys(readerData.later).length;
   const grouped = sources.map((source) => ({
     source,
     items: categories.filter((category) => category.source === source)
@@ -1721,7 +2103,6 @@ function MoreScreen({
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.group}>
         <InfoRow icon={Star} label="收藏" value={String(favoriteCount)} styles={styles} theme={theme} />
-        <InfoRow icon={Clock3} label="稍后读" value={String(laterCount)} styles={styles} theme={theme} />
       </View>
       <View style={styles.group}>
         <Text style={styles.panelTitle}>服务器与同步</Text>
@@ -1779,6 +2160,32 @@ function MoreScreen({
                 }}
                 onLoadStart={() => onSetLoadingLoginPage(true)}
                 onMessage={onHandleLoginMessage}
+              />
+            </View>
+          </View>
+        ) : null}
+        <MenuButton icon={LogIn} label="妖火登录" value={hasYaohuoCookie ? yaohuoLoginState : '未登录'} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
+        {showYaohuoLoginPanel ? (
+          <View style={styles.loginPanel}>
+            <View style={styles.actions}>
+              <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
+              <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearYaohuoLogin} />
+              <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => yaohuoWebViewRef.current?.reload()} />
+            </View>
+            <View style={styles.webViewShell}>
+              {loadingYaohuoLoginPage ? (
+                <View style={styles.loading}>
+                  <ActivityIndicator color={theme.primary} />
+                  <Text style={styles.loadingText}>正在打开妖火...</Text>
+                </View>
+              ) : null}
+              <WebView
+                ref={yaohuoWebViewRef}
+                source={{ uri: YAOHUO_LOGIN_URL }}
+                sharedCookiesEnabled
+                thirdPartyCookiesEnabled
+                onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
+                onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
               />
             </View>
           </View>
@@ -1975,6 +2382,7 @@ function ChipList({
 function TopicScreen({
   actionBusy,
   canUseNodeSeekActions,
+  canUseYaohuoActions,
   contentWidth,
   htmlBaseStyle,
   htmlIgnoredStyles,
@@ -1989,6 +2397,7 @@ function TopicScreen({
   replyComposerOpen,
   replyContent,
   replyFilter,
+  replyTarget,
   replyHasMore,
   replies,
   selectedTopic,
@@ -2000,22 +2409,23 @@ function TopicScreen({
   topicScrollRef,
   onBack,
   onInteract,
+  onYaohuoFavorite,
+  onYaohuoVote,
   onLoadMoreReplies,
   onOpenOriginal,
   onReplyComposerOpenChange,
   onReplyContentChange,
   onReplyFilterChange,
+  onReplyToFloor,
   onRefreshTopic,
   onSubmitReply,
   onTopicScroll,
   onToggleQuotedFloor,
-  onBlockAuthor,
-  onBlockCategory,
-  onToggleFavorite,
-  onToggleLater
+  onToggleFavorite
 }: {
   actionBusy: boolean;
   canUseNodeSeekActions: boolean;
+  canUseYaohuoActions: boolean;
   contentWidth: number;
   htmlBaseStyle: HtmlBaseStyle;
   htmlIgnoredStyles: HtmlIgnoredStyles;
@@ -2030,6 +2440,7 @@ function TopicScreen({
   replyComposerOpen: boolean;
   replyContent: string;
   replyFilter: ReplyFilter;
+  replyTarget: YaohuoReplyTarget | null;
   replyHasMore: boolean;
   replies: Reply[];
   selectedTopic: Topic | null;
@@ -2041,22 +2452,26 @@ function TopicScreen({
   topicScrollRef: RefObject<FlatList<Reply> | null>;
   onBack: () => void;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onYaohuoFavorite: () => void;
+  onYaohuoVote: (voteId: string) => void;
   onLoadMoreReplies: () => void;
   onOpenOriginal: (url: string) => void;
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
   onReplyFilterChange: (filter: ReplyFilter) => void;
+  onReplyToFloor: (reply: Reply) => void;
   onRefreshTopic: () => void;
   onSubmitReply: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
-  onBlockAuthor: (author: string) => void;
-  onBlockCategory: (category: string) => void;
   onToggleFavorite: (topic: Topic) => void;
-  onToggleLater: (topic: Topic) => void;
 }) {
   const item = topic || selectedTopic;
-  const canWrite = Boolean(item && item.source === 'nodeseek' && canUseNodeSeekActions);
+  const topicLoading = !topic && !topicError;
+  const canWriteNodeSeek = Boolean(item && item.source === 'nodeseek' && canUseNodeSeekActions);
+  const canWriteYaohuo = Boolean(item && item.source === 'yaohuo' && canUseYaohuoActions);
+  const canWrite = canWriteNodeSeek || canWriteYaohuo;
+  const itemSource = item?.source;
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply, index) => {
@@ -2086,7 +2501,9 @@ function TopicScreen({
         styles={styles}
         theme={theme}
         onInteract={onInteract}
+        onReplyToFloor={onReplyToFloor}
         onToggleQuotedFloor={onToggleQuotedFloor}
+        source={itemSource}
       />
     </View>
   ), [
@@ -2097,7 +2514,9 @@ function TopicScreen({
     loadedQuotedReplies,
     loadingQuotedFloors,
     onInteract,
+    onReplyToFloor,
     onToggleQuotedFloor,
+    itemSource,
     repliesByFloor,
     styles,
     theme,
@@ -2111,22 +2530,35 @@ function TopicScreen({
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
-        <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
-        <Text style={styles.articleTitle}>{item.title}</Text>
-        <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)}</Text>
-        <Text style={styles.meta}>{item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
-        <View style={styles.actions}>
-          <AppButton compact label={isLater(readerData, item) ? '取消稍后读' : '稍后读'} variant="ghost" styles={styles} onPress={() => onToggleLater(item)} />
-          {item.author ? <AppButton compact label="屏蔽作者" variant="ghost" styles={styles} onPress={() => onBlockAuthor(item.author)} /> : null}
-          {item.category ? <AppButton compact label="屏蔽节点" variant="ghost" styles={styles} onPress={() => onBlockCategory(item.category as string)} /> : null}
-          {canWrite ? (
-            <>
-              <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
-              <IconButton tiny ghost icon={Heart} label={`感谢 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
-            </>
-          ) : null}
+        <View style={styles.topicMetaStack}>
+          <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
+          <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
         </View>
-        {!canWrite ? <Text style={styles.readonlyNote}>本地只读，回复请到原站</Text> : null}
+        <Text style={styles.articleTitle}>{item.title}</Text>
+        {canWriteNodeSeek ? (
+          <View style={styles.topicPrimaryActions}>
+            <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
+            <IconButton tiny ghost icon={Heart} label={`感谢 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+          </View>
+        ) : null}
+        {canWriteYaohuo ? (
+          <View style={styles.topicPrimaryActions}>
+            <IconButton tiny ghost icon={BookMarked} label="原站收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
+            {(topic?.voteOptions || []).map((option) => (
+              <IconButton
+                key={option.id}
+                tiny
+                ghost
+                icon={CheckCircle}
+                label={`投票 ${option.label}${typeof option.count === 'number' ? ` ${option.count}` : ''}`}
+                styles={styles}
+                theme={theme}
+                disabled={actionBusy}
+                onPress={() => onYaohuoVote(option.id)}
+              />
+            ))}
+          </View>
+        ) : null}
         {topicError ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{topicError}</Text>
@@ -2140,7 +2572,7 @@ function TopicScreen({
               html={topic.contentHtml}
             />
           </View>
-        ) : topicError ? null : <ActivityIndicator color={theme.primary} />}
+        ) : topicError ? null : <LoadingState text="正在读取主题..." styles={styles} theme={theme} />}
       </View>
       <View style={[styles.replyHeader, topicColumnStyle]}>
         <View style={styles.sectionHeader}>
@@ -2168,15 +2600,16 @@ function TopicScreen({
       </View>
       {canWrite && replyComposerOpen ? (
         <View style={[styles.replyBox, topicColumnStyle]}>
-          <Text style={styles.panelTitle}>回复</Text>
+          <Text style={styles.panelTitle}>{replyTarget ? `回复 #${replyTarget.floor}${replyTarget.author ? ` · ${replyTarget.author}` : ''}` : '回复'}</Text>
           <TextInput
             style={[styles.input, styles.replyInput]}
             value={replyContent}
             onChangeText={onReplyContentChange}
-            placeholder="输入回复内容"
+            placeholder={replyTarget ? '输入楼层回复内容' : '输入回复内容'}
             placeholderTextColor={theme.muted}
             multiline
           />
+          {replyTarget ? <AppButton label="取消楼层回复" variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
           <AppButton label="发送回复" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
         </View>
       ) : null}
@@ -2184,10 +2617,17 @@ function TopicScreen({
   );
 
   return (
-    <TRenderEngineProvider baseStyle={htmlBaseStyle} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles}>
-      <RenderHTMLConfigProvider renderers={htmlRenderers} renderersProps={htmlRenderersProps}>
+    <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
+      <RenderHTMLConfigProvider
+        renderers={htmlRenderers}
+        renderersProps={htmlRenderersProps}
+        enableExperimentalBRCollapsing
+        enableExperimentalGhostLinesPrevention
+        enableExperimentalMarginCollapsing
+      >
         <View style={styles.topicTopBar}>
           <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
+          {!canWrite ? <Text style={styles.topicTopHint}>只读 · 原站回复</Text> : <Text style={styles.topicTopHint}>{item.source === 'yaohuo' ? '妖火可回复' : 'NodeSeek 可回复'}</Text>}
           <View style={styles.topicTopActions}>
             <IconButton icon={Star} compact ghost iconOnly label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
             <IconButton icon={ExternalLink} compact ghost iconOnly label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
@@ -2204,7 +2644,7 @@ function TopicScreen({
           onScrollEndDrag={onTopicScroll}
           {...REPLY_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
-          ListEmptyComponent={(
+          ListEmptyComponent={topicLoading ? null : (
             <View style={[styles.replyListItem, topicColumnStyle]}>
               <EmptyText text="暂无回复" styles={styles} />
             </View>
@@ -2247,9 +2687,11 @@ function ReplyCard({
   reply,
   replyFloor,
   repliesByFloor,
+  source,
   styles,
   theme,
   onInteract,
+  onReplyToFloor,
   onToggleQuotedFloor
 }: {
   actionBusy: boolean;
@@ -2261,15 +2703,25 @@ function ReplyCard({
   reply: Reply;
   replyFloor: number;
   repliesByFloor: Map<number, Reply>;
+  source?: Source;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onReplyToFloor: (reply: Reply) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   return (
     <View style={styles.replyCard}>
-      <Text style={styles.replyMeta}>#{reply.floor ?? '-'} {reply.author || '未知作者'} · {formatDateTime(reply.createdAt)}</Text>
+      <View style={styles.replyHead}>
+        <View style={styles.replyFloorBadge}>
+          <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
+        </View>
+        <View style={styles.replyAuthorBlock}>
+          <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
+          <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
+        </View>
+      </View>
       {quotedFloors.length ? (
         <View style={styles.quoteStack}>
           {quotedFloors.map((quotedFloor) => {
@@ -2303,14 +2755,21 @@ function ReplyCard({
           })}
         </View>
       ) : null}
-      <MemoizedHtmlContent
-        contentWidth={contentWidth}
-        html={reply.contentHtml}
-      />
-      {canWrite ? (
-        <View style={styles.actions}>
+      <View style={styles.replyBody}>
+        <MemoizedHtmlContent
+          contentWidth={contentWidth}
+          html={reply.contentHtml}
+        />
+      </View>
+      {canWrite && source === 'nodeseek' ? (
+        <View style={styles.replyActionRow}>
           <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
           <IconButton tiny ghost icon={Heart} label={`感谢 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+        </View>
+      ) : null}
+      {canWrite && source === 'yaohuo' ? (
+        <View style={styles.replyActionRow}>
+          <IconButton tiny ghost icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
         </View>
       ) : null}
     </View>
@@ -2397,8 +2856,7 @@ function TopicCard({
   styles,
   theme,
   onOpenTopic,
-  onToggleFavorite,
-  onToggleLater
+  onToggleFavorite
 }: {
   topic: Topic;
   readerState: TopicListItemState;
@@ -2406,11 +2864,9 @@ function TopicCard({
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
   onToggleFavorite?: (topic: Topic) => void;
-  onToggleLater?: (topic: Topic) => void;
 }) {
   const openTopicPress = useCallback(() => onOpenTopic(topic), [onOpenTopic, topic]);
   const toggleFavoritePress = useCallback(() => onToggleFavorite?.(topic), [onToggleFavorite, topic]);
-  const toggleLaterPress = useCallback(() => onToggleLater?.(topic), [onToggleLater, topic]);
   return (
     <View style={[styles.topicCard, readerState.read && styles.topicCardRead, readerState.tracked && styles.topicCardTracked]}>
       <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} onPress={openTopicPress}>
@@ -2428,7 +2884,6 @@ function TopicCard({
         </Pressable>
         <View style={styles.topicMarks}>
           {onToggleFavorite ? <IconButton icon={Star} compact iconOnly label={readerState.favorite ? '已收藏' : '收藏'} styles={styles} theme={theme} active={readerState.favorite} onPress={toggleFavoritePress} /> : null}
-          {onToggleLater ? <IconButton icon={Clock3} compact iconOnly label={readerState.later ? '已稍后读' : '稍后读'} styles={styles} theme={theme} active={readerState.later} onPress={toggleLaterPress} /> : null}
         </View>
       </View>
     </View>
@@ -2693,6 +3148,15 @@ function EmptyText({ text, styles }: { text: string; styles: ReturnType<typeof c
   return <Text style={styles.empty}>{text}</Text>;
 }
 
+function LoadingState({ text, styles, theme }: { text: string; styles: ReturnType<typeof createStyles>; theme: ReaderTheme }) {
+  return (
+    <View style={styles.loadingState}>
+      <ActivityIndicator color={theme.primary} />
+      <Text style={styles.loadingStateText}>{text}</Text>
+    </View>
+  );
+}
+
 function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter) {
   const visible = items.filter((topic) => {
     const text = topicText(topic);
@@ -2710,9 +3174,6 @@ function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter
   }
   if (filter === 'favorite') {
     return visible.filter((topic) => Boolean(data.favorites[topicKey(topic)]));
-  }
-  if (filter === 'later') {
-    return visible.filter((topic) => Boolean(data.later[topicKey(topic)]));
   }
   if (filter === 'subscribed') {
     return visible.filter((topic) => topic.category && Object.values(data.subscriptions).some((subscription) => (
@@ -2732,8 +3193,7 @@ function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter
 function searchLocal(data: ReaderData, query: string, source: FeedSource) {
   const records = [
     ...Object.values(data.favorites),
-    ...Object.values(data.history),
-    ...Object.values(data.later)
+    ...Object.values(data.history)
   ];
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   const seen = new Set<string>();
@@ -2767,6 +3227,10 @@ function sortTopics(items: Topic[], sort: SearchSort) {
   return items;
 }
 
+function sortTopicsByActivity(items: Topic[]) {
+  return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
+}
+
 function mergeTopics(current: Topic[], incoming: Topic[]) {
   const seen = new Set(current.map((topic) => topicKey(topic)));
   const next = [...current];
@@ -2778,6 +3242,42 @@ function mergeTopics(current: Topic[], incoming: Topic[]) {
     }
   }
   return next;
+}
+
+function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
+  return {
+    ...base,
+    items: sortTopicsByActivity(mergeTopics(base.items, extra.items)),
+    errors: {
+      ...(base.errors || {}),
+      ...(extra.errors || {})
+    },
+    hasMore: Boolean(base.hasMore || extra.hasMore),
+    nextPage: base.nextPage ?? extra.nextPage ?? null,
+    nextCursor: base.nextCursor ?? undefined
+  };
+}
+
+function mergeSearchResponses(base: SearchResponse, extra: SearchResponse): SearchResponse {
+  return {
+    items: sortTopicsByActivity(mergeTopics(base.items, extra.items)),
+    errors: {
+      ...(base.errors || {}),
+      ...(extra.errors || {})
+    }
+  };
+}
+
+function mergeCategories(base: Category[], extra: Category[]) {
+  const seen = new Set<string>();
+  return [...base, ...extra].filter((category) => {
+    const key = categoryKey(category);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function replyKey(reply: Reply) {
@@ -2844,7 +3344,19 @@ function sourceLabel(source: Source | FeedSource) {
   if (source === 'nodeseek') {
     return 'NodeSeek';
   }
+  if (source === 'yaohuo') {
+    return '妖火';
+  }
   return 'V2EX';
+}
+
+function isYaohuoLoginRequiredError(error: unknown) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && 'loginRequired' in error
+    && (error as { loginRequired?: unknown }).loginRequired
+  );
 }
 
 function formatDateTime(value?: string) {
@@ -3018,12 +3530,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     topicContentInner: {
       alignItems: 'center',
-      paddingTop: 14
+      paddingTop: 18
     },
     topicHeaderStack: {
       width: '100%',
       alignItems: 'center',
-      gap: 10
+      gap: 18
     },
     stack: {
       gap: 9,
@@ -3392,11 +3904,19 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       justifyContent: 'space-between',
       gap: 8,
       paddingHorizontal: 12,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 10,
-      paddingBottom: 6,
+      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 6 : 12,
+      paddingBottom: 8,
       backgroundColor: theme.surface,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    topicTopHint: {
+      flex: 1,
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      textAlign: 'center'
     },
     topicTopActions: {
       alignItems: 'center',
@@ -3405,34 +3925,47 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     article: {
       width: '100%',
-      gap: 9,
+      gap: 13,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
       borderRadius: 0,
       borderWidth: 0,
       padding: 0
     },
+    topicMetaStack: {
+      gap: 5
+    },
+    topicPrimaryActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      paddingTop: 2
+    },
     articleBody: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
-      marginTop: 4,
-      paddingTop: 12
+      marginTop: 8,
+      paddingTop: 18
     },
     articleTitle: {
       color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: Math.round(20 * titleFontScale),
+      fontSize: Math.round(21 * titleFontScale),
       fontWeight: '600',
-      lineHeight: Math.round(28 * titleFontScale)
+      lineHeight: Math.round(30 * titleFontScale)
     },
-    readonlyNote: {
+    loadingState: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      minHeight: 140,
+      paddingVertical: 28
+    },
+    loadingStateText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 20,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 10
+      fontSize: 13
     },
     errorBox: {
       gap: 8,
@@ -3459,10 +3992,10 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     replyHeader: {
       width: '100%',
-      gap: 8,
+      gap: 10,
       borderTopColor: theme.background,
-      borderTopWidth: 8,
-      paddingTop: 12
+      borderTopWidth: 12,
+      paddingTop: 16
     },
     replyList: {
       width: '100%',
@@ -3477,31 +4010,83 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     },
     topicFooter: {
       alignSelf: 'center',
-      paddingTop: 10
+      paddingTop: 14
     },
     replyCard: {
-      gap: 8,
+      gap: 12,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
       paddingHorizontal: 0,
-      paddingVertical: 14
+      paddingVertical: 20
+    },
+    replyHead: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10
+    },
+    replyFloorBadge: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: 38,
+      minHeight: 24,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 6,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8
+    },
+    replyFloorText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      lineHeight: 16
+    },
+    replyAuthorBlock: {
+      flex: 1,
+      minWidth: 0,
+      gap: 2
+    },
+    replyAuthor: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      fontWeight: '600',
+      lineHeight: 19
+    },
+    replyTime: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      lineHeight: 15
+    },
+    replyBody: {
+      paddingTop: 2
+    },
+    replyActionRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      justifyContent: 'flex-end',
+      paddingTop: 2
     },
     quoteStack: {
-      gap: 8
+      gap: 10
     },
     quoteBox: {
-      gap: 6,
+      gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
-      padding: 9
+      padding: 11
     },
     quoteBody: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 8
+      paddingTop: 10
     },
     replyMeta: {
       color: theme.muted,

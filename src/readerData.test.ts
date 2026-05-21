@@ -7,6 +7,7 @@ import {
   mergeReaderData,
   recordHistory,
   sanitizeReaderData,
+  sanitizeReaderDataForSync,
   toggleFavorite,
   toggleLater,
   toggleSubscription,
@@ -212,5 +213,59 @@ describe('Android reader data helpers', () => {
 
     expect(merged.favorites[key]?.topic.title).toBe('NodeSeek topic');
     expect(merged.deletedRecords.favorites[key]).toBeUndefined();
+  });
+
+  it('keeps yaohuo data locally but removes it from shared sync data', () => {
+    const yaohuoTopic: Topic = {
+      ...topic,
+      source: 'yaohuo',
+      id: '1',
+      title: '妖火帖子',
+      url: 'https://yaohuo.me/bbs-1.html'
+    };
+    const local = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(yaohuoTopic)]: { topic: yaohuoTopic, savedAt: '2026-05-20T02:00:00.000Z' },
+        [topicKey(topic)]: { topic, savedAt: '2026-05-20T03:00:00.000Z' }
+      },
+      history: {
+        [topicKey(yaohuoTopic)]: { topic: yaohuoTopic, savedAt: '2026-05-20T02:00:00.000Z' }
+      },
+      progress: {
+        [topicKey(yaohuoTopic)]: {
+          topic: yaohuoTopic,
+          percent: 50,
+          scrollY: 100,
+          updatedAt: '2026-05-20T02:00:00.000Z'
+        }
+      },
+      subscriptions: {
+        'yaohuo:177': {
+          source: 'yaohuo',
+          id: '177',
+          name: '妖火茶馆',
+          subscribedAt: '2026-05-20T02:00:00.000Z'
+        }
+      },
+      savedSearches: [
+        { id: 'yaohuo:test', query: 'test', source: 'yaohuo', savedAt: '2026-05-20T02:00:00.000Z' },
+        { id: 'all:test', query: 'test', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
+      ],
+      deletedRecords: {
+        favorites: { 'yaohuo:1': '2026-05-20T04:00:00.000Z' },
+        history: {},
+        later: {},
+        subscriptions: { 'yaohuo:177': '2026-05-20T04:00:00.000Z' },
+        savedSearches: { 'yaohuo:test': '2026-05-20T04:00:00.000Z' }
+      }
+    });
+
+    expect(local.favorites[topicKey(yaohuoTopic)]?.topic.title).toBe('妖火帖子');
+
+    const synced = sanitizeReaderDataForSync(local);
+
+    expect(synced.favorites[topicKey(topic)]?.topic.title).toBe('NodeSeek topic');
+    expect(JSON.stringify(synced)).not.toContain('yaohuo');
   });
 });

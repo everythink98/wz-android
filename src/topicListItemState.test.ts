@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEmptyReaderData, recordHistory, toggleFavorite, toggleLater } from './readerData';
+import { createEmptyReaderData, recordHistory, toggleFavorite } from './readerData';
 import { getTopicListItemState, topicListItemStatesEqual } from './topicListItemState';
 import type { Topic } from './types';
 
@@ -30,11 +30,9 @@ describe('Android topic list item state', () => {
     const detail = { ...topic, contentHtml: '<p></p>', replies: [] };
     data = recordHistory(data, detail);
     data = toggleFavorite(data, topic);
-    data = toggleLater(data, topic);
 
     expect(getTopicListItemState(data, topic)).toEqual({
       favorite: true,
-      later: true,
       listDensity: 'loose',
       read: true,
       tracked: true

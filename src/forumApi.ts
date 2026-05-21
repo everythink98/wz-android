@@ -15,7 +15,7 @@ type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 type Validator<T> = (data: unknown) => data is T;
 
 const DATA_FORMAT_ERROR = '服务器返回数据格式不正确';
-const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek']);
+const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -84,16 +84,26 @@ const isSearchResponse: Validator<SearchResponse> = (data): data is SearchRespon
   isRecord(data) && Array.isArray(data.items) && data.items.every(isTopic)
 );
 
-async function fetchJson<T>(url: string, fetcher: Fetcher = fetch, validator?: Validator<T>) {
-  const response = await fetcher(url);
+async function fetchJson<T>(url: string, fetcher: Fetcher = fetch, validator?: Validator<T>, init?: RequestInit) {
+  const response = init ? await fetcher(url, init) : await fetcher(url);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `HTTP ${response.status}`);
+    const error = new Error(data.message || data.error || `HTTP ${response.status}`);
+    Object.assign(error, data);
+    throw error;
   }
   if (validator && !validator(data)) {
     throw new Error(DATA_FORMAT_ERROR);
   }
   return data as T;
+}
+
+function postJson<T>(url: string, payload: Record<string, unknown>, fetcher: Fetcher = fetch, validator?: Validator<T>) {
+  return fetchJson<T>(url, fetcher, validator, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
 }
 
 export function getFeed({
@@ -129,7 +139,11 @@ export function getFeed({
   if (nocache) {
     params.set('nocache', '1');
   }
-  return fetchJson<FeedResponse>(`${normalizeServerUrl(serverUrl)}/api/feed?${params.toString()}`, fetcher, isFeedResponse);
+  return fetchJson<FeedResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/feed?${params.toString()}`,
+    fetcher,
+    isFeedResponse
+  );
 }
 
 export function getCategories({
@@ -142,7 +156,11 @@ export function getCategories({
   fetcher?: Fetcher;
 }) {
   const params = new URLSearchParams({ source });
-  return fetchJson<CategoriesResponse>(`${normalizeServerUrl(serverUrl)}/api/categories?${params.toString()}`, fetcher, isCategoriesResponse);
+  return fetchJson<CategoriesResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/categories?${params.toString()}`,
+    fetcher,
+    isCategoriesResponse
+  );
 }
 
 export function getTopic({
@@ -163,7 +181,11 @@ export function getTopic({
     params.set('nocache', '1');
   }
   const query = params.toString() ? `?${params.toString()}` : '';
-  return fetchJson<TopicDetail>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}${query}`, fetcher, isTopicDetail);
+  return fetchJson<TopicDetail>(
+    `${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}${query}`,
+    fetcher,
+    isTopicDetail
+  );
 }
 
 export function getReplies({
@@ -195,7 +217,11 @@ export function getReplies({
   if (nocache) {
     params.set('nocache', '1');
   }
-  return fetchJson<RepliesResponse>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies?${params.toString()}`, fetcher, isRepliesResponse);
+  return fetchJson<RepliesResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies?${params.toString()}`,
+    fetcher,
+    isRepliesResponse
+  );
 }
 
 export function getReply({
@@ -218,7 +244,11 @@ export function getReply({
     params.set('nocache', '1');
   }
   const query = params.toString() ? `?${params.toString()}` : '';
-  return fetchJson<Reply>(`${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies/${encodeURIComponent(String(floor))}${query}`, fetcher, isReply);
+  return fetchJson<Reply>(
+    `${normalizeServerUrl(serverUrl)}/api/topic/${source}/${encodeURIComponent(id)}/replies/${encodeURIComponent(String(floor))}${query}`,
+    fetcher,
+    isReply
+  );
 }
 
 export function searchTopics({
@@ -239,7 +269,162 @@ export function searchTopics({
     source,
     limit: String(limit)
   });
-  return fetchJson<SearchResponse>(`${normalizeServerUrl(serverUrl)}/api/search?${params.toString()}`, fetcher, isSearchResponse);
+  return fetchJson<SearchResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/search?${params.toString()}`,
+    fetcher,
+    isSearchResponse
+  );
+}
+
+export interface YaohuoLoginCheckResponse {
+  source: 'yaohuo';
+  ok: boolean;
+  loginRequired: boolean;
+  reason?: string;
+  loginUrl: string;
+  message?: string;
+}
+
+const isYaohuoLoginCheckResponse: Validator<YaohuoLoginCheckResponse> = (data): data is YaohuoLoginCheckResponse => (
+  isRecord(data)
+    && data.source === 'yaohuo'
+    && typeof data.ok === 'boolean'
+    && typeof data.loginRequired === 'boolean'
+    && isString(data.loginUrl)
+);
+
+export function parseYaohuoFeedHtml({
+  serverUrl,
+  html,
+  category,
+  url,
+  page = 1,
+  limit = 20,
+  fetcher
+}: {
+  serverUrl: string;
+  html: string;
+  category?: string;
+  url?: string;
+  page?: number;
+  limit?: number;
+  fetcher?: Fetcher;
+}) {
+  return postJson<FeedResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/feed`,
+    {
+      html,
+      category,
+      url,
+      page,
+      limit
+    },
+    fetcher,
+    isFeedResponse
+  );
+}
+
+export function parseYaohuoSearchHtml({
+  serverUrl,
+  html,
+  url,
+  page = 1,
+  limit = 20,
+  fetcher
+}: {
+  serverUrl: string;
+  html: string;
+  url?: string;
+  page?: number;
+  limit?: number;
+  fetcher?: Fetcher;
+}) {
+  return postJson<SearchResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/search`,
+    {
+      html,
+      url,
+      page,
+      limit
+    },
+    fetcher,
+    isSearchResponse
+  );
+}
+
+export function parseYaohuoTopicHtml({
+  serverUrl,
+  html,
+  id,
+  url,
+  fetcher
+}: {
+  serverUrl: string;
+  html: string;
+  id: string;
+  url?: string;
+  fetcher?: Fetcher;
+}) {
+  return postJson<TopicDetail>(
+    `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/topic`,
+    {
+      html,
+      id,
+      url
+    },
+    fetcher,
+    isTopicDetail
+  );
+}
+
+export function parseYaohuoRepliesHtml({
+  serverUrl,
+  html,
+  url,
+  page,
+  limit = 20,
+  fetcher
+}: {
+  serverUrl: string;
+  html: string;
+  url?: string;
+  page: number;
+  limit?: number;
+  fetcher?: Fetcher;
+}) {
+  return postJson<RepliesResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/replies`,
+    {
+      html,
+      url,
+      page,
+      limit
+    },
+    fetcher,
+    isRepliesResponse
+  );
+}
+
+export function parseYaohuoLoginHtml({
+  serverUrl,
+  html,
+  url,
+  fetcher
+}: {
+  serverUrl: string;
+  html: string;
+  url?: string;
+  fetcher?: Fetcher;
+}) {
+  return postJson<YaohuoLoginCheckResponse>(
+    `${normalizeServerUrl(serverUrl)}/api/yaohuo/parse/check-login`,
+    {
+      html,
+      url
+    },
+    fetcher,
+    isYaohuoLoginCheckResponse
+  );
 }
 
 export function getNodeSeekFeed(options: Omit<Parameters<typeof getFeed>[0], 'source'>) {

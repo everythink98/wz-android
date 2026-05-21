@@ -10,6 +10,8 @@ import {
   getReply,
   getReplies,
   getTopic,
+  parseYaohuoFeedHtml,
+  parseYaohuoLoginHtml,
   searchTopics
 } from './forumApi';
 
@@ -126,6 +128,57 @@ describe('Android forum API client', () => {
     expect(fetcher).toHaveBeenNthCalledWith(2, 'http://127.0.0.1:3000/api/topic/v2ex/1212603?nocache=1');
     expect(fetcher).toHaveBeenNthCalledWith(3, 'http://127.0.0.1:3000/api/topic/linuxdo/42/replies?page=4&limit=30&offset=60&nocache=1');
     expect(fetcher).toHaveBeenNthCalledWith(4, 'http://127.0.0.1:3000/api/search?q=VPS&source=all&limit=30');
+  });
+
+  it('posts yaohuo html to parser endpoints without sending cookies to the server', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
+
+    await parseYaohuoFeedHtml({
+      serverUrl: 'http://127.0.0.1:3000',
+      html: '<div class="listdata">妖火</div>',
+      category: '177',
+      page: 2,
+      limit: 30,
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:3000/api/yaohuo/parse/feed', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        html: '<div class="listdata">妖火</div>',
+        category: '177',
+        page: 2,
+        limit: 30
+      })
+    });
+    expect(JSON.stringify(fetcher.mock.calls[0])).not.toContain('sidyaohuo');
+  });
+
+  it('checks yaohuo login state from Android-fetched html without sending cookies to the server', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      source: 'yaohuo',
+      ok: true,
+      loginRequired: false,
+      loginUrl: 'https://yaohuo.me/waplogin.aspx?siteid=1000'
+    })));
+
+    await parseYaohuoLoginHtml({
+      serverUrl: 'http://127.0.0.1:3000',
+      html: '<html>已登录</html>',
+      url: 'https://yaohuo.me/wapindex.aspx?sid=-2',
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledWith('http://127.0.0.1:3000/api/yaohuo/parse/check-login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        html: '<html>已登录</html>',
+        url: 'https://yaohuo.me/wapindex.aspx?sid=-2'
+      })
+    });
+    expect(JSON.stringify(fetcher.mock.calls[0])).not.toContain('sidyaohuo');
   });
 
   it('calls the single-reply endpoint for quoted floors', async () => {

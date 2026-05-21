@@ -1,0 +1,71 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildYaohuoCookieHeader,
+  canStoreYaohuoCookieHeader,
+  hasYaohuoLoginCookie,
+  mergeYaohuoCookies,
+  summarizeYaohuoCookies,
+  type YaohuoNativeCookie
+} from './yaohuoCookies';
+
+describe('yaohuo cookie helpers', () => {
+  it('detects sidyaohuo as the yaohuo login cookie', () => {
+    const cookies: Record<string, YaohuoNativeCookie> = {
+      sidyaohuo: {
+        name: 'sidyaohuo',
+        value: 'abc',
+        domain: 'yaohuo.me'
+      }
+    };
+
+    expect(hasYaohuoLoginCookie(cookies)).toBe(true);
+    expect(canStoreYaohuoCookieHeader(cookies)).toBe(true);
+  });
+
+  it('allows session cookies to reach the real yaohuo login check', () => {
+    const cookies: Record<string, YaohuoNativeCookie> = {
+      asp: { name: 'ASP.NET_SessionId', value: 'session', domain: 'yaohuo.me' },
+      guid: { name: 'GUID', value: 'guid', domain: 'yaohuo.me' }
+    };
+
+    expect(hasYaohuoLoginCookie(cookies)).toBe(false);
+    expect(buildYaohuoCookieHeader(cookies)).toBe('ASP.NET_SessionId=session; GUID=guid');
+    expect(canStoreYaohuoCookieHeader(cookies)).toBe(true);
+  });
+
+  it('keeps yaohuo session cookies and drops unrelated domains or empty values', () => {
+    const cookies: Record<string, YaohuoNativeCookie> = {
+      sidyaohuo: { name: 'sidyaohuo', value: 'abc', domain: '.yaohuo.me' },
+      asp: { name: 'ASP.NET_SessionId', value: 'session', domain: 'www.yaohuo.me' },
+      guid: { name: 'GUID', value: 'guid', domain: 'yaohuo.me' },
+      empty: { name: 'empty', value: '', domain: 'yaohuo.me' },
+      other: { name: 'sidyaohuo', value: 'wrong', domain: 'example.com' }
+    };
+
+    expect(buildYaohuoCookieHeader(cookies)).toBe('ASP.NET_SessionId=session; GUID=guid; sidyaohuo=abc');
+  });
+
+  it('summarizes yaohuo cookies without returning values', () => {
+    const summary = summarizeYaohuoCookies({
+      sidyaohuo: { name: 'sidyaohuo', value: 'secret', domain: 'yaohuo.me' },
+      guid: { name: 'GUID', value: 'guid', domain: 'yaohuo.me' }
+    });
+
+    expect(summary).toEqual({
+      count: 2,
+      names: ['GUID', 'sidyaohuo'],
+      loggedIn: true
+    });
+    expect(JSON.stringify(summary)).not.toContain('secret');
+  });
+
+  it('merges cookies read from both yaohuo hostnames', () => {
+    expect(mergeYaohuoCookies(
+      { sidyaohuo: { name: 'sidyaohuo', value: 'abc' } },
+      { guid: { name: 'GUID', value: 'guid' } }
+    )).toEqual({
+      sidyaohuo: { name: 'sidyaohuo', value: 'abc' },
+      guid: { name: 'GUID', value: 'guid' }
+    });
+  });
+});

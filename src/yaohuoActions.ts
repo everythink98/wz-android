@@ -1,0 +1,132 @@
+export interface YaohuoActionRequest {
+  path: string;
+  method: 'GET' | 'POST';
+  headers: Record<string, string>;
+  body?: string;
+}
+
+function cleanPositiveInteger(value: string | number, name: string) {
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) {
+    throw new Error(`${name} 不正确`);
+  }
+  const number = Number(text);
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(`${name} 不正确`);
+  }
+  return String(number);
+}
+
+function cleanRequiredText(value: string, message: string) {
+  const text = String(value || '').trim();
+  if (!text) {
+    throw new Error(message);
+  }
+  return text;
+}
+
+function normalizeYaohuoContent(content: string) {
+  return cleanRequiredText(content, '请输入回复内容').replace(/\r?\n/g, '\r\n');
+}
+
+function appendIfPresent(params: URLSearchParams, key: string, value?: string | number) {
+  const text = String(value ?? '').trim();
+  if (text) {
+    params.set(key, text);
+  }
+}
+
+export function extractYaohuoSid(cookieHeader: string) {
+  const cookie = String(cookieHeader || '');
+  const pair = cookie.split(';').map((part) => part.trim()).find((part) => /^sidyaohuo=/i.test(part));
+  if (!pair) {
+    return '';
+  }
+  return pair.slice(pair.indexOf('=') + 1).trim();
+}
+
+export function buildYaohuoReplyRequest({
+  topicId,
+  classId,
+  content,
+  replyFloor,
+  toUserId,
+  sid
+}: {
+  topicId: string | number;
+  classId: string | number;
+  content: string;
+  replyFloor?: string | number;
+  toUserId?: string | number;
+  sid?: string;
+}): YaohuoActionRequest {
+  const params = new URLSearchParams({
+    face: '',
+    sendmsg: '0',
+    content: normalizeYaohuoContent(content),
+    action: 'add',
+    id: cleanPositiveInteger(topicId, '帖子 id'),
+    siteid: '1000',
+    lpage: '1',
+    classid: cleanPositiveInteger(classId, '分区 id'),
+    g: replyFloor && toUserId ? '发表回复' : '快速回复'
+  });
+  appendIfPresent(params, 'sid', sid);
+  if (replyFloor && toUserId) {
+    params.set('reply', cleanPositiveInteger(replyFloor, '楼层'));
+    params.set('touserid', cleanPositiveInteger(toUserId, '用户 id'));
+  }
+
+  return {
+    path: '/bbs/book_re.aspx',
+    method: 'POST',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: params.toString()
+  };
+}
+
+export function buildYaohuoFavoriteRequest({
+  topicId,
+  classId
+}: {
+  topicId: string | number;
+  classId: string | number;
+}): YaohuoActionRequest {
+  const params = new URLSearchParams({
+    action: 'fav',
+    siteid: '1000',
+    classid: cleanPositiveInteger(classId, '分区 id'),
+    id: cleanPositiveInteger(topicId, '帖子 id')
+  });
+  return {
+    path: `/bbs/Share.aspx?${params.toString()}`,
+    method: 'GET',
+    headers: {}
+  };
+}
+
+export function buildYaohuoVoteRequest({
+  topicId,
+  classId,
+  voteId
+}: {
+  topicId: string | number;
+  classId: string | number;
+  voteId: string | number;
+}): YaohuoActionRequest {
+  const params = new URLSearchParams({
+    siteid: '1000',
+    classid: cleanPositiveInteger(classId, '分区 id'),
+    vid: cleanPositiveInteger(voteId, '投票 id'),
+    vpage: '1',
+    lpage: '2',
+    id: cleanPositiveInteger(topicId, '帖子 id')
+  });
+  return {
+    path: `/bbs/book_view_toVote.aspx?${params.toString()}`,
+    method: 'GET',
+    headers: {}
+  };
+}

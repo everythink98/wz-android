@@ -66,8 +66,9 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
-const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek']);
-const validFeedSources = new Set<FeedSource>(['all', 'v2ex', 'linuxdo', 'nodeseek']);
+const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
+const validFeedSources = new Set<FeedSource>(['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
+const privateLocalSources = new Set<Source>(['yaohuo']);
 
 function nowIso() {
   return new Date().toISOString();
@@ -93,6 +94,7 @@ function topicSummary(topic: Topic): Topic {
     title: topic.title,
     author: topic.author || '',
     authorAvatar: topic.authorAvatar,
+    categoryId: topic.categoryId,
     category: topic.category,
     url: topic.url,
     createdAt: topic.createdAt,
@@ -319,6 +321,42 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
   };
+}
+
+function isPrivateTopicRecord(record: TopicRecord | ReadingProgressRecord) {
+  return privateLocalSources.has(record.topic.source);
+}
+
+function filterPrivateTopicRecords<T extends TopicRecord | ReadingProgressRecord>(records: Record<string, T>) {
+  return Object.fromEntries(Object.entries(records).filter(([, record]) => !isPrivateTopicRecord(record)));
+}
+
+function filterPrivateSubscriptions(records: Record<string, CategorySubscriptionRecord>) {
+  return Object.fromEntries(Object.entries(records).filter(([, record]) => !privateLocalSources.has(record.source)));
+}
+
+function filterPrivateDeleted(records: Record<string, string>) {
+  return Object.fromEntries(Object.entries(records).filter(([key]) => !key.startsWith('yaohuo:')));
+}
+
+export function sanitizeReaderDataForSync(value: unknown): ReaderData {
+  const data = sanitizeReaderData(value);
+  return sanitizeReaderData({
+    ...data,
+    favorites: filterPrivateTopicRecords(data.favorites),
+    history: filterPrivateTopicRecords(data.history),
+    later: filterPrivateTopicRecords(data.later),
+    progress: filterPrivateTopicRecords(data.progress),
+    subscriptions: filterPrivateSubscriptions(data.subscriptions),
+    savedSearches: data.savedSearches.filter((record) => record.source !== 'yaohuo'),
+    deletedRecords: {
+      favorites: filterPrivateDeleted(data.deletedRecords.favorites),
+      history: filterPrivateDeleted(data.deletedRecords.history),
+      later: filterPrivateDeleted(data.deletedRecords.later),
+      subscriptions: filterPrivateDeleted(data.deletedRecords.subscriptions),
+      savedSearches: filterPrivateDeleted(data.deletedRecords.savedSearches)
+    }
+  });
 }
 
 function dateValue(value: string | undefined) {

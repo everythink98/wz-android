@@ -1,4 +1,4 @@
-export type Source = 'v2ex' | 'linuxdo' | 'nodeseek';
+export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo';
 export type FeedSource = Source | 'all';
 
 export interface Topic {
@@ -7,6 +7,7 @@ export interface Topic {
   title: string;
   author: string;
   authorAvatar?: string;
+  categoryId?: string;
   category?: string;
   url: string;
   createdAt: string;
@@ -18,6 +19,7 @@ export interface Topic {
 
 export interface Reply {
   author: string;
+  authorId?: string;
   authorAvatar?: string;
   contentHtml: string;
   createdAt: string;
@@ -43,6 +45,11 @@ export interface Category {
 export interface TopicDetail extends Topic {
   contentHtml: string;
   replies: Reply[];
+  voteOptions?: Array<{
+    id: string;
+    label: string;
+    count?: number;
+  }>;
   replyHasMore?: boolean;
   replyNextPage?: number | null;
   replyNextOffset?: number | null;
