@@ -2,6 +2,7 @@ import 'expo-dev-client';
 import { memo, type ComponentProps, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
   FlatList,
   Image,
@@ -11,6 +12,7 @@ import {
   Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  PanResponder,
   Platform,
   Pressable,
   SafeAreaView,
@@ -115,10 +117,13 @@ import {
 import { loadReaderData, saveReaderData } from './src/readerDataStore';
 import { normalizeServerUrl, readReaderData as pullReaderData, writeReaderData as pushReaderData } from './src/syncClient';
 import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source, Topic, TopicDetail } from './src/types';
-import { createImagePreviewList, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { createImagePreviewList, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { clearCookieUrls } from './src/cookieCleanup';
+import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { shouldShowFeedFloatingActions } from './src/feedFloatingActions';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
+import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from './src/listSwipeActions';
 import {
   checkYaohuoLoginDirect,
   getYaohuoFeedDirect,
@@ -133,12 +138,19 @@ type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['ignoredS
 type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>;
 type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
 type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles']>;
+type LoginNavigationRequest = { url: string };
+type TopicSwipeActionConfig = {
+  kind: 'favorite' | 'delete';
+  onPress: (topic: Topic) => void;
+};
 
 const NODESEEK_URL = 'https://www.nodeseek.com';
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
+const NODESEEK_LOGIN_HOSTS = ['nodeseek.com'];
 const YAOHUO_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_URL}/waplogin.aspx?siteid=1000`;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
+const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const YAOHUO_DEFAULT_CLASS_ID = '177';
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
@@ -256,7 +268,7 @@ const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.styles === next.styles
   && previous.theme === next.theme
   && previous.onOpenTopic === next.onOpenTopic
-  && previous.onToggleFavorite === next.onToggleFavorite
+  && previous.swipeAction === next.swipeAction
   && topicListItemStatesEqual(previous.readerState, next.readerState)
 ));
 
@@ -274,7 +286,7 @@ export default function App() {
   const topicScrollRef = useRef<FlatList<Reply>>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const systemScheme = useColorScheme();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
@@ -333,7 +345,7 @@ export default function App() {
   currentTopicKeyRef.current = currentTopic ? topicKey(currentTopic) : null;
 
   const theme = useMemo(() => createTheme(readerData.settings, systemScheme), [readerData.settings, systemScheme]);
-  const styles = useMemo(() => createStyles(theme, readerData.settings), [readerData.settings, theme]);
+  const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
   const htmlBaseStyle = useMemo<HtmlBaseStyle>(() => ({
     color: theme.ink,
     fontFamily: fontFamilyValue(readerData.settings.fontFamily),
@@ -551,6 +563,34 @@ export default function App() {
       index: (current.index + 1) % current.urls.length
     } : current);
   }, []);
+  const notify = useCallback((message: string) => {
+    setStatus(message);
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+    }
+  }, []);
+  const openExternalUrl = useCallback((url: string) => {
+    if (!isHttpOrHttpsUrl(url)) {
+      notify('仅支持打开 http/https 链接。');
+      return;
+    }
+    void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
+  }, [notify]);
+  const handleLoginNavigation = useCallback((request: LoginNavigationRequest, allowedHosts: string[]) => {
+    if (shouldOpenLoginWebViewUrl(request.url, allowedHosts)) {
+      return true;
+    }
+    if (isHttpOrHttpsUrl(request.url)) {
+      openExternalUrl(request.url);
+    }
+    return false;
+  }, [openExternalUrl]);
+  const handleNodeSeekLoginNavigation = useCallback((request: LoginNavigationRequest) => (
+    handleLoginNavigation(request, NODESEEK_LOGIN_HOSTS)
+  ), [handleLoginNavigation]);
+  const handleYaohuoLoginNavigation = useCallback((request: LoginNavigationRequest) => (
+    handleLoginNavigation(request, YAOHUO_LOGIN_HOSTS)
+  ), [handleLoginNavigation]);
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
@@ -575,20 +615,13 @@ export default function App() {
           openImagePreview(href);
           return;
         }
-        void Linking.openURL(href);
+        openExternalUrl(href);
       }
     },
     img: {
       enableExperimentalPercentWidth: true
     }
-  }), [openImagePreview]);
-
-  const notify = useCallback((message: string) => {
-    setStatus(message);
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(message, ToastAndroid.SHORT);
-    }
-  }, []);
+  }), [openExternalUrl, openImagePreview]);
 
   const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
     setReaderData((current) => {
@@ -1193,12 +1226,7 @@ export default function App() {
 
   const clearLogin = useCallback(async () => {
     await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
-    try {
-      await CookieManager.clearAll(true);
-    } catch {
-      await CookieManager.clearAll(false);
-    }
-    await CookieManager.flush();
+    await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
     webLoginDetectedRef.current = false;
     setHasNodeSeekCookie(false);
     setCookieNames([]);
@@ -1208,6 +1236,8 @@ export default function App() {
 
   const clearYaohuoLogin = useCallback(async () => {
     await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+    await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);
+    yaohuoWebViewRef.current?.reload();
     setHasYaohuoCookie(false);
     setYaohuoCookieNames([]);
     notify('已清除本机保存的妖火 Cookie。');
@@ -1544,7 +1574,7 @@ export default function App() {
             onYaohuoFavorite={favoriteOnYaohuoSite}
             onYaohuoVote={voteYaohuo}
             onLoadMoreReplies={loadMoreReplies}
-            onOpenOriginal={(url) => void Linking.openURL(url)}
+            onOpenOriginal={openExternalUrl}
             onReplyComposerOpenChange={toggleReplyComposer}
             onReplyContentChange={setReplyContent}
             onReplyFilterChange={setReplyFilter}
@@ -1599,6 +1629,7 @@ export default function App() {
                 onSearch={runSearch}
                 onSearchSourceChange={setSearchSource}
                 onSortChange={setSearchSort}
+                onToggleFavorite={toggleTopicFavorite}
               />
             ) : null}
             {screen === 'library' ? (
@@ -1642,6 +1673,8 @@ export default function App() {
                   onCheckYaohuoLogin={checkYaohuoCookie}
                   onClearLogin={clearLogin}
                   onClearYaohuoLogin={clearYaohuoLogin}
+                  handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
+                  handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
                   onHandleLoginMessage={handleLoginMessage}
                   onPullSync={pullSync}
                   onPushSync={pushSync}
@@ -1734,6 +1767,10 @@ function FeedScreen({
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
     setShowFloatingActions(false);
   }, []);
+  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
+    kind: 'favorite',
+    onPress: onToggleFavorite
+  }), [onToggleFavorite]);
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
     <MemoizedTopicCard
@@ -1742,9 +1779,9 @@ function FeedScreen({
       theme={theme}
       topic={topic}
       onOpenTopic={onOpenTopic}
-      onToggleFavorite={onToggleFavorite}
+      swipeAction={favoriteSwipeAction}
     />
-  ), [onOpenTopic, onToggleFavorite, readerData, styles, theme]);
+  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, theme]);
   const categoryItems = useMemo(
     () => feedCategoryItems(categories, feedSource),
     [categories, feedSource]
@@ -1827,7 +1864,8 @@ function SearchScreen({
   onScopeChange,
   onSearch,
   onSearchSourceChange,
-  onSortChange
+  onSortChange,
+  onToggleFavorite
 }: {
   busy: boolean;
   query: string;
@@ -1845,7 +1883,12 @@ function SearchScreen({
   onSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
+  onToggleFavorite: (topic: Topic) => void;
 }) {
+  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
+    kind: 'favorite',
+    onPress: onToggleFavorite
+  }), [onToggleFavorite]);
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <MemoizedTopicCard
       readerState={getTopicListItemState(readerData, item)}
@@ -1853,8 +1896,9 @@ function SearchScreen({
       theme={theme}
       topic={item}
       onOpenTopic={onOpenTopic}
+      swipeAction={favoriteSwipeAction}
     />
-  ), [onOpenTopic, readerData, styles, theme]);
+  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, theme]);
   const savedSearchItems = useMemo(
     () => readerData.savedSearches.map((item) => ({ value: item.id, label: item.query })),
     [readerData.savedSearches]
@@ -1963,6 +2007,10 @@ function LibraryScreen({
   onRemove: (topic: Topic) => void;
   onTabChange: (tab: LibraryTab) => void;
 }) {
+  const deleteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
+    kind: 'delete',
+    onPress: onRemove
+  }), [onRemove]);
   const renderLibraryItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <View style={styles.libraryItem}>
       <MemoizedTopicCard
@@ -1971,10 +2019,10 @@ function LibraryScreen({
         theme={theme}
         topic={item}
         onOpenTopic={onOpenTopic}
+        swipeAction={deleteSwipeAction}
       />
-      <AppButton label="删除" variant="ghost" styles={styles} onPress={() => onRemove(item)} />
     </View>
-  ), [onOpenTopic, onRemove, readerData, styles, theme]);
+  ), [deleteSwipeAction, onOpenTopic, readerData, styles, theme]);
 
   const header = (
     <View style={styles.stack}>
@@ -2032,6 +2080,8 @@ function MoreScreen({
   onCheckYaohuoLogin,
   onClearLogin,
   onClearYaohuoLogin,
+  handleNodeSeekLoginNavigation,
+  handleYaohuoLoginNavigation,
   onHandleLoginMessage,
   onPullSync,
   onPushSync,
@@ -2075,6 +2125,8 @@ function MoreScreen({
   onCheckYaohuoLogin: () => void;
   onClearLogin: () => void;
   onClearYaohuoLogin: () => void;
+  handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
+  handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
   onPullSync: () => void;
   onPushSync: () => void;
@@ -2160,6 +2212,7 @@ function MoreScreen({
                 }}
                 onLoadStart={() => onSetLoadingLoginPage(true)}
                 onMessage={onHandleLoginMessage}
+                onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
               />
             </View>
           </View>
@@ -2186,6 +2239,7 @@ function MoreScreen({
                 thirdPartyCookiesEnabled
                 onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
                 onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
+                onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
               />
             </View>
           </View>
@@ -2853,39 +2907,101 @@ function ImagePreviewModal({
 function TopicCard({
   topic,
   readerState,
+  swipeAction,
   styles,
   theme,
-  onOpenTopic,
-  onToggleFavorite
+  onOpenTopic
 }: {
   topic: Topic;
   readerState: TopicListItemState;
+  swipeAction?: TopicSwipeActionConfig;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
-  onToggleFavorite?: (topic: Topic) => void;
 }) {
-  const openTopicPress = useCallback(() => onOpenTopic(topic), [onOpenTopic, topic]);
-  const toggleFavoritePress = useCallback(() => onToggleFavorite?.(topic), [onToggleFavorite, topic]);
+  const translateX = useRef(new Animated.Value(0)).current;
+  const isSwipeOpenRef = useRef(false);
+  const animateSwipe = useCallback((open: boolean) => {
+    isSwipeOpenRef.current = open;
+    Animated.spring(translateX, {
+      toValue: open ? -LIST_SWIPE_ACTION_WIDTH : 0,
+      useNativeDriver: true,
+      friction: 9,
+      tension: 90
+    }).start();
+  }, [translateX]);
+  const openTopicPress = useCallback(() => {
+    if (isSwipeOpenRef.current) {
+      animateSwipe(false);
+      return;
+    }
+    onOpenTopic(topic);
+  }, [animateSwipe, onOpenTopic, topic]);
+  const runSwipeAction = useCallback(() => {
+    swipeAction?.onPress(topic);
+    animateSwipe(false);
+  }, [animateSwipe, swipeAction, topic]);
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => Boolean(swipeAction) && shouldCaptureListSwipe(gesture.dx, gesture.dy),
+    onPanResponderMove: (_event, gesture) => {
+      const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
+      translateX.setValue(clampListSwipeTranslate(start + gesture.dx));
+    },
+    onPanResponderRelease: (_event, gesture) => {
+      const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
+      animateSwipe(Boolean(swipeAction) && shouldOpenListSwipeAction(start + gesture.dx, gesture.vx));
+    },
+    onPanResponderTerminate: () => animateSwipe(isSwipeOpenRef.current)
+  }), [animateSwipe, swipeAction, translateX]);
+  const ActionIcon = swipeAction?.kind === 'delete' ? X : Star;
+  const swipeActionLabel = swipeAction?.kind === 'delete'
+    ? '删除'
+    : readerState.favorite ? '取消收藏' : '收藏';
+  const metaParts = [
+    topic.author || '未知作者',
+    `${topic.replyCount} 回复`,
+    topic.viewCount ? `${topic.viewCount} 浏览` : '',
+    readerState.favorite ? '已收藏' : '',
+    readerState.read ? '已读' : '',
+    readerState.tracked ? '追踪命中' : ''
+  ].filter(Boolean).join(' · ');
   return (
-    <View style={[styles.topicCard, readerState.read && styles.topicCardRead, readerState.tracked && styles.topicCardTracked]}>
-      <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} onPress={openTopicPress}>
-        <View style={styles.topicCardHead}>
-          <Text style={styles.sourceText}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
-          <Text style={styles.timeText}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
+    <View style={styles.topicSwipeShell}>
+      {swipeAction ? (
+        <View style={[styles.topicSwipeAction, swipeAction.kind === 'delete' && styles.topicSwipeActionDanger]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={swipeActionLabel}
+            android_ripple={androidRipple(theme.primarySoft)}
+            style={styles.topicSwipeActionButton}
+            onPress={runSwipeAction}
+          >
+            <ActionIcon size={18} color={swipeAction.kind === 'delete' ? theme.danger : theme.primary} strokeWidth={2} />
+            <Text style={[styles.topicSwipeActionText, swipeAction.kind === 'delete' && styles.topicSwipeActionTextDanger]}>{swipeActionLabel}</Text>
+          </Pressable>
         </View>
-        <Text style={styles.cardTitle} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
-        {topic.excerpt && readerState.listDensity === 'loose' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
-        {readerState.tracked ? <Text style={styles.trackedText}>追踪命中</Text> : null}
-      </Pressable>
-      <View style={styles.topicMetaRow}>
-        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={styles.flex} onPress={openTopicPress}>
-          <Text style={styles.meta}>{topic.author || '未知作者'} · {topic.replyCount} 回复{topic.viewCount ? ` · ${topic.viewCount} 浏览` : ''}</Text>
+      ) : null}
+      <Animated.View
+        {...(swipeAction ? panResponder.panHandlers : {})}
+        style={[
+          styles.topicCard,
+          readerState.read && styles.topicCardRead,
+          readerState.tracked && styles.topicCardTracked,
+          { transform: [{ translateX }] }
+        ]}
+      >
+        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={styles.topicCardPressable} onPress={openTopicPress}>
+          <View style={styles.topicCardHead}>
+            <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
+            <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
+          </View>
+          <Text style={styles.cardTitle} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
+          {topic.excerpt && readerState.listDensity === 'loose' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
         </Pressable>
-        <View style={styles.topicMarks}>
-          {onToggleFavorite ? <IconButton icon={Star} compact iconOnly label={readerState.favorite ? '已收藏' : '收藏'} styles={styles} theme={theme} active={readerState.favorite} onPress={toggleFavoritePress} /> : null}
-        </View>
-      </View>
+        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={styles.topicMetaRow} onPress={openTopicPress}>
+          <Text style={styles.meta} numberOfLines={1}>{metaParts}</Text>
+        </Pressable>
+      </Animated.View>
     </View>
   );
 }
@@ -3006,7 +3122,7 @@ function MenuButton({
       </View>
       <View style={styles.flex}>
         <Text style={styles.menuLabel}>{label}</Text>
-        <Text style={styles.meta}>{value}</Text>
+        <Text style={styles.meta} numberOfLines={2}>{value}</Text>
       </View>
     </Pressable>
   );
@@ -3032,7 +3148,7 @@ function InfoRow({
         <Icon size={19} color={theme.primary} strokeWidth={1.8} />
       </View>
       <Text style={[styles.menuLabel, styles.flex]}>{label}</Text>
-      <Text style={styles.meta}>{value}</Text>
+      <Text style={styles.meta} numberOfLines={1}>{value}</Text>
     </View>
   );
 }
@@ -3481,7 +3597,7 @@ function createTheme(settings: ReaderSettings, systemScheme: 'light' | 'dark' | 
       muted: '#aaa79f',
       primary: palette.dark,
       primarySoft: alphaColor(palette.dark, 0.16),
-      mist: '#203026',
+      mist: alphaColor(palette.dark, 0.18),
       onPrimary: palette.darkOn,
       danger: '#da8378',
       success: palette.dark
@@ -3498,18 +3614,19 @@ function createTheme(settings: ReaderSettings, systemScheme: 'light' | 'dark' | 
     muted: '#666666',
     primary: palette.light,
     primarySoft: alphaColor(palette.light, 0.07),
-    mist: '#f2f8f2',
+    mist: alphaColor(palette.light, 0.09),
     onPrimary: palette.lightOn,
     danger: '#ad5349',
     success: palette.light
   };
 }
 
-function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
+function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
   const fontScale = settings.fontScale;
   const titleFontScale = Math.min(fontScale, 1.12);
   const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
   const densityPadding = settings.listDensity === 'compact' ? 10 : settings.listDensity === 'loose' ? 16 : 13;
+  const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)));
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   return StyleSheet.create({
     screen: {
@@ -3578,19 +3695,55 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
     floatingIconButton: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 44,
+      height: 44,
+      borderRadius: 22,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface
     },
+    topicSwipeShell: {
+      position: 'relative',
+      overflow: 'hidden',
+      backgroundColor: theme.surface
+    },
+    topicSwipeAction: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      width: LIST_SWIPE_ACTION_WIDTH,
+      backgroundColor: theme.mist
+    },
+    topicSwipeActionDanger: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08)
+    },
+    topicSwipeActionButton: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      paddingHorizontal: 8
+    },
+    topicSwipeActionText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    topicSwipeActionTextDanger: {
+      color: theme.danger
+    },
     topicCard: {
       gap: 5,
-      paddingVertical: densityPadding,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      backgroundColor: 'transparent'
+      backgroundColor: theme.surface
+    },
+    topicCardPressable: {
+      gap: 5,
+      paddingTop: densityPadding,
+      paddingBottom: 4
     },
     topicCardRead: {
       opacity: 0.62
@@ -3610,7 +3763,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       fontSize: 12,
       fontWeight: '500'
     },
+    topicCardSource: {
+      flex: 1,
+      minWidth: 0
+    },
     timeText: {
+      flexShrink: 0,
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12
@@ -3634,33 +3792,22 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       fontSize: 12,
       lineHeight: 17
     },
-    trackedText: {
-      color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '700'
-    },
-    topicMarks: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 5
-    },
     topicMetaRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 8
+      gap: 8,
+      paddingBottom: densityPadding
     },
     pillRail: {
       gap: 4,
       paddingVertical: 0
     },
     pill: {
-      minHeight: 30,
+      minHeight: 40,
       justifyContent: 'center',
       backgroundColor: 'transparent',
       borderRadius: 6,
-      paddingHorizontal: 8,
+      paddingHorizontal: 10,
       paddingVertical: 3
     },
     pillActive: {
@@ -3682,7 +3829,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderBottomWidth: StyleSheet.hairlineWidth
     },
     tab: {
-      minHeight: 36,
+      minHeight: 40,
       justifyContent: 'center',
       borderBottomColor: 'transparent',
       borderBottomWidth: 2,
@@ -3732,7 +3879,7 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       gap: 8
     },
     button: {
-      minHeight: 38,
+      minHeight: 42,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
@@ -3741,29 +3888,30 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       borderColor: theme.line,
       borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 10,
+      paddingHorizontal: 12,
       paddingVertical: 5
     },
     buttonCompact: {
-      minHeight: 28,
+      minHeight: 40,
       gap: 4,
-      paddingHorizontal: 6,
+      paddingHorizontal: 8,
       paddingVertical: 2
     },
     buttonIconOnly: {
-      width: 30,
-      minHeight: 30,
+      width: 44,
+      minHeight: 44,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
+      borderRadius: 22,
       paddingHorizontal: 0,
       paddingVertical: 0
     },
     buttonTiny: {
-      minHeight: 24,
+      minHeight: 40,
       gap: 3,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
-      paddingHorizontal: 4,
+      paddingHorizontal: 8,
       paddingVertical: 0
     },
     buttonGhost: {
@@ -3870,12 +4018,12 @@ function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
       gap: 10
     },
     webViewShell: {
-      height: 480,
+      height: loginWebViewHeight,
       overflow: 'hidden',
       borderColor: theme.line,
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: '#ffffff'
+      backgroundColor: theme.surface
     },
     loading: {
       position: 'absolute',

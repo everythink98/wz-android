@@ -44,4 +44,18 @@ describe('Android topic detail reading layout', () => {
     expect(appSource).toContain('const saved = readerData.savedSearches.find((item) => item.id === id)');
     expect(appSource).not.toContain('items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}');
   });
+
+  it('keeps native controls large enough for touch use', () => {
+    expect(appSource).toMatch(/pill:\s*\{[\s\S]*minHeight:\s*40/);
+    expect(appSource).toMatch(/tab:\s*\{[\s\S]*minHeight:\s*40/);
+    expect(appSource).toMatch(/buttonIconOnly:\s*\{[\s\S]*width:\s*44[\s\S]*minHeight:\s*44/);
+    expect(appSource).toMatch(/buttonTiny:\s*\{[\s\S]*minHeight:\s*40/);
+  });
+
+  it('ties selected backgrounds and login panels to the current theme', () => {
+    expect(appSource).toContain('mist: alphaColor(palette.light, 0.09)');
+    expect(appSource).toContain('mist: alphaColor(palette.dark, 0.18)');
+    expect(appSource).toContain('const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)))');
+    expect(appSource).toMatch(/webViewShell:\s*\{[\s\S]*height:\s*loginWebViewHeight[\s\S]*backgroundColor:\s*theme\.surface/);
+  });
 });
