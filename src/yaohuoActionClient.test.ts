@@ -26,7 +26,7 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(fetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx', {
+    expect(fetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -40,8 +40,9 @@ describe('runYaohuoAction', () => {
         'sec-fetch-site': 'same-origin',
         'user-agent': expect.stringContaining('Android')
       }),
-      body: expect.any(String)
-    });
+      body: expect.any(String),
+      signal: expect.any(AbortSignal)
+    }));
     expect(result.message).toBe('评论成功');
     expect(JSON.stringify(result)).not.toContain('secret');
   });
@@ -57,8 +58,24 @@ describe('runYaohuoAction', () => {
 
     expect(fetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=123', expect.objectContaining({
       method: 'GET',
-      body: undefined
+      body: undefined,
+      signal: expect.any(AbortSignal)
     }));
+  });
+
+  it('times out stuck yaohuo write requests', async () => {
+    const stuckFetcher = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+    }));
+
+    await expect(runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
+      fetcher: stuckFetcher,
+      timeoutMs: 1
+    })).rejects.toThrow('请求超时，请稍后重试');
   });
 
   it('surfaces login and captcha pages as a relogin flow', async () => {

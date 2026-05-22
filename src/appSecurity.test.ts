@@ -13,12 +13,16 @@ describe('Android App security review guards', () => {
   });
 
   it('clears only the selected login WebView cookies', () => {
-    const clearNodeSeekLoginBlock = appSource.match(/const clearLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify\]\);/)?.[1] || '';
-    const clearYaohuoLoginBlock = appSource.match(/const clearYaohuoLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify\]\);/)?.[1] || '';
+    const clearNodeSeekStateBlock = appSource.match(/const clearNodeSeekLoginState = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearStoredNodeSeekLoginState\]\);/)?.[1] || '';
+    const clearYaohuoStateBlock = appSource.match(/const clearYaohuoLoginState = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearStoredYaohuoLoginState\]\);/)?.[1] || '';
+    const clearNodeSeekLoginBlock = appSource.match(/const clearLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearNodeSeekLoginState, notify\]\);/)?.[1] || '';
+    const clearYaohuoLoginBlock = appSource.match(/const clearYaohuoLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState, notify\]\);/)?.[1] || '';
 
     expect(appSource).not.toContain('CookieManager.clearAll');
-    expect(clearNodeSeekLoginBlock).toContain('await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);');
-    expect(clearYaohuoLoginBlock).toContain('await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);');
+    expect(clearNodeSeekStateBlock).toContain('await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);');
+    expect(clearYaohuoStateBlock).toContain('await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);');
+    expect(clearNodeSeekLoginBlock).toContain('await clearNodeSeekLoginState();');
+    expect(clearYaohuoLoginBlock).toContain('await clearYaohuoLoginState();');
     expect(clearYaohuoLoginBlock).toContain('yaohuoWebViewRef.current?.reload()');
   });
 

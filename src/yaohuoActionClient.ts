@@ -1,5 +1,5 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
-import { type Fetcher } from './request';
+import { fetchWithTimeout, type Fetcher } from './request';
 
 const YAOHUO_BASE_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
@@ -66,18 +66,22 @@ function actionMessage(html: string) {
 export async function runYaohuoAction({
   cookieHeader,
   request,
-  fetcher = fetch
+  fetcher = fetch,
+  signal,
+  timeoutMs
 }: {
   cookieHeader: string;
   request: YaohuoActionRequest;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
     throw yaohuoLoginRequiredError('expired');
   }
 
-  const response = await fetcher(`${YAOHUO_BASE_URL}${request.path}`, {
+  const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}${request.path}`, {
     method: request.method,
     headers: {
       ...YAOHUO_ACTION_HEADERS,
@@ -85,6 +89,10 @@ export async function runYaohuoAction({
       cookie: cleanCookie
     },
     body: request.method === 'POST' ? request.body : undefined
+  }, {
+    fetcher,
+    signal,
+    timeoutMs
   });
   const html = await response.text();
   const responseUrl = response.url || '';

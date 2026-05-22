@@ -21,7 +21,7 @@ describe('runNodeSeekAction', () => {
       fetcher
     });
 
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/attendance?random=false', {
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/attendance?random=false', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
         accept: 'application/json, text/plain, */*',
@@ -39,8 +39,9 @@ describe('runNodeSeekAction', () => {
         'x-csrf-challenge': 'simple-token',
         'x-requested-with': 'XMLHttpRequest'
       }),
-      body: undefined
-    });
+      body: undefined,
+      signal: expect.any(AbortSignal)
+    }));
   });
 
   it('surfaces the high risk action message without retrying repeatedly', async () => {
@@ -54,6 +55,31 @@ describe('runNodeSeekAction', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
+
+  it('marks rejected login cookies and times out stuck write requests', async () => {
+    const rejectedFetcher = vi.fn(async () => jsonResponse({}, 401));
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher: rejectedFetcher
+    })).rejects.toMatchObject({
+      source: 'nodeseek',
+      loginRequired: true
+    });
+
+    const stuckFetcher = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+    }));
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher: stuckFetcher,
+      timeoutMs: 1
+    })).rejects.toThrow('请求超时，请稍后重试');
+  });
+
 
   it('treats HTTP 200 NodeSeek error payloads as failed write actions', async () => {
     const failedSuccessFetcher = vi.fn(async () => jsonResponse({

@@ -1,5 +1,5 @@
 import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodeseekActions';
-import { type Fetcher } from './request';
+import { fetchWithTimeout, type Fetcher } from './request';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
 const NODESEEK_ACTION_HEADERS = {
@@ -39,18 +39,22 @@ function isFailedActionPayload(data: unknown) {
 export async function runNodeSeekAction({
   cookieHeader,
   request,
-  fetcher = fetch
+  fetcher = fetch,
+  signal,
+  timeoutMs
 }: {
   cookieHeader: string;
   request: NodeSeekActionRequest;
   fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }) {
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
     throw new Error('请先检测 NodeSeek 登录');
   }
 
-  const response = await fetcher(`${NODESEEK_BASE_URL}${request.path}`, {
+  const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, {
     method: request.method,
     headers: {
       ...NODESEEK_ACTION_HEADERS,
@@ -58,6 +62,10 @@ export async function runNodeSeekAction({
       cookie: cleanCookie
     },
     body: request.body
+  }, {
+    fetcher,
+    signal,
+    timeoutMs
   });
   let data: unknown = null;
   let parsedJson = true;
@@ -68,14 +76,26 @@ export async function runNodeSeekAction({
   }
 
   if (!response.ok) {
-    throw new Error(nodeSeekActionErrorMessage(data, response.status));
+    throw nodeSeekActionError(data, response.status);
   }
   if (!parsedJson) {
     throw new Error('NodeSeek 返回内容格式不正确');
   }
   if (isFailedActionPayload(data)) {
-    throw new Error(nodeSeekActionErrorMessage(data, response.status));
+    throw nodeSeekActionError(data, response.status);
   }
 
   return data;
+}
+
+function nodeSeekActionError(data: unknown, status: number) {
+  const message = nodeSeekActionErrorMessage(data, status);
+  const error = new Error(message);
+  if (status === 401 || /重新登录|请先.*登录|拒绝了请求/i.test(message)) {
+    Object.assign(error, {
+      source: 'nodeseek',
+      loginRequired: true
+    });
+  }
+  return error;
 }

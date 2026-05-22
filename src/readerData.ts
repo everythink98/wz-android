@@ -7,6 +7,7 @@ export const MAX_PROGRESS_RECORDS = 1000;
 export interface TopicRecord {
   topic: Topic;
   savedAt: string;
+  updatedAt?: string;
   tags?: string[];
   note?: string;
   visitCount?: number;
@@ -203,6 +204,7 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
     next[topicKey(topic)] = {
       topic,
       savedAt: typeof candidate.savedAt === 'string' ? candidate.savedAt : nowIso(),
+      updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined,
       tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
       note: typeof candidate.note === 'string' ? candidate.note : undefined,
       visitCount: typeof candidate.visitCount === 'number' && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
@@ -395,6 +397,19 @@ function mergeTimedMap<T>(local: Record<string, T>, remote: Record<string, T>, g
   return merged;
 }
 
+function topicRecordTime(record: TopicRecord) {
+  return record.updatedAt || record.savedAt;
+}
+
+function hasOwnObjectField(value: unknown, key: string) {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.prototype.hasOwnProperty.call(value, key)
+  );
+}
+
 function mergeDeletedMap(local: Record<string, string>, remote: Record<string, string>) {
   const merged = { ...local };
   for (const [key, remoteDeletedAt] of Object.entries(remote)) {
@@ -470,9 +485,10 @@ function clearDeleted(deletedRecords: DeletedRecords, section: keyof DeletedReco
 export function mergeReaderData(localValue: unknown, remoteValue: unknown): ReaderData {
   const local = sanitizeReaderData(localValue);
   const remote = sanitizeReaderData(remoteValue);
-  const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, (record) => record.savedAt);
-  const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, (record) => record.savedAt);
-  const later = mergeTimedMapWithDeleted(local.later, remote.later, local.deletedRecords.later, remote.deletedRecords.later, (record) => record.savedAt);
+  const remoteHasSettings = hasOwnObjectField(remoteValue, 'settings');
+  const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, topicRecordTime);
+  const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, topicRecordTime);
+  const later = mergeTimedMapWithDeleted(local.later, remote.later, local.deletedRecords.later, remote.deletedRecords.later, topicRecordTime);
   const subscriptions = mergeTimedMapWithDeleted(
     local.subscriptions,
     remote.subscriptions,
@@ -497,7 +513,7 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
       subscriptions: subscriptions.deleted,
       savedSearches: savedSearches.deleted
     },
-    settings: local.settings
+    settings: remoteHasSettings ? remote.settings : local.settings
   });
 }
 

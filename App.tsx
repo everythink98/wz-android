@@ -181,6 +181,15 @@ type TopicSwipeActionConfig = {
   onPress: (topic: Topic) => void;
 };
 
+function isNodeSeekLoginRequiredError(error: unknown) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && (error as { source?: unknown }).source === 'nodeseek'
+    && (error as { loginRequired?: unknown }).loginRequired
+  );
+}
+
 const NODESEEK_URL = 'https://www.nodeseek.com';
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com'];
@@ -304,9 +313,11 @@ export default function App() {
   const topicAbortRef = useRef<AbortController | null>(null);
   const syncAbortRef = useRef<AbortController | null>(null);
   const healthAbortRef = useRef<AbortController | null>(null);
+  const actionAbortRef = useRef<AbortController | null>(null);
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
+  const repliesRequestIdRef = useRef(0);
   const currentTopicKeyRef = useRef<string | null>(null);
   const topicScrollRef = useRef<FlatList<Reply>>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
@@ -317,6 +328,7 @@ export default function App() {
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [cookieNames, setCookieNames] = useState<string[]>([]);
   const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
@@ -685,6 +697,7 @@ export default function App() {
     repliesAbortRef.current?.abort();
     syncAbortRef.current?.abort();
     healthAbortRef.current?.abort();
+    actionAbortRef.current?.abort();
     if (progressSaveTimerRef.current) {
       clearTimeout(progressSaveTimerRef.current);
     }
@@ -785,6 +798,30 @@ export default function App() {
     notify(message);
   }, [notify]);
 
+  const clearStoredYaohuoLoginState = useCallback(async () => {
+    await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+    setHasYaohuoCookie(false);
+    setYaohuoCookieNames([]);
+  }, []);
+
+  const clearStoredNodeSeekLoginState = useCallback(async () => {
+    await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
+    webLoginDetectedRef.current = false;
+    setHasNodeSeekCookie(false);
+    setCookieNames([]);
+    setWebLoginUserId(null);
+  }, []);
+
+  const clearYaohuoLoginState = useCallback(async () => {
+    await clearStoredYaohuoLoginState();
+    await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);
+  }, [clearStoredYaohuoLoginState]);
+
+  const clearNodeSeekLoginState = useCallback(async () => {
+    await clearStoredNodeSeekLoginState();
+    await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
+  }, [clearStoredNodeSeekLoginState]);
+
   const loadCategories = useCallback(async () => {
     if (!serverUrl.trim()) {
       return;
@@ -814,7 +851,7 @@ export default function App() {
       });
       if (errors.length) {
         if (errors.some(([source]) => source === 'yaohuo')) {
-          setHasYaohuoCookie(false);
+          await clearStoredYaohuoLoginState();
         }
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
@@ -825,7 +862,7 @@ export default function App() {
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [notify, serverUrl]);
+  }, [clearStoredYaohuoLoginState, notify, serverUrl]);
 
   const loadFeed = useCallback(async ({
     page = 1,
@@ -850,11 +887,6 @@ export default function App() {
       notify('请输入服务器地址');
       return;
     }
-    const yaohuoCookie = await loadYaohuoCookieForSource(source);
-    if (source === 'yaohuo' && !yaohuoCookie) {
-      showYaohuoLogin();
-      return;
-    }
     if (feedLoadingRef.current && !reset) {
       return;
     }
@@ -875,6 +907,14 @@ export default function App() {
     }
     setBusy(true);
     try {
+      const yaohuoCookie = await loadYaohuoCookieForSource(source);
+      if (requestId !== feedRequestIdRef.current) {
+        return;
+      }
+      if (source === 'yaohuo' && !yaohuoCookie) {
+        showYaohuoLogin();
+        return;
+      }
       let data: FeedResponse;
       if (source === 'all' && yaohuoCookie) {
         const [baseResult, yaohuoResult] = await Promise.allSettled([
@@ -928,7 +968,7 @@ export default function App() {
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
         if (errors.some(([sourceName]) => sourceName === 'yaohuo')) {
-          setHasYaohuoCookie(false);
+          await clearStoredYaohuoLoginState();
         }
         notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
       } else if (successMessage) {
@@ -937,7 +977,7 @@ export default function App() {
     } catch (error) {
       if (requestId === feedRequestIdRef.current) {
         if (isYaohuoLoginRequiredError(error)) {
-          setHasYaohuoCookie(false);
+          await clearYaohuoLoginState();
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
@@ -954,7 +994,7 @@ export default function App() {
       }
       finishAbortableRequest(feedAbortRef, controller);
     }
-  }, [categoryFilter, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
+  }, [categoryFilter, clearStoredYaohuoLoginState, clearYaohuoLoginState, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
 
   useEffect(() => {
     void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
@@ -974,6 +1014,10 @@ export default function App() {
     void loadCategories();
   }, [loadCategories, loadFeed, notify]);
 
+  useEffect(() => {
+    setSearchItems([]);
+  }, [searchQuery, searchScope, searchSource]);
+
   const runSearch = useCallback(async () => {
     const query = searchQuery.trim();
     if (!query) {
@@ -982,6 +1026,7 @@ export default function App() {
     }
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
+    setSearchItems([]);
     setBusy(true);
     try {
       if (searchScope === 'local') {
@@ -1015,7 +1060,7 @@ export default function App() {
         commitReaderData((current) => addSavedSearch(current, query, searchSource));
         const errors = Object.entries(data.errors || {});
         if (errors.some(([sourceName]) => sourceName === 'yaohuo')) {
-          setHasYaohuoCookie(false);
+          await clearStoredYaohuoLoginState();
         }
         notify(errors.length
           ? errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；')
@@ -1024,7 +1069,7 @@ export default function App() {
     } catch (error) {
       if (requestId === searchRequestIdRef.current) {
         if (isYaohuoLoginRequiredError(error)) {
-          setHasYaohuoCookie(false);
+          await clearYaohuoLoginState();
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
@@ -1038,23 +1083,25 @@ export default function App() {
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
+  }, [clearStoredYaohuoLoginState, clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
-    const yaohuoCookie = await loadYaohuoCookieForSource(topic.source);
-    if (topic.source === 'yaohuo' && !yaohuoCookie) {
-      showYaohuoLogin();
-      return;
-    }
     if (screen !== 'topic') {
       topicReturnScreenRef.current = screen;
     }
     const requestId = ++topicRequestIdRef.current;
+    repliesRequestIdRef.current += 1;
+    repliesAbortRef.current?.abort();
+    loadingMoreRepliesRef.current = false;
     currentTopicKeyRef.current = topicKey(topic);
     setSelectedTopic(topic);
     setTopicDetail(null);
     setTopicError('');
     setTopicReplies([]);
+    setReplyHasMore(false);
+    setReplyNextPage(null);
+    setReplyNextOffset(null);
+    setLoadingMoreReplies(false);
     setReplyContent('');
     setReplyComposerOpen(false);
     setYaohuoReplyTarget(null);
@@ -1064,6 +1111,14 @@ export default function App() {
     setBusy(true);
     const controller = startAbortableRequest(topicAbortRef);
     try {
+      const yaohuoCookie = await loadYaohuoCookieForSource(topic.source);
+      if (requestId !== topicRequestIdRef.current) {
+        return;
+      }
+      if (topic.source === 'yaohuo' && !yaohuoCookie) {
+        showYaohuoLogin();
+        return;
+      }
       const detail = topic.source === 'yaohuo'
         ? await getYaohuoTopicDirect({ serverUrl, topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
         : await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache, signal: controller.signal });
@@ -1088,7 +1143,7 @@ export default function App() {
         const message = errorMessage(error);
         setTopicError(message);
         if (isYaohuoLoginRequiredError(error)) {
-          setHasYaohuoCookie(false);
+          await clearYaohuoLoginState();
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
@@ -1102,24 +1157,26 @@ export default function App() {
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [commitReaderData, loadYaohuoCookieForSource, notify, resetQuoteState, screen, serverUrl, showYaohuoLogin]);
+  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, resetQuoteState, screen, serverUrl, showYaohuoLogin]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail || !replyNextPage || loadingMoreRepliesRef.current) {
       return;
     }
-    const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
-    if (detail.source === 'yaohuo' && !yaohuoCookie) {
-      showYaohuoLogin();
-      return;
-    }
     const requestTopicKey = topicKey(detail);
+    const requestId = ++repliesRequestIdRef.current;
     loadingMoreRepliesRef.current = true;
-    const controller = startAbortableRequest(repliesAbortRef);
+    let controller: AbortController | null = null;
     setLoadingMoreReplies(true);
-    setBusy(true);
     try {
+      const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
+      if (detail.source === 'yaohuo' && !yaohuoCookie) {
+        showYaohuoLogin();
+        return;
+      }
+      controller = startAbortableRequest(repliesAbortRef);
+      setBusy(true);
       const data = detail.source === 'yaohuo'
         ? await getYaohuoRepliesDirect({
           serverUrl,
@@ -1139,7 +1196,7 @@ export default function App() {
           offset: replyNextOffset,
           signal: controller.signal
         });
-      if (currentTopicKeyRef.current !== requestTopicKey) {
+      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
         return;
       }
       setTopicReplies((current) => mergeReplies(current, data.items));
@@ -1148,9 +1205,9 @@ export default function App() {
       setReplyNextOffset(data.nextOffset ?? null);
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey) {
+      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
         if (isYaohuoLoginRequiredError(error)) {
-          setHasYaohuoCookie(false);
+          await clearYaohuoLoginState();
           showYaohuoLogin('妖火登录已失效，请重新登录。');
           return;
         }
@@ -1159,14 +1216,18 @@ export default function App() {
         }
       }
     } finally {
-      loadingMoreRepliesRef.current = false;
-      setLoadingMoreReplies(false);
-      if (currentTopicKeyRef.current === requestTopicKey) {
+      if (requestId === repliesRequestIdRef.current) {
+        loadingMoreRepliesRef.current = false;
+        setLoadingMoreReplies(false);
+      }
+      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
         setBusy(false);
       }
-      finishAbortableRequest(repliesAbortRef, controller);
+      if (controller) {
+        finishAbortableRequest(repliesAbortRef, controller);
+      }
     }
-  }, [loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, showYaohuoLogin, topicDetail]);
+  }, [clearYaohuoLoginState, loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, showYaohuoLogin, topicDetail]);
 
   const refreshTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
@@ -1324,7 +1385,7 @@ export default function App() {
       }
       const loginState = await checkYaohuoLoginDirect({ serverUrl, yaohuoCookie: cookieHeader });
       if (loginState.loginRequired || !loginState.ok) {
-        setHasYaohuoCookie(false);
+        await clearYaohuoLoginState();
         notify(loginState.message || '妖火登录已失效，请重新登录。');
         return;
       }
@@ -1333,7 +1394,7 @@ export default function App() {
       notify('已检测到妖火登录 Cookie，已保存在本机。');
     } catch (error) {
       if (isYaohuoLoginRequiredError(error)) {
-        setHasYaohuoCookie(false);
+        await clearYaohuoLoginState();
         notify('妖火登录已失效，请重新登录。');
         return;
       }
@@ -1341,26 +1402,18 @@ export default function App() {
     } finally {
       setChecking(false);
     }
-  }, [notify, serverUrl]);
+  }, [clearYaohuoLoginState, notify, serverUrl]);
 
   const clearLogin = useCallback(async () => {
-    await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
-    await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
-    webLoginDetectedRef.current = false;
-    setHasNodeSeekCookie(false);
-    setCookieNames([]);
-    setWebLoginUserId(null);
+    await clearNodeSeekLoginState();
     notify('已清除本机保存的 NodeSeek Cookie。');
-  }, [notify]);
+  }, [clearNodeSeekLoginState, notify]);
 
   const clearYaohuoLogin = useCallback(async () => {
-    await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);
+    await clearYaohuoLoginState();
     yaohuoWebViewRef.current?.reload();
-    setHasYaohuoCookie(false);
-    setYaohuoCookieNames([]);
     notify('已清除本机保存的妖火 Cookie。');
-  }, [notify]);
+  }, [clearYaohuoLoginState, notify]);
 
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
@@ -1371,12 +1424,14 @@ export default function App() {
       notify('请先在“更多”里登录并检测 NodeSeek Cookie。');
       return false;
     }
+    const controller = startAbortableRequest(actionAbortRef);
     setActionBusy(true);
     try {
       const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
       await runNodeSeekAction({
         cookieHeader: cookieHeader || '',
-        request: requestFactory()
+        request: requestFactory(),
+        signal: controller.signal
       });
       notify(success);
       if (options.refreshTopic !== false && topicDetail?.source === 'nodeseek') {
@@ -1384,12 +1439,17 @@ export default function App() {
       }
       return true;
     } catch (error) {
+      if (isNodeSeekLoginRequiredError(error)) {
+        await clearNodeSeekLoginState();
+      }
       notify(errorMessage(error));
       return false;
     } finally {
-      setActionBusy(false);
+      if (finishAbortableRequest(actionAbortRef, controller)) {
+        setActionBusy(false);
+      }
     }
-  }, [hasNodeSeekCookie, notify, openTopic, topicDetail]);
+  }, [clearNodeSeekLoginState, hasNodeSeekCookie, notify, openTopic, topicDetail]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -1401,11 +1461,13 @@ export default function App() {
       showYaohuoLogin();
       return false;
     }
+    const controller = startAbortableRequest(actionAbortRef);
     setActionBusy(true);
     try {
       const result = await runYaohuoAction({
         cookieHeader,
-        request: requestFactory(cookieHeader)
+        request: requestFactory(cookieHeader),
+        signal: controller.signal
       });
       notify(result.message === '操作已提交' ? success : result.message);
       if (options.refreshTopic !== false && topicDetail?.source === 'yaohuo') {
@@ -1414,16 +1476,18 @@ export default function App() {
       return true;
     } catch (error) {
       if (isYaohuoLoginRequiredError(error)) {
-        setHasYaohuoCookie(false);
+        await clearYaohuoLoginState();
         showYaohuoLogin(errorMessage(error));
         return false;
       }
       notify(errorMessage(error));
       return false;
     } finally {
-      setActionBusy(false);
+      if (finishAbortableRequest(actionAbortRef, controller)) {
+        setActionBusy(false);
+      }
     }
-  }, [loadYaohuoCookieForSource, notify, openTopic, showYaohuoLogin, topicDetail]);
+  }, [clearYaohuoLoginState, loadYaohuoCookieForSource, notify, openTopic, showYaohuoLogin, topicDetail]);
 
   const submitReply = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -1539,25 +1603,29 @@ export default function App() {
   const pullSync = useCallback(async () => {
     const controller = startAbortableRequest(syncAbortRef);
     setBusy(true);
+    setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
       const remote = sanitizeReaderDataForSync(await pullReaderData(serverUrl, syncCode, { signal: controller.signal }));
       const merged = mergeReaderData(readerDataRef.current, remote);
       await replaceReaderData(merged);
-      notify('同步已更新，本机和云端资料已合并');
+      notify('同步已更新，本机已合并云端资料');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
-      setBusy(false);
-      finishAbortableRequest(syncAbortRef, controller);
+      if (finishAbortableRequest(syncAbortRef, controller)) {
+        setBusy(false);
+        setSyncing(false);
+      }
     }
   }, [notify, replaceReaderData, serverUrl, syncCode]);
 
   const pushSync = useCallback(async () => {
     const controller = startAbortableRequest(syncAbortRef);
     setBusy(true);
+    setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
       await pushReaderData(serverUrl, syncCode, sanitizeReaderDataForSync(readerDataRef.current), { signal: controller.signal });
@@ -1567,8 +1635,10 @@ export default function App() {
         notify(errorMessage(error));
       }
     } finally {
-      setBusy(false);
-      finishAbortableRequest(syncAbortRef, controller);
+      if (finishAbortableRequest(syncAbortRef, controller)) {
+        setBusy(false);
+        setSyncing(false);
+      }
     }
   }, [notify, serverUrl, syncCode]);
 
@@ -1589,8 +1659,9 @@ export default function App() {
         notify(errorMessage(error));
       }
     } finally {
-      setBusy(false);
-      finishAbortableRequest(healthAbortRef, controller);
+      if (finishAbortableRequest(healthAbortRef, controller)) {
+        setBusy(false);
+      }
     }
   }, [notify, serverUrl]);
 
@@ -1794,6 +1865,7 @@ export default function App() {
                   showYaohuoLoginPanel={showYaohuoLoginPanel}
                   showSettingsPanel={showSettingsPanel}
                   styles={styles}
+                  syncing={syncing}
                   syncCode={syncCode}
                   theme={theme}
                   webViewRef={webViewRef}
@@ -2232,6 +2304,7 @@ function MoreScreen({
   showYaohuoLoginPanel,
   showSettingsPanel,
   styles,
+  syncing,
   syncCode,
   theme,
   webViewRef,
@@ -2277,6 +2350,7 @@ function MoreScreen({
   showYaohuoLoginPanel: boolean;
   showSettingsPanel: boolean;
   styles: ReturnType<typeof createStyles>;
+  syncing: boolean;
   syncCode: string;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
@@ -2342,8 +2416,8 @@ function MoreScreen({
         />
         <View style={styles.actions}>
           <AppButton label="保存" styles={styles} onPress={onSaveServerSettings} />
-          <AppButton label="读取同步" variant="ghost" styles={styles} onPress={onPullSync} />
-          <AppButton label="保存同步" variant="ghost" styles={styles} onPress={onPushSync} />
+          <AppButton label={syncing ? '同步中' : '读取同步'} variant="ghost" styles={styles} disabled={syncing} onPress={onPullSync} />
+          <AppButton label={syncing ? '同步中' : '保存同步'} variant="ghost" styles={styles} disabled={syncing} onPress={onPushSync} />
         </View>
       </View>
       <View style={styles.group}>

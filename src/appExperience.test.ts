@@ -37,6 +37,19 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('setFeedHasMore(false);');
   });
 
+  it('marks feed loading before reading cookies to avoid duplicate feed requests', () => {
+    const block = appSource.match(/const loadFeed = useCallback\(async \(\{([\s\S]*?)\n  \}, \[categoryFilter/)?.[1] || '';
+    const guardIndex = block.indexOf('if (feedLoadingRef.current && !reset)');
+    const markIndex = block.indexOf('feedLoadingRef.current = true;');
+    const cookieIndex = block.indexOf('await loadYaohuoCookieForSource(source)');
+
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(markIndex).toBeGreaterThan(-1);
+    expect(cookieIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(markIndex);
+    expect(markIndex).toBeLessThan(cookieIndex);
+  });
+
   it('bypasses feed caches when switching source tabs or categories', () => {
     expect(appSource).toContain('source: feedSource, category: categoryFilter, nocache: true, clearItems: true');
   });
@@ -50,11 +63,29 @@ describe('Android App experience guards', () => {
     expect(appSource).not.toContain('feedLoadingRef.current && (!reset || nocache)');
   });
 
+  it('marks reply page loading before reading cookies to avoid duplicate load-more requests', () => {
+    const block = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const guardIndex = block.indexOf('loadingMoreRepliesRef.current = true;');
+    const cookieIndex = block.indexOf('await loadYaohuoCookieForSource(detail.source)');
+
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(cookieIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(cookieIndex);
+  });
+
+  it('clears stale WebView cookies when stored login state is invalidated', () => {
+    const nodeSeekBlock = appSource.match(/const clearNodeSeekLoginState = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearStoredNodeSeekLoginState\]\);/)?.[1] || '';
+    const yaohuoBlock = appSource.match(/const clearYaohuoLoginState = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearStoredYaohuoLoginState\]\);/)?.[1] || '';
+
+    expect(nodeSeekBlock).toContain('await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);');
+    expect(yaohuoBlock).toContain('await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);');
+  });
+
   it('uses concise update wording for refresh and sync feedback', () => {
     expect(appSource).toContain("notify('正在更新列表')");
     expect(appSource).toContain("successMessage: '列表已更新'");
     expect(appSource).toContain("notify('主题已更新')");
-    expect(appSource).toContain("notify('同步已更新，本机和云端资料已合并')");
+    expect(appSource).toContain("notify('同步已更新，本机已合并云端资料')");
     expect(appSource).toContain("notify('同步已保存')");
     expect(appSource).toContain("notify('状态已更新')");
     expect(appSource).not.toContain('正在刷新，请稍候');

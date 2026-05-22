@@ -80,9 +80,11 @@ export function startAbortableRequest(ref: MutableRefObject<AbortController | nu
 }
 
 export function finishAbortableRequest(ref: MutableRefObject<AbortController | null>, controller: AbortController) {
-  if (ref.current === controller) {
-    ref.current = null;
+  if (ref.current !== controller) {
+    return false;
   }
+  ref.current = null;
+  return true;
 }
 
 export function settingsList(value: string[]) {

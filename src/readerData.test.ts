@@ -167,6 +167,128 @@ describe('Android reader data helpers', () => {
     expect(merged.savedSearches.map((item) => item.id)).toEqual(['nodeseek:vps', 'all:codex']);
   });
 
+  it('applies remote reader settings when merging synced reader data', () => {
+    const local = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: {
+        ...createEmptyReaderData().settings,
+        trackedKeywords: [],
+        blockedKeywords: [],
+        blockedUsers: [],
+        blockedCategories: [],
+        listDensity: 'standard'
+      }
+    });
+    const remote = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: {
+        ...createEmptyReaderData().settings,
+        trackedKeywords: ['linux'],
+        blockedKeywords: ['广告'],
+        blockedUsers: ['spammer'],
+        blockedCategories: ['nodeseek:daily'],
+        listDensity: 'compact',
+        theme: 'dark',
+        palette: 'blue',
+        background: 'gray',
+        fontScale: 1.2,
+        lineHeight: 'loose',
+        contentWidth: 'wide',
+        fontFamily: 'serif'
+      }
+    });
+
+    const merged = mergeReaderData(local, remote);
+
+    expect(merged.settings).toMatchObject({
+      trackedKeywords: ['linux'],
+      blockedKeywords: ['广告'],
+      blockedUsers: ['spammer'],
+      blockedCategories: ['nodeseek:daily'],
+      listDensity: 'compact',
+      theme: 'dark',
+      palette: 'blue',
+      background: 'gray',
+      fontScale: 1.2,
+      lineHeight: 'loose',
+      contentWidth: 'wide',
+      fontFamily: 'serif'
+    });
+  });
+
+  it('keeps local reader settings when old remote data has no settings field', () => {
+    const local = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: {
+        ...createEmptyReaderData().settings,
+        trackedKeywords: ['local'],
+        blockedKeywords: ['广告'],
+        blockedUsers: ['spammer'],
+        blockedCategories: ['nodeseek:daily'],
+        listDensity: 'loose',
+        theme: 'dark'
+      }
+    });
+    const remote = {
+      version: 1,
+      favorites: {},
+      history: {},
+      later: {},
+      progress: {},
+      subscriptions: {},
+      savedSearches: []
+    };
+
+    const merged = mergeReaderData(local, remote);
+
+    expect(merged.settings).toMatchObject({
+      trackedKeywords: ['local'],
+      blockedKeywords: ['广告'],
+      blockedUsers: ['spammer'],
+      blockedCategories: ['nodeseek:daily'],
+      listDensity: 'loose',
+      theme: 'dark'
+    });
+  });
+
+  it('keeps newer record annotations when their savedAt is older', () => {
+    const local = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(topic)]: {
+          topic,
+          savedAt: '2026-05-20T02:00:00.000Z',
+          updatedAt: '2026-05-20T05:00:00.000Z',
+          tags: ['local'],
+          note: 'local note'
+        }
+      }
+    });
+    const remote = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(topic)]: {
+          topic: { ...topic, title: 'Remote title' },
+          savedAt: '2026-05-20T04:00:00.000Z',
+          tags: ['remote'],
+          note: 'remote note'
+        }
+      }
+    });
+
+    const merged = mergeReaderData(local, remote);
+
+    expect(merged.favorites[topicKey(topic)]).toMatchObject({
+      savedAt: '2026-05-20T02:00:00.000Z',
+      updatedAt: '2026-05-20T05:00:00.000Z',
+      tags: ['local'],
+      note: 'local note',
+      topic: {
+        title: 'NodeSeek topic'
+      }
+    });
+  });
+
   it('keeps newer local deletions from being restored by older remote records', () => {
     const key = topicKey(topic);
     const local = sanitizeReaderData({

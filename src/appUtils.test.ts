@@ -19,9 +19,9 @@ describe('Android app utils', () => {
 
     expect(first.signal.aborted).toBe(true);
     expect(ref.current).toBe(second);
-    finishAbortableRequest(ref, first);
+    expect(finishAbortableRequest(ref, first)).toBe(false);
     expect(ref.current).toBe(second);
-    finishAbortableRequest(ref, second);
+    expect(finishAbortableRequest(ref, second)).toBe(true);
     expect(ref.current).toBeNull();
   });
 });
