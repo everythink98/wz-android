@@ -203,6 +203,7 @@ const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 const SERVER_URL_STORAGE_KEY = 'server-url';
 const SYNC_CODE_STORAGE_KEY = 'sync-code';
+const DEFAULT_SERVER_URL = 'http://10.0.2.2:3000';
 const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
@@ -247,11 +248,76 @@ true;
 type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic';
 type SearchScope = 'remote' | 'local';
 type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
+type TopicListItem =
+  | { type: 'content'; key: string; html: string }
+  | { type: 'replyControls'; key: string }
+  | { type: 'replyComposer'; key: string }
+  | { type: 'emptyReplies'; key: string }
+  | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
 
 interface YaohuoReplyTarget {
   floor: number;
   author?: string;
   authorId?: string;
+}
+
+function stableTextHash(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
+function getReplyKey(reply: Reply) {
+  if (typeof reply.floor === 'number') {
+    return `reply-floor-${reply.floor}`;
+  }
+  if (typeof reply.commentId === 'number') {
+    return `reply-comment-${reply.commentId}`;
+  }
+  const seed = [
+    reply.authorId || '',
+    reply.author || '',
+    reply.createdAt || '',
+    reply.contentHtml || ''
+  ].join('|');
+  return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
+}
+
+function topicListItemKey(item: TopicListItem) {
+  return item.key;
+}
+
+function splitTopicContentHtml(html: string | undefined) {
+  const clean = (html || '').trim();
+  if (!clean) {
+    return [];
+  }
+  const blockPattern = /[\s\S]*?<\/(?:p|div|blockquote|pre|ul|ol|li|table|h[1-6])>/gi;
+  const blocks = clean.match(blockPattern);
+  if (!blocks?.length) {
+    return [clean];
+  }
+  const chunks: string[] = [];
+  let current = '';
+  let consumedLength = 0;
+  for (const block of blocks) {
+    current += block;
+    consumedLength += block.length;
+    if (current.length >= 2200) {
+      chunks.push(current);
+      current = '';
+    }
+  }
+  const remainder = clean.slice(consumedLength).trim();
+  if (remainder) {
+    current += remainder;
+  }
+  if (current) {
+    chunks.push(current);
+  }
+  return chunks.length ? chunks : [clean];
 }
 
 const MemoizedHtmlContent = memo(HtmlContent);
@@ -320,7 +386,8 @@ export default function App() {
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
   const currentTopicKeyRef = useRef<string | null>(null);
-  const topicScrollRef = useRef<FlatList<Reply>>(null);
+  const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
+  const topicScrollRef = useRef<FlatList<TopicListItem>>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const systemScheme = useColorScheme();
   const { width, height } = useWindowDimensions();
@@ -336,7 +403,8 @@ export default function App() {
   const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
   const [hasYaohuoCookie, setHasYaohuoCookie] = useState(false);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
-  const [serverUrl, setServerUrl] = useState('http://10.0.2.2:3000');
+  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
+  const [draftServerUrl, setDraftServerUrl] = useState(DEFAULT_SERVER_URL);
   const [syncCode, setSyncCode] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
   const readerDataRef = useRef<ReaderData>(readerData);
@@ -402,7 +470,12 @@ export default function App() {
     setLoadingQuotedFloors(next);
     setQuoteStateVersion((current) => current + 1);
   }, []);
+  const abortQuotedReplyRequests = useCallback(() => {
+    Object.values(quotedReplyAbortRefs.current).forEach((controller) => controller.abort());
+    quotedReplyAbortRefs.current = {};
+  }, []);
   const resetQuoteState = useCallback(() => {
+    abortQuotedReplyRequests();
     expandedQuotesRef.current = {};
     loadedQuotedRepliesRef.current = {};
     loadingQuotedFloorsRef.current = {};
@@ -410,7 +483,7 @@ export default function App() {
     setLoadedQuotedReplies({});
     setLoadingQuotedFloors({});
     setQuoteStateVersion((current) => current + 1);
-  }, []);
+  }, [abortQuotedReplyRequests]);
 
   const theme = useMemo(() => createTheme(readerData.settings, systemScheme), [readerData.settings, systemScheme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
@@ -757,6 +830,7 @@ export default function App() {
       setReaderData(savedReaderData);
       if (savedServerUrl) {
         setServerUrl(savedServerUrl);
+        setDraftServerUrl(savedServerUrl);
       }
       if (savedSyncCode) {
         setSyncCode(savedSyncCode);
@@ -774,15 +848,16 @@ export default function App() {
 
   const saveServerSettings = useCallback(async () => {
     try {
-      const cleanServerUrl = normalizeServerUrl(serverUrl);
+      const cleanServerUrl = normalizeServerUrl(draftServerUrl);
       await SecureStore.setItemAsync(SERVER_URL_STORAGE_KEY, cleanServerUrl);
       await SecureStore.setItemAsync(SYNC_CODE_STORAGE_KEY, syncCode.trim());
       setServerUrl(cleanServerUrl);
+      setDraftServerUrl(cleanServerUrl);
       notify('服务器设置已保存');
     } catch (error) {
       notify(errorMessage(error));
     }
-  }, [notify, serverUrl, syncCode]);
+  }, [draftServerUrl, notify, syncCode]);
 
   const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source) => {
     if (source !== 'all' && source !== 'yaohuo') {
@@ -1244,9 +1319,23 @@ export default function App() {
     }
   }, [openTopic, selectedTopic, topicDetail]);
 
+  const changeScreen = useCallback((nextScreen: Screen) => {
+    if (nextScreen !== 'topic') {
+      topicRequestIdRef.current += 1;
+      repliesRequestIdRef.current += 1;
+      topicAbortRef.current?.abort();
+      repliesAbortRef.current?.abort();
+      abortQuotedReplyRequests();
+      loadingMoreRepliesRef.current = false;
+      setLoadingMoreReplies(false);
+    }
+    setScreen(nextScreen);
+  }, [abortQuotedReplyRequests]);
+
   const goBackFromTopic = useCallback(() => {
-    setScreen(topicReturnScreenRef.current);
-  }, []);
+    abortQuotedReplyRequests();
+    changeScreen(topicReturnScreenRef.current);
+  }, [abortQuotedReplyRequests, changeScreen]);
 
   const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const detail = topicDetail || selectedTopic;
@@ -1304,12 +1393,16 @@ export default function App() {
     const requestTopicKey = topicKey(detail);
 
     updateLoadingQuotedFloors((current) => ({ ...current, [key]: true }));
+    quotedReplyAbortRefs.current[key]?.abort();
+    const controller = new AbortController();
+    quotedReplyAbortRefs.current[key] = controller;
     try {
       const loaded = await getReply({
         serverUrl,
         source: detail.source,
         id: detail.id,
-        floor: quotedFloor
+        floor: quotedFloor,
+        signal: controller.signal
       });
       if (currentTopicKeyRef.current !== requestTopicKey) {
         return;
@@ -1321,9 +1414,14 @@ export default function App() {
       notify(`引用已展开 #${quotedFloor}`);
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey) {
-        notify(errorMessage(error));
+        if (!isCanceledRequest(error)) {
+          notify(errorMessage(error));
+        }
       }
     } finally {
+      if (quotedReplyAbortRefs.current[key] === controller) {
+        delete quotedReplyAbortRefs.current[key];
+      }
       if (currentTopicKeyRef.current === requestTopicKey) {
         updateLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
       }
@@ -1875,7 +1973,7 @@ export default function App() {
                   loadingLoginPage={loadingLoginPage}
                   loadingYaohuoLoginPage={loadingYaohuoLoginPage}
                   readerData={readerData}
-                  serverUrl={serverUrl}
+                  draftServerUrl={draftServerUrl}
                   showCategoriesPanel={showCategoriesPanel}
                   showLoginPanel={showLoginPanel}
                   showYaohuoLoginPanel={showYaohuoLoginPanel}
@@ -1901,7 +1999,7 @@ export default function App() {
                   onRefreshCategories={loadCategories}
                   onSaveServerSettings={saveServerSettings}
                   onSelectCategory={selectCategory}
-                  onServerUrlChange={setServerUrl}
+                  onServerUrlChange={setDraftServerUrl}
                   onSetLoadingLoginPage={setLoadingLoginPage}
                   onSetLoadingYaohuoLoginPage={setLoadingYaohuoLoginPage}
                   onShowCategoriesPanelChange={setShowCategoriesPanel}
@@ -1914,7 +2012,7 @@ export default function App() {
                 />
               </ScrollView>
             ) : null}
-            <NavBar active={screen} styles={styles} theme={theme} onChange={setScreen} />
+            <NavBar active={screen} styles={styles} theme={theme} onChange={changeScreen} />
           </>
         )}
         <ImagePreviewModal
@@ -2314,7 +2412,7 @@ function MoreScreen({
   loadingLoginPage,
   loadingYaohuoLoginPage,
   readerData,
-  serverUrl,
+  draftServerUrl,
   showCategoriesPanel,
   showLoginPanel,
   showYaohuoLoginPanel,
@@ -2360,7 +2458,7 @@ function MoreScreen({
   loadingLoginPage: boolean;
   loadingYaohuoLoginPage: boolean;
   readerData: ReaderData;
-  serverUrl: string;
+  draftServerUrl: string;
   showCategoriesPanel: boolean;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
@@ -2413,7 +2511,7 @@ function MoreScreen({
         <Text style={styles.panelTitle}>服务器与同步</Text>
         <TextInput
           style={styles.input}
-          value={serverUrl}
+          value={draftServerUrl}
           onChangeText={onServerUrlChange}
           placeholder="服务器地址，例如 http://192.168.1.23:3000"
           placeholderTextColor={theme.muted}
@@ -2758,7 +2856,7 @@ function TopicScreen({
   theme: ReaderTheme;
   topic: TopicDetail | null;
   topicError: string;
-  topicScrollRef: RefObject<FlatList<Reply> | null>;
+  topicScrollRef: RefObject<FlatList<TopicListItem> | null>;
   onBack: () => void;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
   onYaohuoFavorite: () => void;
@@ -2783,8 +2881,10 @@ function TopicScreen({
   const itemSource = item?.source;
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
-    sourceReplies.forEach((reply, index) => {
-      next.set(reply.floor ?? index + 1, reply);
+    sourceReplies.forEach((reply) => {
+      if (typeof reply.floor === 'number') {
+        next.set(reply.floor, reply);
+      }
     });
     Object.values(loadedQuotedRepliesRef.current).forEach((reply) => {
       if (reply.floor) {
@@ -2795,27 +2895,127 @@ function TopicScreen({
   }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
-  const renderReplyItem = useCallback<ListRenderItem<Reply>>(({ item: reply, index }) => (
-    <View style={[styles.replyListItem, topicColumnStyle]}>
-      <MemoizedReplyCard
-        actionBusy={actionBusy}
-        canWrite={canWrite}
-        contentWidth={Math.max(240, contentWidth - 28)}
-        expandedQuotes={expandedQuotesRef.current}
-        loadedQuotedReplies={loadedQuotedRepliesRef.current}
-        loadingQuotedFloors={loadingQuotedFloorsRef.current}
-        reply={reply}
-        replyFloor={reply.floor ?? index + 1}
-        repliesByFloor={repliesByFloor}
-        styles={styles}
-        theme={theme}
-        onInteract={onInteract}
-        onReplyToFloor={onReplyToFloor}
-        onToggleQuotedFloor={onToggleQuotedFloor}
-        source={itemSource}
-      />
-    </View>
-  ), [
+  const topicContentItems = useMemo<TopicListItem[]>(() => (
+    topic
+      ? splitTopicContentHtml(topic.contentHtml).map((html, index) => ({
+        type: 'content',
+        key: `topic-content-${index}-${stableTextHash(html)}`,
+        html
+      }))
+      : []
+  ), [topic?.contentHtml]);
+  const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
+    type: 'reply',
+    key: getReplyKey(reply),
+    reply,
+    replyFloor: reply.floor ?? 0
+  })), [replies]);
+  const topicListItems = useMemo<TopicListItem[]>(() => {
+    const items = [...topicContentItems];
+    if (!topicLoading) {
+      items.push({ type: 'replyControls', key: 'reply-controls' });
+      if (canWrite && replyComposerOpen) {
+        items.push({ type: 'replyComposer', key: 'reply-composer' });
+      }
+      if (replyItems.length) {
+        items.push(...replyItems);
+      } else {
+        items.push({ type: 'emptyReplies', key: 'empty-replies' });
+      }
+    }
+    return items;
+  }, [canWrite, replyComposerOpen, replyItems, topicContentItems, topicLoading]);
+  const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
+    if (listItem.type === 'content') {
+      return (
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <View style={styles.articleBody}>
+            <MemoizedHtmlContent
+              contentWidth={contentWidth}
+              html={listItem.html}
+            />
+          </View>
+        </View>
+      );
+    }
+
+    if (listItem.type === 'replyControls') {
+      return (
+        <View style={[styles.replyHeader, topicColumnStyle]}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{sourceReplies.length} 条</Text></Text>
+            {canWrite ? (
+              <AppButton
+                label={replyComposerOpen ? '收起回复' : '写回复'}
+                variant={replyComposerOpen ? 'ghost' : 'default'}
+                styles={styles}
+                onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
+              />
+            ) : null}
+          </View>
+          <PillRail
+            items={[
+              { value: 'all', label: '全部' },
+              { value: 'author', label: '只看楼主' },
+              { value: 'images', label: '只看带图' },
+              { value: 'newest', label: '倒序' }
+            ]}
+            value={replyFilter}
+            styles={styles}
+            onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
+          />
+        </View>
+      );
+    }
+
+    if (listItem.type === 'replyComposer') {
+      return (
+        <View style={[styles.replyBox, topicColumnStyle]}>
+          <Text style={styles.panelTitle}>{replyTarget ? `回复 #${replyTarget.floor}${replyTarget.author ? ` · ${replyTarget.author}` : ''}` : '回复'}</Text>
+          <TextInput
+            style={[styles.input, styles.replyInput]}
+            value={replyContent}
+            onChangeText={onReplyContentChange}
+            placeholder={replyTarget ? '输入楼层回复内容' : '输入回复内容'}
+            placeholderTextColor={theme.muted}
+            multiline
+          />
+          {replyTarget ? <AppButton label="取消楼层回复" variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
+          <AppButton label="发送回复" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
+        </View>
+      );
+    }
+
+    if (listItem.type === 'emptyReplies') {
+      return (
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <EmptyText text="暂无回复" styles={styles} />
+        </View>
+      );
+    }
+
+    return (
+      <View style={[styles.replyListItem, topicColumnStyle]}>
+        <MemoizedReplyCard
+          actionBusy={actionBusy}
+          canWrite={canWrite}
+          contentWidth={Math.max(240, contentWidth - 28)}
+          expandedQuotes={expandedQuotesRef.current}
+          loadedQuotedReplies={loadedQuotedRepliesRef.current}
+          loadingQuotedFloors={loadingQuotedFloorsRef.current}
+          reply={listItem.reply}
+          replyFloor={listItem.replyFloor}
+          repliesByFloor={repliesByFloor}
+          styles={styles}
+          theme={theme}
+          onInteract={onInteract}
+          onReplyToFloor={onReplyToFloor}
+          onToggleQuotedFloor={onToggleQuotedFloor}
+          source={itemSource}
+        />
+      </View>
+    );
+  }, [
     actionBusy,
     canWrite,
     contentWidth,
@@ -2823,11 +3023,20 @@ function TopicScreen({
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
     onInteract,
+    onReplyComposerOpenChange,
+    onReplyContentChange,
+    onReplyFilterChange,
     onReplyToFloor,
+    onSubmitReply,
     onToggleQuotedFloor,
     quoteStateVersion,
     itemSource,
+    replyComposerOpen,
+    replyContent,
+    replyFilter,
+    replyTarget,
     repliesByFloor,
+    sourceReplies.length,
     styles,
     theme,
     topicColumnStyle
@@ -2876,54 +3085,8 @@ function TopicScreen({
             <AppButton label="重试" styles={styles} onPress={onRefreshTopic} />
           </View>
         ) : null}
-        {topic ? (
-          <View style={styles.articleBody}>
-            <MemoizedHtmlContent
-              contentWidth={contentWidth}
-              html={topic.contentHtml}
-            />
-          </View>
-        ) : topicError ? null : <LoadingState text="正在读取主题..." styles={styles} theme={theme} />}
+        {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
       </View>
-      <View style={[styles.replyHeader, topicColumnStyle]}>
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{sourceReplies.length} 条</Text></Text>
-          {canWrite ? (
-            <AppButton
-              label={replyComposerOpen ? '收起回复' : '写回复'}
-              variant={replyComposerOpen ? 'ghost' : 'default'}
-              styles={styles}
-              onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
-            />
-          ) : null}
-        </View>
-        <PillRail
-          items={[
-            { value: 'all', label: '全部' },
-            { value: 'author', label: '只看楼主' },
-            { value: 'images', label: '只看带图' },
-            { value: 'newest', label: '倒序' }
-          ]}
-          value={replyFilter}
-          styles={styles}
-          onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
-        />
-      </View>
-      {canWrite && replyComposerOpen ? (
-        <View style={[styles.replyBox, topicColumnStyle]}>
-          <Text style={styles.panelTitle}>{replyTarget ? `回复 #${replyTarget.floor}${replyTarget.author ? ` · ${replyTarget.author}` : ''}` : '回复'}</Text>
-          <TextInput
-            style={[styles.input, styles.replyInput]}
-            value={replyContent}
-            onChangeText={onReplyContentChange}
-            placeholder={replyTarget ? '输入楼层回复内容' : '输入回复内容'}
-            placeholderTextColor={theme.muted}
-            multiline
-          />
-          {replyTarget ? <AppButton label="取消楼层回复" variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
-          <AppButton label="发送回复" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
-        </View>
-      ) : null}
     </View>
   );
 
@@ -2948,19 +3111,14 @@ function TopicScreen({
           ref={topicScrollRef}
           style={[styles.content, styles.topicContent]}
           contentContainerStyle={[styles.contentInner, styles.topicContentInner]}
-          data={replies}
-          keyExtractor={(reply, index) => `${reply.floor ?? index}-${reply.createdAt}`}
+          data={topicListItems}
+          keyExtractor={topicListItemKey}
           keyboardShouldPersistTaps="handled"
           onMomentumScrollEnd={onTopicScroll}
           onScrollEndDrag={onTopicScroll}
           extraData={quoteStateVersion}
           {...REPLY_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
-          ListEmptyComponent={topicLoading ? null : (
-            <View style={[styles.replyListItem, topicColumnStyle]}>
-              <EmptyText text="暂无回复" styles={styles} />
-            </View>
-          )}
           ListFooterComponent={replyHasMore ? (
             <View style={[styles.topicFooter, topicColumnStyle]}>
               <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={onLoadMoreReplies} />

@@ -48,6 +48,35 @@ describe('Android App performance guards', () => {
     expect(renderReplyDeps).not.toMatch(/\bloadingQuotedFloors\b/);
   });
 
+  it('keeps server URL typing separate from the saved active server URL', () => {
+    expect(appSource).toContain('const [draftServerUrl, setDraftServerUrl] = useState');
+    expect(appSource).toContain('normalizeServerUrl(draftServerUrl)');
+    expect(appSource).toContain('setDraftServerUrl(savedServerUrl);');
+    expect(appSource).toContain('draftServerUrl={draftServerUrl}');
+    expect(appSource).toContain('onServerUrlChange={setDraftServerUrl}');
+    expect(appSource).not.toContain('onServerUrlChange={setServerUrl}');
+  });
+
+  it('cancels stale quoted floor requests when switching or leaving topics', () => {
+    expect(appSource).toContain('quotedReplyAbortRefs');
+    expect(appSource).toContain('abortQuotedReplyRequests();');
+    expect(appSource).toContain('quotedReplyAbortRefs.current[key] = controller;');
+    expect(appSource).toContain('signal: controller.signal');
+  });
+
+  it('uses stable reply identifiers without falling back to list positions', () => {
+    expect(appSource).toContain('function getReplyKey(reply: Reply)');
+    expect(appSource).toContain('keyExtractor={topicListItemKey}');
+    expect(appSource).not.toContain('keyExtractor={(reply, index) => `${reply.floor ?? index}-${reply.createdAt}`}');
+  });
+
+  it('renders long topic bodies as batched list items with replies', () => {
+    expect(appSource).toContain('type TopicListItem');
+    expect(appSource).toContain('function splitTopicContentHtml');
+    expect(appSource).toContain("type: 'content'");
+    expect(appSource).toContain('data={topicListItems}');
+  });
+
   it('does not keep unused status state for toast-only notifications', () => {
     expect(appSource).not.toContain('setStatus(message)');
     expect(appSource).not.toContain('const [, setStatus] = useState');
