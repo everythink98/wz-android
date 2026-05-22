@@ -87,7 +87,18 @@ function isFeedSource(value: unknown): value is FeedSource {
 
 function isTopic(value: unknown): value is Topic {
   const item = value as Partial<Topic>;
-  return Boolean(item && isSource(item.source) && item.id && item.title);
+  return Boolean(
+    item
+    && isSource(item.source)
+    && typeof item.id === 'string'
+    && item.id
+    && typeof item.title === 'string'
+    && item.title
+    && typeof item.url === 'string'
+    && item.url
+    && typeof item.createdAt === 'string'
+    && item.createdAt
+  );
 }
 
 function topicAccessRequirement(topic: Topic) {

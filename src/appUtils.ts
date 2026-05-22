@@ -27,6 +27,13 @@ export function isYaohuoLoginRequiredError(error: unknown) {
   );
 }
 
+export function isYaohuoLoginExpiredError(error: unknown) {
+  return Boolean(
+    isYaohuoLoginRequiredError(error)
+    && (error as { reason?: unknown }).reason === 'expired'
+  );
+}
+
 export function formatDateTime(value?: string) {
   if (!value) {
     return '';

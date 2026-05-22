@@ -74,6 +74,6 @@ describe('NodeSeek action request builders', () => {
       message: 'ALREADY CHECKED IN'
     }, 400)).toBe('ALREADY CHECKED IN');
 
-    expect(nodeSeekActionErrorMessage(null, 403)).toBe('NodeSeek 拒绝了请求，请重新登录后再试');
+    expect(nodeSeekActionErrorMessage(null, 403)).toBe('NodeSeek 拒绝了请求，请稍后重试');
   });
 });

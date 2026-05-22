@@ -95,8 +95,12 @@ export function nodeSeekActionErrorMessage(data: unknown, status: number) {
     }
   }
 
-  if (status === 401 || status === 403) {
-    return 'NodeSeek 拒绝了请求，请重新登录后再试';
+  if (status === 401) {
+    return 'NodeSeek 登录已失效，请重新检测登录';
+  }
+
+  if (status === 403) {
+    return 'NodeSeek 拒绝了请求，请稍后重试';
   }
 
   return `NodeSeek 请求失败：HTTP ${status}`;

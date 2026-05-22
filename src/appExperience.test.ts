@@ -81,6 +81,17 @@ describe('Android App experience guards', () => {
     expect(yaohuoBlock).toContain('await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);');
   });
 
+  it('does not clear yaohuo cookies for aggregated source errors', () => {
+    const directStoredClears = appSource.match(/await clearStoredYaohuoLoginState\(\);/g) || [];
+
+    expect(directStoredClears).toHaveLength(1);
+  });
+
+  it('clears yaohuo cookies only for expired login errors, not access verification', () => {
+    expect(appSource).toContain('isYaohuoLoginExpiredError(error)');
+    expect(appSource).toContain('showYaohuoLogin(errorMessage(error))');
+  });
+
   it('uses concise update wording for refresh and sync feedback', () => {
     expect(appSource).toContain("notify('正在更新列表')");
     expect(appSource).toContain("successMessage: '列表已更新'");

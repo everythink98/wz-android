@@ -17,7 +17,7 @@ export function extractImageUrlsFromHtml(html: string): string[] {
   return urls;
 }
 
-export function isPreviewableImageUrl(url: string): boolean {
+export function isPreviewableImageUrl(url: unknown): boolean {
   const clean = decodeHtmlAttribute(url).trim();
   if (!clean) {
     return false;
@@ -31,7 +31,7 @@ export function isPreviewableImageUrl(url: string): boolean {
   return /\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#].*)?$/i.test(clean);
 }
 
-export function isHttpOrHttpsUrl(url: string): boolean {
+export function isHttpOrHttpsUrl(url: unknown): boolean {
   const clean = decodeHtmlAttribute(url).trim();
   if (!clean) {
     return false;
@@ -77,7 +77,10 @@ export function createImagePreviewList({
   return { urls, index };
 }
 
-function decodeHtmlAttribute(value: string): string {
+function decodeHtmlAttribute(value: unknown): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
   return value
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')

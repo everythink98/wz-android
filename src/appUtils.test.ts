@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { finishAbortableRequest, isCanceledRequest, sourceLabel, startAbortableRequest } from './appUtils';
+import {
+  finishAbortableRequest,
+  isCanceledRequest,
+  isYaohuoLoginExpiredError,
+  isYaohuoLoginRequiredError,
+  sourceLabel,
+  startAbortableRequest
+} from './appUtils';
 import { REQUEST_CANCELED_MESSAGE } from './request';
 
 describe('Android app utils', () => {
@@ -23,5 +30,15 @@ describe('Android app utils', () => {
     expect(ref.current).toBe(second);
     expect(finishAbortableRequest(ref, second)).toBe(true);
     expect(ref.current).toBeNull();
+  });
+
+  it('distinguishes expired yaohuo login from access verification', () => {
+    const expired = Object.assign(new Error('expired'), { loginRequired: true, reason: 'expired' });
+    const verification = Object.assign(new Error('verification'), { loginRequired: true, reason: 'verification' });
+
+    expect(isYaohuoLoginRequiredError(expired)).toBe(true);
+    expect(isYaohuoLoginExpiredError(expired)).toBe(true);
+    expect(isYaohuoLoginRequiredError(verification)).toBe(true);
+    expect(isYaohuoLoginExpiredError(verification)).toBe(false);
   });
 });

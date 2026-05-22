@@ -29,6 +29,7 @@ describe('Android HTML image preview helpers', () => {
     expect(isHttpOrHttpsUrl('javascript:alert(1)')).toBe(false);
     expect(isHttpOrHttpsUrl('data:text/html,hello')).toBe(false);
     expect(isHttpOrHttpsUrl('/relative/path')).toBe(false);
+    expect(isHttpOrHttpsUrl(undefined)).toBe(false);
   });
 
   it('normalizes relative proxy URLs against the configured server', () => {

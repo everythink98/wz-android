@@ -91,7 +91,7 @@ export async function runNodeSeekAction({
 function nodeSeekActionError(data: unknown, status: number) {
   const message = nodeSeekActionErrorMessage(data, status);
   const error = new Error(message);
-  if (status === 401 || /重新登录|请先.*登录|拒绝了请求/i.test(message)) {
+  if (status === 401 || /登录已失效|重新检测登录|重新登录|请先.*登录/i.test(message)) {
     Object.assign(error, {
       source: 'nodeseek',
       loginRequired: true

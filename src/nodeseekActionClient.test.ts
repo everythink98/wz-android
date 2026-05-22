@@ -80,6 +80,19 @@ describe('runNodeSeekAction', () => {
     })).rejects.toThrow('请求超时，请稍后重试');
   });
 
+  it('does not mark generic 403 refusals as expired login cookies', async () => {
+    const rejectedFetcher = vi.fn(async () => jsonResponse({}, 403));
+
+    await expect(runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher: rejectedFetcher
+    })).rejects.not.toMatchObject({
+      source: 'nodeseek',
+      loginRequired: true
+    });
+  });
+
 
   it('treats HTTP 200 NodeSeek error payloads as failed write actions', async () => {
     const failedSuccessFetcher = vi.fn(async () => jsonResponse({

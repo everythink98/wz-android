@@ -419,4 +419,27 @@ describe('Android reader data helpers', () => {
     expect(data.progress['nodeseek:0']).toBeUndefined();
     expect(data.history[`nodeseek:${MAX_HISTORY_RECORDS + 19}`]?.topic.title).toBe(`Topic ${MAX_HISTORY_RECORDS + 19}`);
   });
+
+  it('drops local topic records with unsafe missing links or timestamps', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        'nodeseek:broken': {
+          topic: {
+            source: 'nodeseek',
+            id: 'broken',
+            title: 'Broken topic'
+          },
+          savedAt: '2026-05-20T02:00:00.000Z'
+        },
+        [topicKey(topic)]: {
+          topic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    expect(data.favorites['nodeseek:broken']).toBeUndefined();
+    expect(data.favorites[topicKey(topic)]?.topic.url).toBe(topic.url);
+  });
 });

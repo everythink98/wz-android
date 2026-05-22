@@ -155,6 +155,7 @@ import {
   formatDateTime,
   formatRelativeTime,
   isCanceledRequest,
+  isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
   removeString,
   settingsList,
@@ -850,9 +851,6 @@ export default function App() {
         ...(yaohuoData.errors || {})
       });
       if (errors.length) {
-        if (errors.some(([source]) => source === 'yaohuo')) {
-          await clearStoredYaohuoLoginState();
-        }
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
     } catch (error) {
@@ -862,7 +860,7 @@ export default function App() {
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [clearStoredYaohuoLoginState, notify, serverUrl]);
+  }, [notify, serverUrl]);
 
   const loadFeed = useCallback(async ({
     page = 1,
@@ -967,9 +965,6 @@ export default function App() {
       setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
-        if (errors.some(([sourceName]) => sourceName === 'yaohuo')) {
-          await clearStoredYaohuoLoginState();
-        }
         notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
       } else if (successMessage) {
         notify(successMessage);
@@ -977,8 +972,12 @@ export default function App() {
     } catch (error) {
       if (requestId === feedRequestIdRef.current) {
         if (isYaohuoLoginRequiredError(error)) {
-          await clearYaohuoLoginState();
-          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState();
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(errorMessage(error));
+          }
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -994,7 +993,7 @@ export default function App() {
       }
       finishAbortableRequest(feedAbortRef, controller);
     }
-  }, [categoryFilter, clearStoredYaohuoLoginState, clearYaohuoLoginState, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
+  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
 
   useEffect(() => {
     void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
@@ -1059,9 +1058,6 @@ export default function App() {
         setSearchItems(data.items);
         commitReaderData((current) => addSavedSearch(current, query, searchSource));
         const errors = Object.entries(data.errors || {});
-        if (errors.some(([sourceName]) => sourceName === 'yaohuo')) {
-          await clearStoredYaohuoLoginState();
-        }
         notify(errors.length
           ? errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；')
           : `搜索完成：${data.items.length} 条结果`);
@@ -1069,8 +1065,12 @@ export default function App() {
     } catch (error) {
       if (requestId === searchRequestIdRef.current) {
         if (isYaohuoLoginRequiredError(error)) {
-          await clearYaohuoLoginState();
-          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState();
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(errorMessage(error));
+          }
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -1083,7 +1083,7 @@ export default function App() {
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [clearStoredYaohuoLoginState, clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
+  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
     if (screen !== 'topic') {
@@ -1143,8 +1143,12 @@ export default function App() {
         const message = errorMessage(error);
         setTopicError(message);
         if (isYaohuoLoginRequiredError(error)) {
-          await clearYaohuoLoginState();
-          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState();
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(errorMessage(error));
+          }
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -1207,8 +1211,12 @@ export default function App() {
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
         if (isYaohuoLoginRequiredError(error)) {
-          await clearYaohuoLoginState();
-          showYaohuoLogin('妖火登录已失效，请重新登录。');
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState();
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(errorMessage(error));
+          }
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -1385,7 +1393,9 @@ export default function App() {
       }
       const loginState = await checkYaohuoLoginDirect({ serverUrl, yaohuoCookie: cookieHeader });
       if (loginState.loginRequired || !loginState.ok) {
-        await clearYaohuoLoginState();
+        if (loginState.reason === 'expired') {
+          await clearYaohuoLoginState();
+        }
         notify(loginState.message || '妖火登录已失效，请重新登录。');
         return;
       }
@@ -1394,8 +1404,12 @@ export default function App() {
       notify('已检测到妖火登录 Cookie，已保存在本机。');
     } catch (error) {
       if (isYaohuoLoginRequiredError(error)) {
-        await clearYaohuoLoginState();
-        notify('妖火登录已失效，请重新登录。');
+        if (isYaohuoLoginExpiredError(error)) {
+          await clearYaohuoLoginState();
+          notify('妖火登录已失效，请重新登录。');
+        } else {
+          notify(errorMessage(error));
+        }
         return;
       }
       notify(errorMessage(error));
@@ -1476,7 +1490,9 @@ export default function App() {
       return true;
     } catch (error) {
       if (isYaohuoLoginRequiredError(error)) {
-        await clearYaohuoLoginState();
+        if (isYaohuoLoginExpiredError(error)) {
+          await clearYaohuoLoginState();
+        }
         showYaohuoLogin(errorMessage(error));
         return false;
       }
