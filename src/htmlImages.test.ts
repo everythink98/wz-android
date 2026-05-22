@@ -17,13 +17,13 @@ describe('Android HTML image preview helpers', () => {
 
   it('recognizes direct image links and proxied image links only', () => {
     expect(isPreviewableImageUrl('https://cdn.example.com/a.webp?x=1')).toBe(true);
-    expect(isPreviewableImageUrl('http://127.0.0.1:3000/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa')).toBe(true);
+    expect(isPreviewableImageUrl('https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa')).toBe(true);
     expect(isPreviewableImageUrl('https://example.com/topic/1')).toBe(false);
   });
 
   it('allows external opening only for http and https URLs', () => {
     expect(isHttpOrHttpsUrl('https://example.com/topic/1')).toBe(true);
-    expect(isHttpOrHttpsUrl('http://127.0.0.1:3000/status')).toBe(true);
+    expect(isHttpOrHttpsUrl('https://example.com/status')).toBe(true);
     expect(isHttpOrHttpsUrl('HTTPS://EXAMPLE.COM')).toBe(true);
     expect(isHttpOrHttpsUrl('mailto:test@example.com')).toBe(false);
     expect(isHttpOrHttpsUrl('javascript:alert(1)')).toBe(false);
@@ -33,8 +33,14 @@ describe('Android HTML image preview helpers', () => {
   });
 
   it('normalizes relative proxy URLs against the configured server', () => {
-    expect(normalizeImagePreviewUrl('/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg', ' http://10.0.2.2:3000/ ')).toBe(
-      'http://10.0.2.2:3000/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg'
+    expect(normalizeImagePreviewUrl('/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg', ' https://legacy.example.com/ ')).toBe(
+      'https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg'
+    );
+  });
+
+  it('keeps relative legacy proxy URLs relative when no server is configured', () => {
+    expect(normalizeImagePreviewUrl('/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg', '')).toBe(
+      '/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg'
     );
   });
 
@@ -45,7 +51,7 @@ describe('Android HTML image preview helpers', () => {
         '<img src="https://cdn.example.com/a.jpg">',
         '<img src="https://cdn.example.com/b.png"><img src="https://cdn.example.com/a.jpg">'
       ],
-      serverUrl: 'http://10.0.2.2:3000'
+      serverUrl: ''
     });
 
     expect(result).toEqual({

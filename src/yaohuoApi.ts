@@ -1,12 +1,12 @@
+import { fetchWithTimeout, type Fetcher } from './request';
+import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
 import {
-  parseYaohuoFeedHtml,
-  parseYaohuoLoginHtml,
+  checkYaohuoLoginHtml,
+  parseYaohuoListHtml,
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
-} from './forumApi';
-import { fetchWithTimeout, type Fetcher } from './request';
-import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
+} from './localYaohuo';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -79,7 +79,7 @@ export async function getYaohuoFeedDirect({
   signal,
   timeoutMs
 }: {
-  serverUrl: string;
+  serverUrl?: string;
   yaohuoCookie?: string;
   category?: string;
   page?: number;
@@ -99,16 +99,13 @@ export async function getYaohuoFeedDirect({
     getTotal: '2021'
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
-  return parseYaohuoFeedHtml({
-    serverUrl,
-    html: pageResult.html,
+  void serverUrl;
+  void serverFetcher;
+  return parseYaohuoListHtml(pageResult.html, {
     url: pageResult.url,
-    category: classId,
+    classId,
     page,
-    limit,
-    fetcher: serverFetcher,
-    signal,
-    timeoutMs
+    limit
   });
 }
 
@@ -124,7 +121,7 @@ export async function searchYaohuoDirect({
   signal,
   timeoutMs
 }: {
-  serverUrl: string;
+  serverUrl?: string;
   yaohuoCookie?: string;
   query: string;
   page?: number;
@@ -146,15 +143,12 @@ export async function searchYaohuoDirect({
     getTotal: '2021'
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
-  return parseYaohuoSearchHtml({
-    serverUrl,
-    html: pageResult.html,
+  void serverUrl;
+  void serverFetcher;
+  return parseYaohuoSearchHtml(pageResult.html, {
     url: pageResult.url,
     page,
-    limit,
-    fetcher: serverFetcher,
-    signal,
-    timeoutMs
+    limit
   });
 }
 
@@ -168,7 +162,7 @@ export async function getYaohuoTopicDirect({
   signal,
   timeoutMs
 }: {
-  serverUrl: string;
+  serverUrl?: string;
   topic: Topic;
   yaohuoCookie?: string;
   replyLimit?: number;
@@ -181,14 +175,11 @@ export async function getYaohuoTopicDirect({
   const id = topicIdValue(topic.id);
   const topicUrl = topic.url || `${YAOHUO_BASE_URL}/bbs-${id}.html`;
   const topicPage = await fetchYaohuoHtml(topicUrl, cookie, yaohuoFetcher, { signal, timeoutMs });
-  const detail = await parseYaohuoTopicHtml({
-    serverUrl,
-    html: topicPage.html,
+  void serverUrl;
+  void serverFetcher;
+  const detail = parseYaohuoTopicHtml(topicPage.html, {
     id,
-    url: topicPage.url,
-    fetcher: serverFetcher,
-    signal,
-    timeoutMs
+    url: topicPage.url
   });
 
   const replies = await getYaohuoRepliesDirect({
@@ -199,7 +190,6 @@ export async function getYaohuoTopicDirect({
     limit: replyLimit,
     yaohuoCookie,
     yaohuoFetcher,
-    serverFetcher,
     signal,
     timeoutMs
   });
@@ -226,7 +216,7 @@ export async function getYaohuoRepliesDirect({
   signal,
   timeoutMs
 }: {
-  serverUrl: string;
+  serverUrl?: string;
   id: string;
   categoryId?: string;
   page: number;
@@ -244,15 +234,12 @@ export async function getYaohuoRepliesDirect({
     page
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
-  return parseYaohuoRepliesHtml({
-    serverUrl,
-    html: pageResult.html,
+  void serverUrl;
+  void serverFetcher;
+  return parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,
     page,
-    limit,
-    fetcher: serverFetcher,
-    signal,
-    timeoutMs
+    limit
   });
 }
 
@@ -264,7 +251,7 @@ export async function checkYaohuoLoginDirect({
   signal,
   timeoutMs
 }: {
-  serverUrl: string;
+  serverUrl?: string;
   yaohuoCookie?: string;
   yaohuoFetcher?: Fetcher;
   serverFetcher?: Fetcher;
@@ -273,12 +260,7 @@ export async function checkYaohuoLoginDirect({
 }) {
   const cookie = requireYaohuoCookie(yaohuoCookie);
   const page = await fetchYaohuoHtml(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, cookie, yaohuoFetcher, { signal, timeoutMs });
-  return parseYaohuoLoginHtml({
-    serverUrl,
-    html: page.html,
-    url: page.url,
-    fetcher: serverFetcher,
-    signal,
-    timeoutMs
-  });
+  void serverUrl;
+  void serverFetcher;
+  return checkYaohuoLoginHtml(page.html, page.url);
 }

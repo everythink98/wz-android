@@ -52,9 +52,9 @@ export function normalizeImagePreviewUrl(url: string, serverUrl: string): string
   if (clean.startsWith('//')) {
     return `https:${clean}`;
   }
-  const base = (serverUrl.trim() || 'http://10.0.2.2:3000').replace(/\/+$/, '');
+  const base = serverUrl.trim().replace(/\/+$/, '');
   if (clean.startsWith('/')) {
-    return `${base}${clean}`;
+    return base ? `${base}${clean}` : clean;
   }
   return clean;
 }

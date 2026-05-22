@@ -92,12 +92,12 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('showYaohuoLogin(errorMessage(error))');
   });
 
-  it('uses concise update wording for refresh and sync feedback', () => {
+  it('uses concise update wording for refresh and backup feedback', () => {
     expect(appSource).toContain("notify('正在更新列表')");
     expect(appSource).toContain("successMessage: '列表已更新'");
     expect(appSource).toContain("notify('主题已更新')");
-    expect(appSource).toContain("notify('同步已更新，本机已合并云端资料')");
-    expect(appSource).toContain("notify('同步已保存')");
+    expect(appSource).toContain("notify('备份已恢复，本机资料已合并')");
+    expect(appSource).toContain("notify('备份 JSON 已生成')");
     expect(appSource).toContain("notify('状态已更新')");
     expect(appSource).not.toContain('正在刷新，请稍候');
     expect(appSource).not.toContain('正在刷新主题');

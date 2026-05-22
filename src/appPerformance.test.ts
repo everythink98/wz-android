@@ -5,11 +5,12 @@ import { describe, expect, it } from 'vitest';
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
 
 describe('Android App performance guards', () => {
-  it('cancels stale feed, search, topic, and sync requests before starting newer ones', () => {
+  it('cancels stale feed, search, topic, and backup/status requests before starting newer ones', () => {
     expect(appSource).toContain('feedAbortRef.current?.abort()');
     expect(appSource).toContain('searchAbortRef.current?.abort()');
     expect(appSource).toContain('topicAbortRef.current?.abort()');
-    expect(appSource).toContain('syncAbortRef.current?.abort()');
+    expect(appSource).toContain('backupAbortRef.current?.abort()');
+    expect(appSource).toContain('statusAbortRef.current?.abort()');
     expect(appSource).toContain('signal: controller.signal');
   });
 
@@ -19,13 +20,14 @@ describe('Android App performance guards', () => {
     expect(appSource).toContain('mergeSettledSearchResponses');
   });
 
-  it('loads server and Android-only categories in parallel', () => {
-    expect(appSource).toContain('const [baseCategoriesResult, yaohuoCategoriesResult] = await Promise.allSettled');
+  it('loads local categories without the project server', () => {
+    expect(appSource).toContain("getCategories({ source: 'all', nocache: true, signal: controller.signal })");
+    expect(appSource).not.toContain('baseCategoriesResult');
   });
 
   it('bypasses stale category caches when refreshing category metadata', () => {
-    expect(appSource).toContain("getCategories({ serverUrl, source: 'all', nocache: true, signal: controller.signal })");
-    expect(appSource).toContain("getCategories({ serverUrl, source: 'yaohuo', nocache: true, signal: controller.signal })");
+    expect(appSource).toContain("getCategories({ source: 'all', nocache: true, signal: controller.signal })");
+    expect(appSource).not.toContain("getCategories({ serverUrl");
   });
 
   it('debounces reading progress persistence while scrolling long topics', () => {
@@ -48,13 +50,12 @@ describe('Android App performance guards', () => {
     expect(renderReplyDeps).not.toMatch(/\bloadingQuotedFloors\b/);
   });
 
-  it('keeps server URL typing separate from the saved active server URL', () => {
-    expect(appSource).toContain('const [draftServerUrl, setDraftServerUrl] = useState');
-    expect(appSource).toContain('normalizeServerUrl(draftServerUrl)');
-    expect(appSource).toContain('setDraftServerUrl(savedServerUrl);');
-    expect(appSource).toContain('draftServerUrl={draftServerUrl}');
-    expect(appSource).toContain('onServerUrlChange={setDraftServerUrl}');
-    expect(appSource).not.toContain('onServerUrlChange={setServerUrl}');
+  it('does not keep server URL settings in the Android app', () => {
+    expect(appSource).not.toContain('draftServerUrl');
+    expect(appSource).not.toContain('normalizeServerUrl');
+    expect(appSource).not.toContain('setServerUrl');
+    expect(appSource).toContain('backupJson={backupJson}');
+    expect(appSource).toContain('onBackupJsonChange={setBackupJson}');
   });
 
   it('cancels stale quoted floor requests when switching or leaving topics', () => {

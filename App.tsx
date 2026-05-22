@@ -102,10 +102,8 @@ import {
   createEmptyReaderData,
   isFavorite,
   isSubscribed,
-  mergeReaderData,
   recordHistory,
   sanitizeReaderData,
-  sanitizeReaderDataForSync,
   toggleFavorite,
   toggleSubscription,
   topicKey,
@@ -114,7 +112,17 @@ import {
   type ReaderSettings
 } from './src/readerData';
 import { loadReaderData, saveReaderData } from './src/readerDataStore';
-import { normalizeServerUrl, readReaderData as pullReaderData, writeReaderData as pushReaderData } from './src/syncClient';
+import { exportReaderBackupJson, importReaderBackupJson } from './src/readerBackup';
+import {
+  buildLinuxDoCookieHeader,
+  canStoreLinuxDoClearance,
+  clearLinuxDoAccess,
+  linuxDoAccessSummary,
+  loadLinuxDoAccess,
+  readLinuxDoCookiesFromWebView,
+  saveLinuxDoAccess,
+  summarizeLinuxDoCookies
+} from './src/linuxdoCookieBridge';
 import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source, Topic, TopicDetail } from './src/types';
 import { createImagePreviewList, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
@@ -123,7 +131,6 @@ import { shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from './s
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
 import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from './src/listSwipeActions';
-import { fetchWithTimeout } from './src/request';
 import {
   androidRipple,
   contentWidthValue,
@@ -198,12 +205,12 @@ const YAOHUO_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_URL}/waplogin.aspx?siteid=1000`;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
+const LINUXDO_URL = 'https://linux.do';
+const LINUXDO_VERIFY_URL = `${LINUXDO_URL}/latest`;
+const LINUXDO_LOGIN_HOSTS = ['linux.do'];
 const YAOHUO_DEFAULT_CLASS_ID = '177';
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
-const SERVER_URL_STORAGE_KEY = 'server-url';
-const SYNC_CODE_STORAGE_KEY = 'sync-code';
-const DEFAULT_SERVER_URL = 'http://10.0.2.2:3000';
 const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
@@ -368,6 +375,7 @@ const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const yaohuoWebViewRef = useRef<WebView>(null);
+  const linuxDoWebViewRef = useRef<WebView>(null);
   const webLoginDetectedRef = useRef(false);
   const saveQueueRef = useRef(Promise.resolve());
   const feedRequestIdRef = useRef(0);
@@ -378,8 +386,8 @@ export default function App() {
   const searchAbortRef = useRef<AbortController | null>(null);
   const topicRequestIdRef = useRef(0);
   const topicAbortRef = useRef<AbortController | null>(null);
-  const syncAbortRef = useRef<AbortController | null>(null);
-  const healthAbortRef = useRef<AbortController | null>(null);
+  const backupAbortRef = useRef<AbortController | null>(null);
+  const statusAbortRef = useRef<AbortController | null>(null);
   const actionAbortRef = useRef<AbortController | null>(null);
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingMoreRepliesRef = useRef(false);
@@ -394,18 +402,19 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('feed');
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
+  const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [cookieNames, setCookieNames] = useState<string[]>([]);
   const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
+  const [linuxDoCookieNames, setLinuxDoCookieNames] = useState<string[]>([]);
   const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
   const [hasYaohuoCookie, setHasYaohuoCookie] = useState(false);
+  const [hasLinuxDoClearance, setHasLinuxDoClearance] = useState(false);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
-  const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER_URL);
-  const [draftServerUrl, setDraftServerUrl] = useState(DEFAULT_SERVER_URL);
-  const [syncCode, setSyncCode] = useState('');
+  const [backupJson, setBackupJson] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
   const readerDataRef = useRef<ReaderData>(readerData);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
@@ -445,6 +454,7 @@ export default function App() {
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
+  const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
   const [showCategoriesPanel, setShowCategoriesPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [healthSummary, setHealthSummary] = useState('');
@@ -685,12 +695,12 @@ export default function App() {
     const nextPreview = createImagePreviewList({
       tappedUrl: url,
       htmlParts: topicHtmlPartsRef.current,
-      serverUrl
+      serverUrl: ''
     });
     if (nextPreview.urls.length > 0) {
       setImagePreview(nextPreview);
     }
-  }, [serverUrl]);
+  }, []);
   const closeImagePreview = useCallback(() => setImagePreview(null), []);
   const showPreviousImage = useCallback(() => {
     setImagePreview((current) => current && current.urls.length > 1 ? {
@@ -731,6 +741,9 @@ export default function App() {
   const handleYaohuoLoginNavigation = useCallback((request: LoginNavigationRequest) => (
     handleLoginNavigation(request, YAOHUO_LOGIN_HOSTS)
   ), [handleLoginNavigation]);
+  const handleLinuxDoNavigation = useCallback((request: LoginNavigationRequest) => (
+    handleLoginNavigation(request, LINUXDO_LOGIN_HOSTS)
+  ), [handleLoginNavigation]);
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
@@ -769,8 +782,8 @@ export default function App() {
     searchAbortRef.current?.abort();
     topicAbortRef.current?.abort();
     repliesAbortRef.current?.abort();
-    syncAbortRef.current?.abort();
-    healthAbortRef.current?.abort();
+    backupAbortRef.current?.abort();
+    statusAbortRef.current?.abort();
     actionAbortRef.current?.abort();
     if (progressSaveTimerRef.current) {
       clearTimeout(progressSaveTimerRef.current);
@@ -820,21 +833,13 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      const [savedReaderData, savedServerUrl, savedSyncCode, savedCookie, savedYaohuoCookie] = await Promise.all([
+      const [savedReaderData, savedCookie, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
         loadReaderData(),
-        SecureStore.getItemAsync(SERVER_URL_STORAGE_KEY),
-        SecureStore.getItemAsync(SYNC_CODE_STORAGE_KEY),
         SecureStore.getItemAsync(COOKIE_STORAGE_KEY),
-        SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY)
+        SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
+        loadLinuxDoAccess()
       ]);
       setReaderData(savedReaderData);
-      if (savedServerUrl) {
-        setServerUrl(savedServerUrl);
-        setDraftServerUrl(savedServerUrl);
-      }
-      if (savedSyncCode) {
-        setSyncCode(savedSyncCode);
-      }
       if (savedCookie) {
         setHasNodeSeekCookie(true);
         notify('已找到本机保存的 NodeSeek Cookie。');
@@ -843,21 +848,12 @@ export default function App() {
         setHasYaohuoCookie(true);
         notify('已找到本机保存的妖火 Cookie。');
       }
+      setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
+      if (linuxDoAccess?.cookieHeader) {
+        setLinuxDoCookieNames(['cf_clearance']);
+      }
     })().catch((error) => notify(errorMessage(error)));
   }, [notify]);
-
-  const saveServerSettings = useCallback(async () => {
-    try {
-      const cleanServerUrl = normalizeServerUrl(draftServerUrl);
-      await SecureStore.setItemAsync(SERVER_URL_STORAGE_KEY, cleanServerUrl);
-      await SecureStore.setItemAsync(SYNC_CODE_STORAGE_KEY, syncCode.trim());
-      setServerUrl(cleanServerUrl);
-      setDraftServerUrl(cleanServerUrl);
-      notify('服务器设置已保存');
-    } catch (error) {
-      notify(errorMessage(error));
-    }
-  }, [draftServerUrl, notify, syncCode]);
 
   const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source) => {
     if (source !== 'all' && source !== 'yaohuo') {
@@ -899,32 +895,11 @@ export default function App() {
   }, [clearStoredNodeSeekLoginState]);
 
   const loadCategories = useCallback(async () => {
-    if (!serverUrl.trim()) {
-      return;
-    }
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const [baseCategoriesResult, yaohuoCategoriesResult] = await Promise.allSettled([
-        getCategories({ serverUrl, source: 'all', nocache: true, signal: controller.signal }),
-        getCategories({ serverUrl, source: 'yaohuo', nocache: true, signal: controller.signal })
-      ]);
-      if (
-        (baseCategoriesResult.status === 'rejected' && isCanceledRequest(baseCategoriesResult.reason))
-        || (yaohuoCategoriesResult.status === 'rejected' && isCanceledRequest(yaohuoCategoriesResult.reason))
-      ) {
-        return;
-      }
-      const data = baseCategoriesResult.status === 'fulfilled'
-        ? baseCategoriesResult.value
-        : { items: [], errors: { all: errorMessage(baseCategoriesResult.reason) } };
-      const yaohuoData = yaohuoCategoriesResult.status === 'fulfilled'
-        ? yaohuoCategoriesResult.value
-        : { items: [], errors: { yaohuo: errorMessage(yaohuoCategoriesResult.reason) } };
-      setCategories(mergeCategories(data.items, yaohuoData.items));
-      const errors = Object.entries({
-        ...(data.errors || {}),
-        ...(yaohuoData.errors || {})
-      });
+      const data = await getCategories({ source: 'all', nocache: true, signal: controller.signal });
+      setCategories(mergeCategories(data.items, []));
+      const errors = Object.entries(data.errors || {});
       if (errors.length) {
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
@@ -935,7 +910,7 @@ export default function App() {
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [notify, serverUrl]);
+  }, [notify]);
 
   const loadFeed = useCallback(async ({
     page = 1,
@@ -956,10 +931,6 @@ export default function App() {
     clearItems?: boolean;
     successMessage?: string;
   } = {}) => {
-    if (!serverUrl.trim()) {
-      notify('请输入服务器地址');
-      return;
-    }
     if (feedLoadingRef.current && !reset) {
       return;
     }
@@ -992,7 +963,6 @@ export default function App() {
       if (source === 'all' && yaohuoCookie) {
         const [baseResult, yaohuoResult] = await Promise.allSettled([
           getFeed({
-            serverUrl,
             source,
             page,
             cursor,
@@ -1002,7 +972,6 @@ export default function App() {
             signal: controller.signal
           }),
           getYaohuoFeedDirect({
-            serverUrl,
             yaohuoCookie,
             page,
             limit: 30,
@@ -1012,7 +981,6 @@ export default function App() {
         data = mergeSettledFeedResponses(baseResult, yaohuoResult);
       } else if (source === 'yaohuo') {
         data = await getYaohuoFeedDirect({
-          serverUrl,
           yaohuoCookie,
           page,
           limit: 30,
@@ -1021,7 +989,6 @@ export default function App() {
         });
       } else {
         data = await getFeed({
-          serverUrl,
           source,
           page,
           cursor,
@@ -1068,7 +1035,7 @@ export default function App() {
       }
       finishAbortableRequest(feedAbortRef, controller);
     }
-  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
+  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadYaohuoCookieForSource, notify, showYaohuoLogin]);
 
   useEffect(() => {
     void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
@@ -1118,14 +1085,14 @@ export default function App() {
         let data: SearchResponse;
         if (searchSource === 'all' && yaohuoCookie) {
           const [baseResult, yaohuoResult] = await Promise.allSettled([
-            searchTopics({ serverUrl, query, source: searchSource, limit: 30, signal: controller.signal }),
-            searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie, signal: controller.signal })
+            searchTopics({ query, source: searchSource, limit: 30, signal: controller.signal }),
+            searchYaohuoDirect({ query, limit: 30, yaohuoCookie, signal: controller.signal })
           ]);
           data = mergeSettledSearchResponses(baseResult, yaohuoResult);
         } else if (searchSource === 'yaohuo') {
-          data = await searchYaohuoDirect({ serverUrl, query, limit: 30, yaohuoCookie, signal: controller.signal });
+          data = await searchYaohuoDirect({ query, limit: 30, yaohuoCookie, signal: controller.signal });
         } else {
-          data = await searchTopics({ serverUrl, query, source: searchSource, limit: 30, signal: controller.signal });
+          data = await searchTopics({ query, source: searchSource, limit: 30, signal: controller.signal });
         }
         if (requestId !== searchRequestIdRef.current) {
           return;
@@ -1158,7 +1125,7 @@ export default function App() {
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, serverUrl, showYaohuoLogin]);
+  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, showYaohuoLogin]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
     if (screen !== 'topic') {
@@ -1195,8 +1162,8 @@ export default function App() {
         return;
       }
       const detail = topic.source === 'yaohuo'
-        ? await getYaohuoTopicDirect({ serverUrl, topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
-        : await getTopic({ serverUrl, source: topic.source, id: topic.id, nocache, signal: controller.signal });
+        ? await getYaohuoTopicDirect({ topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
+        : await getTopic({ source: topic.source, id: topic.id, nocache, signal: controller.signal });
       if (requestId !== topicRequestIdRef.current) {
         return;
       }
@@ -1236,7 +1203,7 @@ export default function App() {
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, resetQuoteState, screen, serverUrl, showYaohuoLogin]);
+  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, resetQuoteState, screen, showYaohuoLogin]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -1258,7 +1225,6 @@ export default function App() {
       setBusy(true);
       const data = detail.source === 'yaohuo'
         ? await getYaohuoRepliesDirect({
-          serverUrl,
           id: detail.id,
           categoryId: detail.categoryId,
           page: replyNextPage,
@@ -1267,7 +1233,6 @@ export default function App() {
           signal: controller.signal
         })
         : await getReplies({
-          serverUrl,
           source: detail.source,
           id: detail.id,
           page: replyNextPage,
@@ -1310,7 +1275,7 @@ export default function App() {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
-  }, [clearYaohuoLoginState, loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, serverUrl, showYaohuoLogin, topicDetail]);
+  }, [clearYaohuoLoginState, loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, showYaohuoLogin, topicDetail]);
 
   const refreshTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
@@ -1398,7 +1363,6 @@ export default function App() {
     quotedReplyAbortRefs.current[key] = controller;
     try {
       const loaded = await getReply({
-        serverUrl,
         source: detail.source,
         id: detail.id,
         floor: quotedFloor,
@@ -1426,7 +1390,7 @@ export default function App() {
         updateLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
       }
     }
-  }, [notify, selectedTopic, serverUrl, topicDetail, updateExpandedQuotes, updateLoadedQuotedReplies, updateLoadingQuotedFloors]);
+  }, [notify, selectedTopic, topicDetail, updateExpandedQuotes, updateLoadedQuotedReplies, updateLoadingQuotedFloors]);
 
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -1489,7 +1453,7 @@ export default function App() {
         notify('没有检测到明确的妖火登录 Cookie。请确认已经登录后再试。');
         return;
       }
-      const loginState = await checkYaohuoLoginDirect({ serverUrl, yaohuoCookie: cookieHeader });
+      const loginState = await checkYaohuoLoginDirect({ yaohuoCookie: cookieHeader });
       if (loginState.loginRequired || !loginState.ok) {
         if (loginState.reason === 'expired') {
           await clearYaohuoLoginState();
@@ -1514,7 +1478,28 @@ export default function App() {
     } finally {
       setChecking(false);
     }
-  }, [clearYaohuoLoginState, notify, serverUrl]);
+  }, [clearYaohuoLoginState, notify]);
+
+  const checkLinuxDoCookie = useCallback(async () => {
+    setChecking(true);
+    try {
+      const cookies = await readLinuxDoCookiesFromWebView();
+      const summary = summarizeLinuxDoCookies(cookies);
+      const cookieHeader = buildLinuxDoCookieHeader(cookies);
+      setLinuxDoCookieNames(summary.names);
+      if (!canStoreLinuxDoClearance(cookies) || !cookieHeader) {
+        notify('没有检测到 linux.do 公开访问验证 Cookie。请完成验证后再试。');
+        return;
+      }
+      await saveLinuxDoAccess(cookieHeader);
+      setHasLinuxDoClearance(true);
+      notify('linux.do 验证信息已保存在本机。');
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setChecking(false);
+    }
+  }, [notify]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();
@@ -1526,6 +1511,14 @@ export default function App() {
     yaohuoWebViewRef.current?.reload();
     notify('已清除本机保存的妖火 Cookie。');
   }, [clearYaohuoLoginState, notify]);
+
+  const clearLinuxDoCookie = useCallback(async () => {
+    await clearLinuxDoAccess();
+    setHasLinuxDoClearance(false);
+    setLinuxDoCookieNames([]);
+    linuxDoWebViewRef.current?.reload();
+    notify('已清除本机保存的 linux.do 验证信息。');
+  }, [notify]);
 
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
@@ -1714,70 +1707,84 @@ export default function App() {
     );
   }, [runYaohuoRequest, selectedTopic, topicDetail]);
 
-  const pullSync = useCallback(async () => {
-    const controller = startAbortableRequest(syncAbortRef);
+  const importBackup = useCallback(async () => {
+    const controller = startAbortableRequest(backupAbortRef);
     setBusy(true);
     setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
-      const remote = sanitizeReaderDataForSync(await pullReaderData(serverUrl, syncCode, { signal: controller.signal }));
-      const merged = mergeReaderData(readerDataRef.current, remote);
+      if (!backupJson.trim()) {
+        notify('请先粘贴备份 JSON');
+        return;
+      }
+      const merged = importReaderBackupJson(readerDataRef.current, backupJson);
       await replaceReaderData(merged);
-      notify('同步已更新，本机已合并云端资料');
+      notify('备份已恢复，本机资料已合并');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
-      if (finishAbortableRequest(syncAbortRef, controller)) {
+      if (finishAbortableRequest(backupAbortRef, controller)) {
         setBusy(false);
         setSyncing(false);
       }
     }
-  }, [notify, replaceReaderData, serverUrl, syncCode]);
+  }, [backupJson, notify, replaceReaderData]);
 
-  const pushSync = useCallback(async () => {
-    const controller = startAbortableRequest(syncAbortRef);
+  const exportBackup = useCallback(async () => {
+    const controller = startAbortableRequest(backupAbortRef);
     setBusy(true);
     setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
-      await pushReaderData(serverUrl, syncCode, sanitizeReaderDataForSync(readerDataRef.current), { signal: controller.signal });
-      notify('同步已保存');
+      setBackupJson(exportReaderBackupJson(readerDataRef.current));
+      notify('备份 JSON 已生成');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
-      if (finishAbortableRequest(syncAbortRef, controller)) {
+      if (finishAbortableRequest(backupAbortRef, controller)) {
         setBusy(false);
         setSyncing(false);
       }
     }
-  }, [notify, serverUrl, syncCode]);
+  }, [notify]);
 
-  const checkHealth = useCallback(async () => {
-    const controller = startAbortableRequest(healthAbortRef);
+  const checkLocalStatus = useCallback(async () => {
+    const controller = startAbortableRequest(statusAbortRef);
     setBusy(true);
     try {
-      const response = await fetchWithTimeout(`${normalizeServerUrl(serverUrl)}/api/health`, {}, { signal: controller.signal });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}`);
-      }
-      const sourceStatus = sources.map((source) => `${sourceLabel(source)} ${data.sources?.[source]?.ok ? '可用' : '不可用'}`).join(' · ');
-      setHealthSummary(sourceStatus);
+      const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+      const linuxDoAccess = await loadLinuxDoAccess();
+      setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
+      const checks = await Promise.allSettled([
+        getFeed({ source: 'nodeseek', limit: 1, nocache: true, signal: controller.signal }),
+        getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
+        getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal })
+      ]);
+      const status = {
+        nodeseek: checks[0].status === 'fulfilled',
+        v2ex: checks[1].status === 'fulfilled',
+        linuxdo: checks[2].status === 'fulfilled',
+        yaohuo: Boolean(yaohuoCookie)
+      };
+      const access = linuxDoAccessSummary(linuxDoAccess);
+      const sourceStatus = sources.map((source) => `${sourceLabel(source)} ${status[source] ? '可用' : '不可用'}`).join(' · ');
+      const linuxDoText = access.hasClearance ? `linux.do 验证：已保存 ${access.savedAt || ''}` : 'linux.do 验证：未保存';
+      setHealthSummary(`${sourceStatus} · ${linuxDoText}`);
       notify('状态已更新');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
-      if (finishAbortableRequest(healthAbortRef, controller)) {
+      if (finishAbortableRequest(statusAbortRef, controller)) {
         setBusy(false);
       }
     }
-  }, [notify, serverUrl]);
+  }, [notify]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -1791,6 +1798,10 @@ export default function App() {
       }
       if (showYaohuoLoginPanel) {
         setShowYaohuoLoginPanel(false);
+        return true;
+      }
+      if (showLinuxDoPanel) {
+        setShowLinuxDoPanel(false);
         return true;
       }
       if (showCategoriesPanel) {
@@ -1819,6 +1830,7 @@ export default function App() {
     screen,
     showCategoriesPanel,
     showLoginPanel,
+    showLinuxDoPanel,
     showYaohuoLoginPanel,
     showSettingsPanel
   ]);
@@ -1968,45 +1980,52 @@ export default function App() {
                   checking={checking}
                   hasNodeSeekCookie={hasNodeSeekCookie}
                   hasYaohuoCookie={hasYaohuoCookie}
+                  hasLinuxDoClearance={hasLinuxDoClearance}
                   healthSummary={healthSummary}
                   loginState={loginState}
                   loadingLoginPage={loadingLoginPage}
                   loadingYaohuoLoginPage={loadingYaohuoLoginPage}
+                  loadingLinuxDoPage={loadingLinuxDoPage}
                   readerData={readerData}
-                  draftServerUrl={draftServerUrl}
+                  backupJson={backupJson}
                   showCategoriesPanel={showCategoriesPanel}
                   showLoginPanel={showLoginPanel}
                   showYaohuoLoginPanel={showYaohuoLoginPanel}
+                  showLinuxDoPanel={showLinuxDoPanel}
                   showSettingsPanel={showSettingsPanel}
                   styles={styles}
                   syncing={syncing}
-                  syncCode={syncCode}
                   theme={theme}
                   webViewRef={webViewRef}
                   yaohuoLoginState={yaohuoLoginState}
                   yaohuoWebViewRef={yaohuoWebViewRef}
-                  onCheckHealth={checkHealth}
+                  linuxDoCookieNames={linuxDoCookieNames}
+                  linuxDoWebViewRef={linuxDoWebViewRef}
+                  onCheckHealth={checkLocalStatus}
                   onCheckIn={checkIn}
                   onCheckLogin={checkLogin}
                   onCheckYaohuoLogin={checkYaohuoCookie}
+                  onCheckLinuxDoCookie={checkLinuxDoCookie}
                   onClearLogin={clearLogin}
                   onClearYaohuoLogin={clearYaohuoLogin}
+                  onClearLinuxDoCookie={clearLinuxDoCookie}
                   handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
                   handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
+                  handleLinuxDoNavigation={handleLinuxDoNavigation}
                   onHandleLoginMessage={handleLoginMessage}
-                  onPullSync={pullSync}
-                  onPushSync={pushSync}
+                  onImportBackup={importBackup}
+                  onExportBackup={exportBackup}
                   onRefreshCategories={loadCategories}
-                  onSaveServerSettings={saveServerSettings}
                   onSelectCategory={selectCategory}
-                  onServerUrlChange={setDraftServerUrl}
+                  onBackupJsonChange={setBackupJson}
                   onSetLoadingLoginPage={setLoadingLoginPage}
                   onSetLoadingYaohuoLoginPage={setLoadingYaohuoLoginPage}
+                  onSetLoadingLinuxDoPage={setLoadingLinuxDoPage}
                   onShowCategoriesPanelChange={setShowCategoriesPanel}
                   onShowLoginPanelChange={setShowLoginPanel}
                   onShowYaohuoLoginPanelChange={setShowYaohuoLoginPanel}
+                  onShowLinuxDoPanelChange={setShowLinuxDoPanel}
                   onShowSettingsPanelChange={setShowSettingsPanel}
-                  onSyncCodeChange={setSyncCode}
                   onToggleSubscription={(category) => commitReaderData((current) => toggleSubscription(current, category))}
                   onUpdateSettings={updateSettings}
                 />
@@ -2407,45 +2426,52 @@ function MoreScreen({
   checking,
   hasNodeSeekCookie,
   hasYaohuoCookie,
+  hasLinuxDoClearance,
   healthSummary,
   loginState,
   loadingLoginPage,
   loadingYaohuoLoginPage,
+  loadingLinuxDoPage,
   readerData,
-  draftServerUrl,
+  backupJson,
   showCategoriesPanel,
   showLoginPanel,
   showYaohuoLoginPanel,
+  showLinuxDoPanel,
   showSettingsPanel,
   styles,
   syncing,
-  syncCode,
   theme,
   webViewRef,
   yaohuoLoginState,
   yaohuoWebViewRef,
+  linuxDoCookieNames,
+  linuxDoWebViewRef,
   onCheckHealth,
   onCheckIn,
   onCheckLogin,
   onCheckYaohuoLogin,
+  onCheckLinuxDoCookie,
   onClearLogin,
   onClearYaohuoLogin,
+  onClearLinuxDoCookie,
   handleNodeSeekLoginNavigation,
   handleYaohuoLoginNavigation,
+  handleLinuxDoNavigation,
   onHandleLoginMessage,
-  onPullSync,
-  onPushSync,
+  onImportBackup,
+  onExportBackup,
   onRefreshCategories,
-  onSaveServerSettings,
   onSelectCategory,
-  onServerUrlChange,
+  onBackupJsonChange,
   onSetLoadingLoginPage,
   onSetLoadingYaohuoLoginPage,
+  onSetLoadingLinuxDoPage,
   onShowCategoriesPanelChange,
   onShowLoginPanelChange,
   onShowYaohuoLoginPanelChange,
+  onShowLinuxDoPanelChange,
   onShowSettingsPanelChange,
-  onSyncCodeChange,
   onToggleSubscription,
   onUpdateSettings
 }: {
@@ -2453,45 +2479,52 @@ function MoreScreen({
   checking: boolean;
   hasNodeSeekCookie: boolean;
   hasYaohuoCookie: boolean;
+  hasLinuxDoClearance: boolean;
   healthSummary: string;
   loginState: string;
   loadingLoginPage: boolean;
   loadingYaohuoLoginPage: boolean;
+  loadingLinuxDoPage: boolean;
   readerData: ReaderData;
-  draftServerUrl: string;
+  backupJson: string;
   showCategoriesPanel: boolean;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
+  showLinuxDoPanel: boolean;
   showSettingsPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   syncing: boolean;
-  syncCode: string;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
   yaohuoLoginState: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
+  linuxDoCookieNames: string[];
+  linuxDoWebViewRef: RefObject<WebView | null>;
   onCheckHealth: () => void;
   onCheckIn: () => void;
   onCheckLogin: () => void;
   onCheckYaohuoLogin: () => void;
+  onCheckLinuxDoCookie: () => void;
   onClearLogin: () => void;
   onClearYaohuoLogin: () => void;
+  onClearLinuxDoCookie: () => void;
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
+  handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
-  onPullSync: () => void;
-  onPushSync: () => void;
+  onImportBackup: () => void;
+  onExportBackup: () => void;
   onRefreshCategories: () => void;
-  onSaveServerSettings: () => void;
   onSelectCategory: (category: Category) => void;
-  onServerUrlChange: (value: string) => void;
+  onBackupJsonChange: (value: string) => void;
   onSetLoadingLoginPage: (value: boolean) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
+  onSetLoadingLinuxDoPage: (value: boolean) => void;
   onShowCategoriesPanelChange: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
+  onShowLinuxDoPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
-  onSyncCodeChange: (value: string) => void;
   onToggleSubscription: (category: Category) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
@@ -2508,30 +2541,20 @@ function MoreScreen({
         <InfoRow icon={Star} label="收藏" value={String(favoriteCount)} styles={styles} theme={theme} />
       </View>
       <View style={styles.group}>
-        <Text style={styles.panelTitle}>服务器与同步</Text>
+        <Text style={styles.panelTitle}>备份 / 恢复</Text>
         <TextInput
           style={styles.input}
-          value={draftServerUrl}
-          onChangeText={onServerUrlChange}
-          placeholder="服务器地址，例如 http://192.168.1.23:3000"
+          value={backupJson}
+          onChangeText={onBackupJsonChange}
+          placeholder="粘贴或生成阅读资料 JSON"
           placeholderTextColor={theme.muted}
           autoCapitalize="none"
           autoCorrect={false}
-        />
-        <TextInput
-          style={styles.input}
-          value={syncCode}
-          onChangeText={onSyncCodeChange}
-          placeholder="同步码"
-          placeholderTextColor={theme.muted}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
+          multiline
         />
         <View style={styles.actions}>
-          <AppButton label="保存" styles={styles} onPress={onSaveServerSettings} />
-          <AppButton label={syncing ? '同步中' : '读取同步'} variant="ghost" styles={styles} disabled={syncing} onPress={onPullSync} />
-          <AppButton label={syncing ? '同步中' : '保存同步'} variant="ghost" styles={styles} disabled={syncing} onPress={onPushSync} />
+          <AppButton label={syncing ? '处理中' : '生成备份'} styles={styles} disabled={syncing} onPress={onExportBackup} />
+          <AppButton label={syncing ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackup} />
         </View>
       </View>
       <View style={styles.group}>
@@ -2591,6 +2614,33 @@ function MoreScreen({
                 onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
                 onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
                 onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
+              />
+            </View>
+          </View>
+        ) : null}
+        <MenuButton icon={LogIn} label="linux.do 验证" value={hasLinuxDoClearance ? `已保存 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '未验证'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
+        {showLinuxDoPanel ? (
+          <View style={styles.loginPanel}>
+            <View style={styles.actions}>
+              <AppButton label={checking ? '检测中' : '检测验证'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
+              <AppButton label="清除验证" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
+              <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => linuxDoWebViewRef.current?.reload()} />
+            </View>
+            <View style={styles.webViewShell}>
+              {loadingLinuxDoPage ? (
+                <View style={styles.loading}>
+                  <ActivityIndicator color={theme.primary} />
+                  <Text style={styles.loadingText}>正在打开 linux.do...</Text>
+                </View>
+              ) : null}
+              <WebView
+                ref={linuxDoWebViewRef}
+                source={{ uri: LINUXDO_VERIFY_URL }}
+                sharedCookiesEnabled
+                thirdPartyCookiesEnabled
+                onLoadEnd={() => onSetLoadingLinuxDoPage(false)}
+                onLoadStart={() => onSetLoadingLinuxDoPage(true)}
+                onShouldStartLoadWithRequest={handleLinuxDoNavigation}
               />
             </View>
           </View>

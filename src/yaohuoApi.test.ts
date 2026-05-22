@@ -9,17 +9,11 @@ import {
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
-  it('fetches yaohuo feed from the Android device and sends only html to the server parser', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<html>feed</html>'));
-    const serverFetcher = vi.fn(async () => new Response(JSON.stringify({
-      items: [],
-      errors: {},
-      hasMore: false,
-      nextPage: null
-    })));
+  it('fetches yaohuo feed from the Android device and parses HTML locally', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+    const serverFetcher = vi.fn();
 
-    await getYaohuoFeedDirect({
-      serverUrl: 'http://127.0.0.1:3000',
+    const result = await getYaohuoFeedDirect({
       yaohuoCookie: 'sidyaohuo=secret',
       category: '177',
       page: 2,
@@ -34,66 +28,40 @@ describe('Android direct yaohuo API', () => {
         headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' })
       })
     );
-    expect(serverFetcher).toHaveBeenCalledWith('http://127.0.0.1:3000/api/yaohuo/parse/feed', expect.objectContaining({
-      method: 'POST'
-    }));
-    expect(JSON.stringify(serverFetcher.mock.calls[0])).not.toContain('secret');
+    expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
+    expect(serverFetcher).not.toHaveBeenCalled();
   });
 
-  it('checks login with Android-fetched html and does not send the cookie to the server', async () => {
+  it('checks login with Android-fetched HTML and does not send the cookie to a server', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<html>ok</html>'));
-    const serverFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response(JSON.stringify({
-      source: 'yaohuo',
-      ok: true,
-      loginRequired: false,
-      loginUrl: 'https://yaohuo.me/waplogin.aspx?siteid=1000'
-    })));
+    const serverFetcher = vi.fn();
 
-    await checkYaohuoLoginDirect({
-      serverUrl: 'http://127.0.0.1:3000',
+    const result = await checkYaohuoLoginDirect({
       yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher,
       serverFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/wapindex.aspx?sid=-2',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' })
-      })
-    );
-    expect(serverFetcher).toHaveBeenCalledWith('http://127.0.0.1:3000/api/yaohuo/parse/check-login', expect.objectContaining({
-      method: 'POST'
-    }));
-    expect(JSON.parse(String(serverFetcher.mock.calls[0][1]?.body)).url).toBe('https://yaohuo.me/wapindex.aspx');
-    expect(JSON.stringify(serverFetcher.mock.calls[0])).not.toContain('secret');
+    expect(result.loginRequired).toBe(false);
+    expect(serverFetcher).not.toHaveBeenCalled();
   });
 
-  it('passes cancellation signals through direct yaohuo fetches and parser requests', async () => {
+  it('passes cancellation signals through direct yaohuo fetches', async () => {
     const controller = new AbortController();
-    const yaohuoFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response('<html>feed</html>'));
-    const serverFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response(JSON.stringify({
-      items: [],
-      errors: {}
-    })));
+    const yaohuoFetcher = vi.fn(async (_input: string, _init?: RequestInit) => new Response('<div class="listdata"></div>'));
 
     await getYaohuoFeedDirect({
-      serverUrl: 'http://127.0.0.1:3000',
       yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher,
-      serverFetcher,
       signal: controller.signal
     });
 
     expect(yaohuoFetcher.mock.calls[0][1]).toEqual(expect.objectContaining({
       signal: expect.any(AbortSignal)
     }));
-    expect(serverFetcher.mock.calls[0][1]).toEqual(expect.objectContaining({
-      signal: expect.any(AbortSignal)
-    }));
   });
 
-  it('fetches yaohuo topic and replies from Android before server parsing', async () => {
+  it('fetches yaohuo topic and replies from Android before local parsing', async () => {
     const topic: Topic = {
       source: 'yaohuo',
       id: '123',
@@ -104,93 +72,53 @@ describe('Android direct yaohuo API', () => {
       replyCount: 1,
       categoryId: '177'
     };
-    const yaohuoFetcher = vi.fn(async () => new Response('<html>yaohuo</html>'));
-    const serverFetcher = vi.fn(async (input: string) => {
-      if (input.endsWith('/parse/topic')) {
-        return new Response(JSON.stringify({
-          ...topic,
-          replyCount: 0,
-          contentHtml: '<p>body</p>',
-          replies: []
-        }));
+    const yaohuoFetcher = vi.fn(async (input: string) => {
+      if (input.includes('book_re.aspx')) {
+        return new Response('<div class="line1">[沙发] 回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>');
       }
-      return new Response(JSON.stringify({
-        items: [{ author: 'bob', contentHtml: '<p>reply</p>', createdAt: '2026-05-20T00:01:00.000Z' }],
-        hasMore: false,
-        nextPage: null
-      }));
+      return new Response('<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>更多回帖(1)<a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>');
     });
 
     const detail = await getYaohuoTopicDirect({
-      serverUrl: 'http://127.0.0.1:3000',
       topic,
       yaohuoCookie: 'sidyaohuo=secret',
       replyLimit: 30,
-      yaohuoFetcher,
-      serverFetcher
+      yaohuoFetcher
     });
 
     expect(yaohuoFetcher).toHaveBeenNthCalledWith(1, 'https://yaohuo.me/bbs-123.html', expect.any(Object));
     expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1', expect.any(Object));
     expect(detail.replyCount).toBe(1);
-    expect(detail.replies).toHaveLength(1);
-    expect(detail.replyHasMore).toBe(false);
-    expect(JSON.stringify(serverFetcher.mock.calls)).not.toContain('secret');
+    expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
   });
 
   it('fetches later reply pages from Android using the topic category id', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<html>reply page</html>'));
-    const serverFetcher = vi.fn(async () => new Response(JSON.stringify({
-      items: [],
-      hasMore: false,
-      nextPage: null
-    })));
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="line1">[1楼] reply</div>'));
 
     await getYaohuoRepliesDirect({
-      serverUrl: 'http://127.0.0.1:3000',
       id: '123',
       categoryId: '177',
       page: 3,
       limit: 30,
       yaohuoCookie: 'sidyaohuo=secret',
-      yaohuoFetcher,
-      serverFetcher
+      yaohuoFetcher
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3', expect.any(Object));
-    expect(JSON.stringify(serverFetcher.mock.calls)).not.toContain('secret');
   });
 
-  it('surfaces yaohuo search login or verification responses from the parser without sending cookies to the server', async () => {
+  it('surfaces yaohuo verification responses without clearing cookies', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
       status: 200
     }));
-    const serverFetcher = vi.fn(async () => new Response(JSON.stringify({
-      source: 'yaohuo',
-      ok: false,
-      loginRequired: true,
-      reason: 'verification',
-      loginUrl: 'https://yaohuo.me/waplogin.aspx?siteid=1000',
-      message: '妖火需要完成访问验证，请在登录页完成验证后重试'
-    }), { status: 401 }));
 
     await expect(searchYaohuoDirect({
-      serverUrl: 'http://127.0.0.1:3000',
       query: '测试',
       yaohuoCookie: 'sidyaohuo=secret',
-      yaohuoFetcher,
-      serverFetcher
+      yaohuoFetcher
     })).rejects.toMatchObject({
       loginRequired: true,
       reason: 'verification'
     });
-
-    expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list.aspx?action=search&type=title&key=%E6%B5%8B%E8%AF%95&classid=0&page=1&siteid=1000&getTotal=2021',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' })
-      })
-    );
-    expect(JSON.stringify(serverFetcher.mock.calls)).not.toContain('secret');
   });
 });

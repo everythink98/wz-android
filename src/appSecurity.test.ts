@@ -29,7 +29,9 @@ describe('Android App security review guards', () => {
   it('restricts login WebViews to their expected hosts', () => {
     expect(appSource).toContain('handleNodeSeekLoginNavigation');
     expect(appSource).toContain('handleYaohuoLoginNavigation');
+    expect(appSource).toContain('handleLinuxDoNavigation');
     expect(appSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
     expect(appSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
+    expect(appSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
   });
 });
