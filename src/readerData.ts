@@ -89,6 +89,15 @@ function isTopic(value: unknown): value is Topic {
   return Boolean(item && isSource(item.source) && item.id && item.title);
 }
 
+function topicAccessRequirement(topic: Topic) {
+  const accessRequirement = topic.accessRequirement;
+  return accessRequirement
+    && (accessRequirement.type === 'login' || accessRequirement.type === 'level' || accessRequirement.type === 'permission')
+    && typeof accessRequirement.label === 'string'
+    ? accessRequirement
+    : undefined;
+}
+
 function topicSummary(topic: Topic): Topic {
   return {
     source: topic.source,
@@ -103,7 +112,8 @@ function topicSummary(topic: Topic): Topic {
     lastReplyAt: topic.lastReplyAt,
     replyCount: Number(topic.replyCount || 0),
     viewCount: topic.viewCount,
-    excerpt: topic.excerpt
+    excerpt: topic.excerpt,
+    accessRequirement: topicAccessRequirement(topic)
   };
 }
 

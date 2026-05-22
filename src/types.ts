@@ -1,6 +1,12 @@
 export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo';
 export type FeedSource = Source | 'all';
 
+export interface AccessRequirement {
+  type: 'login' | 'level' | 'permission';
+  label: string;
+  detail?: string;
+}
+
 export interface Topic {
   source: Source;
   id: string;
@@ -15,6 +21,7 @@ export interface Topic {
   replyCount: number;
   viewCount?: number;
   excerpt?: string;
+  accessRequirement?: AccessRequirement;
 }
 
 export interface Reply {

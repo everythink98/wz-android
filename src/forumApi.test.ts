@@ -22,6 +22,10 @@ describe('Android forum API client', () => {
     url: 'https://www.nodeseek.com/post-723704-1',
     createdAt: '2026-05-20T00:00:00.000Z',
     replyCount: 0,
+    accessRequirement: {
+      type: 'level',
+      label: '需等级'
+    },
     contentHtml: '<p>body</p>',
     replies: []
   };
@@ -103,6 +107,19 @@ describe('Android forum API client', () => {
     expectFetchCall(fetcher, 4, 'http://127.0.0.1:3000/api/search?q=VPS&source=nodeseek&limit=10');
   });
 
+  it('can bypass cached category responses', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
+
+    await getCategories({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'nodeseek',
+      nocache: true,
+      fetcher
+    });
+
+    expectFetchCall(fetcher, 1, 'http://127.0.0.1:3000/api/categories?source=nodeseek&nocache=1');
+  });
+
   it('calls generic three-source feed endpoints with page and cursor pagination', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
 
@@ -156,6 +173,22 @@ describe('Android forum API client', () => {
     expectFetchCall(fetcher, 2, 'http://127.0.0.1:3000/api/topic/v2ex/1212603?nocache=1');
     expectFetchCall(fetcher, 3, 'http://127.0.0.1:3000/api/topic/linuxdo/42/replies?page=4&limit=30&offset=60&nocache=1');
     expectFetchCall(fetcher, 4, 'http://127.0.0.1:3000/api/search?q=VPS&source=all&limit=30');
+  });
+
+  it('accepts topic access requirement metadata from the server', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(topicDetail)));
+
+    const result = await getTopic({
+      serverUrl: 'http://127.0.0.1:3000',
+      source: 'nodeseek',
+      id: '723704',
+      fetcher
+    });
+
+    expect(result.accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级'
+    });
   });
 
   it('posts yaohuo html to parser endpoints without sending cookies to the server', async () => {

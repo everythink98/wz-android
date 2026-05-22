@@ -119,7 +119,7 @@ import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source,
 import { createImagePreviewList, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
-import { shouldShowFeedFloatingActions } from './src/feedFloatingActions';
+import { shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from './src/feedFloatingActions';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
 import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from './src/listSwipeActions';
@@ -764,7 +764,7 @@ export default function App() {
       await SecureStore.setItemAsync(SERVER_URL_STORAGE_KEY, cleanServerUrl);
       await SecureStore.setItemAsync(SYNC_CODE_STORAGE_KEY, syncCode.trim());
       setServerUrl(cleanServerUrl);
-      notify('服务器地址和同步码已保存在本机。');
+      notify('服务器设置已保存');
     } catch (error) {
       notify(errorMessage(error));
     }
@@ -791,8 +791,22 @@ export default function App() {
     }
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const data = await getCategories({ serverUrl, source: 'all', signal: controller.signal });
-      const yaohuoData = await getCategories({ serverUrl, source: 'yaohuo', signal: controller.signal });
+      const [baseCategoriesResult, yaohuoCategoriesResult] = await Promise.allSettled([
+        getCategories({ serverUrl, source: 'all', nocache: true, signal: controller.signal }),
+        getCategories({ serverUrl, source: 'yaohuo', nocache: true, signal: controller.signal })
+      ]);
+      if (
+        (baseCategoriesResult.status === 'rejected' && isCanceledRequest(baseCategoriesResult.reason))
+        || (yaohuoCategoriesResult.status === 'rejected' && isCanceledRequest(yaohuoCategoriesResult.reason))
+      ) {
+        return;
+      }
+      const data = baseCategoriesResult.status === 'fulfilled'
+        ? baseCategoriesResult.value
+        : { items: [], errors: { all: errorMessage(baseCategoriesResult.reason) } };
+      const yaohuoData = yaohuoCategoriesResult.status === 'fulfilled'
+        ? yaohuoCategoriesResult.value
+        : { items: [], errors: { yaohuo: errorMessage(yaohuoCategoriesResult.reason) } };
       setCategories(mergeCategories(data.items, yaohuoData.items));
       const errors = Object.entries({
         ...(data.errors || {}),
@@ -819,7 +833,9 @@ export default function App() {
     reset = false,
     source = feedSource,
     category = categoryFilter,
-    nocache = false
+    nocache = false,
+    clearItems = reset && !nocache,
+    successMessage
   }: {
     page?: number;
     cursor?: string;
@@ -827,6 +843,8 @@ export default function App() {
     source?: FeedSource;
     category?: string;
     nocache?: boolean;
+    clearItems?: boolean;
+    successMessage?: string;
   } = {}) => {
     if (!serverUrl.trim()) {
       notify('请输入服务器地址');
@@ -837,13 +855,19 @@ export default function App() {
       showYaohuoLogin();
       return;
     }
-    if (feedLoadingRef.current && (!reset || nocache)) {
+    if (feedLoadingRef.current && !reset) {
       return;
     }
     feedLoadingRef.current = true;
     const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
     const isLoadMore = !reset && page > 1;
+    if (!isLoadMore && reset && clearItems) {
+      setFeedItems([]);
+      setFeedPage(1);
+      setFeedNextCursor(undefined);
+      setFeedHasMore(false);
+    }
     if (isLoadMore) {
       setLoadingMoreFeed(true);
     } else if (nocache) {
@@ -907,8 +931,8 @@ export default function App() {
           setHasYaohuoCookie(false);
         }
         notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
-      } else {
-        notify(category ? `已读取 ${sourceLabel(source)}「${category}」` : `已读取 ${sourceLabel(source)}主题`);
+      } else if (successMessage) {
+        notify(successMessage);
       }
     } catch (error) {
       if (requestId === feedRequestIdRef.current) {
@@ -933,7 +957,7 @@ export default function App() {
   }, [categoryFilter, feedSource, loadYaohuoCookieForSource, notify, serverUrl, showYaohuoLogin]);
 
   useEffect(() => {
-    void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter });
+    void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
   }, [categoryFilter, feedSource, loadFeed]);
 
   useEffect(() => {
@@ -942,11 +966,11 @@ export default function App() {
 
   const refreshFeed = useCallback(() => {
     if (feedLoadingRef.current) {
-      notify('正在刷新，请稍候');
+      notify('列表正在更新');
       return;
     }
-    notify('正在刷新主题');
-    void loadFeed({ reset: true, page: 1, nocache: true });
+    notify('正在更新列表');
+    void loadFeed({ reset: true, page: 1, nocache: true, successMessage: '列表已更新' });
     void loadCategories();
   }, [loadCategories, loadFeed, notify]);
 
@@ -1056,7 +1080,9 @@ export default function App() {
       if (progress?.scrollY) {
         setTimeout(() => topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false }), 180);
       }
-      notify('主题已读取');
+      if (nocache) {
+        notify('主题已更新');
+      }
     } catch (error) {
       if (requestId === topicRequestIdRef.current) {
         const message = errorMessage(error);
@@ -1223,7 +1249,7 @@ export default function App() {
         updateLoadedQuotedReplies((current) => ({ ...current, [loaded.floor as number]: loaded }));
       }
       updateExpandedQuotes((current) => ({ ...current, [key]: true }));
-      notify(`已读取引用 #${quotedFloor}`);
+      notify(`引用已展开 #${quotedFloor}`);
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey) {
         notify(errorMessage(error));
@@ -1518,7 +1544,7 @@ export default function App() {
       const remote = sanitizeReaderDataForSync(await pullReaderData(serverUrl, syncCode, { signal: controller.signal }));
       const merged = mergeReaderData(readerDataRef.current, remote);
       await replaceReaderData(merged);
-      notify('同步读取成功，已合并本机和云端资料。');
+      notify('同步已更新，本机和云端资料已合并');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
@@ -1535,7 +1561,7 @@ export default function App() {
     try {
       await saveQueueRef.current.catch(() => undefined);
       await pushReaderData(serverUrl, syncCode, sanitizeReaderDataForSync(readerDataRef.current), { signal: controller.signal });
-      notify('同步保存成功。');
+      notify('同步已保存');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
@@ -1557,7 +1583,7 @@ export default function App() {
       }
       const sourceStatus = sources.map((source) => `${sourceLabel(source)} ${data.sources?.[source]?.ok ? '可用' : '不可用'}`).join(' · ');
       setHealthSummary(sourceStatus);
-      notify('状态检查完成。');
+      notify('状态已更新');
     } catch (error) {
       if (!isCanceledRequest(error)) {
         notify(errorMessage(error));
@@ -1710,7 +1736,7 @@ export default function App() {
                 theme={theme}
                 onCategoryChange={setCategoryFilter}
                 onFeedSourceChange={changeFeedSource}
-                onLoadMore={() => loadFeed({ page: feedPage + 1, cursor: feedSource === 'all' ? feedNextCursor : undefined })}
+                onLoadMore={() => loadFeed({ page: feedPage + 1, cursor: feedSource === 'all' ? feedNextCursor : undefined, nocache: true })}
                 onOpenTopic={openTopic}
                 onReadingFilterChange={setReadingFilter}
                 onRefresh={refreshFeed}
@@ -1859,13 +1885,37 @@ function FeedScreen({
   onToggleFavorite: (topic: Topic) => void;
 }) {
   const listRef = useRef<FlatList<Topic>>(null);
+  const requestedFeedPageRef = useRef<number | null>(null);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
+
+  const requestFeedLoadMore = useCallback(() => {
+    if (!feedHasMore || busy || loadingMore) {
+      return;
+    }
+    const nextPage = feedPage + 1;
+    if (requestedFeedPageRef.current === nextPage) {
+      return;
+    }
+    requestedFeedPageRef.current = nextPage;
+    onLoadMore();
+  }, [busy, feedHasMore, feedPage, loadingMore, onLoadMore]);
+
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const nextVisible = shouldShowFeedFloatingActions(event.nativeEvent.contentOffset.y);
     setShowFloatingActions((current) => current === nextVisible ? current : nextVisible);
-  }, []);
+    if (shouldLoadMoreFeedFromScroll(event.nativeEvent)) {
+      requestFeedLoadMore();
+    }
+  }, [requestFeedLoadMore]);
 
   useEffect(() => {
+    if (!busy && !loadingMore) {
+      requestedFeedPageRef.current = null;
+    }
+  }, [busy, loadingMore]);
+
+  useEffect(() => {
+    requestedFeedPageRef.current = null;
     setShowFloatingActions(false);
   }, [categoryFilter, feedSource, readingFilter]);
 
@@ -1934,6 +1984,8 @@ function FeedScreen({
         keyboardShouldPersistTaps="handled"
         onScroll={handleScroll}
         scrollEventThrottle={64}
+        onEndReachedThreshold={0.6}
+        onEndReached={requestFeedLoadMore}
         {...FEED_LIST_PERFORMANCE_PROPS}
         ListHeaderComponent={header}
         ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={feedEmptyText} styles={styles} />}
@@ -1942,8 +1994,10 @@ function FeedScreen({
             label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
             styles={styles}
             disabled={busy || loadingMore}
-            onPress={onLoadMore}
+            onPress={requestFeedLoadMore}
           />
+        ) : feedItems.length > 0 && !busy ? (
+          <Text style={styles.endOfListText}>已经到底了</Text>
         ) : null}
         renderItem={renderTopicItem}
       />
@@ -2135,7 +2189,7 @@ function LibraryScreen({
 
   const header = (
     <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>书架</Text>
+      <Text style={styles.sectionTitle}>收藏</Text>
       <PillRail
         items={[
           { value: 'favorites', label: '收藏' },
@@ -2699,6 +2753,7 @@ function TopicScreen({
         <View style={styles.topicMetaStack}>
           <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
           <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
+          {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
         </View>
         <Text style={styles.articleTitle}>{item.title}</Text>
         {canWriteNodeSeek ? (
@@ -3122,20 +3177,20 @@ function TopicCard({
         {...(swipeAction ? panResponder.panHandlers : {})}
         style={[
           styles.topicCard,
-          readerState.read && styles.topicCardRead,
           readerState.tracked && styles.topicCardTracked,
           { transform: [{ translateX }] }
         ]}
       >
-        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={styles.topicCardPressable} onPress={openTopicPress}>
+        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
           <View style={styles.topicCardHead}>
             <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
             <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
           </View>
           <Text style={styles.cardTitle} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
+          {topic.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{topic.accessRequirement.label}</Text> : null}
           {topic.excerpt && readerState.listDensity === 'loose' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
         </Pressable>
-        <View style={styles.topicMetaRow}>
+        <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>
           <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>
         </View>
       </Animated.View>
@@ -3157,7 +3212,7 @@ function NavBar({
   const items: Array<{ value: Screen; label: string; icon: LucideIcon }> = [
     { value: 'feed', label: '首页', icon: Home },
     { value: 'search', label: '搜索', icon: Search },
-    { value: 'library', label: '书架', icon: BookMarked },
+    { value: 'library', label: '收藏', icon: Star },
     { value: 'more', label: '更多', icon: MoreHorizontal }
   ];
   return (
@@ -3357,11 +3412,11 @@ function IconButton({
       accessibilityLabel={label}
       accessibilityState={{ disabled, selected: active }}
       android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
-      style={[styles.button, ghost && styles.buttonGhost, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, tiny && styles.buttonTiny, active && styles.buttonActive, disabled && styles.buttonDisabled]}
+      style={[styles.button, ghost && styles.buttonGhost, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, tiny && styles.buttonTiny, active && !iconOnly && styles.buttonActive, disabled && styles.buttonDisabled]}
       disabled={disabled}
       onPress={onPress}
     >
-      <Icon size={iconSize} color={active ? theme.primary : theme.ink} strokeWidth={1.8} />
+      <Icon size={iconSize} color={active ? theme.primary : theme.ink} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
       {iconOnly ? null : <Text style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
     </Pressable>
   );
@@ -3404,8 +3459,22 @@ function EmptyText({ text, styles }: { text: string; styles: ReturnType<typeof c
 function LoadingState({ text, styles, theme }: { text: string; styles: ReturnType<typeof createStyles>; theme: ReaderTheme }) {
   return (
     <View style={styles.loadingState}>
-      <ActivityIndicator color={theme.primary} />
-      <Text style={styles.loadingStateText}>{text}</Text>
+      <View style={styles.loadingStateHeader}>
+        <ActivityIndicator color={theme.primary} size="small" />
+        <Text style={styles.loadingStateText}>{text}</Text>
+      </View>
+      <View style={styles.loadingPlaceholderStack}>
+        {Array.from({ length: 3 }).map((_, index) => (
+          <View
+            key={index}
+            style={[
+              styles.loadingPlaceholderLine,
+              index === 0 && styles.loadingPlaceholderLineShort,
+              index === 2 && styles.loadingPlaceholderLineMuted
+            ]}
+          />
+        ))}
+      </View>
     </View>
   );
 }

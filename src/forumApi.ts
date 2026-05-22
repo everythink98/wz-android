@@ -79,6 +79,17 @@ function isOptionalVoteOptions(value: unknown) {
     || (Array.isArray(value) && value.every(isVoteOption));
 }
 
+function isAccessRequirement(value: unknown) {
+  return isRecord(value)
+    && (value.type === 'login' || value.type === 'level' || value.type === 'permission')
+    && isString(value.label)
+    && isOptionalString(value.detail);
+}
+
+function isOptionalAccessRequirement(value: unknown) {
+  return value === undefined || isAccessRequirement(value);
+}
+
 function isTopic(value: unknown) {
   if (!isRecord(value)) {
     return false;
@@ -95,7 +106,8 @@ function isTopic(value: unknown) {
     && isOptionalString(value.category)
     && isOptionalString(value.lastReplyAt)
     && isOptionalNumber(value.viewCount)
-    && isOptionalString(value.excerpt);
+    && isOptionalString(value.excerpt)
+    && isOptionalAccessRequirement(value.accessRequirement);
 }
 
 function isReply(value: unknown): value is Reply {
@@ -269,17 +281,22 @@ export function getFeed({
 export function getCategories({
   serverUrl,
   source = 'all',
+  nocache = false,
   fetcher,
   signal,
   timeoutMs
 }: {
   serverUrl: string;
   source?: FeedSource;
+  nocache?: boolean;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
   const params = new URLSearchParams({ source });
+  if (nocache) {
+    params.set('nocache', '1');
+  }
   return fetchJson<CategoriesResponse>(
     `${normalizeServerUrl(serverUrl)}/api/categories?${params.toString()}`,
     isCategoriesResponse,

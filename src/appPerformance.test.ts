@@ -19,6 +19,15 @@ describe('Android App performance guards', () => {
     expect(appSource).toContain('mergeSettledSearchResponses');
   });
 
+  it('loads server and Android-only categories in parallel', () => {
+    expect(appSource).toContain('const [baseCategoriesResult, yaohuoCategoriesResult] = await Promise.allSettled');
+  });
+
+  it('bypasses stale category caches when refreshing category metadata', () => {
+    expect(appSource).toContain("getCategories({ serverUrl, source: 'all', nocache: true, signal: controller.signal })");
+    expect(appSource).toContain("getCategories({ serverUrl, source: 'yaohuo', nocache: true, signal: controller.signal })");
+  });
+
   it('debounces reading progress persistence while scrolling long topics', () => {
     expect(appSource).toContain('progressSaveTimerRef');
     expect(appSource).toContain('setTimeout(() => {');

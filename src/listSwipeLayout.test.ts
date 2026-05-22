@@ -25,4 +25,10 @@ describe('Android topic list swipe layout', () => {
     expect(appSource).toContain("readerState.favorite ? '已收藏' : ''");
     expect(appSource).toContain("readerState.tracked ? '追踪命中' : ''");
   });
+
+  it('does not make the full swipe row transparent when a topic is marked read', () => {
+    expect(appSource).not.toMatch(/styles\.topicCard,\s*readerState\.read && styles\.topicCardRead,/);
+    expect(appSource).toContain('style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]}');
+    expect(appSource).toContain('style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}');
+  });
 });

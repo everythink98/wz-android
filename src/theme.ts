@@ -130,7 +130,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 10,
       padding: 16,
       paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
-      paddingBottom: Platform.OS === 'android' ? 112 : 94
+      paddingBottom: Platform.OS === 'android' ? 96 : 94
     },
     topicContentInner: {
       alignItems: 'center',
@@ -176,7 +176,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     feedFloatingActions: {
       position: 'absolute',
       right: 16,
-      bottom: Platform.OS === 'android' ? 92 : 78,
+      bottom: Platform.OS === 'android' ? 78 : 78,
       gap: 8
     },
     floatingIconButton: {
@@ -278,6 +278,21 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 12,
       lineHeight: 17
+    },
+    topicAccessBadge: {
+      alignSelf: 'flex-start',
+      overflow: 'hidden',
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      lineHeight: 16,
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
+      borderColor: alphaColor(theme.danger, 0.34),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 3
     },
     topicMetaRow: {
       alignItems: 'center',
@@ -441,6 +456,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingVertical: 24,
       textAlign: 'center'
     },
+    endOfListText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      lineHeight: 17,
+      paddingVertical: 18,
+      textAlign: 'center'
+    },
     group: {
       gap: 10,
       backgroundColor: theme.surface,
@@ -525,7 +548,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       gap: 8,
       backgroundColor: theme.surface,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.16),
       borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 8
     },
@@ -595,16 +620,41 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       lineHeight: Math.round(30 * titleFontScale)
     },
     loadingState: {
-      alignItems: 'center',
+      alignItems: 'stretch',
       justifyContent: 'center',
-      gap: 8,
-      minHeight: 140,
-      paddingVertical: 28
+      gap: 12,
+      minHeight: 156,
+      backgroundColor: alphaColor(theme.primary, 0.035),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.12),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 16,
+      paddingVertical: 22
+    },
+    loadingStateHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 9
     },
     loadingStateText: {
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 13
+    },
+    loadingPlaceholderStack: {
+      gap: 8
+    },
+    loadingPlaceholderLine: {
+      alignSelf: 'stretch',
+      height: 10,
+      borderRadius: 999,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.08)
+    },
+    loadingPlaceholderLineShort: {
+      width: '42%'
+    },
+    loadingPlaceholderLineMuted: {
+      width: '68%'
     },
     errorBox: {
       gap: 8,
@@ -742,7 +792,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface,
-      paddingBottom: Platform.OS === 'android' ? 18 : 8,
+      paddingBottom: 8,
       paddingHorizontal: 10,
       paddingTop: 4
     },
