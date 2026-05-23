@@ -17,6 +17,7 @@ import { matchesSearchExpression, parseSearchExpression, searchExpressionText } 
 
 const BASE_URL = 'https://linux.do';
 const LIST_PAGE_SIZE = 30;
+const TOPIC_STREAM_CACHE_LIMIT = 100;
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
 
 interface LinuxDoOptions {
@@ -221,8 +222,25 @@ function topicStreamState(data: unknown) {
 function cacheTopicStream(id: string, data: unknown) {
   const state = topicStreamState(data);
   if (state.stream.length) {
+    topicStreamCache.delete(id);
     topicStreamCache.set(id, state);
+    while (topicStreamCache.size > TOPIC_STREAM_CACHE_LIMIT) {
+      const oldestKey = topicStreamCache.keys().next().value;
+      if (oldestKey === undefined) {
+        break;
+      }
+      topicStreamCache.delete(oldestKey);
+    }
   }
+}
+
+function cachedTopicStream(id: string) {
+  const cached = topicStreamCache.get(id);
+  if (cached) {
+    topicStreamCache.delete(id);
+    topicStreamCache.set(id, cached);
+  }
+  return cached;
 }
 
 export async function getLinuxDoFeed(options: LinuxDoOptions & {
@@ -324,11 +342,11 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   limit?: number;
   offset?: number | null;
 } = {}): Promise<RepliesResponse> {
-  let cached = topicStreamCache.get(id);
+  let cached = cachedTopicStream(id);
   if (!cached) {
     const data = await topicData(id, options);
     cacheTopicStream(id, data);
-    cached = topicStreamCache.get(id) || topicStreamState(data);
+    cached = cachedTopicStream(id) || topicStreamState(data);
   }
   const stream = cached.stream;
   const page = options.page || 1;

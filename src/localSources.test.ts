@@ -302,6 +302,47 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
+  it('evicts least recently used linux.do reply streams after the cache limit', async () => {
+    const topicJsonCalls: string[] = [];
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/posts.json')) {
+        return json({
+          post_stream: {
+            posts: [
+              { id: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' }
+            ]
+          }
+        });
+      }
+      const id = String(input).match(/\/t\/(\d+)\.json/)?.[1] || '0';
+      topicJsonCalls.push(id);
+      return json({
+        id: Number(id),
+        title: `linux.do cached topic ${id}`,
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream: [1, 2],
+          posts: [
+            { id: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' }
+          ]
+        }
+      });
+    });
+
+    for (let id = 8000; id < 8100; id += 1) {
+      await getTopic({ source: 'linuxdo', id: String(id), fetcher, nocache: true });
+    }
+    await getReplies({ source: 'linuxdo', id: '8000', page: 2, offset: 0, limit: 1, fetcher });
+
+    topicJsonCalls.length = 0;
+    await getTopic({ source: 'linuxdo', id: '8100', fetcher, nocache: true });
+    await getReplies({ source: 'linuxdo', id: '8001', page: 2, offset: 0, limit: 1, fetcher });
+    await getReplies({ source: 'linuxdo', id: '8000', page: 2, offset: 0, limit: 1, fetcher });
+
+    expect(topicJsonCalls.filter((id) => id === '8001')).toHaveLength(1);
+    expect(topicJsonCalls.filter((id) => id === '8000')).toHaveLength(0);
+  });
+
   it('uses NodeSeek updatedDate as last reply time when embedded topic comments are empty', async () => {
     const emptyTopicPayload = Buffer.from(JSON.stringify({
       postData: {

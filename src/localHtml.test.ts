@@ -37,6 +37,18 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('src="https://cdn.example.com/a.png"');
   });
 
+  it('keeps data image sources without allowing data links or non-image data media', () => {
+    const result = sanitizeContentHtml(`
+      <a href="data:image/png;base64,abc123">image link</a>
+      <img src="data:image/png;base64,abc123">
+      <img src="data:text/html,hello">
+    `, 'https://example.com/base/');
+
+    expect(result).toContain('src="data:image/png;base64,abc123"');
+    expect(result).not.toContain('href=');
+    expect(result).not.toContain('data:text/html');
+  });
+
   it('decodes apostrophe entities', () => {
     expect(decodeHtml('A&apos;B')).toBe("A'B");
   });

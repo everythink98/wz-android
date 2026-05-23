@@ -82,7 +82,7 @@ function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: str
     if (name === 'href' && (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:')) {
       return next;
     }
-    if (name === 'src' && (protocol === 'http:' || protocol === 'https:')) {
+    if (name === 'src' && (protocol === 'http:' || protocol === 'https:' || /^data:image\//i.test(next))) {
       return next;
     }
   } catch {
