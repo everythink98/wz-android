@@ -157,4 +157,39 @@ describe('Android local forum facade', () => {
     expect(calls).not.toMatch(/127\.0\.0\.1(?::3000)?\/api\/search|10\.0\.2\.2(?::3000)?\/api\/search|localhost(?::3000)?\/api\/search/);
     expect(calls).not.toMatch(/127\.0\.0\.1(?::3000)?\/api\/yaohuo\/parse\/search|10\.0\.2\.2(?::3000)?\/api\/yaohuo\/parse\/search|localhost(?::3000)?\/api\/yaohuo\/parse\/search/);
   });
+
+  it('keeps overflow items available when paginating the aggregated Android feed', async () => {
+    const manyNodeSeekTopics = Buffer.from(JSON.stringify({
+      rotateTopics: Array.from({ length: 4 }, (_, index) => ({
+        postId: 100 + index,
+        titleText: `NodeSeek ${index + 1}`,
+        titleLink: `/post-${100 + index}-1`,
+        op: { name: 'alice' },
+        time: { createdDate: `2026-05-20T00:0${index}:00.000Z` }
+      }))
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/page-2')) {
+        return new Response('<script></script>');
+      }
+      if (input.includes('nodeseek.com')) {
+        return new Response(`<script>${manyNodeSeekTopics}</script>`);
+      }
+      if (input.includes('linux.do')) {
+        return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return new Response(JSON.stringify([]), {
+        headers: { 'content-type': 'application/json' }
+      });
+    });
+
+    const first = await getFeed({ source: 'all', limit: 2, fetcher });
+    const second = await getFeed({ source: 'all', page: first.nextPage ?? 2, cursor: first.nextCursor ?? undefined, limit: 2, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['103', '102']);
+    expect(second.items.map((item) => item.id)).toEqual(['101', '100']);
+    expect(second.items.every((item) => item.source === 'nodeseek')).toBe(true);
+  });
 });

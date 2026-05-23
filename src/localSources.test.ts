@@ -22,6 +22,7 @@ vi.mock('react-native', () => ({
 
 import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
+import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{
@@ -65,6 +66,21 @@ const nodeSeekTopicPayload = Buffer.from(JSON.stringify({
   }
 })).toString('base64');
 
+const nodeSeekReplyPagePayload = Buffer.from(JSON.stringify({
+  postData: {
+    postId: 101,
+    title: 'NodeSeek topic',
+    comments: [
+      {
+        commentId: 2,
+        poster: { name: 'bob' },
+        markdown: '回复内容',
+        time: { createdDate: '2026-05-20T00:01:00.000Z' }
+      }
+    ]
+  }
+})).toString('base64');
+
 function json(value: unknown) {
   return new Response(JSON.stringify(value), {
     headers: { 'content-type': 'application/json' }
@@ -81,7 +97,7 @@ describe('Android local sources', () => {
   it('reads NodeSeek feed, categories, topic, replies, and search without project server endpoints', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-101-2')) {
-        return html(`<script>${nodeSeekTopicPayload}</script>`);
+        return html(`<script>${nodeSeekReplyPagePayload}</script>`);
       }
       if (input.includes('/post-101-1')) {
         return html(`<script>${nodeSeekTopicPayload}</script>`);
@@ -98,9 +114,128 @@ describe('Android local sources', () => {
     expect(feed.items[0]).toMatchObject({ source: 'nodeseek', id: '101', categoryId: 'tech' });
     expect(categories.items).toEqual([{ source: 'nodeseek', id: 'tech', name: '技术' }]);
     expect(topic.contentHtml).toContain('<strong>内容</strong>');
+    expect(topic.lastReplyAt).toBe('2026-05-20T00:01:00.000Z');
     expect(replies.items[0]).toMatchObject({ author: 'bob', floor: 1 });
     expect(search.items[0].id).toBe('101');
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/|10\.0\.2\.2|127\.0\.0\.1:3000/);
+  });
+
+  it('continues NodeSeek replies from page one when the first page has more embedded replies', async () => {
+    const comments = [
+      { poster: { name: 'alice' }, markdown: '正文' },
+      ...Array.from({ length: 32 }, (_, index) => ({
+        poster: { name: `reply ${index + 1}` },
+        markdown: `回复 ${index + 1}`,
+        time: { createdDate: `2026-05-20T00:${String(index + 1).padStart(2, '0')}:00.000Z` }
+      }))
+    ];
+    const payload = Buffer.from(JSON.stringify({
+      postData: { postId: 723704, title: 'NodeSeek topic', comments }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const topic = await getNodeSeekTopic('723704', { fetcher, replyLimit: 30 });
+    const replies = await getNodeSeekReplies('723704', {
+      fetcher,
+      page: topic.replyNextPage ?? 1,
+      offset: topic.replyNextOffset,
+      limit: 20
+    });
+
+    expect(topic.replyNextPage).toBe(1);
+    expect(topic.replyNextOffset).toBe(30);
+    expect(replies.items.map((item) => item.author)).toEqual(['reply 31', 'reply 32']);
+    expect(replies.hasMore).toBe(false);
+  });
+
+  it('keeps NodeSeek reply pagination open when page one links to another reply page', async () => {
+    const pageOnePayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          { poster: { name: 'alice' }, markdown: '正文' },
+          { poster: { name: 'reply 1' }, markdown: '回复 1' }
+        ]
+      }
+    })).toString('base64');
+    const pageTwoPayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          { poster: { name: 'reply 2' }, markdown: '回复 2' },
+          { poster: { name: 'reply 3' }, markdown: '回复 3' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/post-723704-2')) {
+        return html(`<script>${pageTwoPayload}</script>`);
+      }
+      return html(`<script>${pageOnePayload}</script><a href="/post-723704-2">2</a>`);
+    });
+
+    const topic = await getNodeSeekTopic('723704', { fetcher, replyLimit: 30 });
+    const replies = await getNodeSeekReplies('723704', {
+      fetcher,
+      page: topic.replyNextPage ?? 1,
+      offset: topic.replyNextOffset,
+      limit: 20
+    });
+
+    expect(topic.replyHasMore).toBe(true);
+    expect(topic.replyNextPage).toBe(2);
+    expect(topic.replyNextOffset).toBe(1);
+    expect(replies.items.map((item) => item.author)).toEqual(['reply 2', 'reply 3']);
+    expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
+  });
+
+  it('uses the linux.do reply offset as the fallback floor on later reply pages', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/posts.json')) {
+        return json({
+          post_stream: {
+            posts: [
+              { id: 32, username: 'reply 31', cooked: '<p>31</p>', created_at: '2026-05-20T00:31:00.000Z' },
+              { id: 33, username: 'reply 32', cooked: '<p>32</p>', created_at: '2026-05-20T00:32:00.000Z' }
+            ]
+          }
+        });
+      }
+      return json({
+        id: 42,
+        title: 'linux.do topic',
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream: Array.from({ length: 40 }, (_, index) => index + 1),
+          posts: [{ id: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' }]
+        }
+      });
+    });
+
+    const replies = await getReplies({ source: 'linuxdo', id: '42', page: 2, offset: 30, limit: 2, fetcher });
+
+    expect(replies.items.map((item) => item.floor)).toEqual([32, 33]);
+  });
+
+  it('uses NodeSeek updatedDate as last reply time when embedded topic comments are empty', async () => {
+    const emptyTopicPayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 101,
+        title: 'NodeSeek topic',
+        op: { name: 'alice' },
+        createdDate: '2026-05-20T00:00:00.000Z',
+        updatedDate: '2026-05-20T01:00:00.000Z',
+        comments: []
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${emptyTopicPayload}</script>`));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '101', fetcher });
+
+    expect(topic.createdAt).toBe('2026-05-20T00:00:00.000Z');
+    expect(topic.lastReplyAt).toBe('2026-05-20T01:00:00.000Z');
   });
 
   it('searches NodeSeek through its site search instead of filtering the latest Android feed', async () => {

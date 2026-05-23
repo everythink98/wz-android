@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createImagePreviewList,
+  dataImageFileFromUrl,
   extractImageUrlsFromHtml,
   isHttpOrHttpsUrl,
   isPreviewableImageUrl,
@@ -32,16 +33,24 @@ describe('Android HTML image preview helpers', () => {
     expect(isHttpOrHttpsUrl(undefined)).toBe(false);
   });
 
-  it('normalizes relative proxy URLs against the configured server', () => {
-    expect(normalizeImagePreviewUrl('/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg', ' https://legacy.example.com/ ')).toBe(
-      'https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg'
-    );
-  });
-
-  it('keeps relative legacy proxy URLs relative when no server is configured', () => {
-    expect(normalizeImagePreviewUrl('/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg', '')).toBe(
+  it('keeps preview URLs in the expected app-safe form', () => {
+    expect(normalizeImagePreviewUrl(' https://cdn.example.com/a.jpg ')).toBe('https://cdn.example.com/a.jpg');
+    expect(normalizeImagePreviewUrl('HTTP://cdn.example.com/a.jpg')).toBe('HTTP://cdn.example.com/a.jpg');
+    expect(normalizeImagePreviewUrl('data:image/png;base64,abc')).toBe('data:image/png;base64,abc');
+    expect(normalizeImagePreviewUrl('//cdn.example.com/a.jpg')).toBe('https://cdn.example.com/a.jpg');
+    expect(normalizeImagePreviewUrl('/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg')).toBe(
       '/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa.jpg'
     );
+    expect(normalizeImagePreviewUrl('images/a.jpg')).toBe('images/a.jpg');
+  });
+
+  it('extracts base64 image file data from data URLs for local saving', () => {
+    expect(dataImageFileFromUrl('data:image/jpeg;base64,abc123')).toEqual({
+      base64: 'abc123',
+      extension: 'jpg'
+    });
+    expect(dataImageFileFromUrl('data:text/plain;base64,abc123')).toBeNull();
+    expect(dataImageFileFromUrl('https://cdn.example.com/a.jpg')).toBeNull();
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {
@@ -50,8 +59,7 @@ describe('Android HTML image preview helpers', () => {
       htmlParts: [
         '<img src="https://cdn.example.com/a.jpg">',
         '<img src="https://cdn.example.com/b.png"><img src="https://cdn.example.com/a.jpg">'
-      ],
-      serverUrl: ''
+      ]
     });
 
     expect(result).toEqual({

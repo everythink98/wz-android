@@ -1,5 +1,6 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
 import { fetchWithTimeout, type Fetcher } from './request';
+import { textContentFromHtml } from './localHtml';
 
 const YAOHUO_BASE_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
@@ -43,20 +44,9 @@ function isLoginHtml(html: string, responseUrl = '') {
     || /请先\s+登录/.test(visibleText);
 }
 
-function textFromHtml(html: string) {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function actionMessage(html: string) {
   const tip = String(html || '').match(/<[^>]*class=["'][^"']*tip[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i)?.[1];
-  const text = textFromHtml(tip || html);
+  const text = textContentFromHtml(tip || html);
   if (text.length > 80) {
     return '操作已提交';
   }

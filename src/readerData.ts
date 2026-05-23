@@ -579,6 +579,7 @@ export function recordHistory(data: ReaderData, topic: Topic) {
     history: {
       ...data.history,
       [key]: {
+        ...existing,
         topic: summary,
         savedAt: nowIso(),
         visitCount: (existing?.visitCount || 0) + 1

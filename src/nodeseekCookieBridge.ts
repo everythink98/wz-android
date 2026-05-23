@@ -2,7 +2,7 @@ import CookieManager from '@react-native-cookies/cookies';
 import { NativeModules } from 'react-native';
 import {
   buildCookieHeader,
-  canStoreNodeSeekCookieHeader,
+  hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
   parseNodeSeekDocumentCookie,
   type NativeCookie
@@ -20,6 +20,7 @@ async function nodeSeekAndroidCookieModule() {
 
 export function nodeSeekCookieModuleFromReactNativeImport(mod: any): NodeSeekCookieModule | undefined {
   const nativeModules = mod?.NativeModules || mod?.default?.NativeModules;
+  // LinuxDoCookieModule owns the shared Android WebView CookieManager bridge; NodeSeek reuses it here.
   return nativeModules?.LinuxDoCookieModule as NodeSeekCookieModule | undefined;
 }
 
@@ -73,7 +74,7 @@ export async function readNodeSeekCookiesFromStores({
   timeoutMs?: number;
 } = {}) {
   const androidStoreCookies = await withNodeSeekCookieReadTimeout(readAndroidStore(), {}, timeoutMs);
-  if (canStoreNodeSeekCookieHeader(androidStoreCookies)) {
+  if (hasNodeSeekLoginCookie(androidStoreCookies)) {
     return androidStoreCookies;
   }
   const cookieManagerCookies = await withNodeSeekCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs);

@@ -20,19 +20,16 @@ import {
 } from './nodeseekCookieBridge';
 
 describe('NodeSeek WebView cookie bridge', () => {
-  it('uses the Android WebView cookie store before CookieManager when clearance is present', async () => {
-    const readCookieManagerStore = vi.fn(async () => {
-      throw new Error('CookieManager should not be required when Android store has NodeSeek cookies');
-    });
-
+  it('merges Android WebView and CookieManager cookies so clearance does not hide login cookies', async () => {
+    const readCookieManagerStore = vi.fn(async () => nodeSeekCookiesFromHeader('session=abc'));
     const cookies = await readNodeSeekCookiesFromStores({
       readAndroidStore: async () => nodeSeekCookiesFromHeader('cf_clearance=native-clearance'),
       readCookieManagerStore,
       timeoutMs: 1
     });
 
-    expect(buildCookieHeader(cookies)).toBe('cf_clearance=native-clearance');
-    expect(readCookieManagerStore).not.toHaveBeenCalled();
+    expect(buildCookieHeader(cookies)).toBe('cf_clearance=native-clearance; session=abc');
+    expect(readCookieManagerStore).toHaveBeenCalled();
   });
 
   it('falls back to CookieManager when Android store has no NodeSeek cookies', async () => {

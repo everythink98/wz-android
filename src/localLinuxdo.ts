@@ -139,7 +139,7 @@ function quotedFloorsFromHtml(html: string, topicId?: string) {
   return [...floors];
 }
 
-function normalizePost(raw: unknown, index: number, topicId?: string): Reply | null {
+function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFloor = index + 1): Reply | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -150,7 +150,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string): Reply | n
     authorAvatar: avatarUrl(raw.avatar_template),
     contentHtml,
     createdAt: toIsoString(raw.created_at),
-    floor: typeof raw.post_number === 'number' ? raw.post_number : index + 1,
+    floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
     ...(quotedFloors.length ? { quotedFloors } : {})
   };
 }
@@ -269,7 +269,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   }
   const replyLimit = options.replyLimit || 30;
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const replies = replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id)).filter(Boolean) as Reply[];
+  const replies = replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[];
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
   const replyHasMore = totalPosts > replies.length + 1;
   return {
@@ -309,7 +309,7 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   const posts = await fetchPosts(id, postIds, options);
   const hasMore = stream.length > start + limit;
   return {
-    items: posts.map((post, index) => normalizePost(post, index, id)).filter(Boolean) as Reply[],
+    items: posts.map((post, index) => normalizePost(post, index, id, previousReplyCount + index + 2)).filter(Boolean) as Reply[],
     hasMore,
     nextPage: hasMore ? page + 1 : null,
     nextOffset: hasMore ? previousReplyCount + postIds.length : null
@@ -321,7 +321,7 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   const embeddedPosts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const embedded = embeddedPosts.find((post) => isRecord(post) && post.post_number === floor);
   if (embedded) {
-    const reply = normalizePost(embedded, floor - 1, id);
+    const reply = normalizePost(embedded, floor - 1, id, floor);
     if (reply) {
       return reply;
     }
@@ -333,7 +333,7 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   }
   const posts = await fetchPosts(id, [guessed], options);
   const post = posts.find((item) => isRecord(item) && item.post_number === floor) || posts[0];
-  const reply = normalizePost(post, floor - 1, id);
+  const reply = normalizePost(post, floor - 1, id, floor);
   if (!reply) {
     throw new Error('引用楼层未找到');
   }

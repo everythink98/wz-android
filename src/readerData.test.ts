@@ -49,6 +49,22 @@ describe('Android reader data helpers', () => {
     expect(data.history[topicKey(topic)].visitCount).toBe(1);
   });
 
+  it('keeps history tags and note when the same topic is opened again', () => {
+    let data = recordHistory(createEmptyReaderData(), topic);
+    data = updateTopicRecord(data, 'history', topic, { tags: [' follow '], note: ' keep this note ' });
+    const updatedAt = data.history[topicKey(topic)].updatedAt;
+
+    data = recordHistory(data, { ...topic, title: 'NodeSeek topic updated' });
+
+    expect(data.history[topicKey(topic)]).toMatchObject({
+      topic: { title: 'NodeSeek topic updated' },
+      tags: ['follow'],
+      note: 'keep this note',
+      updatedAt,
+      visitCount: 2
+    });
+  });
+
   it('toggles favorites and later records independently', () => {
     let data = createEmptyReaderData();
     data = toggleFavorite(data, topic);

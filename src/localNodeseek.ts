@@ -39,6 +39,50 @@ function topicUrl(id: string) {
   return `${BASE_URL}/post-${id}-1`;
 }
 
+function topicPagePath(id: string, page: number) {
+  return `/post-${encodeURIComponent(id)}-${page}`;
+}
+
+function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
+  if (!href) {
+    return null;
+  }
+  try {
+    const pathname = new URL(href, BASE_URL).pathname;
+    const prefix = `/post-${encodeURIComponent(id)}-`;
+    if (!pathname.startsWith(prefix)) {
+      return null;
+    }
+    return parsePositiveInteger(pathname.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) {
+  let nextPage: number | null = null;
+  for (const link of parseHtml(html).querySelectorAll('a')) {
+    const page = nodeSeekPostPageFromHref(link.getAttribute('href'), id);
+    if (page && page > currentPage && (!nextPage || page < nextPage)) {
+      nextPage = page;
+    }
+  }
+  return nextPage;
+}
+
+function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id: string, currentPage = 1) {
+  const nextPage = nextNodeSeekPostPage(html, id, currentPage);
+  if (!topic.replyHasMore && nextPage) {
+    return {
+      ...topic,
+      replyHasMore: true,
+      replyNextPage: nextPage,
+      replyNextOffset: topic.replies.length
+    };
+  }
+  return topic;
+}
+
 function isNodeSeekHost(hostname: string) {
   const host = hostname.toLowerCase();
   return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
@@ -435,7 +479,12 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const allReplies = normalizeReplies(comments, { skipFirst: true });
   const replies = allReplies.slice(0, replyLimit);
   const createdAt = toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
-  const lastReplyAt = toIsoString(isRecord(isRecord(comments.at(-1)) ? comments.at(-1)?.time : {}) ? (comments.at(-1) as Record<string, unknown>).time : data.updatedDate) || createdAt;
+  const lastComment = comments.at(-1);
+  let lastCommentDate: unknown;
+  if (isRecord(lastComment)) {
+    lastCommentDate = isRecord(lastComment.time) ? lastComment.time.createdDate : lastComment.createdDate;
+  }
+  const lastReplyAt = toIsoString(lastCommentDate || data.updatedDate) || createdAt;
   const accessRequirement = accessRequirementFromObject(data);
   return {
     source: 'nodeseek',
@@ -460,7 +509,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     ...(accessRequirement ? { accessRequirement } : {}),
     replies,
     replyHasMore: allReplies.length > replyLimit,
-    replyNextPage: allReplies.length > replyLimit ? 2 : null,
+    replyNextPage: allReplies.length > replyLimit ? 1 : null,
     replyNextOffset: allReplies.length > replyLimit ? replies.length : null
   };
 }
@@ -553,23 +602,23 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,
     replies,
     replyHasMore: allReplies.length > replyLimit,
-    replyNextPage: allReplies.length > replyLimit ? 2 : null,
+    replyNextPage: allReplies.length > replyLimit ? 1 : null,
     replyNextOffset: allReplies.length > replyLimit ? replies.length : null
   };
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
-  return fetchNodeSeekText(`/post-${encodeURIComponent(id)}-${page}`, options);
+  return fetchNodeSeekText(topicPagePath(id, page), options);
 }
 
-async function fetchTopicData(id: string, page: number, options: NodeSeekOptions) {
+async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
   const html = await fetchTopicHtml(id, page, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   if (!postData) {
     throw new Error('NodeSeek 主题解析失败');
   }
-  return postData;
+  return { html, postData };
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
@@ -577,11 +626,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   if (postData) {
-    return normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30);
+    return withNodeSeekReplyPagination(normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30), html, id, 1);
   }
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
   if (rendered) {
-    return rendered;
+    return withNodeSeekReplyPagination(rendered, html, id, 1);
   }
   throw new Error('NodeSeek 主题解析失败');
 }
@@ -593,17 +642,33 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
 }): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const postData = await fetchTopicData(id, page, options);
+  const { html, postData } = await fetchTopicPageData(id, page, options);
   const comments = arrayField(postData.comments);
-  const start = typeof options.offset === 'number' ? options.offset : 0;
-  const items = normalizeReplies(comments, { skipFirst: true, start }).slice(0, limit);
-  const totalReplies = Math.max(comments.length - (page === 1 ? 1 : 0), 0);
-  const hasMore = start + items.length < totalReplies;
+  const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
+  const offset = hasOffset ? options.offset as number : 0;
+  if (page <= 1) {
+    const allReplies = normalizeReplies(comments, { skipFirst: true });
+    const items = allReplies.slice(offset, offset + limit);
+    const consumed = offset + items.length;
+    const hasPageRemainder = consumed < allReplies.length;
+    const nextPage = nextNodeSeekPostPage(html, id, 1);
+    const hasMore = hasPageRemainder || Boolean(nextPage);
+    return {
+      items,
+      hasMore,
+      nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
+      nextOffset: hasMore ? consumed : null
+    };
+  }
+  const floorOffset = hasOffset ? offset : ((page - 1) * limit);
+  const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
+  const nextPage = nextNodeSeekPostPage(html, id, page);
+  const hasMore = Boolean(nextPage);
   return {
     items,
     hasMore,
-    nextPage: hasMore ? page + 1 : null,
-    nextOffset: hasMore ? start + items.length : null
+    nextPage: nextPage || null,
+    nextOffset: hasMore ? floorOffset + items.length : null
   };
 }
 

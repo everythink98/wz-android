@@ -72,13 +72,9 @@ function parseYaohuoDate(value: unknown) {
 
 function extractTopicParts(href?: string) {
   const url = absoluteUrl(href, BASE_URL) || '';
-  let id = url.match(/bbs-(\d+)\.html/i)?.[1]
-    || url.match(/[?&]id=(\d+)/i)?.[1]
-    || url.match(/view\.aspx\?[^#]*id=(\d+)/i)?.[1];
+  const id = url.match(/bbs-(\d+)\.html/i)?.[1]
+    || url.match(/[?&]id=(\d+)/i)?.[1];
   const classId = url.match(/[?&]classid=(\d+)/i)?.[1];
-  if (!id) {
-    id = String(href || '').match(/(?:^|[^\d])(\d{3,})(?:[^\d]|$)/)?.[1];
-  }
   return { id, classId, url };
 }
 
@@ -96,7 +92,7 @@ function parseListItem(element: ReturnType<ReturnType<typeof parseHtml>['querySe
   const resolvedClassId = classId || fallbackClassId;
   const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
   const replyCount = parsePositiveInteger(element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text);
-  const viewCount = parsePositiveInteger(text.match(/阅\s*(\d+)/)?.[1] || text.match(/(\d+)\s*阅/)?.[1] || text.match(/\/\s*阅?(\d+)/)?.[1]);
+  const viewCount = parsePositiveInteger(text.match(/阅\s*(\d+)/)?.[1] || text.match(/(\d+)\s*阅/)?.[1] || text.match(/\/\s*阅(\d+)/)?.[1]);
   const timeText = text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || '';
@@ -291,10 +287,11 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   const rows = root.querySelectorAll('div.line1, div.line2');
+  const floorOffset = Math.max(0, page - 1) * limit;
   const items = rows.map((row, index) => {
     const rawHtml = row.innerHTML;
     const text = elementText(row);
-    const floor = parseFloor(text.match(/\[(沙发|椅子|板凳|\d+楼?)\]/)?.[1] || '') || index + 1;
+    const floor = parseFloor(text.match(/\[(沙发|椅子|板凳|\d+楼?)\]/)?.[1] || '') || floorOffset + index + 1;
     const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
     const actionLink = row.querySelector('a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]');
     const author = elementText(authorLink);

@@ -1,6 +1,6 @@
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, searchNodeSeek } from './localNodeseek';
-import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoRepliesHtml as parseLocalYaohuoRepliesHtml, parseYaohuoSearchHtml as parseLocalYaohuoSearchHtml, parseYaohuoTopicHtml as parseLocalYaohuoTopicHtml, checkYaohuoLoginHtml } from './localYaohuo';
+import { yaohuoCategoriesResponse, parseYaohuoListHtml, checkYaohuoLoginHtml } from './localYaohuo';
 import { getV2exCategories, getV2exFeed, getV2exTopic, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText } from './feedLogic';
 import type {
@@ -11,6 +11,7 @@ import type {
   RepliesResponse,
   SearchResponse,
   Source,
+  Topic,
   TopicDetail
 } from './types';
 import type { Fetcher } from './request';
@@ -22,6 +23,8 @@ interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
 }
+
+const allFeedSources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
 
 function mergeErrors(results: Array<PromiseSettledResult<{ errors?: Partial<Record<FeedSource, string>> }>>, sources: Source[]) {
   const errors: Partial<Record<FeedSource, string>> = {};
@@ -41,6 +44,74 @@ function sortByTime<T extends { createdAt: string; lastReplyAt?: string }>(items
   ));
 }
 
+type AllFeedCursorState = {
+  buffers?: Partial<Record<Source, Topic[]>>;
+  nextPages?: Partial<Record<Source, number | null>>;
+};
+
+function cursorTopic(value: unknown): Topic | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const topic = value as Partial<Topic>;
+  return topic.source
+    && topic.id
+    && topic.title
+    && topic.url
+    && topic.createdAt
+    ? topic as Topic
+    : null;
+}
+
+function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
+  if (!cursor) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorState;
+    const buffers: Partial<Record<Source, Topic[]>> = {};
+    const nextPages: Partial<Record<Source, number | null>> = {};
+    for (const source of allFeedSources) {
+      const items = Array.isArray(parsed.buffers?.[source])
+        ? parsed.buffers[source]?.map(cursorTopic).filter(Boolean) as Topic[]
+        : [];
+      if (items.length) {
+        buffers[source] = items;
+      }
+      const nextPage = parsed.nextPages?.[source];
+      if (typeof nextPage === 'number' && nextPage > 0) {
+        nextPages[source] = nextPage;
+      }
+    }
+    return { buffers, nextPages };
+  } catch {
+    return {};
+  }
+}
+
+function encodeAllFeedCursor(state: AllFeedCursorState) {
+  const buffers: Partial<Record<Source, Topic[]>> = {};
+  const nextPages: Partial<Record<Source, number | null>> = {};
+  for (const source of allFeedSources) {
+    const items = state.buffers?.[source] || [];
+    if (items.length) {
+      buffers[source] = items;
+    }
+    const nextPage = state.nextPages?.[source];
+    if (typeof nextPage === 'number' && nextPage > 0) {
+      nextPages[source] = nextPage;
+    }
+  }
+  if (!Object.keys(buffers).length && !Object.keys(nextPages).length) {
+    return undefined;
+  }
+  return encodeURIComponent(JSON.stringify({ buffers, nextPages }));
+}
+
+function topicIdentity(topic: Topic) {
+  return `${topic.source}:${topic.id}`;
+}
+
 function filterSearchItems(response: SearchResponse, query: string, limit: number): SearchResponse {
   const expression = parseSearchExpression(query);
   return {
@@ -57,6 +128,7 @@ export async function getFeed({
   source,
   page = 1,
   limit = 20,
+  cursor,
   category,
   nocache = false,
   fetcher,
@@ -79,19 +151,51 @@ export async function getFeed({
 }): Promise<FeedResponse> {
   const options = { page, limit, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
-    const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
+    const cursorState = decodeAllFeedCursor(cursor);
+    const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
+    const shouldFetch = !cursor || bufferedItems.length < limit;
+    const adapterLimit = Math.max(limit, limit * allFeedSources.length);
     const results = await Promise.allSettled([
-      getNodeSeekFeed(options),
-      getLinuxDoFeed(options),
-      getV2exFeed(options)
+      shouldFetch && (!cursor || cursorState.nextPages?.nodeseek)
+        ? getNodeSeekFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.nodeseek || page : page })
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null }),
+      shouldFetch && (!cursor || cursorState.nextPages?.linuxdo)
+        ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.linuxdo || page : page })
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null }),
+      shouldFetch && (!cursor || cursorState.nextPages?.v2ex)
+        ? getV2exFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.v2ex || page : page })
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null })
     ]);
-    const items = sortByTime(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []));
-    const hasMore = results.some((result) => result.status === 'fulfilled' && result.value.hasMore);
+    const items = sortByTime([
+      ...bufferedItems,
+      ...results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : [])
+    ]);
+    const selected = items.slice(0, limit);
+    const selectedKeys = new Set(selected.map(topicIdentity));
+    const nextBuffers: Partial<Record<Source, Topic[]>> = {};
+    for (const item of items) {
+      if (selectedKeys.has(topicIdentity(item))) {
+        continue;
+      }
+      nextBuffers[item.source] = [...(nextBuffers[item.source] || []), item];
+    }
+    const nextPages: Partial<Record<Source, number | null>> = {};
+    allFeedSources.forEach((item, index) => {
+      const result = results[index];
+      const nextPage = result?.status === 'fulfilled'
+        ? result.value.nextPage
+        : cursorState.nextPages?.[item];
+      if (nextPage) {
+        nextPages[item] = nextPage;
+      }
+    });
+    const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages });
     return {
-      items: items.slice(0, limit),
-      errors: mergeErrors(results, sources),
-      hasMore,
-      nextPage: hasMore ? page + 1 : null
+      items: selected,
+      errors: mergeErrors(results, allFeedSources),
+      hasMore: Boolean(nextCursor),
+      nextPage: nextCursor ? page + 1 : null,
+      nextCursor
     };
   }
   if (source === 'yaohuo') {
@@ -309,55 +413,6 @@ export function parseYaohuoFeedHtml({
   timeoutMs?: number;
 }) {
   return Promise.resolve().then(() => parseYaohuoListHtml(html, { classId: category, url, page, limit }));
-}
-
-export function parseYaohuoSearchHtml({
-  html,
-  url,
-  page = 1,
-  limit = 20
-}: {
-  html: string;
-  url?: string;
-  page?: number;
-  limit?: number;
-  fetcher?: Fetcher;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}) {
-  return Promise.resolve().then(() => parseLocalYaohuoSearchHtml(html, { url, page, limit }));
-}
-
-export function parseYaohuoTopicHtml({
-  html,
-  id,
-  url
-}: {
-  html: string;
-  id: string;
-  url?: string;
-  fetcher?: Fetcher;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}) {
-  return Promise.resolve().then(() => parseLocalYaohuoTopicHtml(html, { id, url }));
-}
-
-export function parseYaohuoRepliesHtml({
-  html,
-  url,
-  page,
-  limit = 20
-}: {
-  html: string;
-  url?: string;
-  page: number;
-  limit?: number;
-  fetcher?: Fetcher;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}) {
-  return Promise.resolve().then(() => parseLocalYaohuoRepliesHtml(html, { url, page, limit }));
 }
 
 export function parseYaohuoLoginHtml({

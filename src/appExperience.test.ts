@@ -69,6 +69,41 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('setFeedHasMore(false);');
   });
 
+  it('uses separate busy states for feed, search, topic, and status work', () => {
+    expect(appSource).toContain('const [feedBusy, setFeedBusy] = useState(false);');
+    expect(appSource).toContain('const [searchBusy, setSearchBusy] = useState(false);');
+    expect(appSource).toContain('const [topicBusy, setTopicBusy] = useState(false);');
+    expect(appSource).toContain('const [statusBusy, setStatusBusy] = useState(false);');
+    expect(appSource).not.toContain('const [busy, setBusy] = useState(false);');
+
+    const loadFeedBlock = appSource.match(/const loadFeed = useCallback\(async \(\{([\s\S]*?)\n  \}, \[categoryFilter/)?.[1] || '';
+    const runSearchBlock = appSource.match(/const runSearch = useCallback\(async \(sourceOverride\?: Source\) => \{([\s\S]*?)\n  \}, \[addRecentSearch/)?.[1] || '';
+    const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
+    const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
+    const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[loadNodeSeekCookieForSource/)?.[1] || '';
+
+    expect(loadFeedBlock).toContain('setFeedBusy(true);');
+    expect(loadFeedBlock).toContain('setFeedBusy(false);');
+    expect(runSearchBlock).toContain('setSearchBusy(true);');
+    expect(runSearchBlock).toContain('setSearchBusy(false);');
+    expect(openTopicBlock).toContain('setTopicBusy(true);');
+    expect(openTopicBlock).toContain('setTopicBusy(false);');
+    expect(loadMoreRepliesBlock).not.toContain('setBusy(');
+    expect(statusBlock).toContain('setStatusBusy(true);');
+    expect(statusBlock).toContain('setStatusBusy(false);');
+    expect(appSource).toContain('busy={feedBusy || actionBusy}');
+    expect(appSource).toContain('busy={searchBusy}');
+    expect(appSource).toContain('topicBusy={topicBusy}');
+  });
+
+  it('clears search loading when search parameters cancel the active request', () => {
+    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchScope, searchSource\]\);/)?.[0] || '';
+
+    expect(block).toContain('searchRequestIdRef.current += 1;');
+    expect(block).toContain('searchAbortRef.current?.abort();');
+    expect(block).toContain('setSearchBusy(false);');
+  });
+
   it('marks feed loading before reading cookies to avoid duplicate feed requests', () => {
     const block = appSource.match(/const loadFeed = useCallback\(async \(\{([\s\S]*?)\n  \}, \[categoryFilter/)?.[1] || '';
     const guardIndex = block.indexOf('if (feedLoadingRef.current && !reset)');
@@ -101,13 +136,39 @@ describe('Android App experience guards', () => {
     expect(block).toContain('searchRequestIdRef.current += 1;');
     expect(block).toContain('searchAbortRef.current?.abort();');
     expect(block).toContain('setSearchItems([]);');
-    expect(block).toContain('setBusy(false);');
+    expect(block).not.toContain('setBusy(false);');
   });
 
   it('reruns Android search with the current query when switching search tabs', () => {
-    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQuery\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearch\(\);\s*\n\s*}, \[searchSource, searchScope\]\);/)?.[0] || '';
+    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQueryRef\.current\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearchRef\.current\?\.\(\);\s*\n\s*}, \[searchSource, searchScope\]\);/)?.[0] || '';
 
-    expect(block).toContain('void runSearch();');
+    expect(appSource).toContain('runSearchRef.current = runSearch;');
+    expect(block).toContain('void runSearchRef.current?.();');
+  });
+
+  it('keeps recent search callbacks independent from recent search state changes', () => {
+    const addBlock = appSource.match(/const addRecentSearch = useCallback\(\(query: string\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+    const removeBlock = appSource.match(/const removeRecentSearch = useCallback\(\(query: string\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+
+    expect(addBlock).toContain('setRecentSearches((current) =>');
+    expect(removeBlock).toContain('setRecentSearches((current) =>');
+    expect(appSource).not.toContain('}, [recentSearches, writeRecentSearches]);');
+  });
+
+  it('loads the feed after reader data is ready and only when feed parameters change', () => {
+    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!readerDataLoaded\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void loadFeedRef\.current\(\{[\s\S]*?\n\s*}, \[categoryFilter, feedSource, readerDataLoaded\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const [readerDataLoaded, setReaderDataLoaded] = useState(false);');
+    expect(appSource).toContain('loadFeedRef.current = loadFeed;');
+    expect(block).toContain('source: feedSource, category: categoryFilter, nocache: true, clearItems: true');
+    expect(block).not.toContain('loadFeed]');
+  });
+
+  it('saves pending topic progress when the app leaves the foreground', () => {
+    expect(appSource).toContain('AppState.addEventListener');
+    expect(appSource).toContain("if (next !== 'active') {");
+    expect(appSource).toContain('flushPendingProgress();');
+    expect(appSource).toContain('PROGRESS_SAVE_MAX_PENDING_MS');
   });
 
   it('offers linux.do external search shortcuts on the Android search screen', () => {
@@ -131,6 +192,13 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('searchGroups');
     expect(appSource).toContain('retrySearchSource');
     expect(appSource).toContain('highlightQuery={query}');
+  });
+
+  it('updates local search result highlighting when the query changes', () => {
+    const searchScreenSource = appSource.slice(appSource.indexOf('function SearchScreen('), appSource.indexOf('function LibraryScreen('));
+    const block = searchScreenSource.match(/const renderTopicItem = useCallback<ListRenderItem<Topic>>\(\([\s\S]*?\n  \), \[([\s\S]*?)\]\);/)?.[1] || '';
+
+    expect(block).toContain('query');
   });
 
   it('does not pass press or submit events as search source overrides', () => {
@@ -196,8 +264,44 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('exportFavoritesMarkdownFile');
   });
 
-  it('does not offer more feed pages when a source returns an empty page', () => {
-    expect(appSource).toContain('setFeedHasMore(Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor)))');
+  it('removes temporary cache files after saving preview images to the gallery', () => {
+    const block = appSource.match(/const savePreviewImage = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[imagePreview, notify\]\);/)?.[0] || '';
+
+    expect(block).toContain('shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;');
+    expect(block).toContain('let downloadedUri =');
+    expect(block).toContain('finally {');
+    expect(block).toContain('await FileSystem.deleteAsync(downloadedUri, { idempotent: true }).catch(() => undefined);');
+  });
+
+  it('keeps feed pagination available when an empty source page still has a next page', () => {
+    expect(appSource).toContain('setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)))');
+    expect(appSource).not.toContain('setFeedHasMore(Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor)))');
+  });
+
+  it('removes temporary cache files after exporting backup or markdown text', () => {
+    const block = appSource.match(/const shareTextFile = useCallback\(async[\s\S]*?\n  }, \[notify\]\);/)?.[0] || '';
+
+    expect(block).toContain('const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;');
+    expect(block).toContain('finally {');
+    expect(block).toContain('await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);');
+  });
+
+  it('removes the picked backup cache copy after importing it', () => {
+    const block = appSource.match(/const importBackupFile = useCallback\(async \(\) => \{[\s\S]*?\n  }, \[notify, replaceReaderData\]\);/)?.[0] || '';
+
+    expect(block).toContain('const pickedUri = result.assets[0].uri;');
+    expect(block).toContain('pickedUri.startsWith(FileSystem.cacheDirectory)');
+    expect(block).toContain('await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);');
+  });
+
+  it('restores feed scroll position after both storage and list content are ready', () => {
+    const block = appSource.slice(appSource.indexOf('function FeedScreen('), appSource.indexOf('function SearchScreen('));
+
+    expect(block).toContain('const [scrollRestoreReady, setScrollRestoreReady] = useState(false);');
+    expect(block).toContain('setScrollRestoreReady(false);');
+    expect(block).toContain('setScrollRestoreReady(true);');
+    expect(block).toContain('if (scrollRestoreReady && offset && feedItems.length) {');
+    expect(block).toContain('restoreFeedScrollPosition();');
   });
 
   it('bypasses feed caches when loading additional feed pages', () => {
@@ -312,6 +416,14 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
   });
 
+  it('preserves saved NodeSeek login cookies when WebView only reports verification cookies', () => {
+    const block = appSource.match(/const loadNodeSeekCookieForSource = useCallback\(async \(source: FeedSource \| Source\) => \{([\s\S]*?)\n  \}, \[saveNodeSeekCookieHeader\]\);/)?.[1] || '';
+
+    expect(block).toContain('const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);');
+    expect(block).toContain('mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || \'\'), cookies)');
+    expect(block.indexOf('const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);')).toBeLessThan(block.indexOf('await saveNodeSeekCookieHeader'));
+  });
+
   it('uses saved NodeSeek verification data for categories and status checks', () => {
     const categoriesBlock = appSource.match(/const loadCategories = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
@@ -367,8 +479,24 @@ describe('Android App experience guards', () => {
   it('resets topic loading state when leaving the topic screen', () => {
     const block = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
-    expect(block).toContain('setBusy(false);');
+    expect(block).toContain('setTopicBusy(false);');
     expect(block).toContain('setLoadingMoreReplies(false);');
+  });
+
+  it('closes the reply composer before leaving the topic screen with the Android back button', () => {
+    const block = appSource.match(/BackHandler\.addEventListener\('hardwareBackPress', \(\) => \{([\s\S]*?)\n    \}\);/)?.[1] || '';
+
+    expect(block).toContain('if (replyComposerOpen) {');
+    expect(block).toContain('setReplyComposerOpen(false);');
+    expect(block).toContain('setYaohuoReplyTarget(null);');
+  });
+
+  it('resets library filters when switching between favorites and history', () => {
+    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);\s*\n\s*setTagFilter\('all'\);\s*\n\s*}, \[libraryTab\]\);/)?.[0] || '';
+
+    expect(block).toContain("setSourceFilter('all');");
+    expect(block).toContain("setCategoryFilter('all');");
+    expect(block).toContain("setTagFilter('all');");
   });
 
   it('keeps the current topic key active only while the topic screen is visible', () => {
@@ -379,6 +507,12 @@ describe('Android App experience guards', () => {
     const block = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(block).toContain('pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)');
+    expect(block).toContain('pendingLinuxDoTopicRef.current = null;');
+  });
+
+  it('clears stale pending linux.do topics when closing the verification panel', () => {
+    const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+
     expect(block).toContain('pendingLinuxDoTopicRef.current = null;');
   });
 

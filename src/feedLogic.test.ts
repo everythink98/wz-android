@@ -92,6 +92,17 @@ describe('Android feed logic helpers', () => {
     expect(merged[0].duplicateSources).toEqual(['NodeSeek']);
   });
 
+  it('does not mutate existing topics when marking duplicate external links', () => {
+    const externalA: Topic = { ...topic, source: 'v2ex', id: 'a', url: 'https://example.com/shared' };
+    const externalB: Topic = { ...topic, source: 'nodeseek', id: 'b', url: 'https://example.com/shared' };
+
+    const merged = mergeTopics([externalA], [externalB]);
+
+    expect(externalA.duplicateSources).toBeUndefined();
+    expect(merged[0]).not.toBe(externalA);
+    expect(merged[0].duplicateSources).toEqual(['NodeSeek']);
+  });
+
   it('keeps merged search results source-balanced for the default relevance order', () => {
     const newestYaohuo = Array.from({ length: 4 }, (_, index) => ({
       ...topic,

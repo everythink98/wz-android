@@ -44,7 +44,7 @@ export function contentWidthValue(value: ReaderSettings['contentWidth']) {
 }
 
 export function fontFamilyValue(value: ReaderSettings['fontFamily']) {
-  return value === 'serif' ? Platform.select({ android: 'serif', default: 'serif' }) : undefined;
+  return value === 'serif' ? 'serif' : undefined;
 }
 
 export function alphaColor(hex: string, alpha: number) {

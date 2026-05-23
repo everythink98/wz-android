@@ -44,7 +44,7 @@ export function isHttpOrHttpsUrl(url: unknown): boolean {
   }
 }
 
-export function normalizeImagePreviewUrl(url: string, serverUrl: string): string {
+export function normalizeImagePreviewUrl(url: string): string {
   const clean = decodeHtmlAttribute(url).trim();
   if (/^(?:https?:|data:)/i.test(clean)) {
     return clean;
@@ -52,25 +52,31 @@ export function normalizeImagePreviewUrl(url: string, serverUrl: string): string
   if (clean.startsWith('//')) {
     return `https:${clean}`;
   }
-  const base = serverUrl.trim().replace(/\/+$/, '');
-  if (clean.startsWith('/')) {
-    return base ? `${base}${clean}` : clean;
-  }
   return clean;
+}
+
+export function dataImageFileFromUrl(url: unknown): { base64: string; extension: string } | null {
+  const clean = decodeHtmlAttribute(url).trim();
+  const match = clean.match(/^data:image\/([a-z0-9.+-]+);base64,([\s\S]+)$/i);
+  if (!match) {
+    return null;
+  }
+  const type = match[1].toLowerCase();
+  const extension = type === 'jpeg' ? 'jpg' : type.split('+')[0];
+  const base64 = match[2].trim();
+  return base64 ? { base64, extension } : null;
 }
 
 export function createImagePreviewList({
   tappedUrl,
-  htmlParts,
-  serverUrl
+  htmlParts
 }: {
   tappedUrl: string;
   htmlParts: string[];
-  serverUrl: string;
 }): ImagePreviewList {
-  const tapped = normalizeImagePreviewUrl(tappedUrl, serverUrl);
+  const tapped = normalizeImagePreviewUrl(tappedUrl);
   const urls = uniqueStrings([
-    ...htmlParts.flatMap((html) => extractImageUrlsFromHtml(html).map((url) => normalizeImagePreviewUrl(url, serverUrl))),
+    ...htmlParts.flatMap((html) => extractImageUrlsFromHtml(html).map((url) => normalizeImagePreviewUrl(url))),
     tapped
   ]);
   const index = Math.max(0, urls.findIndex((url) => url === tapped));

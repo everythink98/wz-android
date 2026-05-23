@@ -3,6 +3,7 @@ import { memo, type ComponentProps, type RefObject, useCallback, useEffect, useM
 import {
   ActivityIndicator,
   Animated,
+  AppState,
   BackHandler,
   FlatList,
   Image,
@@ -149,7 +150,7 @@ import {
   summarizeLinuxDoCookies
 } from './src/linuxdoCookieBridge';
 import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source, Topic, TopicDetail } from './src/types';
-import { createImagePreviewList, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { createImagePreviewList, dataImageFileFromUrl, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from './src/feedFloatingActions';
@@ -228,7 +229,7 @@ type NodeSeekBrowserFetchRequest = {
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
 };
@@ -296,7 +297,10 @@ function nodeSeekBrowserResponse(html: string, challenge: boolean) {
 }
 
 function cleanupNodeSeekBrowserFetchRequest(request: PendingNodeSeekBrowserFetchRequest) {
-  clearTimeout(request.timeout);
+  if (request.timeout) {
+    clearTimeout(request.timeout);
+    request.timeout = undefined;
+  }
   if (request.abortSignal && request.abortHandler) {
     request.abortSignal.removeEventListener('abort', request.abortHandler);
   }
@@ -306,6 +310,8 @@ const NODESEEK_URL = 'https://www.nodeseek.com';
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
+const PROGRESS_SAVE_DEBOUNCE_MS = 650;
+const PROGRESS_SAVE_MAX_PENDING_MS = 2000;
 const YAOHUO_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_URL}/waplogin.aspx?siteid=1000`;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
@@ -618,6 +624,8 @@ export default function App() {
   const statusAbortRef = useRef<AbortController | null>(null);
   const actionAbortRef = useRef<AbortController | null>(null);
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressMaxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingProgressRef = useRef<{ topic: Topic; percent: number; scrollY: number } | null>(null);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
@@ -631,6 +639,7 @@ export default function App() {
   const nodeSeekBrowserFetchIdRef = useRef(0);
   const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
   const nodeSeekBrowserFetchQueueRef = useRef<PendingNodeSeekBrowserFetchRequest[]>([]);
+  const rejectNodeSeekBrowserFetchRef = useRef<((request: PendingNodeSeekBrowserFetchRequest, message: string) => void) | null>(null);
   const linuxDoWebViewCookieHeaderRef = useRef('');
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const systemScheme = useColorScheme();
@@ -644,7 +653,10 @@ export default function App() {
   const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const [linuxDoWebViewCookieHeader, setLinuxDoWebViewCookieHeader] = useState('');
   const [checking, setChecking] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [feedBusy, setFeedBusy] = useState(false);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [topicBusy, setTopicBusy] = useState(false);
+  const [statusBusy, setStatusBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [cookieNames, setCookieNames] = useState<string[]>([]);
@@ -659,6 +671,7 @@ export default function App() {
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [backupJson, setBackupJson] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
+  const [readerDataLoaded, setReaderDataLoaded] = useState(false);
   const readerDataRef = useRef<ReaderData>(readerData);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [feedItems, setFeedItems] = useState<Topic[]>([]);
@@ -671,8 +684,10 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const searchQueryRef = useRef(searchQuery);
   const [searchSource, setSearchSource] = useState<FeedSource>('all');
   const [searchScope, setSearchScope] = useState<SearchScope>('remote');
+  const runSearchRef = useRef<((sourceOverride?: Source) => Promise<void>) | null>(null);
   const [searchSort, setSearchSort] = useState<SearchSort>('relevance');
   const [searchItems, setSearchItems] = useState<Topic[]>([]);
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
@@ -762,25 +777,28 @@ export default function App() {
     };
   }, []);
 
-  const writeRecentSearches = useCallback((items: string[]) => {
-    setRecentSearches(items);
-    void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(items)).catch(() => undefined);
-  }, []);
-
   const addRecentSearch = useCallback((query: string) => {
     const clean = query.trim();
     if (!clean) {
       return;
     }
-    writeRecentSearches([
-      clean,
-      ...recentSearches.filter((item) => item.toLowerCase() !== clean.toLowerCase())
-    ].slice(0, 20));
-  }, [recentSearches, writeRecentSearches]);
+    setRecentSearches((current) => {
+      const next = [
+        clean,
+        ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
+      ].slice(0, 20);
+      void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next)).catch(() => undefined);
+      return next;
+    });
+  }, []);
 
   const removeRecentSearch = useCallback((query: string) => {
-    writeRecentSearches(recentSearches.filter((item) => item !== query));
-  }, [recentSearches, writeRecentSearches]);
+    setRecentSearches((current) => {
+      const next = current.filter((item) => item !== query);
+      void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next)).catch(() => undefined);
+      return next;
+    });
+  }, []);
 
   const theme = useMemo(() => createTheme(readerData.settings, systemScheme), [readerData.settings, systemScheme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
@@ -980,8 +998,7 @@ export default function App() {
   const openImagePreview = useCallback((url: string) => {
     const nextPreview = createImagePreviewList({
       tappedUrl: url,
-      htmlParts: topicHtmlPartsRef.current,
-      serverUrl: ''
+      htmlParts: topicHtmlPartsRef.current
     });
     if (nextPreview.urls.length > 0) {
       setImagePreview(nextPreview);
@@ -1016,6 +1033,8 @@ export default function App() {
     if (!imagePreview?.urls.length) {
       return;
     }
+    let downloadedUri = '';
+    let shouldDeleteFile = false;
     try {
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
       const permission = await MediaLibrary.requestPermissionsAsync();
@@ -1029,12 +1048,24 @@ export default function App() {
         notify('无法创建图片文件');
         return;
       }
-      const target = `${baseDirectory}${safeFileName('forum-image', extension)}`;
-      const downloaded = await FileSystem.downloadAsync(uri, target);
-      await MediaLibrary.saveToLibraryAsync(downloaded.uri);
+      shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
+      const dataImage = dataImageFileFromUrl(uri);
+      const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || extension)}`;
+      if (dataImage) {
+        await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
+        downloadedUri = target;
+      } else {
+        const downloaded = await FileSystem.downloadAsync(uri, target);
+        downloadedUri = downloaded.uri;
+      }
+      await MediaLibrary.saveToLibraryAsync(downloadedUri);
       notify('图片已保存');
     } catch (error) {
       notify(errorMessage(error));
+    } finally {
+      if (shouldDeleteFile && downloadedUri) {
+        await FileSystem.deleteAsync(downloadedUri, { idempotent: true }).catch(() => undefined);
+      }
     }
   }, [imagePreview, notify]);
   const openExternalUrl = useCallback((url: string) => {
@@ -1106,33 +1137,13 @@ export default function App() {
     if (progressSaveTimerRef.current) {
       clearTimeout(progressSaveTimerRef.current);
     }
+    if (progressMaxSaveTimerRef.current) {
+      clearTimeout(progressMaxSaveTimerRef.current);
+    }
   }, []);
 
-  const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
-    setReaderData((current) => {
-      const next = sanitizeReaderData(updater(readerDataRef.current || current));
-      readerDataRef.current = next;
-      saveQueueRef.current = saveQueueRef.current
-        .catch(() => undefined)
-        .then(() => saveReaderData(next))
-        .then((saved) => {
-          setReaderData((latest) => {
-            if (latest !== next) {
-              return latest;
-            }
-            readerDataRef.current = saved;
-            return saved;
-          });
-        })
-        .catch((error) => notify(errorMessage(error)));
-      return next;
-    });
-  }, [notify]);
-
-  const replaceReaderData = useCallback((nextValue: ReaderData) => {
-    const next = sanitizeReaderData(nextValue);
+  const persistReaderData = useCallback((next: ReaderData) => {
     readerDataRef.current = next;
-    setReaderData(next);
     saveQueueRef.current = saveQueueRef.current
       .catch(() => undefined)
       .then(() => saveReaderData(next))
@@ -1148,6 +1159,49 @@ export default function App() {
       .catch((error) => notify(errorMessage(error)));
     return saveQueueRef.current;
   }, [notify]);
+
+  const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
+    const next = sanitizeReaderData(updater(readerDataRef.current));
+    setReaderData(next);
+    void persistReaderData(next);
+  }, [persistReaderData]);
+
+  const replaceReaderData = useCallback((nextValue: ReaderData) => {
+    const next = sanitizeReaderData(nextValue);
+    setReaderData(next);
+    return persistReaderData(next);
+  }, [persistReaderData]);
+
+  const flushPendingProgress = useCallback(() => {
+    if (progressSaveTimerRef.current) {
+      clearTimeout(progressSaveTimerRef.current);
+      progressSaveTimerRef.current = null;
+    }
+    if (progressMaxSaveTimerRef.current) {
+      clearTimeout(progressMaxSaveTimerRef.current);
+      progressMaxSaveTimerRef.current = null;
+    }
+    const pending = pendingProgressRef.current;
+    pendingProgressRef.current = null;
+    if (!pending) {
+      return;
+    }
+    const next = updateProgress(readerDataRef.current, pending.topic, {
+      percent: pending.percent,
+      scrollY: pending.scrollY
+    });
+    setReaderData(next);
+    void persistReaderData(next);
+  }, [persistReaderData]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') {
+        flushPendingProgress();
+      }
+    });
+    return () => subscription.remove();
+  }, [flushPendingProgress]);
 
   useEffect(() => {
     void (async () => {
@@ -1188,7 +1242,9 @@ export default function App() {
           setLinuxDoWebViewUserAgent(userAgent);
         }
       }
-    })().catch((error) => notify(errorMessage(error)));
+    })()
+      .catch((error) => notify(errorMessage(error)))
+      .finally(() => setReaderDataLoaded(true));
   }, [notify]);
 
   const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source) => {
@@ -1222,18 +1278,18 @@ export default function App() {
       return undefined;
     }
     const cookies = await readNodeSeekCookiesFromWebView();
-    const webViewCookieHeader = await saveNodeSeekCookieHeader(cookies);
+    const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || ''), cookies));
     if (webViewCookieHeader) {
       return webViewCookieHeader;
     }
-    const cookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    if (cookie) {
-      const savedCookies = parseNodeSeekDocumentCookie(cookie);
+    if (savedCookie) {
+      const savedCookies = parseNodeSeekDocumentCookie(savedCookie);
       const summary = summarizeNodeSeekCookies(savedCookies);
       setCookieNames(summary.names);
       setHasNodeSeekCookie(true);
       setHasNodeSeekLoginCookie(summary.loggedIn);
-      return cookie;
+      return savedCookie;
     }
     setHasNodeSeekCookie(false);
     setHasNodeSeekLoginCookie(false);
@@ -1244,7 +1300,25 @@ export default function App() {
     if (nodeSeekBrowserFetchCurrentRef.current) {
       return;
     }
-    const next = nodeSeekBrowserFetchQueueRef.current.shift() || null;
+    let next: PendingNodeSeekBrowserFetchRequest | null = null;
+    while (nodeSeekBrowserFetchQueueRef.current.length) {
+      const candidate = nodeSeekBrowserFetchQueueRef.current.shift() || null;
+      if (!candidate) {
+        continue;
+      }
+      if (candidate.abortSignal?.aborted) {
+        cleanupNodeSeekBrowserFetchRequest(candidate);
+        candidate.reject(new Error('请求已取消'));
+        continue;
+      }
+      next = candidate;
+      break;
+    }
+    if (next) {
+      next.timeout = setTimeout(() => {
+        rejectNodeSeekBrowserFetchRef.current?.(next, 'NodeSeek 页面读取超时');
+      }, NODESEEK_BROWSER_FETCH_TIMEOUT_MS);
+    }
     nodeSeekBrowserFetchCurrentRef.current = next;
     setNodeSeekBrowserFetchRequest(next ? {
       id: next.id,
@@ -1268,6 +1342,7 @@ export default function App() {
     request.reject(new Error(message));
     startNextNodeSeekBrowserFetch();
   }, [startNextNodeSeekBrowserFetch]);
+  rejectNodeSeekBrowserFetchRef.current = rejectNodeSeekBrowserFetch;
 
   const nodeSeekFetchWithWebView: Fetcher = useCallback((input, init) => {
     const url = String(input);
@@ -1279,9 +1354,6 @@ export default function App() {
       const id = ++nodeSeekBrowserFetchIdRef.current;
       const cookie = requestHeaderValue(init?.headers, 'cookie');
       const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
-      const timeout = setTimeout(() => {
-        rejectNodeSeekBrowserFetch(request, 'NodeSeek 页面读取超时');
-      }, NODESEEK_BROWSER_FETCH_TIMEOUT_MS);
       request = {
         id,
         url,
@@ -1289,7 +1361,6 @@ export default function App() {
         userAgent,
         resolve,
         reject,
-        timeout,
         abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
@@ -1373,6 +1444,7 @@ export default function App() {
 
   const closeLinuxDoPanel = useCallback(() => {
     linuxDoWebViewRef.current?.stopLoading();
+    pendingLinuxDoTopicRef.current = null;
     setShowLinuxDoPanel(false);
     setLoadingLinuxDoPage(false);
   }, []);
@@ -1508,7 +1580,7 @@ export default function App() {
     } else if (nocache) {
       setFeedRefreshing(true);
     }
-    setBusy(true);
+    setFeedBusy(true);
     try {
       const yaohuoCookie = await loadYaohuoCookieForSource(source);
       const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
@@ -1570,7 +1642,7 @@ export default function App() {
       setFeedItems((current) => reset ? data.items : mergeTopics(current, data.items));
       setFeedPage(data.nextPage ? data.nextPage - 1 : page);
       setFeedNextCursor(data.nextCursor ?? undefined);
-      setFeedHasMore(Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor)));
+      setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
         if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
@@ -1602,7 +1674,7 @@ export default function App() {
       }
     } finally {
       if (requestId === feedRequestIdRef.current) {
-        setBusy(false);
+        setFeedBusy(false);
         setFeedRefreshing(false);
         setLoadingMoreFeed(false);
         feedLoadingRef.current = false;
@@ -1611,9 +1683,17 @@ export default function App() {
     }
   }, [categoryFilter, clearYaohuoLoginState, feedSource, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, showNodeSeekVerification, showYaohuoLogin]);
 
+  const loadFeedRef = useRef(loadFeed);
   useEffect(() => {
-    void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
-  }, [categoryFilter, feedSource, loadFeed]);
+    loadFeedRef.current = loadFeed;
+  }, [loadFeed]);
+
+  useEffect(() => {
+    if (!readerDataLoaded) {
+      return;
+    }
+    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
+  }, [categoryFilter, feedSource, readerDataLoaded]);
 
   useEffect(() => {
     void loadCategories();
@@ -1634,7 +1714,7 @@ export default function App() {
     searchAbortRef.current?.abort();
     setSearchItems([]);
     setSearchGroups([]);
-    setBusy(false);
+    setSearchBusy(false);
   }, [searchQuery, searchScope, searchSource]);
 
   const runSearch = useCallback(async (sourceOverride?: Source) => {
@@ -1658,7 +1738,7 @@ export default function App() {
         ? activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }))
         : []);
     }
-    setBusy(true);
+    setSearchBusy(true);
     try {
       addRecentSearch(query);
       if (searchScope === 'local') {
@@ -1747,17 +1827,22 @@ export default function App() {
       }
     } finally {
       if (requestId === searchRequestIdRef.current) {
-        setBusy(false);
+        setSearchBusy(false);
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
   }, [addRecentSearch, clearYaohuoLoginState, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, readerData, searchQuery, searchScope, searchSource, showNodeSeekVerification, showYaohuoLogin]);
 
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    searchQueryRef.current = searchQuery;
+    runSearchRef.current = runSearch;
+  }, [runSearch, searchQuery]);
+
+  useEffect(() => {
+    if (!searchQueryRef.current.trim()) {
       return;
     }
-    void runSearch();
+    void runSearchRef.current?.();
   }, [searchSource, searchScope]);
 
   const retrySearchSource = useCallback((source: Source) => {
@@ -1792,7 +1877,7 @@ export default function App() {
     setReplyFilter('all');
     resetQuoteState();
     setScreen('topic');
-    setBusy(true);
+    setTopicBusy(true);
     const controller = startAbortableRequest(topicAbortRef);
     try {
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
@@ -1864,7 +1949,7 @@ export default function App() {
       }
     } finally {
       if (requestId === topicRequestIdRef.current) {
-        setBusy(false);
+        setTopicBusy(false);
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
@@ -1888,7 +1973,6 @@ export default function App() {
         return;
       }
       controller = startAbortableRequest(repliesAbortRef);
-      setBusy(true);
       const data = detail.source === 'yaohuo'
         ? await getYaohuoRepliesDirect({
           id: detail.id,
@@ -1947,9 +2031,6 @@ export default function App() {
         loadingMoreRepliesRef.current = false;
         setLoadingMoreReplies(false);
       }
-      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
-        setBusy(false);
-      }
       if (controller) {
         finishAbortableRequest(repliesAbortRef, controller);
       }
@@ -2000,7 +2081,7 @@ export default function App() {
       currentTopicKeyRef.current = null;
       loadingMoreRepliesRef.current = false;
       setLoadingMoreReplies(false);
-      setBusy(false);
+      setTopicBusy(false);
     }
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests]);
@@ -2019,23 +2100,19 @@ export default function App() {
     const scrollY = Math.max(0, contentOffset.y);
     const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
     const percent = Math.min(100, Math.max(0, Math.round((scrollY / scrollable) * 100)));
-    const next = updateProgress(readerDataRef.current, detail, { percent, scrollY });
-    readerDataRef.current = next;
+    pendingProgressRef.current = { topic: detail, percent, scrollY };
     if (progressSaveTimerRef.current) {
       clearTimeout(progressSaveTimerRef.current);
     }
+    if (!progressMaxSaveTimerRef.current) {
+      progressMaxSaveTimerRef.current = setTimeout(() => {
+        flushPendingProgress();
+      }, PROGRESS_SAVE_MAX_PENDING_MS);
+    }
     progressSaveTimerRef.current = setTimeout(() => {
-      progressSaveTimerRef.current = null;
-      saveQueueRef.current = saveQueueRef.current
-        .catch(() => undefined)
-        .then(() => saveReaderData(readerDataRef.current))
-        .then((saved) => {
-          readerDataRef.current = saved;
-          setReaderData(saved);
-        })
-        .catch((error) => notify(errorMessage(error)));
-    }, 650);
-  }, [notify, selectedTopic, topicDetail]);
+      flushPendingProgress();
+    }, PROGRESS_SAVE_DEBOUNCE_MS);
+  }, [flushPendingProgress, selectedTopic, topicDetail]);
 
   const toggleQuotedFloor = useCallback(async ({
     replyFloor,
@@ -2520,7 +2597,6 @@ export default function App() {
 
   const importBackup = useCallback(async () => {
     const controller = startAbortableRequest(backupAbortRef);
-    setBusy(true);
     setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
@@ -2537,7 +2613,6 @@ export default function App() {
       }
     } finally {
       if (finishAbortableRequest(backupAbortRef, controller)) {
-        setBusy(false);
         setSyncing(false);
       }
     }
@@ -2545,7 +2620,6 @@ export default function App() {
 
   const exportBackup = useCallback(async () => {
     const controller = startAbortableRequest(backupAbortRef);
-    setBusy(true);
     setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
@@ -2557,7 +2631,6 @@ export default function App() {
       }
     } finally {
       if (finishAbortableRequest(backupAbortRef, controller)) {
-        setBusy(false);
         setSyncing(false);
       }
     }
@@ -2571,12 +2644,19 @@ export default function App() {
       return;
     }
     const uri = `${baseDirectory}${fileName}`;
-    await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, { mimeType });
-    } else {
-      await Clipboard.setStringAsync(content);
-      notify('内容已复制');
+    const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
+    try {
+      await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, { mimeType });
+      } else {
+        await Clipboard.setStringAsync(content);
+        notify('内容已复制');
+      }
+    } finally {
+      if (shouldDeleteFile) {
+        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+      }
     }
   }, [notify]);
 
@@ -2611,11 +2691,18 @@ export default function App() {
       if (result.canceled || !result.assets?.[0]?.uri) {
         return;
       }
-      const content = await FileSystem.readAsStringAsync(result.assets[0].uri, { encoding: FileSystem.EncodingType.UTF8 });
-      setBackupJson(content);
-      const merged = importReaderBackupJson(readerDataRef.current, content);
-      await replaceReaderData(merged);
-      notify('备份已恢复，本机资料已合并');
+      const pickedUri = result.assets[0].uri;
+      try {
+        const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
+        setBackupJson(content);
+        const merged = importReaderBackupJson(readerDataRef.current, content);
+        await replaceReaderData(merged);
+        notify('备份已恢复，本机资料已合并');
+      } finally {
+        if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
+          await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
+        }
+      }
     } catch (error) {
       notify(errorMessage(error));
     }
@@ -2623,7 +2710,7 @@ export default function App() {
 
   const checkLocalStatus = useCallback(async () => {
     const controller = startAbortableRequest(statusAbortRef);
-    setBusy(true);
+    setStatusBusy(true);
     try {
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
       const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
@@ -2686,7 +2773,7 @@ export default function App() {
       }
     } finally {
       if (finishAbortableRequest(statusAbortRef, controller)) {
-        setBusy(false);
+        setStatusBusy(false);
       }
     }
   }, [loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify]);
@@ -2717,6 +2804,11 @@ export default function App() {
         setShowSettingsPanel(false);
         return true;
       }
+      if (replyComposerOpen) {
+        setReplyComposerOpen(false);
+        setYaohuoReplyTarget(null);
+        return true;
+      }
       if (screen === 'topic') {
         goBackFromTopic();
         return true;
@@ -2738,10 +2830,11 @@ export default function App() {
     showLoginPanel,
     showLinuxDoPanel,
     showYaohuoLoginPanel,
+    replyComposerOpen,
     showSettingsPanel
   ]);
 
-  function updateSettings(patch: Partial<ReaderSettings>) {
+  const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
     commitReaderData((current) => ({
       ...current,
       settings: {
@@ -2749,13 +2842,13 @@ export default function App() {
         ...patch
       }
     }));
-  }
+  }, [commitReaderData]);
 
-  function selectCategory(category: Category) {
+  const selectCategory = useCallback((category: Category) => {
     setFeedSource(category.source);
     setCategoryFilter(category.id);
     setScreen('feed');
-  }
+  }, []);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
     setFeedItems([]);
@@ -2821,6 +2914,10 @@ export default function App() {
     commitReaderData((current) => updateTopicRecord(current, libraryTab, topic, patch));
   }, [commitReaderData, libraryTab]);
 
+  const toggleCategorySubscription = useCallback((category: Category) => {
+    commitReaderData((current) => toggleSubscription(current, category));
+  }, [commitReaderData]);
+
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <SafeAreaView style={styles.screen}>
@@ -2884,6 +2981,7 @@ export default function App() {
             styles={styles}
             theme={theme}
             topic={topicDetail}
+            topicBusy={topicBusy}
             topicError={topicError}
             topicScrollRef={topicScrollRef}
             unreadReplyCount={unreadReplyCount}
@@ -2913,7 +3011,7 @@ export default function App() {
           <>
             {screen === 'feed' ? (
               <FeedScreen
-                busy={busy || actionBusy}
+                busy={feedBusy || actionBusy}
                 categories={categories}
                 categoryFilter={categoryFilter}
                 feedHasMore={feedHasMore}
@@ -2937,7 +3035,7 @@ export default function App() {
             ) : null}
             {screen === 'search' ? (
               <SearchScreen
-                busy={busy}
+                busy={searchBusy}
                 query={searchQuery}
                 readerData={readerData}
                 recentSearches={recentSearches}
@@ -2981,7 +3079,7 @@ export default function App() {
             ) : null}
             {screen === 'more' ? (
               <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
-                <MoreScreen
+                <MemoizedMoreScreen
                   categories={categories}
                   checking={checking}
                   hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
@@ -3004,6 +3102,7 @@ export default function App() {
                   showYaohuoLoginPanel={showYaohuoLoginPanel}
                   showLinuxDoPanel={showLinuxDoPanel}
                   showSettingsPanel={showSettingsPanel}
+                  statusBusy={statusBusy}
                   styles={styles}
                   syncing={syncing}
                   theme={theme}
@@ -3044,7 +3143,7 @@ export default function App() {
                   onShowYaohuoLoginPanelChange={setShowYaohuoLoginPanel}
                   onShowLinuxDoPanelChange={changeLinuxDoPanel}
                   onShowSettingsPanelChange={setShowSettingsPanel}
-                  onToggleSubscription={(category) => commitReaderData((current) => toggleSubscription(current, category))}
+                  onToggleSubscription={toggleCategorySubscription}
                   onUpdateSettings={updateSettings}
                 />
               </ScrollView>
@@ -3114,6 +3213,7 @@ function FeedScreen({
   const pendingScrollOffsetRef = useRef<number | null>(null);
   const scrollStorageKey = useMemo(() => feedScrollStorageKey(feedSource, categoryFilter, readingFilter), [categoryFilter, feedSource, readingFilter]);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
+  const [scrollRestoreReady, setScrollRestoreReady] = useState(false);
 
   const requestFeedLoadMore = useCallback(() => {
     if (!feedHasMore || busy || loadingMore) {
@@ -3150,23 +3250,40 @@ function FeedScreen({
     requestedFeedPageRef.current = null;
     setShowFloatingActions(false);
     pendingScrollOffsetRef.current = null;
+    setScrollRestoreReady(false);
+    let active = true;
     AsyncStorage.getItem(scrollStorageKey)
       .then((value) => {
+        if (!active) {
+          return;
+        }
         const offset = Number(value || 0);
         if (Number.isFinite(offset) && offset > 0) {
           pendingScrollOffsetRef.current = offset;
         }
       })
-      .catch(() => undefined);
-  }, [categoryFilter, feedSource, readingFilter]);
+      .catch(() => undefined)
+      .then(() => {
+        if (active) {
+          setScrollRestoreReady(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [scrollStorageKey]);
 
   const restoreFeedScrollPosition = useCallback(() => {
     const offset = pendingScrollOffsetRef.current;
-    if (offset && feedItems.length) {
+    if (scrollRestoreReady && offset && feedItems.length) {
       pendingScrollOffsetRef.current = null;
       requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset, animated: false }));
     }
-  }, [feedItems.length]);
+  }, [feedItems.length, scrollRestoreReady]);
+
+  useEffect(() => {
+    restoreFeedScrollPosition();
+  }, [restoreFeedScrollPosition]);
 
   const scrollToTop = useCallback(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -3326,7 +3443,7 @@ function SearchScreen({
       onOpenTopic={onOpenTopic}
       swipeAction={favoriteSwipeAction}
     />
-  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, theme]);
+  ), [favoriteSwipeAction, onOpenTopic, query, readerData, styles, theme]);
   const selectSavedSearch = useCallback((id: string) => {
     const saved = readerData.savedSearches.find((item) => item.id === id);
     if (saved) {
@@ -3590,6 +3707,11 @@ function LibraryScreen({
     ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
   ]), [filteredRecords]);
   useEffect(() => {
+    setSourceFilter('all');
+    setCategoryFilter('all');
+    setTagFilter('all');
+  }, [libraryTab]);
+  useEffect(() => {
     setSelected(new Set());
     setEditingKey('');
   }, [categoryFilter, libraryTab, sourceFilter, tagFilter]);
@@ -3773,6 +3895,7 @@ function MoreScreen({
   showYaohuoLoginPanel,
   showLinuxDoPanel,
   showSettingsPanel,
+  statusBusy,
   styles,
   syncing,
   theme,
@@ -3838,6 +3961,7 @@ function MoreScreen({
   showYaohuoLoginPanel: boolean;
   showLinuxDoPanel: boolean;
   showSettingsPanel: boolean;
+  statusBusy: boolean;
   styles: ReturnType<typeof createStyles>;
   syncing: boolean;
   theme: ReaderTheme;
@@ -4087,7 +4211,7 @@ function MoreScreen({
         ) : null}
       </View>
       <View style={styles.group}>
-        <MenuButton icon={Activity} label="状态 / 检查" value={healthSummary || '来源状态'} styles={styles} theme={theme} onPress={onCheckHealth} />
+        <MenuButton icon={Activity} label="状态 / 检查" value={statusBusy ? '检查中' : healthSummary || '来源状态'} styles={styles} theme={theme} onPress={onCheckHealth} />
         {healthDetails.length ? (
           <View style={styles.stack}>
             {healthDetails.map((item) => (
@@ -4102,6 +4226,77 @@ function MoreScreen({
     </View>
   );
 }
+
+const MemoizedMoreScreen = memo(MoreScreen, (previous, next) => (
+  previous.categories === next.categories
+  && previous.checking === next.checking
+  && previous.hasNodeSeekLoginCookie === next.hasNodeSeekLoginCookie
+  && previous.hasYaohuoCookie === next.hasYaohuoCookie
+  && previous.hasLinuxDoClearance === next.hasLinuxDoClearance
+  && previous.healthDetails === next.healthDetails
+  && previous.healthSummary === next.healthSummary
+  && previous.loginState === next.loginState
+  && previous.loadingLoginPage === next.loadingLoginPage
+  && previous.loadingYaohuoLoginPage === next.loadingYaohuoLoginPage
+  && previous.loadingLinuxDoPage === next.loadingLinuxDoPage
+  && previous.linuxDoWebViewError === next.linuxDoWebViewError
+  && previous.linuxDoWebViewKey === next.linuxDoWebViewKey
+  && previous.linuxDoWebViewUserAgent === next.linuxDoWebViewUserAgent
+  && previous.nodeSeekWebViewUserAgent === next.nodeSeekWebViewUserAgent
+  && previous.readerData.favorites === next.readerData.favorites
+  && previous.readerData.history === next.readerData.history
+  && previous.readerData.settings === next.readerData.settings
+  && previous.readerData.subscriptions === next.readerData.subscriptions
+  && previous.backupJson === next.backupJson
+  && previous.showCategoriesPanel === next.showCategoriesPanel
+  && previous.showLoginPanel === next.showLoginPanel
+  && previous.showYaohuoLoginPanel === next.showYaohuoLoginPanel
+  && previous.showLinuxDoPanel === next.showLinuxDoPanel
+  && previous.showSettingsPanel === next.showSettingsPanel
+  && previous.statusBusy === next.statusBusy
+  && previous.styles === next.styles
+  && previous.syncing === next.syncing
+  && previous.theme === next.theme
+  && previous.webViewRef === next.webViewRef
+  && previous.yaohuoLoginState === next.yaohuoLoginState
+  && previous.yaohuoWebViewRef === next.yaohuoWebViewRef
+  && previous.linuxDoCookieNames === next.linuxDoCookieNames
+  && previous.linuxDoWebViewRef === next.linuxDoWebViewRef
+  && previous.onCheckHealth === next.onCheckHealth
+  && previous.onCheckIn === next.onCheckIn
+  && previous.onCheckLogin === next.onCheckLogin
+  && previous.onRememberNodeSeekCookies === next.onRememberNodeSeekCookies
+  && previous.onCheckYaohuoLogin === next.onCheckYaohuoLogin
+  && previous.onCheckLinuxDoCookie === next.onCheckLinuxDoCookie
+  && previous.onClearLogin === next.onClearLogin
+  && previous.onClearYaohuoLogin === next.onClearYaohuoLogin
+  && previous.onClearLinuxDoCookie === next.onClearLinuxDoCookie
+  && previous.handleNodeSeekLoginNavigation === next.handleNodeSeekLoginNavigation
+  && previous.handleYaohuoLoginNavigation === next.handleYaohuoLoginNavigation
+  && previous.handleLinuxDoNavigation === next.handleLinuxDoNavigation
+  && previous.onHandleLoginMessage === next.onHandleLoginMessage
+  && previous.onHandleLinuxDoMessage === next.onHandleLinuxDoMessage
+  && previous.onImportBackup === next.onImportBackup
+  && previous.onExportBackup === next.onExportBackup
+  && previous.onExportBackupFile === next.onExportBackupFile
+  && previous.onImportBackupFile === next.onImportBackupFile
+  && previous.onExportFavoritesMarkdownFile === next.onExportFavoritesMarkdownFile
+  && previous.onRefreshCategories === next.onRefreshCategories
+  && previous.onSelectCategory === next.onSelectCategory
+  && previous.onBackupJsonChange === next.onBackupJsonChange
+  && previous.onSetLoadingLoginPage === next.onSetLoadingLoginPage
+  && previous.onSetLoadingYaohuoLoginPage === next.onSetLoadingYaohuoLoginPage
+  && previous.onSetLoadingLinuxDoPage === next.onSetLoadingLinuxDoPage
+  && previous.onSetLinuxDoWebViewError === next.onSetLinuxDoWebViewError
+  && previous.onResetLinuxDoWebView === next.onResetLinuxDoWebView
+  && previous.onShowCategoriesPanelChange === next.onShowCategoriesPanelChange
+  && previous.onShowLoginPanelChange === next.onShowLoginPanelChange
+  && previous.onShowYaohuoLoginPanelChange === next.onShowYaohuoLoginPanelChange
+  && previous.onShowLinuxDoPanelChange === next.onShowLinuxDoPanelChange
+  && previous.onShowSettingsPanelChange === next.onShowSettingsPanelChange
+  && previous.onToggleSubscription === next.onToggleSubscription
+  && previous.onUpdateSettings === next.onUpdateSettings
+));
 
 function SettingsPanel({
   readerData,
@@ -4281,6 +4476,7 @@ function TopicScreen({
   styles,
   theme,
   topic,
+  topicBusy,
   topicError,
   topicScrollRef,
   unreadReplyCount,
@@ -4335,6 +4531,7 @@ function TopicScreen({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topic: TopicDetail | null;
+  topicBusy: boolean;
   topicError: string;
   topicScrollRef: RefObject<FlatList<TopicListItem> | null>;
   unreadReplyCount: number;
@@ -4361,7 +4558,7 @@ function TopicScreen({
   onToggleFavorite: (topic: Topic) => void;
 }) {
   const item = topic || selectedTopic;
-  const topicLoading = !topic && !topicError;
+  const topicLoading = topicBusy || (!topic && !topicError);
   const canWriteNodeSeek = Boolean(item && item.source === 'nodeseek' && canUseNodeSeekActions);
   const canWriteYaohuo = Boolean(item && item.source === 'yaohuo' && canUseYaohuoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo;

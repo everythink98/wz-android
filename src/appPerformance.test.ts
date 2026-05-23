@@ -37,12 +37,53 @@ describe('Android App performance guards', () => {
   });
 
   it('debounces reading progress persistence while scrolling long topics', () => {
+    expect(appSource).toContain('pendingProgressRef');
     expect(appSource).toContain('progressSaveTimerRef');
     expect(appSource).toContain('setTimeout(() => {');
-    expect(appSource).toContain('saveReaderData(readerDataRef.current)');
-    expect(appSource).toContain('setReaderData(saved);');
-    expect(appSource).toContain('const next = updateProgress(readerDataRef.current, detail, { percent, scrollY })');
+    expect(appSource).toContain('const next = updateProgress(readerDataRef.current, pending.topic, {');
+    expect(appSource).toContain('saveReaderData(next)');
+    expect(appSource).toContain('void persistReaderData(next);');
+    expect(appSource).not.toContain('const next = updateProgress(readerDataRef.current, detail, { percent, scrollY })');
     expect(appSource).not.toContain('sanitizeReaderData(updateProgress');
+  });
+
+  it('keeps reader data save queue handling in one shared path', () => {
+    expect(appSource).toContain('const persistReaderData = useCallback((next: ReaderData) => {');
+    expect(appSource.match(/saveReaderData\(next\)/g) || []).toHaveLength(1);
+  });
+
+  it('keeps reader data commits outside React state updaters', () => {
+    const block = appSource.match(/const commitReaderData = useCallback\(\(updater: \(current: ReaderData\) => ReaderData\) => \{([\s\S]*?)\n  \}, \[persistReaderData\]\);/)?.[1] || '';
+
+    expect(block).toContain('const next = sanitizeReaderData(updater(readerDataRef.current));');
+    expect(block).toContain('setReaderData(next);');
+    expect(block).toContain('void persistReaderData(next);');
+    expect(block).not.toContain('setReaderData((current)');
+  });
+
+  it('starts NodeSeek hidden WebView timeout only when a queued request starts', () => {
+    const startBlock = appSource.match(/const startNextNodeSeekBrowserFetch = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+    const fetchBlock = appSource.match(/const nodeSeekFetchWithWebView: Fetcher = useCallback\(\(input, init\) => \{([\s\S]*?)\n  \}, \[rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch\]\);/)?.[1] || '';
+
+    expect(startBlock).toContain('next.timeout = setTimeout(() => {');
+    expect(fetchBlock).not.toContain('setTimeout(() =>');
+  });
+
+  it('drops aborted NodeSeek hidden WebView requests before starting the next queued request', () => {
+    const startBlock = appSource.match(/const startNextNodeSeekBrowserFetch = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+
+    expect(startBlock).toContain('while (nodeSeekBrowserFetchQueueRef.current.length) {');
+    expect(startBlock).toContain('if (candidate.abortSignal?.aborted) {');
+    expect(startBlock).toContain("candidate.reject(new Error('请求已取消'));");
+    expect(startBlock).toContain('continue;');
+  });
+
+  it('memoizes the Android More screen against reader data changes it does not display', () => {
+    expect(appSource).toContain('const MemoizedMoreScreen = memo(MoreScreen,');
+    expect(appSource).toContain('previous.readerData.settings === next.readerData.settings');
+    expect(appSource).not.toContain('previous.readerData.progress');
+    expect(appSource).not.toContain('<MoreScreen');
+    expect(appSource).toContain('<MemoizedMoreScreen');
   });
 
   it('keeps reply render callbacks independent from global quote maps', () => {

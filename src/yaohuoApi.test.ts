@@ -6,7 +6,7 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
-import { parseYaohuoListHtml } from './localYaohuo';
+import { parseYaohuoListHtml, parseYaohuoRepliesHtml } from './localYaohuo';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
@@ -102,6 +102,37 @@ describe('Android direct yaohuo API', () => {
     })]));
   });
 
+  it('skips yaohuo non-topic links that only contain unrelated numeric parameters', () => {
+    const result = parseYaohuoListHtml(`
+      <div class="listdata line1">
+        <a class="topic-link" href="/bbs/view.aspx?classid=177&amp;siteid=1000">收藏入口</a>/alice/阅9/05-20 10:00
+      </div>
+    `, {
+      classId: '177',
+      page: 1,
+      limit: 30
+    });
+
+    expect(result.items).toEqual([]);
+  });
+
+  it('does not parse slash-separated yaohuo numeric fields as views without the view marker', () => {
+    const result = parseYaohuoListHtml(`
+      <div class="listdata line1">
+        <a class="topic-link" href="/bbs-1539321.html">妖火主题</a>/alice/10/100 <span class="right">05-20 10:00</span>
+      </div>
+    `, {
+      classId: '177',
+      page: 1,
+      limit: 30
+    });
+
+    expect(result.items[0]).toMatchObject({
+      id: '1539321',
+      viewCount: undefined
+    });
+  });
+
   it('checks login with Android-fetched HTML and does not send the cookie to a server', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<html>ok</html>'));
 
@@ -173,6 +204,15 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3', expect.any(Object));
+  });
+
+  it('uses the page offset as the fallback floor for yaohuo replies without floor labels', () => {
+    const result = parseYaohuoRepliesHtml('<div class="line1">回复内容 <a href="/userinfo.aspx?touserid=1">bob</a> 05-20 10:01</div>', {
+      page: 3,
+      limit: 30
+    });
+
+    expect(result.items[0]).toMatchObject({ author: 'bob', floor: 61 });
   });
 
   it('surfaces yaohuo verification responses without clearing cookies', async () => {

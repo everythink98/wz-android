@@ -133,7 +133,15 @@ export function mergeTopics(current: Topic[], incoming: Topic[]) {
       const urlKey = duplicateExternalUrlKey(topic);
       const existing = urlKey ? seenExternalUrls.get(urlKey) : undefined;
       if (existing && existing.source !== topic.source) {
-        existing.duplicateSources = Array.from(new Set([...(existing.duplicateSources || []), sourceLabel(topic.source)]));
+        const updated = {
+          ...existing,
+          duplicateSources: Array.from(new Set([...(existing.duplicateSources || []), sourceLabel(topic.source)]))
+        };
+        seenExternalUrls.set(urlKey, updated);
+        const index = next.indexOf(existing);
+        if (index >= 0) {
+          next[index] = updated;
+        }
         seen.add(key);
         continue;
       }
