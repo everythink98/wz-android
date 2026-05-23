@@ -26,5 +26,5 @@ export function exportReaderBackupJson(value: unknown) {
 
 export function importReaderBackupJson(local: ReaderData, json: string) {
   const parsed = JSON.parse(json);
-  return mergeReaderData(local, sanitizeReaderData(stripSensitive(parsed)));
+  return mergeReaderData(local, stripSensitive(parsed));
 }

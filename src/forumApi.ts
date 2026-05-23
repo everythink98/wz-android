@@ -153,17 +153,18 @@ export async function getFeed({
   if (source === 'all') {
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
-    const shouldFetch = !cursor || bufferedItems.length < limit;
+    const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
     const adapterLimit = Math.max(limit, limit * allFeedSources.length);
+    const v2exLimit = limit;
     const results = await Promise.allSettled([
-      shouldFetch && (!cursor || cursorState.nextPages?.nodeseek)
+      shouldFetchSource('nodeseek')
         ? getNodeSeekFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.nodeseek || page : page })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null }),
-      shouldFetch && (!cursor || cursorState.nextPages?.linuxdo)
+      shouldFetchSource('linuxdo')
         ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.linuxdo || page : page })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null }),
-      shouldFetch && (!cursor || cursorState.nextPages?.v2ex)
-        ? getV2exFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.v2ex || page : page })
+      shouldFetchSource('v2ex')
+        ? getV2exFeed({ ...options, limit: v2exLimit, page: cursor ? cursorState.nextPages?.v2ex || page : page })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null })
     ]);
     const items = sortByTime([

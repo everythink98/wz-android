@@ -70,6 +70,22 @@ function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) {
   return nextPage;
 }
 
+function nextNodeSeekListPage(html: string, currentPage = 1) {
+  let nextPage: number | null = null;
+  for (const link of parseHtml(html).querySelectorAll('a[href]')) {
+    try {
+      const pathname = new URL(link.getAttribute('href') || '', BASE_URL).pathname;
+      const page = parsePositiveInteger(pathname.match(/(?:^|\/)page-(\d+)$/)?.[1]);
+      if (page && page > currentPage && (!nextPage || page < nextPage)) {
+        nextPage = page;
+      }
+    } catch {
+      // Ignore unrelated links.
+    }
+  }
+  return nextPage;
+}
+
 function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id: string, currentPage = 1) {
   const nextPage = nextNodeSeekPostPage(html, id, currentPage);
   if (!topic.replyHasMore && nextPage) {
@@ -431,11 +447,13 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
   const filtered = options.category
     ? items.filter((item) => !item.categoryId || item.categoryId === options.category || item.category === options.category)
     : items;
+  const nextPage = nextNodeSeekListPage(html, page);
+  const hasMore = filtered.length >= limit || Boolean(nextPage);
   return {
     items: sortTopicsByTime(filtered).slice(0, limit),
     errors: {},
-    hasMore: filtered.length >= limit,
-    nextPage: filtered.length >= limit ? page + 1 : null
+    hasMore,
+    nextPage: hasMore ? nextPage || page + 1 : null
   };
 }
 

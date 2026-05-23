@@ -182,7 +182,19 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();
   }
-  const data = text ? JSON.parse(text) : {};
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        Object.assign(error, { status: response.status });
+        throw error;
+      }
+      throw new Error('linux.do 返回内容格式不正确');
+    }
+  }
   if (!response.ok) {
     const error = new Error(isRecord(data) && typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
     Object.assign(error, { status: response.status });

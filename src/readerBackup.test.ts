@@ -31,6 +31,50 @@ describe('reader JSON backup', () => {
     expect(merged.savedSearches[0].query).toBe('test');
   });
 
+  it('keeps local reader settings when importing old backups without settings', () => {
+    const local = createEmptyReaderData();
+    local.settings.theme = 'dark';
+    local.settings.listDensity = 'loose';
+    const oldBackup = {
+      version: 1,
+      favorites: {},
+      history: {},
+      later: {},
+      progress: {},
+      subscriptions: {},
+      savedSearches: []
+    };
+
+    const merged = importReaderBackupJson(local, JSON.stringify(oldBackup));
+
+    expect(merged.settings.theme).toBe('dark');
+    expect(merged.settings.listDensity).toBe('loose');
+  });
+
+  it('still strips sensitive fields before importing old backups', () => {
+    const local = createEmptyReaderData();
+    const remote = {
+      version: 1,
+      favorites: {},
+      history: {},
+      later: {},
+      progress: {},
+      subscriptions: {},
+      savedSearches: [],
+      settings: {
+        ...createEmptyReaderData().settings,
+        theme: 'dark',
+        nodeseekCookie: 'secret'
+      },
+      nodeseekCookie: 'secret'
+    };
+
+    const merged = importReaderBackupJson(local, JSON.stringify(remote));
+
+    expect(merged.settings.theme).toBe('dark');
+    expect(JSON.stringify(merged)).not.toContain('secret');
+  });
+
   it('keeps yaohuo reader records in local JSON backups', () => {
     const topic: Topic = {
       source: 'yaohuo',

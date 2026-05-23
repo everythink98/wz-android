@@ -256,6 +256,14 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('新增');
   });
 
+  it('keeps the floor index aligned with the currently visible replies', () => {
+    const topicScreenSource = appSource.slice(appSource.indexOf('function TopicScreen('), appSource.indexOf('function ReplyCard('));
+    const floorIndexBlock = topicScreenSource.match(/\{floorOpen \? \([\s\S]*?\n\s*\) : null\}/)?.[0] || '';
+
+    expect(floorIndexBlock).toContain('{replies.map((reply, index) => {');
+    expect(floorIndexBlock).not.toContain('{sourceReplies.map((reply, index) => {');
+  });
+
   it('adds image save, thumbnail selection, and backup file actions', () => {
     expect(appSource).toContain('savePreviewImage');
     expect(appSource).toContain('imagePreviewThumbnail');
@@ -436,11 +444,38 @@ describe('Android App experience guards', () => {
     expect(statusBlock).toContain('nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current');
   });
 
+  it('checks whether saved yaohuo cookies are still usable in local status', () => {
+    const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
+    expect(statusBlock).toContain('checkYaohuoLoginDirect({');
+    expect(statusBlock).toContain('yaohuoCookie');
+    expect(statusBlock).not.toContain('yaohuo: Boolean(yaohuoCookie)');
+  });
+
   it('does not treat Cloudflare-only NodeSeek verification as logged-in actions', () => {
     expect(appSource).toContain('hasNodeSeekLoginCookie');
     expect(appSource).toContain('canUseNodeSeekActions={hasNodeSeekLoginCookie}');
     expect(appSource).toContain('hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
     expect(appSource).toContain('removeNodeSeekLoginCookies');
+  });
+
+  it('requires a real NodeSeek login cookie before enabling login-only actions', () => {
+    const saveCookieBlock = appSource.match(/const saveNodeSeekCookieHeader = useCallback\(async \([\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
+    const rememberBlock = appSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const loginMessageBlock = appSource.match(/const handleLoginMessage = useCallback\(.*?=> \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+
+    expect(saveCookieBlock).toContain('setHasNodeSeekLoginCookie(summary.loggedIn);');
+    expect(saveCookieBlock).not.toContain('setHasNodeSeekLoginCookie(summary.loggedIn || verifiedByPage);');
+    expect(rememberBlock).toContain("notify(summary.loggedIn ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');");
+    expect(rememberBlock).not.toContain('summary.loggedIn || webLoginDetectedRef.current');
+    expect(loginMessageBlock).not.toContain('setHasNodeSeekLoginCookie(true);');
+  });
+
+  it('prevents expired NodeSeek WebView login cookies from being restored', () => {
+    const clearLoginOnlyBlock = appSource.match(/const clearNodeSeekLoginCookiesOnly = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearNodeSeekLoginState\]\);/)?.[1] || '';
+
+    expect(clearLoginOnlyBlock).toContain('nodeSeekWebViewCookieHeaderRef.current = verificationHeader;');
+    expect(clearLoginOnlyBlock).toContain('await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);');
   });
 
   it('uses a hidden WebView to read NodeSeek pages when normal fetch is blocked by Cloudflare', () => {
@@ -483,6 +518,31 @@ describe('Android App experience guards', () => {
     expect(block).toContain('setLoadingMoreReplies(false);');
   });
 
+  it('does not show reply controls when topic detail failed to load', () => {
+    const topicScreenSource = appSource.slice(appSource.indexOf('function TopicScreen('), appSource.indexOf('function ReplyCard('));
+    const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+
+    expect(topicScreenSource).toContain('const canShowReplies = Boolean(topic && !topicLoading);');
+    expect(topicListItemsBlock).toContain('if (canShowReplies) {');
+    expect(topicListItemsBlock).not.toContain('if (!topicLoading) {');
+    expect(topicScreenSource).toContain('const canWriteNodeSeek = Boolean(topic && topic.source === \'nodeseek\' && canUseNodeSeekActions);');
+  });
+
+  it('closes More screen panels when navigating away from More', () => {
+    const closePanelsBlock = appSource.match(/const closeMorePanels = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[closeLinuxDoPanel\]\);/)?.[1] || '';
+    const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const selectCategoryBlock = appSource.match(/const selectCategory = useCallback\(\(category: Category\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+
+    expect(closePanelsBlock).toContain('setShowLoginPanel(false);');
+    expect(closePanelsBlock).toContain('setShowYaohuoLoginPanel(false);');
+    expect(closePanelsBlock).toContain('closeLinuxDoPanel();');
+    expect(closePanelsBlock).toContain('setShowCategoriesPanel(false);');
+    expect(closePanelsBlock).toContain('setShowSettingsPanel(false);');
+    expect(changeScreenBlock).toContain("if (screen === 'more' && nextScreen !== 'more') {");
+    expect(changeScreenBlock).toContain('closeMorePanels();');
+    expect(selectCategoryBlock).toContain('closeMorePanels();');
+  });
+
   it('closes the reply composer before leaving the topic screen with the Android back button', () => {
     const block = appSource.match(/BackHandler\.addEventListener\('hardwareBackPress', \(\) => \{([\s\S]*?)\n    \}\);/)?.[1] || '';
 
@@ -497,6 +557,18 @@ describe('Android App experience guards', () => {
     expect(block).toContain("setSourceFilter('all');");
     expect(block).toContain("setCategoryFilter('all');");
     expect(block).toContain("setTagFilter('all');");
+  });
+
+  it('clears stale library bulk selections when leaving bulk mode or records change', () => {
+    const libraryScreenSource = appSource.slice(appSource.indexOf('function LibraryScreen('), appSource.indexOf('function MoreScreen('));
+    const toggleBlock = libraryScreenSource.match(/const toggleBulkMode = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[bulkMode\]\);/)?.[1] || '';
+
+    expect(libraryScreenSource).toContain('const recordKeys = useMemo(() => records.map(libraryRecordKey).join(\'|\'), [records]);');
+    expect(libraryScreenSource).toContain('}, [recordKeys]);');
+    expect(toggleBlock).toContain('if (bulkMode) {');
+    expect(toggleBlock).toContain('setSelected(new Set());');
+    expect(toggleBlock).toContain("setEditingKey('');");
+    expect(libraryScreenSource).toContain('onPress={toggleBulkMode}');
   });
 
   it('keeps the current topic key active only while the topic screen is visible', () => {

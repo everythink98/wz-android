@@ -23,6 +23,7 @@ vi.mock('react-native', () => ({
 import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
+import { clearV2exCacheForTest } from './localV2ex';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{
@@ -458,6 +459,7 @@ describe('Android local sources', () => {
   });
 
   it('reads V2EX public JSON, HTML pages, topic detail, and SOV2EX search directly', async () => {
+    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/latest.json')) {
         return json([{
@@ -508,6 +510,34 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/);
   });
 
+  it('keeps V2EX feed pagination open when latest JSON is shorter than the app page', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/latest.json')) {
+        return json([
+          { id: 501, title: 'V2EX latest newer', url: 'https://www.v2ex.com/t/501', created: 1780000500, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } },
+          { id: 500, title: 'V2EX latest older', url: 'https://www.v2ex.com/t/500', created: 1780000400, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } }
+        ]);
+      }
+      if (input.includes('/recent?p=1')) {
+        return html(`
+          <div class="cell"><a class="topic-link" href="/t/501#reply1">V2EX latest newer</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:05:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/500#reply1">V2EX latest older</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:04:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/499#reply1">V2EX html newer</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:03:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/498#reply1">V2EX html older</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:02:00"></span></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const first = await getFeed({ source: 'v2ex', limit: 3, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['501', '500', '499']);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextPage).toBe(2);
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/recent?p=1');
+  });
+
   it('reads V2EX search hits when SOV2EX returns a top-level hits array', async () => {
     const fetcher = vi.fn(async () => json({
       total: 1,
@@ -536,5 +566,23 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       reason: 'cloudflare'
     });
+  });
+
+  it('reports non-JSON linux.do HTTP errors with the HTTP status', async () => {
+    const fetcher = vi.fn(async () => new Response('<html>upstream unavailable</html>', {
+      status: 503,
+      headers: { 'content-type': 'text/html' }
+    }));
+
+    await expect(getFeed({ source: 'linuxdo', fetcher })).rejects.toThrow('HTTP 503');
+  });
+
+  it('reports malformed linux.do JSON with a readable message', async () => {
+    const fetcher = vi.fn(async () => new Response('<html>not json</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' }
+    }));
+
+    await expect(getFeed({ source: 'linuxdo', fetcher })).rejects.toThrow('linux.do 返回内容格式不正确');
   });
 });

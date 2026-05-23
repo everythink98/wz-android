@@ -1263,7 +1263,7 @@ export default function App() {
     const summary = summarizeNodeSeekCookies(cookies);
     const cookieHeader = buildCookieHeader(cookies);
     setCookieNames(summary.names);
-    setHasNodeSeekLoginCookie(summary.loggedIn || verifiedByPage);
+    setHasNodeSeekLoginCookie(summary.loggedIn);
     if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
       await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
       await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
@@ -1458,6 +1458,14 @@ export default function App() {
     closeLinuxDoPanel();
   }, [closeLinuxDoPanel, resetLinuxDoWebView]);
 
+  const closeMorePanels = useCallback(() => {
+    setShowLoginPanel(false);
+    setShowYaohuoLoginPanel(false);
+    closeLinuxDoPanel();
+    setShowCategoriesPanel(false);
+    setShowSettingsPanel(false);
+  }, [closeLinuxDoPanel]);
+
   const showLinuxDoVerification = useCallback((message = 'linux.do 需要完成 Cloudflare 验证') => {
     setScreen('more');
     setShowLoginPanel(false);
@@ -1479,6 +1487,7 @@ export default function App() {
     await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
     await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
     webLoginDetectedRef.current = false;
+    nodeSeekWebViewCookieHeaderRef.current = '';
     setHasNodeSeekCookie(false);
     setHasNodeSeekLoginCookie(false);
     setCookieNames([]);
@@ -1506,6 +1515,8 @@ export default function App() {
     setHasNodeSeekLoginCookie(false);
     if (canStoreNodeSeekCookieHeader(verificationCookies) && verificationHeader) {
       await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, verificationHeader);
+      nodeSeekWebViewCookieHeaderRef.current = verificationHeader;
+      await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
       setHasNodeSeekCookie(true);
       setCookieNames(summarizeNodeSeekCookies(verificationCookies).names);
       return;
@@ -2071,6 +2082,9 @@ export default function App() {
   }, [selectedTopic, showLinuxDoVerification, topicDetail]);
 
   const changeScreen = useCallback((nextScreen: Screen) => {
+    if (screen === 'more' && nextScreen !== 'more') {
+      closeMorePanels();
+    }
     if (nextScreen !== 'topic') {
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
@@ -2084,7 +2098,7 @@ export default function App() {
       setTopicBusy(false);
     }
     setScreen(nextScreen);
-  }, [abortQuotedReplyRequests]);
+  }, [abortQuotedReplyRequests, closeMorePanels, screen]);
 
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
@@ -2216,7 +2230,6 @@ export default function App() {
       }
       if (data.type === 'nodeseek-login' && data.loggedIn && Number.isInteger(data.userId)) {
         webLoginDetectedRef.current = true;
-        setHasNodeSeekLoginCookie(true);
         setWebLoginUserId(data.userId || null);
       } else if (data.type === 'nodeseek-login' && data.loggedIn === false) {
         webLoginDetectedRef.current = false;
@@ -2273,7 +2286,7 @@ export default function App() {
     const cookieHeader = await saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current });
     if (cookieHeader) {
       if (!silent) {
-        notify(summary.loggedIn || webLoginDetectedRef.current ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');
+        notify(summary.loggedIn ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');
       }
       return true;
     }
@@ -2716,6 +2729,9 @@ export default function App() {
       const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
       const linuxDoAccess = await loadLinuxDoAccess();
       setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
+      const yaohuoStatusPromise = yaohuoCookie
+        ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
+        : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
       const checks = await Promise.allSettled([
         getFeed({
           source: 'nodeseek',
@@ -2727,13 +2743,19 @@ export default function App() {
           signal: controller.signal
         }),
         getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
-        getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal })
-      ]);
+        getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal }),
+        yaohuoStatusPromise
+      ] as const);
+      const yaohuoCheck = checks[3];
+      const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
+      const yaohuoMessage = yaohuoCheck.status === 'fulfilled'
+        ? (yaohuoOk ? '登录可用' : yaohuoCheck.value.message || '未登录')
+        : errorMessage(yaohuoCheck.reason);
       const status = {
         nodeseek: checks[0].status === 'fulfilled',
         v2ex: checks[1].status === 'fulfilled',
         linuxdo: checks[2].status === 'fulfilled',
-        yaohuo: Boolean(yaohuoCookie)
+        yaohuo: yaohuoOk
       };
       const access = linuxDoAccessSummary(linuxDoAccess);
       setHealthDetails([
@@ -2755,7 +2777,7 @@ export default function App() {
         {
           label: '妖火',
           ok: status.yaohuo,
-          message: status.yaohuo ? '已保存登录 Cookie' : '未登录'
+          message: yaohuoMessage
         },
         {
           label: 'linux.do 验证',
@@ -2845,10 +2867,11 @@ export default function App() {
   }, [commitReaderData]);
 
   const selectCategory = useCallback((category: Category) => {
+    closeMorePanels();
     setFeedSource(category.source);
     setCategoryFilter(category.id);
     setScreen('feed');
-  }, []);
+  }, [closeMorePanels]);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
     setFeedItems([]);
@@ -3706,6 +3729,7 @@ function LibraryScreen({
     { type: 'section' as const, key: `section:${section.label}`, label: section.label },
     ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
   ]), [filteredRecords]);
+  const recordKeys = useMemo(() => records.map(libraryRecordKey).join('|'), [records]);
   useEffect(() => {
     setSourceFilter('all');
     setCategoryFilter('all');
@@ -3715,6 +3739,10 @@ function LibraryScreen({
     setSelected(new Set());
     setEditingKey('');
   }, [categoryFilter, libraryTab, sourceFilter, tagFilter]);
+  useEffect(() => {
+    setSelected(new Set());
+    setEditingKey('');
+  }, [recordKeys]);
   const beginEdit = useCallback((record: TopicRecord) => {
     setEditingKey(libraryRecordKey(record));
     setTagInput(record.tags?.join(', ') || '');
@@ -3745,6 +3773,13 @@ function LibraryScreen({
       setSelected(new Set());
     }
   }, [filteredRecords, onRemoveMany, selected]);
+  const toggleBulkMode = useCallback(() => {
+    if (bulkMode) {
+      setSelected(new Set());
+      setEditingKey('');
+    }
+    setBulkMode((value) => !value);
+  }, [bulkMode]);
   const renderLibraryItem = useCallback<ListRenderItem<LibraryListItem>>(({ item }) => {
     if (item.type === 'section') {
       return <Text style={styles.librarySectionTitle}>{item.label}</Text>;
@@ -3845,7 +3880,7 @@ function LibraryScreen({
         />
       ) : null}
       <View style={styles.actions}>
-        <AppButton compact label={bulkMode ? '退出批量' : '批量删除'} variant="ghost" styles={styles} onPress={() => setBulkMode((value) => !value)} />
+        <AppButton compact label={bulkMode ? '退出批量' : '批量删除'} variant="ghost" styles={styles} onPress={toggleBulkMode} />
         {bulkMode && selected.size ? <AppButton compact label={`删除选中 ${selected.size}`} styles={styles} onPress={removeSelected} /> : null}
         {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={onClearHistory} /> : null}
       </View>
@@ -4559,10 +4594,11 @@ function TopicScreen({
 }) {
   const item = topic || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
-  const canWriteNodeSeek = Boolean(item && item.source === 'nodeseek' && canUseNodeSeekActions);
-  const canWriteYaohuo = Boolean(item && item.source === 'yaohuo' && canUseYaohuoActions);
+  const canShowReplies = Boolean(topic && !topicLoading);
+  const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);
+  const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo;
-  const itemSource = item?.source;
+  const itemSource = topic?.source;
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -4608,7 +4644,7 @@ function TopicScreen({
   })), [replies]);
   const topicListItems = useMemo<TopicListItem[]>(() => {
     const items = [...topicContentItems];
-    if (!topicLoading) {
+    if (canShowReplies) {
       items.push({ type: 'replyControls', key: 'reply-controls' });
       if (canWrite && replyComposerOpen) {
         items.push({ type: 'replyComposer', key: 'reply-composer' });
@@ -4620,7 +4656,7 @@ function TopicScreen({
       }
     }
     return items;
-  }, [canWrite, replyComposerOpen, replyItems, topicContentItems, topicLoading]);
+  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, topicContentItems]);
   const jumpToFloor = useCallback((floor: number) => {
     const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
     if (index >= 0) {
@@ -4683,7 +4719,7 @@ function TopicScreen({
           </View>
           {floorOpen ? (
             <View style={styles.floorIndex}>
-              {sourceReplies.map((reply, index) => {
+              {replies.map((reply, index) => {
                 const floor = reply.floor ?? index + 1;
                 return (
                   <Pressable key={`${floor}-${reply.createdAt}`} accessibilityRole="button" style={styles.floorIndexItem} onPress={() => jumpToFloor(floor)}>
@@ -4873,7 +4909,7 @@ function TopicScreen({
           extraData={quoteStateVersion}
           {...REPLY_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
-          ListFooterComponent={replyHasMore ? (
+          ListFooterComponent={canShowReplies && replyHasMore ? (
             <View style={[styles.topicFooter, topicColumnStyle]}>
               <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={onLoadMoreReplies} />
             </View>

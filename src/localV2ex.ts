@@ -8,6 +8,7 @@ import {
   isRecord,
   parseHtml,
   sanitizeContentHtml,
+  sortTopicsByTime,
   textExcerpt,
   toIsoString
 } from './localHtml';
@@ -217,8 +218,23 @@ export async function getV2exFeed(options: V2exOptions & {
     ? items.filter((topic) => topic.categoryId === options.category || topic.category === options.category)
     : items;
   const start = (page - 1) * limit;
-  const pageItems = filtered.slice(start, start + limit);
-  const hasMore = filtered.length > start + limit;
+  let pageItems = filtered.slice(start, start + limit);
+  let hasMore = filtered.length >= start + limit;
+  if (!options.category && page === 1 && pageItems.length < limit) {
+    const htmlResult = await fetchHtmlWindow({ ...options, page, limit }).catch(() => null);
+    if (htmlResult) {
+      const seen = new Set(pageItems.map((topic) => topic.id));
+      const merged = [...pageItems];
+      for (const topic of htmlResult.items) {
+        if (!seen.has(topic.id)) {
+          seen.add(topic.id);
+          merged.push(topic);
+        }
+      }
+      pageItems = sortTopicsByTime(merged).slice(0, limit);
+      hasMore = hasMore || htmlResult.hasMore || merged.length > limit;
+    }
+  }
   return {
     items: pageItems,
     errors: {},
