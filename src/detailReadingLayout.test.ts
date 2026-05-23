@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
 const themeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'theme.ts'), 'utf8');
 
 describe('Android topic detail reading layout', () => {
@@ -41,11 +42,11 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('uses saved search ids as chip keys while still filling the saved query text', () => {
-    expect(appSource).toContain('key={item.id}');
-    expect(appSource).toContain('const saved = readerData.savedSearches.find((item) => item.id === id)');
-    expect(appSource).toContain('onQueryChange(saved.query);');
-    expect(appSource).not.toContain('onSearchSourceChange(saved.source);');
-    expect(appSource).not.toContain('items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}');
+    expect(searchScreenSource).toContain('key={item.id}');
+    expect(searchScreenSource).toContain('const saved = readerData.savedSearches.find((item) => item.id === id)');
+    expect(searchScreenSource).toContain('onQueryChange(saved.query);');
+    expect(searchScreenSource).not.toContain('onSearchSourceChange(saved.source);');
+    expect(searchScreenSource).not.toContain('items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}');
   });
 
   it('keeps native controls large enough for touch use', () => {

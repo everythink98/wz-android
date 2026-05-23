@@ -8,14 +8,23 @@ export interface TopicListItemState {
   tracked: boolean;
 }
 
-export function getTopicListItemState(data: ReaderData, topic: Topic): TopicListItemState {
+export interface NormalizedTopicListStateInput {
+  trackedKeywords: string[];
+}
+
+export function normalizeTrackedKeywords(keywords: string[]) {
+  return keywords.map((keyword) => keyword.toLowerCase());
+}
+
+export function getTopicListItemState(data: ReaderData, topic: Topic, input?: NormalizedTopicListStateInput): TopicListItemState {
   const key = topicKey(topic);
   const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
+  const trackedKeywords = input?.trackedKeywords || normalizeTrackedKeywords(data.settings.trackedKeywords);
   return {
     favorite: Boolean(data.favorites[key]),
     listDensity: data.settings.listDensity,
     read: Boolean(data.history[key]),
-    tracked: data.settings.trackedKeywords.some((keyword) => text.includes(keyword.toLowerCase()))
+    tracked: trackedKeywords.some((keyword) => text.includes(keyword))
   };
 }
 

@@ -345,6 +345,7 @@ export async function searchTopics({
   source,
   query,
   limit = 20,
+  page = 1,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -354,6 +355,7 @@ export async function searchTopics({
   source: FeedSource;
   query: string;
   limit?: number;
+  page?: number;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -362,7 +364,7 @@ export async function searchTopics({
 }): Promise<SearchResponse> {
   const adapterQuery = positiveSearchQuery(query);
   const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
-  const options = { limit: adapterLimit, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { limit: adapterLimit, page, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
     const results = await Promise.allSettled([
@@ -375,11 +377,13 @@ export async function searchTopics({
       items: balanceTopicsBySource(sortByTime(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []))
         .filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression)))
         .slice(0, limit),
-      errors: mergeErrors(results, sources)
+      errors: mergeErrors(results, sources),
+      hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
+      nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
     };
   }
   if (source === 'yaohuo') {
-    return { items: [], errors: { yaohuo: '请先登录妖火' } };
+    return { items: [], errors: { yaohuo: '请先登录妖火' }, hasMore: false, nextPage: null };
   }
   const response = await pickSource(source, {
     nodeseek: () => searchNodeSeek(adapterQuery, options),

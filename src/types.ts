@@ -91,4 +91,6 @@ export interface CategoriesResponse {
 export interface SearchResponse {
   items: Topic[];
   errors: Partial<Record<FeedSource, string>>;
+  hasMore?: boolean;
+  nextPage?: number | null;
 }

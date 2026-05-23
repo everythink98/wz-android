@@ -312,6 +312,24 @@ function sov2exHits(data: unknown) {
   return [];
 }
 
+function sov2exTotal(data: unknown) {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+  if (typeof data.total === 'number') {
+    return data.total;
+  }
+  if (isRecord(data.hits)) {
+    if (typeof data.hits.total === 'number') {
+      return data.hits.total;
+    }
+    if (isRecord(data.hits.total) && typeof data.hits.total.value === 'number') {
+      return data.hits.total.value;
+    }
+  }
+  return undefined;
+}
+
 function highlightText(highlight: unknown) {
   if (!isRecord(highlight)) {
     return '';
@@ -328,17 +346,20 @@ function highlightText(highlight: unknown) {
   return '';
 }
 
-export async function searchV2ex(query: string, options: V2exOptions & { limit?: number } = {}): Promise<SearchResponse> {
+export async function searchV2ex(query: string, options: V2exOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
   const limit = options.limit || 30;
+  const page = options.page || 1;
+  const from = Math.max(0, page - 1) * limit;
   const params = new URLSearchParams({
     q: query,
     size: String(limit),
-    from: '0',
+    from: String(from),
     sort: 'sumup',
     order: '0'
   });
   const data = await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options);
-  const items = sov2exHits(data).map((hit) => {
+  const hits = sov2exHits(data);
+  const items = hits.map((hit) => {
     const source = isRecord(hit) && isRecord(hit._source) ? hit._source : isRecord(hit) ? hit : {};
     const id = topicId(source.id);
     if (!id) {
@@ -360,7 +381,16 @@ export async function searchV2ex(query: string, options: V2exOptions & { limit?:
       ...(accessRequirement ? { accessRequirement } : {})
     };
   }).filter(Boolean) as Topic[];
-  return { items, errors: {} };
+  const total = sov2exTotal(data);
+  const hasMore = typeof total === 'number'
+    ? total > from + hits.length
+    : hits.length >= limit;
+  return {
+    items,
+    errors: {},
+    hasMore,
+    nextPage: hasMore ? page + 1 : null
+  };
 }
 
 export function clearV2exCacheForTest() {

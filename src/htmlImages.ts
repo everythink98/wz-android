@@ -3,6 +3,13 @@ export interface ImagePreviewList {
   index: number;
 }
 
+const IMAGE_REQUEST_HEADER_HOSTS = [
+  'v2ex.com',
+  'linux.do',
+  'nodeseek.com',
+  '111666.best'
+];
+
 export function extractImageUrlsFromHtml(html: string): string[] {
   const urls: string[] = [];
   const imagePattern = /<img\b[^>]*\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+))/gi;
@@ -53,6 +60,40 @@ export function normalizeImagePreviewUrl(url: string): string {
     return `https:${clean}`;
   }
   return clean;
+}
+
+export function imageRequestHeadersForUrl(url: unknown): Record<string, string> | undefined {
+  const clean = normalizeImagePreviewUrl(decodeHtmlAttribute(url));
+  try {
+    const parsed = new URL(clean);
+    if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isKnownForumImageHost(parsed.hostname)) {
+      return undefined;
+    }
+    return {
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      Referer: parsed.origin
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+export function imageSourceFromUrl(url: string, source?: unknown) {
+  const clean = normalizeImagePreviewUrl(url);
+  const base: Record<string, unknown> = source && typeof source === 'object' && !Array.isArray(source)
+    ? { ...(source as Record<string, unknown>), uri: clean }
+    : { uri: clean };
+  const headers = imageRequestHeadersForUrl(clean);
+  if (!headers) {
+    return base;
+  }
+  return {
+    ...base,
+    headers: {
+      ...((base.headers && typeof base.headers === 'object' && !Array.isArray(base.headers)) ? base.headers : {}),
+      ...headers
+    }
+  };
 }
 
 export function dataImageFileFromUrl(url: unknown): { base64: string; extension: string } | null {
@@ -108,4 +149,9 @@ function uniqueStrings(items: string[]): string[] {
     }
   }
   return result;
+}
+
+function isKnownForumImageHost(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return IMAGE_REQUEST_HEADER_HOSTS.some((host) => normalized === host || normalized.endsWith(`.${host}`));
 }

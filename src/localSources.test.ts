@@ -364,7 +364,7 @@ describe('Android local sources', () => {
 
   it('searches NodeSeek through its site search instead of filtering the latest Android feed', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('/search?') && input.includes('keyword=GPT')) {
+      if (input.includes('/search?') && input.includes('q=GPT')) {
         return html(`
           <ul class="post-list">
             <li class="post-list-item">
@@ -395,9 +395,190 @@ describe('Android local sources', () => {
     });
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
     const calls = callUrls.join('\n');
-    expect(calls).toContain('https://www.nodeseek.com/search?keyword=GPT');
+    expect(calls).toContain('https://www.nodeseek.com/search?q=GPT');
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
     expect(calls).not.toMatch(/\/api\/search|10\.0\.2\.2|127\.0\.0\.1:3000/);
+  });
+
+  it('uses the current NodeSeek q search parameter for short terms like GPT', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=GPT')) {
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-606-1">GPT current search result</a></div>
+              <div class="post-info">
+                <span class="info-author"><a href="/space/2">bob</a></span>
+                <span class="info-comments-count">4</span>
+                <span class="info-views">99</span>
+                <a href="/categories/tech">技术</a>
+                <time datetime="2026-05-21T00:00:00.000Z"></time>
+              </div>
+            </li>
+          </ul>
+        `);
+      }
+      if (input.includes('/search?') && input.includes('keyword=GPT')) {
+        return html('<div>搜索词太短😭</div>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['606']);
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+    expect(calls).toContain('https://www.nodeseek.com/search?q=GPT');
+    expect(calls).not.toContain('keyword=GPT');
+  });
+
+  it('keeps empty NodeSeek site search results empty instead of filtering the latest feed', async () => {
+    const latestPayload = Buffer.from(JSON.stringify({
+      rotateTopics: [{
+        postId: 303,
+        titleText: 'xyz latest incidental match',
+        titleLink: '/post-303-1',
+        op: { name: 'alice' },
+        time: { createdDate: '2026-05-21T00:00:00.000Z' }
+      }]
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=xyz')) {
+        return html('<ul class="post-list"></ul>');
+      }
+      return html(`<script>${latestPayload}</script>`);
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'xyz', fetcher });
+
+    expect(search.items).toEqual([]);
+    const callUrls = fetcher.mock.calls.map((call) => call[0]);
+    expect(callUrls).toContain('https://www.nodeseek.com/search?q=xyz');
+    expect(callUrls).not.toContain('https://www.nodeseek.com/');
+  });
+
+  it('does not request another NodeSeek search page when no next link exists', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('page=2')) {
+        return html('<ul class="post-list"><li><a href="/post-909-1">GPT unrelated second page</a></li></ul>');
+      }
+      if (input.includes('/search?') && input.includes('q=GPT')) {
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-202-1">GPT single page result</a></div>
+              <div class="post-info">
+                <span class="info-author"><a href="/space/2">bob</a></span>
+                <span class="info-comments-count">4</span>
+                <span class="info-views">99</span>
+                <a href="/categories/tech">技术</a>
+                <time datetime="2026-05-21T00:00:00.000Z"></time>
+              </div>
+            </li>
+          </ul>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['202']);
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+    expect(calls).toContain('https://www.nodeseek.com/search?q=GPT');
+    expect(calls).not.toContain('page=2');
+  });
+
+  it('reports and reads the next NodeSeek search page', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('page=2')) {
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-203-1">GPT second page result</a></div>
+              <div class="post-info"><time datetime="2026-05-20T00:00:00.000Z"></time></div>
+            </li>
+          </ul>
+        `);
+      }
+      return html(`
+        <ul class="post-list">
+          <li class="post-list-item">
+            <div class="post-title"><a href="/post-202-1">GPT first page result</a></div>
+            <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+          </li>
+        </ul>
+        <a rel="next" href="/search?q=GPT&page=2">Next</a>
+      `);
+    });
+
+    const first = await searchTopics({ source: 'nodeseek', query: 'GPT', limit: 1, fetcher });
+    const second = await searchTopics({ source: 'nodeseek', query: 'GPT', page: first.nextPage ?? 2, limit: 1, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['202']);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextPage).toBe(2);
+    expect(second.items.map((item) => item.id)).toEqual(['203']);
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.nodeseek.com/search?q=GPT&page=2');
+  });
+
+  it('falls back to latest linux.do topics when anonymous search returns an empty 200 response', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('linux.do/search.json')) {
+        return json({ topics: [], posts: [] });
+      }
+      if (input.includes('linux.do/latest.json')) {
+        return json({
+          topic_list: {
+            topics: [{
+              id: 404,
+              title: 'linux fallback keyword',
+              slug: 'linux-fallback-keyword',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            }]
+          },
+          users: []
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'fallback keyword', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['404']);
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+    expect(calls).toContain('https://linux.do/search.json');
+    expect(calls).toContain('https://linux.do/latest.json');
+  });
+
+  it('passes linux.do search pages through and exposes more results', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const page = url.searchParams.get('page') || '1';
+      return json({
+        grouped_search_result: { more_full_page_results: page === '1' },
+        topics: [{
+          id: page === '1' ? 501 : 502,
+          title: `linux page ${page} keyword`,
+          slug: `linux-page-${page}`,
+          created_at: '2026-05-21T00:00:00.000Z',
+          bumped_at: '2026-05-21T00:00:00.000Z',
+          posts_count: 1
+        }],
+        users: []
+      });
+    });
+
+    const first = await searchTopics({ source: 'linuxdo', query: 'keyword', limit: 1, fetcher });
+    const second = await searchTopics({ source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['501']);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextPage).toBe(2);
+    expect(second.items.map((item) => item.id)).toEqual(['502']);
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('page=2');
   });
 
   it('sends saved NodeSeek verification cookies when reading the Android feed', async () => {
@@ -673,6 +854,36 @@ describe('Android local sources', () => {
     const search = await searchTopics({ source: 'v2ex', query: 'gpt', fetcher });
 
     expect(search.items[0]).toMatchObject({ source: 'v2ex', id: '934576', title: 'GPT search result' });
+  });
+
+  it('passes V2EX search pages through SOV2EX offsets', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      const from = url.searchParams.get('from');
+      return json({
+        hits: {
+          total: { value: 2 },
+          hits: [{
+            _source: {
+              id: from === '0' ? 934576 : 934577,
+              title: from === '0' ? 'GPT first V2EX result' : 'GPT second V2EX result',
+              member: 'neo',
+              created: '2026-05-20T00:00:00',
+              replies: 2
+            }
+          }]
+        }
+      });
+    });
+
+    const first = await searchTopics({ source: 'v2ex', query: 'gpt', limit: 1, fetcher });
+    const second = await searchTopics({ source: 'v2ex', query: 'gpt', page: first.nextPage ?? 2, limit: 1, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['934576']);
+    expect(first.hasMore).toBe(true);
+    expect(first.nextPage).toBe(2);
+    expect(second.items.map((item) => item.id)).toEqual(['934577']);
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('from=1');
   });
 
   it('tags linux.do Cloudflare topic errors so the app can open verification', async () => {

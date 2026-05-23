@@ -3,6 +3,8 @@ import {
   createImagePreviewList,
   dataImageFileFromUrl,
   extractImageUrlsFromHtml,
+  imageRequestHeadersForUrl,
+  imageSourceFromUrl,
   isHttpOrHttpsUrl,
   isPreviewableImageUrl,
   normalizeImagePreviewUrl
@@ -51,6 +53,22 @@ describe('Android HTML image preview helpers', () => {
     });
     expect(dataImageFileFromUrl('data:text/plain;base64,abc123')).toBeNull();
     expect(dataImageFileFromUrl('https://cdn.example.com/a.jpg')).toBeNull();
+  });
+
+  it('adds browser-like headers for known forum image hosts', () => {
+    expect(imageRequestHeadersForUrl('https://i.111666.best/image/a.webp')).toEqual({
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      Referer: 'https://i.111666.best'
+    });
+    expect(imageSourceFromUrl('https://i.111666.best/image/a.webp')).toEqual({
+      uri: 'https://i.111666.best/image/a.webp',
+      headers: {
+        Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+        Referer: 'https://i.111666.best'
+      }
+    });
+    expect(imageRequestHeadersForUrl('https://evil111666.best/image/a.webp')).toBeUndefined();
+    expect(imageRequestHeadersForUrl('data:image/png;base64,abc')).toBeUndefined();
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {

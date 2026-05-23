@@ -2,27 +2,21 @@ import 'expo-dev-client';
 import { memo, type ComponentProps, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   AppState,
   BackHandler,
   FlatList,
-  Image,
   KeyboardAvoidingView,
   type ListRenderItem,
   Linking,
-  Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  PanResponder,
   Platform,
   Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  type StyleProp,
   Text,
   TextInput,
-  type TextStyle,
   ToastAndroid,
   useColorScheme,
   useWindowDimensions,
@@ -51,8 +45,6 @@ import {
   BookMarked,
   CheckCircle,
   ChevronLeft,
-  ChevronRight,
-  ChevronUp,
   Copy,
   ExternalLink,
   Heart,
@@ -150,13 +142,12 @@ import {
   summarizeLinuxDoCookies
 } from './src/linuxdoCookieBridge';
 import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source, Topic, TopicDetail } from './src/types';
-import { createImagePreviewList, dataImageFileFromUrl, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { createImagePreviewList, dataImageFileFromUrl, imageRequestHeadersForUrl, imageSourceFromUrl, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
-import { shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from './src/feedFloatingActions';
-import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from './src/feedCategoryRail';
-import { getTopicListItemState, topicListItemStatesEqual, type TopicListItemState } from './src/topicListItemState';
-import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from './src/listSwipeActions';
+import { shouldUseReadingFilter } from './src/feedCategoryRail';
+import { normalizeTrackedKeywords, type NormalizedTopicListStateInput } from './src/topicListItemState';
+import { splitTopicContentHtml } from './src/topicContentSplit';
 import {
   androidRipple,
   contentWidthValue,
@@ -189,7 +180,6 @@ import {
   isNodeSeekCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
-  linuxDoExternalSearchItems,
   removeString,
   settingsList,
   sourceLabel,
@@ -205,13 +195,16 @@ import {
 import type { Fetcher } from './src/request';
 import {
   buildReplyMarkdown,
-  filterLibraryRecords,
   filterRepliesByQuery,
-  groupLibraryRecordsByTime,
   highlightHtml,
-  highlightTextParts,
   readerModeHtml
 } from './src/androidFeatureHelpers';
+import { AppButton, EmptyText, IconButton, InfoRow, LoadingState, MenuButton, PillRail, SettingRail } from './src/components/AppControls';
+import { ImagePreviewModal } from './src/components/ImagePreviewModal';
+import { REPLY_LIST_PERFORMANCE_PROPS } from './src/components/listPerformance';
+import { FeedScreen } from './src/screens/FeedScreen';
+import { LibraryScreen, type LibraryUndo } from './src/screens/LibraryScreen';
+import { SearchScreen, type SearchGroup, type SearchScope } from './src/screens/SearchScreen';
 
 type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
 type HtmlAllowedStyles = NonNullable<ComponentProps<typeof RenderHTML>['allowedStyles']>;
@@ -233,10 +226,6 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
 };
-type TopicSwipeActionConfig = {
-  kind: 'favorite' | 'delete';
-  onPress: (topic: Topic) => void;
-};
 
 function isNodeSeekLoginRequiredError(error: unknown) {
   return Boolean(
@@ -246,7 +235,6 @@ function isNodeSeekLoginRequiredError(error: unknown) {
     && (error as { loginRequired?: unknown }).loginRequired
   );
 }
-
 function isNodeSeekRequestUrl(input: string) {
   try {
     const host = new URL(input).hostname.toLowerCase();
@@ -327,31 +315,7 @@ const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
-const FEED_SCROLL_STORAGE_PREFIX = 'reader-feed-scroll';
 const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
-const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
-const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
-const FEED_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 12,
-  maxToRenderPerBatch: 8,
-  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
-};
-const TOPIC_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 10,
-  maxToRenderPerBatch: 8,
-  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
-};
-const REPLY_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 6,
-  maxToRenderPerBatch: 5,
-  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
-};
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'iframe', 'noscript'];
 const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 
@@ -417,20 +381,7 @@ true;
 `;
 
 type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic';
-type SearchScope = 'remote' | 'local';
 type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
-type SearchGroup = {
-  source: Source;
-  label: string;
-  items: Topic[];
-  error?: string;
-  loading?: boolean;
-};
-type LibraryUndo = {
-  section: LibraryTab;
-  records: Record<string, TopicRecord>;
-  label: string;
-} | null;
 type HealthDetail = {
   label: string;
   ok: boolean;
@@ -477,31 +428,8 @@ function topicListItemKey(item: TopicListItem) {
   return item.key;
 }
 
-function searchResultCategoryKey(item: Topic) {
-  const category = item.categoryId || item.category?.replace(/^#/, '');
-  return category ? `${item.source}:${category}` : '';
-}
-
 function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
-}
-
-function parseTagsInput(value: string) {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const part of value.split(/[,\s，、]+/)) {
-    const clean = part.trim();
-    const key = clean.toLowerCase();
-    if (clean && !seen.has(key)) {
-      seen.add(key);
-      tags.push(clean);
-    }
-  }
-  return tags;
-}
-
-function libraryRecordKey(record: TopicRecord) {
-  return topicKey(record.topic);
 }
 
 function searchHistoryFromRaw(raw: string | null) {
@@ -516,44 +444,9 @@ function searchHistoryFromRaw(raw: string | null) {
   }
 }
 
-function feedScrollStorageKey(source: FeedSource, category: string, readingFilter: ReadingFilter) {
-  return `${FEED_SCROLL_STORAGE_PREFIX}:${source}:${category || 'all'}:${readingFilter}`;
-}
-
 function safeFileName(value: string, extension: string) {
   const clean = value.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72);
   return `${clean || 'forum-reader'}-${Date.now()}.${extension}`;
-}
-
-function splitTopicContentHtml(html: string | undefined) {
-  const clean = (html || '').trim();
-  if (!clean) {
-    return [];
-  }
-  const blockPattern = /[\s\S]*?<\/(?:p|div|blockquote|pre|ul|ol|li|table|h[1-6])>/gi;
-  const blocks = clean.match(blockPattern);
-  if (!blocks?.length) {
-    return [clean];
-  }
-  const chunks: string[] = [];
-  let current = '';
-  let consumedLength = 0;
-  for (const block of blocks) {
-    current += block;
-    consumedLength += block.length;
-    if (current.length >= 2200) {
-      chunks.push(current);
-      current = '';
-    }
-  }
-  const remainder = clean.slice(consumedLength).trim();
-  if (remainder) {
-    current += remainder;
-  }
-  if (current) {
-    chunks.push(current);
-  }
-  return chunks.length ? chunks : [clean];
 }
 
 const MemoizedHtmlContent = memo(HtmlContent);
@@ -595,16 +488,6 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
   return true;
 });
 
-const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
-  previous.topic === next.topic
-  && previous.styles === next.styles
-  && previous.theme === next.theme
-  && previous.highlightQuery === next.highlightQuery
-  && previous.onOpenTopic === next.onOpenTopic
-  && previous.swipeAction === next.swipeAction
-  && topicListItemStatesEqual(previous.readerState, next.readerState)
-));
-
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const yaohuoWebViewRef = useRef<WebView>(null);
@@ -625,6 +508,7 @@ export default function App() {
   const actionAbortRef = useRef<AbortController | null>(null);
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressMaxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const topicScrollRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingProgressRef = useRef<{ topic: Topic; percent: number; scrollY: number } | null>(null);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
@@ -692,6 +576,7 @@ export default function App() {
   const [searchItems, setSearchItems] = useState<Topic[]>([]);
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   const [libraryUndo, setLibraryUndo] = useState<LibraryUndo>(null);
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
@@ -752,6 +637,12 @@ export default function App() {
     Object.values(quotedReplyAbortRefs.current).forEach((controller) => controller.abort());
     quotedReplyAbortRefs.current = {};
   }, []);
+  const clearTopicScrollRestoreTimer = useCallback(() => {
+    if (topicScrollRestoreTimerRef.current) {
+      clearTimeout(topicScrollRestoreTimerRef.current);
+      topicScrollRestoreTimerRef.current = null;
+    }
+  }, []);
   const resetQuoteState = useCallback(() => {
     abortQuotedReplyRequests();
     expandedQuotesRef.current = {};
@@ -769,13 +660,24 @@ export default function App() {
       .then((raw) => {
         if (active) {
           setRecentSearches(searchHistoryFromRaw(raw));
+          setRecentSearchesLoaded(true);
         }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (active) {
+          setRecentSearchesLoaded(true);
+        }
+      });
     return () => {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!recentSearchesLoaded) {
+      return;
+    }
+    void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(recentSearches)).catch(() => undefined);
+  }, [recentSearches, recentSearchesLoaded]);
 
   const addRecentSearch = useCallback((query: string) => {
     const clean = query.trim();
@@ -787,7 +689,6 @@ export default function App() {
         clean,
         ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
       ].slice(0, 20);
-      void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next)).catch(() => undefined);
       return next;
     });
   }, []);
@@ -795,7 +696,6 @@ export default function App() {
   const removeRecentSearch = useCallback((query: string) => {
     setRecentSearches((current) => {
       const next = current.filter((item) => item !== query);
-      void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(next)).catch(() => undefined);
       return next;
     });
   }, []);
@@ -1055,7 +955,8 @@ export default function App() {
         await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
         downloadedUri = target;
       } else {
-        const downloaded = await FileSystem.downloadAsync(uri, target);
+        const headers = imageRequestHeadersForUrl(uri);
+        const downloaded = await FileSystem.downloadAsync(uri, target, headers ? { headers } : undefined);
         downloadedUri = downloaded.uri;
       }
       await MediaLibrary.saveToLibraryAsync(downloadedUri);
@@ -1100,6 +1001,7 @@ export default function App() {
       return (
         <IMGElement
           {...imageProps}
+          source={imageSourceFromUrl(src, imageProps.source)}
           onPress={(event) => {
             event.stopPropagation?.();
             openImagePreview(src);
@@ -1134,13 +1036,14 @@ export default function App() {
     backupAbortRef.current?.abort();
     statusAbortRef.current?.abort();
     actionAbortRef.current?.abort();
+    clearTopicScrollRestoreTimer();
     if (progressSaveTimerRef.current) {
       clearTimeout(progressSaveTimerRef.current);
     }
     if (progressMaxSaveTimerRef.current) {
       clearTimeout(progressMaxSaveTimerRef.current);
     }
-  }, []);
+  }, [clearTopicScrollRestoreTimer]);
 
   const persistReaderData = useCallback((next: ReaderData) => {
     readerDataRef.current = next;
@@ -1193,6 +1096,9 @@ export default function App() {
     setReaderData(next);
     void persistReaderData(next);
   }, [persistReaderData]);
+  const topicListStateInput = useMemo<NormalizedTopicListStateInput>(() => ({
+    trackedKeywords: normalizeTrackedKeywords(readerData.settings.trackedKeywords)
+  }), [readerData.settings.trackedKeywords]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -1728,6 +1634,46 @@ export default function App() {
     setSearchBusy(false);
   }, [searchQuery, searchScope, searchSource]);
 
+  const runRemoteSearchSource = useCallback(async (source: Source, query: string, page: number, signal: AbortSignal): Promise<SearchGroup> => {
+    try {
+      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
+        loadYaohuoCookieForSource(source),
+        loadNodeSeekCookieForSource(source)
+      ]);
+      if (source === 'yaohuo' && !yaohuoCookie) {
+        return { source, label: sourceLabel(source), items: [], error: '未登录', hasMore: false, nextPage: null };
+      }
+      const data = source === 'yaohuo'
+        ? await searchYaohuoDirect({ query, page, limit: 30, yaohuoCookie, signal })
+        : await searchTopics({
+          query,
+          source,
+          page,
+          limit: 30,
+          fetcher: nodeSeekFetchWithWebView,
+          nodeSeekCookie,
+          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+          signal
+        });
+      return {
+        source,
+        label: sourceLabel(source),
+        items: data.items,
+        error: data.errors?.[source],
+        hasMore: Boolean(data.hasMore && data.nextPage),
+        nextPage: data.nextPage ?? null
+      };
+    } catch (error) {
+      if (isCanceledRequest(error)) {
+        throw error;
+      }
+      if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
+        return { source, label: sourceLabel(source), items: [], error: isYaohuoLoginExpiredError(error) ? '登录已失效' : errorMessage(error), hasMore: false, nextPage: null };
+      }
+      return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
+    }
+  }, [loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView]);
+
   const runSearch = useCallback(async (sourceOverride?: Source) => {
     const query = searchQuery.trim();
     if (!query) {
@@ -1742,7 +1688,7 @@ export default function App() {
         ? sources
         : [searchSource as Source];
     if (sourceOverride) {
-      setSearchGroups((current) => current.map((group) => group.source === sourceOverride ? { ...group, loading: true, error: undefined } : group));
+      setSearchGroups((current) => current.map((group) => group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : group));
     } else {
       setSearchItems([]);
       setSearchGroups(searchScope === 'remote'
@@ -1759,42 +1705,7 @@ export default function App() {
         setSearchItems(searchLocal(readerData, query, searchSource));
         notify('本地搜索完成');
       } else {
-        const groups = await Promise.all(activeSources.map(async (source) => {
-          try {
-            const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-              loadYaohuoCookieForSource(source),
-              loadNodeSeekCookieForSource(source)
-            ]);
-            if (source === 'yaohuo' && !yaohuoCookie) {
-              return { source, label: sourceLabel(source), items: [], error: '未登录' };
-            }
-            const data = source === 'yaohuo'
-              ? await searchYaohuoDirect({ query, limit: 30, yaohuoCookie, signal: controller.signal })
-              : await searchTopics({
-                query,
-                source,
-                limit: 30,
-                fetcher: nodeSeekFetchWithWebView,
-                nodeSeekCookie,
-                nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-                signal: controller.signal
-              });
-            return {
-              source,
-              label: sourceLabel(source),
-              items: data.items,
-              error: data.errors?.[source]
-            };
-          } catch (error) {
-            if (isCanceledRequest(error)) {
-              throw error;
-            }
-            if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
-              return { source, label: sourceLabel(source), items: [], error: isYaohuoLoginExpiredError(error) ? '登录已失效' : errorMessage(error) };
-            }
-            return { source, label: sourceLabel(source), items: [], error: errorMessage(error) };
-          }
-        }));
+        const groups = await Promise.all(activeSources.map((source) => runRemoteSearchSource(source, query, 1, controller.signal)));
         if (requestId !== searchRequestIdRef.current) {
           return;
         }
@@ -1804,6 +1715,7 @@ export default function App() {
             return updated ? { ...updated, loading: false } : group;
           })
           : groups.map((group) => ({ ...group, loading: false }));
+        searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
         const mergedItems = nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
         setSearchItems(mergedItems);
@@ -1842,7 +1754,68 @@ export default function App() {
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [addRecentSearch, clearYaohuoLoginState, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, readerData, searchQuery, searchScope, searchSource, showNodeSeekVerification, showYaohuoLogin]);
+  }, [addRecentSearch, clearYaohuoLoginState, notify, readerData, runRemoteSearchSource, searchQuery, searchScope, searchSource, showNodeSeekVerification, showYaohuoLogin]);
+
+  const loadMoreSearchSource = useCallback(async (source: Source, page: number) => {
+    const query = searchQuery.trim();
+    if (!query || searchScope !== 'remote') {
+      return;
+    }
+    const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
+    if (!currentGroup || currentGroup.loading || currentGroup.loadingMore || !currentGroup.hasMore) {
+      return;
+    }
+    const markedGroups = searchGroupsRef.current.map((group) => (
+      group.source === source ? { ...group, loadingMore: true, error: undefined } : group
+    ));
+    searchGroupsRef.current = markedGroups;
+    setSearchGroups(markedGroups);
+    const controller = startAbortableRequest(searchAbortRef);
+    const requestId = ++searchRequestIdRef.current;
+    setSearchBusy(true);
+    try {
+      const data = await runRemoteSearchSource(source, query, page, controller.signal);
+      if (requestId !== searchRequestIdRef.current) {
+        return;
+      }
+      const nextGroups = searchGroupsRef.current.map((group) => {
+        if (group.source !== source) {
+          return group;
+        }
+        const mergedItems = mergeTopics(group.items, data.items);
+        return {
+          ...data,
+          items: mergedItems,
+          loading: false,
+          loadingMore: false,
+          hasMore: Boolean(data.hasMore && data.nextPage && mergedItems.length > group.items.length)
+        };
+      });
+      searchGroupsRef.current = nextGroups;
+      setSearchGroups(nextGroups);
+      setSearchItems(nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []));
+      const updated = nextGroups.find((group) => group.source === source);
+      if (updated?.error && source === 'nodeseek' && /Cloudflare|验证/.test(updated.error)) {
+        showNodeSeekVerification(updated.error);
+        return;
+      }
+      notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
+    } catch (error) {
+      if (requestId === searchRequestIdRef.current && !isCanceledRequest(error)) {
+        const nextGroups = searchGroupsRef.current.map((group) => (
+          group.source === source ? { ...group, loadingMore: false, error: errorMessage(error) } : group
+        ));
+        searchGroupsRef.current = nextGroups;
+        setSearchGroups(nextGroups);
+        notify(errorMessage(error));
+      }
+    } finally {
+      if (requestId === searchRequestIdRef.current) {
+        setSearchBusy(false);
+      }
+      finishAbortableRequest(searchAbortRef, controller);
+    }
+  }, [notify, runRemoteSearchSource, searchQuery, searchScope, showNodeSeekVerification]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;
@@ -1861,6 +1834,7 @@ export default function App() {
   }, [runSearch]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
+    clearTopicScrollRestoreTimer();
     if (screen !== 'topic') {
       topicReturnScreenRef.current = screen;
     }
@@ -1926,7 +1900,14 @@ export default function App() {
       commitReaderData((current) => recordHistory(current, detail));
       const progress = readerDataRef.current.progress[topicKey(detail)];
       if (progress?.scrollY) {
-        setTimeout(() => topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false }), 180);
+        const restoreTopicKey = topicKey(detail);
+        topicScrollRestoreTimerRef.current = setTimeout(() => {
+          topicScrollRestoreTimerRef.current = null;
+          if (currentTopicKeyRef.current !== restoreTopicKey) {
+            return;
+          }
+          topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false });
+        }, 180);
       }
       if (nocache) {
         notify('主题已更新');
@@ -1964,7 +1945,7 @@ export default function App() {
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [clearYaohuoLoginState, commitReaderData, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
+  }, [clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -2085,7 +2066,11 @@ export default function App() {
     if (screen === 'more' && nextScreen !== 'more') {
       closeMorePanels();
     }
+    if (screen === 'topic' && nextScreen !== 'topic') {
+      flushPendingProgress();
+    }
     if (nextScreen !== 'topic') {
+      clearTopicScrollRestoreTimer();
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
       topicAbortRef.current?.abort();
@@ -2098,7 +2083,7 @@ export default function App() {
       setTopicBusy(false);
     }
     setScreen(nextScreen);
-  }, [abortQuotedReplyRequests, closeMorePanels, screen]);
+  }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, screen]);
 
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
@@ -2957,7 +2942,6 @@ export default function App() {
               javaScriptEnabled
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
-              androidLayerType="software"
               userAgent={nodeSeekBrowserFetchRequest.userAgent || nodeSeekWebViewUserAgent}
               containerStyle={styles.hiddenBrowserWebView}
               style={styles.hiddenBrowserWebView}
@@ -3043,6 +3027,7 @@ export default function App() {
                 feedSource={feedSource}
                 loadingMore={loadingMoreFeed}
                 readerData={readerData}
+                topicListStateInput={topicListStateInput}
                 readingFilter={readingFilter}
                 refreshing={feedRefreshing}
                 styles={styles}
@@ -3061,6 +3046,7 @@ export default function App() {
                 busy={searchBusy}
                 query={searchQuery}
                 readerData={readerData}
+                topicListStateInput={topicListStateInput}
                 recentSearches={recentSearches}
                 results={visibleSearchItems}
                 searchGroups={searchGroups}
@@ -3069,6 +3055,7 @@ export default function App() {
                 sort={searchSort}
                 styles={styles}
                 theme={theme}
+                onLoadMoreSearchSource={loadMoreSearchSource}
                 onOpenExternalUrl={openExternalUrl}
                 onOpenTopic={openTopic}
                 onRemoveRecentSearch={removeRecentSearch}
@@ -3089,6 +3076,7 @@ export default function App() {
                 libraryUndo={libraryUndo}
                 records={libraryRecords}
                 readerData={readerData}
+                topicListStateInput={topicListStateInput}
                 styles={styles}
                 theme={theme}
                 onClearHistory={clearHistory}
@@ -3118,7 +3106,10 @@ export default function App() {
                   linuxDoWebViewKey={linuxDoWebViewKey}
                   linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
                   nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
-                  readerData={readerData}
+                  favoriteCount={Object.keys(readerData.favorites).length}
+                  historyCount={Object.keys(readerData.history).length}
+                  settings={readerData.settings}
+                  subscriptions={readerData.subscriptions}
                   backupJson={backupJson}
                   showCategoriesPanel={showCategoriesPanel}
                   showLoginPanel={showLoginPanel}
@@ -3188,725 +3179,6 @@ export default function App() {
   );
 }
 
-function FeedScreen({
-  busy,
-  categories,
-  categoryFilter,
-  feedHasMore,
-  feedItems,
-  feedPage,
-  feedSource,
-  loadingMore,
-  readerData,
-  readingFilter,
-  refreshing,
-  styles,
-  theme,
-  onCategoryChange,
-  onFeedSourceChange,
-  onLoadMore,
-  onOpenTopic,
-  onReadingFilterChange,
-  onRefresh,
-  onToggleFavorite
-}: {
-  busy: boolean;
-  categories: Category[];
-  categoryFilter: string;
-  feedHasMore: boolean;
-  feedItems: Topic[];
-  feedPage: number;
-  feedSource: FeedSource;
-  loadingMore: boolean;
-  readerData: ReaderData;
-  readingFilter: ReadingFilter;
-  refreshing: boolean;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onCategoryChange: (categoryId: string) => void;
-  onFeedSourceChange: (source: FeedSource) => void;
-  onLoadMore: () => void;
-  onOpenTopic: (topic: Topic) => void;
-  onReadingFilterChange: (filter: ReadingFilter) => void;
-  onRefresh: () => void;
-  onToggleFavorite: (topic: Topic) => void;
-}) {
-  const listRef = useRef<FlatList<Topic>>(null);
-  const requestedFeedPageRef = useRef<number | null>(null);
-  const pendingScrollOffsetRef = useRef<number | null>(null);
-  const scrollStorageKey = useMemo(() => feedScrollStorageKey(feedSource, categoryFilter, readingFilter), [categoryFilter, feedSource, readingFilter]);
-  const [showFloatingActions, setShowFloatingActions] = useState(false);
-  const [scrollRestoreReady, setScrollRestoreReady] = useState(false);
-
-  const requestFeedLoadMore = useCallback(() => {
-    if (!feedHasMore || busy || loadingMore) {
-      return;
-    }
-    const nextPage = feedPage + 1;
-    if (requestedFeedPageRef.current === nextPage) {
-      return;
-    }
-    requestedFeedPageRef.current = nextPage;
-    onLoadMore();
-  }, [busy, feedHasMore, feedPage, loadingMore, onLoadMore]);
-
-  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextVisible = shouldShowFeedFloatingActions(event.nativeEvent.contentOffset.y);
-    setShowFloatingActions((current) => current === nextVisible ? current : nextVisible);
-    if (shouldLoadMoreFeedFromScroll(event.nativeEvent)) {
-      requestFeedLoadMore();
-    }
-  }, [requestFeedLoadMore]);
-
-  const saveFeedScrollPosition = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offset = Math.max(0, Math.round(event.nativeEvent.contentOffset.y));
-    void AsyncStorage.setItem(scrollStorageKey, String(offset)).catch(() => undefined);
-  }, [scrollStorageKey]);
-
-  useEffect(() => {
-    if (!busy && !loadingMore) {
-      requestedFeedPageRef.current = null;
-    }
-  }, [busy, loadingMore]);
-
-  useEffect(() => {
-    requestedFeedPageRef.current = null;
-    setShowFloatingActions(false);
-    pendingScrollOffsetRef.current = null;
-    setScrollRestoreReady(false);
-    let active = true;
-    AsyncStorage.getItem(scrollStorageKey)
-      .then((value) => {
-        if (!active) {
-          return;
-        }
-        const offset = Number(value || 0);
-        if (Number.isFinite(offset) && offset > 0) {
-          pendingScrollOffsetRef.current = offset;
-        }
-      })
-      .catch(() => undefined)
-      .then(() => {
-        if (active) {
-          setScrollRestoreReady(true);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [scrollStorageKey]);
-
-  const restoreFeedScrollPosition = useCallback(() => {
-    const offset = pendingScrollOffsetRef.current;
-    if (scrollRestoreReady && offset && feedItems.length) {
-      pendingScrollOffsetRef.current = null;
-      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset, animated: false }));
-    }
-  }, [feedItems.length, scrollRestoreReady]);
-
-  useEffect(() => {
-    restoreFeedScrollPosition();
-  }, [restoreFeedScrollPosition]);
-
-  const scrollToTop = useCallback(() => {
-    listRef.current?.scrollToOffset({ offset: 0, animated: true });
-    setShowFloatingActions(false);
-  }, []);
-  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
-    kind: 'favorite',
-    onPress: onToggleFavorite
-  }), [onToggleFavorite]);
-
-  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
-    <MemoizedTopicCard
-      readerState={getTopicListItemState(readerData, topic)}
-      styles={styles}
-      theme={theme}
-      topic={topic}
-      onOpenTopic={onOpenTopic}
-      swipeAction={favoriteSwipeAction}
-    />
-  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, theme]);
-  const categoryItems = useMemo(
-    () => feedCategoryItems(categories, feedSource),
-    [categories, feedSource]
-  );
-
-  const header = (
-    <View style={styles.stack}>
-      <PillRail
-        variant="tabs"
-        items={feedSourceItems}
-        value={feedSource}
-        styles={styles}
-        onChange={(value) => onFeedSourceChange(value as FeedSource)}
-      />
-      {shouldUseReadingFilter(feedSource) ? (
-        <PillRail
-          items={feedReadingFilterItems}
-          value={readingFilter}
-          styles={styles}
-          onChange={(value) => onReadingFilterChange(value as ReadingFilter)}
-        />
-      ) : (
-        <PillRail
-          items={categoryItems}
-          value={categoryFilter}
-          styles={styles}
-          onChange={onCategoryChange}
-        />
-      )}
-    </View>
-  );
-  const feedEmptyText = readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all'
-    ? '当前筛选没有匹配主题'
-    : '暂无主题';
-
-  return (
-    <View style={styles.content}>
-      <FlatList
-        ref={listRef}
-        style={styles.content}
-        contentContainerStyle={styles.contentInner}
-        data={feedItems}
-        keyExtractor={topicKey}
-        keyboardShouldPersistTaps="handled"
-        onScroll={handleScroll}
-        scrollEventThrottle={64}
-        onMomentumScrollEnd={saveFeedScrollPosition}
-        onScrollEndDrag={saveFeedScrollPosition}
-        onContentSizeChange={restoreFeedScrollPosition}
-        onEndReachedThreshold={0.6}
-        onEndReached={requestFeedLoadMore}
-        {...FEED_LIST_PERFORMANCE_PROPS}
-        ListHeaderComponent={header}
-        ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={feedEmptyText} styles={styles} />}
-        ListFooterComponent={feedHasMore ? (
-          <AppButton
-            label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
-            styles={styles}
-            disabled={busy || loadingMore}
-            onPress={requestFeedLoadMore}
-          />
-        ) : feedItems.length > 0 && !busy ? (
-          <Text style={styles.endOfListText}>已经到底了</Text>
-        ) : null}
-        renderItem={renderTopicItem}
-      />
-      {showFloatingActions ? (
-        <View style={styles.feedFloatingActions}>
-          <FloatingIconButton icon={RefreshCw} label="刷新" styles={styles} theme={theme} loading={refreshing} disabled={refreshing} onPress={onRefresh} />
-          <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={scrollToTop} />
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function SearchScreen({
-  busy,
-  query,
-  recentSearches,
-  readerData,
-  results,
-  searchGroups,
-  scope,
-  searchSource,
-  sort,
-  styles,
-  theme,
-  onOpenExternalUrl,
-  onOpenTopic,
-  onRemoveRecentSearch,
-  onRemoveSavedSearch,
-  onQueryChange,
-  onSaveSearch,
-  onRetrySearchSource,
-  onScopeChange,
-  onSearch,
-  onSearchSourceChange,
-  onSortChange,
-  onToggleFavorite
-}: {
-  busy: boolean;
-  query: string;
-  recentSearches: string[];
-  readerData: ReaderData;
-  results: Topic[];
-  searchGroups: SearchGroup[];
-  scope: SearchScope;
-  searchSource: FeedSource;
-  sort: SearchSort;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onOpenExternalUrl: (url: string) => void;
-  onOpenTopic: (topic: Topic) => void;
-  onRemoveRecentSearch: (query: string) => void;
-  onRemoveSavedSearch: (id: string) => void;
-  onQueryChange: (value: string) => void;
-  onSaveSearch: () => void;
-  onRetrySearchSource: (source: Source) => void;
-  onScopeChange: (scope: SearchScope) => void;
-  onSearch: () => void;
-  onSearchSourceChange: (source: FeedSource) => void;
-  onSortChange: (sort: SearchSort) => void;
-  onToggleFavorite: (topic: Topic) => void;
-}) {
-  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
-    kind: 'favorite',
-    onPress: onToggleFavorite
-  }), [onToggleFavorite]);
-  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
-    <MemoizedTopicCard
-      highlightQuery={query}
-      readerState={getTopicListItemState(readerData, item)}
-      styles={styles}
-      theme={theme}
-      topic={item}
-      onOpenTopic={onOpenTopic}
-      swipeAction={favoriteSwipeAction}
-    />
-  ), [favoriteSwipeAction, onOpenTopic, query, readerData, styles, theme]);
-  const selectSavedSearch = useCallback((id: string) => {
-    const saved = readerData.savedSearches.find((item) => item.id === id);
-    if (saved) {
-      onQueryChange(saved.query);
-      return;
-    }
-    onQueryChange(id);
-  }, [onQueryChange, readerData.savedSearches]);
-  const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
-  useEffect(() => {
-    setSearchCategoryFilter('all');
-  }, [query, scope, searchSource]);
-  const searchCategoryOptions = useMemo(() => {
-    const counts = new Map<string, { label: string; count: number }>();
-    for (const item of results) {
-      const key = searchResultCategoryKey(item);
-      if (!key || !item.category) {
-        continue;
-      }
-      const current = counts.get(key);
-      counts.set(key, {
-        label: `${sourceLabel(item.source)} · ${item.category}`,
-        count: (current?.count || 0) + 1
-      });
-    }
-    return [...counts.entries()].map(([value, item]) => ({
-      value,
-      label: `${item.label} ${item.count}`
-    }));
-  }, [results]);
-  useEffect(() => {
-    if (searchCategoryFilter !== 'all' && !searchCategoryOptions.some((item) => item.value === searchCategoryFilter)) {
-      setSearchCategoryFilter('all');
-    }
-  }, [searchCategoryFilter, searchCategoryOptions]);
-  const filteredSearchResults = useMemo(() => (
-    searchCategoryFilter === 'all'
-      ? results
-      : results.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
-  ), [results, searchCategoryFilter]);
-  const visibleSearchGroups = useMemo(() => searchGroups.map((group) => ({
-    ...group,
-    items: sortTopics(
-      searchCategoryFilter === 'all'
-        ? group.items
-        : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter),
-      sort
-    )
-  })), [searchCategoryFilter, searchGroups, sort]);
-  const linuxDoExternalItems = useMemo(() => (
-    scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
-      ? linuxDoExternalSearchItems(query)
-      : []
-  ), [query, scope, searchSource]);
-  const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
-
-  const header = (
-    <View style={styles.stack}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>搜索</Text>
-        {busy ? <ActivityIndicator color={theme.primary} /> : null}
-      </View>
-      <View style={styles.searchRow}>
-        <TextInput
-          style={[styles.input, styles.flex]}
-          value={query}
-          onChangeText={onQueryChange}
-          placeholder="输入关键词"
-          placeholderTextColor={theme.muted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onSubmitEditing={onSearch}
-        />
-        {query ? <IconButton icon={X} label="清空" styles={styles} theme={theme} onPress={() => onQueryChange('')} /> : null}
-        <IconButton icon={Search} label="搜索" styles={styles} theme={theme} disabled={busy} onPress={onSearch} />
-      </View>
-      <PillRail
-        items={[
-          { value: 'remote', label: '全网' },
-          { value: 'local', label: '本地' }
-        ]}
-        value={scope}
-        styles={styles}
-        onChange={(value) => onScopeChange(value as SearchScope)}
-      />
-      <PillRail
-        items={[
-          { value: 'all', label: '全部' },
-          { value: 'v2ex', label: 'V2EX' },
-          { value: 'linuxdo', label: 'linux.do' },
-          { value: 'nodeseek', label: 'NodeSeek' },
-          { value: 'yaohuo', label: '妖火' }
-        ]}
-        value={searchSource}
-        styles={styles}
-        onChange={(value) => onSearchSourceChange(value as FeedSource)}
-      />
-      <PillRail
-        items={[
-          { value: 'relevance', label: '相关' },
-          { value: 'time', label: '按时间' },
-          { value: 'reply', label: '按回复' },
-          { value: 'view', label: '按浏览' }
-        ]}
-        value={sort}
-        styles={styles}
-        onChange={(value) => onSortChange(value as SearchSort)}
-      />
-      {searchCategoryOptions.length ? (
-        <PillRail
-          items={[{ value: 'all', label: '分类全部' }, ...searchCategoryOptions]}
-          value={searchCategoryFilter}
-          styles={styles}
-          onChange={setSearchCategoryFilter}
-        />
-      ) : null}
-      {linuxDoExternalItems.length ? (
-        <View style={styles.stack}>
-          <Text style={styles.meta}>linux.do 老帖</Text>
-          <View style={styles.actions}>
-            {linuxDoExternalItems.map((item) => (
-              <AppButton key={item.url} compact label={item.label} styles={styles} onPress={() => onOpenExternalUrl(item.url)} />
-            ))}
-          </View>
-        </View>
-      ) : null}
-      {showRemoteGroups ? (
-        <View style={styles.stack}>
-          {visibleSearchGroups.length ? visibleSearchGroups.map((group) => (
-            <View key={group.source} style={styles.group}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.panelTitle}>{group.label}</Text>
-                <Text style={styles.meta}>{group.loading ? '搜索中' : `${group.items.length} 条`}</Text>
-              </View>
-              {group.error ? (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorText}>{group.error}</Text>
-                  <AppButton label={`重试 ${group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(group.source)} />
-                </View>
-              ) : null}
-              {group.loading ? <LoadingState text={`${group.label} 搜索中...`} styles={styles} theme={theme} /> : null}
-              {group.items.map((item) => (
-                <MemoizedTopicCard
-                  key={topicKey(item)}
-                  highlightQuery={query}
-                  readerState={getTopicListItemState(readerData, item)}
-                  styles={styles}
-                  theme={theme}
-                  topic={item}
-                  onOpenTopic={onOpenTopic}
-                  swipeAction={favoriteSwipeAction}
-                />
-              ))}
-              {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
-            </View>
-          )) : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
-        </View>
-      ) : null}
-      <AppButton label="保存搜索" variant="ghost" styles={styles} onPress={onSaveSearch} />
-      {readerData.savedSearches.length ? (
-        <View style={styles.stack}>
-          <Text style={styles.meta}>保存搜索</Text>
-          <View style={styles.chipWrap}>
-            {readerData.savedSearches.map((item) => (
-              <View key={item.id} style={styles.inlineChipGroup}>
-                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => selectSavedSearch(item.id)}>
-                  <Text style={styles.pillText}>{item.query}</Text>
-                </Pressable>
-                <IconButton tiny ghost icon={X} label="删除保存搜索" styles={styles} theme={theme} onPress={() => onRemoveSavedSearch(item.id)} />
-              </View>
-            ))}
-          </View>
-        </View>
-      ) : null}
-      {recentSearches.length ? (
-        <View style={styles.stack}>
-          <Text style={styles.meta}>最近搜索</Text>
-          <View style={styles.chipWrap}>
-            {recentSearches.map((item) => (
-              <View key={item} style={styles.inlineChipGroup}>
-                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => onQueryChange(item)}>
-                  <Text style={styles.pillText}>{item}</Text>
-                </Pressable>
-                <IconButton tiny ghost icon={X} label="删除最近搜索" styles={styles} theme={theme} onPress={() => onRemoveRecentSearch(item)} />
-              </View>
-            ))}
-          </View>
-        </View>
-      ) : null}
-    </View>
-  );
-
-  return (
-    <FlatList
-      style={styles.content}
-      contentContainerStyle={styles.contentInner}
-      data={showRemoteGroups ? [] : filteredSearchResults}
-      keyExtractor={topicKey}
-      keyboardShouldPersistTaps="handled"
-      {...TOPIC_LIST_PERFORMANCE_PROPS}
-      ListHeaderComponent={header}
-      ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()
-        ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
-        : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
-      renderItem={renderTopicItem}
-    />
-  );
-}
-
-function LibraryScreen({
-  libraryTab,
-  libraryUndo,
-  records,
-  readerData,
-  styles,
-  theme,
-  onClearHistory,
-  onOpenTopic,
-  onRemoveMany,
-  onRemove,
-  onTabChange,
-  onUndoDelete,
-  onUpdateRecord
-}: {
-  libraryTab: LibraryTab;
-  libraryUndo: LibraryUndo;
-  records: TopicRecord[];
-  readerData: ReaderData;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onClearHistory: () => void;
-  onOpenTopic: (topic: Topic) => void;
-  onRemoveMany: (topics: Topic[]) => void;
-  onRemove: (topic: Topic) => void;
-  onTabChange: (tab: LibraryTab) => void;
-  onUndoDelete: () => void;
-  onUpdateRecord: (topic: Topic, patch: Pick<TopicRecord, 'tags' | 'note'>) => void;
-}) {
-  type LibraryListItem = { type: 'section'; key: string; label: string } | { type: 'record'; key: string; record: TopicRecord };
-  const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [tagFilter, setTagFilter] = useState('all');
-  const [bulkMode, setBulkMode] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [editingKey, setEditingKey] = useState('');
-  const [tagInput, setTagInput] = useState('');
-  const [noteInput, setNoteInput] = useState('');
-  const deleteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
-    kind: 'delete',
-    onPress: onRemove
-  }), [onRemove]);
-  const categories = useMemo(() => Array.from(new Set(records.map((record) => record.topic.category).filter(Boolean) as string[])), [records]);
-  const tags = useMemo(() => Array.from(new Set(records.flatMap((record) => record.tags || []))).sort(), [records]);
-  const filteredRecords = useMemo(() => filterLibraryRecords(records, {
-    source: sourceFilter,
-    category: categoryFilter,
-    tag: tagFilter
-  }), [categoryFilter, records, sourceFilter, tagFilter]);
-  const listItems = useMemo<LibraryListItem[]>(() => groupLibraryRecordsByTime(filteredRecords).flatMap((section) => [
-    { type: 'section' as const, key: `section:${section.label}`, label: section.label },
-    ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
-  ]), [filteredRecords]);
-  const recordKeys = useMemo(() => records.map(libraryRecordKey).join('|'), [records]);
-  useEffect(() => {
-    setSourceFilter('all');
-    setCategoryFilter('all');
-    setTagFilter('all');
-  }, [libraryTab]);
-  useEffect(() => {
-    setSelected(new Set());
-    setEditingKey('');
-  }, [categoryFilter, libraryTab, sourceFilter, tagFilter]);
-  useEffect(() => {
-    setSelected(new Set());
-    setEditingKey('');
-  }, [recordKeys]);
-  const beginEdit = useCallback((record: TopicRecord) => {
-    setEditingKey(libraryRecordKey(record));
-    setTagInput(record.tags?.join(', ') || '');
-    setNoteInput(record.note || '');
-  }, []);
-  const saveEdit = useCallback((record: TopicRecord) => {
-    onUpdateRecord(record.topic, {
-      tags: parseTagsInput(tagInput),
-      note: noteInput
-    });
-    setEditingKey('');
-  }, [noteInput, onUpdateRecord, tagInput]);
-  const toggleSelected = useCallback((key: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
-    });
-  }, []);
-  const removeSelected = useCallback(() => {
-    const topics = filteredRecords.filter((record) => selected.has(libraryRecordKey(record))).map((record) => record.topic);
-    if (topics.length) {
-      onRemoveMany(topics);
-      setSelected(new Set());
-    }
-  }, [filteredRecords, onRemoveMany, selected]);
-  const toggleBulkMode = useCallback(() => {
-    if (bulkMode) {
-      setSelected(new Set());
-      setEditingKey('');
-    }
-    setBulkMode((value) => !value);
-  }, [bulkMode]);
-  const renderLibraryItem = useCallback<ListRenderItem<LibraryListItem>>(({ item }) => {
-    if (item.type === 'section') {
-      return <Text style={styles.librarySectionTitle}>{item.label}</Text>;
-    }
-    const record = item.record;
-    const key = libraryRecordKey(record);
-    const selectedRecord = selected.has(key);
-    const editing = editingKey === key;
-    return (
-      <View style={styles.libraryItem}>
-        {bulkMode ? (
-          <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selectedRecord }} style={styles.librarySelectRow} onPress={() => toggleSelected(key)}>
-            <Text style={styles.pillText}>{selectedRecord ? '已选' : '选择'}</Text>
-          </Pressable>
-        ) : null}
-      <MemoizedTopicCard
-        readerState={getTopicListItemState(readerData, record.topic)}
-        styles={styles}
-        theme={theme}
-        topic={record.topic}
-        onOpenTopic={onOpenTopic}
-        swipeAction={bulkMode ? undefined : deleteSwipeAction}
-      />
-        <View style={styles.libraryMetaBlock}>
-          <Text style={styles.meta}>保存于 {formatDateTime(record.savedAt) || record.savedAt}{record.visitCount ? ` · ${record.visitCount} 次阅读` : ''}</Text>
-          {record.tags?.length ? <Text style={styles.meta}>标签：{record.tags.join(', ')}</Text> : null}
-          {record.note ? <Text style={styles.meta}>备注：{record.note}</Text> : null}
-        </View>
-        {editing ? (
-          <View style={styles.stack}>
-            <TextInput
-              style={styles.input}
-              value={tagInput}
-              onChangeText={setTagInput}
-              placeholder="标签，用逗号分隔"
-              placeholderTextColor={theme.muted}
-            />
-            <TextInput
-              style={styles.input}
-              value={noteInput}
-              onChangeText={setNoteInput}
-              placeholder="备注"
-              placeholderTextColor={theme.muted}
-            />
-            <View style={styles.actions}>
-              <AppButton compact label="保存" styles={styles} onPress={() => saveEdit(record)} />
-              <AppButton compact label="取消" variant="ghost" styles={styles} onPress={() => setEditingKey('')} />
-            </View>
-          </View>
-        ) : (
-          <View style={styles.actions}>
-            <AppButton compact label={record.tags?.length || record.note ? '编辑标签和备注' : '添加标签和备注'} variant="ghost" styles={styles} onPress={() => beginEdit(record)} />
-            {!bulkMode ? <AppButton compact label="删除" variant="ghost" styles={styles} onPress={() => onRemove(record.topic)} /> : null}
-          </View>
-        )}
-      </View>
-    );
-  }, [beginEdit, bulkMode, deleteSwipeAction, editingKey, noteInput, onOpenTopic, onRemove, readerData, saveEdit, selected, styles, tagInput, theme, toggleSelected]);
-
-  const header = (
-    <View style={styles.stack}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>收藏</Text>
-        <Text style={styles.meta}>{filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`}</Text>
-      </View>
-      <PillRail
-        items={[
-          { value: 'favorites', label: '收藏' },
-          { value: 'history', label: '历史' }
-        ]}
-        value={libraryTab}
-        styles={styles}
-        onChange={(value) => onTabChange(value as LibraryTab)}
-      />
-      <PillRail
-        items={[
-          { value: 'all', label: '来源全部' },
-          ...sources.map((source) => ({ value: source, label: sourceLabel(source) }))
-        ]}
-        value={sourceFilter}
-        styles={styles}
-        onChange={(value) => setSourceFilter(value as FeedSource)}
-      />
-      {categories.length ? (
-        <PillRail
-          items={[{ value: 'all', label: '节点全部' }, ...categories.map((category) => ({ value: category, label: category }))]}
-          value={categoryFilter}
-          styles={styles}
-          onChange={setCategoryFilter}
-        />
-      ) : null}
-      {tags.length ? (
-        <PillRail
-          items={[{ value: 'all', label: '标签筛选' }, ...tags.map((tag) => ({ value: tag, label: tag }))]}
-          value={tagFilter}
-          styles={styles}
-          onChange={setTagFilter}
-        />
-      ) : null}
-      <View style={styles.actions}>
-        <AppButton compact label={bulkMode ? '退出批量' : '批量删除'} variant="ghost" styles={styles} onPress={toggleBulkMode} />
-        {bulkMode && selected.size ? <AppButton compact label={`删除选中 ${selected.size}`} styles={styles} onPress={removeSelected} /> : null}
-        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={onClearHistory} /> : null}
-      </View>
-      {libraryUndo ? (
-        <View style={styles.noticeBox}>
-          <Text style={styles.meta}>{libraryUndo.label}</Text>
-          <AppButton compact label="撤销删除" variant="ghost" styles={styles} onPress={onUndoDelete} />
-        </View>
-      ) : null}
-    </View>
-  );
-
-  return (
-    <FlatList
-      style={styles.content}
-      contentContainerStyle={styles.contentInner}
-      data={listItems}
-      keyExtractor={(item) => item.key}
-      {...TOPIC_LIST_PERFORMANCE_PROPS}
-      ListHeaderComponent={header}
-      ListEmptyComponent={<EmptyText text="这里还没有内容" styles={styles} />}
-      renderItem={renderLibraryItem}
-    />
-  );
-}
-
 function MoreScreen({
   categories,
   checking,
@@ -3923,7 +3195,10 @@ function MoreScreen({
   linuxDoWebViewKey,
   linuxDoWebViewUserAgent,
   nodeSeekWebViewUserAgent,
-  readerData,
+  favoriteCount,
+  historyCount,
+  settings,
+  subscriptions,
   backupJson,
   showCategoriesPanel,
   showLoginPanel,
@@ -3989,7 +3264,10 @@ function MoreScreen({
   linuxDoWebViewKey: number;
   linuxDoWebViewUserAgent: string;
   nodeSeekWebViewUserAgent: string;
-  readerData: ReaderData;
+  favoriteCount: number;
+  historyCount: number;
+  settings: ReaderSettings;
+  subscriptions: ReaderData['subscriptions'];
   backupJson: string;
   showCategoriesPanel: boolean;
   showLoginPanel: boolean;
@@ -4040,12 +3318,348 @@ function MoreScreen({
   onToggleSubscription: (category: Category) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const favoriteCount = Object.keys(readerData.favorites).length;
-  const historyCount = Object.keys(readerData.history).length;
-  const grouped = sources.map((source) => ({
-    source,
-    items: categories.filter((category) => category.source === source)
-  }));
+  return (
+    <View style={styles.stack}>
+      <Text style={styles.sectionTitle}>更多</Text>
+      <View style={styles.group}>
+        <InfoRow icon={Star} label="收藏" value={String(favoriteCount)} styles={styles} theme={theme} />
+        <InfoRow icon={List} label="历史" value={String(historyCount)} styles={styles} theme={theme} />
+        <InfoRow icon={Activity} label="关于" value="Android 本机阅读器" styles={styles} theme={theme} />
+      </View>
+      <MemoizedBackupRestorePanel
+        backupJson={backupJson}
+        syncing={syncing}
+        styles={styles}
+        theme={theme}
+        onBackupJsonChange={onBackupJsonChange}
+        onExportBackup={onExportBackup}
+        onImportBackup={onImportBackup}
+        onExportBackupFile={onExportBackupFile}
+        onImportBackupFile={onImportBackupFile}
+        onExportFavoritesMarkdownFile={onExportFavoritesMarkdownFile}
+      />
+      <View style={styles.group}>
+        <MemoizedNodeSeekLoginPanel
+          checking={checking}
+          hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
+          loginState={loginState}
+          loadingLoginPage={loadingLoginPage}
+          nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
+          showLoginPanel={showLoginPanel}
+          styles={styles}
+          theme={theme}
+          webViewRef={webViewRef}
+          onCheckIn={onCheckIn}
+          onCheckLogin={onCheckLogin}
+          onClearLogin={onClearLogin}
+          onHandleLoginMessage={onHandleLoginMessage}
+          handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
+          onRememberNodeSeekCookies={onRememberNodeSeekCookies}
+          onSetLoadingLoginPage={onSetLoadingLoginPage}
+          onShowLoginPanelChange={onShowLoginPanelChange}
+        />
+        <MemoizedYaohuoLoginPanel
+          checking={checking}
+          hasYaohuoCookie={hasYaohuoCookie}
+          loadingYaohuoLoginPage={loadingYaohuoLoginPage}
+          showYaohuoLoginPanel={showYaohuoLoginPanel}
+          styles={styles}
+          theme={theme}
+          yaohuoLoginState={yaohuoLoginState}
+          yaohuoWebViewRef={yaohuoWebViewRef}
+          onCheckYaohuoLogin={onCheckYaohuoLogin}
+          onClearYaohuoLogin={onClearYaohuoLogin}
+          handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
+          onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
+          onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
+        />
+        <MemoizedLinuxDoVerifyPanel
+          checking={checking}
+          hasLinuxDoClearance={hasLinuxDoClearance}
+          linuxDoCookieNames={linuxDoCookieNames}
+          linuxDoWebViewError={linuxDoWebViewError}
+          linuxDoWebViewKey={linuxDoWebViewKey}
+          linuxDoWebViewRef={linuxDoWebViewRef}
+          linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+          loadingLinuxDoPage={loadingLinuxDoPage}
+          showLinuxDoPanel={showLinuxDoPanel}
+          styles={styles}
+          theme={theme}
+          onCheckLinuxDoCookie={onCheckLinuxDoCookie}
+          onClearLinuxDoCookie={onClearLinuxDoCookie}
+          handleLinuxDoNavigation={handleLinuxDoNavigation}
+          onHandleLinuxDoMessage={onHandleLinuxDoMessage}
+          onResetLinuxDoWebView={onResetLinuxDoWebView}
+          onSetLinuxDoWebViewError={onSetLinuxDoWebViewError}
+          onSetLoadingLinuxDoPage={onSetLoadingLinuxDoPage}
+          onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}
+        />
+      </View>
+      <MemoizedCategorySubscriptionPanel
+        categories={categories}
+        showCategoriesPanel={showCategoriesPanel}
+        styles={styles}
+        subscriptions={subscriptions}
+        theme={theme}
+        onRefreshCategories={onRefreshCategories}
+        onSelectCategory={onSelectCategory}
+        onShowCategoriesPanelChange={onShowCategoriesPanelChange}
+        onToggleSubscription={onToggleSubscription}
+      />
+      <MemoizedAppearancePanel
+        settings={settings}
+        showSettingsPanel={showSettingsPanel}
+        styles={styles}
+        theme={theme}
+        onShowSettingsPanelChange={onShowSettingsPanelChange}
+        onUpdateSettings={onUpdateSettings}
+      />
+      <MemoizedStatusCheckPanel
+        healthDetails={healthDetails}
+        healthSummary={healthSummary}
+        statusBusy={statusBusy}
+        styles={styles}
+        theme={theme}
+        onCheckHealth={onCheckHealth}
+      />
+    </View>
+  );
+}
+
+function BackupRestorePanel({
+  backupJson,
+  syncing,
+  styles,
+  theme,
+  onBackupJsonChange,
+  onExportBackup,
+  onImportBackup,
+  onExportBackupFile,
+  onImportBackupFile,
+  onExportFavoritesMarkdownFile
+}: {
+  backupJson: string;
+  syncing: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onBackupJsonChange: (value: string) => void;
+  onExportBackup: () => void;
+  onImportBackup: () => void;
+  onExportBackupFile: () => void;
+  onImportBackupFile: () => void;
+  onExportFavoritesMarkdownFile: () => void;
+}) {
+  return (
+    <View style={styles.group}>
+      <Text style={styles.panelTitle}>备份 / 恢复</Text>
+      <TextInput
+        style={styles.input}
+        value={backupJson}
+        onChangeText={onBackupJsonChange}
+        placeholder="粘贴或生成阅读资料 JSON"
+        placeholderTextColor={theme.muted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        multiline
+      />
+      <View style={styles.actions}>
+        <AppButton label={syncing ? '处理中' : '生成备份'} styles={styles} disabled={syncing} onPress={onExportBackup} />
+        <AppButton label={syncing ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackup} />
+        <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onExportBackupFile} />
+        <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackupFile} />
+        <AppButton label="导出收藏 Markdown" variant="ghost" styles={styles} disabled={syncing} onPress={onExportFavoritesMarkdownFile} />
+      </View>
+    </View>
+  );
+}
+
+const MemoizedBackupRestorePanel = memo(BackupRestorePanel);
+
+function NodeSeekLoginPanel({
+  checking,
+  hasNodeSeekLoginCookie,
+  loginState,
+  loadingLoginPage,
+  nodeSeekWebViewUserAgent,
+  showLoginPanel,
+  styles,
+  theme,
+  webViewRef,
+  onCheckIn,
+  onCheckLogin,
+  onClearLogin,
+  onHandleLoginMessage,
+  handleNodeSeekLoginNavigation,
+  onRememberNodeSeekCookies,
+  onSetLoadingLoginPage,
+  onShowLoginPanelChange
+}: {
+  checking: boolean;
+  hasNodeSeekLoginCookie: boolean;
+  loginState: string;
+  loadingLoginPage: boolean;
+  nodeSeekWebViewUserAgent: string;
+  showLoginPanel: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  webViewRef: RefObject<WebView | null>;
+  onCheckIn: () => void;
+  onCheckLogin: () => void;
+  onClearLogin: () => void;
+  onHandleLoginMessage: (event: WebViewMessageEvent) => void;
+  handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
+  onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
+  onSetLoadingLoginPage: (value: boolean) => void;
+  onShowLoginPanelChange: (value: boolean) => void;
+}) {
+  return (
+    <>
+      <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
+      {hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
+      {showLoginPanel ? (
+        <View style={styles.loginPanel}>
+          <View style={styles.actions}>
+            <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
+            <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLogin} />
+            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => webViewRef.current?.reload()} />
+          </View>
+          <View style={styles.webViewShell}>
+            {loadingLoginPage ? (
+              <View style={styles.loading}>
+                <ActivityIndicator color={theme.primary} />
+                <Text style={styles.loadingText}>正在打开 NodeSeek...</Text>
+              </View>
+            ) : null}
+            <WebView
+              ref={webViewRef}
+              source={{ uri: NODESEEK_URL }}
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
+              userAgent={nodeSeekWebViewUserAgent}
+              injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
+              onLoadEnd={() => {
+                onSetLoadingLoginPage(false);
+                webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
+                void onRememberNodeSeekCookies({ silent: true });
+              }}
+              onLoadStart={() => onSetLoadingLoginPage(true)}
+              onMessage={onHandleLoginMessage}
+              onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
+            />
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);
+
+function YaohuoLoginPanel({
+  checking,
+  hasYaohuoCookie,
+  loadingYaohuoLoginPage,
+  showYaohuoLoginPanel,
+  styles,
+  theme,
+  yaohuoLoginState,
+  yaohuoWebViewRef,
+  onCheckYaohuoLogin,
+  onClearYaohuoLogin,
+  handleYaohuoLoginNavigation,
+  onSetLoadingYaohuoLoginPage,
+  onShowYaohuoLoginPanelChange
+}: {
+  checking: boolean;
+  hasYaohuoCookie: boolean;
+  loadingYaohuoLoginPage: boolean;
+  showYaohuoLoginPanel: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  yaohuoLoginState: string;
+  yaohuoWebViewRef: RefObject<WebView | null>;
+  onCheckYaohuoLogin: () => void;
+  onClearYaohuoLogin: () => void;
+  handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
+  onSetLoadingYaohuoLoginPage: (value: boolean) => void;
+  onShowYaohuoLoginPanelChange: (value: boolean) => void;
+}) {
+  return (
+    <>
+      <MenuButton icon={LogIn} label="妖火登录" value={hasYaohuoCookie ? yaohuoLoginState : '未登录'} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
+      {showYaohuoLoginPanel ? (
+        <View style={styles.loginPanel}>
+          <View style={styles.actions}>
+            <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
+            <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearYaohuoLogin} />
+            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => yaohuoWebViewRef.current?.reload()} />
+          </View>
+          <View style={styles.webViewShell}>
+            {loadingYaohuoLoginPage ? (
+              <View style={styles.loading}>
+                <ActivityIndicator color={theme.primary} />
+                <Text style={styles.loadingText}>正在打开妖火...</Text>
+              </View>
+            ) : null}
+            <WebView
+              ref={yaohuoWebViewRef}
+              source={{ uri: YAOHUO_LOGIN_URL }}
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
+              onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
+              onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
+              onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
+            />
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);
+
+function LinuxDoVerifyPanel({
+  checking,
+  hasLinuxDoClearance,
+  linuxDoCookieNames,
+  linuxDoWebViewError,
+  linuxDoWebViewKey,
+  linuxDoWebViewRef,
+  linuxDoWebViewUserAgent,
+  loadingLinuxDoPage,
+  showLinuxDoPanel,
+  styles,
+  theme,
+  onCheckLinuxDoCookie,
+  onClearLinuxDoCookie,
+  handleLinuxDoNavigation,
+  onHandleLinuxDoMessage,
+  onResetLinuxDoWebView,
+  onSetLinuxDoWebViewError,
+  onSetLoadingLinuxDoPage,
+  onShowLinuxDoPanelChange
+}: {
+  checking: boolean;
+  hasLinuxDoClearance: boolean;
+  linuxDoCookieNames: string[];
+  linuxDoWebViewError: string;
+  linuxDoWebViewKey: number;
+  linuxDoWebViewRef: RefObject<WebView | null>;
+  linuxDoWebViewUserAgent: string;
+  loadingLinuxDoPage: boolean;
+  showLinuxDoPanel: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onCheckLinuxDoCookie: () => void;
+  onClearLinuxDoCookie: () => void;
+  handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
+  onHandleLinuxDoMessage: (event: WebViewMessageEvent) => void;
+  onResetLinuxDoWebView: () => void;
+  onSetLinuxDoWebViewError: (value: string) => void;
+  onSetLoadingLinuxDoPage: (value: boolean) => void;
+  onShowLinuxDoPanelChange: (value: boolean) => void;
+}) {
   useEffect(() => {
     if (!showLinuxDoPanel || !loadingLinuxDoPage) {
       return undefined;
@@ -4056,211 +3670,190 @@ function MoreScreen({
     }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
     return () => clearTimeout(timeout);
   }, [loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
-
   return (
-    <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>更多</Text>
-      <View style={styles.group}>
-        <InfoRow icon={Star} label="收藏" value={String(favoriteCount)} styles={styles} theme={theme} />
-        <InfoRow icon={List} label="历史" value={String(historyCount)} styles={styles} theme={theme} />
-        <InfoRow icon={Activity} label="关于" value="Android 本机阅读器" styles={styles} theme={theme} />
-      </View>
-      <View style={styles.group}>
-        <Text style={styles.panelTitle}>备份 / 恢复</Text>
-        <TextInput
-          style={styles.input}
-          value={backupJson}
-          onChangeText={onBackupJsonChange}
-          placeholder="粘贴或生成阅读资料 JSON"
-          placeholderTextColor={theme.muted}
-          autoCapitalize="none"
-          autoCorrect={false}
-          multiline
-        />
-        <View style={styles.actions}>
-          <AppButton label={syncing ? '处理中' : '生成备份'} styles={styles} disabled={syncing} onPress={onExportBackup} />
-          <AppButton label={syncing ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackup} />
-          <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onExportBackupFile} />
-          <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackupFile} />
-          <AppButton label="导出收藏 Markdown" variant="ghost" styles={styles} disabled={syncing} onPress={onExportFavoritesMarkdownFile} />
-        </View>
-      </View>
-      <View style={styles.group}>
-        <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
-        {hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
-        {showLoginPanel ? (
-          <View style={styles.loginPanel}>
-            <View style={styles.actions}>
-              <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
-              <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLogin} />
-              <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => webViewRef.current?.reload()} />
-            </View>
-            <View style={styles.webViewShell}>
-              {loadingLoginPage ? (
-                <View style={styles.loading}>
-                  <ActivityIndicator color={theme.primary} />
-                  <Text style={styles.loadingText}>正在打开 NodeSeek...</Text>
-                </View>
-              ) : null}
-              <WebView
-                ref={webViewRef}
-                source={{ uri: NODESEEK_URL }}
-                sharedCookiesEnabled
-                thirdPartyCookiesEnabled
-                userAgent={nodeSeekWebViewUserAgent}
-                injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
-                onLoadEnd={() => {
-                  onSetLoadingLoginPage(false);
-                  webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
-                  void onRememberNodeSeekCookies({ silent: true });
-                }}
-                onLoadStart={() => onSetLoadingLoginPage(true)}
-                onMessage={onHandleLoginMessage}
-                onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
-              />
-            </View>
+    <>
+      <MenuButton icon={LogIn} label="linux.do 验证" value={hasLinuxDoClearance ? `已保存 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '未验证'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
+      {showLinuxDoPanel ? (
+        <View style={styles.loginPanel}>
+          <View style={styles.actions}>
+            <AppButton label={checking ? '检测中' : '检测验证'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
+            <AppButton label="清除验证" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
+            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
           </View>
-        ) : null}
-        <MenuButton icon={LogIn} label="妖火登录" value={hasYaohuoCookie ? yaohuoLoginState : '未登录'} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
-        {showYaohuoLoginPanel ? (
-          <View style={styles.loginPanel}>
-            <View style={styles.actions}>
-              <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
-              <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearYaohuoLogin} />
-              <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => yaohuoWebViewRef.current?.reload()} />
+          {linuxDoWebViewError ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{linuxDoWebViewError}</Text>
             </View>
-            <View style={styles.webViewShell}>
-              {loadingYaohuoLoginPage ? (
-                <View style={styles.loading}>
-                  <ActivityIndicator color={theme.primary} />
-                  <Text style={styles.loadingText}>正在打开妖火...</Text>
-                </View>
-              ) : null}
-              <WebView
-                ref={yaohuoWebViewRef}
-                source={{ uri: YAOHUO_LOGIN_URL }}
-                sharedCookiesEnabled
-                thirdPartyCookiesEnabled
-                onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
-                onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
-                onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
-              />
-            </View>
-          </View>
-        ) : null}
-        <MenuButton icon={LogIn} label="linux.do 验证" value={hasLinuxDoClearance ? `已保存 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '未验证'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
-        {showLinuxDoPanel ? (
-          <View style={styles.loginPanel}>
-            <View style={styles.actions}>
-              <AppButton label={checking ? '检测中' : '检测验证'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
-              <AppButton label="清除验证" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
-              <AppButton
-                label="刷新页面"
-                variant="ghost"
-                styles={styles}
-                onPress={onResetLinuxDoWebView}
-              />
-            </View>
-            {linuxDoWebViewError ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{linuxDoWebViewError}</Text>
+          ) : null}
+          <View style={styles.webViewShell}>
+            {loadingLinuxDoPage ? (
+              <View style={styles.loading}>
+                <ActivityIndicator color={theme.primary} />
+                <Text style={styles.loadingText}>正在打开 linux.do...</Text>
               </View>
             ) : null}
-            <View style={styles.webViewShell}>
-              {loadingLinuxDoPage ? (
-                <View style={styles.loading}>
-                  <ActivityIndicator color={theme.primary} />
-                  <Text style={styles.loadingText}>正在打开 linux.do...</Text>
-                </View>
-              ) : null}
-              <WebView
-                key={linuxDoWebViewKey}
-                ref={linuxDoWebViewRef}
-                source={{ uri: LINUXDO_VERIFY_URL }}
-                javaScriptEnabled
-                domStorageEnabled
-                cacheEnabled
-                sharedCookiesEnabled
-                thirdPartyCookiesEnabled
-                userAgent={linuxDoWebViewUserAgent}
-                injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
-                onLoadEnd={(event) => {
-                  onSetLoadingLinuxDoPage(false);
-                  if (!('code' in event.nativeEvent)) {
-                    onSetLinuxDoWebViewError('');
-                  }
-                  linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
-                }}
-                onLoadStart={() => {
+            <WebView
+              key={linuxDoWebViewKey}
+              ref={linuxDoWebViewRef}
+              source={{ uri: LINUXDO_VERIFY_URL }}
+              javaScriptEnabled
+              domStorageEnabled
+              cacheEnabled
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
+              userAgent={linuxDoWebViewUserAgent}
+              injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
+              onLoadEnd={(event) => {
+                onSetLoadingLinuxDoPage(false);
+                if (!('code' in event.nativeEvent)) {
                   onSetLinuxDoWebViewError('');
-                  onSetLoadingLinuxDoPage(true);
-                }}
-                onMessage={onHandleLinuxDoMessage}
-                onError={(event) => {
-                  onSetLoadingLinuxDoPage(false);
-                  onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
-                }}
-                renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-                onRenderProcessGone={() => {
-                  onSetLoadingLinuxDoPage(false);
-                  onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。');
-                }}
-                onShouldStartLoadWithRequest={handleLinuxDoNavigation}
-              />
+                }
+                linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+              }}
+              onLoadStart={() => {
+                onSetLinuxDoWebViewError('');
+                onSetLoadingLinuxDoPage(true);
+              }}
+              onMessage={onHandleLinuxDoMessage}
+              onError={(event) => {
+                onSetLoadingLinuxDoPage(false);
+                onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+              }}
+              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+              onRenderProcessGone={() => {
+                onSetLoadingLinuxDoPage(false);
+                onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。');
+              }}
+              onShouldStartLoadWithRequest={handleLinuxDoNavigation}
+            />
+          </View>
+        </View>
+      ) : null}
+    </>
+  );
+}
+
+const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);
+
+function CategorySubscriptionPanel({
+  categories,
+  showCategoriesPanel,
+  styles,
+  subscriptions,
+  theme,
+  onRefreshCategories,
+  onSelectCategory,
+  onShowCategoriesPanelChange,
+  onToggleSubscription
+}: {
+  categories: Category[];
+  showCategoriesPanel: boolean;
+  styles: ReturnType<typeof createStyles>;
+  subscriptions: ReaderData['subscriptions'];
+  theme: ReaderTheme;
+  onRefreshCategories: () => void;
+  onSelectCategory: (category: Category) => void;
+  onShowCategoriesPanelChange: (value: boolean) => void;
+  onToggleSubscription: (category: Category) => void;
+}) {
+  const grouped = useMemo(() => sources.map((source) => ({
+    source,
+    items: categories.filter((category) => category.source === source)
+  })), [categories]);
+  return (
+    <View style={styles.group}>
+      <MenuButton icon={LayoutGrid} label="分类节点" value="按来源浏览节点" styles={styles} theme={theme} onPress={() => onShowCategoriesPanelChange(!showCategoriesPanel)} />
+      {showCategoriesPanel ? (
+        <View style={styles.stack}>
+          <AppButton label="刷新分类" styles={styles} onPress={onRefreshCategories} />
+          {grouped.map((group) => (
+            <View key={group.source} style={styles.categoryGroup}>
+              <Text style={styles.panelTitle}>{sourceLabel(group.source)}</Text>
+              {group.items.length ? group.items.map((category) => (
+                <View key={categoryKey(category)} style={styles.categoryItem}>
+                  <Pressable accessibilityRole="button" style={styles.flex} onPress={() => onSelectCategory(category)}>
+                    <Text style={styles.categoryName}>{category.name}</Text>
+                    {category.description ? <Text style={styles.meta}>{category.description}</Text> : null}
+                    {category.topicCount ? <Text style={styles.meta}>最近 {category.topicCount} 个主题</Text> : null}
+                  </Pressable>
+                  <AppButton
+                    label={subscriptions[categoryKey(category)] ? '已订阅' : '订阅'}
+                    variant="ghost"
+                    styles={styles}
+                    onPress={() => onToggleSubscription(category)}
+                  />
+                </View>
+              )) : <EmptyText text="暂无分类" styles={styles} />}
             </View>
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.group}>
-        <MenuButton icon={LayoutGrid} label="分类节点" value="按来源浏览节点" styles={styles} theme={theme} onPress={() => onShowCategoriesPanelChange(!showCategoriesPanel)} />
-        {showCategoriesPanel ? (
-          <View style={styles.stack}>
-            <AppButton label="刷新分类" styles={styles} onPress={onRefreshCategories} />
-            {grouped.map((group) => (
-              <View key={group.source} style={styles.categoryGroup}>
-                <Text style={styles.panelTitle}>{sourceLabel(group.source)}</Text>
-                {group.items.length ? group.items.map((category) => (
-                  <View key={categoryKey(category)} style={styles.categoryItem}>
-                    <Pressable accessibilityRole="button" style={styles.flex} onPress={() => onSelectCategory(category)}>
-                      <Text style={styles.categoryName}>{category.name}</Text>
-                      {category.description ? <Text style={styles.meta}>{category.description}</Text> : null}
-                      {category.topicCount ? <Text style={styles.meta}>最近 {category.topicCount} 个主题</Text> : null}
-                    </Pressable>
-                    <AppButton
-                      label={isSubscribed(readerData, category) ? '已订阅' : '订阅'}
-                      variant="ghost"
-                      styles={styles}
-                      onPress={() => onToggleSubscription(category)}
-                    />
-                  </View>
-                )) : <EmptyText text="暂无分类" styles={styles} />}
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </View>
-      <View style={styles.group}>
-        <MenuButton icon={Settings} label="外观设置" value="字号 · 主题 · 配色 · 背景" styles={styles} theme={theme} onPress={() => onShowSettingsPanelChange(!showSettingsPanel)} />
-        {showSettingsPanel ? (
-          <SettingsPanel readerData={readerData} styles={styles} onUpdateSettings={onUpdateSettings} />
-        ) : null}
-      </View>
-      <View style={styles.group}>
-        <MenuButton icon={Activity} label="状态 / 检查" value={statusBusy ? '检查中' : healthSummary || '来源状态'} styles={styles} theme={theme} onPress={onCheckHealth} />
-        {healthDetails.length ? (
-          <View style={styles.stack}>
-            {healthDetails.map((item) => (
-              <View key={item.label} style={styles.statusDetailRow}>
-                <Text style={styles.menuLabel}>{item.label}</Text>
-                <Text style={[styles.meta, item.ok ? styles.statusOk : styles.statusBad]}>{item.ok ? '可用' : '不可用'} · {item.message}</Text>
-              </View>
-            ))}
-          </View>
-        ) : null}
-      </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
+
+const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);
+
+function AppearancePanel({
+  settings,
+  showSettingsPanel,
+  styles,
+  theme,
+  onShowSettingsPanelChange,
+  onUpdateSettings
+}: {
+  settings: ReaderSettings;
+  showSettingsPanel: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onShowSettingsPanelChange: (value: boolean) => void;
+  onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
+}) {
+  return (
+    <View style={styles.group}>
+      <MenuButton icon={Settings} label="外观设置" value="字号 · 主题 · 配色 · 背景" styles={styles} theme={theme} onPress={() => onShowSettingsPanelChange(!showSettingsPanel)} />
+      {showSettingsPanel ? (
+        <SettingsPanel settings={settings} styles={styles} onUpdateSettings={onUpdateSettings} />
+      ) : null}
+    </View>
+  );
+}
+
+const MemoizedAppearancePanel = memo(AppearancePanel);
+
+function StatusCheckPanel({
+  healthDetails,
+  healthSummary,
+  statusBusy,
+  styles,
+  theme,
+  onCheckHealth
+}: {
+  healthDetails: HealthDetail[];
+  healthSummary: string;
+  statusBusy: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onCheckHealth: () => void;
+}) {
+  return (
+    <View style={styles.group}>
+      <MenuButton icon={Activity} label="状态 / 检查" value={statusBusy ? '检查中' : healthSummary || '来源状态'} styles={styles} theme={theme} onPress={onCheckHealth} />
+      {healthDetails.length ? (
+        <View style={styles.stack}>
+          {healthDetails.map((item) => (
+            <View key={item.label} style={styles.statusDetailRow}>
+              <Text style={styles.menuLabel}>{item.label}</Text>
+              <Text style={[styles.meta, item.ok ? styles.statusOk : styles.statusBad]}>{item.ok ? '可用' : '不可用'} · {item.message}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const MemoizedStatusCheckPanel = memo(StatusCheckPanel);
 
 const MemoizedMoreScreen = memo(MoreScreen, (previous, next) => (
   previous.categories === next.categories
@@ -4278,10 +3871,10 @@ const MemoizedMoreScreen = memo(MoreScreen, (previous, next) => (
   && previous.linuxDoWebViewKey === next.linuxDoWebViewKey
   && previous.linuxDoWebViewUserAgent === next.linuxDoWebViewUserAgent
   && previous.nodeSeekWebViewUserAgent === next.nodeSeekWebViewUserAgent
-  && previous.readerData.favorites === next.readerData.favorites
-  && previous.readerData.history === next.readerData.history
-  && previous.readerData.settings === next.readerData.settings
-  && previous.readerData.subscriptions === next.readerData.subscriptions
+  && previous.favoriteCount === next.favoriteCount
+  && previous.historyCount === next.historyCount
+  && previous.settings === next.settings
+  && previous.subscriptions === next.subscriptions
   && previous.backupJson === next.backupJson
   && previous.showCategoriesPanel === next.showCategoriesPanel
   && previous.showLoginPanel === next.showLoginPanel
@@ -4334,15 +3927,14 @@ const MemoizedMoreScreen = memo(MoreScreen, (previous, next) => (
 ));
 
 function SettingsPanel({
-  readerData,
+  settings,
   styles,
   onUpdateSettings
 }: {
-  readerData: ReaderData;
+  settings: ReaderSettings;
   styles: ReturnType<typeof createStyles>;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const settings = readerData.settings;
   const [trackedKeyword, setTrackedKeyword] = useState('');
   const [blockedKeyword, setBlockedKeyword] = useState('');
   return (
@@ -5047,259 +4639,6 @@ function ReplyCard({
   );
 }
 
-function ImagePreviewModal({
-  preview,
-  styles,
-  onClose,
-  onNext,
-  onPrevious,
-  onSave,
-  onSelect
-}: {
-  preview: ImagePreviewList | null;
-  styles: ReturnType<typeof createStyles>;
-  onClose: () => void;
-  onNext: () => void;
-  onPrevious: () => void;
-  onSave: () => void;
-  onSelect: (index: number) => void;
-}) {
-  const { width, height } = useWindowDimensions();
-  const [zoomed, setZoomed] = useState(false);
-  const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
-  const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
-  const lastTapRef = useRef(0);
-  const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
-  useEffect(() => {
-    setZoomed(false);
-    setImagePreviewLoading(Boolean(preview));
-    setImagePreviewFailed(false);
-  }, [previewKey]);
-
-  if (!preview || preview.urls.length === 0) {
-    return null;
-  }
-  const uri = preview.urls[preview.index] || preview.urls[0];
-  const hasMany = preview.urls.length > 1;
-  const imageWidth = zoomed ? width * 1.8 : width;
-  const imageHeight = zoomed ? height * 1.8 : height;
-  return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.imagePreviewOverlay}>
-        <View style={styles.imagePreviewTopBar}>
-          <Text style={styles.imagePreviewCount}>{preview.index + 1} / {preview.urls.length}</Text>
-          <View style={styles.imagePreviewTopActions}>
-            <Pressable accessibilityRole="button" accessibilityLabel={zoomed ? '还原图片' : '放大图片'} style={styles.imagePreviewTextButton} onPress={() => setZoomed((current) => !current)}>
-              <Text style={styles.imagePreviewButtonText}>{zoomed ? '还原' : '放大'}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="保存图片" style={styles.imagePreviewTextButton} onPress={onSave}>
-              <Text style={styles.imagePreviewButtonText}>保存</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
-              <X size={22} color="#ffffff" strokeWidth={1.8} />
-            </Pressable>
-          </View>
-        </View>
-        <ScrollView
-          horizontal
-          style={styles.imagePreviewScroll}
-          contentContainerStyle={styles.imagePreviewScrollContent}
-          showsHorizontalScrollIndicator={false}
-        >
-          <ScrollView
-            style={[styles.imagePreviewVerticalScroll, { width: imageWidth }]}
-            contentContainerStyle={[styles.imagePreviewVerticalContent, { minHeight: imageHeight }]}
-            showsVerticalScrollIndicator={false}
-          >
-            <Pressable
-              onPress={() => {
-                const now = Date.now();
-                if (now - lastTapRef.current < 280) {
-                  setZoomed((current) => !current);
-                }
-                lastTapRef.current = now;
-              }}
-            >
-              <Image
-                source={{ uri }}
-                style={[styles.imagePreviewImage, { width: imageWidth, height: imageHeight }]}
-                resizeMode="contain"
-                onLoadStart={() => {
-                  setImagePreviewLoading(true);
-                  setImagePreviewFailed(false);
-                }}
-                onLoadEnd={() => setImagePreviewLoading(false)}
-                onError={() => {
-                  setImagePreviewLoading(false);
-                  setImagePreviewFailed(true);
-                }}
-              />
-            </Pressable>
-            {imagePreviewLoading ? (
-              <View style={styles.imagePreviewState}>
-                <ActivityIndicator color="#ffffff" />
-                <Text style={styles.imagePreviewStateText}>图片加载中...</Text>
-              </View>
-            ) : null}
-            {imagePreviewFailed ? (
-              <View style={styles.imagePreviewState}>
-                <Text style={styles.imagePreviewStateText}>图片加载失败</Text>
-              </View>
-            ) : null}
-          </ScrollView>
-        </ScrollView>
-        {hasMany ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
-            {preview.urls.map((url, index) => (
-              <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === preview.index && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
-                <Image source={{ uri: url }} style={styles.imagePreviewThumbnailImage} resizeMode="cover" />
-              </Pressable>
-            ))}
-          </ScrollView>
-        ) : null}
-        {hasMany ? (
-          <View style={styles.imagePreviewControls}>
-            <Pressable accessibilityRole="button" accessibilityLabel="上一张图片" style={styles.imagePreviewControl} onPress={onPrevious}>
-              <ChevronLeft size={25} color="#ffffff" strokeWidth={1.8} />
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="下一张图片" style={styles.imagePreviewControl} onPress={onNext}>
-              <ChevronRight size={25} color="#ffffff" strokeWidth={1.8} />
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-    </Modal>
-  );
-}
-
-function HighlightedText({
-  highlightStyle,
-  numberOfLines,
-  query,
-  style,
-  text
-}: {
-  highlightStyle: StyleProp<TextStyle>;
-  numberOfLines?: number;
-  query: string;
-  style: StyleProp<TextStyle>;
-  text: string;
-}) {
-  const parts = useMemo(() => highlightTextParts(text, query), [query, text]);
-  return (
-    <Text style={style} numberOfLines={numberOfLines}>
-      {parts.map((part, index) => (
-        <Text key={`${part.text}-${index}`} style={part.highlighted ? highlightStyle : undefined}>{part.text}</Text>
-      ))}
-    </Text>
-  );
-}
-
-function TopicCard({
-  highlightQuery = '',
-  topic,
-  readerState,
-  swipeAction,
-  styles,
-  theme,
-  onOpenTopic
-}: {
-  highlightQuery?: string;
-  topic: Topic;
-  readerState: TopicListItemState;
-  swipeAction?: TopicSwipeActionConfig;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onOpenTopic: (topic: Topic) => void;
-}) {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const isSwipeOpenRef = useRef(false);
-  const animateSwipe = useCallback((open: boolean) => {
-    isSwipeOpenRef.current = open;
-    Animated.spring(translateX, {
-      toValue: open ? -LIST_SWIPE_ACTION_WIDTH : 0,
-      useNativeDriver: true,
-      friction: 9,
-      tension: 90
-    }).start();
-  }, [translateX]);
-  const openTopicPress = useCallback(() => {
-    if (isSwipeOpenRef.current) {
-      animateSwipe(false);
-      return;
-    }
-    onOpenTopic(topic);
-  }, [animateSwipe, onOpenTopic, topic]);
-  const runSwipeAction = useCallback(() => {
-    swipeAction?.onPress(topic);
-    animateSwipe(false);
-  }, [animateSwipe, swipeAction, topic]);
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => Boolean(swipeAction) && shouldCaptureListSwipe(gesture.dx, gesture.dy),
-    onPanResponderMove: (_event, gesture) => {
-      const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
-      translateX.setValue(clampListSwipeTranslate(start + gesture.dx));
-    },
-    onPanResponderRelease: (_event, gesture) => {
-      const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
-      animateSwipe(Boolean(swipeAction) && shouldOpenListSwipeAction(start + gesture.dx, gesture.vx));
-    },
-    onPanResponderTerminate: () => animateSwipe(isSwipeOpenRef.current)
-  }), [animateSwipe, swipeAction, translateX]);
-  const ActionIcon = swipeAction?.kind === 'delete' ? X : Star;
-  const swipeActionLabel = swipeAction?.kind === 'delete'
-    ? '删除'
-    : readerState.favorite ? '取消收藏' : '收藏';
-  const metaParts = [
-    topic.author || '未知作者',
-    `${topic.replyCount} 回复`,
-    topic.viewCount ? `${topic.viewCount} 浏览` : '',
-    readerState.favorite ? '已收藏' : '',
-    readerState.read ? '已读' : '',
-    readerState.tracked ? '追踪命中' : '',
-    topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
-  ].filter(Boolean).join(' · ');
-  return (
-    <View style={styles.topicSwipeShell}>
-      {swipeAction ? (
-        <View style={[styles.topicSwipeAction, swipeAction.kind === 'delete' && styles.topicSwipeActionDanger]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={swipeActionLabel}
-            android_ripple={androidRipple(theme.primarySoft)}
-            style={styles.topicSwipeActionButton}
-            onPress={runSwipeAction}
-          >
-            <ActionIcon size={18} color={swipeAction.kind === 'delete' ? theme.danger : theme.primary} strokeWidth={2} />
-            <Text style={[styles.topicSwipeActionText, swipeAction.kind === 'delete' && styles.topicSwipeActionTextDanger]}>{swipeActionLabel}</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      <Animated.View
-        {...(swipeAction ? panResponder.panHandlers : {})}
-        style={[
-          styles.topicCard,
-          readerState.tracked && styles.topicCardTracked,
-          { transform: [{ translateX }] }
-        ]}
-      >
-        <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
-          <View style={styles.topicCardHead}>
-            <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
-            <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
-          </View>
-          <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
-          {topic.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{topic.accessRequirement.label}</Text> : null}
-          {topic.excerpt && readerState.listDensity === 'loose' ? <HighlightedText style={styles.excerpt} highlightStyle={styles.highlightText} numberOfLines={2} text={topic.excerpt} query={highlightQuery} /> : null}
-        </Pressable>
-        <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>
-          <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>
-        </View>
-      </Animated.View>
-    </View>
-  );
-}
-
 function NavBar({
   active,
   styles,
@@ -5336,247 +4675,6 @@ function NavBar({
           </Pressable>
         );
       })}
-    </View>
-  );
-}
-
-function PillRail({
-  items,
-  variant = 'pills',
-  value,
-  styles,
-  onChange
-}: {
-  items: Array<{ value: string; label: string }>;
-  variant?: 'pills' | 'tabs';
-  value: string;
-  styles: ReturnType<typeof createStyles>;
-  onChange: (value: string) => void;
-}) {
-  const isTabs = variant === 'tabs';
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
-      {items.map((item) => (
-        <Pressable
-          hitSlop={TOUCH_HIT_SLOP}
-          key={`${item.value}-${item.label}`}
-          accessibilityRole="button"
-          accessibilityState={{ selected: value === item.value }}
-          style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : [styles.pill, value === item.value && styles.pillActive]}
-          onPress={() => onChange(item.value)}
-        >
-          <Text style={isTabs ? [styles.tabText, value === item.value && styles.tabTextActive] : [styles.pillText, value === item.value && styles.pillTextActive]}>{item.label}</Text>
-        </Pressable>
-      ))}
-    </ScrollView>
-  );
-}
-
-function SettingRail({
-  title,
-  items,
-  value,
-  styles,
-  onChange
-}: {
-  title: string;
-  items: Array<{ value: string; label: string }>;
-  value: string;
-  styles: ReturnType<typeof createStyles>;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <View style={styles.settingGroup}>
-      <Text style={styles.panelTitle}>{title}</Text>
-      <PillRail items={items} value={value} styles={styles} onChange={onChange} />
-    </View>
-  );
-}
-
-function MenuButton({
-  icon,
-  label,
-  value,
-  styles,
-  theme,
-  onPress
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onPress: () => void;
-}) {
-  const Icon = icon;
-  return (
-    <Pressable accessibilityRole="button" style={styles.menuButton} onPress={onPress}>
-      <View style={styles.menuIcon}>
-        <Icon size={19} color={theme.primary} strokeWidth={1.8} />
-      </View>
-      <View style={styles.flex}>
-        <Text style={styles.menuLabel}>{label}</Text>
-        <Text style={styles.meta} numberOfLines={2}>{value}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
-function InfoRow({
-  icon,
-  label,
-  value,
-  styles,
-  theme
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-}) {
-  const Icon = icon;
-  return (
-    <View style={styles.menuButton}>
-      <View style={styles.menuIcon}>
-        <Icon size={19} color={theme.primary} strokeWidth={1.8} />
-      </View>
-      <Text style={[styles.menuLabel, styles.flex]}>{label}</Text>
-      <Text style={styles.meta} numberOfLines={1}>{value}</Text>
-    </View>
-  );
-}
-
-function FloatingIconButton({
-  disabled = false,
-  icon,
-  label,
-  loading = false,
-  styles,
-  theme,
-  onPress
-}: {
-  disabled?: boolean;
-  icon: LucideIcon;
-  label: string;
-  loading?: boolean;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onPress: () => void;
-}) {
-  const Icon = icon;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      android_ripple={androidRipple(theme.primarySoft, true)}
-      disabled={disabled}
-      style={[styles.floatingIconButton, disabled && styles.buttonDisabled]}
-      onPress={onPress}
-    >
-      {loading ? <ActivityIndicator color={theme.primary} size="small" /> : <Icon size={20} color={theme.primary} strokeWidth={1.9} />}
-    </Pressable>
-  );
-}
-
-function IconButton({
-  active = false,
-  compact = false,
-  disabled = false,
-  ghost = false,
-  iconOnly = false,
-  icon,
-  label,
-  styles,
-  tiny = false,
-  theme,
-  onPress
-}: {
-  active?: boolean;
-  compact?: boolean;
-  disabled?: boolean;
-  ghost?: boolean;
-  iconOnly?: boolean;
-  icon: LucideIcon;
-  label: string;
-  styles: ReturnType<typeof createStyles>;
-  tiny?: boolean;
-  theme: ReaderTheme;
-  onPress: () => void;
-}) {
-  const Icon = icon;
-  const iconSize = tiny ? 13 : iconOnly ? 14 : compact ? 14 : 17;
-  return (
-    <Pressable
-      hitSlop={TOUCH_HIT_SLOP}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled, selected: active }}
-      android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
-      style={[styles.button, ghost && styles.buttonGhost, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, tiny && styles.buttonTiny, active && !iconOnly && styles.buttonActive, disabled && styles.buttonDisabled]}
-      disabled={disabled}
-      onPress={onPress}
-    >
-      <Icon size={iconSize} color={active ? theme.primary : theme.ink} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
-      {iconOnly ? null : <Text style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
-    </Pressable>
-  );
-}
-
-function AppButton({
-  compact = false,
-  disabled = false,
-  label,
-  variant = 'default',
-  styles,
-  onPress
-}: {
-  compact?: boolean;
-  disabled?: boolean;
-  label: string;
-  variant?: 'default' | 'ghost';
-  styles: ReturnType<typeof createStyles>;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      hitSlop={TOUCH_HIT_SLOP}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled }}
-      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, disabled && styles.buttonDisabled]}
-      disabled={disabled}
-      onPress={onPress}
-    >
-      <Text style={[styles.buttonText, compact && styles.buttonTextCompact]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function EmptyText({ text, styles }: { text: string; styles: ReturnType<typeof createStyles> }) {
-  return <Text style={styles.empty}>{text}</Text>;
-}
-
-function LoadingState({ text, styles, theme }: { text: string; styles: ReturnType<typeof createStyles>; theme: ReaderTheme }) {
-  return (
-    <View style={styles.loadingState}>
-      <View style={styles.loadingStateHeader}>
-        <ActivityIndicator color={theme.primary} size="small" />
-        <Text style={styles.loadingStateText}>{text}</Text>
-      </View>
-      <View style={styles.loadingPlaceholderStack}>
-        {Array.from({ length: 3 }).map((_, index) => (
-          <View
-            key={index}
-            style={[
-              styles.loadingPlaceholderLine,
-              index === 0 && styles.loadingPlaceholderLineShort,
-              index === 2 && styles.loadingPlaceholderLineMuted
-            ]}
-          />
-        ))}
-      </View>
     </View>
   );
 }

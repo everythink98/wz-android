@@ -331,7 +331,12 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
 
 export function parseYaohuoSearchHtml(html: string, options: { page?: number; limit?: number; url?: string } = {}): SearchResponse {
   const result = parseYaohuoListHtml(html, { ...options, classId: '0' });
-  return { items: result.items, errors: result.errors };
+  return {
+    items: result.items,
+    errors: result.errors,
+    hasMore: result.hasMore,
+    nextPage: result.nextPage
+  };
 }
 
 export function checkYaohuoLoginHtml(html: string, url?: string) {

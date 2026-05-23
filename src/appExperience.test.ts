@@ -4,6 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 const appConfigSource = readFileSync(join(process.cwd(), 'android-app', 'app.json'), 'utf8');
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+const appControlsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'AppControls.tsx'), 'utf8');
+const topicCardSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'TopicCard.tsx'), 'utf8');
+const imagePreviewModalSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'ImagePreviewModal.tsx'), 'utf8');
+const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
+const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
+const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'LibraryScreen.tsx'), 'utf8');
+const androidUiSource = [appSource, appControlsSource, topicCardSource, imagePreviewModalSource, feedScreenSource, searchScreenSource, libraryScreenSource].join('\n');
 const gitIgnoreSource = readFileSync(join(process.cwd(), '.gitignore'), 'utf8');
 const localLinuxDoSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'localLinuxdo.ts'), 'utf8');
 const linuxDoBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'linuxdoCookieBridge.ts'), 'utf8');
@@ -38,28 +45,35 @@ describe('Android App experience guards', () => {
   });
 
   it('shows loading and failure states inside image preview', () => {
-    expect(appSource).toContain('imagePreviewLoading');
-    expect(appSource).toContain('imagePreviewFailed');
-    expect(appSource).toContain('onLoadStart={() =>');
-    expect(appSource).toContain('onError={() =>');
+    expect(imagePreviewModalSource).toContain('imagePreviewLoading');
+    expect(imagePreviewModalSource).toContain('imagePreviewFailed');
+    expect(imagePreviewModalSource).toContain('onLoadStart={() =>');
+    expect(imagePreviewModalSource).toContain('onError={() =>');
+  });
+
+  it('uses browser-like headers for Android reader images and image preview', () => {
+    expect(appSource).toContain('imageSourceFromUrl(src, imageProps.source)');
+    expect(appSource).toContain('imageRequestHeadersForUrl(uri)');
+    expect(imagePreviewModalSource).toContain('imageSourceFromUrl(uri)');
+    expect(imagePreviewModalSource).toContain('imageSourceFromUrl(url)');
   });
 
   it('keeps list item actions behind the swipe gesture instead of showing permanent icons', () => {
-    expect(appSource).toContain('topicSwipeActionButton');
-    expect(appSource).not.toContain('topicInlineAction');
-    expect(appSource).not.toContain('topicMetaPressable');
+    expect(topicCardSource).toContain('topicSwipeActionButton');
+    expect(androidUiSource).not.toContain('topicInlineAction');
+    expect(androidUiSource).not.toContain('topicMetaPressable');
   });
 
   it('uses more helpful empty messages for filtered feed lists', () => {
-    expect(appSource).toContain('feedEmptyText');
-    expect(appSource).toContain('当前筛选没有匹配主题');
+    expect(feedScreenSource).toContain('feedEmptyText');
+    expect(feedScreenSource).toContain('当前筛选没有匹配主题');
   });
 
   it('loads additional feed pages automatically near the end of the list', () => {
-    expect(appSource).toContain('onEndReachedThreshold={0.6}');
-    expect(appSource).toContain('onEndReached={requestFeedLoadMore}');
-    expect(appSource).toContain('shouldLoadMoreFeedFromScroll(event.nativeEvent)');
-    expect(appSource).toContain('requestedFeedPageRef.current === nextPage');
+    expect(feedScreenSource).toContain('onEndReachedThreshold={0.6}');
+    expect(feedScreenSource).toContain('onEndReached={requestFeedLoadMore}');
+    expect(feedScreenSource).toContain('shouldLoadMoreFeedFromScroll(event.nativeEvent)');
+    expect(feedScreenSource).toContain('requestedFeedPageRef.current === nextPage');
   });
 
   it('shows loading instead of stale rows when resetting the feed list', () => {
@@ -152,6 +166,10 @@ describe('Android App experience guards', () => {
 
     expect(addBlock).toContain('setRecentSearches((current) =>');
     expect(removeBlock).toContain('setRecentSearches((current) =>');
+    expect(addBlock).not.toContain('AsyncStorage.setItem');
+    expect(removeBlock).not.toContain('AsyncStorage.setItem');
+    expect(appSource).toContain('recentSearchesLoaded');
+    expect(appSource).toContain('AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(recentSearches))');
     expect(appSource).not.toContain('}, [recentSearches, writeRecentSearches]);');
   });
 
@@ -171,31 +189,46 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('PROGRESS_SAVE_MAX_PENDING_MS');
   });
 
+  it('saves pending topic progress before leaving the topic screen', () => {
+    const block = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
+    expect(block).toContain("if (screen === 'topic' && nextScreen !== 'topic') {");
+    expect(block).toContain('flushPendingProgress();');
+  });
+
+  it('guards delayed topic scroll restoration against stale topics', () => {
+    const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
+    expect(appSource).toContain('topicScrollRestoreTimerRef');
+    expect(openTopicBlock).toContain('clearTopicScrollRestoreTimer();');
+    expect(openTopicBlock).toContain('const restoreTopicKey = topicKey(detail);');
+    expect(openTopicBlock).toContain('currentTopicKeyRef.current !== restoreTopicKey');
+  });
+
   it('offers linux.do external search shortcuts on the Android search screen', () => {
-    expect(appSource).toContain('linuxDoExternalSearchItems(query)');
-    expect(appSource).toContain('linux.do 老帖');
-    expect(appSource).toContain('linuxDoExternalItems.map');
-    expect(appSource).toContain('onOpenExternalUrl(item.url)');
+    expect(searchScreenSource).toContain('linuxDoExternalSearchItems(query)');
+    expect(searchScreenSource).toContain('linux.do 老帖');
+    expect(searchScreenSource).toContain('linuxDoExternalItems.map');
+    expect(searchScreenSource).toContain('onOpenExternalUrl(item.url)');
   });
 
   it('offers category filters for Android search results like the mobile web page', () => {
-    expect(appSource).toContain('searchCategoryOptions');
-    expect(appSource).toContain('searchResultCategoryKey(item)');
-    expect(appSource).toContain('setSearchCategoryFilter');
-    expect(appSource).toContain('filteredSearchResults');
-    expect(appSource).toContain('data={showRemoteGroups ? [] : filteredSearchResults}');
+    expect(searchScreenSource).toContain('searchCategoryOptions');
+    expect(searchScreenSource).toContain('searchResultCategoryKey(item)');
+    expect(searchScreenSource).toContain('setSearchCategoryFilter');
+    expect(searchScreenSource).toContain('filteredSearchResults');
+    expect(searchScreenSource).toContain('data={showRemoteGroups ? [] : filteredSearchResults}');
   });
 
   it('adds the missing Android-only search management controls', () => {
-    expect(appSource).toContain('最近搜索');
-    expect(appSource).toContain('onRemoveSavedSearch');
-    expect(appSource).toContain('searchGroups');
+    expect(searchScreenSource).toContain('最近搜索');
+    expect(searchScreenSource).toContain('onRemoveSavedSearch');
+    expect(searchScreenSource).toContain('searchGroups');
     expect(appSource).toContain('retrySearchSource');
-    expect(appSource).toContain('highlightQuery={query}');
+    expect(searchScreenSource).toContain('highlightQuery={query}');
   });
 
   it('updates local search result highlighting when the query changes', () => {
-    const searchScreenSource = appSource.slice(appSource.indexOf('function SearchScreen('), appSource.indexOf('function LibraryScreen('));
     const block = searchScreenSource.match(/const renderTopicItem = useCallback<ListRenderItem<Topic>>\(\([\s\S]*?\n  \), \[([\s\S]*?)\]\);/)?.[1] || '';
 
     expect(block).toContain('query');
@@ -207,19 +240,19 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps saved searches keyword-only instead of binding them to a source tab', () => {
-    const selectSavedSearchBlock = appSource.match(/const selectSavedSearch = useCallback[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
+    const selectSavedSearchBlock = searchScreenSource.match(/const selectSavedSearch = useCallback[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(selectSavedSearchBlock).toContain('onQueryChange(saved.query);');
     expect(selectSavedSearchBlock).not.toContain('onSearchSourceChange(saved.source);');
-    expect(appSource).toContain('<Text style={styles.pillText}>{item.query}</Text>');
-    expect(appSource).not.toContain('{item.query} · {sourceLabel(item.source)}');
+    expect(searchScreenSource).toContain('<Text style={styles.pillText}>{item.query}</Text>');
+    expect(searchScreenSource).not.toContain('{item.query} · {sourceLabel(item.source)}');
   });
 
   it('shows remote search source groups before saved and recent search chips', () => {
-    const groupIndex = appSource.indexOf('{showRemoteGroups ? (');
-    const saveButtonIndex = appSource.indexOf('<AppButton label="保存搜索"');
-    const savedListIndex = appSource.indexOf('<Text style={styles.meta}>保存搜索</Text>');
-    const recentListIndex = appSource.indexOf('<Text style={styles.meta}>最近搜索</Text>');
+    const groupIndex = searchScreenSource.indexOf('{showRemoteGroups ? (');
+    const saveButtonIndex = searchScreenSource.indexOf('<AppButton label="保存搜索"');
+    const savedListIndex = searchScreenSource.indexOf('<Text style={styles.meta}>保存搜索</Text>');
+    const recentListIndex = searchScreenSource.indexOf('<Text style={styles.meta}>最近搜索</Text>');
 
     expect(groupIndex).toBeGreaterThan(-1);
     expect(saveButtonIndex).toBeGreaterThan(-1);
@@ -231,19 +264,28 @@ describe('Android App experience guards', () => {
   });
 
   it('does not add a second empty result message below remote search groups', () => {
-    const searchScreenSource = appSource.slice(appSource.indexOf('function SearchScreen('), appSource.indexOf('function LibraryScreen('));
     const listEmptyBlock = searchScreenSource.match(/ListEmptyComponent=\{[\s\S]*?\}\s*renderItem=\{renderTopicItem\}/)?.[0] || '';
 
     expect(listEmptyBlock).toContain('showRemoteGroups ? null : busy && query.trim()');
   });
 
+  it('adds a load-more action to remote search source groups', () => {
+    expect(searchScreenSource).toContain('hasMore?: boolean;');
+    expect(searchScreenSource).toContain('nextPage?: number | null;');
+    expect(searchScreenSource).toContain('loadingMore?: boolean;');
+    expect(searchScreenSource).toContain('onLoadMoreSearchSource: (source: Source, page: number) => void;');
+    expect(searchScreenSource).toContain("label={group.loadingMore ? '加载中...' : `加载更多 ${group.label}`}");
+    expect(appSource).toContain('const loadMoreSearchSource = useCallback');
+    expect(appSource).toContain('onLoadMoreSearchSource={loadMoreSearchSource}');
+  });
+
   it('adds Android library management controls for filters, annotations, bulk delete, and undo', () => {
     expect(appSource).toContain('libraryUndo');
-    expect(appSource).toContain('onClearHistory');
-    expect(appSource).toContain('onRemoveMany');
-    expect(appSource).toContain('onUpdateRecord');
-    expect(appSource).toContain('撤销删除');
-    expect(appSource).toContain('标签筛选');
+    expect(libraryScreenSource).toContain('onClearHistory');
+    expect(libraryScreenSource).toContain('onRemoveMany');
+    expect(libraryScreenSource).toContain('onUpdateRecord');
+    expect(libraryScreenSource).toContain('撤销删除');
+    expect(libraryScreenSource).toContain('标签筛选');
   });
 
   it('adds Android topic reading tools for copy, refresh, reader mode, floor index, and comment find', () => {
@@ -266,7 +308,7 @@ describe('Android App experience guards', () => {
 
   it('adds image save, thumbnail selection, and backup file actions', () => {
     expect(appSource).toContain('savePreviewImage');
-    expect(appSource).toContain('imagePreviewThumbnail');
+    expect(imagePreviewModalSource).toContain('imagePreviewThumbnail');
     expect(appSource).toContain('exportBackupFile');
     expect(appSource).toContain('importBackupFile');
     expect(appSource).toContain('exportFavoritesMarkdownFile');
@@ -303,7 +345,7 @@ describe('Android App experience guards', () => {
   });
 
   it('restores feed scroll position after both storage and list content are ready', () => {
-    const block = appSource.slice(appSource.indexOf('function FeedScreen('), appSource.indexOf('function SearchScreen('));
+    const block = feedScreenSource;
 
     expect(block).toContain('const [scrollRestoreReady, setScrollRestoreReady] = useState(false);');
     expect(block).toContain('setScrollRestoreReady(false);');
@@ -367,33 +409,33 @@ describe('Android App experience guards', () => {
 
   it('labels the saved-topics area as favorites in the bottom navigation and screen title', () => {
     expect(appSource).toContain("{ value: 'library', label: '收藏', icon: Star }");
-    expect(appSource).toContain('<Text style={styles.sectionTitle}>收藏</Text>');
+    expect(libraryScreenSource).toContain('<Text style={styles.sectionTitle}>收藏</Text>');
     expect(appSource).not.toContain("{ value: 'library', label: '书架', icon: BookMarked }");
-    expect(appSource).not.toContain('<Text style={styles.sectionTitle}>书架</Text>');
+    expect(androidUiSource).not.toContain('<Text style={styles.sectionTitle}>书架</Text>');
   });
 
   it('shows a filled favorite icon without an active button shell on Android topic details', () => {
-    expect(appSource).toContain("fill={active ? theme.primary : 'none'}");
-    expect(appSource).toContain('active && !iconOnly && styles.buttonActive');
+    expect(appControlsSource).toContain("fill={active ? theme.primary : 'none'}");
+    expect(appControlsSource).toContain('active && !iconOnly && styles.buttonActive');
   });
 
   it('uses content-like placeholders for shared loading states instead of only a spinner', () => {
-    expect(appSource).toContain('loadingPlaceholderStack');
-    expect(appSource).toContain('loadingPlaceholderLine');
-    expect(appSource).toContain('loadingPlaceholderLineShort');
-    expect(appSource).toContain('loadingPlaceholderLineMuted');
-    expect(appSource).toContain('Array.from({ length: 3 })');
+    expect(appControlsSource).toContain('loadingPlaceholderStack');
+    expect(appControlsSource).toContain('loadingPlaceholderLine');
+    expect(appControlsSource).toContain('loadingPlaceholderLineShort');
+    expect(appControlsSource).toContain('loadingPlaceholderLineMuted');
+    expect(appControlsSource).toContain('Array.from({ length: 3 })');
   });
 
   it('marks topics with extra access requirements in Android lists and details', () => {
-    expect(appSource).toContain('topic.accessRequirement?.label');
-    expect(appSource).toContain('styles.topicAccessBadge');
+    expect(topicCardSource).toContain('topic.accessRequirement?.label');
+    expect(androidUiSource).toContain('styles.topicAccessBadge');
     expect(appSource).toContain('item.accessRequirement?.label');
   });
 
   it('shows a bottom message when the feed cannot load more', () => {
-    expect(appSource).toContain('已经到底了');
-    expect(appSource).toContain('styles.endOfListText');
+    expect(feedScreenSource).toContain('已经到底了');
+    expect(feedScreenSource).toContain('styles.endOfListText');
   });
 
   it('sends linux.do Cloudflare detail errors to the verification panel', () => {
@@ -495,7 +537,8 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('<View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>');
     expect(appSource).toContain('containerStyle={styles.hiddenBrowserWebView}');
     expect(appSource).toContain('style={styles.hiddenBrowserWebView}');
-    expect(appSource).toContain('androidLayerType="software"');
+    expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
+    expect(appSource).not.toContain('androidLayerType="software"');
   });
 
   it('does not mistake regular NodeSeek posts mentioning Cloudflare for verification pages', () => {
@@ -552,7 +595,7 @@ describe('Android App experience guards', () => {
   });
 
   it('resets library filters when switching between favorites and history', () => {
-    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);\s*\n\s*setTagFilter\('all'\);\s*\n\s*}, \[libraryTab\]\);/)?.[0] || '';
+    const block = libraryScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);\s*\n\s*setTagFilter\('all'\);\s*\n\s*}, \[libraryTab\]\);/)?.[0] || '';
 
     expect(block).toContain("setSourceFilter('all');");
     expect(block).toContain("setCategoryFilter('all');");
@@ -560,7 +603,6 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale library bulk selections when leaving bulk mode or records change', () => {
-    const libraryScreenSource = appSource.slice(appSource.indexOf('function LibraryScreen('), appSource.indexOf('function MoreScreen('));
     const toggleBlock = libraryScreenSource.match(/const toggleBulkMode = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[bulkMode\]\);/)?.[1] || '';
 
     expect(libraryScreenSource).toContain('const recordKeys = useMemo(() => records.map(libraryRecordKey).join(\'|\'), [records]);');
@@ -601,8 +643,11 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale linux.do verification errors after a successful page load', () => {
-    expect(appSource).toContain('onLoadEnd={(event) => {\n                  onSetLoadingLinuxDoPage(false);');
-    expect(appSource).toContain("if (!('code' in event.nativeEvent)) {\n                    onSetLinuxDoWebViewError('');");
+    const block = appSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
+
+    expect(block).toContain('onSetLoadingLinuxDoPage(false);');
+    expect(block).toContain("if (!('code' in event.nativeEvent)) {");
+    expect(block).toContain("onSetLinuxDoWebViewError('');");
   });
 
   it('keeps linux.do verification WebView failures contained', () => {

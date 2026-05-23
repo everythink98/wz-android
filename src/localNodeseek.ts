@@ -367,14 +367,14 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
 }
 
 function searchPath(query: string, page = 1) {
-  const params = new URLSearchParams({ keyword: query });
+  const params = new URLSearchParams({ q: query });
   if (page > 1) {
     params.set('page', String(page));
   }
   return `/search?${params.toString()}`;
 }
 
-function nextSearchPath(html: string, query: string, fallbackPage: number) {
+function nextSearchPath(html: string, fallbackPage: number) {
   const root = parseHtml(html);
   const links = [
     ...root.querySelectorAll('a[rel="next"]'),
@@ -396,17 +396,17 @@ function nextSearchPath(html: string, query: string, fallbackPage: number) {
     ))?.href;
 
   if (!href) {
-    return searchPath(query, fallbackPage);
+    return null;
   }
 
   try {
     const url = new URL(href, BASE_URL);
     if (!isNodeSeekHost(url.hostname) || url.pathname !== '/search') {
-      return searchPath(query, fallbackPage);
+      return null;
     }
     return `${url.pathname}${url.search}`;
   } catch {
-    return searchPath(query, fallbackPage);
+    return null;
   }
 }
 
@@ -690,36 +690,21 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
   };
 }
 
-export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number } = {}): Promise<SearchResponse> {
+export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
   const trimmedQuery = query.trim();
   const limit = options.limit || 30;
+  const page = options.page || 1;
   if (!trimmedQuery) {
-    return { items: [], errors: {} };
+    return { items: [], errors: {}, hasMore: false, nextPage: null };
   }
 
   let items: Topic[] = [];
   let searchFailed = false;
+  let nextPage: number | null = null;
   try {
-    let html = await fetchNodeSeekText(searchPath(trimmedQuery), options);
+    const html = await fetchNodeSeekText(searchPath(trimmedQuery, page), options);
     items = filterNodeSeekSearchTopics(html, trimmedQuery);
-    let page = 2;
-
-    while (items.length < limit && page <= MAX_NODESEEK_SEARCH_PAGES) {
-      const previousCount = items.length;
-      try {
-        html = await fetchNodeSeekText(nextSearchPath(html, trimmedQuery, page), options);
-      } catch (error) {
-        if (isNodeSeekCloudflareError(error)) {
-          throw error;
-        }
-        break;
-      }
-      items = mergeSearchTopics(items, filterNodeSeekSearchTopics(html, trimmedQuery));
-      if (items.length === previousCount) {
-        break;
-      }
-      page += 1;
-    }
+    nextPage = page < MAX_NODESEEK_SEARCH_PAGES && nextSearchPath(html, page + 1) ? page + 1 : null;
   } catch (error) {
     if (isNodeSeekCloudflareError(error)) {
       throw error;
@@ -727,7 +712,7 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
     searchFailed = true;
   }
 
-  if (searchFailed || items.length === 0) {
+  if (searchFailed) {
     const fallback = await getNodeSeekFeed({ ...options, limit: 100 });
     const expression = parseSearchExpression(trimmedQuery);
     items = mergeSearchTopics(items, fallback.items.filter((topic) => (
@@ -737,6 +722,8 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
 
   return {
     items: sortTopicsByTime(items).slice(0, limit),
-    errors: {}
+    errors: {},
+    hasMore: Boolean(nextPage),
+    nextPage
   };
 }

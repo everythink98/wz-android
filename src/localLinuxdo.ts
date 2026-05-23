@@ -398,10 +398,26 @@ function topicMatchesSearch(topic: Topic, query: string) {
   return matchesSearchExpression(searchExpressionText(topic), parseSearchExpression(query));
 }
 
-export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number } = {}): Promise<SearchResponse> {
+async function searchLatestLinuxDoTopics(query: string, options: LinuxDoOptions & { limit?: number; page?: number }): Promise<SearchResponse> {
+  const page = options.page || 1;
   const limit = options.limit || 30;
+  const latest = await getLinuxDoFeed({ ...options, limit: 100, page });
+  return {
+    items: latest.items.filter((topic) => topicMatchesSearch(topic, query)).slice(0, limit),
+    errors: {},
+    hasMore: Boolean(latest.hasMore),
+    nextPage: latest.hasMore ? latest.nextPage ?? page + 1 : null
+  };
+}
+
+export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
+  const limit = options.limit || 30;
+  const page = options.page || 1;
   try {
-    const data = await fetchLinuxDoJson<Record<string, unknown>>('/search.json', { q: query }, options);
+    const data = await fetchLinuxDoJson<Record<string, unknown>>('/search.json', {
+      q: query,
+      ...(page > 1 ? { page } : {})
+    }, options);
     const users = usersById(data.users);
     const postsByTopicId = new Map<string, Record<string, unknown>>();
     if (Array.isArray(data.posts)) {
@@ -409,22 +425,26 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
     }
     const categoryMap = categoryMapFromData(data);
     const topics = Array.isArray(data.topics) ? data.topics : [];
+    const items = topics.slice(0, limit).map((topic) => {
+      const normalized = normalizeTopic(topic, categoryMap, isRecord(topic) ? originalPosterUsername(topic, users) : '');
+      const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
+      return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
+    }).filter(Boolean) as Topic[];
+    const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
+    const hasMore = Boolean(grouped.more_full_page_results) || topics.length > limit;
+    if (!items.length && query.trim()) {
+      return searchLatestLinuxDoTopics(query, { ...options, limit, page });
+    }
     return {
-      items: topics.slice(0, limit).map((topic) => {
-        const normalized = normalizeTopic(topic, categoryMap, isRecord(topic) ? originalPosterUsername(topic, users) : '');
-        const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
-        return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
-      }).filter(Boolean) as Topic[],
-      errors: {}
+      items,
+      errors: {},
+      hasMore,
+      nextPage: hasMore ? page + 1 : null
     };
   } catch (error) {
     if (error instanceof LinuxDoCloudflareError) {
       throw error;
     }
-    const latest = await getLinuxDoFeed({ ...options, limit: 100, page: 1 });
-    return {
-      items: latest.items.filter((topic) => topicMatchesSearch(topic, query)).slice(0, limit),
-      errors: {}
-    };
+    return searchLatestLinuxDoTopics(query, { ...options, limit, page });
   }
 }

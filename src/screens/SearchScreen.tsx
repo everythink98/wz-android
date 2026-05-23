@@ -1,0 +1,316 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
+import { Search, X } from 'lucide-react-native';
+import type { FeedSource, Source, Topic } from '../types';
+import { topicKey, type ReaderData } from '../readerData';
+import { sortTopics, type SearchSort } from '../feedLogic';
+import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
+import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
+import { createStyles, type ReaderTheme } from '../theme';
+import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
+import { MemoizedTopicCard, type TopicSwipeActionConfig } from '../components/TopicCard';
+import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+
+export type SearchScope = 'remote' | 'local';
+
+export type SearchGroup = {
+  source: Source;
+  label: string;
+  items: Topic[];
+  error?: string;
+  loading?: boolean;
+  loadingMore?: boolean;
+  hasMore?: boolean;
+  nextPage?: number | null;
+};
+
+function searchResultCategoryKey(item: Topic) {
+  const category = item.categoryId || item.category?.replace(/^#/, '');
+  return category ? `${item.source}:${category}` : '';
+}
+
+export function SearchScreen({
+  busy,
+  query,
+  recentSearches,
+  readerData,
+  topicListStateInput,
+  results,
+  searchGroups,
+  scope,
+  searchSource,
+  sort,
+  styles,
+  theme,
+  onOpenExternalUrl,
+  onOpenTopic,
+  onLoadMoreSearchSource,
+  onRemoveRecentSearch,
+  onRemoveSavedSearch,
+  onQueryChange,
+  onSaveSearch,
+  onRetrySearchSource,
+  onScopeChange,
+  onSearch,
+  onSearchSourceChange,
+  onSortChange,
+  onToggleFavorite
+}: {
+  busy: boolean;
+  query: string;
+  recentSearches: string[];
+  readerData: ReaderData;
+  topicListStateInput: NormalizedTopicListStateInput;
+  results: Topic[];
+  searchGroups: SearchGroup[];
+  scope: SearchScope;
+  searchSource: FeedSource;
+  sort: SearchSort;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onOpenExternalUrl: (url: string) => void;
+  onOpenTopic: (topic: Topic) => void;
+  onLoadMoreSearchSource: (source: Source, page: number) => void;
+  onRemoveRecentSearch: (query: string) => void;
+  onRemoveSavedSearch: (id: string) => void;
+  onQueryChange: (value: string) => void;
+  onSaveSearch: () => void;
+  onRetrySearchSource: (source: Source) => void;
+  onScopeChange: (scope: SearchScope) => void;
+  onSearch: () => void;
+  onSearchSourceChange: (source: FeedSource) => void;
+  onSortChange: (sort: SearchSort) => void;
+  onToggleFavorite: (topic: Topic) => void;
+}) {
+  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
+    kind: 'favorite',
+    onPress: onToggleFavorite
+  }), [onToggleFavorite]);
+  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
+    <MemoizedTopicCard
+      highlightQuery={query}
+      readerState={getTopicListItemState(readerData, item, topicListStateInput)}
+      styles={styles}
+      theme={theme}
+      topic={item}
+      onOpenTopic={onOpenTopic}
+      swipeAction={favoriteSwipeAction}
+    />
+  ), [favoriteSwipeAction, onOpenTopic, query, readerData, styles, theme, topicListStateInput]);
+  const selectSavedSearch = useCallback((id: string) => {
+    const saved = readerData.savedSearches.find((item) => item.id === id);
+    if (saved) {
+      onQueryChange(saved.query);
+      return;
+    }
+    onQueryChange(id);
+  }, [onQueryChange, readerData.savedSearches]);
+  const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
+  useEffect(() => {
+    setSearchCategoryFilter('all');
+  }, [query, scope, searchSource]);
+  const searchCategoryOptions = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const item of results) {
+      const key = searchResultCategoryKey(item);
+      if (!key || !item.category) {
+        continue;
+      }
+      const current = counts.get(key);
+      counts.set(key, {
+        label: `${sourceLabel(item.source)} · ${item.category}`,
+        count: (current?.count || 0) + 1
+      });
+    }
+    return [...counts.entries()].map(([value, item]) => ({
+      value,
+      label: `${item.label} ${item.count}`
+    }));
+  }, [results]);
+  useEffect(() => {
+    if (searchCategoryFilter !== 'all' && !searchCategoryOptions.some((item) => item.value === searchCategoryFilter)) {
+      setSearchCategoryFilter('all');
+    }
+  }, [searchCategoryFilter, searchCategoryOptions]);
+  const filteredSearchResults = useMemo(() => (
+    searchCategoryFilter === 'all'
+      ? results
+      : results.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
+  ), [results, searchCategoryFilter]);
+  const visibleSearchGroups = useMemo(() => searchGroups.map((group) => ({
+    ...group,
+    items: sortTopics(
+      searchCategoryFilter === 'all'
+        ? group.items
+        : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter),
+      sort
+    )
+  })), [searchCategoryFilter, searchGroups, sort]);
+  const linuxDoExternalItems = useMemo(() => (
+    scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
+      ? linuxDoExternalSearchItems(query)
+      : []
+  ), [query, scope, searchSource]);
+  const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
+
+  const header = (
+    <View style={styles.stack}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>搜索</Text>
+        {busy ? <ActivityIndicator color={theme.primary} /> : null}
+      </View>
+      <View style={styles.searchRow}>
+        <TextInput
+          style={[styles.input, styles.flex]}
+          value={query}
+          onChangeText={onQueryChange}
+          placeholder="输入关键词"
+          placeholderTextColor={theme.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={onSearch}
+        />
+        {query ? <IconButton icon={X} label="清空" styles={styles} theme={theme} onPress={() => onQueryChange('')} /> : null}
+        <IconButton icon={Search} label="搜索" styles={styles} theme={theme} disabled={busy} onPress={onSearch} />
+      </View>
+      <PillRail
+        items={[
+          { value: 'remote', label: '全网' },
+          { value: 'local', label: '本地' }
+        ]}
+        value={scope}
+        styles={styles}
+        onChange={(value) => onScopeChange(value as SearchScope)}
+      />
+      <PillRail
+        items={[
+          { value: 'all', label: '全部' },
+          { value: 'v2ex', label: 'V2EX' },
+          { value: 'linuxdo', label: 'linux.do' },
+          { value: 'nodeseek', label: 'NodeSeek' },
+          { value: 'yaohuo', label: '妖火' }
+        ]}
+        value={searchSource}
+        styles={styles}
+        onChange={(value) => onSearchSourceChange(value as FeedSource)}
+      />
+      <PillRail
+        items={[
+          { value: 'relevance', label: '相关' },
+          { value: 'time', label: '按时间' },
+          { value: 'reply', label: '按回复' },
+          { value: 'view', label: '按浏览' }
+        ]}
+        value={sort}
+        styles={styles}
+        onChange={(value) => onSortChange(value as SearchSort)}
+      />
+      {searchCategoryOptions.length ? (
+        <PillRail
+          items={[{ value: 'all', label: '分类全部' }, ...searchCategoryOptions]}
+          value={searchCategoryFilter}
+          styles={styles}
+          onChange={setSearchCategoryFilter}
+        />
+      ) : null}
+      {linuxDoExternalItems.length ? (
+        <View style={styles.stack}>
+          <Text style={styles.meta}>linux.do 老帖</Text>
+          <View style={styles.actions}>
+            {linuxDoExternalItems.map((item) => (
+              <AppButton key={item.url} compact label={item.label} styles={styles} onPress={() => onOpenExternalUrl(item.url)} />
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {showRemoteGroups ? (
+        <View style={styles.stack}>
+          {visibleSearchGroups.length ? visibleSearchGroups.map((group) => (
+            <View key={group.source} style={styles.group}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.panelTitle}>{group.label}</Text>
+                <Text style={styles.meta}>{group.loading ? '搜索中' : `${group.items.length} 条`}</Text>
+              </View>
+              {group.error ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{group.error}</Text>
+                  <AppButton label={`重试 ${group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(group.source)} />
+                </View>
+              ) : null}
+              {group.loading ? <LoadingState text={`${group.label} 搜索中...`} styles={styles} theme={theme} /> : null}
+              {group.items.map((item) => (
+                <MemoizedTopicCard
+                  key={topicKey(item)}
+                  highlightQuery={query}
+                  readerState={getTopicListItemState(readerData, item, topicListStateInput)}
+                  styles={styles}
+                  theme={theme}
+                  topic={item}
+                  onOpenTopic={onOpenTopic}
+                  swipeAction={favoriteSwipeAction}
+                />
+              ))}
+              {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
+              {!group.loading && !group.error && group.hasMore && group.nextPage ? (
+                <AppButton
+                  label={group.loadingMore ? '加载中...' : `加载更多 ${group.label}`}
+                  variant="ghost"
+                  styles={styles}
+                  disabled={busy || group.loadingMore}
+                  onPress={() => onLoadMoreSearchSource(group.source, group.nextPage || 1)}
+                />
+              ) : null}
+            </View>
+          )) : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
+        </View>
+      ) : null}
+      <AppButton label="保存搜索" variant="ghost" styles={styles} onPress={onSaveSearch} />
+      {readerData.savedSearches.length ? (
+        <View style={styles.stack}>
+          <Text style={styles.meta}>保存搜索</Text>
+          <View style={styles.chipWrap}>
+            {readerData.savedSearches.map((item) => (
+              <View key={item.id} style={styles.inlineChipGroup}>
+                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => selectSavedSearch(item.id)}>
+                  <Text style={styles.pillText}>{item.query}</Text>
+                </Pressable>
+                <IconButton tiny ghost icon={X} label="删除保存搜索" styles={styles} theme={theme} onPress={() => onRemoveSavedSearch(item.id)} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {recentSearches.length ? (
+        <View style={styles.stack}>
+          <Text style={styles.meta}>最近搜索</Text>
+          <View style={styles.chipWrap}>
+            {recentSearches.map((item) => (
+              <View key={item} style={styles.inlineChipGroup}>
+                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => onQueryChange(item)}>
+                  <Text style={styles.pillText}>{item}</Text>
+                </Pressable>
+                <IconButton tiny ghost icon={X} label="删除最近搜索" styles={styles} theme={theme} onPress={() => onRemoveRecentSearch(item)} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <FlatList
+      style={styles.content}
+      contentContainerStyle={styles.contentInner}
+      data={showRemoteGroups ? [] : filteredSearchResults}
+      keyExtractor={topicKey}
+      keyboardShouldPersistTaps="handled"
+      {...TOPIC_LIST_PERFORMANCE_PROPS}
+      ListHeaderComponent={header}
+      ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()
+        ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
+        : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
+      renderItem={renderTopicItem}
+    />
+  );
+}

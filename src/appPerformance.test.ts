@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+const topicContentSplitSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'topicContentSplit.ts'), 'utf8');
 
 describe('Android App performance guards', () => {
   it('cancels stale feed, search, topic, and backup/status requests before starting newer ones', () => {
@@ -80,7 +81,18 @@ describe('Android App performance guards', () => {
 
   it('memoizes the Android More screen against reader data changes it does not display', () => {
     expect(appSource).toContain('const MemoizedMoreScreen = memo(MoreScreen,');
-    expect(appSource).toContain('previous.readerData.settings === next.readerData.settings');
+    expect(appSource).toContain('const MemoizedBackupRestorePanel = memo(BackupRestorePanel);');
+    expect(appSource).toContain('const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
+    expect(appSource).toContain('const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
+    expect(appSource).toContain('const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);');
+    expect(appSource).toContain('const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);');
+    expect(appSource).toContain('const MemoizedAppearancePanel = memo(AppearancePanel);');
+    expect(appSource).toContain('const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
+    expect(appSource).toContain('previous.settings === next.settings');
+    expect(appSource).toContain('previous.subscriptions === next.subscriptions');
+    expect(appSource).toContain('previous.favoriteCount === next.favoriteCount');
+    expect(appSource).toContain('previous.historyCount === next.historyCount');
+    expect(appSource).not.toContain('previous.readerData');
     expect(appSource).not.toContain('previous.readerData.progress');
     expect(appSource).not.toContain('<MoreScreen');
     expect(appSource).toContain('<MemoizedMoreScreen');
@@ -120,7 +132,8 @@ describe('Android App performance guards', () => {
 
   it('renders long topic bodies as batched list items with replies', () => {
     expect(appSource).toContain('type TopicListItem');
-    expect(appSource).toContain('function splitTopicContentHtml');
+    expect(appSource).toContain('splitTopicContentHtml(topicContentHtml)');
+    expect(topicContentSplitSource).toContain('export function splitTopicContentHtml');
     expect(appSource).toContain("type: 'content'");
     expect(appSource).toContain('data={topicListItems}');
   });

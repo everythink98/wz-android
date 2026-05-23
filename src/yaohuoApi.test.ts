@@ -6,7 +6,7 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
-import { parseYaohuoListHtml, parseYaohuoRepliesHtml } from './localYaohuo';
+import { parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml } from './localYaohuo';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
@@ -44,6 +44,20 @@ describe('Android direct yaohuo API', () => {
       'https://yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=1&siteid=1000',
       expect.any(Object)
     );
+  });
+
+  it('keeps yaohuo search pagination metadata', () => {
+    const result = parseYaohuoSearchHtml(`
+      <div class="listdata"><a href="/bbs-123.html">搜索结果</a>/alice/阅1/05-20 10:00</div>
+      <a href="/bbs/book_list.aspx?action=search&page=2">下一页</a>
+    `, {
+      page: 1,
+      limit: 1
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['123']);
+    expect(result.hasMore).toBe(true);
+    expect(result.nextPage).toBe(2);
   });
 
   it('does not keep paginating yaohuo HTML when no topics were parsed', () => {
