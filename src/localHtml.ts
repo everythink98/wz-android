@@ -1,4 +1,5 @@
 import { parse, type HTMLElement } from 'node-html-parser';
+import type { AccessRequirement } from './types';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -105,25 +106,94 @@ export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: st
 }
 
 export function accessRequirementFromText(value: unknown) {
-  const text = String(value || '');
-  if (/登录|login|sign in/i.test(text)) {
+  const text = textContentFromHtml(value);
+  if (/请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)/i.test(text)) {
     return { type: 'login' as const, label: '需登录', detail: textContentFromHtml(text).slice(0, 80) };
   }
-  if (/等级|level|trust level/i.test(text)) {
+  if (/需要[^。；\n]{0,20}(?:等级|trust level)|(?:等级|trust level)[^。；\n]{0,20}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,30}trust level|minimum trust level|must be (?:at least )?trust level/i.test(text)) {
     return { type: 'level' as const, label: '需等级', detail: textContentFromHtml(text).slice(0, 80) };
   }
-  if (/权限|permission|private|forbidden/i.test(text)) {
+  if (/权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|permission denied|forbidden|private topic|not authorized|you do not have permission|you don't have permission/i.test(text)) {
     return { type: 'permission' as const, label: '需权限', detail: textContentFromHtml(text).slice(0, 80) };
   }
   return undefined;
+}
+
+function accessRequirementFromToken(value: unknown): AccessRequirement | undefined {
+  const token = String(value || '').trim().toLowerCase();
+  if (token === 'login' || token === 'required_login' || token === 'login_required') {
+    return { type: 'login', label: '需登录' };
+  }
+  if (token === 'level' || token === 'trust_level' || token === 'required_level') {
+    return { type: 'level', label: '需等级' };
+  }
+  if (token === 'permission' || token === 'private' || token === 'restricted' || token === 'forbidden') {
+    return { type: 'permission', label: '需权限' };
+  }
+  return undefined;
+}
+
+function normalizeAccessRequirement(value: unknown): AccessRequirement | undefined {
+  if (typeof value === 'string') {
+    return accessRequirementFromToken(value) || accessRequirementFromText(value);
+  }
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const type = value.type;
+  const label = value.label;
+  return (type === 'login' || type === 'level' || type === 'permission') && typeof label === 'string'
+    ? { type, label, detail: typeof value.detail === 'string' ? value.detail : undefined }
+    : undefined;
 }
 
 export function accessRequirementFromObject(value: unknown) {
   if (!isRecord(value)) {
     return undefined;
   }
-  const text = JSON.stringify(value);
-  return accessRequirementFromText(text);
+  const direct = normalizeAccessRequirement(value.accessRequirement)
+    || normalizeAccessRequirement(value.access_requirement);
+  if (direct) {
+    return direct;
+  }
+  for (const key of ['loginRequired', 'login_required', 'requiresLogin', 'requires_login']) {
+    if (value[key] === true) {
+      return { type: 'login' as const, label: '需登录' };
+    }
+  }
+  for (const key of ['read_restricted', 'restricted', 'private']) {
+    if (value[key] === true) {
+      return { type: 'permission' as const, label: '需权限' };
+    }
+  }
+  for (const key of [
+    'accessRequirement',
+    'access_requirement',
+    'accessRequirementText',
+    'access_requirement_text',
+    'accessReason',
+    'access_reason',
+    'restrictedReason',
+    'restricted_reason',
+    'restriction',
+    'requiredAccess',
+    'required_access',
+    'message',
+    'error'
+  ]) {
+    if (typeof value[key] === 'string') {
+      const accessRequirement = accessRequirementFromToken(value[key]) || accessRequirementFromText(value[key]);
+      if (accessRequirement) {
+        return accessRequirement;
+      }
+    }
+  }
+  for (const key of ['requiredTrustLevel', 'required_trust_level', 'minimumTrustLevel', 'minimum_trust_level', 'minTrustLevel', 'min_trust_level']) {
+    if (typeof value[key] === 'number' && value[key] > 0) {
+      return { type: 'level' as const, label: '需等级', detail: `trust level ${value[key]}` };
+    }
+  }
+  return undefined;
 }
 
 export function elementText(element: HTMLElement | null | undefined) {

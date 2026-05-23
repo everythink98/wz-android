@@ -18,14 +18,22 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  type StyleProp,
   Text,
   TextInput,
+  type TextStyle,
   ToastAndroid,
   useColorScheme,
   useWindowDimensions,
   View
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
+import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -44,10 +52,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Copy,
   ExternalLink,
   Heart,
   Home,
   LayoutGrid,
+  List,
   LogIn,
   MessageCircle,
   MoreHorizontal,
@@ -75,12 +85,16 @@ import {
 } from './src/yaohuoActions';
 import { runYaohuoAction } from './src/yaohuoActionClient';
 import {
+  DEFAULT_NODESEEK_ANDROID_USER_AGENT,
   buildCookieHeader,
   canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
-  summarizeNodeSeekCookies,
-  type NativeCookie
+  parseNodeSeekDocumentCookie,
+  removeNodeSeekLoginCookies,
+  sanitizeNodeSeekUserAgent,
+  summarizeNodeSeekCookies
 } from './src/nodeseekCookies';
+import { readNodeSeekCookiesFromWebView } from './src/nodeseekCookieBridge';
 import {
   buildYaohuoCookieHeader,
   canStoreYaohuoCookieHeader,
@@ -99,28 +113,39 @@ import {
 import {
   addSavedSearch,
   categoryKey,
+  clearRecords,
   createEmptyReaderData,
+  exportFavoritesMarkdown,
   isFavorite,
   isSubscribed,
   recordHistory,
+  removeRecords,
+  removeSavedSearch,
+  restoreRecords,
   sanitizeReaderData,
   toggleFavorite,
   toggleSubscription,
   topicKey,
+  updateTopicRecord,
   updateProgress,
   type ReaderData,
-  type ReaderSettings
+  type ReaderSettings,
+  type TopicRecord
 } from './src/readerData';
 import { loadReaderData, saveReaderData } from './src/readerDataStore';
 import { exportReaderBackupJson, importReaderBackupJson } from './src/readerBackup';
 import {
+  DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   buildLinuxDoCookieHeader,
   canStoreLinuxDoClearance,
   clearLinuxDoAccess,
   linuxDoAccessSummary,
   loadLinuxDoAccess,
+  mergeLinuxDoCookies,
+  parseLinuxDoDocumentCookie,
   readLinuxDoCookiesFromWebView,
   saveLinuxDoAccess,
+  sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
 } from './src/linuxdoCookieBridge';
 import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Source, Topic, TopicDetail } from './src/types';
@@ -145,10 +170,7 @@ import {
   mergeCategories,
   mergeReplies,
   mergeSettledFeedResponses,
-  mergeSettledSearchResponses,
   mergeTopics,
-  recordsToTopics,
-  removeRecord,
   searchLocal,
   sortTopics,
   type LibraryTab,
@@ -162,8 +184,11 @@ import {
   formatDateTime,
   formatRelativeTime,
   isCanceledRequest,
+  isLinuxDoCloudflareError,
+  isNodeSeekCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
+  linuxDoExternalSearchItems,
   removeString,
   settingsList,
   sourceLabel,
@@ -176,6 +201,16 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './src/yaohuoApi';
+import type { Fetcher } from './src/request';
+import {
+  buildReplyMarkdown,
+  filterLibraryRecords,
+  filterRepliesByQuery,
+  groupLibraryRecordsByTime,
+  highlightHtml,
+  highlightTextParts,
+  readerModeHtml
+} from './src/androidFeatureHelpers';
 
 type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
 type HtmlAllowedStyles = NonNullable<ComponentProps<typeof RenderHTML>['allowedStyles']>;
@@ -184,6 +219,19 @@ type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>
 type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
 type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles']>;
 type LoginNavigationRequest = { url: string };
+type NodeSeekBrowserFetchRequest = {
+  id: number;
+  url: string;
+  cookie?: string;
+  userAgent?: string;
+};
+type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
+  resolve: (response: Response) => void;
+  reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+  abortSignal?: AbortSignal;
+  abortHandler?: () => void;
+};
 type TopicSwipeActionConfig = {
   kind: 'favorite' | 'delete';
   onPress: (topic: Topic) => void;
@@ -198,19 +246,82 @@ function isNodeSeekLoginRequiredError(error: unknown) {
   );
 }
 
+function isNodeSeekRequestUrl(input: string) {
+  try {
+    const host = new URL(input).hostname.toLowerCase();
+    return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
+  } catch {
+    return false;
+  }
+}
+
+function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
+  const target = name.toLowerCase();
+  if (!headers) {
+    return undefined;
+  }
+  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+    return headers.get(name) || undefined;
+  }
+  if (Array.isArray(headers)) {
+    const pair = headers.find(([key]) => key.toLowerCase() === target);
+    return pair ? String(pair[1]) : undefined;
+  }
+  const value = Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function nodeSeekBrowserResponse(html: string, challenge: boolean) {
+  const status = challenge ? 403 : 200;
+  const headerValues: Record<string, string> = {
+    'content-type': 'text/html'
+  };
+  if (challenge) {
+    headerValues['cf-mitigated'] = 'challenge';
+  }
+  if (typeof Response !== 'undefined') {
+    return new Response(html, {
+      status,
+      headers: headerValues
+    });
+  }
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => headerValues[name.toLowerCase()] || null
+    },
+    text: () => Promise.resolve(html)
+  } as Response;
+}
+
+function cleanupNodeSeekBrowserFetchRequest(request: PendingNodeSeekBrowserFetchRequest) {
+  clearTimeout(request.timeout);
+  if (request.abortSignal && request.abortHandler) {
+    request.abortSignal.removeEventListener('abort', request.abortHandler);
+  }
+}
+
 const NODESEEK_URL = 'https://www.nodeseek.com';
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
-const NODESEEK_LOGIN_HOSTS = ['nodeseek.com'];
+const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
+const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const YAOHUO_URL = 'https://yaohuo.me';
 const YAOHUO_LOGIN_URL = `${YAOHUO_URL}/waplogin.aspx?siteid=1000`;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const LINUXDO_URL = 'https://linux.do';
 const LINUXDO_VERIFY_URL = `${LINUXDO_URL}/latest`;
-const LINUXDO_LOGIN_HOSTS = ['linux.do'];
+const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
+const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
+const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
+const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
 const YAOHUO_DEFAULT_CLASS_ID = '177';
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
+const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
+const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
+const FEED_SCROLL_STORAGE_PREFIX = 'reader-feed-scroll';
 const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
@@ -238,6 +349,40 @@ const REPLY_LIST_PERFORMANCE_PROPS = {
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'iframe', 'noscript'];
 const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 
+const NODESEEK_BROWSER_FETCH_SCRIPT = `
+(() => {
+  const requestId = __NODESEEK_BROWSER_FETCH_ID__;
+  const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;
+  const isChallengePage = () => {
+    const challengeText = [document.title || "", document.documentElement?.innerHTML || ""].join(" ");
+    return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
+  };
+  const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content"));
+  const postResult = () => {
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: 'nodeseek-browser-fetch',
+      id: requestId,
+      url: location.href,
+      title: document.title || "",
+      challenge: isChallengePage(),
+      html: document.documentElement ? document.documentElement.outerHTML : "",
+      userAgent: navigator.userAgent || "",
+      cookie: document.cookie || ""
+    }));
+  };
+  const deadline = Date.now() + 8000;
+  const waitForReadablePage = () => {
+    if ((!isChallengePage() && hasReadableContent()) || Date.now() >= deadline) {
+      postResult();
+      return;
+    }
+    setTimeout(waitForReadablePage, 500);
+  };
+  waitForReadablePage();
+})();
+true;
+`;
+
 const NODESEEK_LOGIN_PROBE_SCRIPT = `
 (() => {
   const usernameEl = document.querySelector(".Username");
@@ -246,7 +391,20 @@ const NODESEEK_LOGIN_PROBE_SCRIPT = `
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "nodeseek-login",
     loggedIn: Boolean(match),
-    userId: match ? Number(match[1]) : null
+    userId: match ? Number(match[1]) : null,
+    userAgent: navigator.userAgent || "",
+    cookie: document.cookie || ""
+  }));
+})();
+true;
+`;
+
+const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
+(() => {
+  window.ReactNativeWebView.postMessage(JSON.stringify({
+    type: "linuxdo-webview",
+    userAgent: navigator.userAgent || "",
+    cookie: document.cookie || ""
   }));
 })();
 true;
@@ -255,6 +413,23 @@ true;
 type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic';
 type SearchScope = 'remote' | 'local';
 type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
+type SearchGroup = {
+  source: Source;
+  label: string;
+  items: Topic[];
+  error?: string;
+  loading?: boolean;
+};
+type LibraryUndo = {
+  section: LibraryTab;
+  records: Record<string, TopicRecord>;
+  label: string;
+} | null;
+type HealthDetail = {
+  label: string;
+  ok: boolean;
+  message: string;
+};
 type TopicListItem =
   | { type: 'content'; key: string; html: string }
   | { type: 'replyControls'; key: string }
@@ -296,6 +471,54 @@ function topicListItemKey(item: TopicListItem) {
   return item.key;
 }
 
+function searchResultCategoryKey(item: Topic) {
+  const category = item.categoryId || item.category?.replace(/^#/, '');
+  return category ? `${item.source}:${category}` : '';
+}
+
+function sortedRecords(records: Record<string, TopicRecord>) {
+  return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
+}
+
+function parseTagsInput(value: string) {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const part of value.split(/[,\s，、]+/)) {
+    const clean = part.trim();
+    const key = clean.toLowerCase();
+    if (clean && !seen.has(key)) {
+      seen.add(key);
+      tags.push(clean);
+    }
+  }
+  return tags;
+}
+
+function libraryRecordKey(record: TopicRecord) {
+  return topicKey(record.topic);
+}
+
+function searchHistoryFromRaw(raw: string | null) {
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).slice(0, 20) : [];
+  } catch {
+    return [];
+  }
+}
+
+function feedScrollStorageKey(source: FeedSource, category: string, readingFilter: ReadingFilter) {
+  return `${FEED_SCROLL_STORAGE_PREFIX}:${source}:${category || 'all'}:${readingFilter}`;
+}
+
+function safeFileName(value: string, extension: string) {
+  const clean = value.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72);
+  return `${clean || 'forum-reader'}-${Date.now()}.${extension}`;
+}
+
 function splitTopicContentHtml(html: string | undefined) {
   const clean = (html || '').trim();
   if (!clean) {
@@ -334,9 +557,12 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     previous.actionBusy !== next.actionBusy
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
+    || previous.isNew !== next.isNew
     || previous.onInteract !== next.onInteract
+    || previous.onCopyReplyMarkdown !== next.onCopyReplyMarkdown
     || previous.onReplyToFloor !== next.onReplyToFloor
     || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
+    || previous.query !== next.query
     || previous.reply !== next.reply
     || previous.replyFloor !== next.replyFloor
     || previous.source !== next.source
@@ -367,6 +593,7 @@ const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   previous.topic === next.topic
   && previous.styles === next.styles
   && previous.theme === next.theme
+  && previous.highlightQuery === next.highlightQuery
   && previous.onOpenTopic === next.onOpenTopic
   && previous.swipeAction === next.swipeAction
   && topicListItemStatesEqual(previous.readerState, next.readerState)
@@ -376,6 +603,7 @@ export default function App() {
   const webViewRef = useRef<WebView>(null);
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
+  const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
   const webLoginDetectedRef = useRef(false);
   const saveQueueRef = useRef(Promise.resolve());
   const feedRequestIdRef = useRef(0);
@@ -397,12 +625,24 @@ export default function App() {
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
   const topicScrollRef = useRef<FlatList<TopicListItem>>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
+  const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
+  const nodeSeekWebViewCookieHeaderRef = useRef('');
+  const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+  const nodeSeekBrowserFetchIdRef = useRef(0);
+  const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
+  const nodeSeekBrowserFetchQueueRef = useRef<PendingNodeSeekBrowserFetchRequest[]>([]);
+  const linuxDoWebViewCookieHeaderRef = useRef('');
+  const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const systemScheme = useColorScheme();
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
+  const [linuxDoWebViewError, setLinuxDoWebViewError] = useState('');
+  const [linuxDoWebViewKey, setLinuxDoWebViewKey] = useState(0);
+  const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
+  const [linuxDoWebViewCookieHeader, setLinuxDoWebViewCookieHeader] = useState('');
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -411,8 +651,11 @@ export default function App() {
   const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
   const [linuxDoCookieNames, setLinuxDoCookieNames] = useState<string[]>([]);
   const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
+  const [hasNodeSeekLoginCookie, setHasNodeSeekLoginCookie] = useState(false);
   const [hasYaohuoCookie, setHasYaohuoCookie] = useState(false);
   const [hasLinuxDoClearance, setHasLinuxDoClearance] = useState(false);
+  const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+  const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(null);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [backupJson, setBackupJson] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
@@ -432,7 +675,10 @@ export default function App() {
   const [searchScope, setSearchScope] = useState<SearchScope>('remote');
   const [searchSort, setSearchSort] = useState<SearchSort>('relevance');
   const [searchItems, setSearchItems] = useState<Topic[]>([]);
+  const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
+  const [libraryUndo, setLibraryUndo] = useState<LibraryUndo>(null);
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
   const [topicError, setTopicError] = useState('');
@@ -442,6 +688,10 @@ export default function App() {
   const [replyHasMore, setReplyHasMore] = useState(false);
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
+  const [commentQuery, setCommentQuery] = useState('');
+  const [readerMode, setReaderMode] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [unreadReplyCount, setUnreadReplyCount] = useState(0);
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
   const [yaohuoReplyTarget, setYaohuoReplyTarget] = useState<YaohuoReplyTarget | null>(null);
   const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
@@ -458,10 +708,13 @@ export default function App() {
   const [showCategoriesPanel, setShowCategoriesPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [healthSummary, setHealthSummary] = useState('');
+  const [healthDetails, setHealthDetails] = useState<HealthDetail[]>([]);
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   readerDataRef.current = readerData;
+  const searchGroupsRef = useRef<SearchGroup[]>(searchGroups);
+  searchGroupsRef.current = searchGroups;
   const currentTopic = topicDetail || selectedTopic;
-  currentTopicKeyRef.current = currentTopic ? topicKey(currentTopic) : null;
+  currentTopicKeyRef.current = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   const updateExpandedQuotes = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
     const next = updater(expandedQuotesRef.current);
     expandedQuotesRef.current = next;
@@ -494,6 +747,40 @@ export default function App() {
     setLoadingQuotedFloors({});
     setQuoteStateVersion((current) => current + 1);
   }, [abortQuotedReplyRequests]);
+
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
+      .then((raw) => {
+        if (active) {
+          setRecentSearches(searchHistoryFromRaw(raw));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const writeRecentSearches = useCallback((items: string[]) => {
+    setRecentSearches(items);
+    void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(items)).catch(() => undefined);
+  }, []);
+
+  const addRecentSearch = useCallback((query: string) => {
+    const clean = query.trim();
+    if (!clean) {
+      return;
+    }
+    writeRecentSearches([
+      clean,
+      ...recentSearches.filter((item) => item.toLowerCase() !== clean.toLowerCase())
+    ].slice(0, 20));
+  }, [recentSearches, writeRecentSearches]);
+
+  const removeRecentSearch = useCallback((query: string) => {
+    writeRecentSearches(recentSearches.filter((item) => item !== query));
+  }, [recentSearches, writeRecentSearches]);
 
   const theme = useMemo(() => createTheme(readerData.settings, systemScheme), [readerData.settings, systemScheme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
@@ -642,13 +929,16 @@ export default function App() {
       return `网页已确认登录：用户 ${webLoginUserId}`;
     }
     if (!hasNodeSeekCookie && cookieNames.length === 0) {
-      return '未检测到登录 Cookie';
+      return '未检测到 NodeSeek 验证信息';
+    }
+    if (hasNodeSeekLoginCookie) {
+      return cookieNames.length === 0 ? '已保存 NodeSeek 登录 Cookie' : `已检测登录 Cookie：${cookieNames.join(', ')}`;
     }
     if (cookieNames.length === 0) {
-      return '已保存 NodeSeek Cookie';
+      return '已保存 NodeSeek 验证信息';
     }
-    return `已检测 ${cookieNames.length} 个 Cookie：${cookieNames.join(', ')}`;
-  }, [cookieNames, hasNodeSeekCookie, webLoginUserId]);
+    return `已检测验证 Cookie：${cookieNames.join(', ')}`;
+  }, [cookieNames, hasNodeSeekCookie, hasNodeSeekLoginCookie, webLoginUserId]);
 
   const yaohuoLoginState = useMemo(() => {
     if (!hasYaohuoCookie && yaohuoCookieNames.length === 0) {
@@ -664,26 +954,22 @@ export default function App() {
     () => applyFeedFilter(feedItems, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
     [feedItems, feedSource, readerData, readingFilter]
   );
-  const libraryTopics = useMemo(
-    () => recordsToTopics(readerData[libraryTab]),
+  const libraryRecords = useMemo(
+    () => sortedRecords(readerData[libraryTab]),
     [libraryTab, readerData]
   );
   const visibleSearchItems = useMemo(() => sortTopics(searchItems, searchSort), [searchItems, searchSort]);
   const filteredReplies = useMemo(() => {
-    if (!topicDetail) {
-      return topicReplies;
-    }
+    let base = topicReplies;
     if (replyFilter === 'author') {
-      return topicReplies.filter((reply) => reply.author === topicDetail.author);
+      base = topicDetail ? topicReplies.filter((reply) => reply.author === topicDetail.author) : topicReplies;
+    } else if (replyFilter === 'images') {
+      base = topicReplies.filter((reply) => /<img\b/i.test(reply.contentHtml));
+    } else if (replyFilter === 'newest') {
+      base = [...topicReplies].reverse();
     }
-    if (replyFilter === 'images') {
-      return topicReplies.filter((reply) => /<img\b/i.test(reply.contentHtml));
-    }
-    if (replyFilter === 'newest') {
-      return [...topicReplies].reverse();
-    }
-    return topicReplies;
-  }, [replyFilter, topicDetail, topicReplies]);
+    return filterRepliesByQuery(base, commentQuery);
+  }, [commentQuery, replyFilter, topicDetail, topicReplies]);
   const topicHtmlParts = useMemo(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map((reply) => reply.contentHtml || ''),
@@ -714,11 +1000,43 @@ export default function App() {
       index: (current.index + 1) % current.urls.length
     } : current);
   }, []);
+  const selectPreviewImage = useCallback((index: number) => {
+    setImagePreview((current) => current ? {
+      ...current,
+      index: Math.max(0, Math.min(index, current.urls.length - 1))
+    } : current);
+  }, []);
   const notify = useCallback((message: string) => {
     if (Platform.OS === 'android') {
       ToastAndroid.show(message, ToastAndroid.SHORT);
     }
   }, []);
+
+  const savePreviewImage = useCallback(async () => {
+    if (!imagePreview?.urls.length) {
+      return;
+    }
+    try {
+      const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
+      const permission = await MediaLibrary.requestPermissionsAsync();
+      if (!permission.granted) {
+        notify('没有图片保存权限');
+        return;
+      }
+      const extension = uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
+      const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+      if (!baseDirectory) {
+        notify('无法创建图片文件');
+        return;
+      }
+      const target = `${baseDirectory}${safeFileName('forum-image', extension)}`;
+      const downloaded = await FileSystem.downloadAsync(uri, target);
+      await MediaLibrary.saveToLibraryAsync(downloaded.uri);
+      notify('图片已保存');
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [imagePreview, notify]);
   const openExternalUrl = useCallback((url: string) => {
     if (!isHttpOrHttpsUrl(url)) {
       notify('仅支持打开 http/https 链接。');
@@ -833,16 +1151,27 @@ export default function App() {
 
   useEffect(() => {
     void (async () => {
-      const [savedReaderData, savedCookie, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
+      const [savedReaderData, savedCookie, savedNodeSeekUserAgent, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
         loadReaderData(),
         SecureStore.getItemAsync(COOKIE_STORAGE_KEY),
+        SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
         SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
         loadLinuxDoAccess()
       ]);
       setReaderData(savedReaderData);
+      if (savedNodeSeekUserAgent) {
+        const userAgent = sanitizeNodeSeekUserAgent(savedNodeSeekUserAgent);
+        if (userAgent) {
+          nodeSeekWebViewUserAgentRef.current = userAgent;
+          setNodeSeekWebViewUserAgent(userAgent);
+        }
+      }
       if (savedCookie) {
+        const summary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie));
         setHasNodeSeekCookie(true);
-        notify('已找到本机保存的 NodeSeek Cookie。');
+        setHasNodeSeekLoginCookie(summary.loggedIn);
+        setCookieNames(summary.names);
+        notify(summary.loggedIn ? '已找到本机保存的 NodeSeek 登录 Cookie。' : '已找到本机保存的 NodeSeek 验证信息。');
       }
       if (savedYaohuoCookie) {
         setHasYaohuoCookie(true);
@@ -851,6 +1180,13 @@ export default function App() {
       setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
       if (linuxDoAccess?.cookieHeader) {
         setLinuxDoCookieNames(['cf_clearance']);
+      }
+      if (linuxDoAccess?.userAgent) {
+        const userAgent = sanitizeLinuxDoUserAgent(linuxDoAccess.userAgent);
+        if (userAgent) {
+          linuxDoWebViewUserAgentRef.current = userAgent;
+          setLinuxDoWebViewUserAgent(userAgent);
+        }
       }
     })().catch((error) => notify(errorMessage(error)));
   }, [notify]);
@@ -864,11 +1200,202 @@ export default function App() {
     return cookie || undefined;
   }, []);
 
+  const saveNodeSeekCookieHeader = useCallback(async (
+    cookies: Record<string, { name?: string; value?: string; domain?: string }>,
+    { verifiedByPage = false }: { verifiedByPage?: boolean } = {}
+  ) => {
+    const summary = summarizeNodeSeekCookies(cookies);
+    const cookieHeader = buildCookieHeader(cookies);
+    setCookieNames(summary.names);
+    setHasNodeSeekLoginCookie(summary.loggedIn || verifiedByPage);
+    if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
+      await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
+      await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+      setHasNodeSeekCookie(true);
+      return cookieHeader;
+    }
+    return '';
+  }, []);
+
+  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source) => {
+    if (source !== 'all' && source !== 'nodeseek') {
+      return undefined;
+    }
+    const cookies = await readNodeSeekCookiesFromWebView();
+    const webViewCookieHeader = await saveNodeSeekCookieHeader(cookies);
+    if (webViewCookieHeader) {
+      return webViewCookieHeader;
+    }
+    const cookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+    if (cookie) {
+      const savedCookies = parseNodeSeekDocumentCookie(cookie);
+      const summary = summarizeNodeSeekCookies(savedCookies);
+      setCookieNames(summary.names);
+      setHasNodeSeekCookie(true);
+      setHasNodeSeekLoginCookie(summary.loggedIn);
+      return cookie;
+    }
+    setHasNodeSeekCookie(false);
+    setHasNodeSeekLoginCookie(false);
+    return undefined;
+  }, [saveNodeSeekCookieHeader]);
+
+  const startNextNodeSeekBrowserFetch = useCallback(() => {
+    if (nodeSeekBrowserFetchCurrentRef.current) {
+      return;
+    }
+    const next = nodeSeekBrowserFetchQueueRef.current.shift() || null;
+    nodeSeekBrowserFetchCurrentRef.current = next;
+    setNodeSeekBrowserFetchRequest(next ? {
+      id: next.id,
+      url: next.url,
+      cookie: next.cookie,
+      userAgent: next.userAgent
+    } : null);
+  }, []);
+
+  const rejectNodeSeekBrowserFetch = useCallback((request: PendingNodeSeekBrowserFetchRequest, message: string) => {
+    const queuedIndex = nodeSeekBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
+    if (queuedIndex >= 0) {
+      nodeSeekBrowserFetchQueueRef.current.splice(queuedIndex, 1);
+    }
+    if (nodeSeekBrowserFetchCurrentRef.current?.id === request.id) {
+      nodeSeekBrowserWebViewRef.current?.stopLoading();
+      nodeSeekBrowserFetchCurrentRef.current = null;
+      setNodeSeekBrowserFetchRequest(null);
+    }
+    cleanupNodeSeekBrowserFetchRequest(request);
+    request.reject(new Error(message));
+    startNextNodeSeekBrowserFetch();
+  }, [startNextNodeSeekBrowserFetch]);
+
+  const nodeSeekFetchWithWebView: Fetcher = useCallback((input, init) => {
+    const url = String(input);
+    if (!isNodeSeekRequestUrl(url)) {
+      return fetch(input, init);
+    }
+    return new Promise<Response>((resolve, reject) => {
+      let request: PendingNodeSeekBrowserFetchRequest;
+      const id = ++nodeSeekBrowserFetchIdRef.current;
+      const cookie = requestHeaderValue(init?.headers, 'cookie');
+      const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
+      const timeout = setTimeout(() => {
+        rejectNodeSeekBrowserFetch(request, 'NodeSeek 页面读取超时');
+      }, NODESEEK_BROWSER_FETCH_TIMEOUT_MS);
+      request = {
+        id,
+        url,
+        cookie,
+        userAgent,
+        resolve,
+        reject,
+        timeout,
+        abortSignal: init?.signal || undefined
+      };
+      request.abortHandler = () => {
+        rejectNodeSeekBrowserFetch(request, '请求已取消');
+      };
+      if (request.abortSignal) {
+        if (request.abortSignal.aborted) {
+          rejectNodeSeekBrowserFetch(request, '请求已取消');
+          return;
+        }
+        request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
+      }
+      nodeSeekBrowserFetchQueueRef.current.push(request);
+      startNextNodeSeekBrowserFetch();
+    });
+  }, [rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
+
+  const completeNodeSeekBrowserFetch = useCallback((data: {
+    id?: number;
+    html?: string;
+    cookie?: string;
+    userAgent?: string;
+    challenge?: boolean;
+  }) => {
+    const current = nodeSeekBrowserFetchCurrentRef.current;
+    if (!current || data.id !== current.id) {
+      return;
+    }
+    cleanupNodeSeekBrowserFetchRequest(current);
+    nodeSeekBrowserFetchCurrentRef.current = null;
+    setNodeSeekBrowserFetchRequest(null);
+    const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
+    if (userAgent) {
+      nodeSeekWebViewUserAgentRef.current = userAgent;
+      setNodeSeekWebViewUserAgent(userAgent);
+    }
+    if (typeof data.cookie === 'string') {
+      nodeSeekWebViewCookieHeaderRef.current = data.cookie;
+      void CookieManager.flush().then(async () => {
+        const nativeCookies = await readNodeSeekCookiesFromWebView();
+        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')));
+      }).catch(() => undefined);
+    }
+    current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge)));
+    startNextNodeSeekBrowserFetch();
+  }, [saveNodeSeekCookieHeader, startNextNodeSeekBrowserFetch]);
+
+  const failCurrentNodeSeekBrowserFetch = useCallback((message: string) => {
+    const current = nodeSeekBrowserFetchCurrentRef.current;
+    if (current) {
+      rejectNodeSeekBrowserFetch(current, message);
+    }
+  }, [rejectNodeSeekBrowserFetch]);
+
   const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
     setScreen('more');
     setShowYaohuoLoginPanel(true);
     notify(message);
   }, [notify]);
+
+  const showNodeSeekVerification = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证') => {
+    setScreen('more');
+    setShowLoginPanel(true);
+    setShowYaohuoLoginPanel(false);
+    setShowLinuxDoPanel(false);
+    setShowCategoriesPanel(false);
+    setShowSettingsPanel(false);
+    setHasNodeSeekCookie(false);
+    setHasNodeSeekLoginCookie(false);
+    notify(message);
+  }, [notify]);
+
+  const resetLinuxDoWebView = useCallback(() => {
+    linuxDoWebViewRef.current?.stopLoading();
+    linuxDoWebViewCookieHeaderRef.current = '';
+    setLinuxDoWebViewCookieHeader('');
+    setLoadingLinuxDoPage(true);
+    setLinuxDoWebViewError('');
+    setLinuxDoWebViewKey((current) => current + 1);
+  }, []);
+
+  const closeLinuxDoPanel = useCallback(() => {
+    linuxDoWebViewRef.current?.stopLoading();
+    setShowLinuxDoPanel(false);
+    setLoadingLinuxDoPage(false);
+  }, []);
+
+  const changeLinuxDoPanel = useCallback((visible: boolean) => {
+    if (visible) {
+      setShowLinuxDoPanel(true);
+      resetLinuxDoWebView();
+      return;
+    }
+    closeLinuxDoPanel();
+  }, [closeLinuxDoPanel, resetLinuxDoWebView]);
+
+  const showLinuxDoVerification = useCallback((message = 'linux.do 需要完成 Cloudflare 验证') => {
+    setScreen('more');
+    setShowLoginPanel(false);
+    setShowYaohuoLoginPanel(false);
+    setShowCategoriesPanel(false);
+    setShowSettingsPanel(false);
+    changeLinuxDoPanel(true);
+    setHasLinuxDoClearance(false);
+    notify(message);
+  }, [changeLinuxDoPanel, notify]);
 
   const clearStoredYaohuoLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
@@ -878,10 +1405,14 @@ export default function App() {
 
   const clearStoredNodeSeekLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
+    await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
     webLoginDetectedRef.current = false;
     setHasNodeSeekCookie(false);
+    setHasNodeSeekLoginCookie(false);
     setCookieNames([]);
     setWebLoginUserId(null);
+    nodeSeekWebViewUserAgentRef.current = DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+    setNodeSeekWebViewUserAgent(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   }, []);
 
   const clearYaohuoLoginState = useCallback(async () => {
@@ -894,13 +1425,41 @@ export default function App() {
     await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
   }, [clearStoredNodeSeekLoginState]);
 
+  const clearNodeSeekLoginCookiesOnly = useCallback(async () => {
+    const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+    const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
+    const verificationHeader = buildCookieHeader(verificationCookies);
+    webLoginDetectedRef.current = false;
+    setWebLoginUserId(null);
+    setHasNodeSeekLoginCookie(false);
+    if (canStoreNodeSeekCookieHeader(verificationCookies) && verificationHeader) {
+      await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, verificationHeader);
+      setHasNodeSeekCookie(true);
+      setCookieNames(summarizeNodeSeekCookies(verificationCookies).names);
+      return;
+    }
+    await clearNodeSeekLoginState();
+  }, [clearNodeSeekLoginState]);
+
   const loadCategories = useCallback(async () => {
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const data = await getCategories({ source: 'all', nocache: true, signal: controller.signal });
+      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
+      const data = await getCategories({
+        source: 'all',
+        nocache: true,
+        fetcher: nodeSeekFetchWithWebView,
+        nodeSeekCookie,
+        nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+        signal: controller.signal
+      });
       setCategories(mergeCategories(data.items, []));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
+        if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
+          showNodeSeekVerification(data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证');
+          return;
+        }
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
     } catch (error) {
@@ -910,7 +1469,7 @@ export default function App() {
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [notify]);
+  }, [loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify, showNodeSeekVerification]);
 
   const loadFeed = useCallback(async ({
     page = 1,
@@ -952,6 +1511,7 @@ export default function App() {
     setBusy(true);
     try {
       const yaohuoCookie = await loadYaohuoCookieForSource(source);
+      const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
       if (requestId !== feedRequestIdRef.current) {
         return;
       }
@@ -969,6 +1529,9 @@ export default function App() {
             limit: 30,
             category: category || undefined,
             nocache,
+            fetcher: nodeSeekFetchWithWebView,
+            nodeSeekCookie,
+            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
             signal: controller.signal
           }),
           getYaohuoFeedDirect({
@@ -995,6 +1558,9 @@ export default function App() {
           limit: 30,
           category: category || undefined,
           nocache,
+          fetcher: nodeSeekFetchWithWebView,
+          nodeSeekCookie,
+          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
         });
       }
@@ -1004,9 +1570,13 @@ export default function App() {
       setFeedItems((current) => reset ? data.items : mergeTopics(current, data.items));
       setFeedPage(data.nextPage ? data.nextPage - 1 : page);
       setFeedNextCursor(data.nextCursor ?? undefined);
-      setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)));
+      setFeedHasMore(Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor)));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
+        if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
+          showNodeSeekVerification(data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证');
+          return;
+        }
         notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
       } else if (successMessage) {
         notify(successMessage);
@@ -1022,6 +1592,10 @@ export default function App() {
           }
           return;
         }
+        if (isNodeSeekCloudflareError(error)) {
+          showNodeSeekVerification(errorMessage(error));
+          return;
+        }
         if (!isCanceledRequest(error)) {
           notify(errorMessage(error));
         }
@@ -1035,7 +1609,7 @@ export default function App() {
       }
       finishAbortableRequest(feedAbortRef, controller);
     }
-  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadYaohuoCookieForSource, notify, showYaohuoLogin]);
+  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, showNodeSeekVerification, showYaohuoLogin]);
 
   useEffect(() => {
     void loadFeed({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
@@ -1056,10 +1630,14 @@ export default function App() {
   }, [loadCategories, loadFeed, notify]);
 
   useEffect(() => {
+    searchRequestIdRef.current += 1;
+    searchAbortRef.current?.abort();
     setSearchItems([]);
+    setSearchGroups([]);
+    setBusy(false);
   }, [searchQuery, searchScope, searchSource]);
 
-  const runSearch = useCallback(async () => {
+  const runSearch = useCallback(async (sourceOverride?: Source) => {
     const query = searchQuery.trim();
     if (!query) {
       notify('请输入搜索词');
@@ -1067,9 +1645,22 @@ export default function App() {
     }
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
-    setSearchItems([]);
+    const activeSources = sourceOverride
+      ? [sourceOverride]
+      : searchSource === 'all'
+        ? sources
+        : [searchSource as Source];
+    if (sourceOverride) {
+      setSearchGroups((current) => current.map((group) => group.source === sourceOverride ? { ...group, loading: true, error: undefined } : group));
+    } else {
+      setSearchItems([]);
+      setSearchGroups(searchScope === 'remote'
+        ? activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }))
+        : []);
+    }
     setBusy(true);
     try {
+      addRecentSearch(query);
       if (searchScope === 'local') {
         if (requestId !== searchRequestIdRef.current) {
           return;
@@ -1077,32 +1668,63 @@ export default function App() {
         setSearchItems(searchLocal(readerData, query, searchSource));
         notify('本地搜索完成');
       } else {
-        const yaohuoCookie = await loadYaohuoCookieForSource(searchSource);
-        if (searchSource === 'yaohuo' && !yaohuoCookie) {
-          showYaohuoLogin();
-          return;
-        }
-        let data: SearchResponse;
-        if (searchSource === 'all' && yaohuoCookie) {
-          const [baseResult, yaohuoResult] = await Promise.allSettled([
-            searchTopics({ query, source: searchSource, limit: 30, signal: controller.signal }),
-            searchYaohuoDirect({ query, limit: 30, yaohuoCookie, signal: controller.signal })
-          ]);
-          data = mergeSettledSearchResponses(baseResult, yaohuoResult);
-        } else if (searchSource === 'yaohuo') {
-          data = await searchYaohuoDirect({ query, limit: 30, yaohuoCookie, signal: controller.signal });
-        } else {
-          data = await searchTopics({ query, source: searchSource, limit: 30, signal: controller.signal });
-        }
+        const groups = await Promise.all(activeSources.map(async (source) => {
+          try {
+            const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
+              loadYaohuoCookieForSource(source),
+              loadNodeSeekCookieForSource(source)
+            ]);
+            if (source === 'yaohuo' && !yaohuoCookie) {
+              return { source, label: sourceLabel(source), items: [], error: '未登录' };
+            }
+            const data = source === 'yaohuo'
+              ? await searchYaohuoDirect({ query, limit: 30, yaohuoCookie, signal: controller.signal })
+              : await searchTopics({
+                query,
+                source,
+                limit: 30,
+                fetcher: nodeSeekFetchWithWebView,
+                nodeSeekCookie,
+                nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+                signal: controller.signal
+              });
+            return {
+              source,
+              label: sourceLabel(source),
+              items: data.items,
+              error: data.errors?.[source]
+            };
+          } catch (error) {
+            if (isCanceledRequest(error)) {
+              throw error;
+            }
+            if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
+              return { source, label: sourceLabel(source), items: [], error: isYaohuoLoginExpiredError(error) ? '登录已失效' : errorMessage(error) };
+            }
+            return { source, label: sourceLabel(source), items: [], error: errorMessage(error) };
+          }
+        }));
         if (requestId !== searchRequestIdRef.current) {
           return;
         }
-        setSearchItems(data.items);
-        commitReaderData((current) => addSavedSearch(current, query, searchSource));
-        const errors = Object.entries(data.errors || {});
+        const nextGroups = sourceOverride
+          ? searchGroupsRef.current.map((group) => {
+            const updated = groups.find((item) => item.source === group.source);
+            return updated ? { ...updated, loading: false } : group;
+          })
+          : groups.map((group) => ({ ...group, loading: false }));
+        setSearchGroups(nextGroups);
+        const mergedItems = nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
+        setSearchItems(mergedItems);
+        const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
+        if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
+          showNodeSeekVerification(nodeSeekError);
+          return;
+        }
+        const errors = nextGroups.filter((group) => group.error);
         notify(errors.length
-          ? errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；')
-          : `搜索完成：${data.items.length} 条结果`);
+          ? errors.map((group) => `${group.label}：${group.error}`).join('；')
+          : `搜索完成：${mergedItems.length} 条结果`);
       }
     } catch (error) {
       if (requestId === searchRequestIdRef.current) {
@@ -1115,6 +1737,10 @@ export default function App() {
           }
           return;
         }
+        if (isNodeSeekCloudflareError(error)) {
+          showNodeSeekVerification(errorMessage(error));
+          return;
+        }
         if (!isCanceledRequest(error)) {
           notify(errorMessage(error));
         }
@@ -1125,11 +1751,25 @@ export default function App() {
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, readerData, searchQuery, searchScope, searchSource, showYaohuoLogin]);
+  }, [addRecentSearch, clearYaohuoLoginState, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, readerData, searchQuery, searchScope, searchSource, showNodeSeekVerification, showYaohuoLogin]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      return;
+    }
+    void runSearch();
+  }, [searchSource, searchScope]);
+
+  const retrySearchSource = useCallback((source: Source) => {
+    void runSearch(source);
+  }, [runSearch]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
     if (screen !== 'topic') {
       topicReturnScreenRef.current = screen;
+    }
+    if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
+      pendingLinuxDoTopicRef.current = null;
     }
     const requestId = ++topicRequestIdRef.current;
     repliesRequestIdRef.current += 1;
@@ -1140,6 +1780,8 @@ export default function App() {
     setTopicDetail(null);
     setTopicError('');
     setTopicReplies([]);
+    setCommentQuery('');
+    setUnreadReplyCount(0);
     setReplyHasMore(false);
     setReplyNextPage(null);
     setReplyNextOffset(null);
@@ -1153,7 +1795,10 @@ export default function App() {
     setBusy(true);
     const controller = startAbortableRequest(topicAbortRef);
     try {
-      const yaohuoCookie = await loadYaohuoCookieForSource(topic.source);
+      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
+        loadYaohuoCookieForSource(topic.source),
+        loadNodeSeekCookieForSource(topic.source)
+      ]);
       if (requestId !== topicRequestIdRef.current) {
         return;
       }
@@ -1163,10 +1808,20 @@ export default function App() {
       }
       const detail = topic.source === 'yaohuo'
         ? await getYaohuoTopicDirect({ topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
-        : await getTopic({ source: topic.source, id: topic.id, nocache, signal: controller.signal });
+        : await getTopic({
+          source: topic.source,
+          id: topic.id,
+          nocache,
+          fetcher: nodeSeekFetchWithWebView,
+          nodeSeekCookie,
+          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+          signal: controller.signal
+        });
       if (requestId !== topicRequestIdRef.current) {
         return;
       }
+      const previousReplyCount = readerDataRef.current.history[topicKey(detail)]?.topic.replyCount;
+      setUnreadReplyCount(typeof previousReplyCount === 'number' && detail.replyCount > previousReplyCount ? detail.replyCount - previousReplyCount : 0);
       setTopicDetail(detail);
       setTopicReplies(detail.replies || []);
       setReplyHasMore(Boolean(detail.replyHasMore && detail.replyNextPage));
@@ -1184,6 +1839,16 @@ export default function App() {
       if (requestId === topicRequestIdRef.current) {
         const message = errorMessage(error);
         setTopicError(message);
+        if (isLinuxDoCloudflareError(error)) {
+          pendingLinuxDoTopicRef.current = topic;
+          setLinuxDoCookieNames([]);
+          showLinuxDoVerification(message);
+          return;
+        }
+        if (isNodeSeekCloudflareError(error)) {
+          showNodeSeekVerification(message);
+          return;
+        }
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
             await clearYaohuoLoginState();
@@ -1203,7 +1868,7 @@ export default function App() {
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [clearYaohuoLoginState, commitReaderData, loadYaohuoCookieForSource, notify, resetQuoteState, screen, showYaohuoLogin]);
+  }, [clearYaohuoLoginState, commitReaderData, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -1217,6 +1882,7 @@ export default function App() {
     setLoadingMoreReplies(true);
     try {
       const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
+      const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
       if (detail.source === 'yaohuo' && !yaohuoCookie) {
         showYaohuoLogin();
         return;
@@ -1238,6 +1904,9 @@ export default function App() {
           page: replyNextPage,
           limit: 30,
           offset: replyNextOffset,
+          fetcher: nodeSeekFetchWithWebView,
+          nodeSeekCookie,
+          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
         });
       if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
@@ -1259,6 +1928,16 @@ export default function App() {
           }
           return;
         }
+        if (isLinuxDoCloudflareError(error)) {
+          pendingLinuxDoTopicRef.current = detail;
+          setLinuxDoCookieNames([]);
+          showLinuxDoVerification(errorMessage(error));
+          return;
+        }
+        if (isNodeSeekCloudflareError(error)) {
+          showNodeSeekVerification(errorMessage(error));
+          return;
+        }
         if (!isCanceledRequest(error)) {
           notify(errorMessage(error));
         }
@@ -1275,7 +1954,7 @@ export default function App() {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
-  }, [clearYaohuoLoginState, loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, showYaohuoLogin, topicDetail]);
+  }, [clearYaohuoLoginState, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, replyNextOffset, replyNextPage, selectedTopic, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicDetail]);
 
   const refreshTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
@@ -1284,6 +1963,32 @@ export default function App() {
     }
   }, [openTopic, selectedTopic, topicDetail]);
 
+  const copyTopicLink = useCallback(async () => {
+    const detail = topicDetail || selectedTopic;
+    if (!detail?.url) {
+      return;
+    }
+    await Clipboard.setStringAsync(detail.url);
+    notify('链接已复制');
+  }, [notify, selectedTopic, topicDetail]);
+
+  const copyReplyMarkdown = useCallback(async (reply: Reply, floor: number) => {
+    const detail = topicDetail || selectedTopic;
+    if (!detail) {
+      return;
+    }
+    await Clipboard.setStringAsync(buildReplyMarkdown(reply, floor, detail.title, detail.url));
+    notify('楼层引用已复制');
+  }, [notify, selectedTopic, topicDetail]);
+
+  const verifyLinuxDoFromTopic = useCallback(() => {
+    const detail = topicDetail || selectedTopic;
+    if (detail?.source === 'linuxdo') {
+      pendingLinuxDoTopicRef.current = detail;
+    }
+    showLinuxDoVerification();
+  }, [selectedTopic, showLinuxDoVerification, topicDetail]);
+
   const changeScreen = useCallback((nextScreen: Screen) => {
     if (nextScreen !== 'topic') {
       topicRequestIdRef.current += 1;
@@ -1291,8 +1996,11 @@ export default function App() {
       topicAbortRef.current?.abort();
       repliesAbortRef.current?.abort();
       abortQuotedReplyRequests();
+      pendingLinuxDoTopicRef.current = null;
+      currentTopicKeyRef.current = null;
       loadingMoreRepliesRef.current = false;
       setLoadingMoreReplies(false);
+      setBusy(false);
     }
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests]);
@@ -1392,19 +2100,77 @@ export default function App() {
     }
   }, [notify, selectedTopic, topicDetail, updateExpandedQuotes, updateLoadedQuotedReplies, updateLoadingQuotedFloors]);
 
+  const handleNodeSeekBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data) as {
+        type?: string;
+        id?: number;
+        html?: string;
+        cookie?: string;
+        userAgent?: string;
+        challenge?: boolean;
+      };
+      if (data.type === 'nodeseek-browser-fetch') {
+        completeNodeSeekBrowserFetch(data);
+      }
+    } catch {
+      // Ignore unrelated messages from the page.
+    }
+  }, [completeNodeSeekBrowserFetch]);
+
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
         type?: string;
         loggedIn?: boolean;
         userId?: number | null;
+        userAgent?: string;
+        cookie?: string;
       };
+      if (data.type === 'nodeseek-login' && typeof data.userAgent === 'string') {
+        const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
+        if (userAgent) {
+          nodeSeekWebViewUserAgentRef.current = userAgent;
+          setNodeSeekWebViewUserAgent(userAgent);
+        }
+      }
+      if (data.type === 'nodeseek-login' && typeof data.cookie === 'string') {
+        nodeSeekWebViewCookieHeaderRef.current = data.cookie;
+      }
       if (data.type === 'nodeseek-login' && data.loggedIn && Number.isInteger(data.userId)) {
         webLoginDetectedRef.current = true;
+        setHasNodeSeekLoginCookie(true);
         setWebLoginUserId(data.userId || null);
       } else if (data.type === 'nodeseek-login' && data.loggedIn === false) {
         webLoginDetectedRef.current = false;
+        setHasNodeSeekLoginCookie(false);
         setWebLoginUserId(null);
+      }
+    } catch {
+      // Ignore unrelated messages from the page.
+    }
+  }, []);
+
+  const handleLinuxDoMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data) as {
+        type?: string;
+        userAgent?: string;
+        cookie?: string;
+      };
+      if (data.type === 'linuxdo-webview') {
+        setLinuxDoWebViewError('');
+      }
+      if (data.type === 'linuxdo-webview' && typeof data.userAgent === 'string') {
+        const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
+        if (userAgent) {
+          linuxDoWebViewUserAgentRef.current = userAgent;
+          setLinuxDoWebViewUserAgent(userAgent);
+        }
+      }
+      if (data.type === 'linuxdo-webview' && typeof data.cookie === 'string') {
+        linuxDoWebViewCookieHeaderRef.current = data.cookie;
+        setLinuxDoWebViewCookieHeader(data.cookie);
       }
     } catch {
       // Ignore unrelated messages from the page.
@@ -1416,29 +2182,45 @@ export default function App() {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }, []);
 
+  const readCurrentNodeSeekCookies = useCallback(async () => {
+    await probeLoginPage();
+    await CookieManager.flush();
+    const nativeCookies = await readNodeSeekCookiesFromWebView();
+    const nodeSeekDocumentCookieHeader = nodeSeekWebViewCookieHeaderRef.current;
+    return mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader));
+  }, [probeLoginPage]);
+
+  const rememberCurrentNodeSeekCookies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    const cookies = await readCurrentNodeSeekCookies();
+    const summary = summarizeNodeSeekCookies(cookies);
+    const cookieHeader = await saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current });
+    if (cookieHeader) {
+      if (!silent) {
+        notify(summary.loggedIn || webLoginDetectedRef.current ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');
+      }
+      return true;
+    }
+    if (!silent) {
+      notify('没有检测到明确的 NodeSeek Cookie。请完成验证或登录后再试。');
+    }
+    return false;
+  }, [notify, readCurrentNodeSeekCookies, saveNodeSeekCookieHeader]);
+
+  const probeLinuxDoPage = useCallback(async () => {
+    linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }, []);
+
   const checkLogin = useCallback(async () => {
     setChecking(true);
     try {
-      await probeLoginPage();
-      await CookieManager.flush();
-      const cookieMaps = await Promise.all(NODESEEK_COOKIE_URLS.map(async (url) => CookieManager.get(url)));
-      const typedCookies = mergeNodeSeekCookies(...cookieMaps as Array<Record<string, NativeCookie>>);
-      const summary = summarizeNodeSeekCookies(typedCookies);
-      const cookieHeader = buildCookieHeader(typedCookies);
-      setCookieNames(summary.names);
-      if (canStoreNodeSeekCookieHeader(typedCookies, webLoginDetectedRef.current) && cookieHeader) {
-        await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
-        setHasNodeSeekCookie(true);
-        notify('已检测到 NodeSeek 登录 Cookie，已保存在本机。');
-      } else {
-        notify('没有检测到明确的 NodeSeek 登录 Cookie。请确认已经登录后再试。');
-      }
+      await rememberCurrentNodeSeekCookies();
     } catch (error) {
       notify(errorMessage(error));
     } finally {
       setChecking(false);
     }
-  }, [notify, probeLoginPage]);
+  }, [notify, rememberCurrentNodeSeekCookies]);
 
   const checkYaohuoCookie = useCallback(async () => {
     setChecking(true);
@@ -1480,10 +2262,31 @@ export default function App() {
     }
   }, [clearYaohuoLoginState, notify]);
 
+  const readCurrentLinuxDoCookies = useCallback(async () => {
+    await probeLinuxDoPage();
+    const nativeCookies = await readLinuxDoCookiesFromWebView();
+    const linuxDoDocumentCookieHeader = linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader;
+    return mergeLinuxDoCookies(nativeCookies, parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader));
+  }, [linuxDoWebViewCookieHeader, probeLinuxDoPage]);
+
+  const waitForLinuxDoClearance = useCallback(async () => {
+    const deadline = Date.now() + LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS;
+    let cookies = await readCurrentLinuxDoCookies();
+    while (Date.now() < deadline) {
+      if (canStoreLinuxDoClearance(cookies)) {
+        return cookies;
+      }
+      await new Promise((resolve) => setTimeout(resolve, LINUXDO_CLEARANCE_DETECT_INTERVAL_MS));
+      cookies = await readCurrentLinuxDoCookies();
+    }
+    return cookies;
+  }, [readCurrentLinuxDoCookies]);
+
   const checkLinuxDoCookie = useCallback(async () => {
     setChecking(true);
+    setLinuxDoWebViewError('');
     try {
-      const cookies = await readLinuxDoCookiesFromWebView();
+      const cookies = await waitForLinuxDoClearance();
       const summary = summarizeLinuxDoCookies(cookies);
       const cookieHeader = buildLinuxDoCookieHeader(cookies);
       setLinuxDoCookieNames(summary.names);
@@ -1491,15 +2294,23 @@ export default function App() {
         notify('没有检测到 linux.do 公开访问验证 Cookie。请完成验证后再试。');
         return;
       }
-      await saveLinuxDoAccess(cookieHeader);
+      await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
       setHasLinuxDoClearance(true);
+      setLinuxDoWebViewError('');
       notify('linux.do 验证信息已保存在本机。');
+      const pendingTopic = pendingLinuxDoTopicRef.current;
+      pendingLinuxDoTopicRef.current = null;
+      if (pendingTopic) {
+        const returnScreen = topicReturnScreenRef.current;
+        await openTopic(pendingTopic, true);
+        topicReturnScreenRef.current = returnScreen;
+      }
     } catch (error) {
       notify(errorMessage(error));
     } finally {
       setChecking(false);
     }
-  }, [notify]);
+  }, [linuxDoWebViewUserAgent, notify, openTopic, waitForLinuxDoClearance]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();
@@ -1516,16 +2327,16 @@ export default function App() {
     await clearLinuxDoAccess();
     setHasLinuxDoClearance(false);
     setLinuxDoCookieNames([]);
-    linuxDoWebViewRef.current?.reload();
+    resetLinuxDoWebView();
     notify('已清除本机保存的 linux.do 验证信息。');
-  }, [notify]);
+  }, [notify, resetLinuxDoWebView]);
 
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
     success: string,
     options: { refreshTopic?: boolean } = {}
   ) => {
-    if (!hasNodeSeekCookie) {
+    if (!hasNodeSeekLoginCookie) {
       notify('请先在“更多”里登录并检测 NodeSeek Cookie。');
       return false;
     }
@@ -1545,7 +2356,7 @@ export default function App() {
       return true;
     } catch (error) {
       if (isNodeSeekLoginRequiredError(error)) {
-        await clearNodeSeekLoginState();
+        await clearNodeSeekLoginCookiesOnly();
       }
       notify(errorMessage(error));
       return false;
@@ -1554,7 +2365,7 @@ export default function App() {
         setActionBusy(false);
       }
     }
-  }, [clearNodeSeekLoginState, hasNodeSeekCookie, notify, openTopic, topicDetail]);
+  }, [clearNodeSeekLoginCookiesOnly, hasNodeSeekLoginCookie, notify, openTopic, topicDetail]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -1752,15 +2563,82 @@ export default function App() {
     }
   }, [notify]);
 
+  const shareTextFile = useCallback(async (fileName: string, content: string, mimeType: string) => {
+    const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+    if (!baseDirectory) {
+      await Clipboard.setStringAsync(content);
+      notify('内容已复制');
+      return;
+    }
+    const uri = `${baseDirectory}${fileName}`;
+    await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, { mimeType });
+    } else {
+      await Clipboard.setStringAsync(content);
+      notify('内容已复制');
+    }
+  }, [notify]);
+
+  const exportBackupFile = useCallback(async () => {
+    try {
+      await saveQueueRef.current.catch(() => undefined);
+      const content = exportReaderBackupJson(readerDataRef.current);
+      setBackupJson(content);
+      await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
+      notify('备份文件已生成');
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [notify, shareTextFile]);
+
+  const exportFavoritesMarkdownFile = useCallback(async () => {
+    try {
+      await saveQueueRef.current.catch(() => undefined);
+      await shareTextFile(safeFileName('forum-reader-favorites', 'md'), exportFavoritesMarkdown(readerDataRef.current), 'text/markdown');
+      notify('收藏 Markdown 已生成');
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [notify, shareTextFile]);
+
+  const importBackupFile = useCallback(async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        type: ['application/json', 'text/json', '*/*']
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+      const content = await FileSystem.readAsStringAsync(result.assets[0].uri, { encoding: FileSystem.EncodingType.UTF8 });
+      setBackupJson(content);
+      const merged = importReaderBackupJson(readerDataRef.current, content);
+      await replaceReaderData(merged);
+      notify('备份已恢复，本机资料已合并');
+    } catch (error) {
+      notify(errorMessage(error));
+    }
+  }, [notify, replaceReaderData]);
+
   const checkLocalStatus = useCallback(async () => {
     const controller = startAbortableRequest(statusAbortRef);
     setBusy(true);
     try {
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
       const linuxDoAccess = await loadLinuxDoAccess();
       setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
       const checks = await Promise.allSettled([
-        getFeed({ source: 'nodeseek', limit: 1, nocache: true, signal: controller.signal }),
+        getFeed({
+          source: 'nodeseek',
+          limit: 1,
+          nocache: true,
+          fetcher: nodeSeekFetchWithWebView,
+          nodeSeekCookie,
+          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+          signal: controller.signal
+        }),
         getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
         getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal })
       ]);
@@ -1771,6 +2649,33 @@ export default function App() {
         yaohuo: Boolean(yaohuoCookie)
       };
       const access = linuxDoAccessSummary(linuxDoAccess);
+      setHealthDetails([
+        {
+          label: 'NodeSeek',
+          ok: status.nodeseek,
+          message: checks[0].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[0].reason)
+        },
+        {
+          label: 'V2EX',
+          ok: status.v2ex,
+          message: checks[1].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[1].reason)
+        },
+        {
+          label: 'linux.do',
+          ok: status.linuxdo,
+          message: checks[2].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[2].reason)
+        },
+        {
+          label: '妖火',
+          ok: status.yaohuo,
+          message: status.yaohuo ? '已保存登录 Cookie' : '未登录'
+        },
+        {
+          label: 'linux.do 验证',
+          ok: access.hasClearance,
+          message: access.hasClearance ? `已保存 ${access.savedAt || ''}` : '未保存'
+        }
+      ]);
       const sourceStatus = sources.map((source) => `${sourceLabel(source)} ${status[source] ? '可用' : '不可用'}`).join(' · ');
       const linuxDoText = access.hasClearance ? `linux.do 验证：已保存 ${access.savedAt || ''}` : 'linux.do 验证：未保存';
       setHealthSummary(`${sourceStatus} · ${linuxDoText}`);
@@ -1784,7 +2689,7 @@ export default function App() {
         setBusy(false);
       }
     }
-  }, [notify]);
+  }, [loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -1801,7 +2706,7 @@ export default function App() {
         return true;
       }
       if (showLinuxDoPanel) {
-        setShowLinuxDoPanel(false);
+        closeLinuxDoPanel();
         return true;
       }
       if (showCategoriesPanel) {
@@ -1828,6 +2733,7 @@ export default function App() {
     goBackFromTopic,
     imagePreview,
     screen,
+    closeLinuxDoPanel,
     showCategoriesPanel,
     showLoginPanel,
     showLinuxDoPanel,
@@ -1852,6 +2758,10 @@ export default function App() {
   }
 
   const changeFeedSource = useCallback((source: FeedSource) => {
+    setFeedItems([]);
+    setFeedPage(1);
+    setFeedNextCursor(undefined);
+    setFeedHasMore(false);
     setFeedSource(source);
     setCategoryFilter('');
   }, []);
@@ -1861,17 +2771,92 @@ export default function App() {
   }, [commitReaderData]);
 
   const removeLibraryTopic = useCallback((topic: Topic) => {
-    commitReaderData((current) => removeRecord(current, libraryTab, topic));
+    const record = readerDataRef.current[libraryTab][topicKey(topic)];
+    if (record) {
+      setLibraryUndo({
+        section: libraryTab,
+        records: { [topicKey(topic)]: record },
+        label: `已删除 1 条${libraryTab === 'favorites' ? '收藏' : '历史'}`
+      });
+    }
+    commitReaderData((current) => removeRecords(current, libraryTab, [topic]));
+  }, [commitReaderData, libraryTab]);
+
+  const removeManyLibraryTopics = useCallback((topics: Topic[]) => {
+    const records = Object.fromEntries(topics
+      .map((topic) => [topicKey(topic), readerDataRef.current[libraryTab][topicKey(topic)]] as const)
+      .filter(([, record]) => Boolean(record))) as Record<string, TopicRecord>;
+    if (Object.keys(records).length) {
+      setLibraryUndo({
+        section: libraryTab,
+        records,
+        label: `已删除 ${Object.keys(records).length} 条${libraryTab === 'favorites' ? '收藏' : '历史'}`
+      });
+    }
+    commitReaderData((current) => removeRecords(current, libraryTab, topics));
+  }, [commitReaderData, libraryTab]);
+
+  const clearHistory = useCallback(() => {
+    const records = readerDataRef.current.history;
+    if (!Object.keys(records).length) {
+      return;
+    }
+    setLibraryUndo({
+      section: 'history',
+      records,
+      label: `已清空 ${Object.keys(records).length} 条历史`
+    });
+    commitReaderData((current) => clearRecords(current, 'history'));
+  }, [commitReaderData]);
+
+  const undoLibraryDelete = useCallback(() => {
+    if (!libraryUndo) {
+      return;
+    }
+    commitReaderData((current) => restoreRecords(current, libraryUndo.section, libraryUndo.records));
+    setLibraryUndo(null);
+  }, [commitReaderData, libraryUndo]);
+
+  const updateLibraryRecord = useCallback((topic: Topic, patch: Pick<TopicRecord, 'tags' | 'note'>) => {
+    commitReaderData((current) => updateTopicRecord(current, libraryTab, topic, patch));
   }, [commitReaderData, libraryTab]);
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <SafeAreaView style={styles.screen}>
         <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
+        {nodeSeekBrowserFetchRequest ? (
+          <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
+            <WebView
+              key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}
+              ref={nodeSeekBrowserWebViewRef}
+              source={{
+                uri: nodeSeekBrowserFetchRequest.url,
+                headers: nodeSeekBrowserFetchRequest.cookie ? { Cookie: nodeSeekBrowserFetchRequest.cookie } : undefined
+              }}
+              javaScriptEnabled
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
+              androidLayerType="software"
+              userAgent={nodeSeekBrowserFetchRequest.userAgent || nodeSeekWebViewUserAgent}
+              containerStyle={styles.hiddenBrowserWebView}
+              style={styles.hiddenBrowserWebView}
+              onLoadEnd={() => {
+                nodeSeekBrowserWebViewRef.current?.injectJavaScript(
+                  NODESEEK_BROWSER_FETCH_SCRIPT.replace('__NODESEEK_BROWSER_FETCH_ID__', String(nodeSeekBrowserFetchRequest.id))
+                );
+              }}
+              onMessage={handleNodeSeekBrowserFetchMessage}
+              onError={(event) => {
+                failCurrentNodeSeekBrowserFetch(event.nativeEvent.description || 'NodeSeek 页面加载失败');
+              }}
+            />
+          </View>
+        ) : null}
         {screen === 'topic' ? (
           <TopicScreen
             actionBusy={actionBusy}
-            canUseNodeSeekActions={hasNodeSeekCookie}
+            canUseNodeSeekActions={hasNodeSeekLoginCookie}
             canUseYaohuoActions={hasYaohuoCookie}
             contentWidth={contentWidth}
             htmlBaseStyle={htmlBaseStyle}
@@ -1883,8 +2868,11 @@ export default function App() {
             loadedQuotedRepliesRef={loadedQuotedRepliesRef}
             loadingMoreReplies={loadingMoreReplies}
             loadingQuotedFloorsRef={loadingQuotedFloorsRef}
+            commentQuery={commentQuery}
+            focusMode={focusMode}
             quoteStateVersion={quoteStateVersion}
             readerData={readerData}
+            readerMode={readerMode}
             replyComposerOpen={replyComposerOpen}
             replyContent={replyContent}
             replyFilter={replyFilter}
@@ -1898,7 +2886,11 @@ export default function App() {
             topic={topicDetail}
             topicError={topicError}
             topicScrollRef={topicScrollRef}
+            unreadReplyCount={unreadReplyCount}
             onBack={goBackFromTopic}
+            onCommentQueryChange={setCommentQuery}
+            onCopyReplyMarkdown={copyReplyMarkdown}
+            onCopyTopicLink={copyTopicLink}
             onInteract={interact}
             onYaohuoFavorite={favoriteOnYaohuoSite}
             onYaohuoVote={voteYaohuo}
@@ -1909,6 +2901,9 @@ export default function App() {
             onReplyFilterChange={setReplyFilter}
             onReplyToFloor={replyToFloor}
             onRefreshTopic={refreshTopic}
+            onReaderModeChange={setReaderMode}
+            onFocusModeChange={setFocusMode}
+            onVerifyLinuxDo={verifyLinuxDoFromTopic}
             onSubmitReply={submitReply}
             onTopicScroll={handleTopicScroll}
             onToggleQuotedFloor={toggleQuotedFloor}
@@ -1945,32 +2940,43 @@ export default function App() {
                 busy={busy}
                 query={searchQuery}
                 readerData={readerData}
+                recentSearches={recentSearches}
                 results={visibleSearchItems}
+                searchGroups={searchGroups}
                 scope={searchScope}
                 searchSource={searchSource}
                 sort={searchSort}
                 styles={styles}
                 theme={theme}
+                onOpenExternalUrl={openExternalUrl}
                 onOpenTopic={openTopic}
+                onRemoveRecentSearch={removeRecentSearch}
+                onRemoveSavedSearch={(id) => commitReaderData((current) => removeSavedSearch(current, id))}
                 onQueryChange={setSearchQuery}
-                onSaveSearch={() => commitReaderData((current) => addSavedSearch(current, searchQuery, searchSource))}
+                onSaveSearch={() => commitReaderData((current) => addSavedSearch(current, searchQuery))}
                 onScopeChange={setSearchScope}
-                onSearch={runSearch}
+                onSearch={() => runSearch()}
                 onSearchSourceChange={setSearchSource}
                 onSortChange={setSearchSort}
+                onRetrySearchSource={retrySearchSource}
                 onToggleFavorite={toggleTopicFavorite}
               />
             ) : null}
             {screen === 'library' ? (
               <LibraryScreen
                 libraryTab={libraryTab}
+                libraryUndo={libraryUndo}
+                records={libraryRecords}
                 readerData={readerData}
                 styles={styles}
                 theme={theme}
-                topics={libraryTopics}
+                onClearHistory={clearHistory}
                 onOpenTopic={openTopic}
+                onRemoveMany={removeManyLibraryTopics}
                 onRemove={removeLibraryTopic}
                 onTabChange={setLibraryTab}
+                onUndoDelete={undoLibraryDelete}
+                onUpdateRecord={updateLibraryRecord}
               />
             ) : null}
             {screen === 'more' ? (
@@ -1978,14 +2984,19 @@ export default function App() {
                 <MoreScreen
                   categories={categories}
                   checking={checking}
-                  hasNodeSeekCookie={hasNodeSeekCookie}
+                  hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
                   hasYaohuoCookie={hasYaohuoCookie}
                   hasLinuxDoClearance={hasLinuxDoClearance}
+                  healthDetails={healthDetails}
                   healthSummary={healthSummary}
                   loginState={loginState}
                   loadingLoginPage={loadingLoginPage}
                   loadingYaohuoLoginPage={loadingYaohuoLoginPage}
                   loadingLinuxDoPage={loadingLinuxDoPage}
+                  linuxDoWebViewError={linuxDoWebViewError}
+                  linuxDoWebViewKey={linuxDoWebViewKey}
+                  linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+                  nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
                   readerData={readerData}
                   backupJson={backupJson}
                   showCategoriesPanel={showCategoriesPanel}
@@ -2004,6 +3015,7 @@ export default function App() {
                   onCheckHealth={checkLocalStatus}
                   onCheckIn={checkIn}
                   onCheckLogin={checkLogin}
+                  onRememberNodeSeekCookies={rememberCurrentNodeSeekCookies}
                   onCheckYaohuoLogin={checkYaohuoCookie}
                   onCheckLinuxDoCookie={checkLinuxDoCookie}
                   onClearLogin={clearLogin}
@@ -2013,18 +3025,24 @@ export default function App() {
                   handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
                   handleLinuxDoNavigation={handleLinuxDoNavigation}
                   onHandleLoginMessage={handleLoginMessage}
+                  onHandleLinuxDoMessage={handleLinuxDoMessage}
                   onImportBackup={importBackup}
                   onExportBackup={exportBackup}
+                  onExportBackupFile={exportBackupFile}
+                  onImportBackupFile={importBackupFile}
+                  onExportFavoritesMarkdownFile={exportFavoritesMarkdownFile}
                   onRefreshCategories={loadCategories}
                   onSelectCategory={selectCategory}
                   onBackupJsonChange={setBackupJson}
                   onSetLoadingLoginPage={setLoadingLoginPage}
                   onSetLoadingYaohuoLoginPage={setLoadingYaohuoLoginPage}
                   onSetLoadingLinuxDoPage={setLoadingLinuxDoPage}
+                  onSetLinuxDoWebViewError={setLinuxDoWebViewError}
+                  onResetLinuxDoWebView={resetLinuxDoWebView}
                   onShowCategoriesPanelChange={setShowCategoriesPanel}
                   onShowLoginPanelChange={setShowLoginPanel}
                   onShowYaohuoLoginPanelChange={setShowYaohuoLoginPanel}
-                  onShowLinuxDoPanelChange={setShowLinuxDoPanel}
+                  onShowLinuxDoPanelChange={changeLinuxDoPanel}
                   onShowSettingsPanelChange={setShowSettingsPanel}
                   onToggleSubscription={(category) => commitReaderData((current) => toggleSubscription(current, category))}
                   onUpdateSettings={updateSettings}
@@ -2040,6 +3058,8 @@ export default function App() {
           onClose={closeImagePreview}
           onNext={showNextImage}
           onPrevious={showPreviousImage}
+          onSave={savePreviewImage}
+          onSelect={selectPreviewImage}
         />
       </SafeAreaView>
     </KeyboardAvoidingView>
@@ -2091,6 +3111,8 @@ function FeedScreen({
 }) {
   const listRef = useRef<FlatList<Topic>>(null);
   const requestedFeedPageRef = useRef<number | null>(null);
+  const pendingScrollOffsetRef = useRef<number | null>(null);
+  const scrollStorageKey = useMemo(() => feedScrollStorageKey(feedSource, categoryFilter, readingFilter), [categoryFilter, feedSource, readingFilter]);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
 
   const requestFeedLoadMore = useCallback(() => {
@@ -2113,6 +3135,11 @@ function FeedScreen({
     }
   }, [requestFeedLoadMore]);
 
+  const saveFeedScrollPosition = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offset = Math.max(0, Math.round(event.nativeEvent.contentOffset.y));
+    void AsyncStorage.setItem(scrollStorageKey, String(offset)).catch(() => undefined);
+  }, [scrollStorageKey]);
+
   useEffect(() => {
     if (!busy && !loadingMore) {
       requestedFeedPageRef.current = null;
@@ -2122,7 +3149,24 @@ function FeedScreen({
   useEffect(() => {
     requestedFeedPageRef.current = null;
     setShowFloatingActions(false);
+    pendingScrollOffsetRef.current = null;
+    AsyncStorage.getItem(scrollStorageKey)
+      .then((value) => {
+        const offset = Number(value || 0);
+        if (Number.isFinite(offset) && offset > 0) {
+          pendingScrollOffsetRef.current = offset;
+        }
+      })
+      .catch(() => undefined);
   }, [categoryFilter, feedSource, readingFilter]);
+
+  const restoreFeedScrollPosition = useCallback(() => {
+    const offset = pendingScrollOffsetRef.current;
+    if (offset && feedItems.length) {
+      pendingScrollOffsetRef.current = null;
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset, animated: false }));
+    }
+  }, [feedItems.length]);
 
   const scrollToTop = useCallback(() => {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -2189,6 +3233,9 @@ function FeedScreen({
         keyboardShouldPersistTaps="handled"
         onScroll={handleScroll}
         scrollEventThrottle={64}
+        onMomentumScrollEnd={saveFeedScrollPosition}
+        onScrollEndDrag={saveFeedScrollPosition}
+        onContentSizeChange={restoreFeedScrollPosition}
         onEndReachedThreshold={0.6}
         onEndReached={requestFeedLoadMore}
         {...FEED_LIST_PERFORMANCE_PROPS}
@@ -2219,16 +3266,22 @@ function FeedScreen({
 function SearchScreen({
   busy,
   query,
+  recentSearches,
   readerData,
   results,
+  searchGroups,
   scope,
   searchSource,
   sort,
   styles,
   theme,
+  onOpenExternalUrl,
   onOpenTopic,
+  onRemoveRecentSearch,
+  onRemoveSavedSearch,
   onQueryChange,
   onSaveSearch,
+  onRetrySearchSource,
   onScopeChange,
   onSearch,
   onSearchSourceChange,
@@ -2237,16 +3290,22 @@ function SearchScreen({
 }: {
   busy: boolean;
   query: string;
+  recentSearches: string[];
   readerData: ReaderData;
   results: Topic[];
+  searchGroups: SearchGroup[];
   scope: SearchScope;
   searchSource: FeedSource;
   sort: SearchSort;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
+  onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
+  onRemoveRecentSearch: (query: string) => void;
+  onRemoveSavedSearch: (id: string) => void;
   onQueryChange: (value: string) => void;
   onSaveSearch: () => void;
+  onRetrySearchSource: (source: Source) => void;
   onScopeChange: (scope: SearchScope) => void;
   onSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
@@ -2259,6 +3318,7 @@ function SearchScreen({
   }), [onToggleFavorite]);
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <MemoizedTopicCard
+      highlightQuery={query}
       readerState={getTopicListItemState(readerData, item)}
       styles={styles}
       theme={theme}
@@ -2267,14 +3327,61 @@ function SearchScreen({
       swipeAction={favoriteSwipeAction}
     />
   ), [favoriteSwipeAction, onOpenTopic, readerData, styles, theme]);
-  const savedSearchItems = useMemo(
-    () => readerData.savedSearches.map((item) => ({ value: item.id, label: item.query })),
-    [readerData.savedSearches]
-  );
   const selectSavedSearch = useCallback((id: string) => {
     const saved = readerData.savedSearches.find((item) => item.id === id);
-    onQueryChange(saved?.query || id);
+    if (saved) {
+      onQueryChange(saved.query);
+      return;
+    }
+    onQueryChange(id);
   }, [onQueryChange, readerData.savedSearches]);
+  const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
+  useEffect(() => {
+    setSearchCategoryFilter('all');
+  }, [query, scope, searchSource]);
+  const searchCategoryOptions = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>();
+    for (const item of results) {
+      const key = searchResultCategoryKey(item);
+      if (!key || !item.category) {
+        continue;
+      }
+      const current = counts.get(key);
+      counts.set(key, {
+        label: `${sourceLabel(item.source)} · ${item.category}`,
+        count: (current?.count || 0) + 1
+      });
+    }
+    return [...counts.entries()].map(([value, item]) => ({
+      value,
+      label: `${item.label} ${item.count}`
+    }));
+  }, [results]);
+  useEffect(() => {
+    if (searchCategoryFilter !== 'all' && !searchCategoryOptions.some((item) => item.value === searchCategoryFilter)) {
+      setSearchCategoryFilter('all');
+    }
+  }, [searchCategoryFilter, searchCategoryOptions]);
+  const filteredSearchResults = useMemo(() => (
+    searchCategoryFilter === 'all'
+      ? results
+      : results.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
+  ), [results, searchCategoryFilter]);
+  const visibleSearchGroups = useMemo(() => searchGroups.map((group) => ({
+    ...group,
+    items: sortTopics(
+      searchCategoryFilter === 'all'
+        ? group.items
+        : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter),
+      sort
+    )
+  })), [searchCategoryFilter, searchGroups, sort]);
+  const linuxDoExternalItems = useMemo(() => (
+    scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
+      ? linuxDoExternalSearchItems(query)
+      : []
+  ), [query, scope, searchSource]);
+  const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
 
   const header = (
     <View style={styles.stack}>
@@ -2293,6 +3400,7 @@ function SearchScreen({
           autoCorrect={false}
           onSubmitEditing={onSearch}
         />
+        {query ? <IconButton icon={X} label="清空" styles={styles} theme={theme} onPress={() => onQueryChange('')} /> : null}
         <IconButton icon={Search} label="搜索" styles={styles} theme={theme} disabled={busy} onPress={onSearch} />
       </View>
       <PillRail
@@ -2327,14 +3435,86 @@ function SearchScreen({
         styles={styles}
         onChange={(value) => onSortChange(value as SearchSort)}
       />
+      {searchCategoryOptions.length ? (
+        <PillRail
+          items={[{ value: 'all', label: '分类全部' }, ...searchCategoryOptions]}
+          value={searchCategoryFilter}
+          styles={styles}
+          onChange={setSearchCategoryFilter}
+        />
+      ) : null}
+      {linuxDoExternalItems.length ? (
+        <View style={styles.stack}>
+          <Text style={styles.meta}>linux.do 老帖</Text>
+          <View style={styles.actions}>
+            {linuxDoExternalItems.map((item) => (
+              <AppButton key={item.url} compact label={item.label} styles={styles} onPress={() => onOpenExternalUrl(item.url)} />
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {showRemoteGroups ? (
+        <View style={styles.stack}>
+          {visibleSearchGroups.length ? visibleSearchGroups.map((group) => (
+            <View key={group.source} style={styles.group}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.panelTitle}>{group.label}</Text>
+                <Text style={styles.meta}>{group.loading ? '搜索中' : `${group.items.length} 条`}</Text>
+              </View>
+              {group.error ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{group.error}</Text>
+                  <AppButton label={`重试 ${group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(group.source)} />
+                </View>
+              ) : null}
+              {group.loading ? <LoadingState text={`${group.label} 搜索中...`} styles={styles} theme={theme} /> : null}
+              {group.items.map((item) => (
+                <MemoizedTopicCard
+                  key={topicKey(item)}
+                  highlightQuery={query}
+                  readerState={getTopicListItemState(readerData, item)}
+                  styles={styles}
+                  theme={theme}
+                  topic={item}
+                  onOpenTopic={onOpenTopic}
+                  swipeAction={favoriteSwipeAction}
+                />
+              ))}
+              {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
+            </View>
+          )) : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
+        </View>
+      ) : null}
       <AppButton label="保存搜索" variant="ghost" styles={styles} onPress={onSaveSearch} />
       {readerData.savedSearches.length ? (
-        <PillRail
-          items={savedSearchItems}
-          value=""
-          styles={styles}
-          onChange={selectSavedSearch}
-        />
+        <View style={styles.stack}>
+          <Text style={styles.meta}>保存搜索</Text>
+          <View style={styles.chipWrap}>
+            {readerData.savedSearches.map((item) => (
+              <View key={item.id} style={styles.inlineChipGroup}>
+                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => selectSavedSearch(item.id)}>
+                  <Text style={styles.pillText}>{item.query}</Text>
+                </Pressable>
+                <IconButton tiny ghost icon={X} label="删除保存搜索" styles={styles} theme={theme} onPress={() => onRemoveSavedSearch(item.id)} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {recentSearches.length ? (
+        <View style={styles.stack}>
+          <Text style={styles.meta}>最近搜索</Text>
+          <View style={styles.chipWrap}>
+            {recentSearches.map((item) => (
+              <View key={item} style={styles.inlineChipGroup}>
+                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => onQueryChange(item)}>
+                  <Text style={styles.pillText}>{item}</Text>
+                </Pressable>
+                <IconButton tiny ghost icon={X} label="删除最近搜索" styles={styles} theme={theme} onPress={() => onRemoveRecentSearch(item)} />
+              </View>
+            ))}
+          </View>
+        </View>
       ) : null}
     </View>
   );
@@ -2343,12 +3523,12 @@ function SearchScreen({
     <FlatList
       style={styles.content}
       contentContainerStyle={styles.contentInner}
-      data={results}
+      data={showRemoteGroups ? [] : filteredSearchResults}
       keyExtractor={topicKey}
       keyboardShouldPersistTaps="handled"
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
-      ListEmptyComponent={busy && query.trim()
+      ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()
         ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
         : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
       renderItem={renderTopicItem}
@@ -2358,43 +3538,156 @@ function SearchScreen({
 
 function LibraryScreen({
   libraryTab,
+  libraryUndo,
+  records,
   readerData,
   styles,
   theme,
-  topics,
+  onClearHistory,
   onOpenTopic,
+  onRemoveMany,
   onRemove,
-  onTabChange
+  onTabChange,
+  onUndoDelete,
+  onUpdateRecord
 }: {
   libraryTab: LibraryTab;
+  libraryUndo: LibraryUndo;
+  records: TopicRecord[];
   readerData: ReaderData;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  topics: Topic[];
+  onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;
+  onRemoveMany: (topics: Topic[]) => void;
   onRemove: (topic: Topic) => void;
   onTabChange: (tab: LibraryTab) => void;
+  onUndoDelete: () => void;
+  onUpdateRecord: (topic: Topic, patch: Pick<TopicRecord, 'tags' | 'note'>) => void;
 }) {
+  type LibraryListItem = { type: 'section'; key: string; label: string } | { type: 'record'; key: string; record: TopicRecord };
+  const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [tagFilter, setTagFilter] = useState('all');
+  const [bulkMode, setBulkMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [editingKey, setEditingKey] = useState('');
+  const [tagInput, setTagInput] = useState('');
+  const [noteInput, setNoteInput] = useState('');
   const deleteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
     kind: 'delete',
     onPress: onRemove
   }), [onRemove]);
-  const renderLibraryItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
-    <View style={styles.libraryItem}>
+  const categories = useMemo(() => Array.from(new Set(records.map((record) => record.topic.category).filter(Boolean) as string[])), [records]);
+  const tags = useMemo(() => Array.from(new Set(records.flatMap((record) => record.tags || []))).sort(), [records]);
+  const filteredRecords = useMemo(() => filterLibraryRecords(records, {
+    source: sourceFilter,
+    category: categoryFilter,
+    tag: tagFilter
+  }), [categoryFilter, records, sourceFilter, tagFilter]);
+  const listItems = useMemo<LibraryListItem[]>(() => groupLibraryRecordsByTime(filteredRecords).flatMap((section) => [
+    { type: 'section' as const, key: `section:${section.label}`, label: section.label },
+    ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
+  ]), [filteredRecords]);
+  useEffect(() => {
+    setSelected(new Set());
+    setEditingKey('');
+  }, [categoryFilter, libraryTab, sourceFilter, tagFilter]);
+  const beginEdit = useCallback((record: TopicRecord) => {
+    setEditingKey(libraryRecordKey(record));
+    setTagInput(record.tags?.join(', ') || '');
+    setNoteInput(record.note || '');
+  }, []);
+  const saveEdit = useCallback((record: TopicRecord) => {
+    onUpdateRecord(record.topic, {
+      tags: parseTagsInput(tagInput),
+      note: noteInput
+    });
+    setEditingKey('');
+  }, [noteInput, onUpdateRecord, tagInput]);
+  const toggleSelected = useCallback((key: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
+  const removeSelected = useCallback(() => {
+    const topics = filteredRecords.filter((record) => selected.has(libraryRecordKey(record))).map((record) => record.topic);
+    if (topics.length) {
+      onRemoveMany(topics);
+      setSelected(new Set());
+    }
+  }, [filteredRecords, onRemoveMany, selected]);
+  const renderLibraryItem = useCallback<ListRenderItem<LibraryListItem>>(({ item }) => {
+    if (item.type === 'section') {
+      return <Text style={styles.librarySectionTitle}>{item.label}</Text>;
+    }
+    const record = item.record;
+    const key = libraryRecordKey(record);
+    const selectedRecord = selected.has(key);
+    const editing = editingKey === key;
+    return (
+      <View style={styles.libraryItem}>
+        {bulkMode ? (
+          <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: selectedRecord }} style={styles.librarySelectRow} onPress={() => toggleSelected(key)}>
+            <Text style={styles.pillText}>{selectedRecord ? '已选' : '选择'}</Text>
+          </Pressable>
+        ) : null}
       <MemoizedTopicCard
-        readerState={getTopicListItemState(readerData, item)}
+        readerState={getTopicListItemState(readerData, record.topic)}
         styles={styles}
         theme={theme}
-        topic={item}
+        topic={record.topic}
         onOpenTopic={onOpenTopic}
-        swipeAction={deleteSwipeAction}
+        swipeAction={bulkMode ? undefined : deleteSwipeAction}
       />
-    </View>
-  ), [deleteSwipeAction, onOpenTopic, readerData, styles, theme]);
+        <View style={styles.libraryMetaBlock}>
+          <Text style={styles.meta}>保存于 {formatDateTime(record.savedAt) || record.savedAt}{record.visitCount ? ` · ${record.visitCount} 次阅读` : ''}</Text>
+          {record.tags?.length ? <Text style={styles.meta}>标签：{record.tags.join(', ')}</Text> : null}
+          {record.note ? <Text style={styles.meta}>备注：{record.note}</Text> : null}
+        </View>
+        {editing ? (
+          <View style={styles.stack}>
+            <TextInput
+              style={styles.input}
+              value={tagInput}
+              onChangeText={setTagInput}
+              placeholder="标签，用逗号分隔"
+              placeholderTextColor={theme.muted}
+            />
+            <TextInput
+              style={styles.input}
+              value={noteInput}
+              onChangeText={setNoteInput}
+              placeholder="备注"
+              placeholderTextColor={theme.muted}
+            />
+            <View style={styles.actions}>
+              <AppButton compact label="保存" styles={styles} onPress={() => saveEdit(record)} />
+              <AppButton compact label="取消" variant="ghost" styles={styles} onPress={() => setEditingKey('')} />
+            </View>
+          </View>
+        ) : (
+          <View style={styles.actions}>
+            <AppButton compact label={record.tags?.length || record.note ? '编辑标签和备注' : '添加标签和备注'} variant="ghost" styles={styles} onPress={() => beginEdit(record)} />
+            {!bulkMode ? <AppButton compact label="删除" variant="ghost" styles={styles} onPress={() => onRemove(record.topic)} /> : null}
+          </View>
+        )}
+      </View>
+    );
+  }, [beginEdit, bulkMode, deleteSwipeAction, editingKey, noteInput, onOpenTopic, onRemove, readerData, saveEdit, selected, styles, tagInput, theme, toggleSelected]);
 
   const header = (
     <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>收藏</Text>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>收藏</Text>
+        <Text style={styles.meta}>{filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`}</Text>
+      </View>
       <PillRail
         items={[
           { value: 'favorites', label: '收藏' },
@@ -2404,6 +3697,42 @@ function LibraryScreen({
         styles={styles}
         onChange={(value) => onTabChange(value as LibraryTab)}
       />
+      <PillRail
+        items={[
+          { value: 'all', label: '来源全部' },
+          ...sources.map((source) => ({ value: source, label: sourceLabel(source) }))
+        ]}
+        value={sourceFilter}
+        styles={styles}
+        onChange={(value) => setSourceFilter(value as FeedSource)}
+      />
+      {categories.length ? (
+        <PillRail
+          items={[{ value: 'all', label: '节点全部' }, ...categories.map((category) => ({ value: category, label: category }))]}
+          value={categoryFilter}
+          styles={styles}
+          onChange={setCategoryFilter}
+        />
+      ) : null}
+      {tags.length ? (
+        <PillRail
+          items={[{ value: 'all', label: '标签筛选' }, ...tags.map((tag) => ({ value: tag, label: tag }))]}
+          value={tagFilter}
+          styles={styles}
+          onChange={setTagFilter}
+        />
+      ) : null}
+      <View style={styles.actions}>
+        <AppButton compact label={bulkMode ? '退出批量' : '批量删除'} variant="ghost" styles={styles} onPress={() => setBulkMode((value) => !value)} />
+        {bulkMode && selected.size ? <AppButton compact label={`删除选中 ${selected.size}`} styles={styles} onPress={removeSelected} /> : null}
+        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={onClearHistory} /> : null}
+      </View>
+      {libraryUndo ? (
+        <View style={styles.noticeBox}>
+          <Text style={styles.meta}>{libraryUndo.label}</Text>
+          <AppButton compact label="撤销删除" variant="ghost" styles={styles} onPress={onUndoDelete} />
+        </View>
+      ) : null}
     </View>
   );
 
@@ -2411,8 +3740,8 @@ function LibraryScreen({
     <FlatList
       style={styles.content}
       contentContainerStyle={styles.contentInner}
-      data={topics}
-      keyExtractor={topicKey}
+      data={listItems}
+      keyExtractor={(item) => item.key}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListEmptyComponent={<EmptyText text="这里还没有内容" styles={styles} />}
@@ -2424,14 +3753,19 @@ function LibraryScreen({
 function MoreScreen({
   categories,
   checking,
-  hasNodeSeekCookie,
+  hasNodeSeekLoginCookie,
   hasYaohuoCookie,
   hasLinuxDoClearance,
+  healthDetails,
   healthSummary,
   loginState,
   loadingLoginPage,
   loadingYaohuoLoginPage,
   loadingLinuxDoPage,
+  linuxDoWebViewError,
+  linuxDoWebViewKey,
+  linuxDoWebViewUserAgent,
+  nodeSeekWebViewUserAgent,
   readerData,
   backupJson,
   showCategoriesPanel,
@@ -2450,6 +3784,7 @@ function MoreScreen({
   onCheckHealth,
   onCheckIn,
   onCheckLogin,
+  onRememberNodeSeekCookies,
   onCheckYaohuoLogin,
   onCheckLinuxDoCookie,
   onClearLogin,
@@ -2459,14 +3794,20 @@ function MoreScreen({
   handleYaohuoLoginNavigation,
   handleLinuxDoNavigation,
   onHandleLoginMessage,
+  onHandleLinuxDoMessage,
   onImportBackup,
   onExportBackup,
+  onExportBackupFile,
+  onImportBackupFile,
+  onExportFavoritesMarkdownFile,
   onRefreshCategories,
   onSelectCategory,
   onBackupJsonChange,
   onSetLoadingLoginPage,
   onSetLoadingYaohuoLoginPage,
   onSetLoadingLinuxDoPage,
+  onSetLinuxDoWebViewError,
+  onResetLinuxDoWebView,
   onShowCategoriesPanelChange,
   onShowLoginPanelChange,
   onShowYaohuoLoginPanelChange,
@@ -2477,14 +3818,19 @@ function MoreScreen({
 }: {
   categories: Category[];
   checking: boolean;
-  hasNodeSeekCookie: boolean;
+  hasNodeSeekLoginCookie: boolean;
   hasYaohuoCookie: boolean;
   hasLinuxDoClearance: boolean;
+  healthDetails: HealthDetail[];
   healthSummary: string;
   loginState: string;
   loadingLoginPage: boolean;
   loadingYaohuoLoginPage: boolean;
   loadingLinuxDoPage: boolean;
+  linuxDoWebViewError: string;
+  linuxDoWebViewKey: number;
+  linuxDoWebViewUserAgent: string;
+  nodeSeekWebViewUserAgent: string;
   readerData: ReaderData;
   backupJson: string;
   showCategoriesPanel: boolean;
@@ -2503,6 +3849,7 @@ function MoreScreen({
   onCheckHealth: () => void;
   onCheckIn: () => void;
   onCheckLogin: () => void;
+  onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
   onCheckYaohuoLogin: () => void;
   onCheckLinuxDoCookie: () => void;
   onClearLogin: () => void;
@@ -2512,14 +3859,20 @@ function MoreScreen({
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
+  onHandleLinuxDoMessage: (event: WebViewMessageEvent) => void;
   onImportBackup: () => void;
   onExportBackup: () => void;
+  onExportBackupFile: () => void;
+  onImportBackupFile: () => void;
+  onExportFavoritesMarkdownFile: () => void;
   onRefreshCategories: () => void;
   onSelectCategory: (category: Category) => void;
   onBackupJsonChange: (value: string) => void;
   onSetLoadingLoginPage: (value: boolean) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onSetLoadingLinuxDoPage: (value: boolean) => void;
+  onSetLinuxDoWebViewError: (value: string) => void;
+  onResetLinuxDoWebView: () => void;
   onShowCategoriesPanelChange: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
@@ -2529,16 +3882,29 @@ function MoreScreen({
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   const favoriteCount = Object.keys(readerData.favorites).length;
+  const historyCount = Object.keys(readerData.history).length;
   const grouped = sources.map((source) => ({
     source,
     items: categories.filter((category) => category.source === source)
   }));
+  useEffect(() => {
+    if (!showLinuxDoPanel || !loadingLinuxDoPage) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => {
+      onSetLoadingLinuxDoPage(false);
+      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。');
+    }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
 
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.group}>
         <InfoRow icon={Star} label="收藏" value={String(favoriteCount)} styles={styles} theme={theme} />
+        <InfoRow icon={List} label="历史" value={String(historyCount)} styles={styles} theme={theme} />
+        <InfoRow icon={Activity} label="关于" value="Android 本机阅读器" styles={styles} theme={theme} />
       </View>
       <View style={styles.group}>
         <Text style={styles.panelTitle}>备份 / 恢复</Text>
@@ -2555,11 +3921,14 @@ function MoreScreen({
         <View style={styles.actions}>
           <AppButton label={syncing ? '处理中' : '生成备份'} styles={styles} disabled={syncing} onPress={onExportBackup} />
           <AppButton label={syncing ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackup} />
+          <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onExportBackupFile} />
+          <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackupFile} />
+          <AppButton label="导出收藏 Markdown" variant="ghost" styles={styles} disabled={syncing} onPress={onExportFavoritesMarkdownFile} />
         </View>
       </View>
       <View style={styles.group}>
-        <MenuButton icon={LogIn} label="NodeSeek 登录" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
-        {hasNodeSeekCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
+        <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
+        {hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
         {showLoginPanel ? (
           <View style={styles.loginPanel}>
             <View style={styles.actions}>
@@ -2579,10 +3948,12 @@ function MoreScreen({
                 source={{ uri: NODESEEK_URL }}
                 sharedCookiesEnabled
                 thirdPartyCookiesEnabled
+                userAgent={nodeSeekWebViewUserAgent}
                 injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
                 onLoadEnd={() => {
                   onSetLoadingLoginPage(false);
                   webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
+                  void onRememberNodeSeekCookies({ silent: true });
                 }}
                 onLoadStart={() => onSetLoadingLoginPage(true)}
                 onMessage={onHandleLoginMessage}
@@ -2624,8 +3995,18 @@ function MoreScreen({
             <View style={styles.actions}>
               <AppButton label={checking ? '检测中' : '检测验证'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
               <AppButton label="清除验证" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
-              <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => linuxDoWebViewRef.current?.reload()} />
+              <AppButton
+                label="刷新页面"
+                variant="ghost"
+                styles={styles}
+                onPress={onResetLinuxDoWebView}
+              />
             </View>
+            {linuxDoWebViewError ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{linuxDoWebViewError}</Text>
+              </View>
+            ) : null}
             <View style={styles.webViewShell}>
               {loadingLinuxDoPage ? (
                 <View style={styles.loading}>
@@ -2634,12 +4015,37 @@ function MoreScreen({
                 </View>
               ) : null}
               <WebView
+                key={linuxDoWebViewKey}
                 ref={linuxDoWebViewRef}
                 source={{ uri: LINUXDO_VERIFY_URL }}
+                javaScriptEnabled
+                domStorageEnabled
+                cacheEnabled
                 sharedCookiesEnabled
                 thirdPartyCookiesEnabled
-                onLoadEnd={() => onSetLoadingLinuxDoPage(false)}
-                onLoadStart={() => onSetLoadingLinuxDoPage(true)}
+                userAgent={linuxDoWebViewUserAgent}
+                injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
+                onLoadEnd={(event) => {
+                  onSetLoadingLinuxDoPage(false);
+                  if (!('code' in event.nativeEvent)) {
+                    onSetLinuxDoWebViewError('');
+                  }
+                  linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+                }}
+                onLoadStart={() => {
+                  onSetLinuxDoWebViewError('');
+                  onSetLoadingLinuxDoPage(true);
+                }}
+                onMessage={onHandleLinuxDoMessage}
+                onError={(event) => {
+                  onSetLoadingLinuxDoPage(false);
+                  onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+                }}
+                renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+                onRenderProcessGone={() => {
+                  onSetLoadingLinuxDoPage(false);
+                  onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。');
+                }}
                 onShouldStartLoadWithRequest={handleLinuxDoNavigation}
               />
             </View>
@@ -2659,6 +4065,7 @@ function MoreScreen({
                     <Pressable accessibilityRole="button" style={styles.flex} onPress={() => onSelectCategory(category)}>
                       <Text style={styles.categoryName}>{category.name}</Text>
                       {category.description ? <Text style={styles.meta}>{category.description}</Text> : null}
+                      {category.topicCount ? <Text style={styles.meta}>最近 {category.topicCount} 个主题</Text> : null}
                     </Pressable>
                     <AppButton
                       label={isSubscribed(readerData, category) ? '已订阅' : '订阅'}
@@ -2681,6 +4088,16 @@ function MoreScreen({
       </View>
       <View style={styles.group}>
         <MenuButton icon={Activity} label="状态 / 检查" value={healthSummary || '来源状态'} styles={styles} theme={theme} onPress={onCheckHealth} />
+        {healthDetails.length ? (
+          <View style={styles.stack}>
+            {healthDetails.map((item) => (
+              <View key={item.label} style={styles.statusDetailRow}>
+                <Text style={styles.menuLabel}>{item.label}</Text>
+                <Text style={[styles.meta, item.ok ? styles.statusOk : styles.statusBad]}>{item.ok ? '可用' : '不可用'} · {item.message}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -2848,8 +4265,11 @@ function TopicScreen({
   loadedQuotedRepliesRef,
   loadingMoreReplies,
   loadingQuotedFloorsRef,
+  commentQuery,
+  focusMode,
   quoteStateVersion,
   readerData,
+  readerMode,
   replyComposerOpen,
   replyContent,
   replyFilter,
@@ -2863,7 +4283,11 @@ function TopicScreen({
   topic,
   topicError,
   topicScrollRef,
+  unreadReplyCount,
   onBack,
+  onCommentQueryChange,
+  onCopyReplyMarkdown,
+  onCopyTopicLink,
   onInteract,
   onYaohuoFavorite,
   onYaohuoVote,
@@ -2874,6 +4298,9 @@ function TopicScreen({
   onReplyFilterChange,
   onReplyToFloor,
   onRefreshTopic,
+  onReaderModeChange,
+  onFocusModeChange,
+  onVerifyLinuxDo,
   onSubmitReply,
   onTopicScroll,
   onToggleQuotedFloor,
@@ -2892,8 +4319,11 @@ function TopicScreen({
   loadedQuotedRepliesRef: RefObject<Record<number, Reply>>;
   loadingMoreReplies: boolean;
   loadingQuotedFloorsRef: RefObject<Record<string, boolean>>;
+  commentQuery: string;
+  focusMode: boolean;
   quoteStateVersion: number;
   readerData: ReaderData;
+  readerMode: boolean;
   replyComposerOpen: boolean;
   replyContent: string;
   replyFilter: ReplyFilter;
@@ -2907,7 +4337,11 @@ function TopicScreen({
   topic: TopicDetail | null;
   topicError: string;
   topicScrollRef: RefObject<FlatList<TopicListItem> | null>;
+  unreadReplyCount: number;
   onBack: () => void;
+  onCommentQueryChange: (value: string) => void;
+  onCopyReplyMarkdown: (reply: Reply, floor: number) => void;
+  onCopyTopicLink: () => void;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
   onYaohuoFavorite: () => void;
   onYaohuoVote: (voteId: string) => void;
@@ -2918,6 +4352,9 @@ function TopicScreen({
   onReplyFilterChange: (filter: ReplyFilter) => void;
   onReplyToFloor: (reply: Reply) => void;
   onRefreshTopic: () => void;
+  onReaderModeChange: (value: boolean) => void;
+  onFocusModeChange: (value: boolean) => void;
+  onVerifyLinuxDo: () => void;
   onSubmitReply: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
@@ -2943,17 +4380,29 @@ function TopicScreen({
     });
     return next;
   }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
+  const [floorOpen, setFloorOpen] = useState(false);
+  const newReplyFloorStart = useMemo(() => {
+    if (unreadReplyCount <= 0) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const floors = sourceReplies.map((reply) => reply.floor).filter((floor): floor is number => typeof floor === 'number');
+    if (!floors.length) {
+      return Number.POSITIVE_INFINITY;
+    }
+    return Math.max(...floors) - unreadReplyCount + 1;
+  }, [sourceReplies, unreadReplyCount]);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
+  const topicContentHtml = topic ? (readerMode ? readerModeHtml(topic.contentHtml) : topic.contentHtml) : '';
   const topicContentItems = useMemo<TopicListItem[]>(() => (
     topic
-      ? splitTopicContentHtml(topic.contentHtml).map((html, index) => ({
+      ? splitTopicContentHtml(topicContentHtml).map((html, index) => ({
         type: 'content',
         key: `topic-content-${index}-${stableTextHash(html)}`,
         html
       }))
       : []
-  ), [topic?.contentHtml]);
+  ), [topic, topicContentHtml]);
   const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
     type: 'reply',
     key: getReplyKey(reply),
@@ -2975,6 +4424,13 @@ function TopicScreen({
     }
     return items;
   }, [canWrite, replyComposerOpen, replyItems, topicContentItems, topicLoading]);
+  const jumpToFloor = useCallback((floor: number) => {
+    const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
+    if (index >= 0) {
+      topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
+      setFloorOpen(false);
+    }
+  }, [topicListItems, topicScrollRef]);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'content') {
       return (
@@ -3014,6 +4470,32 @@ function TopicScreen({
             styles={styles}
             onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
           />
+          {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
+          <View style={styles.searchRow}>
+            <TextInput
+              style={[styles.input, styles.flex]}
+              value={commentQuery}
+              onChangeText={onCommentQueryChange}
+              placeholder="评论内查找"
+              placeholderTextColor={theme.muted}
+            />
+            {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
+          </View>
+          <View style={styles.actions}>
+            <AppButton compact label={floorOpen ? '收起楼层目录' : '楼层目录'} variant="ghost" styles={styles} onPress={() => setFloorOpen((value) => !value)} />
+          </View>
+          {floorOpen ? (
+            <View style={styles.floorIndex}>
+              {sourceReplies.map((reply, index) => {
+                const floor = reply.floor ?? index + 1;
+                return (
+                  <Pressable key={`${floor}-${reply.createdAt}`} accessibilityRole="button" style={styles.floorIndexItem} onPress={() => jumpToFloor(floor)}>
+                    <Text style={styles.meta}>#{floor} {reply.author || '未知作者'}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
       );
     }
@@ -3059,8 +4541,11 @@ function TopicScreen({
           styles={styles}
           theme={theme}
           onInteract={onInteract}
+          onCopyReplyMarkdown={onCopyReplyMarkdown}
           onReplyToFloor={onReplyToFloor}
           onToggleQuotedFloor={onToggleQuotedFloor}
+          query={commentQuery}
+          isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
           source={itemSource}
         />
       </View>
@@ -3068,10 +4553,16 @@ function TopicScreen({
   }, [
     actionBusy,
     canWrite,
+    commentQuery,
     contentWidth,
     expandedQuotesRef,
+    floorOpen,
+    jumpToFloor,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
+    newReplyFloorStart,
+    onCommentQueryChange,
+    onCopyReplyMarkdown,
     onInteract,
     onReplyComposerOpenChange,
     onReplyContentChange,
@@ -3099,11 +4590,13 @@ function TopicScreen({
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
-        <View style={styles.topicMetaStack}>
-          <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
-          <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
-          {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
-        </View>
+        {!focusMode ? (
+          <View style={styles.topicMetaStack}>
+            <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
+            <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
+            {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
+          </View>
+        ) : null}
         <Text style={styles.articleTitle}>{item.title}</Text>
         {canWriteNodeSeek ? (
           <View style={styles.topicPrimaryActions}>
@@ -3132,7 +4625,10 @@ function TopicScreen({
         {topicError ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{topicError}</Text>
-            <AppButton label="重试" styles={styles} onPress={onRefreshTopic} />
+            <View style={styles.actions}>
+              {item.source === 'linuxdo' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              <AppButton label="重试" styles={styles} onPress={onRefreshTopic} />
+            </View>
           </View>
         ) : null}
         {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
@@ -3151,11 +4647,16 @@ function TopicScreen({
       >
         <View style={styles.topicTopBar}>
           <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
-          {!canWrite ? <Text style={styles.topicTopHint}>只读 · 原站回复</Text> : <Text style={styles.topicTopHint}>{item.source === 'yaohuo' ? '妖火可回复' : 'NodeSeek 可回复'}</Text>}
-          <View style={styles.topicTopActions}>
+          {!focusMode ? (!canWrite ? <Text style={styles.topicTopHint}>只读 · 原站回复</Text> : <Text style={styles.topicTopHint}>{item.source === 'yaohuo' ? '妖火可回复' : 'NodeSeek 可回复'}</Text>) : <Text style={styles.topicTopHint}>专注模式</Text>}
+          <ScrollView horizontal style={styles.topicTopActionScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicTopActions}>
+            <IconButton icon={Copy} compact ghost iconOnly label="复制链接" styles={styles} theme={theme} onPress={onCopyTopicLink} />
+            <IconButton icon={RefreshCw} compact ghost iconOnly label="刷新主题" styles={styles} theme={theme} onPress={onRefreshTopic} />
+            <IconButton icon={List} compact ghost iconOnly label="楼层目录" styles={styles} theme={theme} active={floorOpen} onPress={() => setFloorOpen((value) => !value)} />
+            <IconButton icon={BookMarked} compact ghost iconOnly label="Reader Mode" styles={styles} theme={theme} active={readerMode} onPress={() => onReaderModeChange(!readerMode)} />
+            <IconButton icon={MoreHorizontal} compact ghost iconOnly label="专注模式" styles={styles} theme={theme} active={focusMode} onPress={() => onFocusModeChange(!focusMode)} />
             <IconButton icon={Star} compact ghost iconOnly label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
             <IconButton icon={ExternalLink} compact ghost iconOnly label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
-          </View>
+          </ScrollView>
         </View>
         <FlatList
           ref={topicScrollRef}
@@ -3166,6 +4667,12 @@ function TopicScreen({
           keyboardShouldPersistTaps="handled"
           onMomentumScrollEnd={onTopicScroll}
           onScrollEndDrag={onTopicScroll}
+          onEndReachedThreshold={0.55}
+          onEndReached={() => {
+            if (replyHasMore && !loadingMoreReplies) {
+              onLoadMoreReplies();
+            }
+          }}
           extraData={quoteStateVersion}
           {...REPLY_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
@@ -3202,8 +4709,10 @@ function ReplyCard({
   canWrite,
   contentWidth,
   expandedQuotes,
+  isNew,
   loadedQuotedReplies,
   loadingQuotedFloors,
+  query,
   reply,
   replyFloor,
   repliesByFloor,
@@ -3211,6 +4720,7 @@ function ReplyCard({
   styles,
   theme,
   onInteract,
+  onCopyReplyMarkdown,
   onReplyToFloor,
   onToggleQuotedFloor
 }: {
@@ -3218,8 +4728,10 @@ function ReplyCard({
   canWrite: boolean;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
+  isNew?: boolean;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
+  query: string;
   reply: Reply;
   replyFloor: number;
   repliesByFloor: Map<number, Reply>;
@@ -3227,10 +4739,12 @@ function ReplyCard({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onCopyReplyMarkdown: (reply: Reply, floor: number) => void;
   onReplyToFloor: (reply: Reply) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
+  const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
   return (
     <View style={styles.replyCard}>
       <View style={styles.replyHead}>
@@ -3241,6 +4755,7 @@ function ReplyCard({
           <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
           <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
         </View>
+        {isNew ? <Text style={styles.topicAccessBadge}>新增</Text> : null}
       </View>
       {quotedFloors.length ? (
         <View style={styles.quoteStack}>
@@ -3278,8 +4793,11 @@ function ReplyCard({
       <View style={styles.replyBody}>
         <MemoizedHtmlContent
           contentWidth={contentWidth}
-          html={reply.contentHtml}
+          html={highlightedHtml}
         />
+      </View>
+      <View style={styles.replyActionRow}>
+        <IconButton tiny ghost icon={Copy} label="复制楼层引用" styles={styles} theme={theme} onPress={() => onCopyReplyMarkdown(reply, reply.floor ?? replyFloor)} />
       </View>
       {canWrite && source === 'nodeseek' ? (
         <View style={styles.replyActionRow}>
@@ -3301,18 +4819,23 @@ function ImagePreviewModal({
   styles,
   onClose,
   onNext,
-  onPrevious
+  onPrevious,
+  onSave,
+  onSelect
 }: {
   preview: ImagePreviewList | null;
   styles: ReturnType<typeof createStyles>;
   onClose: () => void;
   onNext: () => void;
   onPrevious: () => void;
+  onSave: () => void;
+  onSelect: (index: number) => void;
 }) {
   const { width, height } = useWindowDimensions();
   const [zoomed, setZoomed] = useState(false);
   const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
   const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
+  const lastTapRef = useRef(0);
   const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
   useEffect(() => {
     setZoomed(false);
@@ -3336,6 +4859,9 @@ function ImagePreviewModal({
             <Pressable accessibilityRole="button" accessibilityLabel={zoomed ? '还原图片' : '放大图片'} style={styles.imagePreviewTextButton} onPress={() => setZoomed((current) => !current)}>
               <Text style={styles.imagePreviewButtonText}>{zoomed ? '还原' : '放大'}</Text>
             </Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="保存图片" style={styles.imagePreviewTextButton} onPress={onSave}>
+              <Text style={styles.imagePreviewButtonText}>保存</Text>
+            </Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
               <X size={22} color="#ffffff" strokeWidth={1.8} />
             </Pressable>
@@ -3352,20 +4878,30 @@ function ImagePreviewModal({
             contentContainerStyle={[styles.imagePreviewVerticalContent, { minHeight: imageHeight }]}
             showsVerticalScrollIndicator={false}
           >
-            <Image
-              source={{ uri }}
-              style={[styles.imagePreviewImage, { width: imageWidth, height: imageHeight }]}
-              resizeMode="contain"
-              onLoadStart={() => {
-                setImagePreviewLoading(true);
-                setImagePreviewFailed(false);
+            <Pressable
+              onPress={() => {
+                const now = Date.now();
+                if (now - lastTapRef.current < 280) {
+                  setZoomed((current) => !current);
+                }
+                lastTapRef.current = now;
               }}
-              onLoadEnd={() => setImagePreviewLoading(false)}
-              onError={() => {
-                setImagePreviewLoading(false);
-                setImagePreviewFailed(true);
-              }}
-            />
+            >
+              <Image
+                source={{ uri }}
+                style={[styles.imagePreviewImage, { width: imageWidth, height: imageHeight }]}
+                resizeMode="contain"
+                onLoadStart={() => {
+                  setImagePreviewLoading(true);
+                  setImagePreviewFailed(false);
+                }}
+                onLoadEnd={() => setImagePreviewLoading(false)}
+                onError={() => {
+                  setImagePreviewLoading(false);
+                  setImagePreviewFailed(true);
+                }}
+              />
+            </Pressable>
             {imagePreviewLoading ? (
               <View style={styles.imagePreviewState}>
                 <ActivityIndicator color="#ffffff" />
@@ -3379,6 +4915,15 @@ function ImagePreviewModal({
             ) : null}
           </ScrollView>
         </ScrollView>
+        {hasMany ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
+            {preview.urls.map((url, index) => (
+              <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === preview.index && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
+                <Image source={{ uri: url }} style={styles.imagePreviewThumbnailImage} resizeMode="cover" />
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
         {hasMany ? (
           <View style={styles.imagePreviewControls}>
             <Pressable accessibilityRole="button" accessibilityLabel="上一张图片" style={styles.imagePreviewControl} onPress={onPrevious}>
@@ -3394,7 +4939,31 @@ function ImagePreviewModal({
   );
 }
 
+function HighlightedText({
+  highlightStyle,
+  numberOfLines,
+  query,
+  style,
+  text
+}: {
+  highlightStyle: StyleProp<TextStyle>;
+  numberOfLines?: number;
+  query: string;
+  style: StyleProp<TextStyle>;
+  text: string;
+}) {
+  const parts = useMemo(() => highlightTextParts(text, query), [query, text]);
+  return (
+    <Text style={style} numberOfLines={numberOfLines}>
+      {parts.map((part, index) => (
+        <Text key={`${part.text}-${index}`} style={part.highlighted ? highlightStyle : undefined}>{part.text}</Text>
+      ))}
+    </Text>
+  );
+}
+
 function TopicCard({
+  highlightQuery = '',
   topic,
   readerState,
   swipeAction,
@@ -3402,6 +4971,7 @@ function TopicCard({
   theme,
   onOpenTopic
 }: {
+  highlightQuery?: string;
   topic: Topic;
   readerState: TopicListItemState;
   swipeAction?: TopicSwipeActionConfig;
@@ -3453,7 +5023,8 @@ function TopicCard({
     topic.viewCount ? `${topic.viewCount} 浏览` : '',
     readerState.favorite ? '已收藏' : '',
     readerState.read ? '已读' : '',
-    readerState.tracked ? '追踪命中' : ''
+    readerState.tracked ? '追踪命中' : '',
+    topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
   ].filter(Boolean).join(' · ');
   return (
     <View style={styles.topicSwipeShell}>
@@ -3484,9 +5055,9 @@ function TopicCard({
             <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
             <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
           </View>
-          <Text style={styles.cardTitle} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2}>{topic.title || '无标题'}</Text>
+          <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
           {topic.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{topic.accessRequirement.label}</Text> : null}
-          {topic.excerpt && readerState.listDensity === 'loose' ? <Text style={styles.excerpt} numberOfLines={2}>{topic.excerpt}</Text> : null}
+          {topic.excerpt && readerState.listDensity === 'loose' ? <HighlightedText style={styles.excerpt} highlightStyle={styles.highlightText} numberOfLines={2} text={topic.excerpt} query={highlightQuery} /> : null}
         </Pressable>
         <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>
           <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>

@@ -18,6 +18,19 @@ export function sourceLabel(source: Source | FeedSource) {
   return 'V2EX';
 }
 
+export function linuxDoExternalSearchItems(query: string) {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return [];
+  }
+  const encoded = encodeURIComponent(`site:linux.do ${trimmed}`);
+  return [
+    { label: 'Google', url: `https://www.google.com/search?q=${encoded}` },
+    { label: 'Bing', url: `https://www.bing.com/search?q=${encoded}` },
+    { label: 'DuckDuckGo', url: `https://duckduckgo.com/?q=${encoded}` }
+  ];
+}
+
 export function isYaohuoLoginRequiredError(error: unknown) {
   return Boolean(
     error
@@ -31,6 +44,24 @@ export function isYaohuoLoginExpiredError(error: unknown) {
   return Boolean(
     isYaohuoLoginRequiredError(error)
     && (error as { reason?: unknown }).reason === 'expired'
+  );
+}
+
+export function isLinuxDoCloudflareError(error: unknown) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && (error as { source?: unknown }).source === 'linuxdo'
+    && (error as { reason?: unknown }).reason === 'cloudflare'
+  );
+}
+
+export function isNodeSeekCloudflareError(error: unknown) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && (error as { source?: unknown }).source === 'nodeseek'
+    && (error as { reason?: unknown }).reason === 'cloudflare'
   );
 }
 

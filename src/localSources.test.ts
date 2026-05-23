@@ -1,5 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@react-native-cookies/cookies', () => ({
+  default: {
+    flush: vi.fn(async () => undefined),
+    get: vi.fn(async () => ({})),
+    clearByName: vi.fn(async () => true)
+  }
+}));
+
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: vi.fn(async () => null),
+  setItemAsync: vi.fn(async () => undefined),
+  deleteItemAsync: vi.fn(async () => undefined)
+}));
+
+vi.mock('react-native', () => ({
+  NativeModules: {
+    LinuxDoCookieModule: {}
+  }
+}));
+
 import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
+import { isLinuxDoCloudflareError } from './appUtils';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{
@@ -81,6 +103,225 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/|10\.0\.2\.2|127\.0\.0\.1:3000/);
   });
 
+  it('searches NodeSeek through its site search instead of filtering the latest Android feed', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('keyword=GPT')) {
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-202-1">GPT 全站旧帖</a></div>
+              <div class="post-info">
+                <span class="info-author"><a href="/space/2">bob</a></span>
+                <span class="info-comments-count">4</span>
+                <span class="info-views">99</span>
+                <a href="/categories/tech">技术</a>
+                <time datetime="2026-05-21T00:00:00.000Z"></time>
+              </div>
+            </li>
+          </ul>
+        `);
+      }
+      return html('<ul class="post-list"><li><a href="/post-101-1">latest only</a></li></ul>');
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher });
+
+    expect(search.items).toHaveLength(1);
+    expect(search.items[0]).toMatchObject({
+      source: 'nodeseek',
+      id: '202',
+      title: 'GPT 全站旧帖',
+      categoryId: 'tech',
+      category: '技术'
+    });
+    const callUrls = fetcher.mock.calls.map((call) => call[0]);
+    const calls = callUrls.join('\n');
+    expect(calls).toContain('https://www.nodeseek.com/search?keyword=GPT');
+    expect(callUrls).not.toContain('https://www.nodeseek.com/');
+    expect(calls).not.toMatch(/\/api\/search|10\.0\.2\.2|127\.0\.0\.1:3000/);
+  });
+
+  it('sends saved NodeSeek verification cookies when reading the Android feed', async () => {
+    const fetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
+
+    await getFeed({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'cf_clearance=clearance',
+      nodeSeekUserAgent: 'NodeSeek WebView UA'
+    });
+
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/', expect.objectContaining({
+      headers: expect.objectContaining({
+        cookie: 'cf_clearance=clearance',
+        'User-Agent': 'NodeSeek WebView UA'
+      })
+    }));
+  });
+
+  it('reports NodeSeek Cloudflare HTML as a verification requirement', async () => {
+    const fetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'content-type': 'text/html', 'cf-mitigated': 'challenge' }
+    }));
+
+    await expect(getFeed({ source: 'nodeseek', fetcher })).rejects.toMatchObject({
+      source: 'nodeseek',
+      reason: 'cloudflare',
+      message: 'NodeSeek 需要完成 Cloudflare 验证'
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/', expect.any(Object));
+  });
+
+  it('reports Chinese NodeSeek Cloudflare HTML as a verification requirement', async () => {
+    const fetcher = vi.fn(async () => html('<html><title>请稍候…</title><body>正在进行安全验证。本网站使用安全服务防护恶意自动程序。</body></html>'));
+
+    await expect(getFeed({ source: 'nodeseek', fetcher })).rejects.toMatchObject({
+      source: 'nodeseek',
+      reason: 'cloudflare',
+      message: 'NodeSeek 需要完成 Cloudflare 验证'
+    });
+  });
+
+  it('reads rendered NodeSeek WebView rows without picking footer post links', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <ul>
+        <li class="post-list-item">
+          <a href="/space/48872"><img src="/avatar/48872.png" alt="我是ikun"></a>
+          <div class="post-list-content">
+            <div class="post-title"><a href="/post-743001-1">【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？</a></div>
+            <div class="post-info">
+              <span class="info-item info-author"><a href="/space/48872">我是ikun</a></span>
+              <span class="info-item info-views"><span title="64 views">64</span></span>
+              <span title="2 comments" class="info-item info-comments-count"><span title="3 comments">2</span></span>
+              <a href="/post-743001-1#2" class="info-item info-last-comment-time">
+                <time title="2026-05-23 00:06:25" datetime="2026-05-22T16:06:25.000Z">3min ago</time>
+              </a>
+              <a href="/categories/daily" class="info-item">日常</a>
+            </div>
+          </div>
+        </li>
+      </ul>
+      <footer><a href="/post-6800-1"><li>Premium Provider</li></a></footer>
+    `));
+
+    const feed = await getFeed({ source: 'nodeseek', fetcher });
+
+    expect(feed.items).toHaveLength(1);
+    expect(feed.items[0]).toMatchObject({
+      id: '743001',
+      title: '【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？',
+      author: '我是ikun',
+      replyCount: 2,
+      viewCount: 64,
+      categoryId: 'daily',
+      category: '日常',
+      lastReplyAt: '2026-05-22T16:06:25.000Z'
+    });
+  });
+
+  it('reads rendered NodeSeek category links when embedded category data is absent', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <nav>
+        <a href="/categories/daily">日常</a>
+        <a href="/categories/tech">技术</a>
+      </nav>
+      <ul>
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743001-1">NodeSeek topic</a></div>
+          <a href="/categories/daily">日常</a>
+        </li>
+      </ul>
+    `));
+
+    const categories = await getCategories({ source: 'nodeseek', fetcher });
+
+    expect(categories.items).toEqual([
+      { source: 'nodeseek', id: 'daily', name: '日常' },
+      { source: 'nodeseek', id: 'tech', name: '技术' }
+    ]);
+  });
+
+  it('reads rendered NodeSeek topic pages when embedded postData is absent', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <main>
+        <article class="post-detail">
+          <h1 class="post-title">cloudflare果然挂了</h1>
+          <div class="post-info">
+            <span class="info-author"><a href="/space/1">alice</a></span>
+            <a href="/categories/daily">日常</a>
+            <time datetime="2026-05-22T16:00:00.000Z">2026-05-23 00:00:00</time>
+          </div>
+          <div class="post-content"><p>正文提到了 Cloudflare，但这是普通正文。</p></div>
+        </article>
+        <section class="comment-list">
+          <div class="comment-item" id="comment-200">
+            <a href="/space/2" class="comment-author">bob</a>
+            <time datetime="2026-05-22T16:01:00.000Z"></time>
+            <div class="comment-content"><p>回复内容</p></div>
+          </div>
+        </section>
+      </main>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743001', fetcher });
+
+    expect(topic).toMatchObject({
+      source: 'nodeseek',
+      id: '743001',
+      title: 'cloudflare果然挂了',
+      author: 'alice',
+      categoryId: 'daily',
+      category: '日常',
+      createdAt: '2026-05-22T16:00:00.000Z',
+      replyCount: 1
+    });
+    expect(topic.contentHtml).toContain('正文提到了 Cloudflare');
+    expect(topic.accessRequirement).toBeUndefined();
+    expect(topic.replies[0]).toMatchObject({
+      author: 'bob',
+      floor: 1,
+      commentId: 200,
+      contentHtml: expect.stringContaining('回复内容')
+    });
+  });
+
+  it('reads rendered NodeSeek content-item authors and replies', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743001-1">【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？</a>
+      <div id="0" data-comment-id="10232616" class="content-item">
+        <div class="author-info"><a href="/space/48872" class="author-name">我是ikun</a><span class="is-poster">楼主</span></div>
+        <span class="date-created"><time datetime="2026-05-22T15:55:11.000Z">1h ago</time></span>
+        <span class="content-category">in <a href="/categories/daily">日常</a></span>
+        <a href="#0" class="floor-link">#0</a>
+        <article class="post-content"><p>如题，希望有经验的朋友分享一下，感谢</p></article>
+      </div>
+      <li id="1" data-comment-id="10232667" class="content-item">
+        <div class="author-info"><a href="/space/26953" class="author-name">纳西妲</a></div>
+        <span class="date-created"><time datetime="2026-05-22T15:59:06.000Z">1h ago</time></span>
+        <a href="#1" class="floor-link">#1</a>
+        <article class="post-content"><p>都用 Google Pay 了肯定没风险</p></article>
+      </li>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743001', fetcher });
+
+    expect(topic).toMatchObject({
+      title: '【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？',
+      author: '我是ikun',
+      commentId: 10232616,
+      categoryId: 'daily',
+      replyCount: 1
+    });
+    expect(topic.replies[0]).toMatchObject({
+      author: '纳西妲',
+      floor: 1,
+      commentId: 10232667,
+      contentHtml: expect.stringContaining('都用 Google Pay')
+    });
+  });
+
   it('reads V2EX public JSON, HTML pages, topic detail, and SOV2EX search directly', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/latest.json')) {
@@ -130,5 +371,35 @@ describe('Android local sources', () => {
     expect(topic.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
     expect(search.items[0]).toMatchObject({ id: '121', title: 'V2EX search' });
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/);
+  });
+
+  it('reads V2EX search hits when SOV2EX returns a top-level hits array', async () => {
+    const fetcher = vi.fn(async () => json({
+      total: 1,
+      hits: [{
+        _source: { id: 934576, title: 'GPT search result', member: 'neo', created: '2026-05-20T00:00:00', replies: 2 },
+        highlight: { title: ['GPT search result'] }
+      }]
+    }));
+
+    const search = await searchTopics({ source: 'v2ex', query: 'gpt', fetcher });
+
+    expect(search.items[0]).toMatchObject({ source: 'v2ex', id: '934576', title: 'GPT search result' });
+  });
+
+  it('tags linux.do Cloudflare topic errors so the app can open verification', async () => {
+    const fetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+
+    const error = await getTopic({ source: 'linuxdo', id: '123', fetcher }).catch((caught) => caught);
+
+    expect(isLinuxDoCloudflareError(error)).toBe(true);
+    expect(error).toMatchObject({
+      message: 'linux.do 需要完成 Cloudflare 验证',
+      source: 'linuxdo',
+      reason: 'cloudflare'
+    });
   });
 });

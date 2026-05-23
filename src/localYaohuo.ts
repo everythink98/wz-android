@@ -96,12 +96,12 @@ function parseListItem(element: ReturnType<ReturnType<typeof parseHtml>['querySe
   const resolvedClassId = classId || fallbackClassId;
   const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
   const replyCount = parsePositiveInteger(element.querySelectorAll('a').find((item) => /^\d+$/.test(elementText(item)))?.text);
-  const viewCount = parsePositiveInteger(text.match(/阅\s*(\d+)/)?.[1] || text.match(/\/\s*阅?(\d+)/)?.[1]);
+  const viewCount = parsePositiveInteger(text.match(/阅\s*(\d+)/)?.[1] || text.match(/(\d+)\s*阅/)?.[1] || text.match(/\/\s*阅?(\d+)/)?.[1]);
   const timeText = text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || '';
   const createdAt = parseYaohuoDate(timeText) || new Date().toISOString();
-  const author = text.replace(title, '').split('/').map((part) => part.trim()).find((part) => (
+  const author = text.replace(title, '').split('/').map((part) => part.trim().replace(/^\d+\.\s*/, '')).find((part) => (
     part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
   )) || '';
   return {
@@ -121,7 +121,49 @@ function parseListItem(element: ReturnType<ReturnType<typeof parseHtml>['querySe
   };
 }
 
+function parseListDataChunks(html: string) {
+  return [...html.matchAll(/<div\b[^>]*class=["'][^"']*\blistdata\b[^"']*["'][^>]*>[\s\S]*?(?=<div\b[^>]*class=["'][^"']*\blistdata\b|<!--listE-->|$)/gi)]
+    .map((match) => match[0]);
+}
+
+function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClassId = '177', limit = 30) {
+  const items: Topic[] = [];
+  const seen = new Set<string>();
+  const fallbackCreatedAt = new Date().toISOString();
+  for (const list of root.querySelectorAll('div.list, .list')) {
+    for (const link of list.querySelectorAll('a[href]')) {
+      const title = elementText(link);
+      const { id, classId, url } = extractTopicParts(link.getAttribute('href'));
+      if (!id || !title || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      const resolvedClassId = classId || fallbackClassId;
+      items.push({
+        source: 'yaohuo',
+        id,
+        title,
+        author: '',
+        categoryId: resolvedClassId,
+        category: categoryNames.get(resolvedClassId),
+        url: url || `${BASE_URL}/bbs-${id}.html`,
+        createdAt: fallbackCreatedAt,
+        lastReplyAt: fallbackCreatedAt,
+        replyCount: 0,
+        excerpt: title
+      });
+      if (items.length >= limit) {
+        return items;
+      }
+    }
+  }
+  return items;
+}
+
 function nextPageFromHtml(html: string, page: number, itemCount: number, limit: number) {
+  if (!itemCount) {
+    return null;
+  }
   const root = parseHtml(html);
   const href = root.querySelectorAll('a[href]').find((link) => /下一页|下页/.test(elementText(link)))?.getAttribute('href') || '';
   const next = href.match(/[?&]page=(\d+)/i)?.[1];
@@ -150,6 +192,19 @@ export function parseYaohuoListHtml(html: string, { classId = '177', limit = 30,
         break;
       }
     }
+  }
+  for (const chunk of parseListDataChunks(html)) {
+    if (items.length >= limit) {
+      break;
+    }
+    const item = parseListItem(parseHtml(chunk), classId) as Topic | null;
+    if (item && !seen.has(item.id)) {
+      seen.add(item.id);
+      items.push(item);
+    }
+  }
+  if (!items.length) {
+    items.push(...parseCompactListItems(root, classId, limit));
   }
   const nextPage = nextPageFromHtml(html, page, items.length, limit);
   return {
@@ -203,7 +258,6 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const createdAt = parseYaohuoDate(contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
-  const accessRequirement = accessRequirementFromText(textContentFromHtml(contentHtml));
   const voteOptions = parseVoteOptions(html);
   return {
     source: 'yaohuo',
@@ -220,7 +274,6 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     excerpt: textExcerpt(contentHtml),
     contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
     replies: [],
-    ...(accessRequirement ? { accessRequirement } : {}),
     ...(voteOptions.length ? { voteOptions } : {})
   };
 }

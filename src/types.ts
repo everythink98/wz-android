@@ -22,6 +22,7 @@ export interface Topic {
   viewCount?: number;
   excerpt?: string;
   accessRequirement?: AccessRequirement;
+  duplicateSources?: string[];
 }
 
 export interface Reply {

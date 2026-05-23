@@ -72,4 +72,41 @@ describe('Android reader theme helpers', () => {
     expect(styles.loadingPlaceholderLineShort.width).toBe('42%');
     expect(styles.loadingPlaceholderLineMuted.width).toBe('68%');
   });
+
+  it('keeps topic rows blended into non-white feed backgrounds', () => {
+    for (const background of ['warm', 'gray'] as const) {
+      const nonWhiteSettings = { ...settings, background };
+      const theme = createTheme(nonWhiteSettings, 'light');
+      const styles = createStyles(theme, nonWhiteSettings, 800);
+
+      expect(styles.topicSwipeShell.backgroundColor).toBe(theme.background);
+      expect(styles.topicCard.backgroundColor).toBe(theme.background);
+    }
+
+    const whiteSettings = { ...settings, background: 'white' as const };
+    const whiteTheme = createTheme(whiteSettings, 'light');
+    const whiteStyles = createStyles(whiteTheme, whiteSettings, 800);
+
+    expect(whiteStyles.topicCard.backgroundColor).toBe(whiteTheme.surface);
+  });
+
+  it('keeps the background browser WebView from occupying visible space', () => {
+    const theme = createTheme(settings, 'light');
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.hiddenBrowserWebViewHost).toMatchObject({
+      position: 'absolute',
+      width: 1,
+      height: 1,
+      overflow: 'hidden',
+      opacity: 0
+    });
+    expect(styles.hiddenBrowserWebView).toMatchObject({
+      flex: 0,
+      width: 1,
+      height: 1,
+      opacity: 0,
+      backgroundColor: 'transparent'
+    });
+  });
 });

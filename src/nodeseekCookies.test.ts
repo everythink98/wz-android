@@ -4,6 +4,9 @@ import {
   canStoreNodeSeekCookieHeader,
   hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
+  parseNodeSeekDocumentCookie,
+  removeNodeSeekLoginCookies,
+  sanitizeNodeSeekUserAgent,
   summarizeNodeSeekCookies,
   type NativeCookie
 } from './nodeseekCookies';
@@ -77,6 +80,37 @@ describe('NodeSeek cookie helpers', () => {
 
     expect(canStoreNodeSeekCookieHeader(cookies)).toBe(false);
     expect(canStoreNodeSeekCookieHeader(cookies, true)).toBe(true);
+  });
+
+  it('allows storing Cloudflare clearance cookies from NodeSeek verification', () => {
+    const cookies: Record<string, NativeCookie> = {
+      cf_clearance: {
+        name: 'cf_clearance',
+        value: 'clearance',
+        domain: '.nodeseek.com'
+      }
+    };
+
+    expect(canStoreNodeSeekCookieHeader(cookies)).toBe(true);
+  });
+
+  it('reads NodeSeek verification cookies from document.cookie fallback data', () => {
+    const cookies = parseNodeSeekDocumentCookie('theme=dark; cf_clearance=clearance; session=abc');
+
+    expect(buildCookieHeader(cookies)).toBe('theme=dark; cf_clearance=clearance; session=abc');
+    expect(canStoreNodeSeekCookieHeader(cookies)).toBe(true);
+  });
+
+  it('can remove login cookies without deleting Cloudflare verification', () => {
+    const cookies = parseNodeSeekDocumentCookie('cf_clearance=clearance; session=abc; theme=dark');
+
+    expect(buildCookieHeader(removeNodeSeekLoginCookies(cookies))).toBe('cf_clearance=clearance; theme=dark');
+  });
+
+  it('normalizes the WebView user agent before using it for NodeSeek requests', () => {
+    expect(sanitizeNodeSeekUserAgent('Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36')).toBe(
+      'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36'
+    );
   });
 
   it('merges cookies read from both NodeSeek hostnames', () => {

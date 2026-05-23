@@ -21,6 +21,7 @@ export async function fetchWithTimeout(
 ) {
   const controller = new AbortController();
   let timedOut = false;
+  let abortTimeout: ReturnType<typeof setTimeout> | undefined;
   const signals = [init.signal, signal].filter(Boolean) as AbortSignal[];
   const abortFromParent = () => controller.abort();
   for (const item of signals) {
@@ -31,23 +32,35 @@ export async function fetchWithTimeout(
     item.addEventListener('abort', abortFromParent, { once: true });
   }
 
-  const timeout = timeoutMs > 0
-    ? setTimeout(() => {
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    const rejectAborted = () => reject(new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE));
+    if (controller.signal.aborted) {
+      rejectAborted();
+      return;
+    }
+    controller.signal.addEventListener('abort', rejectAborted, { once: true });
+  });
+  const timeoutPromise = timeoutMs > 0
+    ? new Promise<never>((_resolve, reject) => {
+      abortTimeout = setTimeout(() => {
       timedOut = true;
       controller.abort();
-    }, timeoutMs)
+        reject(new Error(REQUEST_TIMEOUT_MESSAGE));
+      }, timeoutMs);
+    })
     : undefined;
-
-  try {
-    return await fetcher(input, { ...init, signal: controller.signal });
-  } catch (error) {
+  const fetchPromise = fetcher(input, { ...init, signal: controller.signal }).catch((error) => {
     if (isAbortLikeError(error) || controller.signal.aborted) {
       throw new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE);
     }
     throw error;
+  });
+
+  try {
+    return await Promise.race(timeoutPromise ? [fetchPromise, abortPromise, timeoutPromise] : [fetchPromise, abortPromise]);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
+    if (abortTimeout) {
+      clearTimeout(abortTimeout);
     }
     for (const item of signals) {
       item.removeEventListener('abort', abortFromParent);

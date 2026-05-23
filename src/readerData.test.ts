@@ -1,19 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
   addSavedSearch,
+  clearRecords,
   createEmptyReaderData,
+  exportFavoritesMarkdown,
   isFavorite,
   isLater,
   MAX_HISTORY_RECORDS,
   MAX_PROGRESS_RECORDS,
   mergeReaderData,
   recordHistory,
+  removeRecords,
+  removeSavedSearch,
+  restoreRecords,
   sanitizeReaderData,
   sanitizeReaderDataForSync,
   toggleFavorite,
   toggleLater,
   toggleSubscription,
   topicKey,
+  updateTopicRecord,
   updateProgress
 } from './readerData';
 import type { Topic } from './types';
@@ -61,11 +67,52 @@ describe('Android reader data helpers', () => {
     let data = createEmptyReaderData();
     data = updateProgress(data, topic, { percent: 125, scrollY: 88 });
     data = toggleSubscription(data, { source: 'nodeseek', id: '日常', name: '日常' });
-    data = addSavedSearch(data, '  VPS  ', 'nodeseek');
+    data = addSavedSearch(data, '  VPS  ');
 
     expect(data.progress[topicKey(topic)].percent).toBe(100);
     expect(data.subscriptions['nodeseek:日常']?.name).toBe('日常');
-    expect(data.savedSearches[0]).toMatchObject({ query: 'VPS', source: 'nodeseek' });
+    expect(data.savedSearches[0]).toMatchObject({ id: 'vps', query: 'VPS', source: 'all' });
+  });
+
+  it('keeps saved searches unique by keyword across sources', () => {
+    let data = createEmptyReaderData();
+    data = addSavedSearch(data, 'GPT');
+    data = addSavedSearch(data, ' gpt ');
+    data = addSavedSearch(data, 'GPT');
+
+    expect(data.savedSearches).toHaveLength(1);
+    expect(data.savedSearches[0]).toMatchObject({ id: 'gpt', query: 'GPT', source: 'all' });
+    expect(data.deletedRecords.savedSearches).not.toHaveProperty('nodeseek:gpt');
+  });
+
+  it('normalizes old source-scoped saved searches into one keyword record', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      savedSearches: [
+        { id: 'all:gpt', query: 'GPT', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' },
+        { id: 'nodeseek:gpt', query: 'gpt', source: 'nodeseek', savedAt: '2026-05-20T03:00:00.000Z' },
+        { id: 'linuxdo:gpt', query: ' GPT ', source: 'linuxdo', savedAt: '2026-05-20T02:00:00.000Z' }
+      ],
+      deletedRecords: {
+        favorites: {},
+        history: {},
+        later: {},
+        subscriptions: {},
+        savedSearches: {
+          'nodeseek:gpt': '2026-05-20T01:30:00.000Z'
+        }
+      }
+    });
+
+    expect(data.savedSearches).toEqual([{
+      id: 'gpt',
+      query: 'gpt',
+      source: 'all',
+      savedAt: '2026-05-20T03:00:00.000Z'
+    }]);
+    expect(data.deletedRecords.savedSearches).toEqual({
+      gpt: '2026-05-20T01:30:00.000Z'
+    });
   });
 
   it('drops sensitive NodeSeek fields while sanitizing synced data', () => {
@@ -144,7 +191,7 @@ describe('Android reader data helpers', () => {
         [topicKey(sharedLocal)]: { topic: sharedLocal, savedAt: '2026-05-20T03:00:00.000Z' }
       },
       savedSearches: [
-        { id: 'all:codex', query: 'codex', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
+        { id: 'codex', query: 'codex', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
       ]
     });
     const remote = sanitizeReaderData({
@@ -154,8 +201,8 @@ describe('Android reader data helpers', () => {
         [topicKey(sharedRemote)]: { topic: sharedRemote, savedAt: '2026-05-20T01:00:00.000Z' }
       },
       savedSearches: [
-        { id: 'all:codex', query: 'codex', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' },
-        { id: 'nodeseek:vps', query: 'vps', source: 'nodeseek', savedAt: '2026-05-20T04:00:00.000Z' }
+        { id: 'codex', query: 'codex', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' },
+        { id: 'vps', query: 'vps', source: 'all', savedAt: '2026-05-20T04:00:00.000Z' }
       ]
     });
 
@@ -164,7 +211,56 @@ describe('Android reader data helpers', () => {
     expect(merged.favorites[topicKey(localOnly)]?.topic.title).toBe('Local only');
     expect(merged.favorites[topicKey(remoteOnly)]?.topic.title).toBe('Remote only');
     expect(merged.favorites[topicKey(sharedLocal)]?.topic.title).toBe('Local newer');
-    expect(merged.savedSearches.map((item) => item.id)).toEqual(['nodeseek:vps', 'all:codex']);
+    expect(merged.savedSearches.map((item) => item.id)).toEqual(['vps', 'codex']);
+  });
+
+  it('removes saved searches with deletion markers', () => {
+    let data = createEmptyReaderData();
+    data = addSavedSearch(data, 'VPS');
+
+    data = removeSavedSearch(data, data.savedSearches[0].id);
+
+    expect(data.savedSearches).toEqual([]);
+    expect(data.deletedRecords.savedSearches.vps).toEqual(expect.any(String));
+  });
+
+  it('updates record annotations and supports bulk removal, restore, and clear history', () => {
+    const secondTopic: Topic = { ...topic, id: '2', title: 'Second topic' };
+    let data = createEmptyReaderData();
+    data = toggleFavorite(data, topic);
+    data = toggleFavorite(data, secondTopic);
+    data = updateTopicRecord(data, 'favorites', topic, { tags: ['server', 'AI'], note: 'Read again' });
+
+    expect(data.favorites[topicKey(topic)]).toMatchObject({
+      tags: ['server', 'AI'],
+      note: 'Read again',
+      updatedAt: expect.any(String)
+    });
+
+    const removed = data.favorites;
+    data = removeRecords(data, 'favorites', [topic, secondTopic]);
+    expect(data.favorites).toEqual({});
+    expect(Object.keys(data.deletedRecords.favorites)).toHaveLength(2);
+
+    data = restoreRecords(data, 'favorites', removed);
+    expect(Object.keys(data.favorites)).toHaveLength(2);
+    expect(data.deletedRecords.favorites).toEqual({});
+
+    data = recordHistory(data, topic);
+    data = recordHistory(data, secondTopic);
+    data = clearRecords(data, 'history');
+    expect(data.history).toEqual({});
+    expect(Object.keys(data.deletedRecords.history)).toHaveLength(2);
+  });
+
+  it('exports favorites as markdown', () => {
+    let data = createEmptyReaderData();
+    data = toggleFavorite(data, topic);
+    data = updateTopicRecord(data, 'favorites', topic, { tags: ['server'], note: 'Good thread' });
+
+    expect(exportFavoritesMarkdown(data)).toContain('- [NodeSeek topic](https://www.nodeseek.com/post-723704-1)');
+    expect(exportFavoritesMarkdown(data)).toContain('标签：server');
+    expect(exportFavoritesMarkdown(data)).toContain('备注：Good thread');
   });
 
   it('applies remote reader settings when merging synced reader data', () => {
@@ -373,15 +469,15 @@ describe('Android reader data helpers', () => {
         }
       },
       savedSearches: [
-        { id: 'yaohuo:test', query: 'test', source: 'yaohuo', savedAt: '2026-05-20T02:00:00.000Z' },
-        { id: 'all:test', query: 'test', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
+        { id: 'secret', query: 'secret', source: 'yaohuo', savedAt: '2026-05-20T02:00:00.000Z' },
+        { id: 'test', query: 'test', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
       ],
       deletedRecords: {
         favorites: { 'yaohuo:1': '2026-05-20T04:00:00.000Z' },
         history: {},
         later: {},
         subscriptions: { 'yaohuo:177': '2026-05-20T04:00:00.000Z' },
-        savedSearches: { 'yaohuo:test': '2026-05-20T04:00:00.000Z' }
+        savedSearches: { secret: '2026-05-20T04:00:00.000Z' }
       }
     });
 
@@ -441,5 +537,88 @@ describe('Android reader data helpers', () => {
 
     expect(data.favorites['nodeseek:broken']).toBeUndefined();
     expect(data.favorites[topicKey(topic)]?.topic.url).toBe(topic.url);
+  });
+
+  it('drops topic records with invalid topic or record timestamps', () => {
+    const invalidTopicTime: Topic = { ...topic, id: 'bad-topic-time', createdAt: 'bad-date' };
+    const invalidSavedTime: Topic = { ...topic, id: 'bad-saved-time' };
+    const invalidProgressTime: Topic = { ...topic, id: 'bad-progress-time' };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(invalidTopicTime)]: {
+          topic: invalidTopicTime,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        },
+        [topicKey(invalidSavedTime)]: {
+          topic: invalidSavedTime,
+          savedAt: 'not-a-date'
+        },
+        [topicKey(topic)]: {
+          topic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      },
+      progress: {
+        [topicKey(invalidProgressTime)]: {
+          topic: invalidProgressTime,
+          percent: 30,
+          scrollY: 20,
+          updatedAt: 'invalid'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(invalidTopicTime)]).toBeUndefined();
+    expect(data.favorites[topicKey(invalidSavedTime)]).toBeUndefined();
+    expect(data.progress[topicKey(invalidProgressTime)]).toBeUndefined();
+    expect(data.favorites[topicKey(topic)]?.topic.title).toBe(topic.title);
+  });
+
+  it('removes sensitive query parameters from stored topic links', () => {
+    const unsafeTopic: Topic = {
+      ...topic,
+      source: 'yaohuo',
+      id: '1',
+      url: 'https://yaohuo.me/bbs/book_view.aspx?id=1&classid=177&sid=secret&token=hidden'
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(unsafeTopic)]: {
+          topic: unsafeTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    const url = data.favorites[topicKey(unsafeTopic)]?.topic.url || '';
+    const params = new URL(url).searchParams;
+    expect(params.get('id')).toBe('1');
+    expect(params.get('classid')).toBe('177');
+    expect(url).not.toContain('secret');
+    expect(params.has('sid')).toBe(false);
+    expect(params.has('token')).toBe(false);
+  });
+
+  it('does not persist transient access requirement labels in local topic records', () => {
+    const restrictedTopic: Topic = {
+      ...topic,
+      accessRequirement: { type: 'level', label: '需等级' }
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(restrictedTopic)]: {
+          topic: restrictedTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(restrictedTopic)]?.topic.accessRequirement).toBeUndefined();
   });
 });

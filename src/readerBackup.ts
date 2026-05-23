@@ -1,4 +1,4 @@
-import { mergeReaderData, sanitizeReaderData, sanitizeReaderDataForSync, type ReaderData } from './readerData';
+import { mergeReaderData, sanitizeReaderData, type ReaderData } from './readerData';
 
 const SENSITIVE_KEY_PATTERN = /(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)/i;
 
@@ -21,7 +21,7 @@ function stripSensitive(value: unknown): unknown {
 
 export function exportReaderBackupJson(value: unknown) {
   const clean = sanitizeReaderData(stripSensitive(value));
-  return JSON.stringify(sanitizeReaderDataForSync(clean), null, 2);
+  return JSON.stringify(clean, null, 2);
 }
 
 export function importReaderBackupJson(local: ReaderData, json: string) {

@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   finishAbortableRequest,
   isCanceledRequest,
+  isLinuxDoCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
+  linuxDoExternalSearchItems,
   sourceLabel,
   startAbortableRequest
 } from './appUtils';
@@ -40,5 +42,27 @@ describe('Android app utils', () => {
     expect(isYaohuoLoginExpiredError(expired)).toBe(true);
     expect(isYaohuoLoginRequiredError(verification)).toBe(true);
     expect(isYaohuoLoginExpiredError(verification)).toBe(false);
+  });
+
+  it('identifies linux.do Cloudflare verification errors', () => {
+    const cloudflare = Object.assign(new Error('linux.do 需要完成 Cloudflare 验证'), {
+      source: 'linuxdo',
+      reason: 'cloudflare'
+    });
+    const ordinary = Object.assign(new Error('linux.do 主题不存在'), {
+      source: 'linuxdo'
+    });
+
+    expect(isLinuxDoCloudflareError(cloudflare)).toBe(true);
+    expect(isLinuxDoCloudflareError(ordinary)).toBe(false);
+  });
+
+  it('builds linux.do external search shortcuts like the mobile web search page', () => {
+    expect(linuxDoExternalSearchItems('  gpt plus  ')).toEqual([
+      { label: 'Google', url: 'https://www.google.com/search?q=site%3Alinux.do%20gpt%20plus' },
+      { label: 'Bing', url: 'https://www.bing.com/search?q=site%3Alinux.do%20gpt%20plus' },
+      { label: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=site%3Alinux.do%20gpt%20plus' }
+    ]);
+    expect(linuxDoExternalSearchItems('')).toEqual([]);
   });
 });

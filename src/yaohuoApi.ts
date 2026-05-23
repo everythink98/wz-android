@@ -2,6 +2,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
 import {
   checkYaohuoLoginHtml,
+  ensureYaohuoHtmlLoggedIn,
   parseYaohuoListHtml,
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
@@ -55,12 +56,14 @@ function yaohuoRequestInit(cookie: string): RequestInit {
 async function fetchYaohuoHtml(url: string, cookie: string, fetcher: Fetcher = fetch, options: DirectRequestOptions = {}) {
   const response = await fetchWithTimeout(url, yaohuoRequestInit(cookie), { fetcher, ...options });
   const html = await response.text();
+  const responseUrl = response.url || url;
+  ensureYaohuoHtmlLoggedIn(html, responseUrl);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   return {
     html,
-    url: response.url || url
+    url: responseUrl
   };
 }
 
@@ -69,38 +72,31 @@ function topicIdValue(id: string) {
 }
 
 export async function getYaohuoFeedDirect({
-  serverUrl,
   yaohuoCookie,
   category,
   page = 1,
   limit = 30,
   yaohuoFetcher,
-  serverFetcher,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   yaohuoCookie?: string;
   category?: string;
   page?: number;
   limit?: number;
   yaohuoFetcher?: Fetcher;
-  serverFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
   const cookie = requireYaohuoCookie(yaohuoCookie);
-  const classId = category || DEFAULT_CLASS_ID;
+  const classId = category?.trim() || DEFAULT_CLASS_ID;
   const pageResult = await fetchYaohuoHtml(yaohuoUrl('/bbs/book_list.aspx', {
     action: 'new',
     classid: classId,
     page,
-    siteid: '1000',
-    getTotal: '2021'
+    siteid: '1000'
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
-  void serverUrl;
-  void serverFetcher;
   return parseYaohuoListHtml(pageResult.html, {
     url: pageResult.url,
     classId,
@@ -110,25 +106,21 @@ export async function getYaohuoFeedDirect({
 }
 
 export async function searchYaohuoDirect({
-  serverUrl,
   yaohuoCookie,
   query,
   page = 1,
   limit = 30,
   category = '0',
   yaohuoFetcher,
-  serverFetcher,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   yaohuoCookie?: string;
   query: string;
   page?: number;
   limit?: number;
   category?: string;
   yaohuoFetcher?: Fetcher;
-  serverFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
@@ -143,8 +135,6 @@ export async function searchYaohuoDirect({
     getTotal: '2021'
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
-  void serverUrl;
-  void serverFetcher;
   return parseYaohuoSearchHtml(pageResult.html, {
     url: pageResult.url,
     page,
@@ -153,21 +143,17 @@ export async function searchYaohuoDirect({
 }
 
 export async function getYaohuoTopicDirect({
-  serverUrl,
   topic,
   yaohuoCookie,
   replyLimit = 30,
   yaohuoFetcher,
-  serverFetcher,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   topic: Topic;
   yaohuoCookie?: string;
   replyLimit?: number;
   yaohuoFetcher?: Fetcher;
-  serverFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
@@ -175,15 +161,12 @@ export async function getYaohuoTopicDirect({
   const id = topicIdValue(topic.id);
   const topicUrl = topic.url || `${YAOHUO_BASE_URL}/bbs-${id}.html`;
   const topicPage = await fetchYaohuoHtml(topicUrl, cookie, yaohuoFetcher, { signal, timeoutMs });
-  void serverUrl;
-  void serverFetcher;
   const detail = parseYaohuoTopicHtml(topicPage.html, {
     id,
     url: topicPage.url
   });
 
   const replies = await getYaohuoRepliesDirect({
-    serverUrl,
     id: detail.id || id,
     categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
     page: 1,
@@ -205,25 +188,21 @@ export async function getYaohuoTopicDirect({
 }
 
 export async function getYaohuoRepliesDirect({
-  serverUrl,
   id,
   categoryId,
   page,
   limit = 30,
   yaohuoCookie,
   yaohuoFetcher,
-  serverFetcher,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   id: string;
   categoryId?: string;
   page: number;
   limit?: number;
   yaohuoCookie?: string;
   yaohuoFetcher?: Fetcher;
-  serverFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
@@ -234,8 +213,6 @@ export async function getYaohuoRepliesDirect({
     page
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
-  void serverUrl;
-  void serverFetcher;
   return parseYaohuoRepliesHtml(pageResult.html, {
     url: pageResult.url,
     page,
@@ -244,23 +221,17 @@ export async function getYaohuoRepliesDirect({
 }
 
 export async function checkYaohuoLoginDirect({
-  serverUrl,
   yaohuoCookie,
   yaohuoFetcher,
-  serverFetcher,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   yaohuoCookie?: string;
   yaohuoFetcher?: Fetcher;
-  serverFetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
   const cookie = requireYaohuoCookie(yaohuoCookie);
   const page = await fetchYaohuoHtml(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, cookie, yaohuoFetcher, { signal, timeoutMs });
-  void serverUrl;
-  void serverFetcher;
   return checkYaohuoLoginHtml(page.html, page.url);
 }

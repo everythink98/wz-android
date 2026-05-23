@@ -3,6 +3,7 @@ import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, To
 import {
   absoluteUrl,
   accessRequirementFromObject,
+  accessRequirementFromText,
   elementText,
   isRecord,
   parseHtml,
@@ -92,6 +93,7 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
   const timestamp = element.querySelector('span[title]')?.getAttribute('title');
   const countText = element.querySelector('.count_livid,.count_orange')?.text || '';
   const createdAt = toIsoString(timestamp) || new Date().toISOString();
+  const accessRequirement = accessRequirementFromText(elementText(element).replace(title, ' '));
   return {
     source: 'v2ex',
     id,
@@ -104,7 +106,8 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
     createdAt,
     lastReplyAt: createdAt,
     replyCount: Number.parseInt(String(countText || '0'), 10) || 0,
-    excerpt: ''
+    excerpt: '',
+    ...(accessRequirement ? { accessRequirement } : {})
   };
 }
 
@@ -280,6 +283,9 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
 function sov2exHits(data: unknown) {
   if (Array.isArray(data)) {
     return data;
+  }
+  if (isRecord(data) && Array.isArray(data.hits)) {
+    return data.hits;
   }
   if (isRecord(data) && isRecord(data.hits) && Array.isArray(data.hits.hits)) {
     return data.hits.hits;

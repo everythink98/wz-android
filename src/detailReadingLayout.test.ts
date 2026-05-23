@@ -41,8 +41,10 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('uses saved search ids as chip keys while still filling the saved query text', () => {
-    expect(appSource).toContain('value: item.id, label: item.query');
+    expect(appSource).toContain('key={item.id}');
     expect(appSource).toContain('const saved = readerData.savedSearches.find((item) => item.id === id)');
+    expect(appSource).toContain('onQueryChange(saved.query);');
+    expect(appSource).not.toContain('onSearchSourceChange(saved.source);');
     expect(appSource).not.toContain('items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}');
   });
 

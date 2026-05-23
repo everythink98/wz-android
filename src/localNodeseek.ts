@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it';
 import { Buffer } from 'buffer';
 import { fetchWithTimeout, type Fetcher } from './request';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
 import {
   absoluteUrl,
@@ -15,12 +16,17 @@ import {
   textExcerpt,
   toIsoString
 } from './localHtml';
+import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
 
 const BASE_URL = 'https://www.nodeseek.com';
+const MAX_NODESEEK_SEARCH_PAGES = 5;
+export const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
 interface NodeSeekOptions {
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -66,6 +72,21 @@ function parseViewCount(value: unknown) {
   return count || undefined;
 }
 
+function integerFromElement(element: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
+  return parsePositiveInteger(elementText(element) || element?.getAttribute('title'));
+}
+
+function isInsideFooter(node: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
+  let current = node?.parentNode as { rawTagName?: string; parentNode?: unknown } | null | undefined;
+  while (current) {
+    if (String(current.rawTagName || '').toLowerCase() === 'footer') {
+      return true;
+    }
+    current = current.parentNode as typeof current;
+  }
+  return false;
+}
+
 function embeddedCandidates(html: string) {
   const scriptContents = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
   const dataAttributes = [...html.matchAll(/\sdata-[\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]{40,}[^"']*)["']/g)].map((match) => match[1]);
@@ -100,7 +121,7 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const category = isRecord(raw.category) ? raw.category : isRecord(raw.node) ? raw.node : {};
   const createdAt = toIsoString(isRecord(raw.time) ? raw.time.createdDate : raw.createdDate) || new Date().toISOString();
   const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt;
-  const accessRequirement = accessRequirementFromObject(raw) || accessRequirementFromText(raw.content);
+  const accessRequirement = accessRequirementFromObject(raw);
   return {
     source: 'nodeseek',
     id,
@@ -129,9 +150,47 @@ function embeddedTopics(data: Record<string, unknown>) {
 
 function parseHtmlTopics(html: string) {
   const root = parseHtml(html);
+  const renderedItems: Topic[] = [];
+  for (const row of root.querySelectorAll('li.post-list-item')) {
+    const link = row.querySelector('.post-title a[href*="post-"]') || row.querySelector('a[href*="post-"]');
+    const href = link?.getAttribute('href') || '';
+    const id = href.match(/post-(\d+)/)?.[1];
+    const title = elementText(link);
+    if (!id || !title) {
+      continue;
+    }
+    const authorLink = row.querySelector('.info-author a[href*="/space/"]');
+    const categoryLink = row.querySelector('a[href*="/categories/"]');
+    const categoryHref = categoryLink?.getAttribute('href') || '';
+    const lastReplyTime = row.querySelector('.info-last-comment-time time');
+    const lastReplyAt = toIsoString(lastReplyTime?.getAttribute('datetime') || lastReplyTime?.getAttribute('title'));
+    const accessRequirement = accessRequirementFromText(elementText(row).replace(title, ' '));
+    renderedItems.push({
+      source: 'nodeseek',
+      id,
+      title,
+      author: elementText(authorLink) || String(row.querySelector('img[alt]')?.getAttribute('alt') || ''),
+      authorAvatar: absoluteUrl(row.querySelector('img')?.getAttribute('src'), BASE_URL),
+      categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
+      category: elementText(categoryLink) || undefined,
+      url: safeNodeSeekTopicUrl(id, href),
+      createdAt: lastReplyAt || new Date().toISOString(),
+      lastReplyAt: lastReplyAt || new Date().toISOString(),
+      replyCount: integerFromElement(row.querySelector('.info-comments-count')),
+      viewCount: integerFromElement(row.querySelector('.info-views')),
+      excerpt: '',
+      ...(accessRequirement ? { accessRequirement } : {})
+    });
+  }
+  if (renderedItems.length) {
+    return renderedItems;
+  }
   const seen = new Set<string>();
   const items: Topic[] = [];
   for (const link of root.querySelectorAll('a[href*="post-"]')) {
+    if (isInsideFooter(link)) {
+      continue;
+    }
     const href = link.getAttribute('href') || '';
     const id = href.match(/post-(\d+)/)?.[1];
     const title = elementText(link);
@@ -141,6 +200,7 @@ function parseHtmlTopics(html: string) {
     seen.add(id);
     const row = link.parentNode as { text?: string } | null;
     const text = String(row?.text || link.text || '');
+    const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
     items.push({
       source: 'nodeseek',
       id,
@@ -150,10 +210,26 @@ function parseHtmlTopics(html: string) {
       createdAt: new Date().toISOString(),
       lastReplyAt: new Date().toISOString(),
       replyCount: parsePositiveInteger(text.match(/回复\s*(\d+)/)?.[1]),
-      excerpt: textExcerpt(text)
+      excerpt: textExcerpt(text),
+      ...(accessRequirement ? { accessRequirement } : {})
     });
   }
   return items;
+}
+
+function parseNodeSeekSearchTopics(html: string) {
+  const embedded = extractNodeSeekEmbeddedData(html);
+  const seen = new Set<string>();
+  return [
+    ...(embedded ? embeddedTopics(embedded) : []),
+    ...parseHtmlTopics(html)
+  ].filter((topic) => {
+    if (!topic.id || seen.has(topic.id)) {
+      return false;
+    }
+    seen.add(topic.id);
+    return true;
+  });
 }
 
 function normalizeCategories(data: Record<string, unknown>) {
@@ -164,18 +240,133 @@ function normalizeCategories(data: Record<string, unknown>) {
   });
 }
 
-async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
-  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
-    headers: {
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/rss+xml;q=0.8,*/*;q=0.7',
-      Referer: BASE_URL
+function mergeNodeSeekCategories(categories: Category[]) {
+  const seen = new Set<string>();
+  return categories.filter((category) => {
+    const key = category.id.toLowerCase();
+    if (seen.has(key)) {
+      return false;
     }
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseHtmlCategories(html: string) {
+  const root = parseHtml(html);
+  return mergeNodeSeekCategories(root.querySelectorAll('a[href*="/categories/"]').flatMap((link) => {
+    const id = link.getAttribute('href')?.match(/\/categories\/([^/?#]+)/)?.[1];
+    const name = elementText(link).replace(/^#/, '').trim();
+    if (!id || !name) {
+      return [];
+    }
+    return [{ source: 'nodeseek' as const, id: decodeURIComponent(id), name }];
+  }));
+}
+
+function isNodeSeekCloudflareResponse(response: Response, html: string) {
+  return response.headers.get('cf-mitigated') === 'challenge'
+    || /cf-turnstile|challenge-platform/i.test(html)
+    || /<title>\s*(?:just a moment|请稍候)/i.test(html)
+    || /正在进行安全验证|安全服务防护恶意自动程序/i.test(html)
+    || (response.status === 403 && /just a moment|cloudflare|请稍候/i.test(html));
+}
+
+function nodeSeekCloudflareError() {
+  return Object.assign(new Error(NODESEEK_CLOUDFLARE_MESSAGE), {
+    source: 'nodeseek',
+    reason: 'cloudflare'
+  });
+}
+
+function isNodeSeekCloudflareError(error: unknown) {
+  return isRecord(error) && error.reason === 'cloudflare';
+}
+
+async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
+  const cookie = options.nodeSeekCookie?.trim();
+  const headers: HeadersInit = {
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
+    Referer: BASE_URL,
+    'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
+  };
+  if (cookie) {
+    headers.cookie = cookie;
+  }
+  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
+    headers
   }, options);
   const text = await response.text();
+  if (isNodeSeekCloudflareResponse(response, text)) {
+    throw nodeSeekCloudflareError();
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
   return text;
+}
+
+function searchPath(query: string, page = 1) {
+  const params = new URLSearchParams({ keyword: query });
+  if (page > 1) {
+    params.set('page', String(page));
+  }
+  return `/search?${params.toString()}`;
+}
+
+function nextSearchPath(html: string, query: string, fallbackPage: number) {
+  const root = parseHtml(html);
+  const links = [
+    ...root.querySelectorAll('a[rel="next"]'),
+    ...root.querySelectorAll('a[href*="page="]')
+  ];
+  const href = links
+    .map((link) => ({
+      href: link.getAttribute('href') || '',
+      label: elementText(link),
+      rel: String(link.getAttribute('rel') || '')
+    }))
+    .find((link) => (
+      link.href
+      && (
+        /next/i.test(link.rel)
+        || /下一|Next/i.test(link.label)
+        || link.href.includes(`page=${fallbackPage}`)
+      )
+    ))?.href;
+
+  if (!href) {
+    return searchPath(query, fallbackPage);
+  }
+
+  try {
+    const url = new URL(href, BASE_URL);
+    if (!isNodeSeekHost(url.hostname) || url.pathname !== '/search') {
+      return searchPath(query, fallbackPage);
+    }
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return searchPath(query, fallbackPage);
+  }
+}
+
+function mergeSearchTopics(existing: Topic[], incoming: Topic[]) {
+  const seen = new Set(existing.map((topic) => topic.id));
+  const next = [...existing];
+  for (const topic of incoming) {
+    if (!topic.id || seen.has(topic.id)) {
+      continue;
+    }
+    seen.add(topic.id);
+    next.push(topic);
+  }
+  return next;
+}
+
+function filterNodeSeekSearchTopics(html: string, query: string) {
+  const expression = parseSearchExpression(query);
+  return parseNodeSeekSearchTopics(html)
+    .filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression));
 }
 
 function listPath(page: number, category?: string) {
@@ -208,7 +399,10 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   const html = await fetchNodeSeekText('/', options);
   const embedded = extractNodeSeekEmbeddedData(html);
   return {
-    items: embedded ? normalizeCategories(embedded) : [] as Category[],
+    items: mergeNodeSeekCategories([
+      ...(embedded ? normalizeCategories(embedded) : [] as Category[]),
+      ...parseHtmlCategories(html)
+    ]),
     errors: {}
   };
 }
@@ -242,7 +436,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const replies = allReplies.slice(0, replyLimit);
   const createdAt = toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
   const lastReplyAt = toIsoString(isRecord(isRecord(comments.at(-1)) ? comments.at(-1)?.time : {}) ? (comments.at(-1) as Record<string, unknown>).time : data.updatedDate) || createdAt;
-  const accessRequirement = accessRequirementFromObject(data) || accessRequirementFromText(first.markdown);
+  const accessRequirement = accessRequirementFromObject(data);
   return {
     source: 'nodeseek',
     id,
@@ -271,8 +465,105 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   };
 }
 
+function renderedNodeSeekTime(element: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
+  return toIsoString(element?.getAttribute('datetime') || element?.getAttribute('title') || elementText(element));
+}
+
+function renderedNodeSeekCommentId(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
+  const dataCommentId = parsePositiveInteger(element.getAttribute('data-comment-id'));
+  if (dataCommentId) {
+    return dataCommentId;
+  }
+  const source = `${element.getAttribute('id') || ''}`;
+  const match = source.match(/comment[-_]?(\d+)/i);
+  return match ? Number(match[1]) : undefined;
+}
+
+function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallback: number) {
+  const linkFloor = parsePositiveInteger(elementText(element.querySelector('.floor-link')));
+  if (linkFloor) {
+    return linkFloor;
+  }
+  const id = String(element.getAttribute('id') || '');
+  return /^\d+$/.test(id) ? Number(id) : fallback;
+}
+
+function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 30): TopicDetail | null {
+  const root = parseHtml(html);
+  const firstContentItem = root.querySelector('.content-item');
+  const titleElement = root.querySelector('.post-title a')
+    || root.querySelector('a.post-title')
+    || root.querySelector('article .post-title')
+    || root.querySelector('.post-detail .post-title')
+    || root.querySelector('.post-title')
+    || root.querySelector('h1');
+  const contentElement = firstContentItem?.querySelector('.post-content')
+    || root.querySelector('article .post-content')
+    || root.querySelector('.post-detail .post-content')
+    || root.querySelector('.post-content')
+    || root.querySelector('.content');
+  const title = elementText(titleElement);
+  const contentHtml = contentElement?.innerHTML || '';
+  if (!title || !contentHtml) {
+    return null;
+  }
+  const authorLink = firstContentItem?.querySelector('.author-name, a[href*="/space/"]')
+    || root.querySelector('article .info-author a[href*="/space/"]')
+    || root.querySelector('.post-detail .info-author a[href*="/space/"]')
+    || root.querySelector('.post-info a[href*="/space/"]')
+    || root.querySelector('a[href*="/space/"]');
+  const categoryLink = firstContentItem?.querySelector('.content-category a[href*="/categories/"], a[href*="/categories/"]')
+    || root.querySelector('article a[href*="/categories/"]')
+    || root.querySelector('.post-detail a[href*="/categories/"]')
+    || root.querySelector('.post-info a[href*="/categories/"]')
+    || root.querySelector('a[href*="/categories/"]');
+  const categoryHref = categoryLink?.getAttribute('href') || '';
+  const createdAt = renderedNodeSeekTime(firstContentItem?.querySelector('time') || root.querySelector('article time') || root.querySelector('.post-detail time') || root.querySelector('time')) || new Date().toISOString();
+  const replyRows = root.querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]').filter((row) => {
+    const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    return Boolean(replyContent?.innerHTML && row !== firstContentItem);
+  });
+  const allReplies = replyRows.map((row, index) => {
+    const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    return {
+      author: elementText(row.querySelector('.author-name, .comment-author, .reply-author, a[href*="/space/"]')),
+      authorAvatar: absoluteUrl(row.querySelector('img')?.getAttribute('src'), BASE_URL),
+      contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
+      createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
+      floor: renderedNodeSeekFloor(row, index + 1),
+      commentId: renderedNodeSeekCommentId(row)
+    };
+  });
+  const replies = allReplies.slice(0, replyLimit);
+  const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt;
+  return {
+    source: 'nodeseek',
+    id,
+    title,
+    author: elementText(authorLink),
+    authorAvatar: absoluteUrl(firstContentItem?.querySelector('img')?.getAttribute('src') || root.querySelector('article img')?.getAttribute('src') || root.querySelector('.post-detail img')?.getAttribute('src'), BASE_URL),
+    categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
+    category: elementText(categoryLink) || undefined,
+    url: topicUrl(id),
+    createdAt,
+    lastReplyAt,
+    replyCount: allReplies.length,
+    excerpt: textExcerpt(contentHtml),
+    contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
+    commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,
+    replies,
+    replyHasMore: allReplies.length > replyLimit,
+    replyNextPage: allReplies.length > replyLimit ? 2 : null,
+    replyNextOffset: allReplies.length > replyLimit ? replies.length : null
+  };
+}
+
+async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
+  return fetchNodeSeekText(`/post-${encodeURIComponent(id)}-${page}`, options);
+}
+
 async function fetchTopicData(id: string, page: number, options: NodeSeekOptions) {
-  const html = await fetchNodeSeekText(`/post-${encodeURIComponent(id)}-${page}`, options);
+  const html = await fetchTopicHtml(id, page, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   if (!postData) {
@@ -282,8 +573,17 @@ async function fetchTopicData(id: string, page: number, options: NodeSeekOptions
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
-  const postData = await fetchTopicData(id, 1, options);
-  return normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30);
+  const html = await fetchTopicHtml(id, 1, options);
+  const embedded = extractNodeSeekEmbeddedData(html);
+  const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+  if (postData) {
+    return normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30);
+  }
+  const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
+  if (rendered) {
+    return rendered;
+  }
+  throw new Error('NodeSeek 主题解析失败');
 }
 
 export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & {
@@ -308,13 +608,52 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
 }
 
 export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number } = {}): Promise<SearchResponse> {
-  const result = await getNodeSeekFeed({ ...options, limit: 100 });
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const trimmedQuery = query.trim();
+  const limit = options.limit || 30;
+  if (!trimmedQuery) {
+    return { items: [], errors: {} };
+  }
+
+  let items: Topic[] = [];
+  let searchFailed = false;
+  try {
+    let html = await fetchNodeSeekText(searchPath(trimmedQuery), options);
+    items = filterNodeSeekSearchTopics(html, trimmedQuery);
+    let page = 2;
+
+    while (items.length < limit && page <= MAX_NODESEEK_SEARCH_PAGES) {
+      const previousCount = items.length;
+      try {
+        html = await fetchNodeSeekText(nextSearchPath(html, trimmedQuery, page), options);
+      } catch (error) {
+        if (isNodeSeekCloudflareError(error)) {
+          throw error;
+        }
+        break;
+      }
+      items = mergeSearchTopics(items, filterNodeSeekSearchTopics(html, trimmedQuery));
+      if (items.length === previousCount) {
+        break;
+      }
+      page += 1;
+    }
+  } catch (error) {
+    if (isNodeSeekCloudflareError(error)) {
+      throw error;
+    }
+    searchFailed = true;
+  }
+
+  if (searchFailed || items.length === 0) {
+    const fallback = await getNodeSeekFeed({ ...options, limit: 100 });
+    const expression = parseSearchExpression(trimmedQuery);
+    items = mergeSearchTopics(items, fallback.items.filter((topic) => (
+      matchesSearchExpression(searchExpressionText(topic), expression)
+    )));
+  }
+
   return {
-    items: result.items.filter((topic) => {
-      const text = `${topic.title} ${topic.author} ${topic.category || ''} ${topic.excerpt || ''}`.toLowerCase();
-      return terms.every((term) => text.includes(term));
-    }).slice(0, options.limit || 30),
+    items: sortTopicsByTime(items).slice(0, limit),
     errors: {}
   };
 }

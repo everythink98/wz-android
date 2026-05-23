@@ -2,6 +2,7 @@ import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoRepl
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, searchNodeSeek } from './localNodeseek';
 import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoRepliesHtml as parseLocalYaohuoRepliesHtml, parseYaohuoSearchHtml as parseLocalYaohuoSearchHtml, parseYaohuoTopicHtml as parseLocalYaohuoTopicHtml, checkYaohuoLoginHtml } from './localYaohuo';
 import { getV2exCategories, getV2exFeed, getV2exTopic, searchV2ex } from './localV2ex';
+import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText } from './feedLogic';
 import type {
   CategoriesResponse,
   FeedResponse,
@@ -16,6 +17,8 @@ import type { Fetcher } from './request';
 
 interface RequestOptions {
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -38,6 +41,14 @@ function sortByTime<T extends { createdAt: string; lastReplyAt?: string }>(items
   ));
 }
 
+function filterSearchItems(response: SearchResponse, query: string, limit: number): SearchResponse {
+  const expression = parseSearchExpression(query);
+  return {
+    ...response,
+    items: response.items.filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression)).slice(0, limit)
+  };
+}
+
 function pickSource(source: Source, handlers: Record<Source, () => Promise<unknown>>) {
   return handlers[source]();
 }
@@ -49,10 +60,11 @@ export async function getFeed({
   category,
   nocache = false,
   fetcher,
+  nodeSeekCookie,
+  nodeSeekUserAgent,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   source: FeedSource;
   page?: number;
   limit?: number;
@@ -60,10 +72,12 @@ export async function getFeed({
   category?: string;
   nocache?: boolean;
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, category, nocache, fetcher, signal, timeoutMs };
+  const options = { page, limit, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
     const results = await Promise.allSettled([
@@ -100,17 +114,20 @@ export async function getCategories({
   source = 'all',
   nocache = false,
   fetcher,
+  nodeSeekCookie,
+  nodeSeekUserAgent,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   source?: FeedSource;
   nocache?: boolean;
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
-  const options = { nocache, fetcher, signal, timeoutMs };
+  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'];
     const results = await Promise.allSettled([
@@ -139,18 +156,21 @@ export function getTopic({
   source,
   id,
   fetcher,
+  nodeSeekCookie,
+  nodeSeekUserAgent,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   source: Source;
   id: string;
   nocache?: boolean;
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
-  const options = { fetcher, signal, timeoutMs };
+  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   return pickSource(source, {
     nodeseek: () => getNodeSeekTopic(id, options),
     linuxdo: () => getLinuxDoTopic(id, options),
@@ -166,10 +186,11 @@ export function getReplies({
   limit = 20,
   offset,
   fetcher,
+  nodeSeekCookie,
+  nodeSeekUserAgent,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   source: Source;
   id: string;
   page: number;
@@ -177,10 +198,12 @@ export function getReplies({
   offset?: number | null;
   nocache?: boolean;
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const options = { page, limit, offset, fetcher, signal, timeoutMs };
+  const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   return pickSource(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),
@@ -197,7 +220,6 @@ export function getReply({
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   source: Source;
   id: string;
   floor: number;
@@ -217,39 +239,48 @@ export async function searchTopics({
   query,
   limit = 20,
   fetcher,
+  nodeSeekCookie,
+  nodeSeekUserAgent,
   signal,
   timeoutMs
 }: {
-  serverUrl?: string;
   source: FeedSource;
   query: string;
   limit?: number;
   fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
-  const options = { limit, fetcher, signal, timeoutMs };
+  const adapterQuery = positiveSearchQuery(query);
+  const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
+  const options = { limit: adapterLimit, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
     const results = await Promise.allSettled([
-      searchNodeSeek(query, options),
-      searchLinuxDo(query, options),
-      searchV2ex(query, options)
+      searchNodeSeek(adapterQuery, options),
+      searchLinuxDo(adapterQuery, options),
+      searchV2ex(adapterQuery, options)
     ]);
+    const expression = parseSearchExpression(query);
     return {
-      items: sortByTime(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : [])).slice(0, limit),
+      items: balanceTopicsBySource(sortByTime(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []))
+        .filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression)))
+        .slice(0, limit),
       errors: mergeErrors(results, sources)
     };
   }
   if (source === 'yaohuo') {
     return { items: [], errors: { yaohuo: '请先登录妖火' } };
   }
-  return pickSource(source, {
-    nodeseek: () => searchNodeSeek(query, options),
-    linuxdo: () => searchLinuxDo(query, options),
-    v2ex: () => searchV2ex(query, options),
+  const response = await pickSource(source, {
+    nodeseek: () => searchNodeSeek(adapterQuery, options),
+    linuxdo: () => searchLinuxDo(adapterQuery, options),
+    v2ex: () => searchV2ex(adapterQuery, options),
     yaohuo: async () => ({ items: [], errors: { yaohuo: '请先登录妖火' } })
-  }) as Promise<SearchResponse>;
+  }) as SearchResponse;
+  return filterSearchItems(response, query, limit);
 }
 
 export interface YaohuoLoginCheckResponse {
@@ -268,7 +299,6 @@ export function parseYaohuoFeedHtml({
   page = 1,
   limit = 20
 }: {
-  serverUrl?: string;
   html: string;
   category?: string;
   url?: string;
@@ -287,7 +317,6 @@ export function parseYaohuoSearchHtml({
   page = 1,
   limit = 20
 }: {
-  serverUrl?: string;
   html: string;
   url?: string;
   page?: number;
@@ -304,7 +333,6 @@ export function parseYaohuoTopicHtml({
   id,
   url
 }: {
-  serverUrl?: string;
   html: string;
   id: string;
   url?: string;
@@ -321,7 +349,6 @@ export function parseYaohuoRepliesHtml({
   page,
   limit = 20
 }: {
-  serverUrl?: string;
   html: string;
   url?: string;
   page: number;
@@ -337,7 +364,6 @@ export function parseYaohuoLoginHtml({
   html,
   url
 }: {
-  serverUrl?: string;
   html: string;
   url?: string;
   fetcher?: Fetcher;

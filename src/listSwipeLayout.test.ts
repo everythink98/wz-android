@@ -9,7 +9,7 @@ describe('Android topic list swipe layout', () => {
     expect(appSource).toContain("kind: 'favorite'");
     expect(appSource).toContain("kind: 'delete'");
     expect(appSource).toContain('swipeAction={favoriteSwipeAction}');
-    expect(appSource).toContain('swipeAction={deleteSwipeAction}');
+    expect(appSource).toContain('swipeAction={bulkMode ? undefined : deleteSwipeAction}');
   });
 
   it('does not keep a permanent favorite button in the topic list row footer', () => {

@@ -19,12 +19,36 @@ describe('Android request helpers', () => {
       init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
     }));
 
-    const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, timeoutMs: 1000 });
-    const assertion = expect(request).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
-    await vi.advanceTimersByTimeAsync(1000);
+    try {
+      const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, timeoutMs: 1000 });
+      const assertion = expect(request).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+      await vi.advanceTimersByTimeAsync(1000);
 
-    await assertion;
-    vi.useRealTimers();
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects with a timeout even when the native fetch ignores abort', async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn(() => new Promise<Response>(() => {}));
+
+    try {
+      const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, timeoutMs: 1000 });
+      let rejectedMessage = '';
+      request.catch((error: unknown) => {
+        rejectedMessage = error instanceof Error ? error.message : String(error);
+      });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.resolve();
+
+      expect(rejectedMessage).toBe(REQUEST_TIMEOUT_MESSAGE);
+      await expect(request).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects with a clear cancel message when the caller aborts the request', async () => {
@@ -34,6 +58,16 @@ describe('Android request helpers', () => {
     }));
 
     const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, signal: controller.signal });
+    controller.abort();
+
+    await expect(request).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+  });
+
+  it('rejects with a cancel message even when the native fetch ignores abort', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(() => new Promise<Response>(() => {}));
+    const request = fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, signal: controller.signal });
+
     controller.abort();
 
     await expect(request).rejects.toThrow(REQUEST_CANCELED_MESSAGE);

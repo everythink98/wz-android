@@ -72,6 +72,7 @@ export interface ReaderData {
 const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
 const validFeedSources = new Set<FeedSource>(['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
 const privateLocalSources = new Set<Source>(['yaohuo']);
+const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
 
 function nowIso() {
   return new Date().toISOString();
@@ -97,17 +98,23 @@ function isTopic(value: unknown): value is Topic {
     && typeof item.url === 'string'
     && item.url
     && typeof item.createdAt === 'string'
-    && item.createdAt
+    && dateValue(item.createdAt) > 0
+    && (item.lastReplyAt === undefined || (typeof item.lastReplyAt === 'string' && dateValue(item.lastReplyAt) > 0))
   );
 }
 
-function topicAccessRequirement(topic: Topic) {
-  const accessRequirement = topic.accessRequirement;
-  return accessRequirement
-    && (accessRequirement.type === 'login' || accessRequirement.type === 'level' || accessRequirement.type === 'permission')
-    && typeof accessRequirement.label === 'string'
-    ? accessRequirement
-    : undefined;
+function sanitizeTopicUrl(value: string) {
+  try {
+    const url = new URL(value);
+    for (const key of [...url.searchParams.keys()]) {
+      if (sensitiveUrlParamPattern.test(key)) {
+        url.searchParams.delete(key);
+      }
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
 }
 
 function topicSummary(topic: Topic): Topic {
@@ -119,13 +126,12 @@ function topicSummary(topic: Topic): Topic {
     authorAvatar: topic.authorAvatar,
     categoryId: topic.categoryId,
     category: topic.category,
-    url: topic.url,
+    url: sanitizeTopicUrl(topic.url),
     createdAt: topic.createdAt,
     lastReplyAt: topic.lastReplyAt,
     replyCount: Number(topic.replyCount || 0),
     viewCount: topic.viewCount,
-    excerpt: topic.excerpt,
-    accessRequirement: topicAccessRequirement(topic)
+    excerpt: topic.excerpt
   };
 }
 
@@ -201,6 +207,15 @@ export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
   return `${category.source}:${category.id}`;
 }
 
+function savedSearchKey(query: string) {
+  return query.trim().toLowerCase();
+}
+
+function normalizeSavedSearchDeletedKey(key: string) {
+  const raw = key.includes(':') ? key.split(':').slice(1).join(':') : key;
+  return savedSearchKey(raw);
+}
+
 function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -211,11 +226,16 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
     if (!candidate.topic || !isTopic(candidate.topic)) {
       continue;
     }
+    const savedAt = typeof candidate.savedAt === 'string' ? candidate.savedAt : '';
+    const updatedAt = typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined;
+    if (dateValue(savedAt) <= 0 || (updatedAt !== undefined && dateValue(updatedAt) <= 0)) {
+      continue;
+    }
     const topic = topicSummary(candidate.topic);
     next[topicKey(topic)] = {
       topic,
-      savedAt: typeof candidate.savedAt === 'string' ? candidate.savedAt : nowIso(),
-      updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined,
+      savedAt,
+      updatedAt,
       tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
       note: typeof candidate.note === 'string' ? candidate.note : undefined,
       visitCount: typeof candidate.visitCount === 'number' && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
@@ -242,12 +262,16 @@ function normalizeProgress(value: unknown): Record<string, ReadingProgressRecord
     if (!candidate.topic || !isTopic(candidate.topic)) {
       continue;
     }
+    const updatedAt = typeof candidate.updatedAt === 'string' ? candidate.updatedAt : '';
+    if (dateValue(updatedAt) <= 0) {
+      continue;
+    }
     const topic = topicSummary(candidate.topic);
     next[topicKey(topic)] = {
       topic,
       percent: clampPercent(candidate.percent),
       scrollY: typeof candidate.scrollY === 'number' && candidate.scrollY > 0 ? Math.round(candidate.scrollY) : 0,
-      updatedAt: typeof candidate.updatedAt === 'string' ? candidate.updatedAt : nowIso()
+      updatedAt
     };
   }
   return next;
@@ -278,25 +302,43 @@ function normalizeSavedSearches(value: unknown): SavedSearchRecord[] {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .filter((item) => item && typeof item.query === 'string' && isFeedSource(item.source))
-    .map((item) => ({
-      id: typeof item.id === 'string' ? item.id : `${item.source}:${item.query}`,
-      query: item.query,
-      source: item.source,
+  const records = new Map<string, SavedSearchRecord>();
+  for (const item of value) {
+    if (!item || typeof item.query !== 'string' || !isFeedSource(item.source)) {
+      continue;
+    }
+    const query = item.query.trim();
+    const id = savedSearchKey(query);
+    if (!id) {
+      continue;
+    }
+    const record: SavedSearchRecord = {
+      id,
+      query,
+      source: 'all',
       savedAt: typeof item.savedAt === 'string' ? item.savedAt : nowIso()
-    }))
+    };
+    const existing = records.get(id);
+    if (!existing || dateValue(record.savedAt) > dateValue(existing.savedAt)) {
+      records.set(id, record);
+    }
+  }
+  return Array.from(records.values())
+    .sort((a, b) => dateValue(b.savedAt) - dateValue(a.savedAt))
     .slice(0, 30);
 }
 
-function normalizeDeletedRecordMap(value: unknown): Record<string, string> {
+function normalizeDeletedRecordMap(value: unknown, normalizeKey?: (key: string) => string): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
   }
   const next: Record<string, string> = {};
   for (const [key, deletedAt] of Object.entries(value)) {
     if (typeof key === 'string' && key && typeof deletedAt === 'string' && dateValue(deletedAt) > 0) {
-      next[key] = deletedAt;
+      const nextKey = normalizeKey ? normalizeKey(key) : key;
+      if (nextKey && dateValue(deletedAt) > dateValue(next[nextKey])) {
+        next[nextKey] = deletedAt;
+      }
     }
   }
   return next;
@@ -311,7 +353,7 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
     history: normalizeDeletedRecordMap(base.history),
     later: normalizeDeletedRecordMap(base.later),
     subscriptions: normalizeDeletedRecordMap(base.subscriptions),
-    savedSearches: normalizeDeletedRecordMap(base.savedSearches)
+    savedSearches: normalizeDeletedRecordMap(base.savedSearches, normalizeSavedSearchDeletedKey)
   };
 }
 
@@ -611,20 +653,117 @@ export function toggleSubscription(data: ReaderData, category: Pick<Category, 's
   return { ...data, subscriptions: next, deletedRecords };
 }
 
-export function addSavedSearch(data: ReaderData, query: string, source: FeedSource) {
+export function addSavedSearch(data: ReaderData, query: string): ReaderData {
   const cleanQuery = query.trim();
   if (!cleanQuery) {
     return data;
   }
-  const id = `${source}:${cleanQuery.toLowerCase()}`;
+  const id = savedSearchKey(cleanQuery);
   return {
     ...data,
     savedSearches: [
-      { id, query: cleanQuery, source, savedAt: nowIso() },
+      { id, query: cleanQuery, source: 'all' as FeedSource, savedAt: nowIso() },
       ...data.savedSearches.filter((item) => item.id !== id)
     ].slice(0, 30),
     deletedRecords: clearDeleted(data.deletedRecords, 'savedSearches', id)
   };
+}
+
+export function removeSavedSearch(data: ReaderData, id: string) {
+  if (!id || !data.savedSearches.some((item) => item.id === id)) {
+    return data;
+  }
+  return {
+    ...data,
+    savedSearches: data.savedSearches.filter((item) => item.id !== id),
+    deletedRecords: markDeleted(data.deletedRecords, 'savedSearches', id)
+  };
+}
+
+export function updateTopicRecord(
+  data: ReaderData,
+  section: 'favorites' | 'history',
+  topic: Pick<Topic, 'source' | 'id'>,
+  patch: Pick<TopicRecord, 'tags' | 'note'>
+) {
+  const key = topicKey(topic);
+  const record = data[section][key];
+  if (!record) {
+    return data;
+  }
+  return {
+    ...data,
+    [section]: {
+      ...data[section],
+      [key]: {
+        ...record,
+        tags: normalizeStringList(patch.tags),
+        note: typeof patch.note === 'string' ? patch.note.trim() : '',
+        updatedAt: nowIso()
+      }
+    }
+  };
+}
+
+export function removeRecords(data: ReaderData, section: 'favorites' | 'history', topics: Array<Pick<Topic, 'source' | 'id'>>) {
+  const next = { ...data[section] };
+  let deletedRecords = data.deletedRecords;
+  for (const topic of topics) {
+    const key = topicKey(topic);
+    if (next[key]) {
+      delete next[key];
+      deletedRecords = markDeleted(deletedRecords, section, key);
+    }
+  }
+  return {
+    ...data,
+    [section]: next,
+    deletedRecords
+  };
+}
+
+export function clearRecords(data: ReaderData, section: 'history') {
+  return removeRecords(data, section, Object.values(data[section]).map((record) => record.topic));
+}
+
+export function restoreRecords(data: ReaderData, section: 'favorites' | 'history', records: Record<string, TopicRecord>) {
+  const restored = normalizeRecordMap(records);
+  const deleted = { ...data.deletedRecords[section] };
+  for (const key of Object.keys(restored)) {
+    delete deleted[key];
+  }
+  return sanitizeReaderData({
+    ...data,
+    [section]: {
+      ...data[section],
+      ...restored
+    },
+    deletedRecords: {
+      ...data.deletedRecords,
+      [section]: deleted
+    }
+  });
+}
+
+export function exportFavoritesMarkdown(data: ReaderData) {
+  const records = Object.values(data.favorites)
+    .sort((left, right) => dateValue(right.savedAt) - dateValue(left.savedAt));
+  if (!records.length) {
+    return '# 收藏\n\n暂无收藏\n';
+  }
+  const lines = ['# 收藏', ''];
+  for (const record of records) {
+    const topic = record.topic;
+    lines.push(`- [${topic.title}](${topic.url})`);
+    lines.push(`  - 来源：${topic.source}${topic.category ? ` · ${topic.category}` : ''}`);
+    if (record.tags?.length) {
+      lines.push(`  - 标签：${record.tags.join(', ')}`);
+    }
+    if (record.note) {
+      lines.push(`  - 备注：${record.note}`);
+    }
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 export function isFavorite(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {

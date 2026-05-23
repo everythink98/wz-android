@@ -1,0 +1,47 @@
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@react-native-cookies/cookies', () => ({
+  default: {
+    flush: vi.fn(async () => undefined),
+    get: vi.fn(async () => ({}))
+  }
+}));
+
+vi.mock('react-native', () => ({
+  NativeModules: {
+    LinuxDoCookieModule: {}
+  }
+}));
+
+import {
+  buildCookieHeader,
+  nodeSeekCookiesFromHeader,
+  readNodeSeekCookiesFromStores
+} from './nodeseekCookieBridge';
+
+describe('NodeSeek WebView cookie bridge', () => {
+  it('uses the Android WebView cookie store before CookieManager when clearance is present', async () => {
+    const readCookieManagerStore = vi.fn(async () => {
+      throw new Error('CookieManager should not be required when Android store has NodeSeek cookies');
+    });
+
+    const cookies = await readNodeSeekCookiesFromStores({
+      readAndroidStore: async () => nodeSeekCookiesFromHeader('cf_clearance=native-clearance'),
+      readCookieManagerStore,
+      timeoutMs: 1
+    });
+
+    expect(buildCookieHeader(cookies)).toBe('cf_clearance=native-clearance');
+    expect(readCookieManagerStore).not.toHaveBeenCalled();
+  });
+
+  it('falls back to CookieManager when Android store has no NodeSeek cookies', async () => {
+    const cookies = await readNodeSeekCookiesFromStores({
+      readAndroidStore: async () => ({}),
+      readCookieManagerStore: async () => nodeSeekCookiesFromHeader('session=abc'),
+      timeoutMs: 1
+    });
+
+    expect(buildCookieHeader(cookies)).toBe('session=abc');
+  });
+});

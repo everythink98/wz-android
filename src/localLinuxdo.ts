@@ -8,7 +8,12 @@ import {
   textExcerpt,
   toIsoString
 } from './localHtml';
-import { isCloudflareChallengeBody, loadLinuxDoAccess } from './linuxdoCookieBridge';
+import {
+  DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+  isCloudflareChallengeResponse,
+  loadLinuxDoAccess
+} from './linuxdoCookieBridge';
+import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
 
 const BASE_URL = 'https://linux.do';
 const LIST_PAGE_SIZE = 30;
@@ -21,6 +26,9 @@ interface LinuxDoOptions {
 }
 
 export class LinuxDoCloudflareError extends Error {
+  source = 'linuxdo' as const;
+  reason = 'cloudflare' as const;
+
   constructor() {
     super('linux.do 需要完成 Cloudflare 验证');
   }
@@ -153,6 +161,7 @@ async function linuxDoHeaders() {
     Accept: 'application/json,text/plain,*/*',
     Referer: `${BASE_URL}/latest`,
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
     ...(access?.cookieHeader ? { Cookie: access.cookieHeader } : {})
   };
 }
@@ -170,7 +179,7 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
     headers: await linuxDoHeaders()
   }, options);
   const text = await response.text();
-  if (isCloudflareChallengeBody(text) || response.headers.get('cf-mitigated') === 'challenge') {
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();
   }
   const data = text ? JSON.parse(text) : {};
@@ -332,9 +341,7 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
 }
 
 function topicMatchesSearch(topic: Topic, query: string) {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const text = `${topic.title} ${topic.excerpt || ''} ${topic.author} ${topic.category || ''}`.toLowerCase();
-  return terms.every((term) => text.includes(term));
+  return matchesSearchExpression(searchExpressionText(topic), parseSearchExpression(query));
 }
 
 export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number } = {}): Promise<SearchResponse> {

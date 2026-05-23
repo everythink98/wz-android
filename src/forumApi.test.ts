@@ -1,4 +1,25 @@
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@react-native-cookies/cookies', () => ({
+  default: {
+    flush: vi.fn(async () => undefined),
+    get: vi.fn(async () => ({})),
+    clearByName: vi.fn(async () => true)
+  }
+}));
+
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: vi.fn(async () => null),
+  setItemAsync: vi.fn(async () => undefined),
+  deleteItemAsync: vi.fn(async () => undefined)
+}));
+
+vi.mock('react-native', () => ({
+  NativeModules: {
+    LinuxDoCookieModule: {}
+  }
+}));
+
 import { getCategories, getFeed, getReply, parseYaohuoFeedHtml, parseYaohuoLoginHtml, searchTopics } from './forumApi';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -86,5 +107,54 @@ describe('Android local forum facade', () => {
     expect(result.items[0]).toMatchObject({ source: 'nodeseek', id: '1' });
     expect(result.errors.linuxdo).toBeTruthy();
     expect(result.errors.v2ex).toBeTruthy();
+  });
+
+  it('balances all-source Android search across local source adapters without using the project search endpoint', async () => {
+    const manyNodeSeekTopics = Buffer.from(JSON.stringify({
+      rotateTopics: Array.from({ length: 4 }, (_, index) => ({
+        postId: 100 + index,
+        titleText: `match NodeSeek ${index}`,
+        titleLink: `/post-${100 + index}-1`,
+        op: { name: 'alice' },
+        time: { createdDate: `2026-05-20T00:0${index}:00.000Z` }
+      }))
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        return new Response(`<script>${manyNodeSeekTopics}</script>`);
+      }
+      if (input.includes('linux.do/search.json')) {
+        return new Response(JSON.stringify({
+          topics: [{
+            id: 201,
+            title: 'match linux.do',
+            created_at: '2026-05-19T00:00:00.000Z',
+            posts_count: 1
+          }],
+          posts: []
+        }));
+      }
+      if (input.includes('sov2ex.com')) {
+        return new Response(JSON.stringify({
+          hits: [{
+            _source: {
+              id: 301,
+              title: 'match V2EX',
+              member: 'neo',
+              created: '2026-05-18T00:00:00.000Z',
+              replies: 0
+            }
+          }]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const result = await searchTopics({ source: 'all', query: 'match', limit: 3, fetcher });
+
+    expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'linuxdo', 'v2ex']);
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+    expect(calls).not.toMatch(/127\.0\.0\.1(?::3000)?\/api\/search|10\.0\.2\.2(?::3000)?\/api\/search|localhost(?::3000)?\/api\/search/);
+    expect(calls).not.toMatch(/127\.0\.0\.1(?::3000)?\/api\/yaohuo\/parse\/search|10\.0\.2\.2(?::3000)?\/api\/yaohuo\/parse\/search|localhost(?::3000)?\/api\/yaohuo\/parse\/search/);
   });
 });

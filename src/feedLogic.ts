@@ -1,19 +1,52 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
 import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Topic } from './types';
-import { dateTime, errorMessage, isCanceledRequest } from './appUtils';
+import { dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUtils';
 
 export { dateTime } from './appUtils';
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite' | 'subscribed' | 'active' | 'hot';
 export type SearchSort = 'relevance' | 'time' | 'reply' | 'view';
 export type LibraryTab = 'favorites' | 'history';
 
+export interface SearchExpression {
+  include: string[];
+  exclude: string[];
+}
+
+export function parseSearchExpression(query: string): SearchExpression {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const part of query.trim().split(/\s+/).filter(Boolean)) {
+    if (part.startsWith('-') && part.length > 1) {
+      exclude.push(part.slice(1).toLowerCase());
+    } else {
+      include.push(part);
+    }
+  }
+  return { include, exclude };
+}
+
+export function searchExpressionText(topic: Topic) {
+  return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`;
+}
+
+export function matchesSearchExpression(text: string, expression: SearchExpression) {
+  const normalized = text.toLowerCase();
+  return expression.include.every((term) => normalized.includes(term.toLowerCase()))
+    && expression.exclude.every((term) => !normalized.includes(term));
+}
+
+export function positiveSearchQuery(query: string) {
+  const expression = parseSearchExpression(query);
+  return expression.exclude.length ? expression.include.join(' ') : query;
+}
+
 export function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter) {
   const visible = items.filter((topic) => {
     const text = topicText(topic);
-    const category = topic.category ? `${topic.source}:${topic.category.replace(/^#/, '')}`.toLowerCase() : '';
+    const categories = topicCategoryKeys(topic);
     return !includesAnyKeyword(text, data.settings.blockedKeywords)
       && !data.settings.blockedUsers.some((user) => topic.author?.toLowerCase() === user.toLowerCase())
-      && !data.settings.blockedCategories.some((blocked) => blocked.toLowerCase() === category);
+      && !data.settings.blockedCategories.some((blocked) => categories.includes(blocked.toLowerCase()));
   });
 
   if (filter === 'unread') {
@@ -26,9 +59,12 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
     return visible.filter((topic) => Boolean(data.favorites[topicKey(topic)]));
   }
   if (filter === 'subscribed') {
-    return visible.filter((topic) => topic.category && Object.values(data.subscriptions).some((subscription) => (
+    return visible.filter((topic) => Object.values(data.subscriptions).some((subscription) => (
       subscription.source === topic.source
-      && [subscription.id, subscription.name].includes(topic.category!.replace(/^#/, ''))
+      && topicCategoryValues(topic).some((category) => (
+        category.toLowerCase() === subscription.id.toLowerCase()
+        || category.toLowerCase() === subscription.name.toLowerCase()
+      ))
     )));
   }
   if (filter === 'active') {
@@ -45,7 +81,7 @@ export function searchLocal(data: ReaderData, query: string, source: FeedSource)
     ...Object.values(data.favorites),
     ...Object.values(data.history)
   ];
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const expression = parseSearchExpression(query);
   const seen = new Set<string>();
   return records
     .filter((record) => {
@@ -55,7 +91,7 @@ export function searchLocal(data: ReaderData, query: string, source: FeedSource)
         return false;
       }
       const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''} ${record.tags?.join(' ') || ''} ${record.note || ''}`.toLowerCase();
-      const matched = terms.every((term) => text.includes(term));
+      const matched = matchesSearchExpression(text, expression);
       if (matched) {
         seen.add(key);
       }
@@ -83,15 +119,67 @@ export function sortTopicsByActivity(items: Topic[]) {
 
 export function mergeTopics(current: Topic[], incoming: Topic[]) {
   const seen = new Set(current.map((topic) => topicKey(topic)));
+  const seenExternalUrls = new Map<string, Topic>();
+  for (const topic of current) {
+    const urlKey = duplicateExternalUrlKey(topic);
+    if (urlKey) {
+      seenExternalUrls.set(urlKey, topic);
+    }
+  }
   const next = [...current];
   for (const topic of incoming) {
     const key = topicKey(topic);
     if (!seen.has(key)) {
+      const urlKey = duplicateExternalUrlKey(topic);
+      const existing = urlKey ? seenExternalUrls.get(urlKey) : undefined;
+      if (existing && existing.source !== topic.source) {
+        existing.duplicateSources = Array.from(new Set([...(existing.duplicateSources || []), sourceLabel(topic.source)]));
+        seen.add(key);
+        continue;
+      }
       seen.add(key);
+      if (urlKey) {
+        seenExternalUrls.set(urlKey, topic);
+      }
       next.push(topic);
     }
   }
   return next;
+}
+
+function duplicateExternalUrlKey(topic: Topic) {
+  const key = topic.url.trim().toLowerCase();
+  if (!key || key.includes('/topic/') || key.includes('/t/')) {
+    return '';
+  }
+  return key;
+}
+
+export function balanceTopicsBySource(items: Topic[]) {
+  const order: Topic['source'][] = [];
+  const buckets = new Map<Topic['source'], Topic[]>();
+  for (const item of items) {
+    const bucket = buckets.get(item.source);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      buckets.set(item.source, [item]);
+      order.push(item.source);
+    }
+  }
+  const balanced: Topic[] = [];
+  let hasMore = true;
+  while (hasMore) {
+    hasMore = false;
+    for (const source of order) {
+      const next = buckets.get(source)?.shift();
+      if (next) {
+        balanced.push(next);
+        hasMore = true;
+      }
+    }
+  }
+  return balanced;
 }
 
 export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
@@ -110,7 +198,7 @@ export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): Fee
 
 export function mergeSearchResponses(base: SearchResponse, extra: SearchResponse): SearchResponse {
   return {
-    items: sortTopicsByActivity(mergeTopics(base.items, extra.items)),
+    items: balanceTopicsBySource(sortTopicsByActivity(mergeTopics(base.items, extra.items))),
     errors: {
       ...(base.errors || {}),
       ...(extra.errors || {})
@@ -222,6 +310,14 @@ export function removeRecord(data: ReaderData, section: LibraryTab, topic: Topic
 
 export function topicText(topic: Topic) {
   return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
+}
+
+function topicCategoryValues(topic: Topic) {
+  return [topic.categoryId, topic.category?.replace(/^#/, '')].filter((value): value is string => Boolean(value));
+}
+
+function topicCategoryKeys(topic: Topic) {
+  return topicCategoryValues(topic).map((value) => `${topic.source}:${value}`.toLowerCase());
 }
 
 export function includesAnyKeyword(text: string, keywords: string[]) {

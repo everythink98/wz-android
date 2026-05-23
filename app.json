@@ -18,6 +18,7 @@
       }
     },
     "plugins": [
+      "./plugins/withLinuxDoCookieModule",
       "./plugins/withAndroidCleartextTraffic",
       "expo-secure-store"
     ]

@@ -6,44 +6,112 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
+import { parseYaohuoListHtml } from './localYaohuo';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
   it('fetches yaohuo feed from the Android device and parses HTML locally', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
-    const serverFetcher = vi.fn();
 
     const result = await getYaohuoFeedDirect({
       yaohuoCookie: 'sidyaohuo=secret',
       category: '177',
       page: 2,
       limit: 30,
-      yaohuoFetcher,
-      serverFetcher
+      yaohuoFetcher
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000&getTotal=2021',
+      'https://yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000',
       expect.objectContaining({
         headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' })
       })
     );
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
-    expect(serverFetcher).not.toHaveBeenCalled();
+  });
+
+  it('uses the default yaohuo class when category is blank', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+
+    await getYaohuoFeedDirect({
+      yaohuoCookie: 'sidyaohuo=secret',
+      category: '',
+      page: 1,
+      yaohuoFetcher
+    });
+
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      'https://yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=1&siteid=1000',
+      expect.any(Object)
+    );
+  });
+
+  it('does not keep paginating yaohuo HTML when no topics were parsed', () => {
+    const result = parseYaohuoListHtml('<a href="/bbs/book_list.aspx?page=51">下一页</a>', {
+      classId: '177',
+      page: 50,
+      limit: 30
+    });
+
+    expect(result.items).toEqual([]);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextPage).toBeNull();
+  });
+
+  it('parses yaohuo compact numbered list rows', () => {
+    const result = parseYaohuoListHtml(`
+      <div class="title">【妖火论坛】</div>
+      <div class="list">
+        1.<a href="/bbs-1422771.html">忙了三四天，成亲了</a><br>
+        2.<a href="/bbs-1423356.html">giffgaff卡免流教程</a><br>
+      </div>
+    `, {
+      classId: '177',
+      page: 1,
+      limit: 30
+    });
+
+    expect(result.items.map((item) => item.title)).toEqual([
+      '忙了三四天，成亲了',
+      'giffgaff卡免流教程'
+    ]);
+  });
+
+  it('parses current yaohuo listdata rows with multiple classes', () => {
+    const result = parseYaohuoListHtml(`
+      <!--listS-->
+      <div class="listdata line1">1.<img src="/NetImages/file.gif" alt="附"/><a class="topic-link" href="/bbs-1539321.html">局停后应急方案</a><br/><span class="louzhunicheng">畫家李問</span>/<a class="topic-link" href="/bbs/book_re.aspx?actoin=class&amp;siteid=1000&amp;classid=177&amp;id=1539321&amp;getTotal=0&amp;lpage=1">0</a>回/39阅 <span class="right">今天 午夜<span></div>
+      <div class="listdata line2">2.<a class="topic-link" href="/bbs-1539320.html">dnshe域名互助</a><br/><span class="louzhunicheng">冷眸阳少</span>/<a class="topic-link" href="/bbs/book_re.aspx?actoin=class&amp;siteid=1000&amp;classid=177&amp;id=1539320&amp;getTotal=0&amp;lpage=1">0</a>回/37阅 <span class="right">今天 午夜<span></div>
+      <!--listE-->
+    `, {
+      classId: '177',
+      page: 1,
+      limit: 30
+    });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items).toEqual(expect.arrayContaining([expect.objectContaining({
+      source: 'yaohuo',
+      id: '1539321',
+      title: '局停后应急方案',
+      author: '畫家李問',
+      categoryId: '177',
+      category: '妖火茶馆',
+      replyCount: 0,
+      viewCount: 39
+    })]));
   });
 
   it('checks login with Android-fetched HTML and does not send the cookie to a server', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<html>ok</html>'));
-    const serverFetcher = vi.fn();
 
     const result = await checkYaohuoLoginDirect({
       yaohuoCookie: 'sidyaohuo=secret',
-      yaohuoFetcher,
-      serverFetcher
+      yaohuoFetcher
     });
 
     expect(result.loginRequired).toBe(false);
-    expect(serverFetcher).not.toHaveBeenCalled();
+    expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/wapindex.aspx?sid=-2', expect.any(Object));
   });
 
   it('passes cancellation signals through direct yaohuo fetches', async () => {
@@ -114,6 +182,20 @@ describe('Android direct yaohuo API', () => {
 
     await expect(searchYaohuoDirect({
       query: '测试',
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    })).rejects.toMatchObject({
+      loginRequired: true,
+      reason: 'verification'
+    });
+  });
+
+  it('surfaces non-200 yaohuo verification pages as verification errors', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
+      status: 403
+    }));
+
+    await expect(getYaohuoFeedDirect({
       yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     })).rejects.toMatchObject({

@@ -14,19 +14,25 @@ describe('Android App performance guards', () => {
     expect(appSource).toContain('signal: controller.signal');
   });
 
-  it('loads yaohuo and the server aggregate in parallel for combined feed and search screens', () => {
+  it('loads combined feed and grouped search without the project server', () => {
     expect(appSource).toContain('Promise.allSettled');
     expect(appSource).toContain('mergeSettledFeedResponses');
-    expect(appSource).toContain('mergeSettledSearchResponses');
+    expect(appSource).toContain('activeSources.map');
+    expect(appSource).toContain('setSearchGroups');
+    expect(appSource).toContain('onRetrySearchSource');
   });
 
   it('loads local categories without the project server', () => {
-    expect(appSource).toContain("getCategories({ source: 'all', nocache: true, signal: controller.signal })");
+    expect(appSource).toContain('const data = await getCategories({');
+    expect(appSource).toContain("source: 'all'");
+    expect(appSource).toContain('nocache: true');
+    expect(appSource).toContain('signal: controller.signal');
     expect(appSource).not.toContain('baseCategoriesResult');
   });
 
   it('bypasses stale category caches when refreshing category metadata', () => {
-    expect(appSource).toContain("getCategories({ source: 'all', nocache: true, signal: controller.signal })");
+    expect(appSource).toContain('const data = await getCategories({');
+    expect(appSource).toContain('nocache: true');
     expect(appSource).not.toContain("getCategories({ serverUrl");
   });
 
