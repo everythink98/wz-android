@@ -63,6 +63,39 @@ describe('runYaohuoAction', () => {
     }));
   });
 
+  it('does not report long full pages without a tip as submitted', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(`
+      <html>
+        <head><title>妖火论坛</title></head>
+        <body>
+          <div class="content">这里是完整论坛页面，不是操作结果提示。页面内容很长，可能是操作失败后返回的普通页面。</div>
+          <div>请回到帖子页面检查实际状态，避免把失败误认为成功。</div>
+          <div>这些导航、页脚、公告和列表内容都不应该被当成操作成功提示。</div>
+        </body>
+      </html>
+    `));
+
+    const result = await runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
+      fetcher
+    });
+
+    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
+  });
+
+  it('keeps short yaohuo action text when no tip wrapper exists', async () => {
+    const fetcher = vi.fn(async () => htmlResponse('<html>收藏成功</html>'));
+
+    const result = await runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
+      fetcher
+    });
+
+    expect(result.message).toBe('收藏成功');
+  });
+
   it('times out stuck yaohuo write requests', async () => {
     const stuckFetcher = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => {

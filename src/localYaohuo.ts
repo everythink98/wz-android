@@ -61,11 +61,15 @@ function parseYaohuoDate(value: unknown) {
   const text = String(value || '').trim();
   const full = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/);
   const partial = text.match(/(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/);
-  const parts = full ? full.slice(1) : partial ? [String(new Date().getFullYear()), ...partial.slice(1)] : null;
+  const now = new Date();
+  const parts = full ? full.slice(1) : partial ? [String(now.getFullYear()), ...partial.slice(1)] : null;
   if (!parts) {
     return '';
   }
-  const [year, month, day, hour, minute] = parts.map(Number);
+  let [year, month, day, hour, minute] = parts.map(Number);
+  if (!full && month > now.getMonth() + 1) {
+    year -= 1;
+  }
   const date = new Date(Date.UTC(year, month - 1, day, hour - 8, minute));
   return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 }

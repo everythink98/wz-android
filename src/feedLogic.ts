@@ -193,7 +193,7 @@ export function balanceTopicsBySource(items: Topic[]) {
 export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
   return {
     ...base,
-    items: sortTopicsByActivity(mergeTopics(base.items, extra.items)),
+    items: balanceTopicsBySource(sortTopicsByActivity(mergeTopics(base.items, extra.items))),
     errors: {
       ...(base.errors || {}),
       ...(extra.errors || {})

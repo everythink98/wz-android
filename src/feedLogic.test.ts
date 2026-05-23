@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, dateTime, mergeReplies, mergeSearchResponses, mergeTopics, searchLocal } from './feedLogic';
+import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeSearchResponses, mergeTopics, searchLocal } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -121,5 +121,36 @@ describe('Android feed logic helpers', () => {
     const merged = mergeSearchResponses({ items: baseItems, errors: {} }, { items: newestYaohuo, errors: {} });
 
     expect(merged.items.slice(0, 4).map((item) => item.source)).toEqual(['yaohuo', 'nodeseek', 'linuxdo', 'v2ex']);
+  });
+
+  it('keeps merged feed results source-balanced after adding yaohuo items', () => {
+    const v2exItems = Array.from({ length: 3 }, (_, index) => ({
+      ...topic,
+      source: 'v2ex' as const,
+      id: `v${index}`,
+      title: `V2EX ${index}`,
+      url: `https://www.v2ex.com/t/${index}`,
+      createdAt: `2026-05-20T00:0${5 - index}:00.000Z`
+    }));
+    const baseItems: Topic[] = [
+      ...v2exItems,
+      { ...topic, source: 'nodeseek', id: 'n1', title: 'NodeSeek result', createdAt: '2026-05-20T00:02:00.000Z' },
+      { ...topic, source: 'linuxdo', id: 'l1', title: 'linux.do result', createdAt: '2026-05-20T00:01:00.000Z' }
+    ];
+    const yaohuoItem: Topic = {
+      ...topic,
+      source: 'yaohuo',
+      id: 'y1',
+      title: 'Yaohuo result',
+      url: 'https://yaohuo.me/bbs-1.html',
+      createdAt: '2026-05-20T00:03:00.000Z'
+    };
+
+    const merged = mergeFeedResponses(
+      { items: baseItems, errors: {}, hasMore: false, nextPage: null },
+      { items: [yaohuoItem], errors: {}, hasMore: false, nextPage: null }
+    );
+
+    expect(merged.items.slice(0, 4).map((item) => item.source)).toEqual(['v2ex', 'yaohuo', 'nodeseek', 'linuxdo']);
   });
 });

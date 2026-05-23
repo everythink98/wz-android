@@ -41,6 +41,7 @@ export function decodeHtml(value: unknown) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
     .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number.parseInt(code, 10)));
 }
@@ -71,6 +72,25 @@ export function parseHtml(value: unknown) {
   });
 }
 
+function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: string) {
+  const next = absoluteUrl(value, baseUrl);
+  if (!next) {
+    return undefined;
+  }
+  try {
+    const protocol = new URL(next).protocol.toLowerCase();
+    if (name === 'href' && (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:')) {
+      return next;
+    }
+    if (name === 'src' && (protocol === 'http:' || protocol === 'https:')) {
+      return next;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   const root = parseHtml(html);
   for (const selector of ['script', 'style', 'iframe', 'noscript']) {
@@ -85,14 +105,12 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
         node.removeAttribute(name);
         continue;
       }
-      if ((lower === 'href' || lower === 'src') && /^javascript:/i.test(value.trim())) {
-        node.removeAttribute(name);
-        continue;
-      }
       if (lower === 'href' || lower === 'src') {
-        const next = absoluteUrl(value, baseUrl);
+        const next = sanitizedUrlAttribute(lower, value, baseUrl);
         if (next) {
           node.setAttribute(name, next);
+        } else {
+          node.removeAttribute(name);
         }
       }
     }

@@ -45,8 +45,11 @@ function isLoginHtml(html: string, responseUrl = '') {
 }
 
 function actionMessage(html: string) {
-  const tip = String(html || '').match(/<[^>]*class=["'][^"']*tip[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i)?.[1];
-  const text = textContentFromHtml(tip || html);
+  const tip = String(html || '').match(/<[^>]*class=["'][^"']*tip[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i);
+  const text = textContentFromHtml(tip?.[1] || html);
+  if (!tip && text.length > 80) {
+    return '操作结果无法确认，请刷新原帖核对';
+  }
   if (text.length > 80) {
     return '操作已提交';
   }

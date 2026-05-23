@@ -17,6 +17,7 @@ import { matchesSearchExpression, parseSearchExpression, searchExpressionText } 
 
 const BASE_URL = 'https://linux.do';
 const LIST_PAGE_SIZE = 30;
+const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
 
 interface LinuxDoOptions {
   fetcher?: Fetcher;
@@ -210,6 +211,20 @@ function latestParams(page: number, category?: string) {
   };
 }
 
+function topicStreamState(data: unknown) {
+  const postStream = isRecord(data) && isRecord(data.post_stream) ? data.post_stream : {};
+  const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
+  const embeddedPosts = Array.isArray(postStream.posts) ? postStream.posts : [];
+  return { stream, embeddedPostCount: embeddedPosts.length };
+}
+
+function cacheTopicStream(id: string, data: unknown) {
+  const state = topicStreamState(data);
+  if (state.stream.length) {
+    topicStreamCache.set(id, state);
+  }
+}
+
 export async function getLinuxDoFeed(options: LinuxDoOptions & {
   page?: number;
   limit?: number;
@@ -230,6 +245,9 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
     const users = usersById(data.users);
     const items = topics.map((topic) => normalizeTopic(topic, categoryMap, isRecord(topic) ? originalPosterUsername(topic, users) : '')).filter(Boolean) as Topic[];
+    if (!items.length) {
+      break;
+    }
     collected.push(...(listPage === firstListPage && firstOffset > 0 ? items.slice(firstOffset) : items));
     if (collected.length > limit) {
       hasMore = true;
@@ -284,6 +302,8 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const replies = replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[];
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
   const replyHasMore = totalPosts > replies.length + 1;
+  cacheTopicStream(id, data);
+  cacheTopicStream(topic.id, data);
   return {
     ...topic,
     contentHtml: sanitizeContentHtml(isRecord(firstPost) ? firstPost.cooked || '' : '', BASE_URL),
@@ -304,12 +324,16 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   limit?: number;
   offset?: number | null;
 } = {}): Promise<RepliesResponse> {
-  const data = await topicData(id, options);
-  const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const embeddedPosts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
+  let cached = topicStreamCache.get(id);
+  if (!cached) {
+    const data = await topicData(id, options);
+    cacheTopicStream(id, data);
+    cached = topicStreamCache.get(id) || topicStreamState(data);
+  }
+  const stream = cached.stream;
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const firstPageReplyCount = embeddedPosts.length ? Math.min(limit, Math.max(embeddedPosts.length - 1, 0)) : limit;
+  const firstPageReplyCount = cached.embeddedPostCount ? Math.min(limit, Math.max(cached.embeddedPostCount - 1, 0)) : limit;
   const previousReplyCount = page > 1
     ? typeof options.offset === 'number' ? options.offset : firstPageReplyCount + ((page - 2) * limit)
     : 0;

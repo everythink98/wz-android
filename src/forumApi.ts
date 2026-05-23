@@ -120,8 +120,12 @@ function filterSearchItems(response: SearchResponse, query: string, limit: numbe
   };
 }
 
-function pickSource(source: Source, handlers: Record<Source, () => Promise<unknown>>) {
-  return handlers[source]();
+function pickSource<T>(source: Source, handlers: Partial<Record<Source, () => Promise<T>>>) {
+  const handler = handlers[source];
+  if (!handler) {
+    throw new Error('来源不支持');
+  }
+  return handler();
 }
 
 export async function getFeed({
@@ -171,7 +175,7 @@ export async function getFeed({
       ...bufferedItems,
       ...results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : [])
     ]);
-    const selected = items.slice(0, limit);
+    const selected = balanceTopicsBySource(items).slice(0, limit);
     const selectedKeys = new Set(selected.map(topicIdentity));
     const nextBuffers: Partial<Record<Source, Topic[]>> = {};
     for (const item of items) {
@@ -210,9 +214,8 @@ export async function getFeed({
   return pickSource(source, {
     nodeseek: () => getNodeSeekFeed(options),
     linuxdo: () => getLinuxDoFeed(options),
-    v2ex: () => getV2exFeed(options),
-    yaohuo: async () => ({ items: [], errors: { yaohuo: '请先登录妖火' }, hasMore: false, nextPage: null })
-  }) as Promise<FeedResponse>;
+    v2ex: () => getV2exFeed(options)
+  });
 }
 
 export async function getCategories({
@@ -252,9 +255,8 @@ export async function getCategories({
   return pickSource(source, {
     nodeseek: () => getNodeSeekCategories(options),
     linuxdo: () => getLinuxDoCategories(options),
-    v2ex: () => getV2exCategories(options),
-    yaohuo: () => Promise.resolve(yaohuoCategoriesResponse())
-  }) as Promise<CategoriesResponse>;
+    v2ex: () => getV2exCategories(options)
+  });
 }
 
 export function getTopic({
@@ -281,7 +283,7 @@ export function getTopic({
     linuxdo: () => getLinuxDoTopic(id, options),
     v2ex: () => getV2exTopic(id, options),
     yaohuo: async () => { throw new Error('请先登录妖火'); }
-  }) as Promise<TopicDetail>;
+  });
 }
 
 export function getReplies({
@@ -314,7 +316,7 @@ export function getReplies({
     linuxdo: () => getLinuxDoReplies(id, options),
     v2ex: async () => ({ items: [], hasMore: false, nextPage: null }),
     yaohuo: async () => { throw new Error('请先登录妖火'); }
-  }) as Promise<RepliesResponse>;
+  });
 }
 
 export function getReply({
@@ -382,9 +384,8 @@ export async function searchTopics({
   const response = await pickSource(source, {
     nodeseek: () => searchNodeSeek(adapterQuery, options),
     linuxdo: () => searchLinuxDo(adapterQuery, options),
-    v2ex: () => searchV2ex(adapterQuery, options),
-    yaohuo: async () => ({ items: [], errors: { yaohuo: '请先登录妖火' } })
-  }) as SearchResponse;
+    v2ex: () => searchV2ex(adapterQuery, options)
+  });
   return filterSearchItems(response, query, limit);
 }
 

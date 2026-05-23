@@ -102,6 +102,26 @@ describe('Android direct yaohuo API', () => {
     })]));
   });
 
+  it('rolls partial yaohuo dates back across a new-year boundary', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:30:00+08:00'));
+    try {
+      const result = parseYaohuoListHtml(`
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">跨年主题</a>/alice/阅1/12-31 23:50</div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">新年主题</a>/bob/阅1/01-01 00:10</div>
+      `, {
+        classId: '177',
+        page: 1,
+        limit: 30
+      });
+
+      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2025-12-31T15:50:00.000Z');
+      expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2025-12-31T16:10:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('skips yaohuo non-topic links that only contain unrelated numeric parameters', () => {
     const result = parseYaohuoListHtml(`
       <div class="listdata line1">

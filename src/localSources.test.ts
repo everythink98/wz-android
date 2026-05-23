@@ -121,6 +121,22 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/|10\.0\.2\.2|127\.0\.0\.1:3000/);
   });
 
+  it('does not infer a NodeSeek next page when the list exactly reaches the limit', async () => {
+    const exactPagePayload = Buffer.from(JSON.stringify({
+      rotateTopics: [
+        { postId: 201, titleText: 'NodeSeek one', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:01:00.000Z' } },
+        { postId: 200, titleText: 'NodeSeek two', titleLink: '/post-200-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:00:00.000Z' } }
+      ]
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${exactPagePayload}</script>`));
+
+    const feed = await getFeed({ source: 'nodeseek', limit: 2, fetcher });
+
+    expect(feed.items).toHaveLength(2);
+    expect(feed.hasMore).toBe(false);
+    expect(feed.nextPage).toBeNull();
+  });
+
   it('continues NodeSeek replies from page one when the first page has more embedded replies', async () => {
     const comments = [
       { poster: { name: 'alice' }, markdown: '正文' },
@@ -218,6 +234,72 @@ describe('Android local sources', () => {
     const replies = await getReplies({ source: 'linuxdo', id: '42', page: 2, offset: 30, limit: 2, fetcher });
 
     expect(replies.items.map((item) => item.floor)).toEqual([32, 33]);
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
+      'https://linux.do/t/42.json',
+      expect.stringContaining('https://linux.do/t/42/posts.json')
+    ]);
+  });
+
+  it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {
+    const fetcher = vi.fn(async () => {
+      if (fetcher.mock.calls.length > 1) {
+        throw new Error('unexpected second linux.do feed request');
+      }
+      return json({
+        topic_list: {
+          topics: [],
+          more_topics_url: '/latest.json?page=1'
+        },
+        users: []
+      });
+    });
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 2, fetcher });
+
+    expect(feed).toMatchObject({ items: [], hasMore: false, nextPage: null });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses the cached linux.do reply stream after reading topic details', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/posts.json')) {
+        return json({
+          post_stream: {
+            posts: [
+              { id: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
+              { id: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
+            ]
+          }
+        });
+      }
+      return json({
+        id: 900,
+        title: 'linux.do cached topic',
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream: [1, 2, 3, 4, 5],
+          posts: [
+            { id: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+            { id: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' },
+            { id: 3, username: 'reply 3', cooked: '<p>3</p>', created_at: '2026-05-20T00:03:00.000Z' }
+          ]
+        }
+      });
+    });
+
+    const topic = await getTopic({ source: 'linuxdo', id: '900', fetcher, nocache: true });
+    const replies = await getReplies({
+      source: 'linuxdo',
+      id: '900',
+      page: topic.replyNextPage ?? 2,
+      offset: topic.replyNextOffset,
+      limit: 2,
+      fetcher
+    });
+
+    expect(replies.items.map((item) => item.floor)).toEqual([4, 5]);
+    expect(fetcher.mock.calls.filter((call) => String(call[0]).includes('/t/900.json'))).toHaveLength(1);
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
   it('uses NodeSeek updatedDate as last reply time when embedded topic comments are empty', async () => {

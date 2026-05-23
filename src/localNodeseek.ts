@@ -448,12 +448,12 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
     ? items.filter((item) => !item.categoryId || item.categoryId === options.category || item.category === options.category)
     : items;
   const nextPage = nextNodeSeekListPage(html, page);
-  const hasMore = filtered.length >= limit || Boolean(nextPage);
+  const hasMore = Boolean(nextPage);
   return {
     items: sortTopicsByTime(filtered).slice(0, limit),
     errors: {},
     hasMore,
-    nextPage: hasMore ? nextPage || page + 1 : null
+    nextPage: nextPage || null
   };
 }
 
