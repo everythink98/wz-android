@@ -43,7 +43,7 @@ describe('Android local forum facade', () => {
     await getCategories({ source: 'all', fetcher });
 
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
-    expect(calls).toContain('https://www.nodeseek.com/categories/tech/page-2');
+    expect(calls).toContain('https://www.nodeseek.com/categories/tech/page-2?sortBy=postTime');
     expect(calls).not.toMatch(/127\.0\.0\.1:3000|10\.0\.2\.2|\/api\/feed|\/api\/categories/);
   });
 

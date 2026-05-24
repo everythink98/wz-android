@@ -241,7 +241,7 @@ describe('Android local sources', () => {
   });
 
   it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {
-    const fetcher = vi.fn(async () => {
+    const fetcher = vi.fn(async (_input: string) => {
       if (fetcher.mock.calls.length > 1) {
         throw new Error('unexpected second linux.do feed request');
       }
@@ -258,6 +258,89 @@ describe('Android local sources', () => {
 
     expect(feed).toMatchObject({ items: [], hasMore: false, nextPage: null });
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls[0][0]).toContain('order=created');
+    expect(fetcher.mock.calls[0][0]).toContain('ascending=false');
+  });
+
+  it('maps linux.do feed category ids through site categories before showing rows', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/site.json')) {
+        return json({
+          categories: [
+            { id: 4, name: '开发调优' }
+          ]
+        });
+      }
+      return json({
+        topic_list: {
+          topics: [{
+            id: 404,
+            title: 'linux.do mapped category',
+            slug: 'mapped-category',
+            category_id: 4,
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:00:00.000Z',
+            posts_count: 1
+          }]
+        },
+        users: []
+      });
+    });
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      categoryId: '4',
+      category: '开发调优'
+    });
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/site.json');
+  });
+
+  it('labels linux.do feed topics without a category as uncategorized', async () => {
+    const fetcher = vi.fn(async () => json({
+      topic_list: {
+        topics: [{
+          id: 405,
+          title: 'linux.do uncategorized',
+          slug: 'uncategorized',
+          created_at: '2026-05-21T00:00:00.000Z',
+          bumped_at: '2026-05-21T00:00:00.000Z',
+          posts_count: 1
+        }]
+      },
+      users: []
+    }));
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      categoryId: undefined,
+      category: '未分类'
+    });
+  });
+
+  it('does not expose linux.do uncategorized as a category tab option', async () => {
+    const fetcher = vi.fn(async () => json({
+      categories: [{
+        id: 1,
+        name: '未分类',
+        slug: 'uncategorized'
+      }, {
+        id: 4,
+        name: '开发调优',
+        slug: 'dev'
+      }]
+    }));
+
+    const categories = await getCategories({ source: 'linuxdo', fetcher, nocache: true });
+
+    expect(categories.items).toHaveLength(1);
+    expect(categories.items[0]).toMatchObject({
+      source: 'linuxdo',
+      id: '4',
+      name: '开发调优',
+      slug: 'dev'
+    });
   });
 
   it('reuses the cached linux.do reply stream after reading topic details', async () => {
@@ -591,7 +674,7 @@ describe('Android local sources', () => {
       nodeSeekUserAgent: 'NodeSeek WebView UA'
     });
 
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=postTime', expect.objectContaining({
       headers: expect.objectContaining({
         cookie: 'cf_clearance=clearance',
         'User-Agent': 'NodeSeek WebView UA'
@@ -611,7 +694,7 @@ describe('Android local sources', () => {
       message: 'NodeSeek 需要完成 Cloudflare 验证'
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/', expect.any(Object));
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=postTime', expect.any(Object));
   });
 
   it('reports Chinese NodeSeek Cloudflare HTML as a verification requirement', async () => {
@@ -659,6 +742,31 @@ describe('Android local sources', () => {
       category: '日常',
       lastReplyAt: '2026-05-22T16:06:25.000Z'
     });
+  });
+
+  it('keeps NodeSeek feed in the origin post-time order', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      rotateTopics: [{
+        postId: 201,
+        titleText: 'Newer post first',
+        titleLink: '/post-201-1',
+        op: { name: 'alice' },
+        time: { createdDate: '2026-05-20T02:00:00.000Z' },
+        updatedDate: '2026-05-20T02:00:00.000Z'
+      }, {
+        postId: 200,
+        titleText: 'Older post with newer reply',
+        titleLink: '/post-200-1',
+        op: { name: 'bob' },
+        time: { createdDate: '2026-05-20T01:00:00.000Z' },
+        updatedDate: '2026-05-20T03:00:00.000Z'
+      }]
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const feed = await getFeed({ source: 'nodeseek', limit: 2, fetcher });
+
+    expect(feed.items.map((item) => item.id)).toEqual(['201', '200']);
   });
 
   it('reads rendered NodeSeek category links when embedded category data is absent', async () => {
@@ -814,6 +922,28 @@ describe('Android local sources', () => {
     expect(topic.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
     expect(search.items[0]).toMatchObject({ id: '121', title: 'V2EX search' });
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/);
+  });
+
+  it('does not let stale V2EX last_touched predate topic creation on Android', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async () => json([{
+      id: 701,
+      title: 'Fresh V2EX topic',
+      url: 'https://www.v2ex.com/t/701',
+      created: 1780000500,
+      last_touched: 1780000000,
+      replies: 0,
+      node: { name: 'create', title: '分享创造' },
+      member: { username: 'neo' }
+    }]));
+
+    const feed = await getFeed({ source: 'v2ex', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      createdAt: '2026-05-28T20:35:00.000Z',
+      lastReplyAt: '2026-05-28T20:35:00.000Z',
+      replyCount: 0
+    });
   });
 
   it('keeps V2EX feed pagination open when latest JSON is shorter than the app page', async () => {

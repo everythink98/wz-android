@@ -432,7 +432,8 @@ function filterNodeSeekSearchTopics(html: string, query: string) {
 
 function listPath(page: number, category?: string) {
   const prefix = category ? `/categories/${encodeURIComponent(category)}` : '';
-  return page > 1 ? `${prefix}/page-${page}` : `${prefix || '/'}`;
+  const path = page > 1 ? `${prefix}/page-${page}` : `${prefix || '/'}`;
+  return `${path}?sortBy=postTime`;
 }
 
 export async function getNodeSeekFeed(options: NodeSeekOptions & {
@@ -451,7 +452,7 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
   const nextPage = nextNodeSeekListPage(html, page);
   const hasMore = Boolean(nextPage);
   return {
-    items: sortTopicsByTime(filtered).slice(0, limit),
+    items: filtered.slice(0, limit),
     errors: {},
     hasMore,
     nextPage: nextPage || null

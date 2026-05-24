@@ -7,7 +7,8 @@ import {
   isYaohuoLoginRequiredError,
   linuxDoExternalSearchItems,
   sourceLabel,
-  startAbortableRequest
+  startAbortableRequest,
+  topicListDisplayTime
 } from './appUtils';
 import { REQUEST_CANCELED_MESSAGE } from './request';
 
@@ -64,5 +65,18 @@ describe('Android app utils', () => {
       { label: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=site%3Alinux.do%20gpt%20plus' }
     ]);
     expect(linuxDoExternalSearchItems('')).toEqual([]);
+  });
+
+  it('uses active time for V2EX list display time', () => {
+    expect(topicListDisplayTime({
+      source: 'v2ex',
+      createdAt: '2026-05-24T08:50:00.000Z',
+      lastReplyAt: '2026-05-24T06:00:00.000Z'
+    })).toBe('2026-05-24T06:00:00.000Z');
+    expect(topicListDisplayTime({
+      source: 'linuxdo',
+      createdAt: '2026-05-24T08:50:00.000Z',
+      lastReplyAt: '2026-05-24T09:00:00.000Z'
+    })).toBe('2026-05-24T09:00:00.000Z');
   });
 });

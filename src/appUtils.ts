@@ -94,6 +94,10 @@ export function formatRelativeTime(value?: string) {
   return `${Math.floor(diff / (24 * 60 * 60_000))} 天前`;
 }
 
+export function topicListDisplayTime(topic: { source: Source; createdAt: string; lastReplyAt?: string }) {
+  return topic.lastReplyAt || topic.createdAt;
+}
+
 export function dateTime(value?: string) {
   if (!value) {
     return 0;

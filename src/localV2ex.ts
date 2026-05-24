@@ -39,6 +39,19 @@ function safeTopicUrl(id: string, raw?: unknown) {
   }
 }
 
+function v2exLastReplyAt(raw: Record<string, unknown>, createdAt: string) {
+  const touchedAt = toIsoString(raw.last_touched);
+  const createdMs = Date.parse(createdAt || '');
+  const touchedMs = Date.parse(touchedAt || '');
+  if (!Number.isFinite(touchedMs)) {
+    return createdAt;
+  }
+  if (!Number.isFinite(createdMs)) {
+    return touchedAt;
+  }
+  return Number(raw.replies || 0) > 0 && touchedMs >= createdMs ? touchedAt : createdAt;
+}
+
 function topicId(value: unknown) {
   const text = String(value || '').trim();
   return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
@@ -55,7 +68,7 @@ function normalizeApiTopic(raw: unknown): Topic | null {
   const node = isRecord(raw.node) ? raw.node : {};
   const member = isRecord(raw.member) ? raw.member : {};
   const createdAt = toIsoString(raw.created) || new Date().toISOString();
-  const lastReplyAt = toIsoString(raw.last_touched) || createdAt;
+  const lastReplyAt = v2exLastReplyAt(raw, createdAt);
   const accessRequirement = accessRequirementFromObject(raw);
   return {
     source: 'v2ex',

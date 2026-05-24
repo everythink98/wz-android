@@ -3,7 +3,7 @@ import { Animated, PanResponder, Pressable, Text, type StyleProp, type TextStyle
 import { Star, X } from 'lucide-react-native';
 import type { Topic } from '../types';
 import { topicKey } from '../readerData';
-import { formatRelativeTime, sourceLabel } from '../appUtils';
+import { formatRelativeTime, sourceLabel, topicListDisplayTime } from '../appUtils';
 import { highlightTextParts } from '../androidFeatureHelpers';
 import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from '../listSwipeActions';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
@@ -130,7 +130,7 @@ export function TopicCard({
         <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
           <View style={styles.topicCardHead}>
             <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
-            <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topic.lastReplyAt || topic.createdAt)}</Text>
+            <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topicListDisplayTime(topic))}</Text>
           </View>
           <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
           {topic.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{topic.accessRequirement.label}</Text> : null}
@@ -148,8 +148,11 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   topicKey(previous.topic) === topicKey(next.topic)
   && previous.topic.title === next.topic.title
   && previous.topic.excerpt === next.topic.excerpt
+  && previous.topic.category === next.topic.category
+  && previous.topic.categoryId === next.topic.categoryId
   && previous.topic.replyCount === next.topic.replyCount
   && previous.topic.viewCount === next.topic.viewCount
+  && previous.topic.createdAt === next.topic.createdAt
   && previous.topic.lastReplyAt === next.topic.lastReplyAt
   && previous.styles === next.styles
   && previous.theme === next.theme

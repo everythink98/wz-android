@@ -19,6 +19,11 @@ const BASE_URL = 'https://linux.do';
 const LIST_PAGE_SIZE = 30;
 const TOPIC_STREAM_CACHE_LIMIT = 100;
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
+const UNCATEGORIZED_CATEGORY_NAME = '未分类';
+const NEWEST_TOPIC_PARAMS = {
+  order: 'created',
+  ascending: 'false'
+};
 
 interface LinuxDoOptions {
   fetcher?: Fetcher;
@@ -81,6 +86,40 @@ function categoryMapFromData(data: unknown) {
   return map;
 }
 
+function isUncategorizedCategory(category: unknown) {
+  if (!isRecord(category)) {
+    return false;
+  }
+  const name = String(category.name || '').trim();
+  const slug = String(category.slug || '').trim().toLowerCase();
+  return name === UNCATEGORIZED_CATEGORY_NAME || slug === 'uncategorized';
+}
+
+function topicsNeedCategoryMap(topics: unknown[], categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>) {
+  return topics.some((topic) => isRecord(topic) && topic.category_id && !categoryMap.has(String(topic.category_id)));
+}
+
+async function categoryMapForTopics(
+  data: unknown,
+  topics: unknown[],
+  categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>,
+  options: LinuxDoOptions
+) {
+  let nextCategoryMap = new Map([...categoryMap, ...categoryMapFromData(data)]);
+  if (!topicsNeedCategoryMap(topics, nextCategoryMap)) {
+    return nextCategoryMap;
+  }
+  try {
+    const siteData = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
+    nextCategoryMap = new Map([...nextCategoryMap, ...categoryMapFromData(siteData)]);
+  } catch (error) {
+    if (error instanceof LinuxDoCloudflareError) {
+      throw error;
+    }
+  }
+  return nextCategoryMap;
+}
+
 function originalPosterUsername(topic: Record<string, unknown>, users: Map<string, Record<string, unknown>>) {
   const posters = Array.isArray(topic.posters) ? topic.posters : [];
   const poster = posters.find((item) => isRecord(item) && /original poster/i.test(String(item.description || '')))
@@ -106,7 +145,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     title: String(raw.title || ''),
     author: author || (isRecord(raw.details) && isRecord(raw.details.created_by) ? String(raw.details.created_by.username || '') : '') || String(raw.last_poster_username || ''),
     categoryId: raw.category_id ? String(raw.category_id) : undefined,
-    category: category?.name || (raw.category_id ? `#${raw.category_id}` : undefined),
+    category: category?.name || UNCATEGORIZED_CATEGORY_NAME,
     url: `${BASE_URL}/t/${raw.slug || id}/${id}`,
     createdAt,
     lastReplyAt,
@@ -207,6 +246,7 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
 
 function latestParams(page: number, category?: string) {
   return {
+    ...NEWEST_TOPIC_PARAMS,
     ...(page > 1 ? { page: page - 1 } : {}),
     ...(category ? { category: /^\d+$/.test(category) ? Number(category) : category } : {})
   };
@@ -259,8 +299,8 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   let categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
   while (collected.length < limit + 1) {
     const data = await fetchLinuxDoJson<Record<string, unknown>>('/latest.json', latestParams(listPage, options.category), options);
-    categoryMap = new Map([...categoryMap, ...categoryMapFromData(data)]);
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
+    categoryMap = await categoryMapForTopics(data, topics, categoryMap, options);
     const users = usersById(data.users);
     const items = topics.map((topic) => normalizeTopic(topic, categoryMap, isRecord(topic) ? originalPosterUsername(topic, users) : '')).filter(Boolean) as Topic[];
     if (!items.length) {
@@ -289,7 +329,7 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   const categories = Array.isArray(data.categories) ? data.categories : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
   return {
-    items: categories.filter(isRecord).map((category) => ({
+    items: categories.filter(isRecord).filter((category) => !isUncategorizedCategory(category)).map((category) => ({
       source: 'linuxdo' as const,
       id: String(category.id),
       name: String(category.name || ''),
