@@ -1,5 +1,5 @@
 import 'expo-dev-client';
-import { type ComponentProps, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   BackHandler,
@@ -30,7 +30,7 @@ import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import RenderHTML, {
+import {
   IMGElement,
   useIMGElementProps,
   type CustomBlockRenderer,
@@ -79,7 +79,6 @@ import {
 } from './src/forumApi';
 import {
   addSavedSearch,
-  categoryKey,
   clearRecords,
   createEmptyReaderData,
   exportFavoritesMarkdown,
@@ -117,7 +116,7 @@ import type { Category, FeedResponse, FeedSource, Reply, Source, Topic, TopicDet
 import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
-import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
+import { NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
 import { feedSources, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { normalizeTrackedKeywords, type NormalizedTopicListStateInput } from './src/topicListItemState';
 import {
@@ -125,8 +124,7 @@ import {
   createStyles,
   createTheme,
   fontFamilyValue,
-  lineHeightMultiplier,
-  type ReaderTheme
+  lineHeightMultiplier
 } from './src/theme';
 import {
   applyFeedFilter,
@@ -165,16 +163,10 @@ import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
 import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
-import type { HealthDetail, ReplyFilter, Screen, YaohuoReplyTarget } from './src/appTypes';
+import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, Screen, YaohuoReplyTarget } from './src/appTypes';
 import { LibraryScreen, type LibraryUndo } from './src/screens/LibraryScreen';
 import { SearchScreen, type SearchGroup, type SearchScope } from './src/screens/SearchScreen';
 
-type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
-type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['ignoredStyles']>;
-type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>;
-type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
-type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles']>;
-type LoginNavigationRequest = { url: string };
 type NodeSeekBrowserFetchRequest = {
   id: number;
   url: string;

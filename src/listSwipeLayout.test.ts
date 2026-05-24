@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
 const topicCardSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'TopicCard.tsx'), 'utf8');
 const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');

@@ -16,14 +16,6 @@ import type {
 } from './types';
 import type { Fetcher } from './request';
 
-interface RequestOptions {
-  fetcher?: Fetcher;
-  nodeSeekCookie?: string;
-  nodeSeekUserAgent?: string;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}
-
 const allFeedSources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
 
 function mergeErrors(results: Array<PromiseSettledResult<{ errors?: Partial<Record<FeedSource, string>> }>>, sources: Source[]) {
@@ -158,7 +150,7 @@ export async function getFeed({
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
     const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
-    const adapterLimit = Math.max(limit, limit * allFeedSources.length);
+    const adapterLimit = limit * allFeedSources.length;
     const v2exLimit = limit;
     const results = await Promise.allSettled([
       shouldFetchSource('nodeseek')

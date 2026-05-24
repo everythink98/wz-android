@@ -10,7 +10,7 @@ import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from '../appUrls';
 import { feedSources } from '../feedCategoryRail';
 import { appendUnique, removeString, settingsList, sourceLabel } from '../appUtils';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, InfoRow, MenuButton, PillRail, SettingRail } from '../components/AppControls';
+import { AppButton, EmptyText, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
@@ -718,76 +718,7 @@ function StatusCheckPanel({
 
 const MemoizedStatusCheckPanel = memo(StatusCheckPanel);
 
-export const MemoizedMoreScreen = memo(MoreScreen, (previous, next) => (
-  previous.categories === next.categories
-  && previous.checking === next.checking
-  && previous.hasNodeSeekLoginCookie === next.hasNodeSeekLoginCookie
-  && previous.hasYaohuoCookie === next.hasYaohuoCookie
-  && previous.hasLinuxDoClearance === next.hasLinuxDoClearance
-  && previous.healthDetails === next.healthDetails
-  && previous.healthSummary === next.healthSummary
-  && previous.loginState === next.loginState
-  && previous.loadingLoginPage === next.loadingLoginPage
-  && previous.loadingYaohuoLoginPage === next.loadingYaohuoLoginPage
-  && previous.loadingLinuxDoPage === next.loadingLinuxDoPage
-  && previous.linuxDoWebViewError === next.linuxDoWebViewError
-  && previous.linuxDoWebViewKey === next.linuxDoWebViewKey
-  && previous.linuxDoWebViewUserAgent === next.linuxDoWebViewUserAgent
-  && previous.nodeSeekWebViewUserAgent === next.nodeSeekWebViewUserAgent
-  && previous.favoriteCount === next.favoriteCount
-  && previous.historyCount === next.historyCount
-  && previous.settings === next.settings
-  && previous.subscriptions === next.subscriptions
-  && previous.backupJson === next.backupJson
-  && previous.showCategoriesPanel === next.showCategoriesPanel
-  && previous.showLoginPanel === next.showLoginPanel
-  && previous.showYaohuoLoginPanel === next.showYaohuoLoginPanel
-  && previous.showLinuxDoPanel === next.showLinuxDoPanel
-  && previous.showSettingsPanel === next.showSettingsPanel
-  && previous.statusBusy === next.statusBusy
-  && previous.styles === next.styles
-  && previous.syncing === next.syncing
-  && previous.theme === next.theme
-  && previous.webViewRef === next.webViewRef
-  && previous.yaohuoLoginState === next.yaohuoLoginState
-  && previous.yaohuoWebViewRef === next.yaohuoWebViewRef
-  && previous.linuxDoCookieNames === next.linuxDoCookieNames
-  && previous.linuxDoWebViewRef === next.linuxDoWebViewRef
-  && previous.onCheckHealth === next.onCheckHealth
-  && previous.onCheckIn === next.onCheckIn
-  && previous.onCheckLogin === next.onCheckLogin
-  && previous.onRememberNodeSeekCookies === next.onRememberNodeSeekCookies
-  && previous.onCheckYaohuoLogin === next.onCheckYaohuoLogin
-  && previous.onCheckLinuxDoCookie === next.onCheckLinuxDoCookie
-  && previous.onClearLogin === next.onClearLogin
-  && previous.onClearYaohuoLogin === next.onClearYaohuoLogin
-  && previous.onClearLinuxDoCookie === next.onClearLinuxDoCookie
-  && previous.handleNodeSeekLoginNavigation === next.handleNodeSeekLoginNavigation
-  && previous.handleYaohuoLoginNavigation === next.handleYaohuoLoginNavigation
-  && previous.handleLinuxDoNavigation === next.handleLinuxDoNavigation
-  && previous.onHandleLoginMessage === next.onHandleLoginMessage
-  && previous.onHandleLinuxDoMessage === next.onHandleLinuxDoMessage
-  && previous.onImportBackup === next.onImportBackup
-  && previous.onExportBackup === next.onExportBackup
-  && previous.onExportBackupFile === next.onExportBackupFile
-  && previous.onImportBackupFile === next.onImportBackupFile
-  && previous.onExportFavoritesMarkdownFile === next.onExportFavoritesMarkdownFile
-  && previous.onRefreshCategories === next.onRefreshCategories
-  && previous.onSelectCategory === next.onSelectCategory
-  && previous.onBackupJsonChange === next.onBackupJsonChange
-  && previous.onSetLoadingLoginPage === next.onSetLoadingLoginPage
-  && previous.onSetLoadingYaohuoLoginPage === next.onSetLoadingYaohuoLoginPage
-  && previous.onSetLoadingLinuxDoPage === next.onSetLoadingLinuxDoPage
-  && previous.onSetLinuxDoWebViewError === next.onSetLinuxDoWebViewError
-  && previous.onResetLinuxDoWebView === next.onResetLinuxDoWebView
-  && previous.onShowCategoriesPanelChange === next.onShowCategoriesPanelChange
-  && previous.onShowLoginPanelChange === next.onShowLoginPanelChange
-  && previous.onShowYaohuoLoginPanelChange === next.onShowYaohuoLoginPanelChange
-  && previous.onShowLinuxDoPanelChange === next.onShowLinuxDoPanelChange
-  && previous.onShowSettingsPanelChange === next.onShowSettingsPanelChange
-  && previous.onToggleSubscription === next.onToggleSubscription
-  && previous.onUpdateSettings === next.onUpdateSettings
-));
+export const MemoizedMoreScreen = memo(MoreScreen);
 
 function SettingsPanel({
   settings,

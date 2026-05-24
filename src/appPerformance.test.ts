@@ -82,7 +82,7 @@ describe('Android App performance guards', () => {
   });
 
   it('memoizes the Android More screen against reader data changes it does not display', () => {
-    expect(moreScreenSource).toContain('export const MemoizedMoreScreen = memo(MoreScreen,');
+    expect(moreScreenSource).toContain('export const MemoizedMoreScreen = memo(MoreScreen);');
     expect(moreScreenSource).toContain('const MemoizedBackupRestorePanel = memo(BackupRestorePanel);');
     expect(moreScreenSource).toContain('const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
     expect(moreScreenSource).toContain('const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
@@ -90,10 +90,10 @@ describe('Android App performance guards', () => {
     expect(moreScreenSource).toContain('const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);');
     expect(moreScreenSource).toContain('const MemoizedAppearancePanel = memo(AppearancePanel);');
     expect(moreScreenSource).toContain('const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
-    expect(moreScreenSource).toContain('previous.settings === next.settings');
-    expect(moreScreenSource).toContain('previous.subscriptions === next.subscriptions');
-    expect(moreScreenSource).toContain('previous.favoriteCount === next.favoriteCount');
-    expect(moreScreenSource).toContain('previous.historyCount === next.historyCount');
+    expect(moreScreenSource).not.toContain('previous.settings === next.settings');
+    expect(moreScreenSource).not.toContain('previous.subscriptions === next.subscriptions');
+    expect(moreScreenSource).not.toContain('previous.favoriteCount === next.favoriteCount');
+    expect(moreScreenSource).not.toContain('previous.historyCount === next.historyCount');
     expect(moreScreenSource).not.toContain('previous.readerData');
     expect(moreScreenSource).not.toContain('previous.readerData.progress');
     expect(appSource).not.toContain('<MoreScreen');

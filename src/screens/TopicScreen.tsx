@@ -1,4 +1,4 @@
-import { memo, type ComponentProps, type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   type ListRenderItem,
@@ -10,7 +10,7 @@ import {
   TextInput,
   View
 } from 'react-native';
-import RenderHTML, {
+import {
   HTMLContentModel,
   HTMLElementModel,
   RenderHTMLConfigProvider,
@@ -22,7 +22,7 @@ import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageC
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
 import type { Reply, Source, Topic, TopicDetail } from '../types';
-import type { ReplyFilter, YaohuoReplyTarget } from '../appTypes';
+import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, YaohuoReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
@@ -31,13 +31,6 @@ import { splitTopicContentHtml } from '../topicContentSplit';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
 import { REPLY_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-
-type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
-type HtmlAllowedStyles = NonNullable<ComponentProps<typeof RenderHTML>['allowedStyles']>;
-type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['ignoredStyles']>;
-type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>;
-type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
-type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles']>;
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -83,44 +76,6 @@ function getReplyKey(reply: Reply) {
 function topicListItemKey(item: TopicListItem) {
   return item.key;
 }
-
-const MemoizedHtmlContent = memo(HtmlContent);
-
-const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
-  if (
-    previous.actionBusy !== next.actionBusy
-    || previous.canWrite !== next.canWrite
-    || previous.contentWidth !== next.contentWidth
-    || previous.isNew !== next.isNew
-    || previous.onInteract !== next.onInteract
-    || previous.onReplyToFloor !== next.onReplyToFloor
-    || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
-    || previous.query !== next.query
-    || previous.reply !== next.reply
-    || previous.replyFloor !== next.replyFloor
-    || previous.source !== next.source
-    || previous.styles !== next.styles
-    || previous.theme !== next.theme
-  ) {
-    return false;
-  }
-
-  const quotedFloors = new Set([...(previous.reply.quotedFloors || []), ...(next.reply.quotedFloors || [])]);
-  for (const quotedFloor of quotedFloors) {
-    const previousKey = `${previous.replyFloor}:${quotedFloor}`;
-    const nextKey = `${next.replyFloor}:${quotedFloor}`;
-    if (
-      Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey])
-      || Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey])
-      || previous.loadedQuotedReplies[quotedFloor] !== next.loadedQuotedReplies[quotedFloor]
-      || previous.repliesByFloor.get(quotedFloor) !== next.repliesByFloor.get(quotedFloor)
-    ) {
-      return false;
-    }
-  }
-
-  return true;
-});
 
 function authorInitial(name: string | undefined) {
   return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
@@ -636,6 +591,8 @@ function HtmlContent({
   );
 }
 
+const MemoizedHtmlContent = memo(HtmlContent);
+
 function ReplyCard({
   actionBusy,
   canWrite,
@@ -747,3 +704,39 @@ function ReplyCard({
     </View>
   );
 }
+
+const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
+  if (
+    previous.actionBusy !== next.actionBusy
+    || previous.canWrite !== next.canWrite
+    || previous.contentWidth !== next.contentWidth
+    || previous.isNew !== next.isNew
+    || previous.onInteract !== next.onInteract
+    || previous.onReplyToFloor !== next.onReplyToFloor
+    || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
+    || previous.query !== next.query
+    || previous.reply !== next.reply
+    || previous.replyFloor !== next.replyFloor
+    || previous.source !== next.source
+    || previous.styles !== next.styles
+    || previous.theme !== next.theme
+  ) {
+    return false;
+  }
+
+  const quotedFloors = new Set([...(previous.reply.quotedFloors || []), ...(next.reply.quotedFloors || [])]);
+  for (const quotedFloor of quotedFloors) {
+    const previousKey = `${previous.replyFloor}:${quotedFloor}`;
+    const nextKey = `${next.replyFloor}:${quotedFloor}`;
+    if (
+      Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey])
+      || Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey])
+      || previous.loadedQuotedReplies[quotedFloor] !== next.loadedQuotedReplies[quotedFloor]
+      || previous.repliesByFloor.get(quotedFloor) !== next.repliesByFloor.get(quotedFloor)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+});
