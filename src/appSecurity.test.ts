@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
 
 describe('Android App security review guards', () => {
   it('routes external links through the http/https protocol guard', () => {
@@ -30,8 +31,8 @@ describe('Android App security review guards', () => {
     expect(appSource).toContain('handleNodeSeekLoginNavigation');
     expect(appSource).toContain('handleYaohuoLoginNavigation');
     expect(appSource).toContain('handleLinuxDoNavigation');
-    expect(appSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
-    expect(appSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
-    expect(appSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
+    expect(moreScreenSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
+    expect(moreScreenSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
+    expect(moreScreenSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
   });
 });

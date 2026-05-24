@@ -4,20 +4,21 @@ import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
+const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
 const themeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'theme.ts'), 'utf8');
 
 describe('Android topic detail reading layout', () => {
   it('uses render-html whitespace controls for cleaner native HTML output', () => {
-    expect(appSource).toContain('enableExperimentalMarginCollapsing');
-    expect(appSource).toContain('enableExperimentalBRCollapsing');
-    expect(appSource).toContain('enableExperimentalGhostLinesPrevention');
+    expect(topicScreenSource).toContain('enableExperimentalMarginCollapsing');
+    expect(topicScreenSource).toContain('enableExperimentalBRCollapsing');
+    expect(topicScreenSource).toContain('enableExperimentalGhostLinesPrevention');
   });
 
   it('limits forum inline styles so detail HTML follows the app reading layout', () => {
-    const allowedInlineStyles = appSource.match(/HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = \[([^\]]+)\]/)?.[1] || '';
+    const allowedInlineStyles = topicScreenSource.match(/HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = \[([^\]]+)\]/)?.[1] || '';
 
-    expect(appSource).toContain('HTML_ALLOWED_INLINE_STYLES');
-    expect(appSource).toContain('allowedStyles={HTML_ALLOWED_INLINE_STYLES}');
+    expect(topicScreenSource).toContain('HTML_ALLOWED_INLINE_STYLES');
+    expect(topicScreenSource).toContain('allowedStyles={HTML_ALLOWED_INLINE_STYLES}');
     expect(allowedInlineStyles).toContain("'fontWeight'");
     expect(allowedInlineStyles).not.toContain("'fontSize'");
     expect(allowedInlineStyles).not.toContain("'backgroundColor'");
@@ -28,17 +29,17 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('defines roomier topic detail spacing tokens', () => {
-    expect(appSource).toContain('topicMetaStack');
-    expect(appSource).toContain('topicPrimaryActions');
+    expect(topicScreenSource).toContain('topicMetaStack');
+    expect(topicScreenSource).toContain('topicPrimaryActions');
     expect(appSource).toContain('htmlParagraph');
   });
 
   it('separates reply floor, author, body, and actions for readable mobile replies', () => {
-    expect(appSource).toContain('replyHead');
-    expect(appSource).toContain('replyFloorBadge');
-    expect(appSource).toContain('replyAuthorBlock');
-    expect(appSource).toContain('replyBody');
-    expect(appSource).toContain('replyActionRow');
+    expect(topicScreenSource).toContain('replyHead');
+    expect(topicScreenSource).toContain('replyFloorBadge');
+    expect(topicScreenSource).toContain('replyAuthorBlock');
+    expect(topicScreenSource).toContain('replyBody');
+    expect(topicScreenSource).toContain('replyActionRow');
   });
 
   it('uses saved search ids as chip keys while still filling the saved query text', () => {

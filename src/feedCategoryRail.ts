@@ -1,4 +1,4 @@
-import type { Category, FeedSource } from './types';
+import type { Category, FeedSource, Source } from './types';
 
 export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
   { value: 'all', label: '全部' },
@@ -7,6 +7,10 @@ export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
   { value: 'nodeseek', label: 'NodeSeek' },
   { value: 'yaohuo', label: '妖火' }
 ];
+
+export const feedSources: Source[] = feedSourceItems
+  .filter((item) => item.value !== 'all')
+  .map((item) => item.value as Source);
 
 export const feedReadingFilterItems = [
   { value: 'all', label: '全部' },

@@ -10,7 +10,21 @@ const imagePreviewModalSource = readFileSync(join(process.cwd(), 'android-app', 
 const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
 const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'LibraryScreen.tsx'), 'utf8');
-const androidUiSource = [appSource, appControlsSource, topicCardSource, imagePreviewModalSource, feedScreenSource, searchScreenSource, libraryScreenSource].join('\n');
+const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
+const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
+const navBarSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'NavBar.tsx'), 'utf8');
+const androidUiSource = [
+  appSource,
+  appControlsSource,
+  topicCardSource,
+  imagePreviewModalSource,
+  feedScreenSource,
+  searchScreenSource,
+  libraryScreenSource,
+  moreScreenSource,
+  topicScreenSource,
+  navBarSource
+].join('\n');
 const gitIgnoreSource = readFileSync(join(process.cwd(), '.gitignore'), 'utf8');
 const localLinuxDoSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'localLinuxdo.ts'), 'utf8');
 const linuxDoBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'linuxdoCookieBridge.ts'), 'utf8');
@@ -292,14 +306,13 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('copyTopicLink');
     expect(appSource).toContain('readerMode');
     expect(appSource).toContain('focusMode');
-    expect(appSource).toContain('floorOpen');
-    expect(appSource).toContain('commentQuery');
+    expect(topicScreenSource).toContain('floorOpen');
+    expect(topicScreenSource).toContain('commentQuery');
     expect(appSource).toContain('copyReplyMarkdown');
-    expect(appSource).toContain('新增');
+    expect(topicScreenSource).toContain('新增');
   });
 
   it('keeps the floor index aligned with the currently visible replies', () => {
-    const topicScreenSource = appSource.slice(appSource.indexOf('function TopicScreen('), appSource.indexOf('function ReplyCard('));
     const floorIndexBlock = topicScreenSource.match(/\{floorOpen \? \([\s\S]*?\n\s*\) : null\}/)?.[0] || '';
 
     expect(floorIndexBlock).toContain('{replies.map((reply, index) => {');
@@ -408,9 +421,9 @@ describe('Android App experience guards', () => {
   });
 
   it('labels the saved-topics area as favorites in the bottom navigation and screen title', () => {
-    expect(appSource).toContain("{ value: 'library', label: '收藏', icon: Star }");
+    expect(navBarSource).toContain("{ value: 'library', label: '收藏', icon: Star }");
     expect(libraryScreenSource).toContain('<Text style={styles.sectionTitle}>收藏</Text>');
-    expect(appSource).not.toContain("{ value: 'library', label: '书架', icon: BookMarked }");
+    expect(navBarSource).not.toContain("{ value: 'library', label: '书架', icon: BookMarked }");
     expect(androidUiSource).not.toContain('<Text style={styles.sectionTitle}>书架</Text>');
   });
 
@@ -430,7 +443,7 @@ describe('Android App experience guards', () => {
   it('marks topics with extra access requirements in Android lists and details', () => {
     expect(topicCardSource).toContain('topic.accessRequirement?.label');
     expect(androidUiSource).toContain('styles.topicAccessBadge');
-    expect(appSource).toContain('item.accessRequirement?.label');
+    expect(topicScreenSource).toContain('item.accessRequirement?.label');
   });
 
   it('shows a bottom message when the feed cannot load more', () => {
@@ -442,7 +455,7 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('pendingLinuxDoTopicRef');
     expect(appSource).toContain('showLinuxDoVerification');
     expect(appSource).toContain('isLinuxDoCloudflareError(error)');
-    expect(appSource).toContain('label="去验证"');
+    expect(topicScreenSource).toContain('label="去验证"');
     expect(appSource).toContain('await openTopic(pendingTopic, true);');
   });
 
@@ -451,8 +464,8 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('isNodeSeekCloudflareError(error)');
     expect(appSource).toContain('loadNodeSeekCookieForSource');
     expect(appSource).toContain('nodeSeekCookie');
-    expect(appSource).toContain('label="NodeSeek 登录 / 验证"');
-    expect(appSource).toContain('userAgent={nodeSeekWebViewUserAgent}');
+    expect(moreScreenSource).toContain('label="NodeSeek 登录 / 验证"');
+    expect(moreScreenSource).toContain('userAgent={nodeSeekWebViewUserAgent}');
   });
 
   it('saves NodeSeek WebView verification cookies before returning to lists', () => {
@@ -463,7 +476,9 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('nodeSeekWebViewUserAgentRef');
     expect(appSource).toContain('sanitizeNodeSeekUserAgent(data.userAgent)');
     expect(appSource).toContain('parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader)');
-    expect(appSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
+    expect(moreScreenSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
+    expect(moreScreenSource).toContain('type: "nodeseek-login"');
+    expect(moreScreenSource).not.toContain('nodeseek-login-probe');
   });
 
   it('preserves saved NodeSeek login cookies when WebView only reports verification cookies', () => {
@@ -497,7 +512,7 @@ describe('Android App experience guards', () => {
   it('does not treat Cloudflare-only NodeSeek verification as logged-in actions', () => {
     expect(appSource).toContain('hasNodeSeekLoginCookie');
     expect(appSource).toContain('canUseNodeSeekActions={hasNodeSeekLoginCookie}');
-    expect(appSource).toContain('hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
+    expect(moreScreenSource).toContain('hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
     expect(appSource).toContain('removeNodeSeekLoginCookies');
   });
 
@@ -547,11 +562,11 @@ describe('Android App experience guards', () => {
   });
 
   it('stops the linux.do verification spinner when the WebView cannot load', () => {
-    expect(appSource).toContain('linuxDoWebViewError');
-    expect(appSource).toContain('onSetLinuxDoWebViewError');
-    expect(appSource).toContain('onError={(event) =>');
-    expect(appSource).toContain('onSetLoadingLinuxDoPage(false);');
-    expect(appSource).toContain('linux.do 页面加载失败');
+    expect(moreScreenSource).toContain('linuxDoWebViewError');
+    expect(moreScreenSource).toContain('onSetLinuxDoWebViewError');
+    expect(moreScreenSource).toContain('onError={(event) =>');
+    expect(moreScreenSource).toContain('onSetLoadingLinuxDoPage(false);');
+    expect(moreScreenSource).toContain('linux.do 页面加载失败');
   });
 
   it('resets topic loading state when leaving the topic screen', () => {
@@ -562,7 +577,6 @@ describe('Android App experience guards', () => {
   });
 
   it('does not show reply controls when topic detail failed to load', () => {
-    const topicScreenSource = appSource.slice(appSource.indexOf('function TopicScreen('), appSource.indexOf('function ReplyCard('));
     const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
     expect(topicScreenSource).toContain('const canShowReplies = Boolean(topic && !topicLoading);');
@@ -631,9 +645,9 @@ describe('Android App experience guards', () => {
   });
 
   it('does not let the linux.do verification page stay loading forever', () => {
-    expect(appSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
-    expect(appSource).toContain('linux.do 页面打开超时');
-    expect(appSource).toContain('clearTimeout(timeout)');
+    expect(moreScreenSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
+    expect(moreScreenSource).toContain('linux.do 页面打开超时');
+    expect(moreScreenSource).toContain('clearTimeout(timeout)');
   });
 
   it('clears stale linux.do verification errors after the WebView responds again', () => {
@@ -643,7 +657,7 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale linux.do verification errors after a successful page load', () => {
-    const block = appSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
+    const block = moreScreenSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
 
     expect(block).toContain('onSetLoadingLinuxDoPage(false);');
     expect(block).toContain("if (!('code' in event.nativeEvent)) {");
@@ -651,33 +665,34 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps linux.do verification WebView failures contained', () => {
-    expect(appSource).toContain('linuxDoWebViewKey');
-    expect(appSource).toContain('onResetLinuxDoWebView');
-    expect(appSource).toContain('key={linuxDoWebViewKey}');
-    expect(appSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
-    expect(appSource).toContain('onRenderProcessGone={() =>');
-    expect(appSource).toContain('linux.do 验证页面已停止');
+    expect(moreScreenSource).toContain('linuxDoWebViewKey');
+    expect(moreScreenSource).toContain('onResetLinuxDoWebView');
+    expect(moreScreenSource).toContain('key={linuxDoWebViewKey}');
+    expect(moreScreenSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
+    expect(moreScreenSource).toContain('onRenderProcessGone={() =>');
+    expect(moreScreenSource).toContain('linux.do 验证页面已停止');
   });
 
   it('stops the linux.do verification WebView before hiding it', () => {
     expect(appSource).toContain('closeLinuxDoPanel');
     expect(appSource).toContain('linuxDoWebViewRef.current?.stopLoading()');
     expect(appSource).toContain('onShowLinuxDoPanelChange={changeLinuxDoPanel}');
+    expect(moreScreenSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
   });
 
   it('reuses the linux.do verification WebView user agent for local requests', () => {
-    expect(appSource).toContain('navigator.userAgent');
+    expect(moreScreenSource).toContain('navigator.userAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgentRef');
     expect(appSource).toContain('sanitizeLinuxDoUserAgent(data.userAgent)');
-    expect(appSource).toContain('userAgent={linuxDoWebViewUserAgent}');
+    expect(moreScreenSource).toContain('userAgent={linuxDoWebViewUserAgent}');
     expect(appSource).toContain('saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined)');
     expect(localLinuxDoSource).toContain("DEFAULT_LINUXDO_ANDROID_USER_AGENT");
     expect(localLinuxDoSource).toContain("'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT");
   });
 
   it('can detect linux.do clearance from the visible WebView document cookies', () => {
-    expect(appSource).toContain('cookie: document.cookie || ""');
+    expect(moreScreenSource).toContain('cookie: document.cookie || ""');
     expect(appSource).toContain('linuxDoWebViewCookieHeader');
     expect(appSource).toContain('linuxDoWebViewCookieHeaderRef');
     expect(appSource).toContain('parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)');

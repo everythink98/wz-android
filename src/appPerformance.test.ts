@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
+const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
 const topicContentSplitSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'topicContentSplit.ts'), 'utf8');
 
 describe('Android App performance guards', () => {
@@ -80,30 +82,30 @@ describe('Android App performance guards', () => {
   });
 
   it('memoizes the Android More screen against reader data changes it does not display', () => {
-    expect(appSource).toContain('const MemoizedMoreScreen = memo(MoreScreen,');
-    expect(appSource).toContain('const MemoizedBackupRestorePanel = memo(BackupRestorePanel);');
-    expect(appSource).toContain('const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
-    expect(appSource).toContain('const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
-    expect(appSource).toContain('const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);');
-    expect(appSource).toContain('const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);');
-    expect(appSource).toContain('const MemoizedAppearancePanel = memo(AppearancePanel);');
-    expect(appSource).toContain('const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
-    expect(appSource).toContain('previous.settings === next.settings');
-    expect(appSource).toContain('previous.subscriptions === next.subscriptions');
-    expect(appSource).toContain('previous.favoriteCount === next.favoriteCount');
-    expect(appSource).toContain('previous.historyCount === next.historyCount');
-    expect(appSource).not.toContain('previous.readerData');
-    expect(appSource).not.toContain('previous.readerData.progress');
+    expect(moreScreenSource).toContain('export const MemoizedMoreScreen = memo(MoreScreen,');
+    expect(moreScreenSource).toContain('const MemoizedBackupRestorePanel = memo(BackupRestorePanel);');
+    expect(moreScreenSource).toContain('const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
+    expect(moreScreenSource).toContain('const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
+    expect(moreScreenSource).toContain('const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);');
+    expect(moreScreenSource).toContain('const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);');
+    expect(moreScreenSource).toContain('const MemoizedAppearancePanel = memo(AppearancePanel);');
+    expect(moreScreenSource).toContain('const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
+    expect(moreScreenSource).toContain('previous.settings === next.settings');
+    expect(moreScreenSource).toContain('previous.subscriptions === next.subscriptions');
+    expect(moreScreenSource).toContain('previous.favoriteCount === next.favoriteCount');
+    expect(moreScreenSource).toContain('previous.historyCount === next.historyCount');
+    expect(moreScreenSource).not.toContain('previous.readerData');
+    expect(moreScreenSource).not.toContain('previous.readerData.progress');
     expect(appSource).not.toContain('<MoreScreen');
     expect(appSource).toContain('<MemoizedMoreScreen');
   });
 
   it('keeps reply render callbacks independent from global quote maps', () => {
-    const renderReplyDeps = appSource.match(/const renderReplyItem = useCallback[\s\S]*?\), \[([\s\S]*?)\]\);/)?.[1] || '';
+    const renderReplyDeps = topicScreenSource.match(/const renderReplyItem = useCallback[\s\S]*?\), \[([\s\S]*?)\]\);/)?.[1] || '';
 
-    expect(appSource).toContain('expandedQuotesRef');
-    expect(appSource).toContain('loadedQuotedRepliesRef');
-    expect(appSource).toContain('loadingQuotedFloorsRef');
+    expect(topicScreenSource).toContain('expandedQuotesRef');
+    expect(topicScreenSource).toContain('loadedQuotedRepliesRef');
+    expect(topicScreenSource).toContain('loadingQuotedFloorsRef');
     expect(renderReplyDeps).not.toMatch(/\bexpandedQuotes\b/);
     expect(renderReplyDeps).not.toMatch(/\bloadedQuotedReplies\b/);
     expect(renderReplyDeps).not.toMatch(/\bloadingQuotedFloors\b/);
@@ -125,17 +127,17 @@ describe('Android App performance guards', () => {
   });
 
   it('uses stable reply identifiers without falling back to list positions', () => {
-    expect(appSource).toContain('function getReplyKey(reply: Reply)');
-    expect(appSource).toContain('keyExtractor={topicListItemKey}');
-    expect(appSource).not.toContain('keyExtractor={(reply, index) => `${reply.floor ?? index}-${reply.createdAt}`}');
+    expect(topicScreenSource).toContain('function getReplyKey(reply: Reply)');
+    expect(topicScreenSource).toContain('keyExtractor={topicListItemKey}');
+    expect(topicScreenSource).not.toContain('keyExtractor={(reply, index) => `${reply.floor ?? index}-${reply.createdAt}`}');
   });
 
   it('renders long topic bodies as batched list items with replies', () => {
-    expect(appSource).toContain('type TopicListItem');
-    expect(appSource).toContain('splitTopicContentHtml(topicContentHtml)');
+    expect(topicScreenSource).toContain('type TopicListItem');
+    expect(topicScreenSource).toContain('splitTopicContentHtml(topicContentHtml)');
     expect(topicContentSplitSource).toContain('export function splitTopicContentHtml');
-    expect(appSource).toContain("type: 'content'");
-    expect(appSource).toContain('data={topicListItems}');
+    expect(topicScreenSource).toContain("type: 'content'");
+    expect(topicScreenSource).toContain('data={topicListItems}');
   });
 
   it('does not keep unused status state for toast-only notifications', () => {

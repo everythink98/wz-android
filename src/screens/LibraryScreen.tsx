@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
-import type { FeedSource, Source, Topic } from '../types';
+import type { FeedSource, Topic } from '../types';
 import { type ReaderData, type TopicRecord } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
 import { filterLibraryRecords, groupLibraryRecordsByTime } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
+import { feedSources } from '../feedCategoryRail';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, PillRail } from '../components/AppControls';
 import { MemoizedTopicCard, type TopicSwipeActionConfig } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-
-const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'];
 
 export type LibraryUndo = {
   section: LibraryTab;
@@ -220,7 +219,7 @@ export function LibraryScreen({
       <PillRail
         items={[
           { value: 'all', label: '来源全部' },
-          ...sources.map((source) => ({ value: source, label: sourceLabel(source) }))
+          ...feedSources.map((source) => ({ value: source, label: sourceLabel(source) }))
         ]}
         value={sourceFilter}
         styles={styles}
