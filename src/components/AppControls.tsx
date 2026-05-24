@@ -170,7 +170,7 @@ export function IconButton({
   onPress: () => void;
 }) {
   const Icon = icon;
-  const iconSize = tiny ? 13 : iconOnly ? 14 : compact ? 14 : 17;
+  const iconSize = tiny ? 15 : iconOnly ? 14 : compact ? 14 : 17;
   return (
     <Pressable
       hitSlop={TOUCH_HIT_SLOP}
@@ -183,7 +183,7 @@ export function IconButton({
       onPress={onPress}
     >
       <Icon size={iconSize} color={active ? theme.primary : theme.ink} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
-      {iconOnly ? null : <Text style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
+      {iconOnly ? null : <Text numberOfLines={1} style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
     </Pressable>
   );
 }

@@ -418,11 +418,13 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingVertical: 0
     },
     buttonTiny: {
+      alignSelf: 'flex-start',
+      borderRadius: 999,
       minHeight: 40,
-      gap: 3,
-      backgroundColor: 'transparent',
-      borderColor: 'transparent',
-      paddingHorizontal: 8,
+      gap: 5,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      paddingHorizontal: 10,
       paddingVertical: 0
     },
     buttonGhost: {
@@ -449,7 +451,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     buttonTextTiny: {
       color: theme.muted,
       fontSize: 12,
-      fontWeight: '500'
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 16
     },
     buttonTextActive: {
       color: theme.primary
@@ -635,11 +639,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicTopBar: {
       alignItems: 'center',
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 8,
-      paddingHorizontal: 12,
+      gap: 6,
+      paddingHorizontal: 10,
       paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 6 : 12,
-      paddingBottom: 8,
+      paddingBottom: 6,
       backgroundColor: theme.surface,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
@@ -650,20 +653,17 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '500',
-      textAlign: 'center'
+      textAlign: 'left'
     },
     topicTopActions: {
       alignItems: 'center',
       flexDirection: 'row',
+      flexShrink: 0,
       gap: 2
-    },
-    topicTopActionScroll: {
-      flexGrow: 0,
-      maxWidth: 220
     },
     article: {
       width: '100%',
-      gap: 13,
+      gap: 14,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
       borderRadius: 0,
@@ -671,20 +671,45 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       padding: 0
     },
     topicMetaStack: {
-      gap: 5
+      gap: 10,
+      paddingTop: 2
+    },
+    topicAuthorRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10
+    },
+    topicAuthorMeta: {
+      flex: 1,
+      minWidth: 0,
+      gap: 2
+    },
+    topicAvatar: {
+      width: 42,
+      height: 42,
+      borderRadius: 21
     },
     topicPrimaryActions: {
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
+      justifyContent: 'flex-start',
       paddingTop: 2
+    },
+    topicPostActionArea: {
+      gap: 8,
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      marginTop: 2,
+      paddingTop: 12,
+      paddingBottom: 4
     },
     articleBody: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
-      marginTop: 8,
-      paddingTop: 18
+      marginTop: 2,
+      paddingTop: 16
     },
     articleTitle: {
       color: theme.ink,
@@ -776,26 +801,55 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 14
     },
     replyCard: {
-      gap: 12,
+      gap: 10,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
       paddingHorizontal: 0,
-      paddingVertical: 20
+      paddingVertical: 18
     },
     replyHead: {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 10
     },
+    replyAvatar: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 34,
+      height: 34,
+      overflow: 'hidden',
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 17,
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    replyAvatarSmall: {
+      width: 32,
+      height: 32,
+      borderRadius: 16
+    },
+    replyAvatarImage: {
+      width: '100%',
+      height: '100%'
+    },
+    replyAvatarText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '700'
+    },
+    replyAvatarSmallText: {
+      fontSize: 11
+    },
     replyFloorBadge: {
       alignItems: 'center',
       justifyContent: 'center',
-      minWidth: 38,
-      minHeight: 24,
+      minWidth: 44,
+      minHeight: 28,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 6,
+      borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8
     },
@@ -824,15 +878,20 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 11,
       lineHeight: 15
     },
+    replyContentArea: {
+      gap: 10,
+      paddingLeft: 42
+    },
     replyBody: {
-      paddingTop: 2
+      paddingTop: 0
     },
     replyActionRow: {
       alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 8,
-      justifyContent: 'flex-end',
+      justifyContent: 'flex-start',
+      minHeight: 40,
       paddingTop: 2
     },
     floorIndex: {
@@ -866,11 +925,29 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopWidth: StyleSheet.hairlineWidth,
       paddingTop: 10
     },
+    quoteAuthorRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 8
+    },
     replyMeta: {
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
       lineHeight: 18
+    },
+    inlineForumImageText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(16 * fontScale),
+      lineHeight: Math.round(20 * fontScale)
+    },
+    inlineForumImage: {
+      width: Math.round(104 * fontScale),
+      height: Math.round(82 * fontScale),
+      marginHorizontal: 2,
+      resizeMode: 'contain'
     },
     nav: {
       position: 'absolute',

@@ -125,19 +125,3 @@ export function filterRepliesByQuery(replies: Reply[], query: string) {
     return terms.every((term) => text.includes(term.toLowerCase()));
   });
 }
-
-export function buildReplyMarkdown(reply: Reply, floor: number, topicTitle: string, topicUrl: string) {
-  const title = topicTitle || '主题';
-  const author = reply.author || '未知作者';
-  const body = stripHtml(reply.contentHtml)
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n');
-  return [
-    `#${floor} · ${author}`,
-    '',
-    body || '> ',
-    '',
-    `[${title}](${topicUrl})`
-  ].join('\n');
-}

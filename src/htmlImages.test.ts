@@ -3,6 +3,7 @@ import {
   createImagePreviewList,
   dataImageFileFromUrl,
   extractImageUrlsFromHtml,
+  flowInlineImagesInMixedParagraphs,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
   isHttpOrHttpsUrl,
@@ -21,6 +22,7 @@ describe('Android HTML image preview helpers', () => {
   it('recognizes direct image links and proxied image links only', () => {
     expect(isPreviewableImageUrl('https://cdn.example.com/a.webp?x=1')).toBe(true);
     expect(isPreviewableImageUrl('https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa')).toBe(true);
+    expect(isPreviewableImageUrl('https://linux.do/images/emoji/twitter/slight_smile.png?v=12')).toBe(false);
     expect(isPreviewableImageUrl('https://example.com/topic/1')).toBe(false);
   });
 
@@ -71,6 +73,14 @@ describe('Android HTML image preview helpers', () => {
     expect(imageRequestHeadersForUrl('data:image/png;base64,abc')).toBeUndefined();
   });
 
+  it('adds a browser user agent for NodeSeek avatar images', () => {
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png')).toEqual({
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      Referer: 'https://www.nodeseek.com',
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+    });
+  });
+
   it('builds a de-duplicated preview list and keeps tapped image position', () => {
     const result = createImagePreviewList({
       tappedUrl: 'https://cdn.example.com/b.png',
@@ -83,6 +93,42 @@ describe('Android HTML image preview helpers', () => {
     expect(result).toEqual({
       urls: ['https://cdn.example.com/a.jpg', 'https://cdn.example.com/b.png'],
       index: 1
+    });
+  });
+
+  it('keeps forum emoji images out of the preview gallery', () => {
+    const html = '<p>hello <img class="emoji" src="https://linux.do/images/emoji/twitter/slight_smile.png?v=12" alt="🙂" title=":slight_smile:" width="20" height="20"><img src="https://cdn.example.com/photo.jpg"></p>';
+
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/photo.jpg']);
+    expect(createImagePreviewList({
+      tappedUrl: 'https://cdn.example.com/photo.jpg',
+      htmlParts: [html]
+    })).toEqual({
+      urls: ['https://cdn.example.com/photo.jpg'],
+      index: 0
+    });
+  });
+
+  it('marks images mixed with paragraph text as inline while keeping standalone images block-like', () => {
+    const mixed = '<p>hello 😟<img alt="image" src="https://cdn.example.com/sticker.png"></p>';
+    const standalone = '<p><img alt="image" src="https://cdn.example.com/photo.jpg"></p>';
+
+    expect(flowInlineImagesInMixedParagraphs(mixed)).toContain('<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png"></forum-inline-image>');
+    expect(flowInlineImagesInMixedParagraphs(standalone)).toContain('<img alt="image" src="https://cdn.example.com/photo.jpg">');
+  });
+
+  it('keeps real HTML images previewable even when their URLs have no file extension', () => {
+    const result = createImagePreviewList({
+      tappedUrl: 'https://www.nodeseek.com/api/attachments/123',
+      htmlParts: [
+        '<p><img src="https://www.nodeseek.com/api/attachments/123" alt="photo"></p>',
+        '<p><img class="emoji" src="https://www.nodeseek.com/images/emoji/smile.png" alt=":smile:" width="20" height="20"></p>'
+      ]
+    });
+
+    expect(result).toEqual({
+      urls: ['https://www.nodeseek.com/api/attachments/123'],
+      index: 0
     });
   });
 });

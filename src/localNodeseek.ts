@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { Buffer } from 'buffer';
+import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
@@ -546,6 +547,27 @@ function renderedNodeSeekCommentId(element: ReturnType<ReturnType<typeof parseHt
   return match ? Number(match[1]) : undefined;
 }
 
+function renderedNodeSeekAuthor(element: HTMLElement | null | undefined) {
+  if (!element) {
+    return '';
+  }
+  return elementText(element.querySelector('.author-name'))
+    || elementText(element.querySelector('.comment-author'))
+    || elementText(element.querySelector('.reply-author'))
+    || element.querySelectorAll('a[href*="/space/"]').map((link) => elementText(link)).find(Boolean)
+    || '';
+}
+
+function renderedNodeSeekAvatar(element: HTMLElement | null | undefined) {
+  if (!element) {
+    return undefined;
+  }
+  return absoluteUrl(
+    element.querySelector('.author-info a[href*="/space/"] img, .post-info a[href*="/space/"] img, .comment-author img, .reply-author img, a[href*="/space/"] img, img.avatar')?.getAttribute('src'),
+    BASE_URL
+  );
+}
+
 function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallback: number) {
   const linkFloor = parsePositiveInteger(elementText(element.querySelector('.floor-link')));
   if (linkFloor) {
@@ -574,11 +596,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   if (!title || !contentHtml) {
     return null;
   }
-  const authorLink = firstContentItem?.querySelector('.author-name, a[href*="/space/"]')
-    || root.querySelector('article .info-author a[href*="/space/"]')
-    || root.querySelector('.post-detail .info-author a[href*="/space/"]')
-    || root.querySelector('.post-info a[href*="/space/"]')
-    || root.querySelector('a[href*="/space/"]');
+  const authorContainer = firstContentItem || root.querySelector('article') || root.querySelector('.post-detail') || root;
   const categoryLink = firstContentItem?.querySelector('.content-category a[href*="/categories/"], a[href*="/categories/"]')
     || root.querySelector('article a[href*="/categories/"]')
     || root.querySelector('.post-detail a[href*="/categories/"]')
@@ -593,8 +611,8 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   const allReplies = replyRows.map((row, index) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     return {
-      author: elementText(row.querySelector('.author-name, .comment-author, .reply-author, a[href*="/space/"]')),
-      authorAvatar: absoluteUrl(row.querySelector('img')?.getAttribute('src'), BASE_URL),
+      author: renderedNodeSeekAuthor(row),
+      authorAvatar: renderedNodeSeekAvatar(row),
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
       floor: renderedNodeSeekFloor(row, index + 1),
@@ -607,8 +625,8 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     source: 'nodeseek',
     id,
     title,
-    author: elementText(authorLink),
-    authorAvatar: absoluteUrl(firstContentItem?.querySelector('img')?.getAttribute('src') || root.querySelector('article img')?.getAttribute('src') || root.querySelector('.post-detail img')?.getAttribute('src'), BASE_URL),
+    author: renderedNodeSeekAuthor(authorContainer),
+    authorAvatar: renderedNodeSeekAvatar(authorContainer),
     categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
     category: elementText(categoryLink) || undefined,
     url: topicUrl(id),

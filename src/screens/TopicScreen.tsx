@@ -1,27 +1,32 @@
-import { memo, type ComponentProps, type RefObject, useCallback, useMemo, useState } from 'react';
+import { memo, type ComponentProps, type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   type ListRenderItem,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  Image,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
   View
 } from 'react-native';
 import RenderHTML, {
+  HTMLContentModel,
+  HTMLElementModel,
   RenderHTMLConfigProvider,
   RenderHTMLSource,
   TRenderEngineProvider
 } from 'react-native-render-html';
-import { BookMarked, CheckCircle, ChevronLeft, Copy, ExternalLink, Heart, List, MessageCircle, MoreHorizontal, RefreshCw, Star, ThumbsUp, X } from 'lucide-react-native';
+import { SvgXml } from 'react-native-svg';
+import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, RefreshCw, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
 import type { Reply, Source, Topic, TopicDetail } from '../types';
 import type { ReplyFilter, YaohuoReplyTarget } from '../appTypes';
-import { highlightHtml, readerModeHtml } from '../androidFeatureHelpers';
+import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
+import { loadRemoteAvatarSvgText } from '../avatarImages';
+import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
@@ -37,6 +42,7 @@ type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles'
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
   | TopicListContentItem
+  | { type: 'topicActions'; key: string }
   | { type: 'replyControls'; key: string }
   | { type: 'replyComposer'; key: string }
   | { type: 'emptyReplies'; key: string }
@@ -44,7 +50,12 @@ export type TopicListItem =
 
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'iframe', 'noscript'];
 const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
-
+const HTML_CUSTOM_ELEMENT_MODELS = {
+  [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: INLINE_FORUM_IMAGE_TAG,
+    contentModel: HTMLContentModel.textual
+  })
+};
 function stableTextHash(value: string) {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -82,7 +93,6 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     || previous.contentWidth !== next.contentWidth
     || previous.isNew !== next.isNew
     || previous.onInteract !== next.onInteract
-    || previous.onCopyReplyMarkdown !== next.onCopyReplyMarkdown
     || previous.onReplyToFloor !== next.onReplyToFloor
     || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
     || previous.query !== next.query
@@ -112,6 +122,61 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
   return true;
 });
 
+function authorInitial(name: string | undefined) {
+  return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
+}
+
+function AuthorAvatar({
+  name,
+  small,
+  styles,
+  uri
+}: {
+  name?: string;
+  small?: boolean;
+  styles: ReturnType<typeof createStyles>;
+  uri?: string;
+}) {
+  const [svgXml, setSvgXml] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSvgXml(null);
+    if (!uri) {
+      return () => {
+        cancelled = true;
+      };
+    }
+    loadRemoteAvatarSvgText(uri).then((xml) => {
+      if (!cancelled) {
+        setSvgXml(xml);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+
+  return (
+    <View style={[styles.replyAvatar, small ? styles.replyAvatarSmall : styles.topicAvatar]}>
+      {svgXml ? (
+        <SvgXml
+          xml={svgXml}
+          width="100%"
+          height="100%"
+        />
+      ) : uri ? (
+        <Image
+          source={imageSourceFromUrl(uri)}
+          style={[styles.replyAvatarImage, small ? styles.replyAvatarSmall : styles.topicAvatar]}
+        />
+      ) : (
+        <Text style={[styles.replyAvatarText, small && styles.replyAvatarSmallText]}>{authorInitial(name)}</Text>
+      )}
+    </View>
+  );
+}
+
 export function TopicScreen({
   actionBusy,
   canUseNodeSeekActions,
@@ -127,10 +192,8 @@ export function TopicScreen({
   loadingMoreReplies,
   loadingQuotedFloorsRef,
   commentQuery,
-  focusMode,
   quoteStateVersion,
   readerData,
-  readerMode,
   replyComposerOpen,
   replyContent,
   replyFilter,
@@ -148,9 +211,8 @@ export function TopicScreen({
   unreadReplyCount,
   onBack,
   onCommentQueryChange,
-  onCopyReplyMarkdown,
-  onCopyTopicLink,
   onInteract,
+  onShareTopic,
   onYaohuoFavorite,
   onYaohuoVote,
   onLoadMoreReplies,
@@ -160,8 +222,6 @@ export function TopicScreen({
   onReplyFilterChange,
   onReplyToFloor,
   onRefreshTopic,
-  onReaderModeChange,
-  onFocusModeChange,
   onVerifyLinuxDo,
   onSubmitReply,
   onTopicScroll,
@@ -182,10 +242,8 @@ export function TopicScreen({
   loadingMoreReplies: boolean;
   loadingQuotedFloorsRef: RefObject<Record<string, boolean>>;
   commentQuery: string;
-  focusMode: boolean;
   quoteStateVersion: number;
   readerData: ReaderData;
-  readerMode: boolean;
   replyComposerOpen: boolean;
   replyContent: string;
   replyFilter: ReplyFilter;
@@ -203,9 +261,8 @@ export function TopicScreen({
   unreadReplyCount: number;
   onBack: () => void;
   onCommentQueryChange: (value: string) => void;
-  onCopyReplyMarkdown: (reply: Reply, floor: number) => void;
-  onCopyTopicLink: () => void;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onShareTopic: () => void;
   onYaohuoFavorite: () => void;
   onYaohuoVote: (voteId: string) => void;
   onLoadMoreReplies: () => void;
@@ -215,8 +272,6 @@ export function TopicScreen({
   onReplyFilterChange: (filter: ReplyFilter) => void;
   onReplyToFloor: (reply: Reply) => void;
   onRefreshTopic: () => void;
-  onReaderModeChange: (value: boolean) => void;
-  onFocusModeChange: (value: boolean) => void;
   onVerifyLinuxDo: () => void;
   onSubmitReply: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -257,7 +312,7 @@ export function TopicScreen({
   }, [sourceReplies, unreadReplyCount]);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
-  const topicContentHtml = topic ? (readerMode ? readerModeHtml(topic.contentHtml) : topic.contentHtml) : '';
+  const topicContentHtml = topic?.contentHtml || '';
   const topicContentItems = useMemo<TopicListItem[]>(() => (
     topic
       ? splitTopicContentHtml(topicContentHtml).map((html, index) => ({
@@ -275,6 +330,9 @@ export function TopicScreen({
   })), [replies]);
   const topicListItems = useMemo<TopicListItem[]>(() => {
     const items = [...topicContentItems];
+    if (topic) {
+      items.push({ type: 'topicActions', key: 'topic-actions' });
+    }
     if (canShowReplies) {
       items.push({ type: 'replyControls', key: 'reply-controls' });
       if (canWrite && replyComposerOpen) {
@@ -287,7 +345,7 @@ export function TopicScreen({
       }
     }
     return items;
-  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, topicContentItems]);
+  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, topic, topicContentItems]);
   const jumpToFloor = useCallback((floor: number) => {
     const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
     if (index >= 0) {
@@ -364,6 +422,36 @@ export function TopicScreen({
       );
     }
 
+    if (listItem.type === 'topicActions') {
+      return (
+        <View style={[styles.topicPostActionArea, topicColumnStyle]}>
+          {canWriteNodeSeek ? (
+            <View style={styles.topicPrimaryActions}>
+              <IconButton tiny icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
+              <IconButton tiny icon={Drumstick} label={`加鸡腿 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+            </View>
+          ) : null}
+          {canWriteYaohuo ? (
+            <View style={styles.topicPrimaryActions}>
+              <IconButton tiny icon={BookMarked} label="原站收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
+              {(topic?.voteOptions || []).map((option) => (
+                <IconButton
+                  key={option.id}
+                  tiny
+                  icon={CheckCircle}
+                  label={`投票 ${option.label}${typeof option.count === 'number' ? ` ${option.count}` : ''}`}
+                  styles={styles}
+                  theme={theme}
+                  disabled={actionBusy}
+                  onPress={() => onYaohuoVote(option.id)}
+                />
+              ))}
+            </View>
+          ) : null}
+        </View>
+      );
+    }
+
     if (listItem.type === 'replyComposer') {
       return (
         <View style={[styles.replyBox, topicColumnStyle]}>
@@ -405,7 +493,6 @@ export function TopicScreen({
           styles={styles}
           theme={theme}
           onInteract={onInteract}
-          onCopyReplyMarkdown={onCopyReplyMarkdown}
           onReplyToFloor={onReplyToFloor}
           onToggleQuotedFloor={onToggleQuotedFloor}
           query={commentQuery}
@@ -417,6 +504,8 @@ export function TopicScreen({
   }, [
     actionBusy,
     canWrite,
+    canWriteNodeSeek,
+    canWriteYaohuo,
     commentQuery,
     contentWidth,
     expandedQuotesRef,
@@ -426,7 +515,6 @@ export function TopicScreen({
     loadingQuotedFloorsRef,
     newReplyFloorStart,
     onCommentQueryChange,
-    onCopyReplyMarkdown,
     onInteract,
     onReplyComposerOpenChange,
     onReplyContentChange,
@@ -434,6 +522,8 @@ export function TopicScreen({
     onReplyToFloor,
     onSubmitReply,
     onToggleQuotedFloor,
+    onYaohuoFavorite,
+    onYaohuoVote,
     quoteStateVersion,
     itemSource,
     replyComposerOpen,
@@ -444,6 +534,7 @@ export function TopicScreen({
     sourceReplies.length,
     styles,
     theme,
+    topic,
     topicColumnStyle
   ]);
 
@@ -451,47 +542,21 @@ export function TopicScreen({
     return <EmptyText text="未选择主题" styles={styles} />;
   }
 
-  const topicTopHint = focusMode
-    ? '专注模式'
-    : canWrite
-      ? item.source === 'yaohuo' ? '妖火可回复' : 'NodeSeek 可回复'
-      : '只读 · 原站回复';
-
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
-        {!focusMode ? (
-          <View style={styles.topicMetaStack}>
-            <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
-            <Text style={styles.meta}>{item.author || '未知作者'} · {formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
-            {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
+        <View style={styles.topicMetaStack}>
+          <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
+          <Text style={styles.articleTitle}>{item.title}</Text>
+          <View style={styles.topicAuthorRow}>
+            <AuthorAvatar name={item.author} uri={item.authorAvatar} styles={styles} />
+            <View style={styles.topicAuthorMeta}>
+              <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
+              <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
+            </View>
           </View>
-        ) : null}
-        <Text style={styles.articleTitle}>{item.title}</Text>
-        {canWriteNodeSeek ? (
-          <View style={styles.topicPrimaryActions}>
-            <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
-            <IconButton tiny ghost icon={Heart} label={`感谢 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
-          </View>
-        ) : null}
-        {canWriteYaohuo ? (
-          <View style={styles.topicPrimaryActions}>
-            <IconButton tiny ghost icon={BookMarked} label="原站收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
-            {(topic?.voteOptions || []).map((option) => (
-              <IconButton
-                key={option.id}
-                tiny
-                ghost
-                icon={CheckCircle}
-                label={`投票 ${option.label}${typeof option.count === 'number' ? ` ${option.count}` : ''}`}
-                styles={styles}
-                theme={theme}
-                disabled={actionBusy}
-                onPress={() => onYaohuoVote(option.id)}
-              />
-            ))}
-          </View>
-        ) : null}
+          {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
+        </View>
         {topicError ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{topicError}</Text>
@@ -507,7 +572,7 @@ export function TopicScreen({
   );
 
   return (
-    <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
+    <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
       <RenderHTMLConfigProvider
         renderers={htmlRenderers}
         renderersProps={htmlRenderersProps}
@@ -517,16 +582,13 @@ export function TopicScreen({
       >
         <View style={styles.topicTopBar}>
           <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
-          <Text style={styles.topicTopHint}>{topicTopHint}</Text>
-          <ScrollView horizontal style={styles.topicTopActionScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.topicTopActions}>
-            <IconButton icon={Copy} compact ghost iconOnly label="复制链接" styles={styles} theme={theme} onPress={onCopyTopicLink} />
-            <IconButton icon={RefreshCw} compact ghost iconOnly label="刷新主题" styles={styles} theme={theme} onPress={onRefreshTopic} />
-            <IconButton icon={List} compact ghost iconOnly label="楼层目录" styles={styles} theme={theme} active={floorOpen} onPress={() => setFloorOpen((value) => !value)} />
-            <IconButton icon={BookMarked} compact ghost iconOnly label="Reader Mode" styles={styles} theme={theme} active={readerMode} onPress={() => onReaderModeChange(!readerMode)} />
-            <IconButton icon={MoreHorizontal} compact ghost iconOnly label="专注模式" styles={styles} theme={theme} active={focusMode} onPress={() => onFocusModeChange(!focusMode)} />
-            <IconButton icon={Star} compact ghost iconOnly label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
-            <IconButton icon={ExternalLink} compact ghost iconOnly label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
-          </ScrollView>
+          <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
+          <View style={styles.topicTopActions}>
+            <IconButton iconOnly ghost icon={Star} label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
+            <IconButton iconOnly ghost icon={Share2} label="分享" styles={styles} theme={theme} onPress={onShareTopic} />
+            <IconButton iconOnly ghost icon={RefreshCw} label="刷新" styles={styles} theme={theme} onPress={onRefreshTopic} />
+            <IconButton iconOnly ghost icon={ExternalLink} label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
+          </View>
         </View>
         <FlatList
           ref={topicScrollRef}
@@ -565,7 +627,7 @@ function HtmlContent({
   contentWidth: number;
   html: string | undefined;
 }) {
-  const source = useMemo(() => ({ html: html || '<p></p>' }), [html]);
+  const source = useMemo(() => ({ html: flowInlineImagesInMixedParagraphs(html || '<p></p>') }), [html]);
   return (
     <RenderHTMLSource
       contentWidth={contentWidth}
@@ -590,7 +652,6 @@ function ReplyCard({
   styles,
   theme,
   onInteract,
-  onCopyReplyMarkdown,
   onReplyToFloor,
   onToggleQuotedFloor
 }: {
@@ -609,77 +670,80 @@ function ReplyCard({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
-  onCopyReplyMarkdown: (reply: Reply, floor: number) => void;
   onReplyToFloor: (reply: Reply) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
+  const replyContentWidth = Math.max(220, contentWidth - 42);
   return (
     <View style={styles.replyCard}>
       <View style={styles.replyHead}>
-        <View style={styles.replyFloorBadge}>
-          <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
-        </View>
+        <AuthorAvatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
           <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
           <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
         </View>
+        <View style={styles.replyFloorBadge}>
+          <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
+        </View>
         {isNew ? <Text style={styles.topicAccessBadge}>新增</Text> : null}
       </View>
-      {quotedFloors.length ? (
-        <View style={styles.quoteStack}>
-          {quotedFloors.map((quotedFloor) => {
-            const key = `${replyFloor}:${quotedFloor}`;
-            const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
-            const expanded = Boolean(expandedQuotes[key]);
-            const loading = Boolean(loadingQuotedFloors[key]);
-            return (
-              <View key={key} style={styles.quoteBox}>
-                <View style={styles.actions}>
-                  <AppButton
-                    label={loading ? '读取引用' : expanded ? `收起引用 #${quotedFloor}` : `展开引用 #${quotedFloor}`}
-                    variant="ghost"
-                    styles={styles}
-                    disabled={loading}
-                    onPress={() => onToggleQuotedFloor({ replyFloor, quotedFloor, quotedReply })}
-                  />
-                  {quotedReply ? <Text style={styles.meta}>已加载</Text> : <Text style={styles.meta}>引用楼层未加载</Text>}
-                </View>
-                {expanded && quotedReply ? (
-                  <View style={styles.quoteBody}>
-                    <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
-                    <MemoizedHtmlContent
-                      contentWidth={Math.max(240, contentWidth - 44)}
-                      html={quotedReply.contentHtml}
+      <View style={styles.replyContentArea}>
+        {quotedFloors.length ? (
+          <View style={styles.quoteStack}>
+            {quotedFloors.map((quotedFloor) => {
+              const key = `${replyFloor}:${quotedFloor}`;
+              const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
+              const expanded = Boolean(expandedQuotes[key]);
+              const loading = Boolean(loadingQuotedFloors[key]);
+              return (
+                <View key={key} style={styles.quoteBox}>
+                  <View style={styles.actions}>
+                    <AppButton
+                      label={loading ? '读取引用' : expanded ? `收起引用 #${quotedFloor}` : `展开引用 #${quotedFloor}`}
+                      variant="ghost"
+                      styles={styles}
+                      disabled={loading}
+                      onPress={() => onToggleQuotedFloor({ replyFloor, quotedFloor, quotedReply })}
                     />
+                    {quotedReply ? <Text style={styles.meta}>已加载</Text> : <Text style={styles.meta}>引用楼层未加载</Text>}
                   </View>
-                ) : null}
-              </View>
-            );
-          })}
+                  {expanded && quotedReply ? (
+                    <View style={styles.quoteBody}>
+                      <View style={styles.quoteAuthorRow}>
+                        <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
+                        <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
+                      </View>
+                      <MemoizedHtmlContent
+                        contentWidth={Math.max(220, replyContentWidth - 24)}
+                        html={quotedReply.contentHtml}
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+        <View style={styles.replyBody}>
+          <MemoizedHtmlContent
+            contentWidth={replyContentWidth}
+            html={highlightedHtml}
+          />
         </View>
-      ) : null}
-      <View style={styles.replyBody}>
-        <MemoizedHtmlContent
-          contentWidth={contentWidth}
-          html={highlightedHtml}
-        />
+        {canWrite && source === 'nodeseek' ? (
+          <View style={styles.replyActionRow}>
+            <IconButton tiny icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
+            <IconButton tiny icon={Drumstick} label={`加鸡腿 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+          </View>
+        ) : null}
+        {canWrite && source === 'yaohuo' ? (
+          <View style={styles.replyActionRow}>
+            <IconButton tiny icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+          </View>
+        ) : null}
       </View>
-      <View style={styles.replyActionRow}>
-        <IconButton tiny ghost icon={Copy} label="复制楼层引用" styles={styles} theme={theme} onPress={() => onCopyReplyMarkdown(reply, reply.floor ?? replyFloor)} />
-      </View>
-      {canWrite && source === 'nodeseek' ? (
-        <View style={styles.replyActionRow}>
-          <IconButton tiny ghost icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-          <IconButton tiny ghost icon={Heart} label={`感谢 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-        </View>
-      ) : null}
-      {canWrite && source === 'yaohuo' ? (
-        <View style={styles.replyActionRow}>
-          <IconButton tiny ghost icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-        </View>
-      ) : null}
     </View>
   );
 }

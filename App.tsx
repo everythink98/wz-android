@@ -4,14 +4,17 @@ import {
   AppState,
   BackHandler,
   FlatList,
+  Image,
   KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
   SafeAreaView,
+  Share,
   ScrollView,
   StyleSheet,
+  Text,
   ToastAndroid,
   useColorScheme,
   useWindowDimensions,
@@ -30,7 +33,8 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import RenderHTML, {
   IMGElement,
   useIMGElementProps,
-  type CustomBlockRenderer
+  type CustomBlockRenderer,
+  type CustomMixedRenderer
 } from 'react-native-render-html';
 import {
   buildNodeSeekAttendanceRequest,
@@ -110,7 +114,7 @@ import {
   summarizeLinuxDoCookies
 } from './src/linuxdoCookieBridge';
 import type { Category, FeedResponse, FeedSource, Reply, Source, Topic, TopicDetail } from './src/types';
-import { createImagePreviewList, dataImageFileFromUrl, imageRequestHeadersForUrl, imageSourceFromUrl, isHttpOrHttpsUrl, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
@@ -155,10 +159,7 @@ import {
   searchYaohuoDirect
 } from './src/yaohuoApi';
 import type { Fetcher } from './src/request';
-import {
-  buildReplyMarkdown,
-  filterRepliesByQuery
-} from './src/androidFeatureHelpers';
+import { filterRepliesByQuery } from './src/androidFeatureHelpers';
 import { NavBar } from './src/components/NavBar';
 import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
@@ -427,8 +428,6 @@ export default function App() {
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
   const [commentQuery, setCommentQuery] = useState('');
-  const [readerMode, setReaderMode] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
   const [unreadReplyCount, setUnreadReplyCount] = useState(0);
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
   const [yaohuoReplyTarget, setYaohuoReplyTarget] = useState<YaohuoReplyTarget | null>(null);
@@ -720,7 +719,7 @@ export default function App() {
     if (replyFilter === 'author') {
       base = topicDetail ? topicReplies.filter((reply) => reply.author === topicDetail.author) : topicReplies;
     } else if (replyFilter === 'images') {
-      base = topicReplies.filter((reply) => /<img\b/i.test(reply.contentHtml));
+      base = topicReplies.filter((reply) => extractImageUrlsFromHtml(reply.contentHtml).length > 0);
     } else if (replyFilter === 'newest') {
       base = [...topicReplies].reverse();
     }
@@ -836,6 +835,9 @@ export default function App() {
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
+      if (isInlineForumImage(props.tnode.attributes)) {
+        return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
+      }
       return (
         <IMGElement
           {...imageProps}
@@ -847,8 +849,27 @@ export default function App() {
         />
       );
     };
-    return { img: PreviewImageRenderer };
-  }, [openImagePreview]);
+    const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
+      const attributes = ((props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {});
+      const src = attributes.src || '';
+      const label = attributes.alt || attributes.title || '';
+      if (!src || isInlineForumImage(attributes)) {
+        return <Text style={styles.inlineForumImageText}>{label}</Text>;
+      }
+      return (
+        <Text
+          onPress={isPreviewableImageUrl(src) ? () => openImagePreview(src) : undefined}
+          style={styles.inlineForumImageText}
+        >
+          <Image
+            source={imageSourceFromUrl(src)}
+            style={styles.inlineForumImage}
+          />
+        </Text>
+      );
+    };
+    return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
+  }, [openImagePreview, styles.inlineForumImage, styles.inlineForumImageText]);
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
     a: {
       onPress: (event, href) => {
@@ -1874,22 +1895,21 @@ export default function App() {
     }
   }, [openTopic, selectedTopic, topicDetail]);
 
-  const copyTopicLink = useCallback(async () => {
+  const shareTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail?.url) {
       return;
     }
-    await Clipboard.setStringAsync(detail.url);
-    notify('链接已复制');
-  }, [notify, selectedTopic, topicDetail]);
-
-  const copyReplyMarkdown = useCallback(async (reply: Reply, floor: number) => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail) {
-      return;
+    try {
+      await Share.share({
+        title: detail.title,
+        message: `${detail.title}\n${detail.url}`,
+        url: detail.url
+      });
+    } catch {
+      await Clipboard.setStringAsync(detail.url);
+      notify('链接已复制');
     }
-    await Clipboard.setStringAsync(buildReplyMarkdown(reply, floor, detail.title, detail.url));
-    notify('楼层引用已复制');
   }, [notify, selectedTopic, topicDetail]);
 
   const verifyLinuxDoFromTopic = useCallback(() => {
@@ -2397,7 +2417,7 @@ export default function App() {
     }
     await runNodeSeekRequest(
       () => buildNodeSeekInteractionRequest({ type, commentId }),
-      type === 'upvote' ? '点赞请求已提交' : '感谢请求已提交'
+      type === 'upvote' ? '点赞请求已提交' : '加鸡腿请求已提交'
     );
   }, [notify, runNodeSeekRequest]);
 
@@ -2811,10 +2831,8 @@ export default function App() {
             loadingMoreReplies={loadingMoreReplies}
             loadingQuotedFloorsRef={loadingQuotedFloorsRef}
             commentQuery={commentQuery}
-            focusMode={focusMode}
             quoteStateVersion={quoteStateVersion}
             readerData={readerData}
-            readerMode={readerMode}
             replyComposerOpen={replyComposerOpen}
             replyContent={replyContent}
             replyFilter={replyFilter}
@@ -2832,9 +2850,8 @@ export default function App() {
             unreadReplyCount={unreadReplyCount}
             onBack={goBackFromTopic}
             onCommentQueryChange={setCommentQuery}
-            onCopyReplyMarkdown={copyReplyMarkdown}
-            onCopyTopicLink={copyTopicLink}
             onInteract={interact}
+            onShareTopic={shareTopic}
             onYaohuoFavorite={favoriteOnYaohuoSite}
             onYaohuoVote={voteYaohuo}
             onLoadMoreReplies={loadMoreReplies}
@@ -2844,8 +2861,6 @@ export default function App() {
             onReplyFilterChange={setReplyFilter}
             onReplyToFloor={replyToFloor}
             onRefreshTopic={refreshTopic}
-            onReaderModeChange={setReaderMode}
-            onFocusModeChange={setFocusMode}
             onVerifyLinuxDo={verifyLinuxDoFromTopic}
             onSubmitReply={submitReply}
             onTopicScroll={handleTopicScroll}

@@ -1,7 +1,12 @@
+import { parseHtml, textContentFromHtml } from './localHtml';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
+
 export interface ImagePreviewList {
   urls: string[];
   index: number;
 }
+
+export const INLINE_FORUM_IMAGE_TAG = 'forum-inline-image';
 
 const IMAGE_REQUEST_HEADER_HOSTS = [
   'v2ex.com',
@@ -11,22 +16,34 @@ const IMAGE_REQUEST_HEADER_HOSTS = [
 ];
 
 export function extractImageUrlsFromHtml(html: string): string[] {
-  const urls: string[] = [];
-  const imagePattern = /<img\b[^>]*\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>]+))/gi;
-  let match = imagePattern.exec(html);
-  while (match) {
-    const src = decodeHtmlAttribute(match[1] || match[2] || match[3] || '').trim();
-    if (src) {
-      urls.push(src);
+  try {
+    const root = parseHtml(html);
+    return root.querySelectorAll('img')
+      .filter((image) => !isInlineForumImageAttributes(image.attributes))
+      .map((image) => decodeHtmlAttribute(image.getAttribute('src') || '').trim())
+      .filter(Boolean);
+  } catch {
+    const urls: string[] = [];
+    const imagePattern = /<img\b([^>]*)>/gi;
+    let match = imagePattern.exec(html);
+    while (match) {
+      const attributes = imageAttributesFromText(match[1] || '');
+      const src = decodeHtmlAttribute(attributes.src || '').trim();
+      if (src && !isInlineForumImageAttributes(attributes)) {
+        urls.push(src);
+      }
+      match = imagePattern.exec(html);
     }
-    match = imagePattern.exec(html);
+    return urls;
   }
-  return urls;
 }
 
 export function isPreviewableImageUrl(url: unknown): boolean {
   const clean = decodeHtmlAttribute(url).trim();
   if (!clean) {
+    return false;
+  }
+  if (isInlineForumImageUrl(clean)) {
     return false;
   }
   if (/^data:image\//i.test(clean)) {
@@ -36,6 +53,28 @@ export function isPreviewableImageUrl(url: unknown): boolean {
     return true;
   }
   return /\.(?:apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#].*)?$/i.test(clean);
+}
+
+export function isInlineForumImage(attributes: Record<string, string | undefined>) {
+  return isInlineForumImageAttributes(attributes);
+}
+
+export function flowInlineImagesInMixedParagraphs(html: string) {
+  try {
+    const root = parseHtml(html);
+    root.querySelectorAll('p').forEach((paragraph) => {
+      const images = paragraph.querySelectorAll('img');
+      if (!images.length || !paragraphHasTextOutsideImages(paragraph.innerHTML)) {
+        return;
+      }
+      images.forEach((image) => {
+        image.tagName = INLINE_FORUM_IMAGE_TAG;
+      });
+    });
+    return root.toString();
+  } catch {
+    return html;
+  }
 }
 
 export function isHttpOrHttpsUrl(url: unknown): boolean {
@@ -69,10 +108,14 @@ export function imageRequestHeadersForUrl(url: unknown): Record<string, string> 
     if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isKnownForumImageHost(parsed.hostname)) {
       return undefined;
     }
-    return {
+    const headers: Record<string, string> = {
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
       Referer: parsed.origin
     };
+    if (isNodeSeekHost(parsed.hostname)) {
+      headers['User-Agent'] = DEFAULT_NODESEEK_ANDROID_USER_AGENT;
+    }
+    return headers;
   } catch {
     return undefined;
   }
@@ -118,7 +161,7 @@ export function createImagePreviewList({
   const tapped = normalizeImagePreviewUrl(tappedUrl);
   const urls = uniqueStrings([
     ...htmlParts.flatMap((html) => extractImageUrlsFromHtml(html).map((url) => normalizeImagePreviewUrl(url))),
-    tapped
+    ...(tapped && !isInlineForumImageUrl(tapped) ? [tapped] : [])
   ]);
   const index = Math.max(0, urls.findIndex((url) => url === tapped));
   return { urls, index };
@@ -151,7 +194,67 @@ function uniqueStrings(items: string[]): string[] {
   return result;
 }
 
+function imageAttributesFromText(value: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const pattern = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let match = pattern.exec(value);
+  while (match) {
+    attributes[match[1].toLowerCase()] = match[2] || match[3] || match[4] || '';
+    match = pattern.exec(value);
+  }
+  return attributes;
+}
+
+function paragraphHasTextOutsideImages(html: string) {
+  const withoutImages = html.replace(/<img\b[^>]*>/gi, ' ');
+  return textContentFromHtml(withoutImages).length > 0;
+}
+
+function attributeValue(attributes: Record<string, string | undefined>, name: string) {
+  return decodeHtmlAttribute(attributes[name] || attributes[name.toLowerCase()] || '').trim();
+}
+
+function isInlineForumImageAttributes(attributes: Record<string, string | undefined>) {
+  const className = attributeValue(attributes, 'class');
+  const src = attributeValue(attributes, 'src');
+  const title = attributeValue(attributes, 'title');
+  const alt = attributeValue(attributes, 'alt');
+  const role = attributeValue(attributes, 'role');
+  const width = parseImageDimension(attributeValue(attributes, 'width'));
+  const height = parseImageDimension(attributeValue(attributes, 'height'));
+  const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
+  const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
+  const urlMarksEmoji = isInlineForumImageUrl(src);
+  const titleMarksEmoji = /^:[a-z0-9_+.-]+:$/i.test(title);
+  const altMarksEmoji = /^:[a-z0-9_+.-]+:$/i.test(alt);
+  const hasEmojiMarker = classMarksEmoji || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
+  return hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji);
+}
+
+function isInlineForumImageUrl(url: string) {
+  const markers = new Set(['emoji', 'emojis', 'emoticon', 'emoticons', 'smiley', 'smilies', 'twemoji']);
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.toLowerCase().includes('twemoji')) {
+      return true;
+    }
+    return parsed.pathname.split('/').some((part) => markers.has(part.toLowerCase()));
+  } catch {
+    return url.split(/[?#]/)[0].split('/').some((part) => markers.has(part.toLowerCase()));
+  }
+}
+
+function parseImageDimension(value: string) {
+  const match = value.match(/^\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : 0;
+}
+
 function isKnownForumImageHost(hostname: string) {
   const normalized = hostname.toLowerCase();
   return IMAGE_REQUEST_HEADER_HOSTS.some((host) => normalized === host || normalized.endsWith(`.${host}`));
+}
+
+function isNodeSeekHost(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return normalized === 'nodeseek.com' || normalized.endsWith('.nodeseek.com');
 }

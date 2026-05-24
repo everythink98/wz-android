@@ -302,13 +302,21 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('标签筛选');
   });
 
-  it('adds Android topic reading tools for copy, refresh, reader mode, floor index, and comment find', () => {
-    expect(appSource).toContain('copyTopicLink');
-    expect(appSource).toContain('readerMode');
-    expect(appSource).toContain('focusMode');
+  it('keeps Android topic reading tools content-first without reader or focus toggles', () => {
+    expect(appSource).toContain('shareTopic');
+    expect(appSource).toContain('Share.share');
+    expect(appSource).not.toContain('readerMode');
+    expect(appSource).not.toContain('focusMode');
+    expect(topicScreenSource).toContain('topicTopActions');
+    expect(topicScreenSource).toContain('topicPostActionArea');
+    expect(topicScreenSource).not.toContain('Reader Mode');
+    expect(topicScreenSource).not.toContain('专注模式');
     expect(topicScreenSource).toContain('floorOpen');
     expect(topicScreenSource).toContain('commentQuery');
-    expect(appSource).toContain('copyReplyMarkdown');
+    expect(appSource).not.toContain('copyReplyMarkdown');
+    expect(appSource).not.toContain('buildReplyMarkdown');
+    expect(appSource).toContain('加鸡腿请求已提交');
+    expect(appSource).not.toContain('感谢请求已提交');
     expect(topicScreenSource).toContain('新增');
   });
 

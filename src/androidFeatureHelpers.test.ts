@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildReplyMarkdown,
   filterLibraryRecords,
   filterRepliesByQuery,
   groupLibraryRecordsByTime,
@@ -58,14 +57,13 @@ describe('Android feature helpers', () => {
     expect(groupLibraryRecordsByTime(records, new Date('2026-05-23T12:00:00.000Z')).map((section) => section.label)).toEqual(['今天', '本周', '更早']);
   });
 
-  it('filters replies by query and builds markdown quotes', () => {
+  it('filters replies by query', () => {
     const replies: Reply[] = [
       { floor: 1, author: 'alice', createdAt: '2026-05-23T01:00:00.000Z', contentHtml: '<p>Hello VPS</p>' },
       { floor: 2, author: 'bob', createdAt: '2026-05-23T02:00:00.000Z', contentHtml: '<p>Other</p>' }
     ];
 
     expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
-    expect(buildReplyMarkdown(replies[0], 1, 'Topic title', 'https://example.com/1')).toContain('> Hello VPS');
   });
 
   it('normalizes reader mode html noise', () => {

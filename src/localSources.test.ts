@@ -731,14 +731,14 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async () => html(`
       <a class="post-title" href="/post-743001-1">【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？</a>
       <div id="0" data-comment-id="10232616" class="content-item">
-        <div class="author-info"><a href="/space/48872" class="author-name">我是ikun</a><span class="is-poster">楼主</span></div>
+        <div class="author-info"><a href="/space/48872"><img src="/avatar/48872.png" alt="我是ikun"></a><a href="/space/48872" class="author-name">我是ikun</a><span class="is-poster">楼主</span></div>
         <span class="date-created"><time datetime="2026-05-22T15:55:11.000Z">1h ago</time></span>
         <span class="content-category">in <a href="/categories/daily">日常</a></span>
         <a href="#0" class="floor-link">#0</a>
         <article class="post-content"><p>如题，希望有经验的朋友分享一下，感谢</p></article>
       </div>
       <li id="1" data-comment-id="10232667" class="content-item">
-        <div class="author-info"><a href="/space/26953" class="author-name">纳西妲</a></div>
+        <div class="author-info"><a href="/space/26953"><img src="/avatar/26953.png" alt="纳西妲"></a><a href="/space/26953" class="author-name">纳西妲</a></div>
         <span class="date-created"><time datetime="2026-05-22T15:59:06.000Z">1h ago</time></span>
         <a href="#1" class="floor-link">#1</a>
         <article class="post-content"><p>都用 Google Pay 了肯定没风险</p></article>
@@ -750,12 +750,14 @@ describe('Android local sources', () => {
     expect(topic).toMatchObject({
       title: '【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？',
       author: '我是ikun',
+      authorAvatar: 'https://www.nodeseek.com/avatar/48872.png',
       commentId: 10232616,
       categoryId: 'daily',
       replyCount: 1
     });
     expect(topic.replies[0]).toMatchObject({
       author: '纳西妲',
+      authorAvatar: 'https://www.nodeseek.com/avatar/26953.png',
       floor: 1,
       commentId: 10232667,
       contentHtml: expect.stringContaining('都用 Google Pay')
