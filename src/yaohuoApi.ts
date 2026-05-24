@@ -125,7 +125,8 @@ export async function searchYaohuoDirect({
   timeoutMs?: number;
 }): Promise<SearchResponse> {
   const cookie = requireYaohuoCookie(yaohuoCookie);
-  const pageResult = await fetchYaohuoHtml(yaohuoUrl('/bbs/book_list.aspx', {
+  const searchPath = page > 1 ? '/bbs/book_list_search.aspx' : '/bbs/book_list.aspx';
+  const pageResult = await fetchYaohuoHtml(yaohuoUrl(searchPath, {
     action: 'search',
     type: 'title',
     key: query,

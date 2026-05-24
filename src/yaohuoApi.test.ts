@@ -60,6 +60,23 @@ describe('Android direct yaohuo API', () => {
     expect(result.nextPage).toBe(2);
   });
 
+  it('fetches later yaohuo search pages through the search pagination endpoint', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-456.html">第二页结果</a>/alice/阅1/05-20 10:00</div>'));
+
+    const result = await searchYaohuoDirect({
+      query: '免流',
+      page: 2,
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      'https://yaohuo.me/bbs/book_list_search.aspx?action=search&type=title&key=%E5%85%8D%E6%B5%81&classid=0&page=2&siteid=1000&getTotal=2021',
+      expect.any(Object)
+    );
+    expect(result.items[0]).toMatchObject({ id: '456', title: '第二页结果' });
+  });
+
   it('does not keep paginating yaohuo HTML when no topics were parsed', () => {
     const result = parseYaohuoListHtml('<a href="/bbs/book_list.aspx?page=51">下一页</a>', {
       classId: '177',
