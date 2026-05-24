@@ -30,7 +30,7 @@ describe('Android direct yaohuo API', () => {
     expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
   });
 
-  it('uses the default yaohuo class when category is blank', async () => {
+  it('uses the all-category yaohuo feed when category is blank', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
 
     await getYaohuoFeedDirect({
@@ -41,7 +41,22 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=1&siteid=1000',
+      'https://yaohuo.me/bbs/book_list.aspx?gettotal=2025&action=new',
+      expect.any(Object)
+    );
+  });
+
+  it('keeps all-category yaohuo pagination on the all feed URL', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+
+    await getYaohuoFeedDirect({
+      yaohuoCookie: 'sidyaohuo=secret',
+      page: 2,
+      yaohuoFetcher
+    });
+
+    expect(yaohuoFetcher).toHaveBeenCalledWith(
+      'https://yaohuo.me/bbs/book_list.aspx?gettotal=2025&action=new&page=2',
       expect.any(Object)
     );
   });
@@ -58,6 +73,28 @@ describe('Android direct yaohuo API', () => {
     expect(result.items.map((item) => item.id)).toEqual(['123']);
     expect(result.hasMore).toBe(true);
     expect(result.nextPage).toBe(2);
+  });
+
+  it('parses and sorts yaohuo search result times by newest first', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
+    try {
+      const result = parseYaohuoSearchHtml(`
+        <div class="listdata line1"><a href="/bbs-1539321.html">旧搜索结果</a>/alice/阅1 <span class="right">昨天 00:05</span></div>
+        <div class="listdata line2"><a href="/bbs-1539322.html">新搜索结果</a>/bob/阅1 <span class="right">今天 23:50</span></div>
+        <div class="listdata line1"><a href="/bbs-1539323.html">下午搜索结果</a>/carol/阅1 <span class="right">下午 3:20</span></div>
+      `, {
+        page: 1,
+        limit: 30
+      });
+
+      expect(result.items.map((item) => item.id)).toEqual(['1539322', '1539323', '1539321']);
+      expect(result.items[0].createdAt).toBe('2026-05-25T15:50:00.000Z');
+      expect(result.items[1].createdAt).toBe('2026-05-25T07:20:00.000Z');
+      expect(result.items[2].createdAt).toBe('2026-05-23T16:05:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('fetches later yaohuo search pages through the search pagination endpoint', async () => {
@@ -131,6 +168,67 @@ describe('Android direct yaohuo API', () => {
       replyCount: 0,
       viewCount: 39
     })]));
+  });
+
+  it('parses yaohuo relative list times as real Beijing times', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
+    try {
+      const result = parseYaohuoListHtml(`
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">午夜主题</a>/alice/阅1 <span class="right">今天 午夜</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">深夜主题</a>/bob/阅1 <span class="right">今天 23:50</span></div>
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539323.html">昨天主题</a>/carol/阅1 <span class="right">昨天 00:05</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539324.html">下午主题</a>/dave/阅1 <span class="right">下午 3:20</span></div>
+      `, {
+        page: 1,
+        limit: 30
+      });
+
+      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
+      expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2026-05-25T15:50:00.000Z');
+      expect(result.items.find((item) => item.id === '1539323')?.createdAt).toBe('2026-05-23T16:05:00.000Z');
+      expect(result.items.find((item) => item.id === '1539324')?.createdAt).toBe('2026-05-25T07:20:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('sorts yaohuo list rows by newest real time and keeps equal-time rows in source order', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
+    try {
+      const result = parseYaohuoListHtml(`
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">第一条同时间</a>/alice/阅1 <span class="right">今天 午夜</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">第二条同时间</a>/bob/阅1 <span class="right">今天 午夜</span></div>
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539323.html">更新主题</a>/carol/阅1 <span class="right">今天 23:50</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539324.html">旧主题</a>/dave/阅1 <span class="right">昨天 00:05</span></div>
+      `, {
+        page: 1,
+        limit: 30
+      });
+
+      expect(result.items.map((item) => item.id)).toEqual(['1539323', '1539321', '1539322', '1539324']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses yaohuo class ids from list row links before falling back to the selected class', () => {
+    const result = parseYaohuoListHtml(`
+      <div class="listdata line1">
+        <a class="topic-link" href="/bbs-1539321.html">悬赏主题</a>/alice/
+        <a href="/bbs/book_re.aspx?classid=213&amp;id=1539321">0</a>回/1阅 <span class="right">05-20 10:00</span>
+      </div>
+    `, {
+      page: 1,
+      limit: 30
+    });
+
+    expect(result.items[0]).toMatchObject({
+      id: '1539321',
+      categoryId: '213',
+      category: '悬赏问答'
+    });
   });
 
   it('rolls partial yaohuo dates back across a new-year boundary', () => {

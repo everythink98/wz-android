@@ -89,17 +89,23 @@ export async function getYaohuoFeedDirect({
   timeoutMs?: number;
 }): Promise<FeedResponse> {
   const cookie = requireYaohuoCookie(yaohuoCookie);
-  const classId = category?.trim() || DEFAULT_CLASS_ID;
-  const pageResult = await fetchYaohuoHtml(yaohuoUrl('/bbs/book_list.aspx', {
-    action: 'new',
-    classid: classId,
-    page,
-    siteid: '1000'
-  }), cookie, yaohuoFetcher, { signal, timeoutMs });
+  const classId = category?.trim();
+  const pageResult = await fetchYaohuoHtml(classId
+    ? yaohuoUrl('/bbs/book_list.aspx', {
+      action: 'new',
+      classid: classId,
+      page,
+      siteid: '1000'
+    })
+    : yaohuoUrl('/bbs/book_list.aspx', {
+      gettotal: '2025',
+      action: 'new',
+      ...(page > 1 ? { page } : {})
+    }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
   return parseYaohuoListHtml(pageResult.html, {
     url: pageResult.url,
-    classId,
+    classId: classId || undefined,
     page,
     limit
   });
