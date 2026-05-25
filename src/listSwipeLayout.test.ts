@@ -36,4 +36,8 @@ describe('Android topic list swipe layout', () => {
     expect(topicCardSource).toContain('style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]}');
     expect(topicCardSource).toContain('style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}');
   });
+
+  it('does not tint full topic rows for tracked keywords', () => {
+    expect(topicCardSource).not.toContain('readerState.tracked && styles.topicCardTracked');
+  });
 });

@@ -1,4 +1,4 @@
-import type { Category, FeedSource, Source, Topic } from './types';
+import type { Category, FeedSource, Source, Topic, UserProfile } from './types';
 
 export const readerDataVersion = 1;
 export const MAX_HISTORY_RECORDS = 1000;
@@ -34,11 +34,17 @@ export interface CategorySubscriptionRecord {
   subscribedAt: string;
 }
 
+export interface FollowedUserRecord {
+  user: UserProfile;
+  followedAt: string;
+}
+
 export interface DeletedRecords {
   favorites: Record<string, string>;
   history: Record<string, string>;
   later: Record<string, string>;
   subscriptions: Record<string, string>;
+  followedUsers: Record<string, string>;
   savedSearches: Record<string, string>;
 }
 
@@ -48,9 +54,9 @@ export interface ReaderSettings {
   blockedUsers: string[];
   blockedCategories: string[];
   listDensity: 'compact' | 'standard' | 'loose';
-  theme: 'system' | 'light' | 'dark';
-  palette: 'sage' | 'coral' | 'blue' | 'mint' | 'berry' | 'noir';
-  background: 'warm' | 'white' | 'gray';
+  theme: 'light' | 'dark';
+  palette: 'mint';
+  background: 'warm';
   fontScale: number;
   lineHeight: 'compact' | 'standard' | 'loose';
   contentWidth: 'narrow' | 'standard' | 'wide';
@@ -64,6 +70,7 @@ export interface ReaderData {
   later: Record<string, TopicRecord>;
   progress: Record<string, ReadingProgressRecord>;
   subscriptions: Record<string, CategorySubscriptionRecord>;
+  followedUsers: Record<string, FollowedUserRecord>;
   savedSearches: SavedSearchRecord[];
   deletedRecords: DeletedRecords;
   settings: ReaderSettings;
@@ -73,6 +80,26 @@ const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
 const validFeedSources = new Set<FeedSource>(['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
 const privateLocalSources = new Set<Source>(['yaohuo']);
 const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
+
+function userProfileUrl(source: Source, id: string, fallback = '') {
+  const cleanId = String(id || '').trim();
+  if (fallback) {
+    return fallback;
+  }
+  if (!cleanId) {
+    return '';
+  }
+  if (source === 'nodeseek') {
+    return `https://www.nodeseek.com/space/${encodeURIComponent(cleanId)}`;
+  }
+  if (source === 'linuxdo') {
+    return `https://linux.do/u/${encodeURIComponent(cleanId)}`;
+  }
+  if (source === 'v2ex') {
+    return `https://www.v2ex.com/member/${encodeURIComponent(cleanId)}`;
+  }
+  return `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -103,6 +130,20 @@ function isTopic(value: unknown): value is Topic {
   );
 }
 
+function isUserProfile(value: unknown): value is UserProfile {
+  const item = value as Partial<UserProfile>;
+  return Boolean(
+    item
+    && isSource(item.source)
+    && typeof item.id === 'string'
+    && item.id
+    && typeof item.username === 'string'
+    && item.username
+    && typeof item.url === 'string'
+    && item.url
+  );
+}
+
 function sanitizeTopicUrl(value: string) {
   try {
     const url = new URL(value);
@@ -123,7 +164,9 @@ function topicSummary(topic: Topic): Topic {
     id: String(topic.id),
     title: topic.title,
     author: topic.author || '',
+    authorId: topic.authorId,
     authorAvatar: topic.authorAvatar,
+    authorUrl: topic.authorUrl ? sanitizeTopicUrl(topic.authorUrl) : undefined,
     categoryId: topic.categoryId,
     category: topic.category,
     url: sanitizeTopicUrl(topic.url),
@@ -132,6 +175,24 @@ function topicSummary(topic: Topic): Topic {
     replyCount: Number(topic.replyCount || 0),
     viewCount: topic.viewCount,
     excerpt: topic.excerpt
+  };
+}
+
+function userSummary(user: UserProfile): UserProfile {
+  const id = String(user.id || user.username || '').trim();
+  return {
+    source: user.source,
+    id,
+    username: user.username || user.displayName || '',
+    displayName: user.displayName,
+    avatar: user.avatar ? sanitizeTopicUrl(user.avatar) : undefined,
+    url: sanitizeTopicUrl(userProfileUrl(user.source, id, user.url)),
+    bio: user.bio,
+    joinedAt: user.joinedAt,
+    topicCount: typeof user.topicCount === 'number' ? user.topicCount : undefined,
+    replyCount: typeof user.replyCount === 'number' ? user.replyCount : undefined,
+    postCount: typeof user.postCount === 'number' ? user.postCount : undefined,
+    topics: Array.isArray(user.topics) ? user.topics.filter(isTopic).map(topicSummary).slice(0, 50) : []
   };
 }
 
@@ -168,6 +229,7 @@ function createEmptyDeletedRecords(): DeletedRecords {
     history: {},
     later: {},
     subscriptions: {},
+    followedUsers: {},
     savedSearches: {}
   };
 }
@@ -180,6 +242,7 @@ export function createEmptyReaderData(): ReaderData {
     later: {},
     progress: {},
     subscriptions: {},
+    followedUsers: {},
     savedSearches: [],
     deletedRecords: createEmptyDeletedRecords(),
     settings: {
@@ -188,8 +251,8 @@ export function createEmptyReaderData(): ReaderData {
       blockedUsers: [],
       blockedCategories: [],
       listDensity: 'standard',
-      theme: 'system',
-      palette: 'sage',
+      theme: 'light',
+      palette: 'mint',
       background: 'warm',
       fontScale: 1,
       lineHeight: 'standard',
@@ -205,6 +268,10 @@ export function topicKey(topic: Pick<Topic, 'source' | 'id'>) {
 
 export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
   return `${category.source}:${category.id}`;
+}
+
+export function userKey(user: Pick<UserProfile, 'source' | 'id'>) {
+  return `${user.source}:${user.id}`;
 }
 
 function savedSearchKey(query: string) {
@@ -328,6 +395,29 @@ function normalizeSavedSearches(value: unknown): SavedSearchRecord[] {
     .slice(0, 30);
 }
 
+function normalizeFollowedUsers(value: unknown): Record<string, FollowedUserRecord> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  const next: Record<string, FollowedUserRecord> = {};
+  for (const record of Object.values(value)) {
+    const candidate = record as Partial<FollowedUserRecord>;
+    if (!candidate.user || !isUserProfile(candidate.user)) {
+      continue;
+    }
+    const followedAt = typeof candidate.followedAt === 'string' ? candidate.followedAt : '';
+    if (dateValue(followedAt) <= 0) {
+      continue;
+    }
+    const user = userSummary(candidate.user);
+    next[userKey(user)] = {
+      user,
+      followedAt
+    };
+  }
+  return next;
+}
+
 function normalizeDeletedRecordMap(value: unknown, normalizeKey?: (key: string) => string): Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -353,6 +443,7 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
     history: normalizeDeletedRecordMap(base.history),
     later: normalizeDeletedRecordMap(base.later),
     subscriptions: normalizeDeletedRecordMap(base.subscriptions),
+    followedUsers: normalizeDeletedRecordMap(base.followedUsers),
     savedSearches: normalizeDeletedRecordMap(base.savedSearches, normalizeSavedSearchDeletedKey)
   };
 }
@@ -370,9 +461,9 @@ function normalizeSettings(value: unknown): ReaderSettings {
     blockedUsers: normalizeStringList(base.blockedUsers),
     blockedCategories: normalizeStringList(base.blockedCategories),
     listDensity: base.listDensity === 'compact' || base.listDensity === 'loose' ? base.listDensity : 'standard',
-    theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : 'system',
-    palette: base.palette === 'coral' || base.palette === 'blue' || base.palette === 'mint' || base.palette === 'berry' || base.palette === 'noir' ? base.palette : 'sage',
-    background: base.background === 'white' || base.background === 'gray' ? base.background : 'warm',
+    theme: base.theme === 'dark' ? 'dark' : 'light',
+    palette: 'mint',
+    background: 'warm',
     fontScale,
     lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'loose' ? base.lineHeight : 'standard',
     contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'wide' ? base.contentWidth : 'standard',
@@ -392,6 +483,7 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     later: normalizeRecordMap(data.later),
     progress: limitRecordMap(normalizeProgress(data.progress), MAX_PROGRESS_RECORDS, (record) => record.updatedAt),
     subscriptions: normalizeSubscriptions(data.subscriptions),
+    followedUsers: normalizeFollowedUsers(data.followedUsers),
     savedSearches: normalizeSavedSearches(data.savedSearches),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
@@ -423,12 +515,14 @@ export function sanitizeReaderDataForSync(value: unknown): ReaderData {
     later: filterPrivateTopicRecords(data.later),
     progress: filterPrivateTopicRecords(data.progress),
     subscriptions: filterPrivateSubscriptions(data.subscriptions),
+    followedUsers: Object.fromEntries(Object.entries(data.followedUsers).filter(([, record]) => !privateLocalSources.has(record.user.source))),
     savedSearches: data.savedSearches.filter((record) => record.source !== 'yaohuo'),
     deletedRecords: {
       favorites: filterPrivateDeleted(data.deletedRecords.favorites),
       history: filterPrivateDeleted(data.deletedRecords.history),
       later: filterPrivateDeleted(data.deletedRecords.later),
       subscriptions: filterPrivateDeleted(data.deletedRecords.subscriptions),
+      followedUsers: filterPrivateDeleted(data.deletedRecords.followedUsers),
       savedSearches: filterPrivateDeleted(data.deletedRecords.savedSearches)
     }
   });
@@ -549,6 +643,13 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     remote.deletedRecords.subscriptions,
     (record) => record.subscribedAt
   );
+  const followedUsers = mergeTimedMapWithDeleted(
+    local.followedUsers,
+    remote.followedUsers,
+    local.deletedRecords.followedUsers,
+    remote.deletedRecords.followedUsers,
+    (record) => record.followedAt
+  );
   const savedSearches = mergeSavedSearchesWithDeleted(local, remote);
 
   return sanitizeReaderData({
@@ -558,12 +659,14 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     later: later.records,
     progress: mergeTimedMap(local.progress, remote.progress, (record) => record.updatedAt),
     subscriptions: subscriptions.records,
+    followedUsers: followedUsers.records,
     savedSearches: savedSearches.records,
     deletedRecords: {
       favorites: favorites.deleted,
       history: history.deleted,
       later: later.deleted,
       subscriptions: subscriptions.deleted,
+      followedUsers: followedUsers.deleted,
       savedSearches: savedSearches.deleted
     },
     settings: remoteHasSettings ? remote.settings : local.settings
@@ -670,6 +773,21 @@ export function addSavedSearch(data: ReaderData, query: string): ReaderData {
   };
 }
 
+export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
+  const summary = userSummary(user);
+  const key = userKey(summary);
+  const next = { ...data.followedUsers };
+  let deletedRecords = data.deletedRecords;
+  if (next[key]) {
+    delete next[key];
+    deletedRecords = markDeleted(deletedRecords, 'followedUsers', key);
+  } else {
+    next[key] = { user: summary, followedAt: nowIso() };
+    deletedRecords = clearDeleted(deletedRecords, 'followedUsers', key);
+  }
+  return { ...data, followedUsers: next, deletedRecords };
+}
+
 export function removeSavedSearch(data: ReaderData, id: string) {
   if (!id || !data.savedSearches.some((item) => item.id === id)) {
     return data;
@@ -719,6 +837,23 @@ export function removeRecords(data: ReaderData, section: 'favorites' | 'history'
   return {
     ...data,
     [section]: next,
+    deletedRecords
+  };
+}
+
+export function removeFollowedUsers(data: ReaderData, users: Array<Pick<UserProfile, 'source' | 'id'>>) {
+  const next = { ...data.followedUsers };
+  let deletedRecords = data.deletedRecords;
+  for (const user of users) {
+    const key = userKey(user);
+    if (next[key]) {
+      delete next[key];
+      deletedRecords = markDeleted(deletedRecords, 'followedUsers', key);
+    }
+  }
+  return {
+    ...data,
+    followedUsers: next,
     deletedRecords
   };
 }
@@ -777,4 +912,8 @@ export function isLater(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
 
 export function isSubscribed(data: ReaderData, category: Pick<Category, 'source' | 'id'>) {
   return Boolean(data.subscriptions[categoryKey(category)]);
+}
+
+export function isUserFollowed(data: ReaderData, user: Pick<UserProfile, 'source' | 'id'>) {
+  return Boolean(data.followedUsers[userKey(user)]);
 }

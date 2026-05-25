@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Animated, PanResponder, Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import { Star, X } from 'lucide-react-native';
 import type { Topic } from '../types';
@@ -45,7 +45,11 @@ export function TopicCard({
   swipeAction,
   styles,
   theme,
-  onOpenTopic
+  onOpenTopic,
+  swipeOpenKey,
+  onSwipeActiveChange,
+  onSwipeClose,
+  onSwipeOpen
 }: {
   highlightQuery?: string;
   topic: Topic;
@@ -54,18 +58,51 @@ export function TopicCard({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
+  swipeOpenKey?: string;
+  onSwipeActiveChange?: (active: boolean) => void;
+  onSwipeClose?: () => void;
+  onSwipeOpen?: (key: string) => void;
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
   const isSwipeOpenRef = useRef(false);
+  const isSwipeActiveRef = useRef(false);
+  const key = topicKey(topic);
+  const releaseSwipeActive = useCallback(() => {
+    if (isSwipeActiveRef.current) {
+      isSwipeActiveRef.current = false;
+      onSwipeActiveChange?.(false);
+    }
+  }, [onSwipeActiveChange]);
   const animateSwipe = useCallback((open: boolean) => {
     isSwipeOpenRef.current = open;
+    if (open) {
+      onSwipeOpen?.(key);
+    } else {
+      onSwipeClose?.();
+    }
     Animated.spring(translateX, {
       toValue: open ? -LIST_SWIPE_ACTION_WIDTH : 0,
       useNativeDriver: true,
       friction: 9,
       tension: 90
     }).start();
-  }, [translateX]);
+  }, [key, onSwipeClose, onSwipeOpen, translateX]);
+  useEffect(() => {
+    if (isSwipeOpenRef.current && swipeOpenKey !== key) {
+      animateSwipe(false);
+    }
+  }, [animateSwipe, key, swipeOpenKey]);
+  useEffect(() => () => {
+    releaseSwipeActive();
+  }, [releaseSwipeActive]);
+  useEffect(() => {
+    if (!swipeAction) {
+      releaseSwipeActive();
+      if (isSwipeOpenRef.current) {
+        animateSwipe(false);
+      }
+    }
+  }, [animateSwipe, releaseSwipeActive, swipeAction]);
   const openTopicPress = useCallback(() => {
     if (isSwipeOpenRef.current) {
       animateSwipe(false);
@@ -78,17 +115,33 @@ export function TopicCard({
     animateSwipe(false);
   }, [animateSwipe, swipeAction, topic]);
   const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => Boolean(swipeAction) && shouldCaptureListSwipe(gesture.dx, gesture.dy),
+    onMoveShouldSetPanResponder: (_event, gesture) => {
+      if (!swipeAction) {
+        return false;
+      }
+      if (isSwipeOpenRef.current) {
+        return Math.abs(gesture.dx) >= 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.6;
+      }
+      return shouldCaptureListSwipe(gesture.dx, gesture.dy);
+    },
+    onPanResponderGrant: () => {
+      isSwipeActiveRef.current = true;
+      onSwipeActiveChange?.(true);
+    },
     onPanResponderMove: (_event, gesture) => {
       const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
       translateX.setValue(clampListSwipeTranslate(start + gesture.dx));
     },
     onPanResponderRelease: (_event, gesture) => {
       const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
+      releaseSwipeActive();
       animateSwipe(Boolean(swipeAction) && shouldOpenListSwipeAction(start + gesture.dx, gesture.vx));
     },
-    onPanResponderTerminate: () => animateSwipe(isSwipeOpenRef.current)
-  }), [animateSwipe, swipeAction, translateX]);
+    onPanResponderTerminate: () => {
+      releaseSwipeActive();
+      animateSwipe(isSwipeOpenRef.current);
+    }
+  }), [animateSwipe, onSwipeActiveChange, releaseSwipeActive, swipeAction, translateX]);
   const ActionIcon = swipeAction?.kind === 'delete' ? X : Star;
   const swipeActionLabel = swipeAction?.kind === 'delete'
     ? '删除'
@@ -123,7 +176,6 @@ export function TopicCard({
         {...(swipeAction ? panResponder.panHandlers : {})}
         style={[
           styles.topicCard,
-          readerState.tracked && styles.topicCardTracked,
           { transform: [{ translateX }] }
         ]}
       >
@@ -158,6 +210,10 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.theme === next.theme
   && previous.highlightQuery === next.highlightQuery
   && previous.onOpenTopic === next.onOpenTopic
+  && previous.onSwipeActiveChange === next.onSwipeActiveChange
+  && previous.onSwipeClose === next.onSwipeClose
+  && previous.onSwipeOpen === next.onSwipeOpen
   && previous.swipeAction === next.swipeAction
+  && previous.swipeOpenKey === next.swipeOpenKey
   && topicListItemStatesEqual(previous.readerState, next.readerState)
 ));

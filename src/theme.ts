@@ -56,35 +56,23 @@ export function alphaColor(hex: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-export function createTheme(settings: ReaderSettings, systemScheme: 'light' | 'dark' | null | undefined): ReaderTheme {
-  const dark = settings.theme === 'dark' || (settings.theme === 'system' && systemScheme === 'dark');
-  const palette = {
-    sage: { light: '#016826', dark: '#6dc17b', lightOn: '#fbfbf9', darkOn: '#0b100c' },
-    coral: { light: '#94563e', dark: '#d39780', lightOn: '#fdfaf8', darkOn: '#130d0a' },
-    blue: { light: '#326893', dark: '#80b1da', lightOn: '#f8fbfd', darkOn: '#0a0f13' },
-    mint: { light: '#1f6954', dark: '#72b8a0', lightOn: '#f8fbfa', darkOn: '#09100d' },
-    berry: { light: '#80557c', dark: '#c899c3', lightOn: '#fcf9fc', darkOn: '#110d11' },
-    noir: { light: '#3f3723', dark: '#c4af7e', lightOn: '#f1ebdc', darkOn: '#110e08' }
-  }[settings.palette];
-  const backgrounds = {
-    warm: { background: '#f7f7f2', surface2: '#f6f6f1', line: '#e8e8e2', lineStrong: '#d7d7cf' },
-    white: { background: '#ffffff', surface2: '#f7f7f7', line: '#e5e5e5', lineStrong: '#d8d8d8' },
-    gray: { background: '#f5f5f5', surface2: '#f7f7f7', line: '#e6e6e6', lineStrong: '#d9d9d9' }
-  };
-  const background = backgrounds[settings.background];
+export function createTheme(settings: ReaderSettings): ReaderTheme {
+  const dark = settings.theme === 'dark';
+  const palette = { light: '#1f6954', dark: '#72b8a0', lightOn: '#f8fbfa', darkOn: '#09100d' };
+  const background = { base: '#ffffff', surface2: '#f7f7f7', line: '#e5e5e5', lineStrong: '#d8d8d8' };
   if (dark) {
     return {
       dark: true,
-      background: '#151713',
-      surface: '#1b1d18',
-      surface2: '#22251f',
-      line: '#31342d',
-      lineStrong: '#45493f',
-      ink: '#eeeeea',
-      muted: '#aaa79f',
+      background: '#111111',
+      surface: '#171717',
+      surface2: '#222222',
+      line: '#2f2f2f',
+      lineStrong: '#444444',
+      ink: '#eeeeee',
+      muted: '#a6a6a6',
       primary: palette.dark,
-      primarySoft: alphaColor(palette.dark, 0.16),
-      mist: alphaColor(palette.dark, 0.18),
+      primarySoft: alphaColor(palette.dark, 0.12),
+      mist: alphaColor(palette.dark, 0.12),
       onPrimary: palette.darkOn,
       danger: '#da8378',
       success: palette.dark
@@ -92,8 +80,8 @@ export function createTheme(settings: ReaderSettings, systemScheme: 'light' | 'd
   }
   return {
     dark: false,
-    background: background.background,
-    surface: '#ffffff',
+    background: background.base,
+    surface: background.base,
     surface2: background.surface2,
     line: background.line,
     lineStrong: background.lineStrong,
@@ -115,7 +103,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
   const densityPadding = settings.listDensity === 'compact' ? 10 : settings.listDensity === 'loose' ? 16 : 13;
   const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)));
   const appFontFamily = fontFamilyValue(settings.fontFamily);
-  const topicRowBackground = theme.dark || settings.background === 'white' ? theme.surface : theme.background;
+  const topicRowBackground = theme.background;
   return StyleSheet.create({
     screen: {
       flex: 1,
@@ -235,9 +223,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     topicCardRead: {
       opacity: 0.62
-    },
-    topicCardTracked: {
-      backgroundColor: theme.primarySoft
     },
     topicCardHead: {
       alignItems: 'center',
@@ -536,6 +521,25 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 11,
       paddingVertical: 6
+    },
+    removableChipShell: {
+      position: 'relative',
+      justifyContent: 'center',
+      paddingRight: 5,
+      paddingTop: 5
+    },
+    removableChipClose: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth
     },
     inlineChipGroup: {
       alignItems: 'center',

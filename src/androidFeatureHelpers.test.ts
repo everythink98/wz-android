@@ -5,9 +5,10 @@ import {
   groupLibraryRecordsByTime,
   highlightHtml,
   highlightTextParts,
+  libraryCategoryFilterItems,
   readerModeHtml
 } from './androidFeatureHelpers';
-import type { Reply, Topic } from './types';
+import type { Category, Reply, Topic } from './types';
 import type { TopicRecord } from './readerData';
 
 const topic: Topic = {
@@ -24,7 +25,14 @@ const topic: Topic = {
 
 function record(patch: Partial<TopicRecord> & { id: string; savedAt: string }): TopicRecord {
   return {
-    topic: { ...topic, id: patch.id, title: `Topic ${patch.id}`, category: patch.topic?.category ?? topic.category },
+    topic: {
+      ...topic,
+      id: patch.id,
+      title: `Topic ${patch.id}`,
+      category: patch.topic?.category ?? topic.category,
+      categoryId: patch.topic?.categoryId ?? topic.categoryId,
+      source: patch.topic?.source ?? topic.source
+    },
     savedAt: patch.savedAt,
     tags: patch.tags,
     note: patch.note,
@@ -55,6 +63,40 @@ describe('Android feature helpers', () => {
 
     expect(filterLibraryRecords(records, { source: 'all', category: 'Daily', tag: 'server' }).map((item) => item.topic.id)).toEqual(['1']);
     expect(groupLibraryRecordsByTime(records, new Date('2026-05-23T12:00:00.000Z')).map((section) => section.label)).toEqual(['今天', '本周', '更早']);
+  });
+
+  it('filters library records by source-scoped category keys', () => {
+    const records = [
+      record({ id: '1', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'nodeseek', category: '日常', categoryId: 'daily' } }),
+      record({ id: '2', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'daily' } })
+    ];
+
+    expect(filterLibraryRecords(records, { source: 'all', category: 'v2ex:daily', tag: 'all' }).map((item) => item.topic.id)).toEqual(['2']);
+    expect(filterLibraryRecords(records, { source: 'nodeseek', category: 'nodeseek:daily', tag: 'all' }).map((item) => item.topic.id)).toEqual(['1']);
+  });
+
+  it('builds library category filters only from the selected source', () => {
+    const records = [
+      record({ id: '1', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'create' } }),
+      record({ id: '2', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'nodeseek', category: '日常', categoryId: 'daily' } }),
+      record({ id: '3', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'linuxdo', category: '4', categoryId: '4' } })
+    ];
+    const categories: Category[] = [
+      { source: 'v2ex', id: 'create', name: '分享创造' },
+      { source: 'nodeseek', id: 'daily', name: '日常' },
+      { source: 'linuxdo', id: '4', name: '开发调优' }
+    ];
+
+    expect(libraryCategoryFilterItems(records, categories, 'linuxdo')).toEqual([
+      { value: 'all', label: '节点全部' },
+      { value: 'linuxdo:4', label: '开发调优' }
+    ]);
+    expect(libraryCategoryFilterItems(records, categories, 'all').map((item) => item.value)).toEqual([
+      'all',
+      'v2ex:create',
+      'nodeseek:daily',
+      'linuxdo:4'
+    ]);
   });
 
   it('filters replies by query', () => {

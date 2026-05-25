@@ -1,4 +1,4 @@
-import type { FeedSource, Reply } from './types';
+import type { Category, FeedSource, Reply } from './types';
 import type { TopicRecord } from './readerData';
 
 export interface HighlightPart {
@@ -15,6 +15,17 @@ export interface LibraryFilter {
 export interface LibrarySection {
   label: string;
   records: TopicRecord[];
+}
+
+export function libraryCategoryKey(source: FeedSource, categoryId: string) {
+  return source === 'all' ? categoryId : `${source}:${categoryId}`;
+}
+
+export function libraryCategoryLabel(source: FeedSource, category: Category) {
+  if (source === 'linuxdo' && category.id === 'uncategorized') {
+    return '未分类';
+  }
+  return category.name || category.id;
 }
 
 function escapeRegExp(value: string) {
@@ -87,9 +98,25 @@ export function readerModeHtml(html: string) {
 export function filterLibraryRecords(records: TopicRecord[], filter: LibraryFilter) {
   return records.filter((record) => (
     (filter.source === 'all' || record.topic.source === filter.source)
-    && (filter.category === 'all' || record.topic.category === filter.category)
+    && (filter.category === 'all' || libraryCategoryKey(record.topic.source, record.topic.categoryId || record.topic.category || '') === filter.category || record.topic.category === filter.category)
     && (filter.tag === 'all' || record.tags?.includes(filter.tag))
   ));
+}
+
+export function libraryCategoryFilterItems(records: TopicRecord[], categories: Category[], source: FeedSource) {
+  const selected = source === 'all' ? categories : categories.filter((category) => category.source === source);
+  const seen = new Set<string>();
+  return [
+    { value: 'all', label: '节点全部' },
+    ...selected.flatMap((category) => {
+      const key = libraryCategoryKey(category.source, category.id);
+      if (seen.has(key)) {
+        return [];
+      }
+      seen.add(key);
+      return [{ value: key, label: libraryCategoryLabel(category.source, category) }];
+    })
+  ];
 }
 
 export function groupLibraryRecordsByTime(records: TopicRecord[], now = new Date()): LibrarySection[] {

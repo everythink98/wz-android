@@ -12,7 +12,9 @@ export interface Topic {
   id: string;
   title: string;
   author: string;
+  authorId?: string;
   authorAvatar?: string;
+  authorUrl?: string;
   categoryId?: string;
   category?: string;
   url: string;
@@ -29,6 +31,7 @@ export interface Reply {
   author: string;
   authorId?: string;
   authorAvatar?: string;
+  authorUrl?: string;
   contentHtml: string;
   createdAt: string;
   floor?: number;
@@ -66,6 +69,21 @@ export interface TopicDetail extends Topic {
   likeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+}
+
+export interface UserProfile {
+  source: Source;
+  id: string;
+  username: string;
+  displayName?: string;
+  avatar?: string;
+  url: string;
+  bio?: string;
+  joinedAt?: string;
+  topicCount?: number;
+  replyCount?: number;
+  postCount?: number;
+  topics: Topic[];
 }
 
 export interface FeedResponse {

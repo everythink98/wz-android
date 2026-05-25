@@ -1,10 +1,11 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
+import type { CategoriesResponse, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
   accessRequirementFromObject,
   absoluteUrl,
   isRecord,
   sanitizeContentHtml,
+  sortTopicsByCreatedAt,
   textExcerpt,
   toIsoString
 } from './localHtml';
@@ -86,6 +87,10 @@ function categoryMapFromData(data: unknown) {
   return map;
 }
 
+function userUrl(username: string) {
+  return `${BASE_URL}/u/${encodeURIComponent(username)}`;
+}
+
 function isUncategorizedCategory(category: unknown) {
   if (!isRecord(category)) {
     return false;
@@ -120,14 +125,18 @@ async function categoryMapForTopics(
   return nextCategoryMap;
 }
 
-function originalPosterUsername(topic: Record<string, unknown>, users: Map<string, Record<string, unknown>>) {
+function originalPoster(topic: Record<string, unknown>, users: Map<string, Record<string, unknown>>) {
   const posters = Array.isArray(topic.posters) ? topic.posters : [];
   const poster = posters.find((item) => isRecord(item) && /original poster/i.test(String(item.description || '')))
     || posters.find(isRecord);
-  return isRecord(poster) ? String(users.get(String(poster.user_id))?.username || '') : '';
+  return isRecord(poster) ? users.get(String(poster.user_id)) : undefined;
 }
 
-function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string): Topic | null {
+function originalPosterUsername(topic: Record<string, unknown>, users: Map<string, Record<string, unknown>>) {
+  return String(originalPoster(topic, users)?.username || '');
+}
+
+function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string, authorData?: Record<string, unknown>): Topic | null {
   if (!isRecord(raw)) {
     return null;
   }
@@ -139,11 +148,17 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   const lastReplyAt = toIsoString(raw.bumped_at || raw.last_posted_at || raw.created_at) || createdAt;
   const category = raw.category_id ? categoryMap.get(String(raw.category_id)) : undefined;
   const accessRequirement = accessRequirementFromObject(raw) || category?.accessRequirement;
+  const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
+  const authorName = author || String(createdBy.username || raw.last_poster_username || '');
+  const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
   return {
     source: 'linuxdo',
     id,
     title: String(raw.title || ''),
-    author: author || (isRecord(raw.details) && isRecord(raw.details.created_by) ? String(raw.details.created_by.username || '') : '') || String(raw.last_poster_username || ''),
+    author: authorName,
+    authorId: authorName || undefined,
+    authorAvatar,
+    authorUrl: authorName ? userUrl(authorName) : undefined,
     categoryId: raw.category_id ? String(raw.category_id) : undefined,
     category: category?.name || UNCATEGORIZED_CATEGORY_NAME,
     url: `${BASE_URL}/t/${raw.slug || id}/${id}`,
@@ -188,7 +203,9 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const quotedFloors = quotedFloorsFromHtml(contentHtml, topicId);
   return {
     author: String(raw.username || ''),
+    authorId: String(raw.username || '') || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
+    authorUrl: raw.username ? userUrl(String(raw.username)) : undefined,
     contentHtml,
     createdAt: toIsoString(raw.created_at),
     floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
@@ -302,7 +319,10 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
     categoryMap = await categoryMapForTopics(data, topics, categoryMap, options);
     const users = usersById(data.users);
-    const items = topics.map((topic) => normalizeTopic(topic, categoryMap, isRecord(topic) ? originalPosterUsername(topic, users) : '')).filter(Boolean) as Topic[];
+    const items = topics.map((topic) => {
+      const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
+      return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
+    }).filter(Boolean) as Topic[];
     if (!items.length) {
       break;
     }
@@ -351,7 +371,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
   const categoryMap = categoryMapFromData(data);
-  const topic = normalizeTopic(data, categoryMap, isRecord(firstPost) ? String(firstPost.username || '') : '');
+  const topic = normalizeTopic(data, categoryMap, isRecord(firstPost) ? String(firstPost.username || '') : '', isRecord(firstPost) ? firstPost : undefined);
   if (!topic) {
     throw new Error('linux.do 主题不存在');
   }
@@ -466,7 +486,8 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
     const categoryMap = categoryMapFromData(data);
     const topics = Array.isArray(data.topics) ? data.topics : [];
     const items = topics.slice(0, limit).map((topic) => {
-      const normalized = normalizeTopic(topic, categoryMap, isRecord(topic) ? originalPosterUsername(topic, users) : '');
+      const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
+      const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
       const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
       return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
     }).filter(Boolean) as Topic[];
@@ -487,4 +508,35 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
     }
     return searchLatestLinuxDoTopics(query, { ...options, limit, page });
   }
+}
+
+export async function getLinuxDoUserProfile(id: string, username: string, options: LinuxDoOptions = {}): Promise<UserProfile> {
+  const name = (username || id).trim();
+  if (!name) {
+    throw new Error('linux.do 用户信息不完整');
+  }
+  const data = await fetchLinuxDoJson<Record<string, unknown>>(`/u/${encodeURIComponent(name)}/summary.json`, undefined, options);
+  const summary = isRecord(data.user_summary) ? data.user_summary : {};
+  const user = isRecord(summary.user) ? summary.user : isRecord(data.user) ? data.user : {};
+  const resolvedUsername = String(user.username || name);
+  const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
+  const avatar = avatarUrl(user.avatar_template);
+  const categoryMap = categoryMapFromData(data);
+  const topics = Array.isArray(data.topics)
+    ? data.topics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[]
+    : [];
+  const visibleTopics = sortTopicsByCreatedAt(topics);
+  return {
+    source: 'linuxdo',
+    id: resolvedUsername,
+    username: resolvedUsername,
+    displayName,
+    avatar,
+    url: userUrl(resolvedUsername),
+    bio: typeof user.bio_raw === 'string' ? user.bio_raw : typeof user.bio_excerpt === 'string' ? user.bio_excerpt : undefined,
+    topicCount: Number(summary.topic_count || 0) || visibleTopics.length || undefined,
+    replyCount: Number(summary.reply_count || 0) || undefined,
+    postCount: Number(summary.post_count || 0) || undefined,
+    topics: visibleTopics
+  };
 }

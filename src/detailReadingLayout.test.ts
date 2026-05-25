@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
 const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
+const userScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'UserScreen.tsx'), 'utf8');
 const themeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'theme.ts'), 'utf8');
 
 describe('Android topic detail reading layout', () => {
@@ -131,6 +132,18 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).not.toContain('replaceInlineImagesWithAltText');
   });
 
+  it('uses the SVG avatar fallback on user profile pages too', () => {
+    expect(userScreenSource).toContain('SvgXml');
+    expect(userScreenSource).toContain('loadRemoteAvatarSvgText');
+    expect(userScreenSource).not.toContain('imageSourceFromUrl(user.avatar)');
+  });
+
+  it('falls back to profile initials when user profile avatars fail to load', () => {
+    expect(userScreenSource).toContain('const [imageFailed, setImageFailed] = useState(false);');
+    expect(userScreenSource).toContain('onError={() => setImageFailed(true)}');
+    expect(userScreenSource).toContain('uri && !imageFailed');
+  });
+
   it('renders mixed paragraph images as inline media instead of centered block images', () => {
     expect(topicScreenSource).toContain('flowInlineImagesInMixedParagraphs');
     expect(topicScreenSource).toContain('INLINE_FORUM_IMAGE_TAG');
@@ -155,7 +168,7 @@ describe('Android topic detail reading layout', () => {
 
   it('ties selected backgrounds and login panels to the current theme', () => {
     expect(themeSource).toContain('mist: alphaColor(palette.light, 0.09)');
-    expect(themeSource).toContain('mist: alphaColor(palette.dark, 0.18)');
+    expect(themeSource).toContain('mist: alphaColor(palette.dark, 0.12)');
     expect(themeSource).toContain('const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)))');
     expect(themeSource).toMatch(/webViewShell:\s*\{[\s\S]*height:\s*loginWebViewHeight[\s\S]*backgroundColor:\s*theme\.surface/);
   });

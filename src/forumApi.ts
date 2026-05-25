@@ -1,8 +1,8 @@
-import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, searchLinuxDo } from './localLinuxdo';
-import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, searchNodeSeek } from './localNodeseek';
-import { yaohuoCategoriesResponse, parseYaohuoListHtml, checkYaohuoLoginHtml } from './localYaohuo';
-import { getV2exCategories, getV2exFeed, getV2exTopic, searchV2ex } from './localV2ex';
-import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText } from './feedLogic';
+import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
+import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
+import { yaohuoCategoriesResponse, parseYaohuoListHtml, checkYaohuoLoginHtml, parseYaohuoUserProfileHtml } from './localYaohuo';
+import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
+import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchSort } from './feedLogic';
 import type {
   CategoriesResponse,
   FeedResponse,
@@ -12,9 +12,10 @@ import type {
   SearchResponse,
   Source,
   Topic,
-  TopicDetail
+  TopicDetail,
+  UserProfile
 } from './types';
-import type { Fetcher } from './request';
+import { fetchWithTimeout, type Fetcher } from './request';
 
 const allFeedSources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
 
@@ -333,6 +334,58 @@ export function getReply({
   return getLinuxDoReply(id, floor, { fetcher, signal, timeoutMs });
 }
 
+export function getUserProfile({
+  source,
+  id,
+  username,
+  fetcher,
+  nodeSeekCookie,
+  nodeSeekUserAgent,
+  yaohuoCookie,
+  signal,
+  timeoutMs
+}: {
+  source: Source;
+  id: string;
+  username?: string;
+  fetcher?: Fetcher;
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
+  yaohuoCookie?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<UserProfile> {
+  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  return pickSource(source, {
+    nodeseek: () => getNodeSeekUserProfile(id || username || '', options),
+    linuxdo: () => getLinuxDoUserProfile(id, username || id, { fetcher, signal, timeoutMs }),
+    v2ex: () => getV2exUserProfile(id, username || id, { fetcher, signal, timeoutMs }),
+    yaohuo: async () => {
+      if (!yaohuoCookie) {
+        throw new Error('请先登录妖火');
+      }
+      const targetId = id || username || '';
+      const url = `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(targetId)}&siteid=1000`;
+      const response = await fetchWithTimeout(url, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          Cookie: yaohuoCookie,
+          Referer: 'https://yaohuo.me/bbs/'
+        }
+      }, { fetcher, signal, timeoutMs });
+      const html = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return parseYaohuoUserProfileHtml(html, {
+        id: targetId,
+        username,
+        url: response.url || url
+      });
+    }
+  });
+}
+
 export async function searchTopics({
   source,
   query,
@@ -341,6 +394,7 @@ export async function searchTopics({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  sort = 'relevance',
   signal,
   timeoutMs
 }: {
@@ -351,6 +405,7 @@ export async function searchTopics({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  sort?: SearchSort;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
@@ -366,7 +421,7 @@ export async function searchTopics({
     ]);
     const expression = parseSearchExpression(query);
     return {
-      items: balanceTopicsBySource(sortByTime(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []))
+      items: sortTopicsByCreatedAt(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : [])
         .filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression)))
         .slice(0, limit),
       errors: mergeErrors(results, sources),
@@ -380,7 +435,7 @@ export async function searchTopics({
   const response = await pickSource(source, {
     nodeseek: () => searchNodeSeek(adapterQuery, options),
     linuxdo: () => searchLinuxDo(adapterQuery, options),
-    v2ex: () => searchV2ex(adapterQuery, options)
+    v2ex: () => searchV2ex(adapterQuery, { ...options, sort })
   });
   return filterSearchItems(response, query, limit);
 }

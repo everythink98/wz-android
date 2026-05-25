@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { getCategories, getFeed, getReply, parseYaohuoFeedHtml, parseYaohuoLoginHtml, searchTopics } from './forumApi';
+import { getCategories, getFeed, getReply, getUserProfile, parseYaohuoFeedHtml, parseYaohuoLoginHtml, searchTopics } from './forumApi';
 import { clearV2exCacheForTest } from './localV2ex';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -110,7 +110,295 @@ describe('Android local forum facade', () => {
     expect(result.errors.v2ex).toBeTruthy();
   });
 
-  it('balances all-source Android search across local source adapters without using the project search endpoint', async () => {
+  it('routes user profile reads to each public source site', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, readme: 'bio' } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0 }] }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, comments: [{ post_id: 101, floor_id: 2, text: 'NodeSeek reply' }] }));
+      }
+      if (input.includes('linux.do/u/alice/summary.json')) {
+        return new Response(JSON.stringify({
+          user_summary: {
+            user: { id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1_2.png' },
+            topic_count: 2,
+            post_count: 8
+          },
+          topics: [{ id: 42, title: 'linux topic', slug: 'linux-topic', created_at: '2026-05-20T00:00:00.000Z', posts_count: 1 }]
+        }));
+      }
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ id: 9, username: 'neo', avatar_large: '//cdn.v2ex.com/avatar.png', tagline: 'hello' }));
+      }
+      if (input.includes('v2ex.com/member/neo')) {
+        return new Response('<div class="cell item"><a class="topic-link" href="/t/121">V2EX topic</a><a class="node" href="/go/create">分享创造</a><span title="2026-05-20 10:00:00"></span></div>');
+      }
+      if (input.includes('yaohuo.me')) {
+        return new Response('<div class="content">昵称:火友<br/>发帖:3<br/>回帖:9</div><a href="/bbs-66.html">妖火主题</a>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
+    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+
+    expect(nodeseek).toMatchObject({ source: 'nodeseek', id: '48872', username: '我是ikun', url: 'https://www.nodeseek.com/space/48872' });
+    expect(linuxdo).toMatchObject({ source: 'linuxdo', id: 'alice', username: 'alice', postCount: 8, topicCount: 2 });
+    expect(v2ex).toMatchObject({ source: 'v2ex', id: 'neo', username: 'neo', bio: 'hello' });
+    expect(yaohuo).toMatchObject({ source: 'yaohuo', id: '7', username: '火友', postCount: 12 });
+  });
+
+  it('reads user profile topic times from all four Android sources', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          discussions: [{
+            post_id: 101,
+            title: 'NodeSeek topic',
+            rank: 0,
+            created_at: '2026-05-22T16:06:25.000Z'
+          }]
+        }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, comments: [{ post_id: 101, floor_id: 2, text: 'NodeSeek reply' }] }));
+      }
+      if (input.includes('linux.do/u/alice/summary.json')) {
+        return new Response(JSON.stringify({
+          user_summary: {
+            user: { id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1_2.png' }
+          },
+          topics: [{
+            id: 42,
+            title: 'linux topic',
+            slug: 'linux-topic',
+            created_at: '2026-05-20T00:00:00.000Z',
+            bumped_at: '2026-05-20T01:00:00.000Z',
+            posts_count: 2
+          }]
+        }));
+      }
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ id: 9, username: 'neo', avatar_large: '//cdn.v2ex.com/avatar.png', tagline: 'hello' }));
+      }
+      if (input.includes('v2ex.com/member/neo/topics')) {
+        return new Response(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/121#reply4">V2EX topic</a></span>
+            <span class="topic_info"><a class="node" href="/go/create">分享创造</a> · <strong><a href="/member/neo">neo</a></strong> · <span title="2026-05-20 10:00:00 +08:00">1 day ago</span></span>
+            <a class="count_livid" href="/t/121#reply4">4</a>
+          </div>
+        `);
+      }
+      if (input.includes('v2ex.com/member/neo')) {
+        return new Response('<h1>neo</h1><a href="/member/neo/topics">More topics by neo</a>');
+      }
+      if (input.includes('yaohuo.me')) {
+        return new Response(`
+          <div class="content">昵称:火友<br/>发帖:3<br/>回帖:9</div>
+          <div class="listdata"><a href="/bbs-66.html?classid=177">妖火主题</a>/火友/阅1/2026-05-20 10:00</div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
+    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+
+    expect(nodeseek.topics[0]).toMatchObject({
+      id: '101',
+      createdAt: '2026-05-22T16:06:25.000Z',
+      lastReplyAt: '2026-05-22T16:06:25.000Z'
+    });
+    expect(nodeseek.topics).toHaveLength(1);
+    expect(linuxdo.topics[0]).toMatchObject({
+      id: '42',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      lastReplyAt: '2026-05-20T01:00:00.000Z'
+    });
+    expect(v2ex.topics[0]).toMatchObject({
+      id: '121',
+      createdAt: '2026-05-20T02:00:00.000Z',
+      lastReplyAt: '2026-05-20T02:00:00.000Z'
+    });
+    expect(yaohuo.topics[0]).toMatchObject({
+      id: '66',
+      createdAt: '2026-05-20T02:00:00.000Z',
+      lastReplyAt: '2026-05-20T02:00:00.000Z'
+    });
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/member/neo/topics');
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('nodeseek.com/api/content/list-discussions?uid=48872&page=1');
+  });
+
+  it('reads V2EX user topics from the public member page and orders them newest first', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ id: 683966, username: 'haonanaaaaaa', avatar_large: 'https://cdn.v2ex.com/avatar.png' }));
+      }
+      if (input === 'https://www.v2ex.com/member/haonanaaaaaa') {
+        return new Response(`
+          <div class="cell item">
+            <span class="item_title"><a href="/t/1214608#reply177" class="topic-link">大家都用的什么代理软件</a></span>
+            <span class="topic_info"><a class="node" href="/go/survey">调查</a> · <strong><a href="/member/haonanaaaaaa">haonanaaaaaa</a></strong> · <span title="2026-05-25 02:10:57 +08:00">10h ago</span></span>
+            <a href="/t/1214608#reply177" class="count_livid">177</a>
+          </div>
+          <div class="cell item">
+            <span class="item_title"><a href="/t/1212849#reply55" class="topic-link">Gemini 要重新做教育认证了</a></span>
+            <span class="topic_info"><a class="node" href="/go/programmer">程序员</a> · <strong><a href="/member/haonanaaaaaa">haonanaaaaaa</a></strong> · <span title="2026-05-25 12:28:22 +08:00">31 mins ago</span></span>
+            <a href="/t/1212849#reply55" class="count_livid">55</a>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profile = await getUserProfile({ source: 'v2ex', id: 'haonanaaaaaa', username: 'haonanaaaaaa', fetcher });
+
+    expect(profile.topics.map((topic) => topic.id)).toEqual(['1212849', '1214608']);
+  });
+
+  it('orders all user profile topic lists by created time newest first', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          discussions: [
+            { post_id: 101, title: 'NodeSeek older', time: { createdDate: '2026-05-20T00:00:00.000Z' } },
+            { post_id: 102, title: 'NodeSeek newer', time: { createdDate: '2026-05-22T00:00:00.000Z' } }
+          ]
+        }));
+      }
+      if (input.includes('linux.do/u/alice/summary.json')) {
+        return new Response(JSON.stringify({
+          user_summary: {
+            user: { id: 7, username: 'alice', name: 'Alice' }
+          },
+          topics: [
+            { id: 41, title: 'linux older', slug: 'linux-older', created_at: '2026-05-20T00:00:00.000Z', bumped_at: '2026-05-23T00:00:00.000Z', posts_count: 2 },
+            { id: 42, title: 'linux newer', slug: 'linux-newer', created_at: '2026-05-22T00:00:00.000Z', posts_count: 1 }
+          ]
+        }));
+      }
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ id: 9, username: 'neo' }));
+      }
+      if (input === 'https://www.v2ex.com/member/neo') {
+        return new Response(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/121#reply4">V2EX older</a></span>
+            <span class="topic_info"><a class="node" href="/go/create">分享创造</a> · <strong><a href="/member/neo">neo</a></strong> · <span title="2026-05-20 10:00:00 +08:00">older</span></span>
+          </div>
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/122#reply4">V2EX newer</a></span>
+            <span class="topic_info"><a class="node" href="/go/create">分享创造</a> · <strong><a href="/member/neo">neo</a></strong> · <span title="2026-05-22 10:00:00 +08:00">newer</span></span>
+          </div>
+        `);
+      }
+      if (input.includes('yaohuo.me')) {
+        return new Response(`
+          <div class="content">昵称:火友<br/>发帖:3<br/>回帖:9</div>
+          <div class="listdata"><a href="/bbs-66.html?classid=177">妖火 older</a>/火友/阅1/2026-05-20 10:00</div>
+          <div class="listdata"><a href="/bbs-67.html?classid=177">妖火 newer</a>/火友/阅1/2026-05-22 10:00</div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+    const v2ex = await getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', fetcher });
+    const yaohuo = await getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' });
+
+    expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['102', '101']);
+    expect(linuxdo.topics.map((topic) => topic.id)).toEqual(['42', '41']);
+    expect(v2ex.topics.map((topic) => topic.id)).toEqual(['122', '121']);
+    expect(yaohuo.topics.map((topic) => topic.id)).toEqual(['67', '66']);
+  });
+
+  it('reads NodeSeek user profile post times from topic detail when the discussion list has no time', async () => {
+    const topicPayload = Buffer.from(JSON.stringify({
+      postData: {
+        title: 'NodeSeek topic',
+        op: { name: '我是ikun', userId: 48872 },
+        comments: [{
+          poster: { name: '我是ikun', id: 48872 },
+          markdown: 'body',
+          time: { createdDate: '2026-05-22T16:06:25.000Z' }
+        }]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0 }] }));
+      }
+      if (input.includes('nodeseek.com/post-101-1')) {
+        return new Response(`<script>${topicPayload}</script>`);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+
+    expect(nodeseek.topics[0]).toMatchObject({
+      id: '101',
+      createdAt: '2026-05-22T16:06:25.000Z',
+      lastReplyAt: '2026-05-22T16:06:25.000Z'
+    });
+    expect(calls).toContain('nodeseek.com/post-101-1');
+    expect(calls).not.toContain('list-comments');
+  });
+
+  it('reads NodeSeek user profile post times directly from nested discussion time', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          discussions: [{
+            post_id: 101,
+            title: 'NodeSeek topic',
+            rank: 0,
+            time: { createdDate: '2026-05-22T16:06:25.000Z' }
+          }]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+
+    expect(nodeseek.topics[0]).toMatchObject({
+      id: '101',
+      createdAt: '2026-05-22T16:06:25.000Z',
+      lastReplyAt: '2026-05-22T16:06:25.000Z'
+    });
+    expect(calls).not.toContain('nodeseek.com/post-101-1');
+    expect(calls).not.toContain('list-comments');
+  });
+
+  it('orders all-source Android search by time without using the project search endpoint', async () => {
     const manyNodeSeekTopics = Buffer.from(JSON.stringify({
       rotateTopics: Array.from({ length: 4 }, (_, index) => ({
         postId: 100 + index,
@@ -151,12 +439,58 @@ describe('Android local forum facade', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const result = await searchTopics({ source: 'all', query: 'match', limit: 3, fetcher });
+    const result = await searchTopics({ source: 'all', query: 'match', limit: 6, fetcher });
 
-    expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'linuxdo', 'v2ex']);
+    expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'nodeseek', 'nodeseek', 'nodeseek', 'linuxdo', 'v2ex']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
     expect(calls).not.toMatch(/127\.0\.0\.1(?::3000)?\/api\/search|10\.0\.2\.2(?::3000)?\/api\/search|localhost(?::3000)?\/api\/search/);
     expect(calls).not.toMatch(/127\.0\.0\.1(?::3000)?\/api\/yaohuo\/parse\/search|10\.0\.2\.2(?::3000)?\/api\/yaohuo\/parse\/search|localhost(?::3000)?\/api\/yaohuo\/parse\/search/);
+  });
+
+  it('orders all-source Android search by topic creation time newest first', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        return new Response(`<script>${Buffer.from(JSON.stringify({
+          rotateTopics: [{
+            postId: 100,
+            titleText: 'match NodeSeek older',
+            titleLink: '/post-100-1',
+            op: { name: 'alice' },
+            time: { createdDate: '2026-05-19T00:00:00.000Z' }
+          }]
+        })).toString('base64')}</script>`);
+      }
+      if (input.includes('linux.do/search.json')) {
+        return new Response(JSON.stringify({
+          topics: [{
+            id: 201,
+            title: 'match linux.do newest',
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-18T00:00:00.000Z',
+            posts_count: 1
+          }],
+          posts: []
+        }));
+      }
+      if (input.includes('sov2ex.com')) {
+        return new Response(JSON.stringify({
+          hits: [{
+            _source: {
+              id: 301,
+              title: 'match V2EX middle',
+              member: 'neo',
+              created: '2026-05-20T00:00:00.000Z',
+              replies: 0
+            }
+          }]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const result = await searchTopics({ source: 'all', query: 'match', limit: 3, fetcher });
+
+    expect(result.items.map((item) => item.source)).toEqual(['linuxdo', 'v2ex', 'nodeseek']);
   });
 
   it('keeps all-source Android feed balanced across local source adapters', async () => {

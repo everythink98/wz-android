@@ -4,8 +4,8 @@ import { dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUti
 
 export { dateTime } from './appUtils';
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite' | 'subscribed' | 'active' | 'hot';
-export type SearchSort = 'relevance' | 'time' | 'reply' | 'view';
-export type LibraryTab = 'favorites' | 'history';
+export type SearchSort = 'relevance' | 'time';
+export type LibraryTab = 'favorites' | 'users' | 'history';
 
 export interface SearchExpression {
   include: string[];
@@ -100,17 +100,8 @@ export function searchLocal(data: ReaderData, query: string, source: FeedSource)
     .map((record) => record.topic);
 }
 
-export function sortTopics(items: Topic[], sort: SearchSort) {
-  if (sort === 'reply') {
-    return [...items].sort((left, right) => right.replyCount - left.replyCount);
-  }
-  if (sort === 'view') {
-    return [...items].sort((left, right) => (right.viewCount || 0) - (left.viewCount || 0));
-  }
-  if (sort === 'time') {
-    return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
-  }
-  return items;
+export function sortTopicsByCreatedAt(items: Topic[]) {
+  return [...items].sort((left, right) => dateTime(right.createdAt) - dateTime(left.createdAt));
 }
 
 export function sortTopicsByActivity(items: Topic[]) {
@@ -299,7 +290,7 @@ export function recordsToTopics(records: Record<string, { topic: Topic; savedAt:
     .map((record) => record.topic);
 }
 
-export function removeRecord(data: ReaderData, section: LibraryTab, topic: Topic) {
+export function removeRecord(data: ReaderData, section: 'favorites' | 'history', topic: Topic) {
   const key = topicKey(topic);
   const next = { ...data[section] };
   delete next[key];

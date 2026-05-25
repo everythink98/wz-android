@@ -87,7 +87,7 @@ describe('Android App performance guards', () => {
     expect(moreScreenSource).toContain('const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
     expect(moreScreenSource).toContain('const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
     expect(moreScreenSource).toContain('const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);');
-    expect(moreScreenSource).toContain('const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);');
+    expect(moreScreenSource).not.toContain('CategorySubscriptionPanel');
     expect(moreScreenSource).toContain('const MemoizedAppearancePanel = memo(AppearancePanel);');
     expect(moreScreenSource).toContain('const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
     expect(moreScreenSource).not.toContain('previous.settings === next.settings');

@@ -1,16 +1,13 @@
-import { memo, type RefObject, useEffect, useMemo, useState } from 'react';
+import { memo, type RefObject, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, CheckCircle, LayoutGrid, List, LogIn, Settings, Star } from 'lucide-react-native';
-import type { Category } from '../types';
-import type { ReaderData, ReaderSettings } from '../readerData';
-import { categoryKey } from '../readerData';
+import { Activity, CheckCircle, LogIn, Settings } from 'lucide-react-native';
+import type { ReaderSettings } from '../readerData';
 import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
 import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from '../appUrls';
-import { feedSources } from '../feedCategoryRail';
-import { appendUnique, removeString, settingsList, sourceLabel } from '../appUtils';
+import { appendUnique, removeString, settingsList } from '../appUtils';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
+import { AppButton, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
@@ -43,7 +40,6 @@ true;
 `;
 
 function MoreScreen({
-  categories,
   checking,
   hasNodeSeekLoginCookie,
   hasYaohuoCookie,
@@ -58,12 +54,8 @@ function MoreScreen({
   linuxDoWebViewKey,
   linuxDoWebViewUserAgent,
   nodeSeekWebViewUserAgent,
-  favoriteCount,
-  historyCount,
   settings,
-  subscriptions,
   backupJson,
-  showCategoriesPanel,
   showLoginPanel,
   showYaohuoLoginPanel,
   showLinuxDoPanel,
@@ -95,24 +87,18 @@ function MoreScreen({
   onExportBackup,
   onExportBackupFile,
   onImportBackupFile,
-  onExportFavoritesMarkdownFile,
-  onRefreshCategories,
-  onSelectCategory,
   onBackupJsonChange,
   onSetLoadingLoginPage,
   onSetLoadingYaohuoLoginPage,
   onSetLoadingLinuxDoPage,
   onSetLinuxDoWebViewError,
   onResetLinuxDoWebView,
-  onShowCategoriesPanelChange,
   onShowLoginPanelChange,
   onShowYaohuoLoginPanelChange,
   onShowLinuxDoPanelChange,
   onShowSettingsPanelChange,
-  onToggleSubscription,
   onUpdateSettings
 }: {
-  categories: Category[];
   checking: boolean;
   hasNodeSeekLoginCookie: boolean;
   hasYaohuoCookie: boolean;
@@ -127,12 +113,8 @@ function MoreScreen({
   linuxDoWebViewKey: number;
   linuxDoWebViewUserAgent: string;
   nodeSeekWebViewUserAgent: string;
-  favoriteCount: number;
-  historyCount: number;
   settings: ReaderSettings;
-  subscriptions: ReaderData['subscriptions'];
   backupJson: string;
-  showCategoriesPanel: boolean;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
   showLinuxDoPanel: boolean;
@@ -164,29 +146,22 @@ function MoreScreen({
   onExportBackup: () => void;
   onExportBackupFile: () => void;
   onImportBackupFile: () => void;
-  onExportFavoritesMarkdownFile: () => void;
-  onRefreshCategories: () => void;
-  onSelectCategory: (category: Category) => void;
   onBackupJsonChange: (value: string) => void;
   onSetLoadingLoginPage: (value: boolean) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onSetLoadingLinuxDoPage: (value: boolean) => void;
   onSetLinuxDoWebViewError: (value: string) => void;
   onResetLinuxDoWebView: () => void;
-  onShowCategoriesPanelChange: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
-  onToggleSubscription: (category: Category) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.group}>
-        <InfoRow icon={Star} label="收藏" value={String(favoriteCount)} styles={styles} theme={theme} />
-        <InfoRow icon={List} label="历史" value={String(historyCount)} styles={styles} theme={theme} />
         <InfoRow icon={Activity} label="关于" value="Android 本机阅读器" styles={styles} theme={theme} />
       </View>
       <MemoizedBackupRestorePanel
@@ -199,7 +174,6 @@ function MoreScreen({
         onImportBackup={onImportBackup}
         onExportBackupFile={onExportBackupFile}
         onImportBackupFile={onImportBackupFile}
-        onExportFavoritesMarkdownFile={onExportFavoritesMarkdownFile}
       />
       <View style={styles.group}>
         <MemoizedNodeSeekLoginPanel
@@ -258,17 +232,6 @@ function MoreScreen({
           onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}
         />
       </View>
-      <MemoizedCategorySubscriptionPanel
-        categories={categories}
-        showCategoriesPanel={showCategoriesPanel}
-        styles={styles}
-        subscriptions={subscriptions}
-        theme={theme}
-        onRefreshCategories={onRefreshCategories}
-        onSelectCategory={onSelectCategory}
-        onShowCategoriesPanelChange={onShowCategoriesPanelChange}
-        onToggleSubscription={onToggleSubscription}
-      />
       <MemoizedAppearancePanel
         settings={settings}
         showSettingsPanel={showSettingsPanel}
@@ -298,8 +261,7 @@ function BackupRestorePanel({
   onExportBackup,
   onImportBackup,
   onExportBackupFile,
-  onImportBackupFile,
-  onExportFavoritesMarkdownFile
+  onImportBackupFile
 }: {
   backupJson: string;
   syncing: boolean;
@@ -310,7 +272,6 @@ function BackupRestorePanel({
   onImportBackup: () => void;
   onExportBackupFile: () => void;
   onImportBackupFile: () => void;
-  onExportFavoritesMarkdownFile: () => void;
 }) {
   return (
     <View style={styles.group}>
@@ -330,7 +291,6 @@ function BackupRestorePanel({
         <AppButton label={syncing ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackup} />
         <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onExportBackupFile} />
         <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackupFile} />
-        <AppButton label="导出收藏 Markdown" variant="ghost" styles={styles} disabled={syncing} onPress={onExportFavoritesMarkdownFile} />
       </View>
     </View>
   );
@@ -598,65 +558,6 @@ function LinuxDoVerifyPanel({
 
 const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);
 
-function CategorySubscriptionPanel({
-  categories,
-  showCategoriesPanel,
-  styles,
-  subscriptions,
-  theme,
-  onRefreshCategories,
-  onSelectCategory,
-  onShowCategoriesPanelChange,
-  onToggleSubscription
-}: {
-  categories: Category[];
-  showCategoriesPanel: boolean;
-  styles: ReturnType<typeof createStyles>;
-  subscriptions: ReaderData['subscriptions'];
-  theme: ReaderTheme;
-  onRefreshCategories: () => void;
-  onSelectCategory: (category: Category) => void;
-  onShowCategoriesPanelChange: (value: boolean) => void;
-  onToggleSubscription: (category: Category) => void;
-}) {
-  const grouped = useMemo(() => feedSources.map((source) => ({
-    source,
-    items: categories.filter((category) => category.source === source)
-  })), [categories]);
-  return (
-    <View style={styles.group}>
-      <MenuButton icon={LayoutGrid} label="分类节点" value="按来源浏览节点" styles={styles} theme={theme} onPress={() => onShowCategoriesPanelChange(!showCategoriesPanel)} />
-      {showCategoriesPanel ? (
-        <View style={styles.stack}>
-          <AppButton label="刷新分类" styles={styles} onPress={onRefreshCategories} />
-          {grouped.map((group) => (
-            <View key={group.source} style={styles.categoryGroup}>
-              <Text style={styles.panelTitle}>{sourceLabel(group.source)}</Text>
-              {group.items.length ? group.items.map((category) => (
-                <View key={categoryKey(category)} style={styles.categoryItem}>
-                  <Pressable accessibilityRole="button" style={styles.flex} onPress={() => onSelectCategory(category)}>
-                    <Text style={styles.categoryName}>{category.name}</Text>
-                    {category.description ? <Text style={styles.meta}>{category.description}</Text> : null}
-                    {category.topicCount ? <Text style={styles.meta}>最近 {category.topicCount} 个主题</Text> : null}
-                  </Pressable>
-                  <AppButton
-                    label={subscriptions[categoryKey(category)] ? '已订阅' : '订阅'}
-                    variant="ghost"
-                    styles={styles}
-                    onPress={() => onToggleSubscription(category)}
-                  />
-                </View>
-              )) : <EmptyText text="暂无分类" styles={styles} />}
-            </View>
-          ))}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-const MemoizedCategorySubscriptionPanel = memo(CategorySubscriptionPanel);
-
 function AppearancePanel({
   settings,
   showSettingsPanel,
@@ -674,7 +575,7 @@ function AppearancePanel({
 }) {
   return (
     <View style={styles.group}>
-      <MenuButton icon={Settings} label="外观设置" value="字号 · 主题 · 配色 · 背景" styles={styles} theme={theme} onPress={() => onShowSettingsPanelChange(!showSettingsPanel)} />
+      <MenuButton icon={Settings} label="外观设置" value="字号 · 白天/黑夜 · 阅读调节" styles={styles} theme={theme} onPress={() => onShowSettingsPanelChange(!showSettingsPanel)} />
       {showSettingsPanel ? (
         <SettingsPanel settings={settings} styles={styles} theme={theme} onUpdateSettings={onUpdateSettings} />
       ) : null}
@@ -742,23 +643,9 @@ function SettingsPanel({
         { value: '1.25', label: '特大' }
       ]} value={String(settings.fontScale)} styles={styles} onChange={(value) => onUpdateSettings({ fontScale: Number(value) })} />
       <SettingRail title="主题" items={[
-        { value: 'system', label: '系统' },
         { value: 'light', label: '浅色' },
         { value: 'dark', label: '深色' }
       ]} value={settings.theme} styles={styles} onChange={(value) => onUpdateSettings({ theme: value as ReaderSettings['theme'] })} />
-      <SettingRail title="配色" items={[
-        { value: 'sage', label: '豆青' },
-        { value: 'coral', label: '赤陶' },
-        { value: 'blue', label: '青蓝' },
-        { value: 'mint', label: '森绿' },
-        { value: 'berry', label: '紫莓' },
-        { value: 'noir', label: '墨金' }
-      ]} value={settings.palette} styles={styles} onChange={(value) => onUpdateSettings({ palette: value as ReaderSettings['palette'] })} />
-      <SettingRail title="背景" items={[
-        { value: 'warm', label: '暖白' },
-        { value: 'white', label: '豆瓣白' },
-        { value: 'gray', label: '浅灰' }
-      ]} value={settings.background} styles={styles} onChange={(value) => onUpdateSettings({ background: value as ReaderSettings['background'] })} />
       <SettingRail title="列表密度" items={[
         { value: 'compact', label: '紧凑' },
         { value: 'standard', label: '标准' },

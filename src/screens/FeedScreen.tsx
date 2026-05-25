@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FlatList, Text, View, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { FlatList, PanResponder, Text, View, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { ChevronUp, RefreshCw } from 'lucide-react-native';
 import type { Category, FeedSource, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
@@ -70,6 +70,8 @@ export function FeedScreen({
   const scrollStorageKey = useMemo(() => feedScrollStorageKey(feedSource, categoryFilter, readingFilter), [categoryFilter, feedSource, readingFilter]);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
   const [scrollRestoreReady, setScrollRestoreReady] = useState(false);
+  const [rowSwipeActive, setRowSwipeActive] = useState(false);
+  const [swipeOpenKey, setSwipeOpenKey] = useState<string | undefined>();
 
   const requestFeedLoadMore = useCallback(() => {
     if (!feedHasMore || busy || loadingMore) {
@@ -141,10 +143,39 @@ export function FeedScreen({
     restoreFeedScrollPosition();
   }, [restoreFeedScrollPosition]);
 
+  useEffect(() => {
+    setSwipeOpenKey(undefined);
+    setRowSwipeActive(false);
+  }, [categoryFilter, feedSource, readingFilter]);
+
   const scrollToTop = useCallback(() => {
+    setSwipeOpenKey(undefined);
+    setRowSwipeActive(false);
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
     setShowFloatingActions(false);
   }, []);
+  const switchFeedSourceBySwipe = useCallback((direction: 1 | -1) => {
+    const index = feedSourceItems.findIndex((item) => item.value === feedSource);
+    const next = feedSourceItems[index + direction];
+    if (next) {
+      setSwipeOpenKey(undefined);
+      setRowSwipeActive(false);
+      onFeedSourceChange(next.value);
+    }
+  }, [feedSource, onFeedSourceChange]);
+  const pagePanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => (
+      !rowSwipeActive
+      && Math.abs(gesture.dx) >= 52
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.8
+    ),
+    onPanResponderRelease: (_event, gesture) => {
+      if (Math.abs(gesture.dx) < 72 && Math.abs(gesture.vx) < 0.45) {
+        return;
+      }
+      switchFeedSourceBySwipe(gesture.dx < 0 ? 1 : -1);
+    }
+  }), [rowSwipeActive, switchFeedSourceBySwipe]);
   const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
     kind: 'favorite',
     onPress: onToggleFavorite
@@ -158,8 +189,12 @@ export function FeedScreen({
       topic={topic}
       onOpenTopic={onOpenTopic}
       swipeAction={favoriteSwipeAction}
+      swipeOpenKey={swipeOpenKey}
+      onSwipeActiveChange={setRowSwipeActive}
+      onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(topic) ? undefined : current)}
+      onSwipeOpen={setSwipeOpenKey}
     />
-  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, theme, topicListStateInput]);
+  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, swipeOpenKey, theme, topicListStateInput]);
   const categoryItems = useMemo(
     () => feedCategoryItems(categories, feedSource),
     [categories, feedSource]
@@ -196,7 +231,7 @@ export function FeedScreen({
     : '暂无主题';
 
   return (
-    <View style={styles.content}>
+    <View style={styles.content} {...pagePanResponder.panHandlers}>
       <FlatList
         ref={listRef}
         style={styles.content}
@@ -204,6 +239,11 @@ export function FeedScreen({
         data={feedItems}
         keyExtractor={topicKey}
         keyboardShouldPersistTaps="handled"
+        scrollEnabled={!rowSwipeActive}
+        onScrollBeginDrag={() => {
+          setSwipeOpenKey(undefined);
+          setRowSwipeActive(false);
+        }}
         onScroll={handleScroll}
         scrollEventThrottle={64}
         onMomentumScrollEnd={saveFeedScrollPosition}

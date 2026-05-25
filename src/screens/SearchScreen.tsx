@@ -3,7 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type Lis
 import { Search, X } from 'lucide-react-native';
 import type { FeedSource, Source, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
-import { sortTopics, type SearchSort } from '../feedLogic';
+import type { SearchSort } from '../feedLogic';
 import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
@@ -86,6 +86,8 @@ export function SearchScreen({
     kind: 'favorite',
     onPress: onToggleFavorite
   }), [onToggleFavorite]);
+  const [rowSwipeActive, setRowSwipeActive] = useState(false);
+  const [swipeOpenKey, setSwipeOpenKey] = useState<string | undefined>();
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <MemoizedTopicCard
       highlightQuery={query}
@@ -95,8 +97,12 @@ export function SearchScreen({
       topic={item}
       onOpenTopic={onOpenTopic}
       swipeAction={favoriteSwipeAction}
+      swipeOpenKey={swipeOpenKey}
+      onSwipeActiveChange={setRowSwipeActive}
+      onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(item) ? undefined : current)}
+      onSwipeOpen={setSwipeOpenKey}
     />
-  ), [favoriteSwipeAction, onOpenTopic, query, readerData, styles, theme, topicListStateInput]);
+  ), [favoriteSwipeAction, onOpenTopic, query, readerData, styles, swipeOpenKey, theme, topicListStateInput]);
   const selectSavedSearch = useCallback((id: string) => {
     const saved = readerData.savedSearches.find((item) => item.id === id);
     if (saved) {
@@ -107,8 +113,10 @@ export function SearchScreen({
   }, [onQueryChange, readerData.savedSearches]);
   const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
   useEffect(() => {
+    setSwipeOpenKey(undefined);
+    setRowSwipeActive(false);
     setSearchCategoryFilter('all');
-  }, [query, scope, searchSource]);
+  }, [query, scope, searchSource, sort]);
   const searchCategoryOptions = useMemo(() => {
     const counts = new Map<string, { label: string; count: number }>();
     for (const item of results) {
@@ -132,6 +140,10 @@ export function SearchScreen({
       setSearchCategoryFilter('all');
     }
   }, [searchCategoryFilter, searchCategoryOptions]);
+  useEffect(() => {
+    setSwipeOpenKey(undefined);
+    setRowSwipeActive(false);
+  }, [searchCategoryFilter]);
   const filteredSearchResults = useMemo(() => (
     searchCategoryFilter === 'all'
       ? results
@@ -139,19 +151,58 @@ export function SearchScreen({
   ), [results, searchCategoryFilter]);
   const visibleSearchGroups = useMemo(() => searchGroups.map((group) => ({
     ...group,
-    items: sortTopics(
-      searchCategoryFilter === 'all'
-        ? group.items
-        : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter),
-      sort
-    )
-  })), [searchCategoryFilter, searchGroups, sort]);
+    items: searchCategoryFilter === 'all'
+      ? group.items
+      : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
+  })), [searchCategoryFilter, searchGroups]);
+  const renderedSearchGroups = useMemo(() => visibleSearchGroups.map((group) => (
+    <View key={group.source} style={styles.group}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.panelTitle}>{group.label}</Text>
+        <Text style={styles.meta}>{group.loading ? '搜索中' : `${group.items.length} 条`}</Text>
+      </View>
+      {group.error ? (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{group.error}</Text>
+          <AppButton label={`重试 ${group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(group.source)} />
+        </View>
+      ) : null}
+      {group.loading ? <LoadingState text={`${group.label} 搜索中...`} styles={styles} theme={theme} /> : null}
+      {group.items.map((item) => (
+        <MemoizedTopicCard
+          key={topicKey(item)}
+          highlightQuery={query}
+          readerState={getTopicListItemState(readerData, item, topicListStateInput)}
+          styles={styles}
+          theme={theme}
+          topic={item}
+          onOpenTopic={onOpenTopic}
+          swipeAction={favoriteSwipeAction}
+          swipeOpenKey={swipeOpenKey}
+          onSwipeActiveChange={setRowSwipeActive}
+          onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(item) ? undefined : current)}
+          onSwipeOpen={setSwipeOpenKey}
+        />
+      ))}
+      {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
+      {!group.loading && !group.error && group.hasMore && group.nextPage ? (
+        <AppButton
+          label={group.loadingMore ? '加载中...' : `加载更多 ${group.label}`}
+          variant="ghost"
+          styles={styles}
+          disabled={busy || group.loadingMore}
+          onPress={() => onLoadMoreSearchSource(group.source, group.nextPage || 1)}
+        />
+      ) : null}
+    </View>
+  )), [busy, favoriteSwipeAction, onLoadMoreSearchSource, onOpenTopic, onRetrySearchSource, query, readerData, styles, swipeOpenKey, theme, topicListStateInput, visibleSearchGroups]);
   const linuxDoExternalItems = useMemo(() => (
     scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
       ? linuxDoExternalSearchItems(query)
       : []
   ), [query, scope, searchSource]);
   const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
+  const showSearchSort = scope === 'remote' && searchSource === 'v2ex';
 
   const header = (
     <View style={styles.stack}>
@@ -194,17 +245,17 @@ export function SearchScreen({
         styles={styles}
         onChange={(value) => onSearchSourceChange(value as FeedSource)}
       />
-      <PillRail
-        items={[
-          { value: 'relevance', label: '相关' },
-          { value: 'time', label: '按时间' },
-          { value: 'reply', label: '按回复' },
-          { value: 'view', label: '按浏览' }
-        ]}
-        value={sort}
-        styles={styles}
-        onChange={(value) => onSortChange(value as SearchSort)}
-      />
+      {showSearchSort ? (
+        <PillRail
+          items={[
+            { value: 'relevance', label: '相关' },
+            { value: 'time', label: '按时间' }
+          ]}
+          value={sort}
+          styles={styles}
+          onChange={(value) => onSortChange(value as SearchSort)}
+        />
+      ) : null}
       {searchCategoryOptions.length ? (
         <PillRail
           items={[{ value: 'all', label: '分类全部' }, ...searchCategoryOptions]}
@@ -225,43 +276,7 @@ export function SearchScreen({
       ) : null}
       {showRemoteGroups ? (
         <View style={styles.stack}>
-          {visibleSearchGroups.length ? visibleSearchGroups.map((group) => (
-            <View key={group.source} style={styles.group}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.panelTitle}>{group.label}</Text>
-                <Text style={styles.meta}>{group.loading ? '搜索中' : `${group.items.length} 条`}</Text>
-              </View>
-              {group.error ? (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorText}>{group.error}</Text>
-                  <AppButton label={`重试 ${group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(group.source)} />
-                </View>
-              ) : null}
-              {group.loading ? <LoadingState text={`${group.label} 搜索中...`} styles={styles} theme={theme} /> : null}
-              {group.items.map((item) => (
-                <MemoizedTopicCard
-                  key={topicKey(item)}
-                  highlightQuery={query}
-                  readerState={getTopicListItemState(readerData, item, topicListStateInput)}
-                  styles={styles}
-                  theme={theme}
-                  topic={item}
-                  onOpenTopic={onOpenTopic}
-                  swipeAction={favoriteSwipeAction}
-                />
-              ))}
-              {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
-              {!group.loading && !group.error && group.hasMore && group.nextPage ? (
-                <AppButton
-                  label={group.loadingMore ? '加载中...' : `加载更多 ${group.label}`}
-                  variant="ghost"
-                  styles={styles}
-                  disabled={busy || group.loadingMore}
-                  onPress={() => onLoadMoreSearchSource(group.source, group.nextPage || 1)}
-                />
-              ) : null}
-            </View>
-          )) : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
+          {visibleSearchGroups.length ? renderedSearchGroups : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
         </View>
       ) : null}
       <AppButton label="保存搜索" variant="ghost" styles={styles} onPress={onSaveSearch} />
@@ -285,11 +300,19 @@ export function SearchScreen({
           <Text style={styles.meta}>最近搜索</Text>
           <View style={styles.chipWrap}>
             {recentSearches.map((item) => (
-              <View key={item} style={styles.inlineChipGroup}>
+              <View key={item} style={styles.removableChipShell}>
                 <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => onQueryChange(item)}>
                   <Text style={styles.pillText}>{item}</Text>
                 </Pressable>
-                <IconButton tiny ghost icon={X} label="删除最近搜索" styles={styles} theme={theme} onPress={() => onRemoveRecentSearch(item)} />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`删除最近搜索 ${item}`}
+                  hitSlop={8}
+                  style={styles.removableChipClose}
+                  onPress={() => onRemoveRecentSearch(item)}
+                >
+                  <X size={12} color={theme.muted} strokeWidth={2.2} />
+                </Pressable>
               </View>
             ))}
           </View>
@@ -305,6 +328,11 @@ export function SearchScreen({
       data={showRemoteGroups ? [] : filteredSearchResults}
       keyExtractor={topicKey}
       keyboardShouldPersistTaps="handled"
+      scrollEnabled={!rowSwipeActive}
+      onScrollBeginDrag={() => {
+        setSwipeOpenKey(undefined);
+        setRowSwipeActive(false);
+      }}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()

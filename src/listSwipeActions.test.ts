@@ -15,7 +15,14 @@ describe('Android list swipe actions', () => {
 
   it('does not capture ordinary vertical scrolling', () => {
     expect(shouldCaptureListSwipe(-18, 44)).toBe(false);
-    expect(shouldCaptureListSwipe(-18, 8)).toBe(true);
+    expect(shouldCaptureListSwipe(-18, 8)).toBe(false);
+    expect(shouldCaptureListSwipe(-30, 8)).toBe(true);
+  });
+
+  it('keeps mostly horizontal swipes captured while rejecting diagonal drags', () => {
+    expect(shouldCaptureListSwipe(-30, 18)).toBe(false);
+    expect(shouldCaptureListSwipe(-42, 12)).toBe(true);
+    expect(shouldCaptureListSwipe(42, 12)).toBe(false);
   });
 
   it('keeps the row translation within the revealed action width', () => {

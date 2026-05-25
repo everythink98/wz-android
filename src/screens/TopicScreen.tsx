@@ -21,7 +21,7 @@ import { SvgXml } from 'react-native-svg';
 import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, RefreshCw, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
-import type { Reply, Source, Topic, TopicDetail } from '../types';
+import type { Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, YaohuoReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
@@ -132,6 +132,41 @@ function AuthorAvatar({
   );
 }
 
+function userFromTopic(topic: Topic | TopicDetail): UserProfile | null {
+  const id = topic.authorId || topic.author;
+  if (!id && !topic.authorUrl) {
+    return null;
+  }
+  return {
+    source: topic.source,
+    id: id || topic.author,
+    username: topic.author || id || '',
+    displayName: topic.author || undefined,
+    avatar: topic.authorAvatar,
+    url: topic.authorUrl || '',
+    topics: []
+  };
+}
+
+function userFromReply(reply: Reply, source?: Source): UserProfile | null {
+  if (!source) {
+    return null;
+  }
+  const id = reply.authorId || reply.author;
+  if (!id && !reply.authorUrl) {
+    return null;
+  }
+  return {
+    source,
+    id: id || reply.author,
+    username: reply.author || id || '',
+    displayName: reply.author || undefined,
+    avatar: reply.authorAvatar,
+    url: reply.authorUrl || '',
+    topics: []
+  };
+}
+
 export function TopicScreen({
   actionBusy,
   canUseNodeSeekActions,
@@ -181,7 +216,8 @@ export function TopicScreen({
   onSubmitReply,
   onTopicScroll,
   onToggleQuotedFloor,
-  onToggleFavorite
+  onToggleFavorite,
+  onOpenUser
 }: {
   actionBusy: boolean;
   canUseNodeSeekActions: boolean;
@@ -232,6 +268,7 @@ export function TopicScreen({
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
   onToggleFavorite: (topic: Topic) => void;
+  onOpenUser: (user: UserProfile) => void;
 }) {
   const item = topic || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
@@ -453,6 +490,7 @@ export function TopicScreen({
           query={commentQuery}
           isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
           source={itemSource}
+          onOpenUser={onOpenUser}
         />
       </View>
     );
@@ -477,6 +515,7 @@ export function TopicScreen({
     onReplyToFloor,
     onSubmitReply,
     onToggleQuotedFloor,
+    onOpenUser,
     onYaohuoFavorite,
     onYaohuoVote,
     quoteStateVersion,
@@ -502,14 +541,24 @@ export function TopicScreen({
       <View style={[styles.article, topicColumnStyle]}>
         <View style={styles.topicMetaStack}>
           <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
-          <Text style={styles.articleTitle}>{item.title}</Text>
-          <View style={styles.topicAuthorRow}>
+          <Text selectable style={styles.articleTitle}>{item.title}</Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={!userFromTopic(item)}
+            style={styles.topicAuthorRow}
+            onPress={() => {
+              const user = userFromTopic(item);
+              if (user) {
+                onOpenUser(user);
+              }
+            }}
+          >
             <AuthorAvatar name={item.author} uri={item.authorAvatar} styles={styles} />
             <View style={styles.topicAuthorMeta}>
               <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
               <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
             </View>
-          </View>
+          </Pressable>
           {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
         </View>
         {topicError ? (
@@ -531,6 +580,7 @@ export function TopicScreen({
       <RenderHTMLConfigProvider
         renderers={htmlRenderers}
         renderersProps={htmlRenderersProps}
+        defaultTextProps={{ selectable: true }}
         enableExperimentalBRCollapsing
         enableExperimentalGhostLinesPrevention
         enableExperimentalMarginCollapsing
@@ -609,6 +659,7 @@ function ReplyCard({
   styles,
   theme,
   onInteract,
+  onOpenUser,
   onReplyToFloor,
   onToggleQuotedFloor
 }: {
@@ -627,15 +678,26 @@ function ReplyCard({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onOpenUser: (user: UserProfile) => void;
   onReplyToFloor: (reply: Reply) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
   const replyContentWidth = Math.max(220, contentWidth - 42);
+  const replyUser = userFromReply(reply, source);
   return (
     <View style={styles.replyCard}>
-      <View style={styles.replyHead}>
+      <Pressable
+        accessibilityRole="button"
+        disabled={!replyUser}
+        style={styles.replyHead}
+        onPress={() => {
+          if (replyUser) {
+            onOpenUser(replyUser);
+          }
+        }}
+      >
         <AuthorAvatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
           <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
@@ -645,7 +707,7 @@ function ReplyCard({
           <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
         </View>
         {isNew ? <Text style={styles.topicAccessBadge}>新增</Text> : null}
-      </View>
+      </Pressable>
       <View style={styles.replyContentArea}>
         {quotedFloors.length ? (
           <View style={styles.quoteStack}>
@@ -668,10 +730,20 @@ function ReplyCard({
                   </View>
                   {expanded && quotedReply ? (
                     <View style={styles.quoteBody}>
-                      <View style={styles.quoteAuthorRow}>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={!userFromReply(quotedReply, source)}
+                        style={styles.quoteAuthorRow}
+                        onPress={() => {
+                          const user = userFromReply(quotedReply, source);
+                          if (user) {
+                            onOpenUser(user);
+                          }
+                        }}
+                      >
                         <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
                         <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
-                      </View>
+                      </Pressable>
                       <MemoizedHtmlContent
                         contentWidth={Math.max(220, replyContentWidth - 24)}
                         html={quotedReply.contentHtml}
@@ -712,6 +784,7 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     || previous.contentWidth !== next.contentWidth
     || previous.isNew !== next.isNew
     || previous.onInteract !== next.onInteract
+    || previous.onOpenUser !== next.onOpenUser
     || previous.onReplyToFloor !== next.onReplyToFloor
     || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
     || previous.query !== next.query

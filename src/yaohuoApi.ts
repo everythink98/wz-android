@@ -6,8 +6,10 @@ import {
   parseYaohuoListHtml,
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
-  parseYaohuoTopicHtml
+  parseYaohuoTopicHtml,
+  parseYaohuoUserProfileHtml
 } from './localYaohuo';
+import type { UserProfile } from './types';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -224,6 +226,34 @@ export async function getYaohuoRepliesDirect({
     url: pageResult.url,
     page,
     limit
+  });
+}
+
+export async function getYaohuoUserProfileDirect({
+  id,
+  username,
+  yaohuoCookie,
+  yaohuoFetcher,
+  signal,
+  timeoutMs
+}: {
+  id: string;
+  username?: string;
+  yaohuoCookie?: string;
+  yaohuoFetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<UserProfile> {
+  const cookie = requireYaohuoCookie(yaohuoCookie);
+  const url = yaohuoUrl('/bbs/userinfo.aspx', {
+    touserid: id,
+    siteid: '1000'
+  });
+  const page = await fetchYaohuoHtml(url, cookie, yaohuoFetcher, { signal, timeoutMs });
+  return parseYaohuoUserProfileHtml(page.html, {
+    id,
+    username,
+    url: page.url
   });
 }
 

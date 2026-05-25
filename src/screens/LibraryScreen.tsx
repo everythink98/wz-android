@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
-import type { FeedSource, Topic } from '../types';
-import { type ReaderData, type TopicRecord } from '../readerData';
+import type { FeedSource, Topic, UserProfile } from '../types';
+import { type FollowedUserRecord, type ReaderData, type TopicRecord, topicKey, userKey } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
-import { filterLibraryRecords, groupLibraryRecordsByTime } from '../androidFeatureHelpers';
+import { filterLibraryRecords, groupLibraryRecordsByTime, libraryCategoryFilterItems } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { feedSources } from '../feedCategoryRail';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
@@ -13,7 +13,7 @@ import { MemoizedTopicCard, type TopicSwipeActionConfig } from '../components/To
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 export type LibraryUndo = {
-  section: LibraryTab;
+  section: 'favorites' | 'history';
   records: Record<string, TopicRecord>;
   label: string;
 } | null;
@@ -39,6 +39,8 @@ function libraryRecordKey(record: TopicRecord) {
 export function LibraryScreen({
   libraryTab,
   libraryUndo,
+  categories,
+  followedUsers,
   records,
   readerData,
   topicListStateInput,
@@ -46,14 +48,18 @@ export function LibraryScreen({
   theme,
   onClearHistory,
   onOpenTopic,
+  onOpenUser,
   onRemoveMany,
   onRemove,
+  onRemoveUser,
   onTabChange,
   onUndoDelete,
   onUpdateRecord
 }: {
   libraryTab: LibraryTab;
   libraryUndo: LibraryUndo;
+  categories: Parameters<typeof libraryCategoryFilterItems>[1];
+  followedUsers: FollowedUserRecord[];
   records: TopicRecord[];
   readerData: ReaderData;
   topicListStateInput: NormalizedTopicListStateInput;
@@ -61,8 +67,10 @@ export function LibraryScreen({
   theme: ReaderTheme;
   onClearHistory: () => void;
   onOpenTopic: (topic: Topic) => void;
+  onOpenUser: (user: UserProfile) => void;
   onRemoveMany: (topics: Topic[]) => void;
   onRemove: (topic: Topic) => void;
+  onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;
   onUndoDelete: () => void;
   onUpdateRecord: (topic: Topic, patch: Pick<TopicRecord, 'tags' | 'note'>) => void;
@@ -72,6 +80,8 @@ export function LibraryScreen({
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
   const [bulkMode, setBulkMode] = useState(false);
+  const [rowSwipeActive, setRowSwipeActive] = useState(false);
+  const [swipeOpenKey, setSwipeOpenKey] = useState<string | undefined>();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [editingKey, setEditingKey] = useState('');
   const [tagInput, setTagInput] = useState('');
@@ -80,8 +90,18 @@ export function LibraryScreen({
     kind: 'delete',
     onPress: onRemove
   }), [onRemove]);
-  const categories = useMemo(() => Array.from(new Set(records.map((record) => record.topic.category).filter(Boolean) as string[])), [records]);
-  const tags = useMemo(() => Array.from(new Set(records.flatMap((record) => record.tags || []))).sort(), [records]);
+  const userRecords = useMemo(() => (
+    sourceFilter === 'all'
+      ? followedUsers
+      : followedUsers.filter((record) => record.user.source === sourceFilter)
+  ), [followedUsers, sourceFilter]);
+  const recordsForSource = useMemo(() => (
+    sourceFilter === 'all'
+      ? records
+      : records.filter((record) => record.topic.source === sourceFilter)
+  ), [records, sourceFilter]);
+  const categoryItems = useMemo(() => libraryCategoryFilterItems(records, categories, sourceFilter), [categories, records, sourceFilter]);
+  const tags = useMemo(() => Array.from(new Set(recordsForSource.flatMap((record) => record.tags || []))).sort(), [recordsForSource]);
   const filteredRecords = useMemo(() => filterLibraryRecords(records, {
     source: sourceFilter,
     category: categoryFilter,
@@ -91,15 +111,29 @@ export function LibraryScreen({
     { type: 'section' as const, key: `section:${section.label}`, label: section.label },
     ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
   ]), [filteredRecords]);
-  const recordKeys = useMemo(() => records.map(libraryRecordKey).join('|'), [records]);
+  const recordKeys = useMemo(() => `${records.map(libraryRecordKey).join('|')}|${followedUsers.map((record) => userKey(record.user)).join('|')}`, [followedUsers, records]);
   useEffect(() => {
     setSourceFilter('all');
     setCategoryFilter('all');
     setTagFilter('all');
+    setSwipeOpenKey(undefined);
+    setRowSwipeActive(false);
   }, [libraryTab]);
+  useEffect(() => {
+    if (categoryFilter !== 'all' && !categoryItems.some((item) => item.value === categoryFilter)) {
+      setCategoryFilter('all');
+    }
+  }, [categoryFilter, categoryItems]);
+  useEffect(() => {
+    if (tagFilter !== 'all' && !tags.includes(tagFilter)) {
+      setTagFilter('all');
+    }
+  }, [tagFilter, tags]);
   useEffect(() => {
     setSelected(new Set());
     setEditingKey('');
+    setSwipeOpenKey(undefined);
+    setRowSwipeActive(false);
   }, [categoryFilter, libraryTab, sourceFilter, tagFilter]);
   useEffect(() => {
     setSelected(new Set());
@@ -164,6 +198,10 @@ export function LibraryScreen({
           topic={record.topic}
           onOpenTopic={onOpenTopic}
           swipeAction={bulkMode ? undefined : deleteSwipeAction}
+          swipeOpenKey={swipeOpenKey}
+          onSwipeActiveChange={setRowSwipeActive}
+          onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(record.topic) ? undefined : current)}
+          onSwipeOpen={setSwipeOpenKey}
         />
         <View style={styles.libraryMetaBlock}>
           <Text style={styles.meta}>保存于 {formatDateTime(record.savedAt) || record.savedAt}{record.visitCount ? ` · ${record.visitCount} 次阅读` : ''}</Text>
@@ -199,17 +237,34 @@ export function LibraryScreen({
         )}
       </View>
     );
-  }, [beginEdit, bulkMode, deleteSwipeAction, editingKey, noteInput, onOpenTopic, onRemove, readerData, saveEdit, selected, styles, tagInput, theme, toggleSelected, topicListStateInput]);
+  }, [beginEdit, bulkMode, deleteSwipeAction, editingKey, noteInput, onOpenTopic, onRemove, readerData, saveEdit, selected, styles, swipeOpenKey, tagInput, theme, toggleSelected, topicListStateInput]);
+  const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
+    <View style={styles.libraryItem}>
+      <Pressable accessibilityRole="button" style={styles.menuButton} onPress={() => onOpenUser(item.user)}>
+        <View style={styles.menuIcon}>
+          <Text style={styles.replyAvatarText}>{(item.user.displayName || item.user.username || '?').slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={styles.flex}>
+          <Text style={styles.menuLabel} numberOfLines={1}>{item.user.displayName || item.user.username}</Text>
+          <Text style={styles.meta} numberOfLines={2}>{sourceLabel(item.user.source)} · 关注于 {formatDateTime(item.followedAt) || item.followedAt}</Text>
+        </View>
+      </Pressable>
+      <View style={styles.actions}>
+        <AppButton compact label="取消关注" variant="ghost" styles={styles} onPress={() => onRemoveUser(item.user)} />
+      </View>
+    </View>
+  ), [onOpenUser, onRemoveUser, styles]);
 
   const header = (
     <View style={styles.stack}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>收藏</Text>
-        <Text style={styles.meta}>{filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`}</Text>
+        <Text style={styles.meta}>{libraryTab === 'users' ? `${userRecords.length} / ${followedUsers.length} 人` : filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`}</Text>
       </View>
       <PillRail
         items={[
-          { value: 'favorites', label: '收藏' },
+          { value: 'favorites', label: '帖子' },
+          { value: 'users', label: '用户' },
           { value: 'history', label: '历史' }
         ]}
         value={libraryTab}
@@ -225,15 +280,15 @@ export function LibraryScreen({
         styles={styles}
         onChange={(value) => setSourceFilter(value as FeedSource)}
       />
-      {categories.length ? (
+      {libraryTab !== 'users' && categoryItems.length > 1 ? (
         <PillRail
-          items={[{ value: 'all', label: '节点全部' }, ...categories.map((category) => ({ value: category, label: category }))]}
+          items={categoryItems}
           value={categoryFilter}
           styles={styles}
           onChange={setCategoryFilter}
         />
       ) : null}
-      {tags.length ? (
+      {libraryTab !== 'users' && tags.length ? (
         <PillRail
           items={[{ value: 'all', label: '标签筛选' }, ...tags.map((tag) => ({ value: tag, label: tag }))]}
           value={tagFilter}
@@ -242,8 +297,8 @@ export function LibraryScreen({
         />
       ) : null}
       <View style={styles.actions}>
-        <AppButton compact label={bulkMode ? '退出批量' : '批量删除'} variant="ghost" styles={styles} onPress={toggleBulkMode} />
-        {bulkMode && selected.size ? <AppButton compact label={`删除选中 ${selected.size}`} styles={styles} onPress={removeSelected} /> : null}
+        {libraryTab !== 'users' ? <AppButton compact label={bulkMode ? '退出批量' : '批量删除'} variant="ghost" styles={styles} onPress={toggleBulkMode} /> : null}
+        {libraryTab !== 'users' && bulkMode && selected.size ? <AppButton compact label={`删除选中 ${selected.size}`} styles={styles} onPress={removeSelected} /> : null}
         {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={onClearHistory} /> : null}
       </View>
       {libraryUndo ? (
@@ -259,12 +314,17 @@ export function LibraryScreen({
     <FlatList
       style={styles.content}
       contentContainerStyle={styles.contentInner}
-      data={listItems}
-      keyExtractor={(item) => item.key}
+      data={libraryTab === 'users' ? userRecords : listItems}
+      keyExtractor={(item) => libraryTab === 'users' ? userKey((item as FollowedUserRecord).user) : (item as LibraryListItem).key}
+      scrollEnabled={!rowSwipeActive}
+      onScrollBeginDrag={() => {
+        setSwipeOpenKey(undefined);
+        setRowSwipeActive(false);
+      }}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
-      ListEmptyComponent={<EmptyText text="这里还没有内容" styles={styles} />}
-      renderItem={renderLibraryItem}
+      ListEmptyComponent={<EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />}
+      renderItem={libraryTab === 'users' ? renderUserItem as ListRenderItem<FollowedUserRecord | LibraryListItem> : renderLibraryItem as ListRenderItem<FollowedUserRecord | LibraryListItem>}
     />
   );
 }

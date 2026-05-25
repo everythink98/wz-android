@@ -1,4 +1,4 @@
-import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
+import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -6,6 +6,7 @@ import {
   parseHtml,
   parsePositiveInteger,
   sanitizeContentHtml,
+  sortTopicsByCreatedAt,
   sortTopicsByTime,
   textContentFromHtml,
   textExcerpt
@@ -139,6 +140,26 @@ function extractTopicParts(href?: string) {
   return { id, classId, url };
 }
 
+function userUrl(id: string) {
+  return `${BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`;
+}
+
+function extractUserIdFromHref(href?: string) {
+  return String(href || '').match(/[?&]touserid=(\d+)/i)?.[1]
+    || String(href || '').match(/[?&]userid=(\d+)/i)?.[1]
+    || String(href || '').match(/userinfo(?:\.aspx)?\/?(\d+)/i)?.[1];
+}
+
+function profileStats(text: string) {
+  const topicCount = parsePositiveInteger(text.match(/(?:主题|帖子|发帖)\s*[:：]?\s*(\d+)/)?.[1]);
+  const replyCount = parsePositiveInteger(text.match(/(?:回复|回帖)\s*[:：]?\s*(\d+)/)?.[1]);
+  return {
+    topicCount: topicCount || undefined,
+    replyCount: replyCount || undefined,
+    postCount: topicCount || replyCount ? topicCount + replyCount : undefined
+  };
+}
+
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
   return element.querySelectorAll('a[href]')
     .map((item) => item.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1])
@@ -169,11 +190,16 @@ function parseListItem(element: ReturnType<ReturnType<typeof parseHtml>['querySe
   const author = text.replace(title, '').split('/').map((part) => part.trim().replace(/^\d+\.\s*/, '')).find((part) => (
     part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
   )) || '';
+  const authorLink = element.querySelector('a[href*="userinfo"], a[href*="touserid"]');
+  const authorHref = authorLink?.getAttribute('href') || '';
+  const authorId = extractUserIdFromHref(authorHref);
   return {
     source: 'yaohuo' as const,
     id,
     title,
     author,
+    authorId,
+    authorUrl: authorId ? userUrl(authorId) : authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
     categoryId: resolvedClassId,
     category: resolvedClassId ? categoryNames.get(resolvedClassId) : undefined,
     url: url || `${BASE_URL}/bbs-${id}.html`,
@@ -321,6 +347,8 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const contentText = elementText(root.querySelector('div.content'));
   const classId = root.querySelectorAll('a[href*="classid="]').map((link) => link.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1]).find(Boolean);
   const author = elementText(root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')) || elementText(root.querySelector('div.subtitle a'));
+  const authorHref = root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')?.getAttribute('href') || '';
+  const authorId = extractUserIdFromHref(authorHref);
   const createdAt = parseYaohuoDate(contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
@@ -330,6 +358,8 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     id: String(id || ''),
     title: topicTitle(root) || '',
     author,
+    authorId,
+    authorUrl: authorId ? userUrl(authorId) : authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
     categoryId: classId,
     category: classId ? categoryNames.get(classId) : undefined,
     url: url || `${BASE_URL}/bbs-${id}.html`,
@@ -380,6 +410,7 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
     return {
       author,
       ...(authorId ? { authorId } : {}),
+      ...(authorId ? { authorUrl: userUrl(authorId) } : {}),
       contentHtml: sanitizeContentHtml(contentOnly, BASE_URL),
       createdAt,
       floor
@@ -390,6 +421,59 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
     items,
     hasMore: Boolean(nextPage),
     nextPage
+  };
+}
+
+export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: { id: string; username?: string; url?: string }): UserProfile {
+  ensureYaohuoHtmlLoggedIn(html, url);
+  const root = parseHtml(html);
+  const visibleText = elementText(root);
+  const displayName = visibleText.match(/(?:昵称|用户名|用户)\s*[:：]\s*([^\s<]+)/)?.[1]
+    || elementText(root.querySelector('.username, .user-name, h1'))
+    || username
+    || id;
+  const stats = profileStats(visibleText);
+  const seen = new Set<string>();
+  const rows = [
+    ...root.querySelectorAll('.listdata, div.line1, div.line2'),
+    ...root.querySelectorAll('a[href]')
+  ];
+  const topics = rows.flatMap((row) => {
+    const link = row.rawTagName === 'a' ? row : row.querySelector('a[href]');
+    const title = elementText(link);
+    const { id: topicId, classId, url: topicUrl } = extractTopicParts(link?.getAttribute('href'));
+    if (!topicId || !title || seen.has(topicId)) {
+      return [];
+    }
+    seen.add(topicId);
+    const text = elementText(row);
+    const timeText = text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
+      || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
+      || '';
+    const createdAt = parseYaohuoDate(timeText || text) || new Date().toISOString();
+    return [{
+      source: 'yaohuo' as const,
+      id: topicId,
+      title,
+      author: displayName,
+      authorId: id,
+      authorUrl: userUrl(id),
+      categoryId: classId,
+      category: classId ? categoryNames.get(classId) : undefined,
+      url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
+      createdAt,
+      lastReplyAt: createdAt,
+      replyCount: 0
+    }];
+  });
+  return {
+    source: 'yaohuo',
+    id,
+    username: username || displayName,
+    displayName,
+    url: userUrl(id),
+    ...stats,
+    topics: sortTopicsByCreatedAt(topics).slice(0, 30)
   };
 }
 

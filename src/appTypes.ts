@@ -1,7 +1,7 @@
 import type { ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
 
-export type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic';
+export type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic' | 'user';
 export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
 export type HealthDetail = {
   label: string;

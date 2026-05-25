@@ -25,9 +25,12 @@ export function toIsoString(value: unknown) {
   if (typeof value === 'number') {
     time = value > 10_000_000_000 ? value : value * 1000;
   } else if (typeof value === 'string') {
-    const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value)
-      ? `${value}Z`
-      : value.replace(' ', 'T');
+    const text = value.trim();
+    const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
+      ? `${text}Z`
+      : text.replace(/^(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([+-]\d{2}:?\d{2})?$/, (_match, date, clock, zone = '') => (
+        `${date}T${clock}${zone}`
+      ));
     time = Date.parse(normalized);
   }
   return Number.isFinite(time) ? new Date(time).toISOString() : '';
@@ -126,6 +129,12 @@ export function parsePositiveInteger(value: unknown) {
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
   return [...items].sort((left, right) => (
     Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
+  ));
+}
+
+export function sortTopicsByCreatedAt<T extends { createdAt: string }>(items: T[]) {
+  return [...items].sort((left, right) => (
+    Date.parse(right.createdAt || '') - Date.parse(left.createdAt || '')
   ));
 }
 

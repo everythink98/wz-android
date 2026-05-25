@@ -3,7 +3,7 @@ import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
-import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail } from './types';
+import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -13,6 +13,7 @@ import {
   parseHtml,
   parsePositiveInteger,
   sanitizeContentHtml,
+  sortTopicsByCreatedAt,
   sortTopicsByTime,
   textExcerpt,
   toIsoString
@@ -38,6 +39,10 @@ function markdownToHtml(markdown: unknown) {
 
 function topicUrl(id: string) {
   return `${BASE_URL}/post-${id}-1`;
+}
+
+function spaceUrl(id: string) {
+  return `${BASE_URL}/space/${encodeURIComponent(id)}`;
 }
 
 function topicPagePath(id: string, page: number) {
@@ -172,6 +177,11 @@ function arrayField(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+function nodeSeekCreatedAt(raw: Record<string, unknown>) {
+  const time = isRecord(raw.time) ? raw.time : {};
+  return toIsoString(raw.created_at || raw.createdAt || raw.createdDate || time.created_at || time.createdAt || time.createdDate || raw.time);
+}
+
 function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const id = String(raw.postId || raw.id || '').trim();
   const title = String(raw.titleText || raw.title || '').trim();
@@ -180,7 +190,8 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   }
   const op = isRecord(raw.op) ? raw.op : {};
   const category = isRecord(raw.category) ? raw.category : isRecord(raw.node) ? raw.node : {};
-  const createdAt = toIsoString(isRecord(raw.time) ? raw.time.createdDate : raw.createdDate) || new Date().toISOString();
+  const authorId = String(op.userId || op.user_id || op.id || raw.authorId || raw.author_id || '').trim();
+  const createdAt = nodeSeekCreatedAt(raw) || new Date().toISOString();
   const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt;
   const accessRequirement = accessRequirementFromObject(raw);
   return {
@@ -189,6 +200,8 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
     title,
     author: String(op.name || raw.author || ''),
     authorAvatar: absoluteUrl(op.avatar, BASE_URL),
+    authorId: authorId || undefined,
+    authorUrl: authorId ? spaceUrl(authorId) : undefined,
     categoryId: typeof category.key === 'string' ? category.key : undefined,
     category: typeof category.name === 'string' ? category.name : typeof raw.categoryWord === 'string' ? raw.categoryWord : undefined,
     url: safeNodeSeekTopicUrl(id, raw.titleLink || raw.url),
@@ -232,6 +245,8 @@ function parseHtmlTopics(html: string) {
       title,
       author: elementText(authorLink) || String(row.querySelector('img[alt]')?.getAttribute('alt') || ''),
       authorAvatar: absoluteUrl(row.querySelector('img')?.getAttribute('src'), BASE_URL),
+      authorId: authorLink?.getAttribute('href')?.match(/\/space\/(\d+)/)?.[1],
+      authorUrl: authorLink?.getAttribute('href') ? absoluteUrl(authorLink.getAttribute('href'), BASE_URL) : undefined,
       categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
       category: elementText(categoryLink) || undefined,
       url: safeNodeSeekTopicUrl(id, href),
@@ -367,6 +382,15 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
   return text;
 }
 
+async function fetchNodeSeekJson(path: string, options: NodeSeekOptions = {}) {
+  const text = await fetchNodeSeekText(path, options);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error('NodeSeek 数据解析失败');
+  }
+}
+
 function searchPath(query: string, page = 1) {
   const params = new URLSearchParams({ q: query });
   if (page > 1) {
@@ -475,9 +499,12 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
   const source = skipFirst ? comments.slice(1) : comments;
   return source.slice(start).filter(isRecord).map((comment, index) => {
     const poster = isRecord(comment.poster) ? comment.poster : {};
+    const authorId = String(poster.id || poster.userId || poster.user_id || '').trim();
     return {
       author: String(poster.name || ''),
       authorAvatar: absoluteUrl(poster.avatar, BASE_URL),
+      authorId: authorId || undefined,
+      authorUrl: authorId ? spaceUrl(authorId) : undefined,
       contentHtml: markdownToHtml(comment.markdown),
       createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
       floor: floorOffset + start + index + 1,
@@ -506,12 +533,15 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   }
   const lastReplyAt = toIsoString(lastCommentDate || data.updatedDate) || createdAt;
   const accessRequirement = accessRequirementFromObject(data);
+  const authorId = String(op.userId || op.user_id || op.id || poster.id || poster.userId || poster.user_id || '').trim();
   return {
     source: 'nodeseek',
     id,
     title: String(data.title || ''),
     author: String(op.name || poster.name || ''),
     authorAvatar: absoluteUrl(op.avatar || poster.avatar, BASE_URL),
+    authorId: authorId || undefined,
+    authorUrl: authorId ? spaceUrl(authorId) : undefined,
     categoryId: typeof category.key === 'string' ? category.key : undefined,
     category: typeof category.name === 'string' ? category.name : undefined,
     url,
@@ -611,9 +641,13 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   });
   const allReplies = replyRows.map((row, index) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
+    const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
+    const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
     return {
       author: renderedNodeSeekAuthor(row),
       authorAvatar: renderedNodeSeekAvatar(row),
+      authorId,
+      authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
       floor: renderedNodeSeekFloor(row, index + 1),
@@ -622,12 +656,16 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   });
   const replies = allReplies.slice(0, replyLimit);
   const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt;
+  const authorHref = authorContainer?.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
+  const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
   return {
     source: 'nodeseek',
     id,
     title,
     author: renderedNodeSeekAuthor(authorContainer),
     authorAvatar: renderedNodeSeekAvatar(authorContainer),
+    authorId,
+    authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
     categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
     category: elementText(categoryLink) || undefined,
     url: topicUrl(id),
@@ -706,6 +744,62 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
     hasMore,
     nextPage: nextPage || null,
     nextOffset: hasMore ? floorOffset + items.length : null
+  };
+}
+
+export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
+  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, options);
+  if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
+    throw new Error('NodeSeek 用户主页读取失败');
+  }
+  const user = userData.detail;
+  const username = String(user.member_name || user.username || user.name || id).trim() || id;
+  const userId = String(user.member_id || user.id || id).trim() || id;
+  const avatar = absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(userId)}.png`, BASE_URL);
+  const bio = String(user.bio || user.readme || '').trim() || undefined;
+  const joinedAt = toIsoString(user.created_at || user.createdAt || user.createdDate);
+  const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=1`, options);
+  const discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
+  const topics = await Promise.all(discussions.filter(isRecord).map(async (discussion) => {
+    const topicId = String(discussion.post_id || discussion.postId || discussion.id || '').trim();
+    const title = String(discussion.title || discussion.titleText || '').trim();
+    if (!topicId || !title) {
+      return null;
+    }
+    const directCreatedAt = nodeSeekCreatedAt(discussion);
+    const detail = directCreatedAt ? null : await getNodeSeekTopic(topicId, { ...options, replyLimit: 1 }).catch(() => null);
+    const createdAt = directCreatedAt || detail?.createdAt || new Date().toISOString();
+    const accessRequirement = accessRequirementFromObject(discussion);
+    return {
+      source: 'nodeseek' as const,
+      id: topicId,
+      title,
+      author: username,
+      authorAvatar: avatar,
+      authorId: userId,
+      authorUrl: spaceUrl(userId),
+      url: safeNodeSeekTopicUrl(topicId, `/post-${topicId}-1`),
+      createdAt,
+      lastReplyAt: createdAt,
+      replyCount: parsePositiveInteger(discussion.comments || discussion.commentCount || discussion.nComment || detail?.replyCount),
+      viewCount: parseViewCount(discussion.views || discussion.viewCount),
+      ...(accessRequirement ? { accessRequirement } : {})
+    };
+  })) as Array<Topic | null>;
+  const visibleTopics = sortTopicsByCreatedAt(topics.filter(Boolean) as Topic[]);
+  return {
+    source: 'nodeseek',
+    id: userId,
+    username,
+    displayName: username,
+    avatar,
+    url: spaceUrl(userId),
+    bio,
+    joinedAt: joinedAt || undefined,
+    topicCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
+    postCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
+    replyCount: parsePositiveInteger(user.nComment) || undefined,
+    topics: visibleTopics
   };
 }
 

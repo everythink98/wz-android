@@ -6,23 +6,27 @@ import {
   exportFavoritesMarkdown,
   isFavorite,
   isLater,
+  isUserFollowed,
   MAX_HISTORY_RECORDS,
   MAX_PROGRESS_RECORDS,
   mergeReaderData,
   recordHistory,
   removeRecords,
+  removeFollowedUsers,
   removeSavedSearch,
   restoreRecords,
   sanitizeReaderData,
   sanitizeReaderDataForSync,
   toggleFavorite,
+  toggleFollowedUser,
   toggleLater,
   toggleSubscription,
   topicKey,
+  userKey,
   updateTopicRecord,
   updateProgress
 } from './readerData';
-import type { Topic } from './types';
+import type { Topic, UserProfile } from './types';
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -36,7 +40,27 @@ const topic: Topic = {
   replyCount: 2
 };
 
+const profile: UserProfile = {
+  source: 'nodeseek',
+  id: '48872',
+  username: 'alice',
+  displayName: 'Alice',
+  avatar: 'https://www.nodeseek.com/avatar/48872.png',
+  url: 'https://www.nodeseek.com/space/48872',
+  topics: []
+};
+
 describe('Android reader data helpers', () => {
+  it('defaults Android appearance to light theme, forest green, and pea white', () => {
+    const data = createEmptyReaderData();
+
+    expect(data.settings).toMatchObject({
+      theme: 'light',
+      palette: 'mint',
+      background: 'warm'
+    });
+  });
+
   it('stores only a topic summary when recording history', () => {
     const detail = {
       ...topic,
@@ -90,6 +114,49 @@ describe('Android reader data helpers', () => {
     expect(data.savedSearches[0]).toMatchObject({ id: 'vps', query: 'VPS', source: 'all' });
   });
 
+  it('stores followed users separately from favorite topics', () => {
+    let data = createEmptyReaderData();
+
+    data = toggleFollowedUser(data, profile);
+
+    expect(isUserFollowed(data, profile)).toBe(true);
+    expect(data.followedUsers[userKey(profile)]).toMatchObject({
+      user: profile,
+      followedAt: expect.any(String)
+    });
+    expect(data.favorites).toEqual({});
+
+    data = toggleFollowedUser(data, profile);
+
+    expect(isUserFollowed(data, profile)).toBe(false);
+    expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
+  });
+
+  it('keeps followed users created from topic authors even when the profile url is missing', () => {
+    const partialProfile: UserProfile = {
+      source: 'v2ex',
+      id: 'neo',
+      username: 'neo',
+      displayName: 'neo',
+      url: '',
+      topics: []
+    };
+
+    const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
+
+    expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
+    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
+  });
+
+  it('removes followed users with deletion markers', () => {
+    let data = toggleFollowedUser(createEmptyReaderData(), profile);
+
+    data = removeFollowedUsers(data, [profile]);
+
+    expect(data.followedUsers).toEqual({});
+    expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
+  });
+
   it('keeps saved searches unique by keyword across sources', () => {
     let data = createEmptyReaderData();
     data = addSavedSearch(data, 'GPT');
@@ -114,6 +181,7 @@ describe('Android reader data helpers', () => {
         history: {},
         later: {},
         subscriptions: {},
+        followedUsers: {},
         savedSearches: {
           'nodeseek:gpt': '2026-05-20T01:30:00.000Z'
         }
@@ -185,14 +253,32 @@ describe('Android reader data helpers', () => {
     expect(data.settings).toMatchObject({
       listDensity: 'loose',
       theme: 'dark',
-      palette: 'blue',
-      background: 'gray',
+      palette: 'mint',
+      background: 'warm',
       fontScale: 1.2,
       lineHeight: 'loose',
       contentWidth: 'wide',
       fontFamily: 'serif'
     });
     expect(data.settings).not.toHaveProperty('nodeseekCookie');
+  });
+
+  it('normalizes removed Android appearance choices to the maintained style', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: {
+        ...createEmptyReaderData().settings,
+        theme: 'system',
+        palette: 'noir',
+        background: 'white'
+      }
+    });
+
+    expect(data.settings).toMatchObject({
+      theme: 'light',
+      palette: 'mint',
+      background: 'warm'
+    });
   });
 
   it('merges reader data without overwriting newer local or remote records', () => {
@@ -319,8 +405,8 @@ describe('Android reader data helpers', () => {
       blockedCategories: ['nodeseek:daily'],
       listDensity: 'compact',
       theme: 'dark',
-      palette: 'blue',
-      background: 'gray',
+      palette: 'mint',
+      background: 'warm',
       fontScale: 1.2,
       lineHeight: 'loose',
       contentWidth: 'wide',
@@ -493,6 +579,7 @@ describe('Android reader data helpers', () => {
         history: {},
         later: {},
         subscriptions: { 'yaohuo:177': '2026-05-20T04:00:00.000Z' },
+        followedUsers: { 'yaohuo:7': '2026-05-20T04:00:00.000Z' },
         savedSearches: { secret: '2026-05-20T04:00:00.000Z' }
       }
     });

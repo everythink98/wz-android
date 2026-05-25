@@ -1,5 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail } from './types';
+import type { SearchSort } from './feedLogic';
+import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -8,6 +9,7 @@ import {
   isRecord,
   parseHtml,
   sanitizeContentHtml,
+  sortTopicsByCreatedAt,
   sortTopicsByTime,
   textExcerpt,
   toIsoString
@@ -37,6 +39,10 @@ function safeTopicUrl(id: string, raw?: unknown) {
   } catch {
     return fallback;
   }
+}
+
+function memberUrl(username: string) {
+  return `${BASE_URL}/member/${encodeURIComponent(username)}`;
 }
 
 function v2exLastReplyAt(raw: Record<string, unknown>, createdAt: string) {
@@ -76,6 +82,8 @@ function normalizeApiTopic(raw: unknown): Topic | null {
     title: String(raw.title || ''),
     author: String(member.username || ''),
     authorAvatar: absoluteUrl(member.avatar_large || member.avatar_normal || member.avatar_mini, BASE_URL),
+    authorId: typeof member.username === 'string' ? member.username : undefined,
+    authorUrl: typeof member.username === 'string' ? memberUrl(member.username) : undefined,
     categoryId: typeof node.name === 'string' ? node.name : undefined,
     category: typeof node.title === 'string' ? node.title : typeof node.name === 'string' ? node.name : undefined,
     url: safeTopicUrl(id, raw.url),
@@ -103,6 +111,8 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
   const nodeLink = element.querySelector('a.node');
   const categoryId = nodeIdFromHref(nodeLink?.getAttribute('href')) || fallbackCategory;
   const memberLink = element.querySelector('a[href^="/member/"]');
+  const memberHref = memberLink?.getAttribute('href') || '';
+  const memberName = elementText(memberLink);
   const avatar = element.querySelector('img.avatar')?.getAttribute('src');
   const timestamp = element.querySelector('span[title]')?.getAttribute('title');
   const countText = element.querySelector('.count_livid,.count_orange')?.text || '';
@@ -112,8 +122,10 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
     source: 'v2ex',
     id,
     title,
-    author: elementText(memberLink),
+    author: memberName,
     authorAvatar: absoluteUrl(avatar, BASE_URL),
+    authorId: memberName || undefined,
+    authorUrl: memberHref ? absoluteUrl(memberHref, BASE_URL) : memberName ? memberUrl(memberName) : undefined,
     categoryId,
     category: elementText(nodeLink) || categoryId,
     url: `${BASE_URL}/t/${id}`,
@@ -283,10 +295,61 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
   const member = isRecord(raw.member) ? raw.member : {};
   return {
     author: String(member.username || ''),
+    authorId: typeof member.username === 'string' ? member.username : undefined,
     authorAvatar: absoluteUrl(member.avatar_large || member.avatar_normal || member.avatar_mini, BASE_URL),
+    authorUrl: typeof member.username === 'string' ? memberUrl(member.username) : undefined,
     contentHtml: sanitizeContentHtml(raw.content_rendered || raw.content || '', BASE_URL),
     createdAt: toIsoString(raw.created),
     floor: index + 1
+  };
+}
+
+function parseV2exMemberTopics(html: string, username: string, avatar?: string) {
+  const root = parseHtml(html);
+  return root.querySelectorAll('.cell, .box .item')
+    .map((element) => normalizeHtmlTopic(element))
+    .filter(Boolean)
+    .map((topic) => ({
+      ...topic,
+      author: topic?.author || username,
+      authorId: username,
+      authorAvatar: topic?.authorAvatar || avatar,
+      authorUrl: memberUrl(username)
+    })) as Topic[];
+}
+
+async function fetchV2exMemberTopics(username: string, options: V2exOptions) {
+  const html = await fetchText(`${memberUrl(username)}/topics`, options).catch(() => '');
+  return html ? parseV2exMemberTopics(html, username).slice(0, 30) : [];
+}
+
+export async function getV2exUserProfile(id: string, username: string, options: V2exOptions = {}): Promise<UserProfile> {
+  const key = (username || id).trim();
+  if (!key) {
+    throw new Error('V2EX 用户信息不完整');
+  }
+  const [memberData, memberHtml] = await Promise.all([
+    fetchJson<Record<string, unknown>>(`${BASE_URL}/api/members/show.json?username=${encodeURIComponent(key)}`, options),
+    fetchText(memberUrl(key), options).catch(() => '')
+  ]);
+  if (isRecord(memberData) && memberData.status === 'notfound') {
+    throw new Error('V2EX 用户不存在');
+  }
+  const resolvedUsername = String(memberData.username || key);
+  const avatar = absoluteUrl(memberData.avatar_large || memberData.avatar_normal || memberData.avatar_mini, BASE_URL);
+  const topics = memberHtml ? parseV2exMemberTopics(memberHtml, resolvedUsername, avatar) : [];
+  const profileTopics = sortTopicsByCreatedAt(topics.length ? topics : await fetchV2exMemberTopics(resolvedUsername, options)).slice(0, 30);
+  return {
+    source: 'v2ex',
+    id: resolvedUsername,
+    username: resolvedUsername,
+    displayName: resolvedUsername,
+    avatar,
+    url: memberUrl(resolvedUsername),
+    bio: typeof memberData.tagline === 'string' ? memberData.tagline : undefined,
+    topics: profileTopics,
+    topicCount: profileTopics.length || undefined,
+    postCount: profileTopics.length || undefined
   };
 }
 
@@ -359,7 +422,7 @@ function highlightText(highlight: unknown) {
   return '';
 }
 
-export async function searchV2ex(query: string, options: V2exOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
+export async function searchV2ex(query: string, options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort } = {}): Promise<SearchResponse> {
   const limit = options.limit || 30;
   const page = options.page || 1;
   const from = Math.max(0, page - 1) * limit;
@@ -367,9 +430,14 @@ export async function searchV2ex(query: string, options: V2exOptions & { limit?:
     q: query,
     size: String(limit),
     from: String(from),
-    sort: 'sumup',
-    order: '0'
+    version: '1.0.1'
   });
+  if (options.sort === 'time') {
+    params.set('sort', 'created');
+    params.set('order', '0');
+  } else {
+    params.set('sort', 'sumup');
+  }
   const data = await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options);
   const hits = sov2exHits(data);
   const items = hits.map((hit) => {

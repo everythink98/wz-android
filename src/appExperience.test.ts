@@ -78,6 +78,22 @@ describe('Android App experience guards', () => {
     expect(androidUiSource).not.toContain('topicMetaPressable');
   });
 
+  it('releases row swipe locks when swipe rows disappear or lists reset', () => {
+    expect(topicCardSource).toContain('isSwipeActiveRef');
+    expect(topicCardSource).toContain('releaseSwipeActive');
+    expect(topicCardSource).toContain('useEffect(() => () => {');
+    expect(feedScreenSource).toContain('setRowSwipeActive(false);');
+    expect(searchScreenSource).toContain('setRowSwipeActive(false);');
+    expect(libraryScreenSource).toContain('setRowSwipeActive(false);');
+  });
+
+  it('closes feed row swipes when feed filters change from the header tabs', () => {
+    const block = feedScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSwipeOpenKey\(undefined\);[\s\S]*?\n\s*}, \[categoryFilter, feedSource, readingFilter\]\);/)?.[0] || '';
+
+    expect(block).toContain('setSwipeOpenKey(undefined);');
+    expect(block).toContain('setRowSwipeActive(false);');
+  });
+
   it('uses more helpful empty messages for filtered feed lists', () => {
     expect(feedScreenSource).toContain('feedEmptyText');
     expect(feedScreenSource).toContain('当前筛选没有匹配主题');
@@ -168,7 +184,7 @@ describe('Android App experience guards', () => {
   });
 
   it('reruns Android search with the current query when switching search tabs', () => {
-    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQueryRef\.current\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearchRef\.current\?\.\(\);\s*\n\s*}, \[searchSource, searchScope\]\);/)?.[0] || '';
+    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQueryRef\.current\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearchRef\.current\?\.\(\);\s*\n\s*}, \[searchSource, searchScope, searchSort\]\);/)?.[0] || '';
 
     expect(appSource).toContain('runSearchRef.current = runSearch;');
     expect(block).toContain('void runSearchRef.current?.();');
@@ -234,12 +250,47 @@ describe('Android App experience guards', () => {
     expect(searchScreenSource).toContain('data={showRemoteGroups ? [] : filteredSearchResults}');
   });
 
+  it('closes search row swipes when the search category filter changes', () => {
+    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSwipeOpenKey\(undefined\);[\s\S]*?\n\s*}, \[searchCategoryFilter\]\);/)?.[0] || '';
+
+    expect(block).toContain('setSwipeOpenKey(undefined);');
+    expect(block).toContain('setRowSwipeActive(false);');
+  });
+
+  it('closes search row swipes when search sorting changes', () => {
+    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSwipeOpenKey\(undefined\);[\s\S]*?\n\s*}, \[query, scope, searchSource, sort\]\);/)?.[0] || '';
+
+    expect(block).toContain('setSwipeOpenKey(undefined);');
+    expect(block).toContain('setRowSwipeActive(false);');
+  });
+
+  it('only shows Android search sort filters for sources with real request parameters', () => {
+    expect(searchScreenSource).toContain("const showSearchSort = scope === 'remote' && searchSource === 'v2ex';");
+    expect(searchScreenSource).toContain('{showSearchSort ? (');
+    expect(searchScreenSource).toContain("label: '相关'");
+    expect(searchScreenSource).toContain("label: '按时间'");
+    expect(searchScreenSource).not.toContain("label: '按回复'");
+    expect(searchScreenSource).not.toContain("label: '按浏览'");
+    expect(appSource).toContain("const activeSort = searchSource === 'all'");
+    expect(appSource).toContain("? 'time'");
+    expect(appSource).toContain('searchSort === \'time\'');
+  });
+
   it('adds the missing Android-only search management controls', () => {
     expect(searchScreenSource).toContain('最近搜索');
     expect(searchScreenSource).toContain('onRemoveSavedSearch');
     expect(searchScreenSource).toContain('searchGroups');
     expect(appSource).toContain('retrySearchSource');
     expect(searchScreenSource).toContain('highlightQuery={query}');
+  });
+
+  it('keeps recent search removal attached to the search chip instead of a separate button', () => {
+    const recentSearchBlock = searchScreenSource.match(/\{recentSearches\.length \? \([\s\S]*?\n      \) : null\}/)?.[0] || '';
+
+    expect(recentSearchBlock).toContain('styles.removableChipShell');
+    expect(recentSearchBlock).toContain('styles.removableChipClose');
+    expect(recentSearchBlock).toContain('accessibilityLabel={`删除最近搜索 ${item}`}');
+    expect(recentSearchBlock).not.toContain('IconButton tiny ghost icon={X} label="删除最近搜索"');
   });
 
   it('updates local search result highlighting when the query changes', () => {
@@ -332,7 +383,6 @@ describe('Android App experience guards', () => {
     expect(imagePreviewModalSource).toContain('imagePreviewThumbnail');
     expect(appSource).toContain('exportBackupFile');
     expect(appSource).toContain('importBackupFile');
-    expect(appSource).toContain('exportFavoritesMarkdownFile');
   });
 
   it('removes temporary cache files after saving preview images to the gallery', () => {
@@ -551,6 +601,16 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
   });
 
+  it('does not leave hidden NodeSeek browser fetch requests pending after WebView failures', () => {
+    expect(appSource).toContain('const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string) => {');
+    expect(appSource).toContain('onHttpError={(event) => {');
+    expect(appSource).toContain('if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {');
+    expect(appSource).toContain('NodeSeek 页面返回错误');
+    expect(appSource).toContain('onRenderProcessGone={() => {');
+    expect(appSource).toContain('NodeSeek 页面读取进程已停止');
+    expect(appSource).toContain('renderError={() => <View style={styles.hiddenBrowserWebView} />}');
+  });
+
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
     expect(appSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content"));');
     expect(appSource).toContain('if ((!isChallengePage() && hasReadableContent()) || Date.now() >= deadline) {');
@@ -584,6 +644,20 @@ describe('Android App experience guards', () => {
     expect(block).toContain('setLoadingMoreReplies(false);');
   });
 
+  it('opens user pages through the shared navigation cleanup path', () => {
+    const block = appSource.match(/const openUser = useCallback\(async \(user: UserProfile, nocache = false\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+
+    expect(block).toContain("changeScreen('user');");
+    expect(block).not.toContain("setScreen('user');");
+  });
+
+  it('opens topic pages through the shared navigation cleanup path', () => {
+    const block = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+
+    expect(block).toContain("changeScreen('topic');");
+    expect(block).not.toContain("setScreen('topic');");
+  });
+
   it('does not show reply controls when topic detail failed to load', () => {
     const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
@@ -596,16 +670,45 @@ describe('Android App experience guards', () => {
   it('closes More screen panels when navigating away from More', () => {
     const closePanelsBlock = appSource.match(/const closeMorePanels = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[closeLinuxDoPanel\]\);/)?.[1] || '';
     const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
-    const selectCategoryBlock = appSource.match(/const selectCategory = useCallback\(\(category: Category\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
     expect(closePanelsBlock).toContain('setShowLoginPanel(false);');
     expect(closePanelsBlock).toContain('setShowYaohuoLoginPanel(false);');
     expect(closePanelsBlock).toContain('closeLinuxDoPanel();');
-    expect(closePanelsBlock).toContain('setShowCategoriesPanel(false);');
     expect(closePanelsBlock).toContain('setShowSettingsPanel(false);');
     expect(changeScreenBlock).toContain("if (screen === 'more' && nextScreen !== 'more') {");
     expect(changeScreenBlock).toContain('closeMorePanels();');
-    expect(selectCategoryBlock).toContain('closeMorePanels();');
+  });
+
+  it('keeps unused collection, history, category, and subscription entries out of More', () => {
+    const moreScreenSignature = moreScreenSource.match(/function MoreScreen\(\{[\s\S]*?\}: \{[\s\S]*?\}\) \{/)?.[0] || '';
+
+    expect(moreScreenSource).not.toContain('label="收藏"');
+    expect(moreScreenSource).not.toContain('label="历史"');
+    expect(moreScreenSource).not.toContain('label="分类节点"');
+    expect(moreScreenSource).not.toContain('订阅');
+    expect(moreScreenSource).not.toContain('导出收藏 Markdown');
+    expect(moreScreenSignature).not.toContain('favoriteCount');
+    expect(moreScreenSignature).not.toContain('historyCount');
+    expect(moreScreenSignature).not.toContain('showCategoriesPanel');
+    expect(moreScreenSignature).not.toContain('subscriptions');
+    expect(appSource).not.toContain('showCategoriesPanel');
+    expect(appSource).not.toContain('exportFavoritesMarkdownFile');
+    expect(appSource).not.toContain('toggleCategorySubscription');
+  });
+
+  it('keeps Android appearance settings to light or dark with fixed forest green and pea white', () => {
+    const settingsPanelBlock = moreScreenSource.match(/function SettingsPanel\([\s\S]*?\n}\n\nfunction ChipList/)?.[0] || '';
+
+    expect(moreScreenSource).toContain('value="字号 · 白天/黑夜 · 阅读调节"');
+    expect(settingsPanelBlock).toContain("{ value: 'light', label: '浅色' }");
+    expect(settingsPanelBlock).toContain("{ value: 'dark', label: '深色' }");
+    expect(settingsPanelBlock).not.toContain("{ value: 'system', label: '系统' }");
+    expect(settingsPanelBlock).not.toContain('title="配色"');
+    expect(settingsPanelBlock).not.toContain('title="背景"');
+    expect(settingsPanelBlock).not.toContain('豆青');
+    expect(settingsPanelBlock).not.toContain('森绿');
+    expect(appConfigSource).toContain('"userInterfaceStyle": "light"');
+    expect(appConfigSource).toContain('"backgroundColor": "#ffffff"');
   });
 
   it('closes the reply composer before leaving the topic screen with the Android back button', () => {
@@ -617,17 +720,32 @@ describe('Android App experience guards', () => {
   });
 
   it('resets library filters when switching between favorites and history', () => {
-    const block = libraryScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);\s*\n\s*setTagFilter\('all'\);\s*\n\s*}, \[libraryTab\]\);/)?.[0] || '';
+    const block = libraryScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);\s*\n\s*setTagFilter\('all'\);[\s\S]*?\n\s*}, \[libraryTab\]\);/)?.[0] || '';
 
     expect(block).toContain("setSourceFilter('all');");
     expect(block).toContain("setCategoryFilter('all');");
     expect(block).toContain("setTagFilter('all');");
+    expect(block).toContain('setSwipeOpenKey(undefined);');
+  });
+
+  it('clears stale library category filters after switching sources', () => {
+    expect(libraryScreenSource).toContain("categoryFilter !== 'all' && !categoryItems.some((item) => item.value === categoryFilter)");
+    expect(libraryScreenSource).toContain("setCategoryFilter('all');");
+    expect(libraryScreenSource).toContain('}, [categoryFilter, categoryItems]);');
+  });
+
+  it('keeps library tag filters scoped to the selected source', () => {
+    expect(libraryScreenSource).toContain('recordsForSource');
+    expect(libraryScreenSource).toContain('recordsForSource.flatMap((record) => record.tags || [])');
+    expect(libraryScreenSource).not.toContain('records.flatMap((record) => record.tags || [])');
   });
 
   it('clears stale library bulk selections when leaving bulk mode or records change', () => {
     const toggleBlock = libraryScreenSource.match(/const toggleBulkMode = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[bulkMode\]\);/)?.[1] || '';
 
-    expect(libraryScreenSource).toContain('const recordKeys = useMemo(() => records.map(libraryRecordKey).join(\'|\'), [records]);');
+    expect(libraryScreenSource).toContain('const recordKeys = useMemo(() =>');
+    expect(libraryScreenSource).toContain('records.map(libraryRecordKey).join(\'|\')');
+    expect(libraryScreenSource).toContain('followedUsers.map((record) => userKey(record.user)).join(\'|\')');
     expect(libraryScreenSource).toContain('}, [recordKeys]);');
     expect(toggleBlock).toContain('if (bulkMode) {');
     expect(toggleBlock).toContain('setSelected(new Set());');

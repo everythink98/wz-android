@@ -1015,7 +1015,43 @@ describe('Android local sources', () => {
     expect(first.hasMore).toBe(true);
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['934577']);
-    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('from=1');
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+    expect(calls).toContain('from=1');
+    expect(calls).toContain('sort=sumup');
+    expect(calls).toContain('version=1.0.1');
+  });
+
+  it('passes V2EX relevance and time sorting through real SOV2EX parameters', async () => {
+    const fetcher = vi.fn(async () => json({ hits: [] }));
+
+    await searchTopics({ source: 'v2ex', query: 'gpt', sort: 'relevance', fetcher });
+    await searchTopics({ source: 'v2ex', query: 'gpt', sort: 'time', fetcher });
+
+    expect(fetcher.mock.calls.length).toBe(2);
+    const calls = fetcher.mock.calls as unknown as Array<[string, unknown?]>;
+    const relevanceCall = calls[0];
+    const timeCall = calls[1];
+    expect(relevanceCall).toBeTruthy();
+    expect(timeCall).toBeTruthy();
+    const relevanceUrl = new URL(relevanceCall?.[0] || '');
+    const timeUrl = new URL(timeCall?.[0] || '');
+    expect(relevanceUrl.searchParams.get('sort')).toBe('sumup');
+    expect(relevanceUrl.searchParams.get('order')).toBeNull();
+    expect(timeUrl.searchParams.get('sort')).toBe('created');
+    expect(timeUrl.searchParams.get('order')).toBe('0');
+  });
+
+  it('does not add unsupported sort parameters to NodeSeek searches', async () => {
+    const fetcher = vi.fn(async () => html('<ul class="post-list"></ul>'));
+
+    await searchTopics({ source: 'nodeseek', query: 'GPT', sort: 'time', fetcher });
+
+    expect(fetcher.mock.calls.length).toBeGreaterThan(0);
+    const calls = fetcher.mock.calls as unknown as Array<[string, unknown?]>;
+    const url = new URL(calls[0]?.[0] || '');
+    expect(url.searchParams.get('q')).toBe('GPT');
+    expect(url.searchParams.has('sort')).toBe(false);
+    expect(url.searchParams.has('order')).toBe(false);
   });
 
   it('tags linux.do Cloudflare topic errors so the app can open verification', async () => {
