@@ -587,26 +587,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 3,
       paddingTop: 2
     },
-    librarySelectRow: {
-      alignSelf: 'flex-start',
-      minHeight: 36,
-      justifyContent: 'center',
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 10,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 10
-    },
-    noticeBox: {
-      alignItems: 'center',
+    libraryTopicRow: {
+      alignItems: 'flex-start',
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      gap: 8,
-      backgroundColor: theme.mist,
-      borderColor: theme.line,
-      borderRadius: 12,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 10
+      gap: 6
     },
     noticeText: {
       color: theme.primary,

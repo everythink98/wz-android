@@ -88,7 +88,7 @@ describe('Android feature helpers', () => {
     ];
 
     expect(libraryCategoryFilterItems(records, categories, 'linuxdo')).toEqual([
-      { value: 'all', label: '节点全部' },
+      { value: 'all', label: '全部' },
       { value: 'linuxdo:4', label: '开发调优' }
     ]);
     expect(libraryCategoryFilterItems(records, categories, 'all').map((item) => item.value)).toEqual([

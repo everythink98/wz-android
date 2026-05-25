@@ -9,7 +9,7 @@ export interface HighlightPart {
 export interface LibraryFilter {
   source: FeedSource;
   category: string;
-  tag: string;
+  tag?: string;
 }
 
 export interface LibrarySection {
@@ -99,7 +99,7 @@ export function filterLibraryRecords(records: TopicRecord[], filter: LibraryFilt
   return records.filter((record) => (
     (filter.source === 'all' || record.topic.source === filter.source)
     && (filter.category === 'all' || libraryCategoryKey(record.topic.source, record.topic.categoryId || record.topic.category || '') === filter.category || record.topic.category === filter.category)
-    && (filter.tag === 'all' || record.tags?.includes(filter.tag))
+    && (!filter.tag || filter.tag === 'all' || record.tags?.includes(filter.tag))
   ));
 }
 
@@ -107,7 +107,7 @@ export function libraryCategoryFilterItems(records: TopicRecord[], categories: C
   const selected = source === 'all' ? categories : categories.filter((category) => category.source === source);
   const seen = new Set<string>();
   return [
-    { value: 'all', label: '节点全部' },
+    { value: 'all', label: '全部' },
     ...selected.flatMap((category) => {
       const key = libraryCategoryKey(category.source, category.id);
       if (seen.has(key)) {

@@ -85,13 +85,11 @@ import {
   removeFollowedUsers,
   removeRecords,
   removeSavedSearch,
-  restoreRecords,
   sanitizeReaderData,
   toggleFavorite,
   toggleFollowedUser,
   isUserFollowed,
   topicKey,
-  updateTopicRecord,
   updateProgress,
   type FollowedUserRecord,
   type ReaderData,
@@ -166,7 +164,7 @@ import { FeedScreen } from './src/screens/FeedScreen';
 import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
 import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, Screen, YaohuoReplyTarget } from './src/appTypes';
-import { LibraryScreen, type LibraryUndo } from './src/screens/LibraryScreen';
+import { LibraryScreen } from './src/screens/LibraryScreen';
 import { SearchScreen, type SearchGroup, type SearchScope } from './src/screens/SearchScreen';
 import { UserScreen } from './src/screens/UserScreen';
 import { nodeSeekUserIdFromValue, topicWithAuthorFallback } from './src/userNavigation';
@@ -416,7 +414,6 @@ export default function App() {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
-  const [libraryUndo, setLibraryUndo] = useState<LibraryUndo>(null);
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
   const [topicError, setTopicError] = useState('');
@@ -2848,30 +2845,7 @@ export default function App() {
 
   const removeLibraryTopic = useCallback((topic: Topic) => {
     const section = libraryTab === 'history' ? 'history' : 'favorites';
-    const record = readerDataRef.current[section][topicKey(topic)];
-    if (record) {
-      setLibraryUndo({
-        section,
-        records: { [topicKey(topic)]: record },
-        label: `已删除 1 条${section === 'favorites' ? '收藏' : '历史'}`
-      });
-    }
     commitReaderData((current) => removeRecords(current, section, [topic]));
-  }, [commitReaderData, libraryTab]);
-
-  const removeManyLibraryTopics = useCallback((topics: Topic[]) => {
-    const section = libraryTab === 'history' ? 'history' : 'favorites';
-    const records = Object.fromEntries(topics
-      .map((topic) => [topicKey(topic), readerDataRef.current[section][topicKey(topic)]] as const)
-      .filter(([, record]) => Boolean(record))) as Record<string, TopicRecord>;
-    if (Object.keys(records).length) {
-      setLibraryUndo({
-        section,
-        records,
-        label: `已删除 ${Object.keys(records).length} 条${section === 'favorites' ? '收藏' : '历史'}`
-      });
-    }
-    commitReaderData((current) => removeRecords(current, section, topics));
   }, [commitReaderData, libraryTab]);
 
   const clearHistory = useCallback(() => {
@@ -2879,26 +2853,8 @@ export default function App() {
     if (!Object.keys(records).length) {
       return;
     }
-    setLibraryUndo({
-      section: 'history',
-      records,
-      label: `已清空 ${Object.keys(records).length} 条历史`
-    });
     commitReaderData((current) => clearRecords(current, 'history'));
   }, [commitReaderData]);
-
-  const undoLibraryDelete = useCallback(() => {
-    if (!libraryUndo) {
-      return;
-    }
-    commitReaderData((current) => restoreRecords(current, libraryUndo.section, libraryUndo.records));
-    setLibraryUndo(null);
-  }, [commitReaderData, libraryUndo]);
-
-  const updateLibraryRecord = useCallback((topic: Topic, patch: Pick<TopicRecord, 'tags' | 'note'>) => {
-    const section = libraryTab === 'history' ? 'history' : 'favorites';
-    commitReaderData((current) => updateTopicRecord(current, section, topic, patch));
-  }, [commitReaderData, libraryTab]);
 
   return (
     <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -3078,7 +3034,6 @@ export default function App() {
                 categories={categories}
                 followedUsers={followedUserRecords}
                 libraryTab={libraryTab}
-                libraryUndo={libraryUndo}
                 records={libraryRecords}
                 readerData={readerData}
                 topicListStateInput={topicListStateInput}
@@ -3087,12 +3042,9 @@ export default function App() {
                 onClearHistory={clearHistory}
                 onOpenTopic={openTopic}
                 onOpenUser={openUser}
-                onRemoveMany={removeManyLibraryTopics}
                 onRemove={removeLibraryTopic}
                 onRemoveUser={removeFollowedUser}
                 onTabChange={setLibraryTab}
-                onUndoDelete={undoLibraryDelete}
-                onUpdateRecord={updateLibraryRecord}
               />
             ) : null}
             {screen === 'more' ? (

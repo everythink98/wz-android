@@ -330,13 +330,23 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('onLoadMoreSearchSource={loadMoreSearchSource}');
   });
 
-  it('adds Android library management controls for filters, annotations, bulk delete, and undo', () => {
-    expect(appSource).toContain('libraryUndo');
-    expect(libraryScreenSource).toContain('onClearHistory');
-    expect(libraryScreenSource).toContain('onRemoveMany');
-    expect(libraryScreenSource).toContain('onUpdateRecord');
-    expect(libraryScreenSource).toContain('撤销删除');
-    expect(libraryScreenSource).toContain('标签筛选');
+  it('keeps Android favorites as a simple list with confirmed unfavorite actions', () => {
+    expect(appSource).not.toContain('libraryUndo');
+    expect(libraryScreenSource).toContain('Alert.alert');
+    expect(libraryScreenSource).toContain('确定取消收藏吗？');
+    expect(libraryScreenSource).toContain('label="取消收藏"');
+    expect(libraryScreenSource).toContain('active');
+    expect(libraryScreenSource).not.toContain('撤销删除');
+    expect(libraryScreenSource).not.toContain('批量删除');
+    expect(libraryScreenSource).not.toContain('退出批量');
+    expect(libraryScreenSource).not.toContain('删除选中');
+    expect(libraryScreenSource).not.toContain('标签筛选');
+    expect(libraryScreenSource).not.toContain('添加标签和备注');
+    expect(libraryScreenSource).not.toContain('编辑标签和备注');
+    expect(libraryScreenSource).not.toContain('备注：');
+    expect(libraryScreenSource).not.toContain('标签：');
+    expect(libraryScreenSource).not.toContain('来源全部');
+    expect(libraryScreenSource).not.toContain('节点全部');
   });
 
   it('keeps Android topic reading tools content-first without reader or focus toggles', () => {
@@ -718,11 +728,11 @@ describe('Android App experience guards', () => {
   });
 
   it('resets library filters when switching between favorites and history', () => {
-    const block = libraryScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);\s*\n\s*setTagFilter\('all'\);[\s\S]*?\n\s*}, \[libraryTab\]\);/)?.[0] || '';
+    const block = libraryScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSourceFilter\('all'\);\s*\n\s*setCategoryFilter\('all'\);[\s\S]*?\n\s*}, \[libraryTab\]\);/)?.[0] || '';
 
     expect(block).toContain("setSourceFilter('all');");
     expect(block).toContain("setCategoryFilter('all');");
-    expect(block).toContain("setTagFilter('all');");
+    expect(block).not.toContain("setTagFilter('all');");
     expect(libraryScreenSource).not.toContain('setSwipeOpenKey');
   });
 
@@ -732,23 +742,20 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('}, [categoryFilter, categoryItems]);');
   });
 
-  it('keeps library tag filters scoped to the selected source', () => {
-    expect(libraryScreenSource).toContain('recordsForSource');
-    expect(libraryScreenSource).toContain('recordsForSource.flatMap((record) => record.tags || [])');
-    expect(libraryScreenSource).not.toContain('records.flatMap((record) => record.tags || [])');
+  it('does not show Android library tag and note management controls', () => {
+    expect(libraryScreenSource).not.toContain('tagFilter');
+    expect(libraryScreenSource).not.toContain('tagInput');
+    expect(libraryScreenSource).not.toContain('noteInput');
+    expect(libraryScreenSource).not.toContain('TextInput');
+    expect(libraryScreenSource).not.toContain('onUpdateRecord');
   });
 
-  it('clears stale library bulk selections when leaving bulk mode or records change', () => {
-    const toggleBlock = libraryScreenSource.match(/const toggleBulkMode = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[bulkMode\]\);/)?.[1] || '';
-
-    expect(libraryScreenSource).toContain('const recordKeys = useMemo(() =>');
-    expect(libraryScreenSource).toContain('records.map(libraryRecordKey).join(\'|\')');
-    expect(libraryScreenSource).toContain('followedUsers.map((record) => userKey(record.user)).join(\'|\')');
-    expect(libraryScreenSource).toContain('}, [recordKeys]);');
-    expect(toggleBlock).toContain('if (bulkMode) {');
-    expect(toggleBlock).toContain('setSelected(new Set());');
-    expect(toggleBlock).toContain("setEditingKey('');");
-    expect(libraryScreenSource).toContain('onPress={toggleBulkMode}');
+  it('does not keep Android library bulk selection state', () => {
+    expect(libraryScreenSource).not.toContain('bulkMode');
+    expect(libraryScreenSource).not.toContain('selected');
+    expect(libraryScreenSource).not.toContain('toggleBulkMode');
+    expect(libraryScreenSource).not.toContain('removeSelected');
+    expect(libraryScreenSource).not.toContain('librarySelectRow');
   });
 
   it('keeps the current topic key active only while the topic screen is visible', () => {
