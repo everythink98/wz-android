@@ -269,6 +269,54 @@ describe('Android local forum facade', () => {
     expect(profile.topics.map((topic) => topic.id)).toEqual(['1212849', '1214608']);
   });
 
+  it('falls back to the V2EX member Atom feed when the public member page has no topic links', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ id: 683966, username: 'haonanaaaaaa', avatar_large: 'https://cdn.v2ex.com/avatar.png' }));
+      }
+      if (input === 'https://www.v2ex.com/member/haonanaaaaaa') {
+        return new Response('<h1>haonanaaaaaa</h1><a href="/member/haonanaaaaaa/topics">More topics by haonanaaaaaa</a>');
+      }
+      if (input === 'https://www.v2ex.com/member/haonanaaaaaa/topics') {
+        return new Response('<h1>haonanaaaaaa</h1>');
+      }
+      if (input === 'https://www.v2ex.com/feed/member/haonanaaaaaa.xml') {
+        return new Response(`<?xml version="1.0" encoding="utf-8"?>
+          <feed xmlns="http://www.w3.org/2005/Atom">
+            <entry>
+              <title>[调查] 大家都用的什么代理软件</title>
+              <link rel="alternate" type="text/html" href="https://www.v2ex.com/t/1214608#reply177" />
+              <published>2026-05-22T02:02:38Z</published>
+              <updated>2026-05-23T19:31:33Z</updated>
+              <author><name>haonanaaaaaa</name><uri>https://www.v2ex.com/member/haonanaaaaaa</uri></author>
+              <content type="html">&lt;p&gt;代理软件讨论&lt;/p&gt;</content>
+            </entry>
+            <entry>
+              <title>[程序员] Gemini 要重新做教育认证了</title>
+              <link rel="alternate" type="text/html" href="https://www.v2ex.com/t/1212849#reply55" />
+              <published>2026-05-15T01:02:35Z</published>
+              <updated>2026-05-21T01:39:01Z</updated>
+              <author><name>haonanaaaaaa</name><uri>https://www.v2ex.com/member/haonanaaaaaa</uri></author>
+              <content type="html">&lt;p&gt;教育认证提醒&lt;/p&gt;</content>
+            </entry>
+          </feed>`, {
+          headers: { 'content-type': 'application/atom+xml' }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profile = await getUserProfile({ source: 'v2ex', id: 'haonanaaaaaa', username: 'haonanaaaaaa', fetcher });
+
+    expect(profile.topics.map((topic) => topic.id)).toEqual(['1214608', '1212849']);
+    expect(profile.topics[0]).toMatchObject({
+      category: '调查',
+      title: '大家都用的什么代理软件',
+      excerpt: '代理软件讨论'
+    });
+    expect(fetcher.mock.calls.map((call) => call[0])).toContain('https://www.v2ex.com/feed/member/haonanaaaaaa.xml');
+  });
+
   it('orders all user profile topic lists by created time newest first', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {

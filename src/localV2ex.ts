@@ -1,5 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from './request';
 import type { SearchSort } from './feedLogic';
+import { XMLParser } from 'fast-xml-parser';
 import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
   absoluteUrl,
@@ -19,6 +20,13 @@ const BASE_URL = 'https://www.v2ex.com';
 const SOV2EX_URL = 'https://www.sov2ex.com';
 const HTML_LIST_PAGE_SIZE = 20;
 const latestCache: { savedAt: number; data: unknown[] } = { savedAt: 0, data: [] };
+const atomParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: '',
+  textNodeName: '#text',
+  cdataPropName: '#cdata',
+  trimValues: true
+});
 
 interface V2exOptions {
   fetcher?: Fetcher;
@@ -318,9 +326,61 @@ function parseV2exMemberTopics(html: string, username: string, avatar?: string) 
     })) as Topic[];
 }
 
+function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
+  const data = atomParser.parse(xml);
+  const entries = isRecord(data) && isRecord(data.feed)
+    ? data.feed.entry
+    : [];
+  return (Array.isArray(entries) ? entries : [entries])
+    .map((entry) => {
+      if (!isRecord(entry)) {
+        return null;
+      }
+      const links = Array.isArray(entry.link) ? entry.link : [entry.link];
+      const link = links.find((item) => isRecord(item) && typeof item.href === 'string') || {};
+      const href = isRecord(link) ? String(link.href || '') : '';
+      const id = href.match(/\/t\/(\d+)/)?.[1] || String(entry.id || '').match(/\/t\/(\d+)/)?.[1];
+      const rawTitle = String(entry.title || '').trim();
+      const titleMatch = rawTitle.match(/^\[([^\]]+)\]\s*(.+)$/);
+      const category = titleMatch ? titleMatch[1].trim() : undefined;
+      const title = (titleMatch ? titleMatch[2] : rawTitle).trim();
+      if (!id || !title) {
+        return null;
+      }
+      const createdAt = toIsoString(entry.published)
+        || toIsoString(entry.updated)
+        || new Date().toISOString();
+      const updatedAt = toIsoString(entry.updated) || createdAt;
+      const content = isRecord(entry.content)
+        ? String(entry.content['#cdata'] || entry.content['#text'] || '')
+        : String(entry.content || '');
+      return {
+        source: 'v2ex' as const,
+        id,
+        title,
+        author: username,
+        authorId: username,
+        authorAvatar: avatar,
+        authorUrl: memberUrl(username),
+        category,
+        url: safeTopicUrl(id, href),
+        createdAt,
+        lastReplyAt: updatedAt,
+        replyCount: Number.parseInt(href.match(/#reply(\d+)/)?.[1] || '0', 10) || 0,
+        excerpt: textExcerpt(content)
+      };
+    })
+    .filter(Boolean) as Topic[];
+}
+
 async function fetchV2exMemberTopics(username: string, options: V2exOptions) {
   const html = await fetchText(`${memberUrl(username)}/topics`, options).catch(() => '');
   return html ? parseV2exMemberTopics(html, username).slice(0, 30) : [];
+}
+
+async function fetchV2exMemberFeedTopics(username: string, avatar: string | undefined, options: V2exOptions) {
+  const xml = await fetchText(`${BASE_URL}/feed/member/${encodeURIComponent(username)}.xml`, options).catch(() => '');
+  return xml ? parseV2exAtomFeed(xml, username, avatar).slice(0, 30) : [];
 }
 
 export async function getV2exUserProfile(id: string, username: string, options: V2exOptions = {}): Promise<UserProfile> {
@@ -338,7 +398,9 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   const resolvedUsername = String(memberData.username || key);
   const avatar = absoluteUrl(memberData.avatar_large || memberData.avatar_normal || memberData.avatar_mini, BASE_URL);
   const topics = memberHtml ? parseV2exMemberTopics(memberHtml, resolvedUsername, avatar) : [];
-  const profileTopics = sortTopicsByCreatedAt(topics.length ? topics : await fetchV2exMemberTopics(resolvedUsername, options)).slice(0, 30);
+  const topicsPageTopics = topics.length ? topics : await fetchV2exMemberTopics(resolvedUsername, options);
+  const feedTopics = topicsPageTopics.length ? topicsPageTopics : await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options);
+  const profileTopics = sortTopicsByCreatedAt(feedTopics).slice(0, 30);
   return {
     source: 'v2ex',
     id: resolvedUsername,

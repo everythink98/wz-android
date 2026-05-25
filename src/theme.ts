@@ -58,23 +58,23 @@ export function alphaColor(hex: string, alpha: number) {
 
 export function createTheme(settings: ReaderSettings): ReaderTheme {
   const dark = settings.theme === 'dark';
-  const palette = { light: '#1f6954', dark: '#72b8a0', lightOn: '#f8fbfa', darkOn: '#09100d' };
-  const background = { base: '#ffffff', surface2: '#f7f7f7', line: '#e5e5e5', lineStrong: '#d8d8d8' };
+  const palette = { light: '#2b5548', dark: '#82bda8', lightOn: '#f5faf8', darkOn: '#0b120f' };
+  const background = { base: '#fafaf8', surface2: '#f0efec', line: '#e3e1dc', lineStrong: '#d0cec9' };
   if (dark) {
     return {
       dark: true,
-      background: '#111111',
-      surface: '#171717',
-      surface2: '#222222',
-      line: '#2f2f2f',
-      lineStrong: '#444444',
-      ink: '#eeeeee',
-      muted: '#a6a6a6',
+      background: '#121210',
+      surface: '#1a1918',
+      surface2: '#242321',
+      line: '#302f2c',
+      lineStrong: '#454441',
+      ink: '#eceae6',
+      muted: '#a3a19b',
       primary: palette.dark,
       primarySoft: alphaColor(palette.dark, 0.12),
       mist: alphaColor(palette.dark, 0.12),
       onPrimary: palette.darkOn,
-      danger: '#da8378',
+      danger: '#d4817a',
       success: palette.dark
     };
   }
@@ -85,13 +85,13 @@ export function createTheme(settings: ReaderSettings): ReaderTheme {
     surface2: background.surface2,
     line: background.line,
     lineStrong: background.lineStrong,
-    ink: '#191919',
-    muted: '#666666',
+    ink: '#1c1b19',
+    muted: '#86847e',
     primary: palette.light,
     primarySoft: alphaColor(palette.light, 0.07),
     mist: alphaColor(palette.light, 0.09),
     onPrimary: palette.lightOn,
-    danger: '#ad5349',
+    danger: '#a35046',
     success: palette.light
   };
 }
@@ -128,10 +128,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicHeaderStack: {
       width: '100%',
       alignItems: 'center',
-      gap: 18
+      gap: 20
     },
     stack: {
-      gap: 9,
+      gap: 10,
       width: '100%'
     },
     sectionHeader: {
@@ -176,7 +176,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderRadius: 22,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface
+      backgroundColor: theme.surface,
+      elevation: 2
     },
     topicSwipeShell: {
       position: 'relative',
@@ -211,13 +212,13 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       color: theme.danger
     },
     topicCard: {
-      gap: 5,
+      gap: 6,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: topicRowBackground
     },
     topicCardPressable: {
-      gap: 5,
+      gap: 7,
       paddingTop: densityPadding,
       paddingBottom: 4
     },
@@ -302,7 +303,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 40,
       justifyContent: 'center',
       backgroundColor: 'transparent',
-      borderRadius: 6,
+      borderRadius: 20,
       paddingHorizontal: 10,
       paddingVertical: 3
     },
@@ -320,7 +321,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '500'
     },
     tabRail: {
-      gap: 16,
+      gap: 20,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
@@ -348,7 +349,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 44,
       backgroundColor: theme.surface,
       borderColor: theme.lineStrong,
-      borderRadius: 6,
+      borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
       fontFamily: appFontFamily,
@@ -382,7 +383,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 6,
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 6,
+      borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 5
@@ -462,7 +463,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 10,
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -475,9 +476,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     menuIcon: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 30,
-      height: 30,
-      borderRadius: 8,
+      width: 32,
+      height: 32,
+      borderRadius: 10,
       backgroundColor: theme.surface2
     },
     menuLabel: {
@@ -553,7 +554,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       height: loginWebViewHeight,
       overflow: 'hidden',
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface
     },
@@ -591,6 +592,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.16),
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
+      elevation: 2,
       paddingHorizontal: 12,
       paddingVertical: 8
     },
@@ -619,7 +621,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'center',
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 6,
+      borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10
     },
@@ -630,7 +632,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8,
       backgroundColor: theme.mist,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 10
     },
@@ -667,7 +669,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     article: {
       width: '100%',
-      gap: 14,
+      gap: 16,
       backgroundColor: 'transparent',
       borderColor: 'transparent',
       borderRadius: 0,
@@ -729,7 +731,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 156,
       backgroundColor: alphaColor(theme.primary, 0.035),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.12),
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 16,
       paddingVertical: 22
@@ -763,7 +765,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
       borderColor: alphaColor(theme.danger, 0.34),
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
     },
@@ -810,7 +812,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
       paddingHorizontal: 0,
-      paddingVertical: 18
+      paddingVertical: 20
     },
     replyHead: {
       alignItems: 'center',
@@ -903,7 +905,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 4,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 8
     },
@@ -920,7 +922,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 8,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 11
     },
@@ -962,6 +964,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface,
+      elevation: 4,
       paddingBottom: 8,
       paddingHorizontal: 10,
       paddingTop: 4

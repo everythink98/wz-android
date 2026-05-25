@@ -43,15 +43,15 @@ describe('Android reader theme helpers', () => {
   });
 
   it('creates rgba colors and light theme tokens', () => {
-    expect(alphaColor('#1f6954', 0.09)).toBe('rgba(31, 105, 84, 0.09)');
+    expect(alphaColor('#2b5548', 0.09)).toBe('rgba(43, 85, 72, 0.09)');
     expect(createTheme(settings)).toMatchObject({
       dark: false,
-      background: '#ffffff',
-      surface: '#ffffff',
-      surface2: '#f7f7f7',
-      line: '#e5e5e5',
-      lineStrong: '#d8d8d8',
-      primary: '#1f6954'
+      background: '#fafaf8',
+      surface: '#fafaf8',
+      surface2: '#f0efec',
+      line: '#e3e1dc',
+      lineStrong: '#d0cec9',
+      primary: '#2b5548'
     });
   });
 
@@ -91,14 +91,14 @@ describe('Android reader theme helpers', () => {
 
     expect(theme).toMatchObject({
       dark: true,
-      background: '#111111',
-      surface: '#171717',
-      surface2: '#222222',
-      line: '#2f2f2f',
-      lineStrong: '#444444',
-      ink: '#eeeeee',
-      muted: '#a6a6a6',
-      primary: '#72b8a0'
+      background: '#121210',
+      surface: '#1a1918',
+      surface2: '#242321',
+      line: '#302f2c',
+      lineStrong: '#454441',
+      ink: '#eceae6',
+      muted: '#a3a19b',
+      primary: '#82bda8'
     });
     expect(styles.topicSwipeShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
@@ -119,11 +119,11 @@ describe('Android reader theme helpers', () => {
   it('uses only explicit light and dark themes', () => {
     expect(createTheme({ ...settings, theme: 'light' })).toMatchObject({
       dark: false,
-      primary: '#1f6954'
+      primary: '#2b5548'
     });
     expect(createTheme({ ...settings, theme: 'dark' })).toMatchObject({
       dark: true,
-      primary: '#72b8a0'
+      primary: '#82bda8'
     });
   });
 
