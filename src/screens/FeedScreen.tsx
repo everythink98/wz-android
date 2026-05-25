@@ -6,11 +6,12 @@ import type { Category, FeedSource, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from '../feedCategoryRail';
 import { shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
+import { feedSourceSwipeDirection, shouldCaptureFeedSourceSwipe } from '../feedSourceSwipe';
 import type { ReadingFilter } from '../feedLogic';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, FloatingIconButton, LoadingState, PillRail } from '../components/AppControls';
-import { MemoizedTopicCard, type TopicSwipeActionConfig } from '../components/TopicCard';
+import { MemoizedTopicCard } from '../components/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 const FEED_SCROLL_STORAGE_PREFIX = 'reader-feed-scroll';
@@ -64,14 +65,13 @@ export function FeedScreen({
   onRefresh: () => void;
   onToggleFavorite: (topic: Topic) => void;
 }) {
+  void onToggleFavorite;
   const listRef = useRef<FlatList<Topic>>(null);
   const requestedFeedPageRef = useRef<number | null>(null);
   const pendingScrollOffsetRef = useRef<number | null>(null);
   const scrollStorageKey = useMemo(() => feedScrollStorageKey(feedSource, categoryFilter, readingFilter), [categoryFilter, feedSource, readingFilter]);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
   const [scrollRestoreReady, setScrollRestoreReady] = useState(false);
-  const [rowSwipeActive, setRowSwipeActive] = useState(false);
-  const [swipeOpenKey, setSwipeOpenKey] = useState<string | undefined>();
 
   const requestFeedLoadMore = useCallback(() => {
     if (!feedHasMore || busy || loadingMore) {
@@ -143,14 +143,7 @@ export function FeedScreen({
     restoreFeedScrollPosition();
   }, [restoreFeedScrollPosition]);
 
-  useEffect(() => {
-    setSwipeOpenKey(undefined);
-    setRowSwipeActive(false);
-  }, [categoryFilter, feedSource, readingFilter]);
-
   const scrollToTop = useCallback(() => {
-    setSwipeOpenKey(undefined);
-    setRowSwipeActive(false);
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
     setShowFloatingActions(false);
   }, []);
@@ -158,28 +151,20 @@ export function FeedScreen({
     const index = feedSourceItems.findIndex((item) => item.value === feedSource);
     const next = feedSourceItems[index + direction];
     if (next) {
-      setSwipeOpenKey(undefined);
-      setRowSwipeActive(false);
       onFeedSourceChange(next.value);
     }
   }, [feedSource, onFeedSourceChange]);
   const pagePanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_event, gesture) => (
-      !rowSwipeActive
-      && Math.abs(gesture.dx) >= 52
-      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.8
+      shouldCaptureFeedSourceSwipe(gesture.dx, gesture.dy)
     ),
     onPanResponderRelease: (_event, gesture) => {
-      if (Math.abs(gesture.dx) < 72 && Math.abs(gesture.vx) < 0.45) {
-        return;
+      const direction = feedSourceSwipeDirection(gesture.dx, gesture.dy, gesture.vx);
+      if (direction) {
+        switchFeedSourceBySwipe(direction);
       }
-      switchFeedSourceBySwipe(gesture.dx < 0 ? 1 : -1);
     }
-  }), [rowSwipeActive, switchFeedSourceBySwipe]);
-  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
-    kind: 'favorite',
-    onPress: onToggleFavorite
-  }), [onToggleFavorite]);
+  }), [switchFeedSourceBySwipe]);
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
     <MemoizedTopicCard
@@ -188,13 +173,8 @@ export function FeedScreen({
       theme={theme}
       topic={topic}
       onOpenTopic={onOpenTopic}
-      swipeAction={favoriteSwipeAction}
-      swipeOpenKey={swipeOpenKey}
-      onSwipeActiveChange={setRowSwipeActive}
-      onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(topic) ? undefined : current)}
-      onSwipeOpen={setSwipeOpenKey}
     />
-  ), [favoriteSwipeAction, onOpenTopic, readerData, styles, swipeOpenKey, theme, topicListStateInput]);
+  ), [onOpenTopic, readerData, styles, theme, topicListStateInput]);
   const categoryItems = useMemo(
     () => feedCategoryItems(categories, feedSource),
     [categories, feedSource]
@@ -239,11 +219,6 @@ export function FeedScreen({
         data={feedItems}
         keyExtractor={topicKey}
         keyboardShouldPersistTaps="handled"
-        scrollEnabled={!rowSwipeActive}
-        onScrollBeginDrag={() => {
-          setSwipeOpenKey(undefined);
-          setRowSwipeActive(false);
-        }}
         onScroll={handleScroll}
         scrollEventThrottle={64}
         onMomentumScrollEnd={saveFeedScrollPosition}

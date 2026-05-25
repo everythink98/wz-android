@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedCategoryItems, feedReadingFilterItems, shouldUseReadingFilter } from './feedCategoryRail';
+import { feedCategoryItems, feedReadingFilterItems, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './feedCategoryRail';
 import type { Category } from './types';
 
 const categories: Category[] = [
@@ -35,5 +35,11 @@ describe('Android feed category rail', () => {
       { value: '', label: '全部' },
       { value: 'daily', label: '日常' }
     ]);
+  });
+
+  it('requests a source category refresh only until that source has categories', () => {
+    expect(shouldLoadCategoriesForSource(categories, 'linuxdo')).toBe(true);
+    expect(shouldLoadCategoriesForSource([...categories, { source: 'linuxdo', id: '4', name: '开发调优' }], 'linuxdo')).toBe(false);
+    expect(shouldLoadCategoriesForSource(categories, 'all')).toBe(false);
   });
 });

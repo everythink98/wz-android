@@ -521,10 +521,9 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   const resolvedUsername = String(user.username || name);
   const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
   const avatar = avatarUrl(user.avatar_template);
-  const categoryMap = categoryMapFromData(data);
-  const topics = Array.isArray(data.topics)
-    ? data.topics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[]
-    : [];
+  const rawTopics = Array.isArray(data.topics) ? data.topics : [];
+  const categoryMap = await categoryMapForTopics(data, rawTopics, categoryMapFromData(data), options);
+  const topics = rawTopics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[];
   const visibleTopics = sortTopicsByCreatedAt(topics);
   return {
     source: 'linuxdo',

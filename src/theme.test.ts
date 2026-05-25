@@ -81,7 +81,7 @@ describe('Android reader theme helpers', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
-    expect(styles.topicSwipeShell.backgroundColor).toBe(theme.background);
+    expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
   });
 
@@ -100,7 +100,7 @@ describe('Android reader theme helpers', () => {
       muted: '#a3a19b',
       primary: '#82bda8'
     });
-    expect(styles.topicSwipeShell.backgroundColor).toBe(theme.background);
+    expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
   });
 

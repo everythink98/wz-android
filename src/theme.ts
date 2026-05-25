@@ -1,5 +1,4 @@
 import { Platform, StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
-import { LIST_SWIPE_ACTION_WIDTH } from './listSwipeActions';
 import { type ReaderSettings } from './readerData';
 
 export interface ReaderTheme {
@@ -179,37 +178,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       backgroundColor: theme.surface,
       elevation: 2
     },
-    topicSwipeShell: {
+    topicRowShell: {
       position: 'relative',
       overflow: 'hidden',
       backgroundColor: topicRowBackground
-    },
-    topicSwipeAction: {
-      position: 'absolute',
-      top: 0,
-      right: 0,
-      bottom: 0,
-      width: LIST_SWIPE_ACTION_WIDTH,
-      backgroundColor: theme.mist
-    },
-    topicSwipeActionDanger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08)
-    },
-    topicSwipeActionButton: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 4,
-      paddingHorizontal: 8
-    },
-    topicSwipeActionText: {
-      color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '600'
-    },
-    topicSwipeActionTextDanger: {
-      color: theme.danger
     },
     topicCard: {
       gap: 6,

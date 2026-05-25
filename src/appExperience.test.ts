@@ -72,26 +72,18 @@ describe('Android App experience guards', () => {
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(url)');
   });
 
-  it('keeps list item actions behind the swipe gesture instead of showing permanent icons', () => {
-    expect(topicCardSource).toContain('topicSwipeActionButton');
+  it('keeps topic list rows free of swipe action controls', () => {
+    expect(topicCardSource).not.toContain('topicSwipeActionButton');
+    expect(androidUiSource).not.toContain('swipeAction=');
+    expect(androidUiSource).not.toContain('TopicSwipeActionConfig');
     expect(androidUiSource).not.toContain('topicInlineAction');
     expect(androidUiSource).not.toContain('topicMetaPressable');
   });
 
-  it('releases row swipe locks when swipe rows disappear or lists reset', () => {
-    expect(topicCardSource).toContain('isSwipeActiveRef');
-    expect(topicCardSource).toContain('releaseSwipeActive');
-    expect(topicCardSource).toContain('useEffect(() => () => {');
-    expect(feedScreenSource).toContain('setRowSwipeActive(false);');
-    expect(searchScreenSource).toContain('setRowSwipeActive(false);');
-    expect(libraryScreenSource).toContain('setRowSwipeActive(false);');
-  });
-
-  it('closes feed row swipes when feed filters change from the header tabs', () => {
-    const block = feedScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSwipeOpenKey\(undefined\);[\s\S]*?\n\s*}, \[categoryFilter, feedSource, readingFilter\]\);/)?.[0] || '';
-
-    expect(block).toContain('setSwipeOpenKey(undefined);');
-    expect(block).toContain('setRowSwipeActive(false);');
+  it('switches Android feed sources through a page-level horizontal gesture', () => {
+    expect(feedScreenSource).toContain('feedSourceSwipeDirection(gesture.dx, gesture.dy, gesture.vx)');
+    expect(feedScreenSource).toContain('shouldCaptureFeedSourceSwipe(gesture.dx, gesture.dy)');
+    expect(feedScreenSource).toContain('switchFeedSourceBySwipe(direction);');
   });
 
   it('uses more helpful empty messages for filtered feed lists', () => {
@@ -231,7 +223,7 @@ describe('Android App experience guards', () => {
 
     expect(appSource).toContain('topicScrollRestoreTimerRef');
     expect(openTopicBlock).toContain('clearTopicScrollRestoreTimer();');
-    expect(openTopicBlock).toContain('const restoreTopicKey = topicKey(detail);');
+    expect(openTopicBlock).toContain('const restoreTopicKey = topicKey(displayDetail);');
     expect(openTopicBlock).toContain('currentTopicKeyRef.current !== restoreTopicKey');
   });
 
@@ -250,18 +242,12 @@ describe('Android App experience guards', () => {
     expect(searchScreenSource).toContain('data={showRemoteGroups ? [] : filteredSearchResults}');
   });
 
-  it('closes search row swipes when the search category filter changes', () => {
-    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSwipeOpenKey\(undefined\);[\s\S]*?\n\s*}, \[searchCategoryFilter\]\);/)?.[0] || '';
+  it('resets Android search category filters when the search context changes', () => {
+    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSearchCategoryFilter\('all'\);[\s\S]*?\n\s*}, \[query, scope, searchSource, sort\]\);/)?.[0] || '';
 
-    expect(block).toContain('setSwipeOpenKey(undefined);');
-    expect(block).toContain('setRowSwipeActive(false);');
-  });
-
-  it('closes search row swipes when search sorting changes', () => {
-    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSwipeOpenKey\(undefined\);[\s\S]*?\n\s*}, \[query, scope, searchSource, sort\]\);/)?.[0] || '';
-
-    expect(block).toContain('setSwipeOpenKey(undefined);');
-    expect(block).toContain('setRowSwipeActive(false);');
+    expect(block).toContain("setSearchCategoryFilter('all');");
+    expect(searchScreenSource).not.toContain('setSwipeOpenKey');
+    expect(searchScreenSource).not.toContain('setRowSwipeActive');
   });
 
   it('only shows Android search sort filters for sources with real request parameters', () => {
@@ -548,7 +534,7 @@ describe('Android App experience guards', () => {
   });
 
   it('uses saved NodeSeek verification data for categories and status checks', () => {
-    const categoriesBlock = appSource.match(/const loadCategories = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const categoriesBlock = appSource.match(/const loadCategories = useCallback\(async \(source: FeedSource = 'all'\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(categoriesBlock).toContain('loadNodeSeekCookieForSource');
@@ -557,6 +543,13 @@ describe('Android App experience guards', () => {
     expect(statusBlock).toContain('loadNodeSeekCookieForSource');
     expect(statusBlock).toContain('nodeSeekCookie');
     expect(statusBlock).toContain('nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current');
+  });
+
+  it('reloads a single source category list only when that source is missing categories', () => {
+    const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(shouldLoadCategoriesForSource\(categories, feedSource\)\) \{[\s\S]*?\n\s*}, \[categories, feedSource, loadCategories\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('shouldLoadCategoriesForSource');
+    expect(block).toContain('void loadCategories(feedSource);');
   });
 
   it('checks whether saved yaohuo cookies are still usable in local status', () => {
@@ -612,7 +605,8 @@ describe('Android App experience guards', () => {
   });
 
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
-    expect(appSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content"));');
+    expect(appSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
+    expect(appSource).toContain('document.body?.innerText');
     expect(appSource).toContain('if ((!isChallengePage() && hasReadableContent()) || Date.now() >= deadline) {');
   });
 
@@ -697,7 +691,11 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps Android appearance settings to light or dark with fixed forest green and pea white', () => {
-    const settingsPanelBlock = moreScreenSource.match(/function SettingsPanel\([\s\S]*?\n}\n\nfunction ChipList/)?.[0] || '';
+    const settingsPanelStart = moreScreenSource.indexOf('function SettingsPanel(');
+    const settingsPanelEnd = moreScreenSource.indexOf('function ChipList(');
+    const settingsPanelBlock = settingsPanelStart >= 0 && settingsPanelEnd > settingsPanelStart
+      ? moreScreenSource.slice(settingsPanelStart, settingsPanelEnd)
+      : '';
 
     expect(moreScreenSource).toContain('value="字号 · 白天/黑夜 · 阅读调节"');
     expect(settingsPanelBlock).toContain("{ value: 'light', label: '浅色' }");
@@ -725,7 +723,7 @@ describe('Android App experience guards', () => {
     expect(block).toContain("setSourceFilter('all');");
     expect(block).toContain("setCategoryFilter('all');");
     expect(block).toContain("setTagFilter('all');");
-    expect(block).toContain('setSwipeOpenKey(undefined);');
+    expect(libraryScreenSource).not.toContain('setSwipeOpenKey');
   });
 
   it('clears stale library category filters after switching sources', () => {

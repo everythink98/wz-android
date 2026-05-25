@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
 import type { FeedSource, Topic, UserProfile } from '../types';
-import { type FollowedUserRecord, type ReaderData, type TopicRecord, topicKey, userKey } from '../readerData';
+import { type FollowedUserRecord, type ReaderData, type TopicRecord, userKey } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
 import { filterLibraryRecords, groupLibraryRecordsByTime, libraryCategoryFilterItems } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
@@ -9,7 +9,7 @@ import { feedSources } from '../feedCategoryRail';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, PillRail } from '../components/AppControls';
-import { MemoizedTopicCard, type TopicSwipeActionConfig } from '../components/TopicCard';
+import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 export type LibraryUndo = {
@@ -80,16 +80,10 @@ export function LibraryScreen({
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState('all');
   const [bulkMode, setBulkMode] = useState(false);
-  const [rowSwipeActive, setRowSwipeActive] = useState(false);
-  const [swipeOpenKey, setSwipeOpenKey] = useState<string | undefined>();
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [editingKey, setEditingKey] = useState('');
   const [tagInput, setTagInput] = useState('');
   const [noteInput, setNoteInput] = useState('');
-  const deleteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
-    kind: 'delete',
-    onPress: onRemove
-  }), [onRemove]);
   const userRecords = useMemo(() => (
     sourceFilter === 'all'
       ? followedUsers
@@ -116,8 +110,6 @@ export function LibraryScreen({
     setSourceFilter('all');
     setCategoryFilter('all');
     setTagFilter('all');
-    setSwipeOpenKey(undefined);
-    setRowSwipeActive(false);
   }, [libraryTab]);
   useEffect(() => {
     if (categoryFilter !== 'all' && !categoryItems.some((item) => item.value === categoryFilter)) {
@@ -132,8 +124,6 @@ export function LibraryScreen({
   useEffect(() => {
     setSelected(new Set());
     setEditingKey('');
-    setSwipeOpenKey(undefined);
-    setRowSwipeActive(false);
   }, [categoryFilter, libraryTab, sourceFilter, tagFilter]);
   useEffect(() => {
     setSelected(new Set());
@@ -197,11 +187,6 @@ export function LibraryScreen({
           theme={theme}
           topic={record.topic}
           onOpenTopic={onOpenTopic}
-          swipeAction={bulkMode ? undefined : deleteSwipeAction}
-          swipeOpenKey={swipeOpenKey}
-          onSwipeActiveChange={setRowSwipeActive}
-          onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(record.topic) ? undefined : current)}
-          onSwipeOpen={setSwipeOpenKey}
         />
         <View style={styles.libraryMetaBlock}>
           <Text style={styles.meta}>保存于 {formatDateTime(record.savedAt) || record.savedAt}{record.visitCount ? ` · ${record.visitCount} 次阅读` : ''}</Text>
@@ -237,7 +222,7 @@ export function LibraryScreen({
         )}
       </View>
     );
-  }, [beginEdit, bulkMode, deleteSwipeAction, editingKey, noteInput, onOpenTopic, onRemove, readerData, saveEdit, selected, styles, swipeOpenKey, tagInput, theme, toggleSelected, topicListStateInput]);
+  }, [beginEdit, bulkMode, editingKey, noteInput, onOpenTopic, onRemove, readerData, saveEdit, selected, styles, tagInput, theme, toggleSelected, topicListStateInput]);
   const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
     <View style={styles.libraryItem}>
       <Pressable accessibilityRole="button" style={styles.menuButton} onPress={() => onOpenUser(item.user)}>
@@ -316,11 +301,6 @@ export function LibraryScreen({
       contentContainerStyle={styles.contentInner}
       data={libraryTab === 'users' ? userRecords : listItems}
       keyExtractor={(item) => libraryTab === 'users' ? userKey((item as FollowedUserRecord).user) : (item as LibraryListItem).key}
-      scrollEnabled={!rowSwipeActive}
-      onScrollBeginDrag={() => {
-        setSwipeOpenKey(undefined);
-        setRowSwipeActive(false);
-      }}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListEmptyComponent={<EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />}

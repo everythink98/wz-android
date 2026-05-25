@@ -1,19 +1,11 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
-import { Animated, PanResponder, Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
-import { Star, X } from 'lucide-react-native';
+import { memo, useCallback, useMemo } from 'react';
+import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import type { Topic } from '../types';
 import { topicKey } from '../readerData';
 import { formatRelativeTime, sourceLabel, topicListDisplayTime } from '../appUtils';
 import { highlightTextParts } from '../androidFeatureHelpers';
-import { LIST_SWIPE_ACTION_WIDTH, clampListSwipeTranslate, shouldCaptureListSwipe, shouldOpenListSwipeAction } from '../listSwipeActions';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { topicListItemStatesEqual, type TopicListItemState } from '../topicListItemState';
-import { TOUCH_HIT_SLOP } from './AppControls';
-
-export type TopicSwipeActionConfig = {
-  kind: 'favorite' | 'delete';
-  onPress: (topic: Topic) => void;
-};
 
 function HighlightedText({
   highlightStyle,
@@ -42,110 +34,20 @@ export function TopicCard({
   highlightQuery = '',
   topic,
   readerState,
-  swipeAction,
   styles,
   theme,
-  onOpenTopic,
-  swipeOpenKey,
-  onSwipeActiveChange,
-  onSwipeClose,
-  onSwipeOpen
+  onOpenTopic
 }: {
   highlightQuery?: string;
   topic: Topic;
   readerState: TopicListItemState;
-  swipeAction?: TopicSwipeActionConfig;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
-  swipeOpenKey?: string;
-  onSwipeActiveChange?: (active: boolean) => void;
-  onSwipeClose?: () => void;
-  onSwipeOpen?: (key: string) => void;
 }) {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const isSwipeOpenRef = useRef(false);
-  const isSwipeActiveRef = useRef(false);
-  const key = topicKey(topic);
-  const releaseSwipeActive = useCallback(() => {
-    if (isSwipeActiveRef.current) {
-      isSwipeActiveRef.current = false;
-      onSwipeActiveChange?.(false);
-    }
-  }, [onSwipeActiveChange]);
-  const animateSwipe = useCallback((open: boolean) => {
-    isSwipeOpenRef.current = open;
-    if (open) {
-      onSwipeOpen?.(key);
-    } else {
-      onSwipeClose?.();
-    }
-    Animated.spring(translateX, {
-      toValue: open ? -LIST_SWIPE_ACTION_WIDTH : 0,
-      useNativeDriver: true,
-      friction: 9,
-      tension: 90
-    }).start();
-  }, [key, onSwipeClose, onSwipeOpen, translateX]);
-  useEffect(() => {
-    if (isSwipeOpenRef.current && swipeOpenKey !== key) {
-      animateSwipe(false);
-    }
-  }, [animateSwipe, key, swipeOpenKey]);
-  useEffect(() => () => {
-    releaseSwipeActive();
-  }, [releaseSwipeActive]);
-  useEffect(() => {
-    if (!swipeAction) {
-      releaseSwipeActive();
-      if (isSwipeOpenRef.current) {
-        animateSwipe(false);
-      }
-    }
-  }, [animateSwipe, releaseSwipeActive, swipeAction]);
   const openTopicPress = useCallback(() => {
-    if (isSwipeOpenRef.current) {
-      animateSwipe(false);
-      return;
-    }
     onOpenTopic(topic);
-  }, [animateSwipe, onOpenTopic, topic]);
-  const runSwipeAction = useCallback(() => {
-    swipeAction?.onPress(topic);
-    animateSwipe(false);
-  }, [animateSwipe, swipeAction, topic]);
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => {
-      if (!swipeAction) {
-        return false;
-      }
-      if (isSwipeOpenRef.current) {
-        return Math.abs(gesture.dx) >= 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.6;
-      }
-      return shouldCaptureListSwipe(gesture.dx, gesture.dy);
-    },
-    onPanResponderGrant: () => {
-      isSwipeActiveRef.current = true;
-      onSwipeActiveChange?.(true);
-    },
-    onPanResponderMove: (_event, gesture) => {
-      const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
-      translateX.setValue(clampListSwipeTranslate(start + gesture.dx));
-    },
-    onPanResponderRelease: (_event, gesture) => {
-      const start = isSwipeOpenRef.current ? -LIST_SWIPE_ACTION_WIDTH : 0;
-      releaseSwipeActive();
-      animateSwipe(Boolean(swipeAction) && shouldOpenListSwipeAction(start + gesture.dx, gesture.vx));
-    },
-    onPanResponderTerminate: () => {
-      releaseSwipeActive();
-      animateSwipe(isSwipeOpenRef.current);
-    }
-  }), [animateSwipe, onSwipeActiveChange, releaseSwipeActive, swipeAction, translateX]);
-  const ActionIcon = swipeAction?.kind === 'delete' ? X : Star;
-  const swipeActionLabel = swipeAction?.kind === 'delete'
-    ? '删除'
-    : readerState.favorite ? '取消收藏' : '收藏';
+  }, [onOpenTopic, topic]);
   const metaParts = [
     topic.author || '未知作者',
     `${topic.replyCount} 回复`,
@@ -156,29 +58,8 @@ export function TopicCard({
     topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
   ].filter(Boolean).join(' · ');
   return (
-    <View style={styles.topicSwipeShell}>
-      {swipeAction ? (
-        <View style={[styles.topicSwipeAction, swipeAction.kind === 'delete' && styles.topicSwipeActionDanger]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={swipeActionLabel}
-            hitSlop={TOUCH_HIT_SLOP}
-            android_ripple={androidRipple(theme.primarySoft)}
-            style={styles.topicSwipeActionButton}
-            onPress={runSwipeAction}
-          >
-            <ActionIcon size={18} color={swipeAction.kind === 'delete' ? theme.danger : theme.primary} strokeWidth={2} />
-            <Text style={[styles.topicSwipeActionText, swipeAction.kind === 'delete' && styles.topicSwipeActionTextDanger]}>{swipeActionLabel}</Text>
-          </Pressable>
-        </View>
-      ) : null}
-      <Animated.View
-        {...(swipeAction ? panResponder.panHandlers : {})}
-        style={[
-          styles.topicCard,
-          { transform: [{ translateX }] }
-        ]}
-      >
+    <View style={styles.topicRowShell}>
+      <View style={styles.topicCard}>
         <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
           <View style={styles.topicCardHead}>
             <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
@@ -191,7 +72,7 @@ export function TopicCard({
         <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>
           <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>
         </View>
-      </Animated.View>
+      </View>
     </View>
   );
 }
@@ -210,10 +91,5 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.theme === next.theme
   && previous.highlightQuery === next.highlightQuery
   && previous.onOpenTopic === next.onOpenTopic
-  && previous.onSwipeActiveChange === next.onSwipeActiveChange
-  && previous.onSwipeClose === next.onSwipeClose
-  && previous.onSwipeOpen === next.onSwipeOpen
-  && previous.swipeAction === next.swipeAction
-  && previous.swipeOpenKey === next.swipeOpenKey
   && topicListItemStatesEqual(previous.readerState, next.readerState)
 ));

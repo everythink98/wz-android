@@ -214,6 +214,23 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   };
 }
 
+function sortNodeSeekUserTopics(topics: Topic[]) {
+  return topics
+    .map((topic, index) => ({ topic, index, time: Date.parse(topic.createdAt || '') }))
+    .sort((left, right) => {
+      const leftTimed = Number.isFinite(left.time);
+      const rightTimed = Number.isFinite(right.time);
+      if (leftTimed && rightTimed) {
+        return right.time - left.time;
+      }
+      if (leftTimed !== rightTimed) {
+        return leftTimed ? -1 : 1;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.topic);
+}
+
 function embeddedTopics(data: Record<string, unknown>) {
   return [
     ...arrayField(data.rotateTopics),
@@ -385,10 +402,23 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
 async function fetchNodeSeekJson(path: string, options: NodeSeekOptions = {}) {
   const text = await fetchNodeSeekText(path, options);
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(extractNodeSeekJsonText(text)) as unknown;
   } catch {
     throw new Error('NodeSeek 数据解析失败');
   }
+}
+
+function extractNodeSeekJsonText(text: string) {
+  const trimmed = text.trim();
+  if (!/^</.test(trimmed)) {
+    return trimmed;
+  }
+  const root = parseHtml(trimmed);
+  const preText = elementText(root.querySelector('pre')).trim();
+  if (preText) {
+    return preText;
+  }
+  return elementText(root.querySelector('body')).trim() || trimmed;
 }
 
 function searchPath(query: string, page = 1) {
@@ -760,15 +790,13 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   const joinedAt = toIsoString(user.created_at || user.createdAt || user.createdDate);
   const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=1`, options);
   const discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
-  const topics = await Promise.all(discussions.filter(isRecord).map(async (discussion) => {
+  const topics = discussions.filter(isRecord).map((discussion) => {
     const topicId = String(discussion.post_id || discussion.postId || discussion.id || '').trim();
     const title = String(discussion.title || discussion.titleText || '').trim();
     if (!topicId || !title) {
       return null;
     }
-    const directCreatedAt = nodeSeekCreatedAt(discussion);
-    const detail = directCreatedAt ? null : await getNodeSeekTopic(topicId, { ...options, replyLimit: 1 }).catch(() => null);
-    const createdAt = directCreatedAt || detail?.createdAt || new Date().toISOString();
+    const createdAt = nodeSeekCreatedAt(discussion);
     const accessRequirement = accessRequirementFromObject(discussion);
     return {
       source: 'nodeseek' as const,
@@ -781,12 +809,12 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
       url: safeNodeSeekTopicUrl(topicId, `/post-${topicId}-1`),
       createdAt,
       lastReplyAt: createdAt,
-      replyCount: parsePositiveInteger(discussion.comments || discussion.commentCount || discussion.nComment || detail?.replyCount),
+      replyCount: parsePositiveInteger(discussion.comments || discussion.commentCount || discussion.nComment),
       viewCount: parseViewCount(discussion.views || discussion.viewCount),
       ...(accessRequirement ? { accessRequirement } : {})
     };
-  })) as Array<Topic | null>;
-  const visibleTopics = sortTopicsByCreatedAt(topics.filter(Boolean) as Topic[]);
+  }) as Array<Topic | null>;
+  const visibleTopics = sortNodeSeekUserTopics(topics.filter(Boolean) as Topic[]);
   return {
     source: 'nodeseek',
     id: userId,

@@ -9,12 +9,13 @@ const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src
 const listSource = [topicCardSource, feedScreenSource, searchScreenSource, libraryScreenSource].join('\n');
 
 describe('Android topic list swipe layout', () => {
-  it('uses swipe actions for feed, search, and library topic rows', () => {
-    expect(listSource).toContain("kind: 'favorite'");
-    expect(listSource).toContain("kind: 'delete'");
-    expect(feedScreenSource).toContain('swipeAction={favoriteSwipeAction}');
-    expect(searchScreenSource).toContain('swipeAction={favoriteSwipeAction}');
-    expect(libraryScreenSource).toContain('swipeAction={bulkMode ? undefined : deleteSwipeAction}');
+  it('does not attach swipe actions to feed, search, or library topic rows', () => {
+    expect(listSource).not.toContain('TopicSwipeActionConfig');
+    expect(listSource).not.toContain('swipeAction=');
+    expect(listSource).not.toContain('swipeOpenKey');
+    expect(listSource).not.toContain('onSwipeActiveChange');
+    expect(listSource).not.toContain('onSwipeOpen');
+    expect(listSource).not.toContain('onSwipeClose');
   });
 
   it('does not keep a permanent favorite button in the topic list row footer', () => {
@@ -31,7 +32,7 @@ describe('Android topic list swipe layout', () => {
     expect(topicCardSource).toContain("readerState.tracked ? '追踪命中' : ''");
   });
 
-  it('does not make the full swipe row transparent when a topic is marked read', () => {
+  it('does not make the full topic row transparent when a topic is marked read', () => {
     expect(topicCardSource).not.toMatch(/styles\.topicCard,\s*readerState\.read && styles\.topicCardRead,/);
     expect(topicCardSource).toContain('style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]}');
     expect(topicCardSource).toContain('style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}');

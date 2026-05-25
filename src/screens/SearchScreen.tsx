@@ -8,7 +8,7 @@ import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
-import { MemoizedTopicCard, type TopicSwipeActionConfig } from '../components/TopicCard';
+import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 export type SearchScope = 'remote' | 'local';
@@ -82,12 +82,7 @@ export function SearchScreen({
   onSortChange: (sort: SearchSort) => void;
   onToggleFavorite: (topic: Topic) => void;
 }) {
-  const favoriteSwipeAction = useMemo<TopicSwipeActionConfig>(() => ({
-    kind: 'favorite',
-    onPress: onToggleFavorite
-  }), [onToggleFavorite]);
-  const [rowSwipeActive, setRowSwipeActive] = useState(false);
-  const [swipeOpenKey, setSwipeOpenKey] = useState<string | undefined>();
+  void onToggleFavorite;
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <MemoizedTopicCard
       highlightQuery={query}
@@ -96,13 +91,8 @@ export function SearchScreen({
       theme={theme}
       topic={item}
       onOpenTopic={onOpenTopic}
-      swipeAction={favoriteSwipeAction}
-      swipeOpenKey={swipeOpenKey}
-      onSwipeActiveChange={setRowSwipeActive}
-      onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(item) ? undefined : current)}
-      onSwipeOpen={setSwipeOpenKey}
     />
-  ), [favoriteSwipeAction, onOpenTopic, query, readerData, styles, swipeOpenKey, theme, topicListStateInput]);
+  ), [onOpenTopic, query, readerData, styles, theme, topicListStateInput]);
   const selectSavedSearch = useCallback((id: string) => {
     const saved = readerData.savedSearches.find((item) => item.id === id);
     if (saved) {
@@ -113,8 +103,6 @@ export function SearchScreen({
   }, [onQueryChange, readerData.savedSearches]);
   const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
   useEffect(() => {
-    setSwipeOpenKey(undefined);
-    setRowSwipeActive(false);
     setSearchCategoryFilter('all');
   }, [query, scope, searchSource, sort]);
   const searchCategoryOptions = useMemo(() => {
@@ -140,10 +128,6 @@ export function SearchScreen({
       setSearchCategoryFilter('all');
     }
   }, [searchCategoryFilter, searchCategoryOptions]);
-  useEffect(() => {
-    setSwipeOpenKey(undefined);
-    setRowSwipeActive(false);
-  }, [searchCategoryFilter]);
   const filteredSearchResults = useMemo(() => (
     searchCategoryFilter === 'all'
       ? results
@@ -177,11 +161,6 @@ export function SearchScreen({
           theme={theme}
           topic={item}
           onOpenTopic={onOpenTopic}
-          swipeAction={favoriteSwipeAction}
-          swipeOpenKey={swipeOpenKey}
-          onSwipeActiveChange={setRowSwipeActive}
-          onSwipeClose={() => setSwipeOpenKey((current) => current === topicKey(item) ? undefined : current)}
-          onSwipeOpen={setSwipeOpenKey}
         />
       ))}
       {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
@@ -195,7 +174,7 @@ export function SearchScreen({
         />
       ) : null}
     </View>
-  )), [busy, favoriteSwipeAction, onLoadMoreSearchSource, onOpenTopic, onRetrySearchSource, query, readerData, styles, swipeOpenKey, theme, topicListStateInput, visibleSearchGroups]);
+  )), [busy, onLoadMoreSearchSource, onOpenTopic, onRetrySearchSource, query, readerData, styles, theme, topicListStateInput, visibleSearchGroups]);
   const linuxDoExternalItems = useMemo(() => (
     scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
       ? linuxDoExternalSearchItems(query)
@@ -328,11 +307,6 @@ export function SearchScreen({
       data={showRemoteGroups ? [] : filteredSearchResults}
       keyExtractor={topicKey}
       keyboardShouldPersistTaps="handled"
-      scrollEnabled={!rowSwipeActive}
-      onScrollBeginDrag={() => {
-        setSwipeOpenKey(undefined);
-        setRowSwipeActive(false);
-      }}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()

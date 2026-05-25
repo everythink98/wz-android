@@ -835,6 +835,31 @@ describe('Android local sources', () => {
     });
   });
 
+  it('does not treat rendered NodeSeek category links as topic authors', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <main>
+        <article class="post-detail">
+          <h1 class="post-title">NodeSeek category author regression</h1>
+          <div class="post-info">
+            <a href="/categories/bug">Bugs</a>
+            <time datetime="2026-05-25T03:34:00.000Z">2026-05-25 11:34</time>
+          </div>
+          <div class="post-content"><p>body</p></div>
+        </article>
+      </main>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743002', fetcher });
+
+    expect(topic).toMatchObject({
+      categoryId: 'bug',
+      category: 'Bugs'
+    });
+    expect(topic.author).toBe('');
+    expect(topic.authorId).toBeUndefined();
+    expect(topic.authorUrl).toBeUndefined();
+  });
+
   it('reads rendered NodeSeek content-item authors and replies', async () => {
     const fetcher = vi.fn(async () => html(`
       <a class="post-title" href="/post-743001-1">【求助】Claude使用Google pay绑定国内visa信用卡订阅有风险吗？</a>

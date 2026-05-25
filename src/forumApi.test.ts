@@ -378,27 +378,13 @@ describe('Android local forum facade', () => {
     expect(yaohuo.topics.map((topic) => topic.id)).toEqual(['67', '66']);
   });
 
-  it('reads NodeSeek user profile post times from topic detail when the discussion list has no time', async () => {
-    const topicPayload = Buffer.from(JSON.stringify({
-      postData: {
-        title: 'NodeSeek topic',
-        op: { name: '我是ikun', userId: 48872 },
-        comments: [{
-          poster: { name: '我是ikun', id: 48872 },
-          markdown: 'body',
-          time: { createdDate: '2026-05-22T16:06:25.000Z' }
-        }]
-      }
-    })).toString('base64');
+  it('keeps untimed NodeSeek user profile posts untimed without opening topic details', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
         return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
       }
       if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
         return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0 }] }));
-      }
-      if (input.includes('nodeseek.com/post-101-1')) {
-        return new Response(`<script>${topicPayload}</script>`);
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -407,12 +393,40 @@ describe('Android local forum facade', () => {
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
 
     expect(nodeseek.topics[0]).toMatchObject({
-      id: '101',
-      createdAt: '2026-05-22T16:06:25.000Z',
-      lastReplyAt: '2026-05-22T16:06:25.000Z'
+      id: '101'
     });
-    expect(calls).toContain('nodeseek.com/post-101-1');
+    expect(nodeseek.topics[0].createdAt).toBe('');
+    expect(nodeseek.topics[0].lastReplyAt).toBe('');
+    expect(calls).not.toContain('nodeseek.com/post-101-1');
     expect(calls).not.toContain('list-comments');
+  });
+
+  it('reads NodeSeek user profile JSON when hidden WebView wraps it in an HTML document', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/15105?readme=1')) {
+        return new Response('<html><body><pre>{"success":true,"detail":{"member_name":"Bugs","member_id":15105}}</pre></body></html>', {
+          headers: { 'content-type': 'text/html' }
+        });
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=15105&page=1')) {
+        return new Response('<html><body>{"success":true,"discussions":[{"post_id":746779,"title":"NodeSeek topic","time":{"createdDate":"2026-05-25T03:34:00.000Z"}}]}</body></html>', {
+          headers: { 'content-type': 'text/html' }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '15105', username: 'Bugs', fetcher });
+
+    expect(nodeseek).toMatchObject({
+      source: 'nodeseek',
+      id: '15105',
+      username: 'Bugs'
+    });
+    expect(nodeseek.topics[0]).toMatchObject({
+      id: '746779',
+      createdAt: '2026-05-25T03:34:00.000Z'
+    });
   });
 
   it('reads NodeSeek user profile post times directly from nested discussion time', async () => {
@@ -444,6 +458,88 @@ describe('Android local forum facade', () => {
     });
     expect(calls).not.toContain('nodeseek.com/post-101-1');
     expect(calls).not.toContain('list-comments');
+  });
+
+  it('keeps untimed NodeSeek user profile posts in their original list order', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          discussions: [
+            { post_id: 101, title: 'NodeSeek first' },
+            { post_id: 102, title: 'NodeSeek second' }
+          ]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+
+    expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['101', '102']);
+    expect(nodeseek.topics.every((topic) => topic.createdAt === '' && topic.lastReplyAt === '')).toBe(true);
+  });
+
+  it('sorts timed NodeSeek user profile posts while preserving untimed post order', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          discussions: [
+            { post_id: 101, title: 'NodeSeek older', time: { createdDate: '2026-05-20T00:00:00.000Z' } },
+            { post_id: 102, title: 'NodeSeek untimed first' },
+            { post_id: 103, title: 'NodeSeek newer', time: { createdDate: '2026-05-22T00:00:00.000Z' } },
+            { post_id: 104, title: 'NodeSeek untimed second' }
+          ]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+
+    expect(nodeseek.topics.map((topic) => topic.id)).toEqual(['103', '101', '102', '104']);
+    expect(nodeseek.topics.slice(2).map((topic) => topic.createdAt)).toEqual(['', '']);
+  });
+
+  it('maps linux.do user profile topic categories through site categories', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('linux.do/site.json')) {
+        return new Response(JSON.stringify({
+          categories: [{ id: 4, name: '开发调优' }]
+        }));
+      }
+      if (input.includes('linux.do/u/alice/summary.json')) {
+        return new Response(JSON.stringify({
+          user_summary: {
+            user: { id: 7, username: 'alice', name: 'Alice' }
+          },
+          topics: [{
+            id: 42,
+            title: 'linux topic',
+            slug: 'linux-topic',
+            category_id: 4,
+            created_at: '2026-05-20T00:00:00.000Z',
+            posts_count: 1
+          }]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const linuxdo = await getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', fetcher });
+
+    expect(linuxdo.topics[0]).toMatchObject({
+      categoryId: '4',
+      category: '开发调优'
+    });
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/site.json');
   });
 
   it('orders all-source Android search by time without using the project search endpoint', async () => {

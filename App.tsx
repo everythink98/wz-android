@@ -119,7 +119,7 @@ import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml,
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
-import { feedSources, shouldUseReadingFilter } from './src/feedCategoryRail';
+import { feedSources, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './src/feedCategoryRail';
 import { normalizeTrackedKeywords, type NormalizedTopicListStateInput } from './src/topicListItemState';
 import {
   contentWidthValue,
@@ -169,6 +169,7 @@ import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, Htm
 import { LibraryScreen, type LibraryUndo } from './src/screens/LibraryScreen';
 import { SearchScreen, type SearchGroup, type SearchScope } from './src/screens/SearchScreen';
 import { UserScreen } from './src/screens/UserScreen';
+import { nodeSeekUserIdFromValue, topicWithAuthorFallback } from './src/userNavigation';
 
 type NodeSeekBrowserFetchRequest = {
   id: number;
@@ -274,7 +275,8 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
     const challengeText = [document.title || "", document.documentElement?.innerHTML || ""].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
-  const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content"));
+  const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
+    || /^\\s*[{[]/.test((document.body?.innerText || document.documentElement?.innerText || "").trim());
   const postResult = () => {
     window.ReactNativeWebView.postMessage(JSON.stringify({
       type: 'nodeseek-browser-fetch',
@@ -1292,19 +1294,22 @@ export default function App() {
     await clearNodeSeekLoginState();
   }, [clearNodeSeekLoginState]);
 
-  const loadCategories = useCallback(async () => {
+  const loadCategories = useCallback(async (source: FeedSource = 'all') => {
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
+      const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
       const data = await getCategories({
-        source: 'all',
+        source,
         nocache: true,
         fetcher: nodeSeekFetchWithWebView,
         nodeSeekCookie,
         nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
         signal: controller.signal
       });
-      setCategories(mergeCategories(data.items, []));
+      if (source !== 'all' && !data.items.length) {
+        return;
+      }
+      setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
         if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
@@ -1477,6 +1482,12 @@ export default function App() {
   useEffect(() => {
     void loadCategories();
   }, [loadCategories]);
+
+  useEffect(() => {
+    if (shouldLoadCategoriesForSource(categories, feedSource)) {
+      void loadCategories(feedSource);
+    }
+  }, [categories, feedSource, loadCategories]);
 
   const refreshFeed = useCallback(() => {
     if (feedLoadingRef.current) {
@@ -1802,17 +1813,18 @@ export default function App() {
       if (requestId !== topicRequestIdRef.current) {
         return;
       }
-      const previousReplyCount = readerDataRef.current.history[topicKey(detail)]?.topic.replyCount;
-      setUnreadReplyCount(typeof previousReplyCount === 'number' && detail.replyCount > previousReplyCount ? detail.replyCount - previousReplyCount : 0);
-      setTopicDetail(detail);
-      setTopicReplies(detail.replies || []);
-      setReplyHasMore(Boolean(detail.replyHasMore && detail.replyNextPage));
-      setReplyNextPage(detail.replyNextPage ?? null);
-      setReplyNextOffset(detail.replyNextOffset ?? null);
-      commitReaderData((current) => recordHistory(current, detail));
-      const progress = readerDataRef.current.progress[topicKey(detail)];
+      const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
+      const previousReplyCount = readerDataRef.current.history[topicKey(displayDetail)]?.topic.replyCount;
+      setUnreadReplyCount(typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0);
+      setTopicDetail(displayDetail);
+      setTopicReplies(displayDetail.replies || []);
+      setReplyHasMore(Boolean(displayDetail.replyHasMore && displayDetail.replyNextPage));
+      setReplyNextPage(displayDetail.replyNextPage ?? null);
+      setReplyNextOffset(displayDetail.replyNextOffset ?? null);
+      commitReaderData((current) => recordHistory(current, displayDetail));
+      const progress = readerDataRef.current.progress[topicKey(displayDetail)];
       if (progress?.scrollY) {
-        const restoreTopicKey = topicKey(detail);
+        const restoreTopicKey = topicKey(displayDetail);
         topicScrollRestoreTimerRef.current = setTimeout(() => {
           topicScrollRestoreTimerRef.current = null;
           if (currentTopicKeyRef.current !== restoreTopicKey) {
@@ -1988,7 +2000,7 @@ export default function App() {
     }
     const requestUser = {
       ...user,
-      id: user.id || user.username,
+      id: user.source === 'nodeseek' ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || user.id || user.username : user.id || user.username,
       username: user.username || user.displayName || user.id,
       url: user.url || '',
       topics: user.topics || []

@@ -31,6 +31,7 @@ import { splitTopicContentHtml } from '../topicContentSplit';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
 import { REPLY_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -130,41 +131,6 @@ function AuthorAvatar({
       )}
     </View>
   );
-}
-
-function userFromTopic(topic: Topic | TopicDetail): UserProfile | null {
-  const id = topic.authorId || topic.author;
-  if (!id && !topic.authorUrl) {
-    return null;
-  }
-  return {
-    source: topic.source,
-    id: id || topic.author,
-    username: topic.author || id || '',
-    displayName: topic.author || undefined,
-    avatar: topic.authorAvatar,
-    url: topic.authorUrl || '',
-    topics: []
-  };
-}
-
-function userFromReply(reply: Reply, source?: Source): UserProfile | null {
-  if (!source) {
-    return null;
-  }
-  const id = reply.authorId || reply.author;
-  if (!id && !reply.authorUrl) {
-    return null;
-  }
-  return {
-    source,
-    id: id || reply.author,
-    username: reply.author || id || '',
-    displayName: reply.author || undefined,
-    avatar: reply.authorAvatar,
-    url: reply.authorUrl || '',
-    topics: []
-  };
 }
 
 export function TopicScreen({
@@ -270,7 +236,7 @@ export function TopicScreen({
   onToggleFavorite: (topic: Topic) => void;
   onOpenUser: (user: UserProfile) => void;
 }) {
-  const item = topic || selectedTopic;
+  const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
   const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);

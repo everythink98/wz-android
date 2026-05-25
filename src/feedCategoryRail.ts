@@ -26,6 +26,10 @@ export function shouldUseReadingFilter(source: FeedSource) {
   return source === 'all';
 }
 
+export function shouldLoadCategoriesForSource(categories: Category[], source: FeedSource) {
+  return source !== 'all' && !categories.some((category) => category.source === source);
+}
+
 export function feedCategoryItems(categories: Category[], source: FeedSource) {
   if (source === 'all') {
     return [];

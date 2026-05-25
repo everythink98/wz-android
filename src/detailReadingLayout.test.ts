@@ -52,6 +52,12 @@ describe('Android topic detail reading layout', () => {
     expect(topBar).not.toContain('label="楼层"');
   });
 
+  it('does not open NodeSeek user pages when only a display name is available', () => {
+    expect(topicScreenSource).toContain("from '../userNavigation'");
+    expect(topicScreenSource).toContain('userFromTopic(item)');
+    expect(topicScreenSource).toContain('userFromReply(reply, source)');
+  });
+
   it('puts post interaction actions after the main post body instead of before it', () => {
     const header = topicScreenSource.match(/const listHeader = \([\s\S]*?\n  \);/)?.[0] || '';
     const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
@@ -70,7 +76,11 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('does not repeat the original-site button at the bottom of the main post', () => {
-    const topicActionRenderer = topicScreenSource.match(/if \(listItem\.type === 'topicActions'\) \{[\s\S]*?\n    \}\n\n    if \(listItem\.type === 'replyComposer'\)/)?.[0] || '';
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
+      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
+      : '';
 
     expect(topicActionRenderer).toContain('styles.topicPostActionArea');
     expect(topicActionRenderer).toContain('label="原站收藏"');

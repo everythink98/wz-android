@@ -27,7 +27,8 @@ describe('Android App performance guards', () => {
 
   it('loads local categories without the project server', () => {
     expect(appSource).toContain('const data = await getCategories({');
-    expect(appSource).toContain("source: 'all'");
+    expect(appSource).toContain("source: FeedSource = 'all'");
+    expect(appSource).toContain('source,');
     expect(appSource).toContain('nocache: true');
     expect(appSource).toContain('signal: controller.signal');
     expect(appSource).not.toContain('baseCategoriesResult');
