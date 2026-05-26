@@ -8,7 +8,7 @@
     "platforms": [
       "android"
     ],
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "userInterfaceStyle": "light",
     "android": {
       "package": "com.wz.reader",

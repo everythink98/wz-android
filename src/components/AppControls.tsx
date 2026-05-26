@@ -1,8 +1,20 @@
+import { useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
-import type { LucideIcon } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
+import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
+import * as Haptics from 'expo-haptics';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 
 export const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
+
+function pressWithFeedback(onPress: () => void) {
+  void Haptics.selectionAsync().catch(() => undefined);
+  onPress();
+}
+
+export function triggerPressFeedback() {
+  void Haptics.selectionAsync().catch(() => undefined);
+}
 
 export function PillRail({
   items,
@@ -27,7 +39,7 @@ export function PillRail({
           accessibilityRole="button"
           accessibilityState={{ selected: value === item.value }}
           style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : [styles.pill, value === item.value && styles.pillActive]}
-          onPress={() => onChange(item.value)}
+          onPress={() => pressWithFeedback(() => onChange(item.value))}
         >
           <Text style={isTabs ? [styles.tabText, value === item.value && styles.tabTextActive] : [styles.pillText, value === item.value && styles.pillTextActive]}>{item.label}</Text>
         </Pressable>
@@ -61,6 +73,7 @@ export function MenuButton({
   icon,
   label,
   value,
+  expanded,
   styles,
   theme,
   onPress
@@ -68,13 +81,15 @@ export function MenuButton({
   icon: LucideIcon;
   label: string;
   value: string;
+  expanded?: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
   const Icon = icon;
+  const Chevron = expanded === undefined ? ChevronRight : ChevronDown;
   return (
-    <Pressable accessibilityRole="button" style={styles.menuButton} onPress={onPress}>
+    <Pressable accessibilityRole="button" style={styles.menuButton} onPress={() => pressWithFeedback(onPress)}>
       <View style={styles.menuIcon}>
         <Icon size={19} color={theme.primary} strokeWidth={1.8} />
       </View>
@@ -82,7 +97,75 @@ export function MenuButton({
         <Text style={styles.menuLabel}>{label}</Text>
         <Text style={styles.meta} numberOfLines={2}>{value}</Text>
       </View>
+      <Chevron size={16} color={theme.muted} strokeWidth={1.6} style={[styles.menuChevron, expanded && styles.menuChevronExpanded]} />
     </Pressable>
+  );
+}
+
+export function ExpandablePanel({
+  children,
+  defaultExpanded = false,
+  expanded,
+  icon,
+  meta,
+  styles,
+  theme,
+  title,
+  onExpandedChange
+}: {
+  children: ReactNode;
+  defaultExpanded?: boolean;
+  expanded?: boolean;
+  icon?: LucideIcon;
+  meta?: string;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  title: string;
+  onExpandedChange?: (expanded: boolean) => void;
+}) {
+  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded);
+  const panelExpanded = expanded ?? internalExpanded;
+  const Icon = icon;
+  const StateIcon = panelExpanded ? ChevronUp : ChevronDown;
+  const bodyStyle = useAnimatedStyle(() => ({
+    maxHeight: withTiming(panelExpanded ? 6000 : 0, { duration: 210 }),
+    opacity: withTiming(panelExpanded ? 1 : 0, { duration: 160 }),
+    transform: [{ translateY: withTiming(panelExpanded ? 0 : -4, { duration: 160 }) }]
+  }), [panelExpanded]);
+
+  const toggleExpanded = () => {
+    const nextExpanded = !panelExpanded;
+    setInternalExpanded(nextExpanded);
+    onExpandedChange?.(nextExpanded);
+  };
+
+  return (
+    <View style={styles.group}>
+      <Pressable
+        accessibilityLabel={panelExpanded ? `收起${title}` : `展开${title}`}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: panelExpanded }}
+        android_ripple={androidRipple(theme.primarySoft)}
+        style={styles.expandableHeader}
+        onPress={toggleExpanded}
+      >
+        {Icon ? (
+          <View style={styles.menuIcon}>
+            <Icon size={19} color={theme.primary} strokeWidth={1.8} />
+          </View>
+        ) : null}
+        <View style={styles.flex}>
+          <Text style={styles.panelTitle}>{title}</Text>
+          {meta ? <Text style={styles.meta} numberOfLines={2}>{meta}</Text> : null}
+        </View>
+        <View style={styles.expandableStateIcon}>
+          <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
+        </View>
+      </Pressable>
+      <Animated.View pointerEvents={panelExpanded ? 'auto' : 'none'} style={[styles.expandableBody, bodyStyle]}>
+        {children}
+      </Animated.View>
+    </View>
   );
 }
 
@@ -137,7 +220,7 @@ export function FloatingIconButton({
       android_ripple={androidRipple(theme.primarySoft, true)}
       disabled={disabled}
       style={[styles.floatingIconButton, disabled && styles.buttonDisabled]}
-      onPress={onPress}
+      onPress={() => pressWithFeedback(onPress)}
     >
       {loading ? <ActivityIndicator color={theme.primary} size="small" /> : <Icon size={20} color={theme.primary} strokeWidth={1.9} />}
     </Pressable>
@@ -180,7 +263,7 @@ export function IconButton({
       android_ripple={androidRipple(theme.primarySoft, iconOnly || tiny)}
       style={[styles.button, ghost && styles.buttonGhost, compact && styles.buttonCompact, iconOnly && styles.buttonIconOnly, tiny && styles.buttonTiny, active && !iconOnly && styles.buttonActive, disabled && styles.buttonDisabled]}
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => pressWithFeedback(onPress)}
     >
       <Icon size={iconSize} color={active ? theme.primary : theme.ink} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
       {iconOnly ? null : <Text numberOfLines={1} style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
@@ -199,7 +282,7 @@ export function AppButton({
   compact?: boolean;
   disabled?: boolean;
   label: string;
-  variant?: 'default' | 'ghost';
+  variant?: 'default' | 'ghost' | 'primary';
   styles: ReturnType<typeof createStyles>;
   onPress: () => void;
 }) {
@@ -209,11 +292,11 @@ export function AppButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, disabled && styles.buttonDisabled]}
+      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, variant === 'primary' && styles.buttonPrimary, disabled && styles.buttonDisabled]}
       disabled={disabled}
-      onPress={onPress}
+      onPress={() => pressWithFeedback(onPress)}
     >
-      <Text style={[styles.buttonText, compact && styles.buttonTextCompact]}>{label}</Text>
+      <Text style={[styles.buttonText, compact && styles.buttonTextCompact, variant === 'primary' && styles.buttonTextPrimary]}>{label}</Text>
     </Pressable>
   );
 }

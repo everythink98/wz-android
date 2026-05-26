@@ -1,13 +1,13 @@
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, CheckCircle, LogIn, Settings } from 'lucide-react-native';
+import { Activity, CheckCircle, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
 import type { ReaderSettings } from '../readerData';
 import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
 import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from '../appUrls';
 import { appendUnique, removeString, settingsList } from '../appUtils';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
+import { AppButton, ExpandablePanel, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
@@ -158,27 +158,54 @@ function MoreScreen({
   onShowSettingsPanelChange: (value: boolean) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
+  const [backupExpanded, setBackupExpanded] = useState(false);
+  const [accountExpanded, setAccountExpanded] = useState(false);
+  const [statusExpanded, setStatusExpanded] = useState(false);
+  useEffect(() => {
+    if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {
+      setAccountExpanded(true);
+    }
+  }, [showLinuxDoPanel, showLoginPanel, showYaohuoLoginPanel]);
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.group}>
         <InfoRow icon={Activity} label="关于" value="Android 本机阅读器" styles={styles} theme={theme} />
       </View>
-      <MemoizedBackupRestorePanel
-        backupJson={backupJson}
-        syncing={syncing}
+      <ExpandablePanel
+        title="备份 / 恢复"
+        meta={syncing ? '处理中' : backupJson ? '已有 JSON 内容' : 'JSON 导出和导入'}
+        icon={DatabaseBackup}
+        expanded={backupExpanded}
         styles={styles}
         theme={theme}
-        onBackupJsonChange={onBackupJsonChange}
-        onExportBackup={onExportBackup}
-        onImportBackup={onImportBackup}
-        onExportBackupFile={onExportBackupFile}
-        onImportBackupFile={onImportBackupFile}
-      />
-      <View style={styles.group}>
+        onExpandedChange={setBackupExpanded}
+      >
+        <MemoizedBackupRestorePanel
+          backupJson={backupJson}
+          syncing={syncing}
+          styles={styles}
+          theme={theme}
+          onBackupJsonChange={onBackupJsonChange}
+          onExportBackup={onExportBackup}
+          onImportBackup={onImportBackup}
+          onExportBackupFile={onExportBackupFile}
+          onImportBackupFile={onImportBackupFile}
+        />
+      </ExpandablePanel>
+      <ExpandablePanel
+        title="账号与验证"
+        meta={`NodeSeek ${hasNodeSeekLoginCookie ? '已登录' : '未登录'} · 妖火 ${hasYaohuoCookie ? '已登录' : '未登录'} · linux.do ${hasLinuxDoClearance ? '已验证' : '未验证'}`}
+        icon={LogIn}
+        expanded={accountExpanded}
+        styles={styles}
+        theme={theme}
+        onExpandedChange={setAccountExpanded}
+      >
         <MemoizedNodeSeekLoginPanel
           checking={checking}
           hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
+          accountExpanded={accountExpanded}
           loginState={loginState}
           loadingLoginPage={loadingLoginPage}
           nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
@@ -198,6 +225,7 @@ function MoreScreen({
         <MemoizedYaohuoLoginPanel
           checking={checking}
           hasYaohuoCookie={hasYaohuoCookie}
+          accountExpanded={accountExpanded}
           loadingYaohuoLoginPage={loadingYaohuoLoginPage}
           showYaohuoLoginPanel={showYaohuoLoginPanel}
           styles={styles}
@@ -213,6 +241,7 @@ function MoreScreen({
         <MemoizedLinuxDoVerifyPanel
           checking={checking}
           hasLinuxDoClearance={hasLinuxDoClearance}
+          accountExpanded={accountExpanded}
           linuxDoCookieNames={linuxDoCookieNames}
           linuxDoWebViewError={linuxDoWebViewError}
           linuxDoWebViewKey={linuxDoWebViewKey}
@@ -231,23 +260,42 @@ function MoreScreen({
           onSetLoadingLinuxDoPage={onSetLoadingLinuxDoPage}
           onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}
         />
-      </View>
-      <MemoizedAppearancePanel
-        settings={settings}
-        showSettingsPanel={showSettingsPanel}
+      </ExpandablePanel>
+      <ExpandablePanel
+        title="外观"
+        meta="字号 · 白天/黑夜 · 阅读调节"
+        icon={Settings}
+        expanded={showSettingsPanel}
         styles={styles}
         theme={theme}
-        onShowSettingsPanelChange={onShowSettingsPanelChange}
-        onUpdateSettings={onUpdateSettings}
-      />
-      <MemoizedStatusCheckPanel
-        healthDetails={healthDetails}
-        healthSummary={healthSummary}
-        statusBusy={statusBusy}
+        onExpandedChange={onShowSettingsPanelChange}
+      >
+        <MemoizedAppearancePanel
+          settings={settings}
+          showSettingsPanel={showSettingsPanel}
+          styles={styles}
+          theme={theme}
+          onUpdateSettings={onUpdateSettings}
+        />
+      </ExpandablePanel>
+      <ExpandablePanel
+        title="状态检查"
+        meta={statusBusy ? '检查中' : healthSummary || '来源状态'}
+        icon={Activity}
+        expanded={statusExpanded}
         styles={styles}
         theme={theme}
-        onCheckHealth={onCheckHealth}
-      />
+        onExpandedChange={setStatusExpanded}
+      >
+        <MemoizedStatusCheckPanel
+          healthDetails={healthDetails}
+          healthSummary={healthSummary}
+          statusBusy={statusBusy}
+          styles={styles}
+          theme={theme}
+          onCheckHealth={onCheckHealth}
+        />
+      </ExpandablePanel>
     </View>
   );
 }
@@ -274,8 +322,7 @@ function BackupRestorePanel({
   onImportBackupFile: () => void;
 }) {
   return (
-    <View style={styles.group}>
-      <Text style={styles.panelTitle}>备份 / 恢复</Text>
+    <View style={styles.stack}>
       <TextInput
         style={styles.input}
         value={backupJson}
@@ -299,6 +346,7 @@ function BackupRestorePanel({
 const MemoizedBackupRestorePanel = memo(BackupRestorePanel);
 
 function NodeSeekLoginPanel({
+  accountExpanded,
   checking,
   hasNodeSeekLoginCookie,
   loginState,
@@ -317,6 +365,7 @@ function NodeSeekLoginPanel({
   onSetLoadingLoginPage,
   onShowLoginPanelChange
 }: {
+  accountExpanded: boolean;
   checking: boolean;
   hasNodeSeekLoginCookie: boolean;
   loginState: string;
@@ -339,7 +388,7 @@ function NodeSeekLoginPanel({
     <>
       <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
       {hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
-      {showLoginPanel ? (
+      {showLoginPanel && accountExpanded ? (
         <View style={styles.loginPanel}>
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
@@ -379,6 +428,7 @@ function NodeSeekLoginPanel({
 const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);
 
 function YaohuoLoginPanel({
+  accountExpanded,
   checking,
   hasYaohuoCookie,
   loadingYaohuoLoginPage,
@@ -393,6 +443,7 @@ function YaohuoLoginPanel({
   onSetLoadingYaohuoLoginPage,
   onShowYaohuoLoginPanelChange
 }: {
+  accountExpanded: boolean;
   checking: boolean;
   hasYaohuoCookie: boolean;
   loadingYaohuoLoginPage: boolean;
@@ -410,7 +461,7 @@ function YaohuoLoginPanel({
   return (
     <>
       <MenuButton icon={LogIn} label="妖火登录" value={hasYaohuoCookie ? yaohuoLoginState : '未登录'} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
-      {showYaohuoLoginPanel ? (
+      {showYaohuoLoginPanel && accountExpanded ? (
         <View style={styles.loginPanel}>
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
@@ -443,6 +494,7 @@ function YaohuoLoginPanel({
 const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);
 
 function LinuxDoVerifyPanel({
+  accountExpanded,
   checking,
   hasLinuxDoClearance,
   linuxDoCookieNames,
@@ -463,6 +515,7 @@ function LinuxDoVerifyPanel({
   onSetLoadingLinuxDoPage,
   onShowLinuxDoPanelChange
 }: {
+  accountExpanded: boolean;
   checking: boolean;
   hasLinuxDoClearance: boolean;
   linuxDoCookieNames: string[];
@@ -496,7 +549,7 @@ function LinuxDoVerifyPanel({
   return (
     <>
       <MenuButton icon={LogIn} label="linux.do 验证" value={hasLinuxDoClearance ? `已保存 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '未验证'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
-      {showLinuxDoPanel ? (
+      {showLinuxDoPanel && accountExpanded ? (
         <View style={styles.loginPanel}>
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测验证'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
@@ -563,19 +616,16 @@ function AppearancePanel({
   showSettingsPanel,
   styles,
   theme,
-  onShowSettingsPanelChange,
   onUpdateSettings
 }: {
   settings: ReaderSettings;
   showSettingsPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  onShowSettingsPanelChange: (value: boolean) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
-    <View style={styles.group}>
-      <MenuButton icon={Settings} label="外观设置" value="字号 · 白天/黑夜 · 阅读调节" styles={styles} theme={theme} onPress={() => onShowSettingsPanelChange(!showSettingsPanel)} />
+    <View style={styles.stack}>
       {showSettingsPanel ? (
         <SettingsPanel settings={settings} styles={styles} theme={theme} onUpdateSettings={onUpdateSettings} />
       ) : null}
@@ -601,8 +651,8 @@ function StatusCheckPanel({
   onCheckHealth: () => void;
 }) {
   return (
-    <View style={styles.group}>
-      <MenuButton icon={Activity} label="状态 / 检查" value={statusBusy ? '检查中' : healthSummary || '来源状态'} styles={styles} theme={theme} onPress={onCheckHealth} />
+    <View style={styles.stack}>
+      <AppButton label={statusBusy ? '检查中' : '检查状态'} styles={styles} disabled={statusBusy} onPress={onCheckHealth} />
       {healthDetails.length ? (
         <View style={styles.stack}>
           {healthDetails.map((item) => (

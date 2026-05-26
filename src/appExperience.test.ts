@@ -81,9 +81,12 @@ describe('Android App experience guards', () => {
   });
 
   it('switches Android feed sources through a page-level horizontal gesture', () => {
-    expect(feedScreenSource).toContain('feedSourceSwipeDirection(gesture.dx, gesture.dy, gesture.vx)');
-    expect(feedScreenSource).toContain('shouldCaptureFeedSourceSwipe(gesture.dx, gesture.dy)');
-    expect(feedScreenSource).toContain('switchFeedSourceBySwipe(direction);');
+    expect(feedScreenSource).toContain("from 'react-native-tab-view'");
+    expect(feedScreenSource).toContain('renderTabBar={() => null}');
+    expect(feedScreenSource).toContain('onIndexChange={handleFeedPageChange}');
+    expect(feedScreenSource).not.toContain('PanResponder');
+    expect(feedScreenSource).not.toContain('feedSourceSwipeDirection');
+    expect(feedScreenSource).not.toContain('shouldCaptureFeedSourceSwipe');
   });
 
   it('uses more helpful empty messages for filtered feed lists', () => {
@@ -93,16 +96,24 @@ describe('Android App experience guards', () => {
 
   it('loads additional feed pages automatically near the end of the list', () => {
     expect(feedScreenSource).toContain('onEndReachedThreshold={0.6}');
-    expect(feedScreenSource).toContain('onEndReached={requestFeedLoadMore}');
+    expect(feedScreenSource).toContain('onEndReached={active ? requestFeedLoadMore : undefined}');
     expect(feedScreenSource).toContain('shouldLoadMoreFeedFromScroll(event.nativeEvent)');
     expect(feedScreenSource).toContain('requestedFeedPageRef.current === nextPage');
+  });
+
+  it('keeps all-feed reading filters from reusing the remote feed paginator', () => {
+    expect(appSource).toContain('shouldAllowFeedRemotePagination');
+    expect(appSource).toContain('const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);');
+    expect(appSource).toContain('feedHasMore={activeFeedState.hasMore && feedAllowsRemotePagination}');
+    expect(appSource).toContain('if (!feedAllowsRemotePagination) {');
   });
 
   it('shows loading instead of stale rows when resetting the feed list', () => {
     expect(appSource).toContain('clearItems = reset && !nocache');
     expect(appSource).toContain('if (!isLoadMore && reset && clearItems) {');
-    expect(appSource).toContain('setFeedItems([]);');
-    expect(appSource).toContain('setFeedHasMore(false);');
+    expect(appSource).toContain('setFeedStates((current) => ({');
+    expect(appSource).toContain('items: [],');
+    expect(appSource).toContain('hasMore: false');
   });
 
   it('uses separate busy states for feed, search, topic, and status work', () => {
@@ -157,13 +168,22 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('source: feedSource, category: categoryFilter, nocache: true, clearItems: true');
   });
 
-  it('resets stale feed paging immediately when switching source tabs', () => {
-    const block = appSource.match(/const changeFeedSource = useCallback\(\(source: FeedSource\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+  it('keeps independent feed paging state for each source tab', () => {
+    expect(appSource).toContain('type FeedSourceState = {');
+    expect(appSource).toContain('const [feedStates, setFeedStates]');
+    expect(appSource).toContain('[requestSource]: {');
+    expect(appSource).toContain('items: reset ? data.items : mergeTopics(previous.items, data.items)');
+  });
 
-    expect(block).toContain('setFeedItems([]);');
-    expect(block).toContain('setFeedPage(1);');
-    expect(block).toContain('setFeedNextCursor(undefined);');
-    expect(block).toContain('setFeedHasMore(false);');
+  it('clears stale per-source feed loading flags after a superseded request ends', () => {
+    const loadFeedBlock = appSource.match(/const loadFeed = useCallback\(async \(\{([\s\S]*?)\n  \}, \[categoryFilter/)?.[1] || '';
+
+    expect(appSource).toContain('const feedSourceRequestIdRef = useRef<Partial<Record<FeedSource, number>>>({});');
+    expect(loadFeedBlock).toContain('feedSourceRequestIdRef.current[requestSource] = requestId;');
+    expect(loadFeedBlock).toContain('const isLatestForFeedSource = feedSourceRequestIdRef.current[requestSource] === requestId;');
+    expect(loadFeedBlock).toContain('if (isLatestForFeedSource) {');
+    expect(loadFeedBlock).toContain('loadingMore: false');
+    expect(loadFeedBlock).toContain('refreshing: false');
   });
 
   it('cancels stale search requests when the query, source, or scope changes', () => {
@@ -391,8 +411,8 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps feed pagination available when an empty source page still has a next page', () => {
-    expect(appSource).toContain('setFeedHasMore(Boolean(data.hasMore && (data.nextPage || data.nextCursor)))');
-    expect(appSource).not.toContain('setFeedHasMore(Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor)))');
+    expect(appSource).toContain('hasMore: Boolean(data.hasMore && (data.nextPage || data.nextCursor))');
+    expect(appSource).not.toContain('hasMore: Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor))');
   });
 
   it('removes temporary cache files after exporting backup or markdown text', () => {
@@ -422,7 +442,9 @@ describe('Android App experience guards', () => {
   });
 
   it('bypasses feed caches when loading additional feed pages', () => {
-    expect(appSource).toContain("onLoadMore={() => loadFeed({ page: feedPage + 1, cursor: feedSource === 'all' ? feedNextCursor : undefined, nocache: true })}");
+    const block = appSource.match(/onLoadMore=\{\(\) => \{([\s\S]*?)\n      \}\}/)?.[1] || '';
+
+    expect(block).toContain('loadFeed({ page: activeFeedState.page + 1, cursor: feedSource === \'all\' ? activeFeedState.nextCursor : undefined, nocache: true });');
   });
 
   it('allows reset feed requests to replace stale loads when switching source tabs or categories', () => {
@@ -707,7 +729,7 @@ describe('Android App experience guards', () => {
       ? moreScreenSource.slice(settingsPanelStart, settingsPanelEnd)
       : '';
 
-    expect(moreScreenSource).toContain('value="字号 · 白天/黑夜 · 阅读调节"');
+    expect(moreScreenSource).toContain('meta="字号 · 白天/黑夜 · 阅读调节"');
     expect(settingsPanelBlock).toContain("{ value: 'light', label: '浅色' }");
     expect(settingsPanelBlock).toContain("{ value: 'dark', label: '深色' }");
     expect(settingsPanelBlock).not.toContain("{ value: 'system', label: '系统' }");
@@ -717,6 +739,28 @@ describe('Android App experience guards', () => {
     expect(settingsPanelBlock).not.toContain('森绿');
     expect(appConfigSource).toContain('"userInterfaceStyle": "light"');
     expect(appConfigSource).toContain('"backgroundColor": "#ffffff"');
+  });
+
+  it('shows explicit expand and collapse state icons on foldable panels', () => {
+    expect(appControlsSource).toContain('ChevronUp');
+    expect(appControlsSource).toContain('const StateIcon = panelExpanded ? ChevronUp : ChevronDown;');
+    expect(appControlsSource).toContain('accessibilityLabel={panelExpanded ? `收起${title}` : `展开${title}`}');
+    expect(appControlsSource).toContain('styles.expandableStateIcon');
+    expect(searchScreenSource).toContain('<ExpandablePanel');
+    expect(moreScreenSource).toContain('<ExpandablePanel');
+  });
+
+  it('opens the account panel when a login or verification child panel is requested', () => {
+    const moreScreenBlock = moreScreenSource.match(/function MoreScreen\(\{[\s\S]*?\n  return \(/)?.[0] || '';
+
+    expect(moreScreenBlock).toContain('if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {');
+    expect(moreScreenBlock).toContain('setAccountExpanded(true);');
+  });
+
+  it('uses the shared settings panel state for the appearance foldout', () => {
+    expect(moreScreenSource).toContain('expanded={showSettingsPanel}');
+    expect(moreScreenSource).toContain('showSettingsPanel={showSettingsPanel}');
+    expect(moreScreenSource).not.toContain('appearanceExpanded || showSettingsPanel');
   });
 
   it('closes the reply composer before leaving the topic screen with the Android back button', () => {

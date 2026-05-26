@@ -1,4 +1,5 @@
 import type { Category, FeedSource, Source } from './types';
+import type { ReadingFilter } from './feedLogic';
 
 export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
   { value: 'all', label: '全部' },
@@ -24,6 +25,10 @@ export const feedReadingFilterItems = [
 
 export function shouldUseReadingFilter(source: FeedSource) {
   return source === 'all';
+}
+
+export function shouldAllowFeedRemotePagination(source: FeedSource, readingFilter: ReadingFilter) {
+  return source !== 'all' || readingFilter === 'all';
 }
 
 export function shouldLoadCategoriesForSource(categories: Category[], source: FeedSource) {

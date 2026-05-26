@@ -6,7 +6,7 @@
   "scripts": {
     "start": "expo start --dev-client",
     "android": "expo run:android",
-    "release:android": "cd android && gradlew.bat :app:clean :app:assembleRelease -I ../scripts/android-release-apk.gradle -PreactNativeArchitectures=arm64-v8a -Pandroid.enableShrinkResourcesInReleaseBuilds=true -Pandroid.enableMinifyInReleaseBuilds=true -PEX_DEV_CLIENT_NETWORK_INSPECTOR=false",
+    "release:android": "cd android && gradlew.bat :app:clean :app:assembleRelease -I ../scripts/android-release-apk.gradle -PnewArchEnabled=true -PreactNativeArchitectures=arm64-v8a -Pandroid.enableShrinkResourcesInReleaseBuilds=true -Pandroid.enableMinifyInReleaseBuilds=true -PEX_DEV_CLIENT_NETWORK_INSPECTOR=false",
     "typecheck": "tsc --noEmit",
     "ios": "expo run:ios"
   },
@@ -14,6 +14,9 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-cookies/cookies": "^6.2.1",
     "@react-native-picker/picker": "2.11.1",
+    "@react-navigation/bottom-tabs": "^7.16.1",
+    "@react-navigation/native": "^7.2.4",
+    "@react-navigation/native-stack": "^7.15.1",
     "@types/markdown-it": "^14.1.2",
     "buffer": "^6.0.3",
     "expo": "~54.0.33",
@@ -21,6 +24,7 @@
     "expo-dev-client": "~6.0.21",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.22",
+    "expo-haptics": "~15.0.8",
     "expo-media-library": "~18.2.1",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
@@ -31,9 +35,16 @@
     "node-html-parser": "^7.1.0",
     "react": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-gesture-handler": "~2.28.0",
+    "react-native-pager-view": "6.9.1",
+    "react-native-reanimated": "~4.1.1",
     "react-native-render-html": "^6.3.4",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
-    "react-native-webview": "13.15.0"
+    "react-native-tab-view": "^4.3.0",
+    "react-native-webview": "13.15.0",
+    "react-native-worklets": "0.5.1"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",

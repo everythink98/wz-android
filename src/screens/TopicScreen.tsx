@@ -423,7 +423,7 @@ export function TopicScreen({
             multiline
           />
           {replyTarget ? <AppButton label="取消楼层回复" variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
-          <AppButton label="发送回复" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
+          <AppButton label="发送回复" variant="primary" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
         </View>
       );
     }
@@ -672,7 +672,7 @@ function ReplyCard({
         <View style={styles.replyFloorBadge}>
           <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
         </View>
-        {isNew ? <Text style={styles.topicAccessBadge}>新增</Text> : null}
+        {isNew ? <Text style={styles.replyNewBadge}>新增</Text> : null}
       </Pressable>
       <View style={styles.replyContentArea}>
         {quotedFloors.length ? (

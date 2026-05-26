@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedCategoryItems, feedReadingFilterItems, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './feedCategoryRail';
+import { feedCategoryItems, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './feedCategoryRail';
 import type { Category } from './types';
 
 const categories: Category[] = [
@@ -41,5 +41,17 @@ describe('Android feed category rail', () => {
     expect(shouldLoadCategoriesForSource(categories, 'linuxdo')).toBe(true);
     expect(shouldLoadCategoriesForSource([...categories, { source: 'linuxdo', id: '4', name: '开发调优' }], 'linuxdo')).toBe(false);
     expect(shouldLoadCategoriesForSource(categories, 'all')).toBe(false);
+  });
+
+  it('keeps all-feed reading filters local so they cannot trigger remote pagination loops', () => {
+    expect(shouldAllowFeedRemotePagination('all', 'all')).toBe(true);
+    expect(shouldAllowFeedRemotePagination('all', 'unread')).toBe(false);
+    expect(shouldAllowFeedRemotePagination('all', 'read')).toBe(false);
+    expect(shouldAllowFeedRemotePagination('all', 'favorite')).toBe(false);
+    expect(shouldAllowFeedRemotePagination('all', 'subscribed')).toBe(false);
+    expect(shouldAllowFeedRemotePagination('all', 'active')).toBe(false);
+    expect(shouldAllowFeedRemotePagination('all', 'hot')).toBe(false);
+    expect(shouldAllowFeedRemotePagination('nodeseek', 'all')).toBe(true);
+    expect(shouldAllowFeedRemotePagination('nodeseek', 'favorite')).toBe(true);
   });
 });

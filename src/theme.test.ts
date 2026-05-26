@@ -64,6 +64,19 @@ describe('Android reader theme helpers', () => {
     expect(styles.feedFloatingActions.bottom).toBe(78);
   });
 
+  it('keeps scrolled content from drawing under the Android status bar', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.statusBarScrim).toMatchObject({
+      position: 'absolute',
+      top: 0,
+      height: 24,
+      backgroundColor: theme.background
+    });
+    expect(styles.statusBarScrim.zIndex).toBeGreaterThan(10);
+  });
+
   it('styles loading states as quiet content placeholders', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
@@ -77,12 +90,54 @@ describe('Android reader theme helpers', () => {
     expect(styles.loadingPlaceholderLineMuted.width).toBe('68%');
   });
 
+  it('makes foldable panel state icons visible and tappable', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.expandableStateIcon).toMatchObject({
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 32,
+      height: 32,
+      borderRadius: 999,
+      backgroundColor: theme.surface2
+    });
+    expect(styles.expandableStateIcon.borderWidth).toBe(1);
+  });
+
   it('keeps topic rows blended into the maintained pea white background', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
     expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
+  });
+
+  it('lays out topic rows as full-width rows with internal padding instead of floating cards', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.feedListContentInner.paddingHorizontal).toBe(0);
+    expect(styles.feedListContentInner.gap).toBe(0);
+    expect(styles.topicRowShell.width).toBe('100%');
+    expect(styles.topicCard.width).toBe('100%');
+    expect(styles.topicCardPressable.paddingHorizontal).toBe(16);
+    expect(styles.topicCardPressable.paddingTop).toBeGreaterThan(10);
+    expect(styles.topicCardPressable.paddingBottom).toBeGreaterThan(10);
+    expect(styles.topicCard.borderRadius || 0).toBe(0);
+  });
+
+  it('keeps reading typography and quotes quiet instead of decorative', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+    const letterSpacingValues = Object.values(styles)
+      .map((style) => style.letterSpacing)
+      .filter((value) => value !== undefined);
+
+    expect(letterSpacingValues.every((value) => value === 0)).toBe(true);
+    expect(styles.quoteBox.borderLeftWidth).toBeUndefined();
+    expect(styles.quoteBox.borderWidth).toBe(1);
+    expect(styles.quoteBox.borderRadius).toBeLessThanOrEqual(8);
   });
 
   it('keeps dark topic rows on the same neutral background as the page', () => {

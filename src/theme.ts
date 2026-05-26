@@ -108,6 +108,16 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flex: 1,
       backgroundColor: theme.background
     },
+    statusBarScrim: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      left: 0,
+      height: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) : 0,
+      backgroundColor: theme.background,
+      zIndex: 20,
+      elevation: 20
+    },
     content: {
       flex: 1
     },
@@ -167,6 +177,26 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       bottom: Platform.OS === 'android' ? 78 : 78,
       gap: 8
     },
+    feedFixedHeader: {
+      gap: 6,
+      backgroundColor: theme.surface,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 16,
+      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 8 : 14,
+      paddingBottom: 6,
+      zIndex: 3,
+      elevation: 0
+    },
+    feedPager: {
+      flex: 1
+    },
+    feedListContentInner: {
+      gap: 0,
+      paddingHorizontal: 0,
+      paddingTop: 0,
+      paddingBottom: Platform.OS === 'android' ? 96 : 94
+    },
     floatingIconButton: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -181,21 +211,25 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicRowShell: {
       position: 'relative',
       overflow: 'hidden',
+      width: '100%',
       backgroundColor: topicRowBackground
     },
     topicCard: {
-      gap: 6,
+      width: '100%',
+      gap: 0,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
-      backgroundColor: topicRowBackground
+      backgroundColor: topicRowBackground,
+      borderRadius: 0
     },
     topicCardPressable: {
-      gap: 7,
-      paddingTop: densityPadding,
-      paddingBottom: 4
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingTop: densityPadding + 2,
+      paddingBottom: 12
     },
     topicCardRead: {
-      opacity: 0.62
+      opacity: 0.72
     },
     topicCardHead: {
       alignItems: 'center',
@@ -223,7 +257,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: Math.round(16 * listFontScale),
-      fontWeight: '400',
+      fontWeight: '500',
+      letterSpacing: 0,
       lineHeight: Math.round(22 * listFontScale)
     },
     excerpt: {
@@ -261,7 +296,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       flexDirection: 'row',
       gap: 8,
-      paddingBottom: densityPadding
+      paddingHorizontal: 16,
+      paddingBottom: densityPadding + 1
     },
     topicMetaText: {
       flex: 1,
@@ -275,25 +311,28 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 40,
       justifyContent: 'center',
       backgroundColor: 'transparent',
-      borderRadius: 20,
-      paddingHorizontal: 10,
-      paddingVertical: 3
+      borderColor: 'transparent',
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 11,
+      paddingVertical: 4
     },
     pillActive: {
-      backgroundColor: theme.mist
+      backgroundColor: theme.mist,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.32 : 0.22)
     },
     pillText: {
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
-      fontWeight: '400'
+      fontWeight: '500'
     },
     pillTextActive: {
       color: theme.primary,
-      fontWeight: '500'
+      fontWeight: '600'
     },
     tabRail: {
-      gap: 20,
+      gap: 24,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
@@ -311,11 +350,11 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 14,
-      fontWeight: '400'
+      fontWeight: '500'
     },
     tabTextActive: {
       color: theme.primary,
-      fontWeight: '500'
+      fontWeight: '600'
     },
     input: {
       minHeight: 44,
@@ -459,6 +498,33 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 15,
       fontWeight: '600'
     },
+    menuChevron: {
+      marginLeft: 4,
+      opacity: 0.45
+    },
+    menuChevronExpanded: {
+      transform: [{ rotate: '180deg' }]
+    },
+    expandableHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10,
+      minHeight: 44
+    },
+    expandableStateIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 32,
+      height: 32,
+      borderColor: theme.line,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface2
+    },
+    expandableBody: {
+      gap: 10,
+      overflow: 'hidden'
+    },
     categoryGroup: {
       gap: 8,
       paddingTop: 4
@@ -577,11 +643,13 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8
     },
     librarySectionTitle: {
-      color: theme.ink,
+      color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 14,
-      fontWeight: '700',
-      paddingTop: 8
+      fontSize: 12,
+      fontWeight: '600',
+      letterSpacing: 0,
+      paddingTop: 12,
+      paddingBottom: 2
     },
     libraryMetaBlock: {
       gap: 3,
@@ -602,26 +670,27 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       flexDirection: 'row',
       gap: 6,
-      paddingHorizontal: 10,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 6 : 12,
-      paddingBottom: 6,
+      paddingHorizontal: 12,
+      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 8 : 12,
+      paddingBottom: 8,
       backgroundColor: theme.surface,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth
     },
     topicTopHint: {
       flex: 1,
-      color: theme.muted,
+      color: theme.ink,
       fontFamily: appFontFamily,
-      fontSize: 12,
-      fontWeight: '500',
+      fontSize: 13,
+      fontWeight: '600',
+      letterSpacing: 0,
       textAlign: 'left'
     },
     topicTopActions: {
       alignItems: 'center',
       flexDirection: 'row',
       flexShrink: 0,
-      gap: 2
+      gap: 4
     },
     article: {
       width: '100%',
@@ -768,7 +837,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
       paddingHorizontal: 0,
-      paddingVertical: 20
+      paddingVertical: 18
     },
     replyHead: {
       alignItems: 'center',
@@ -807,19 +876,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replyFloorBadge: {
       alignItems: 'center',
       justifyContent: 'center',
-      minWidth: 44,
-      minHeight: 28,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 999,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8
+      paddingHorizontal: 0
     },
     replyFloorText: {
-      color: theme.primary,
+      color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
-      fontWeight: '700',
+      fontWeight: '600',
+      letterSpacing: 0,
       lineHeight: 16
     },
     replyAuthorBlock: {
@@ -872,26 +936,25 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderBottomWidth: StyleSheet.hairlineWidth
     },
     quoteStack: {
-      gap: 10
+      gap: 12
     },
     quoteBox: {
-      gap: 8,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 12,
+      gap: 6,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.05),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.16),
+      borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
-      padding: 11
+      paddingHorizontal: 12,
+      paddingVertical: 8
     },
     quoteBody: {
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 10
+      paddingTop: 4
     },
     quoteAuthorRow: {
       alignItems: 'center',
       flexDirection: 'row',
       gap: 8,
-      marginBottom: 8
+      marginBottom: 4
     },
     replyMeta: {
       color: theme.muted,
@@ -912,35 +975,42 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       resizeMode: 'contain'
     },
     nav: {
-      position: 'absolute',
-      right: 0,
-      bottom: 0,
-      left: 0,
       flexDirection: 'row',
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface,
-      elevation: 4,
-      paddingBottom: 8,
+      elevation: 0,
+      paddingBottom: Platform.OS === 'android' ? 8 : 10,
       paddingHorizontal: 10,
-      paddingTop: 4
+      paddingTop: 4,
+      height: Platform.OS === 'android' ? 64 : 70
     },
     navItem: {
       flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 1,
+      gap: 2,
       minHeight: 48,
       borderRadius: 6
     },
     navItemActive: {
       backgroundColor: 'transparent'
     },
+    navItemIndicator: {
+      width: 18,
+      height: 2,
+      borderRadius: 999,
+      backgroundColor: 'transparent'
+    },
+    navItemIndicatorActive: {
+      backgroundColor: theme.primary
+    },
     navText: {
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 10,
-      fontWeight: '600'
+      fontWeight: '600',
+      letterSpacing: 0
     },
     navTextActive: {
       color: theme.primary
@@ -1083,6 +1153,30 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     statusOk: {
       color: theme.success
+    },
+    buttonPrimary: {
+      backgroundColor: theme.primary,
+      borderColor: theme.primary
+    },
+    buttonTextPrimary: {
+      color: theme.onPrimary,
+      fontWeight: '700',
+      letterSpacing: 0
+    },
+    replyNewBadge: {
+      alignSelf: 'flex-start',
+      overflow: 'hidden',
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      lineHeight: 16,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.20 : 0.12),
+      borderColor: alphaColor(theme.primary, 0.32),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 3
     },
     statusBad: {
       color: theme.danger

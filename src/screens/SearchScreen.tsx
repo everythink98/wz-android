@@ -7,7 +7,7 @@ import type { SearchSort } from '../feedLogic';
 import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
+import { AppButton, EmptyText, ExpandablePanel, IconButton, LoadingState, PillRail } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
@@ -102,9 +102,32 @@ export function SearchScreen({
     onQueryChange(id);
   }, [onQueryChange, readerData.savedSearches]);
   const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
+  const [expandedSearchGroups, setExpandedSearchGroups] = useState<Record<string, boolean>>({});
   useEffect(() => {
     setSearchCategoryFilter('all');
   }, [query, scope, searchSource, sort]);
+  useEffect(() => {
+    setExpandedSearchGroups((current) => {
+      const next = { ...current };
+      for (const group of searchGroups) {
+        if (next[group.source] === undefined) {
+          next[group.source] = true;
+        }
+      }
+      for (const source of Object.keys(next)) {
+        if (!searchGroups.some((group) => group.source === source)) {
+          delete next[source];
+        }
+      }
+      return next;
+    });
+  }, [searchGroups]);
+  const toggleSearchGroup = useCallback((source: Source, expanded: boolean) => {
+    setExpandedSearchGroups((current) => ({
+      ...current,
+      [source]: expanded
+    }));
+  }, []);
   const searchCategoryOptions = useMemo(() => {
     const counts = new Map<string, { label: string; count: number }>();
     for (const item of results) {
@@ -140,11 +163,16 @@ export function SearchScreen({
       : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
   })), [searchCategoryFilter, searchGroups]);
   const renderedSearchGroups = useMemo(() => visibleSearchGroups.map((group) => (
-    <View key={group.source} style={styles.group}>
-      <View style={styles.sectionHeader}>
-        <Text style={styles.panelTitle}>{group.label}</Text>
-        <Text style={styles.meta}>{group.loading ? '搜索中' : `${group.items.length} 条`}</Text>
-      </View>
+    <ExpandablePanel
+      defaultExpanded
+      key={group.source}
+      title={group.label}
+      meta={group.loading ? '搜索中' : group.error ? '读取失败' : `${group.items.length} 条${group.hasMore ? ' · 可继续加载' : ''}`}
+      expanded={expandedSearchGroups[group.source] ?? true}
+      styles={styles}
+      theme={theme}
+      onExpandedChange={(expanded) => toggleSearchGroup(group.source, expanded)}
+    >
       {group.error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{group.error}</Text>
@@ -173,8 +201,8 @@ export function SearchScreen({
           onPress={() => onLoadMoreSearchSource(group.source, group.nextPage || 1)}
         />
       ) : null}
-    </View>
-  )), [busy, onLoadMoreSearchSource, onOpenTopic, onRetrySearchSource, query, readerData, styles, theme, topicListStateInput, visibleSearchGroups]);
+    </ExpandablePanel>
+  )), [busy, expandedSearchGroups, onLoadMoreSearchSource, onOpenTopic, onRetrySearchSource, query, readerData, styles, theme, toggleSearchGroup, topicListStateInput, visibleSearchGroups]);
   const linuxDoExternalItems = useMemo(() => (
     scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
       ? linuxDoExternalSearchItems(query)
