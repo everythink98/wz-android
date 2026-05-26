@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addSavedSearch,
   clearRecords,
   createEmptyReaderData,
   exportFavoritesMarkdown,
@@ -13,7 +12,6 @@ import {
   recordHistory,
   removeRecords,
   removeFollowedUsers,
-  removeSavedSearch,
   restoreRecords,
   sanitizeReaderData,
   sanitizeReaderDataForSync,
@@ -103,15 +101,13 @@ describe('Android reader data helpers', () => {
     expect(data.deletedRecords.favorites[topicKey(topic)]).toEqual(expect.any(String));
   });
 
-  it('tracks reading progress, subscriptions, and saved searches', () => {
+  it('tracks reading progress and subscriptions', () => {
     let data = createEmptyReaderData();
     data = updateProgress(data, topic, { percent: 125, scrollY: 88 });
     data = toggleSubscription(data, { source: 'nodeseek', id: '日常', name: '日常' });
-    data = addSavedSearch(data, '  VPS  ');
 
     expect(data.progress[topicKey(topic)].percent).toBe(100);
     expect(data.subscriptions['nodeseek:日常']?.name).toBe('日常');
-    expect(data.savedSearches[0]).toMatchObject({ id: 'vps', query: 'VPS', source: 'all' });
   });
 
   it('stores followed users separately from favorite topics', () => {
@@ -157,18 +153,7 @@ describe('Android reader data helpers', () => {
     expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
   });
 
-  it('keeps saved searches unique by keyword across sources', () => {
-    let data = createEmptyReaderData();
-    data = addSavedSearch(data, 'GPT');
-    data = addSavedSearch(data, ' gpt ');
-    data = addSavedSearch(data, 'GPT');
-
-    expect(data.savedSearches).toHaveLength(1);
-    expect(data.savedSearches[0]).toMatchObject({ id: 'gpt', query: 'GPT', source: 'all' });
-    expect(data.deletedRecords.savedSearches).not.toHaveProperty('nodeseek:gpt');
-  });
-
-  it('normalizes old source-scoped saved searches into one keyword record', () => {
+  it('ignores old saved search records while sanitizing reader data', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
       savedSearches: [
@@ -188,15 +173,8 @@ describe('Android reader data helpers', () => {
       }
     });
 
-    expect(data.savedSearches).toEqual([{
-      id: 'gpt',
-      query: 'gpt',
-      source: 'all',
-      savedAt: '2026-05-20T03:00:00.000Z'
-    }]);
-    expect(data.deletedRecords.savedSearches).toEqual({
-      gpt: '2026-05-20T01:30:00.000Z'
-    });
+    expect(data).not.toHaveProperty('savedSearches');
+    expect(data.deletedRecords).not.toHaveProperty('savedSearches');
   });
 
   it('drops sensitive NodeSeek fields while sanitizing synced data', () => {
@@ -207,7 +185,6 @@ describe('Android reader data helpers', () => {
       later: {},
       progress: {},
       subscriptions: {},
-      savedSearches: [],
       settings: {
         trackedKeywords: ['AI'],
         blockedKeywords: [],
@@ -232,7 +209,6 @@ describe('Android reader data helpers', () => {
       later: {},
       progress: {},
       subscriptions: {},
-      savedSearches: [],
       settings: {
         trackedKeywords: [],
         blockedKeywords: [],
@@ -291,21 +267,14 @@ describe('Android reader data helpers', () => {
       favorites: {
         [topicKey(localOnly)]: { topic: localOnly, savedAt: '2026-05-20T02:00:00.000Z' },
         [topicKey(sharedLocal)]: { topic: sharedLocal, savedAt: '2026-05-20T03:00:00.000Z' }
-      },
-      savedSearches: [
-        { id: 'codex', query: 'codex', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
-      ]
+      }
     });
     const remote = sanitizeReaderData({
       ...createEmptyReaderData(),
       favorites: {
         [topicKey(remoteOnly)]: { topic: remoteOnly, savedAt: '2026-05-20T04:00:00.000Z' },
         [topicKey(sharedRemote)]: { topic: sharedRemote, savedAt: '2026-05-20T01:00:00.000Z' }
-      },
-      savedSearches: [
-        { id: 'codex', query: 'codex', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' },
-        { id: 'vps', query: 'vps', source: 'all', savedAt: '2026-05-20T04:00:00.000Z' }
-      ]
+      }
     });
 
     const merged = mergeReaderData(local, remote);
@@ -313,17 +282,6 @@ describe('Android reader data helpers', () => {
     expect(merged.favorites[topicKey(localOnly)]?.topic.title).toBe('Local only');
     expect(merged.favorites[topicKey(remoteOnly)]?.topic.title).toBe('Remote only');
     expect(merged.favorites[topicKey(sharedLocal)]?.topic.title).toBe('Local newer');
-    expect(merged.savedSearches.map((item) => item.id)).toEqual(['vps', 'codex']);
-  });
-
-  it('removes saved searches with deletion markers', () => {
-    let data = createEmptyReaderData();
-    data = addSavedSearch(data, 'VPS');
-
-    data = removeSavedSearch(data, data.savedSearches[0].id);
-
-    expect(data.savedSearches).toEqual([]);
-    expect(data.deletedRecords.savedSearches.vps).toEqual(expect.any(String));
   });
 
   it('updates record annotations and supports bulk removal, restore, and clear history', () => {
@@ -433,8 +391,7 @@ describe('Android reader data helpers', () => {
       history: {},
       later: {},
       progress: {},
-      subscriptions: {},
-      savedSearches: []
+      subscriptions: {}
     };
 
     const merged = mergeReaderData(local, remote);
@@ -496,7 +453,7 @@ describe('Android reader data helpers', () => {
         history: {},
         later: {},
         subscriptions: {},
-        savedSearches: {}
+        followedUsers: {}
       }
     });
     const remote = sanitizeReaderData({
@@ -521,7 +478,7 @@ describe('Android reader data helpers', () => {
         history: {},
         later: {},
         subscriptions: {},
-        savedSearches: {}
+        followedUsers: {}
       }
     });
     const remote = sanitizeReaderData({
@@ -570,17 +527,12 @@ describe('Android reader data helpers', () => {
           subscribedAt: '2026-05-20T02:00:00.000Z'
         }
       },
-      savedSearches: [
-        { id: 'secret', query: 'secret', source: 'yaohuo', savedAt: '2026-05-20T02:00:00.000Z' },
-        { id: 'test', query: 'test', source: 'all', savedAt: '2026-05-20T03:00:00.000Z' }
-      ],
       deletedRecords: {
         favorites: { 'yaohuo:1': '2026-05-20T04:00:00.000Z' },
         history: {},
         later: {},
         subscriptions: { 'yaohuo:177': '2026-05-20T04:00:00.000Z' },
-        followedUsers: { 'yaohuo:7': '2026-05-20T04:00:00.000Z' },
-        savedSearches: { secret: '2026-05-20T04:00:00.000Z' }
+        followedUsers: { 'yaohuo:7': '2026-05-20T04:00:00.000Z' }
       }
     });
 

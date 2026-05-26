@@ -5,6 +5,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Image,
+  Modal,
   Pressable,
   Text,
   TextInput,
@@ -18,7 +19,7 @@ import {
   TRenderEngineProvider
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, RefreshCw, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
 import type { Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
@@ -29,7 +30,7 @@ import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../components/AppControls';
+import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
 import { REPLY_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
 
@@ -76,6 +77,16 @@ function getReplyKey(reply: Reply) {
 
 function topicListItemKey(item: TopicListItem) {
   return item.key;
+}
+
+function readableTopicError(message: string) {
+  if (/upstream unavailable/i.test(message)) {
+    return '来源暂时不可用，请稍后重试';
+  }
+  if (/^HTTP 5\d\d$/i.test(message)) {
+    return `来源暂时不可用（${message}）`;
+  }
+  return message;
 }
 
 function authorInitial(name: string | undefined) {
@@ -243,6 +254,7 @@ export function TopicScreen({
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo;
   const itemSource = topic?.source;
+  const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -311,6 +323,14 @@ export function TopicScreen({
       setFloorOpen(false);
     }
   }, [topicListItems, topicScrollRef]);
+  useEffect(() => {
+    setTopicMenuOpen(false);
+  }, [item?.id, item?.source]);
+  const runTopicMenuAction = useCallback((action: () => void) => {
+    triggerPressFeedback();
+    setTopicMenuOpen(false);
+    action();
+  }, []);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'content') {
       return (
@@ -529,7 +549,7 @@ export function TopicScreen({
         </View>
         {topicError ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{topicError}</Text>
+            <Text style={styles.errorText}>{readableTopicError(topicError)}</Text>
             <View style={styles.actions}>
               {item.source === 'linuxdo' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
               <AppButton label="重试" styles={styles} onPress={onRefreshTopic} />
@@ -556,9 +576,7 @@ export function TopicScreen({
           <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
           <View style={styles.topicTopActions}>
             <IconButton iconOnly ghost icon={Star} label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
-            <IconButton iconOnly ghost icon={Share2} label="分享" styles={styles} theme={theme} onPress={onShareTopic} />
-            <IconButton iconOnly ghost icon={RefreshCw} label="刷新" styles={styles} theme={theme} onPress={onRefreshTopic} />
-            <IconButton iconOnly ghost icon={ExternalLink} label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(item.url)} />
+            <IconButton iconOnly ghost icon={MoreHorizontal} label="更多操作" styles={styles} theme={theme} active={topicMenuOpen} onPress={() => setTopicMenuOpen((value) => !value)} />
           </View>
         </View>
         <FlatList
@@ -586,6 +604,25 @@ export function TopicScreen({
           ) : null}
           renderItem={renderReplyItem}
         />
+        <Modal transparent visible={topicMenuOpen} animationType="fade" onRequestClose={() => setTopicMenuOpen(false)}>
+          <View style={styles.topicMenuLayer}>
+            <Pressable accessibilityRole="button" accessibilityLabel="关闭更多操作" style={styles.topicMenuDismissLayer} onPress={() => setTopicMenuOpen(false)} />
+            <View style={styles.topicOverflowMenu}>
+              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onShareTopic)}>
+                <Share2 size={17} color={theme.ink} strokeWidth={1.8} />
+                <Text style={styles.topicMenuItemText}>分享</Text>
+              </Pressable>
+              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onRefreshTopic)}>
+                <RefreshCw size={17} color={theme.ink} strokeWidth={1.8} />
+                <Text style={styles.topicMenuItemText}>刷新</Text>
+              </Pressable>
+              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={[styles.topicMenuItem, styles.topicMenuItemLast]} onPress={() => runTopicMenuAction(() => onOpenOriginal(item.url))}>
+                <ExternalLink size={17} color={theme.ink} strokeWidth={1.8} />
+                <Text style={styles.topicMenuItemText}>原站打开</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </RenderHTMLConfigProvider>
     </TRenderEngineProvider>
   );

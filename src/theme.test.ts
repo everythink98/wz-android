@@ -43,15 +43,15 @@ describe('Android reader theme helpers', () => {
   });
 
   it('creates rgba colors and light theme tokens', () => {
-    expect(alphaColor('#2b5548', 0.09)).toBe('rgba(43, 85, 72, 0.09)');
+    expect(alphaColor('#2f6555', 0.065)).toBe('rgba(47, 101, 85, 0.065)');
     expect(createTheme(settings)).toMatchObject({
       dark: false,
-      background: '#fafaf8',
-      surface: '#fafaf8',
-      surface2: '#f0efec',
-      line: '#e3e1dc',
-      lineStrong: '#d0cec9',
-      primary: '#2b5548'
+      background: '#f8f8f4',
+      surface: '#fbfbf7',
+      surface2: '#eef1ec',
+      line: '#e2e5dd',
+      lineStrong: '#cfd4cb',
+      primary: '#2f6555'
     });
   });
 
@@ -100,7 +100,7 @@ describe('Android reader theme helpers', () => {
       width: 32,
       height: 32,
       borderRadius: 999,
-      backgroundColor: theme.surface2
+      backgroundColor: theme.surface
     });
     expect(styles.expandableStateIcon.borderWidth).toBe(1);
   });
@@ -146,39 +146,39 @@ describe('Android reader theme helpers', () => {
 
     expect(theme).toMatchObject({
       dark: true,
-      background: '#121210',
-      surface: '#1a1918',
-      surface2: '#242321',
-      line: '#302f2c',
-      lineStrong: '#454441',
-      ink: '#eceae6',
-      muted: '#a3a19b',
-      primary: '#82bda8'
+      background: '#101410',
+      surface: '#171b17',
+      surface2: '#222820',
+      line: '#30372e',
+      lineStrong: '#465046',
+      ink: '#ebece7',
+      muted: '#9ca39a',
+      primary: '#8bbfad'
     });
     expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
   });
 
-  it('keeps list chrome and controls in the pea white surface family', () => {
+  it('keeps list chrome and controls in a quiet pea white surface family', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
-    expect(theme.surface).toBe(theme.background);
-    expect(styles.group.backgroundColor).toBe(theme.background);
-    expect(styles.button.backgroundColor).toBe(theme.background);
-    expect(styles.input.backgroundColor).toBe(theme.background);
-    expect(styles.nav.backgroundColor).toBe(theme.background);
-    expect(styles.floatingIconButton.backgroundColor).toBe(theme.background);
+    expect(theme.surface).not.toBe(theme.background);
+    expect(styles.group.backgroundColor).toBe(theme.surface);
+    expect(styles.button.backgroundColor).toBe(theme.surface);
+    expect(styles.input.backgroundColor).toBe(theme.surface);
+    expect(styles.nav.backgroundColor).toBe(theme.surface);
+    expect(styles.floatingIconButton.backgroundColor).toBe(theme.surface);
   });
 
   it('uses only explicit light and dark themes', () => {
     expect(createTheme({ ...settings, theme: 'light' })).toMatchObject({
       dark: false,
-      primary: '#2b5548'
+      primary: '#2f6555'
     });
     expect(createTheme({ ...settings, theme: 'dark' })).toMatchObject({
       dark: true,
-      primary: '#82bda8'
+      primary: '#8bbfad'
     });
   });
 

@@ -46,9 +46,7 @@ export function SearchScreen({
   onOpenTopic,
   onLoadMoreSearchSource,
   onRemoveRecentSearch,
-  onRemoveSavedSearch,
   onQueryChange,
-  onSaveSearch,
   onRetrySearchSource,
   onScopeChange,
   onSearch,
@@ -72,9 +70,7 @@ export function SearchScreen({
   onOpenTopic: (topic: Topic) => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
   onRemoveRecentSearch: (query: string) => void;
-  onRemoveSavedSearch: (id: string) => void;
   onQueryChange: (value: string) => void;
-  onSaveSearch: () => void;
   onRetrySearchSource: (source: Source) => void;
   onScopeChange: (scope: SearchScope) => void;
   onSearch: () => void;
@@ -93,14 +89,6 @@ export function SearchScreen({
       onOpenTopic={onOpenTopic}
     />
   ), [onOpenTopic, query, readerData, styles, theme, topicListStateInput]);
-  const selectSavedSearch = useCallback((id: string) => {
-    const saved = readerData.savedSearches.find((item) => item.id === id);
-    if (saved) {
-      onQueryChange(saved.query);
-      return;
-    }
-    onQueryChange(id);
-  }, [onQueryChange, readerData.savedSearches]);
   const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
   const [expandedSearchGroups, setExpandedSearchGroups] = useState<Record<string, boolean>>({});
   useEffect(() => {
@@ -286,29 +274,13 @@ export function SearchScreen({
           {visibleSearchGroups.length ? renderedSearchGroups : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
         </View>
       ) : null}
-      <AppButton label="保存搜索" variant="ghost" styles={styles} onPress={onSaveSearch} />
-      {readerData.savedSearches.length ? (
-        <View style={styles.stack}>
-          <Text style={styles.meta}>保存搜索</Text>
-          <View style={styles.chipWrap}>
-            {readerData.savedSearches.map((item) => (
-              <View key={item.id} style={styles.inlineChipGroup}>
-                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => selectSavedSearch(item.id)}>
-                  <Text style={styles.pillText}>{item.query}</Text>
-                </Pressable>
-                <IconButton tiny ghost icon={X} label="删除保存搜索" styles={styles} theme={theme} onPress={() => onRemoveSavedSearch(item.id)} />
-              </View>
-            ))}
-          </View>
-        </View>
-      ) : null}
       {recentSearches.length ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>最近搜索</Text>
           <View style={styles.chipWrap}>
             {recentSearches.map((item) => (
               <View key={item} style={styles.removableChipShell}>
-                <Pressable accessibilityRole="button" style={styles.removableChip} onPress={() => onQueryChange(item)}>
+                <Pressable accessibilityRole="button" style={[styles.removableChip, styles.removableChipPadded]} onPress={() => onQueryChange(item)}>
                   <Text style={styles.pillText}>{item}</Text>
                 </Pressable>
                 <Pressable

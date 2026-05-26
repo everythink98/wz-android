@@ -43,10 +43,13 @@ describe('Android topic detail reading layout', () => {
     expect(topBar).toContain('label="返回"');
     expect(topBar).toContain('{sourceLabel(item.source)}');
     expect(topBar).toContain('label={isFavorite(readerData, item) ? \'已收藏\' : \'收藏\'}');
-    expect(topBar).toContain('label="分享"');
-    expect(topBar).toContain('label="刷新"');
-    expect(topBar).toContain('label="原站"');
-    expect(topBar).toContain('onOpenOriginal(item.url)');
+    expect(topBar).toContain('label="更多操作"');
+    expect(topicScreenSource).toContain('topicOverflowMenu');
+    expect(topicScreenSource).toContain('原站打开');
+    expect(topicScreenSource).toContain('onOpenOriginal(item.url)');
+    expect(topBar).not.toContain('label="分享"');
+    expect(topBar).not.toContain('label="刷新"');
+    expect(topBar).not.toContain('label="原站"');
     expect(topBar).not.toContain('Reader Mode');
     expect(topBar).not.toContain('专注模式');
     expect(topBar).not.toContain('label="楼层"');
@@ -161,10 +164,9 @@ describe('Android topic detail reading layout', () => {
     expect(appSource).toContain('styles.inlineForumImage');
   });
 
-  it('uses saved search ids as chip keys while still filling the saved query text', () => {
-    expect(searchScreenSource).toContain('key={item.id}');
-    expect(searchScreenSource).toContain('const saved = readerData.savedSearches.find((item) => item.id === id)');
-    expect(searchScreenSource).toContain('onQueryChange(saved.query);');
+  it('keeps saved search records out of the Android search screen chrome', () => {
+    expect(searchScreenSource).not.toContain('readerData.savedSearches.map');
+    expect(searchScreenSource).not.toContain('const saved = readerData.savedSearches.find');
     expect(searchScreenSource).not.toContain('onSearchSourceChange(saved.source);');
     expect(searchScreenSource).not.toContain('items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}');
   });
@@ -177,8 +179,8 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('ties selected backgrounds and login panels to the current theme', () => {
-    expect(themeSource).toContain('mist: alphaColor(palette.light, 0.09)');
-    expect(themeSource).toContain('mist: alphaColor(palette.dark, 0.12)');
+    expect(themeSource).toContain('mist: alphaColor(palette.light, 0.065)');
+    expect(themeSource).toContain('mist: alphaColor(palette.dark, 0.11)');
     expect(themeSource).toContain('const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)))');
     expect(themeSource).toMatch(/webViewShell:\s*\{[\s\S]*height:\s*loginWebViewHeight[\s\S]*backgroundColor:\s*theme\.surface/);
   });

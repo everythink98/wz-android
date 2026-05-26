@@ -57,21 +57,21 @@ export function alphaColor(hex: string, alpha: number) {
 
 export function createTheme(settings: ReaderSettings): ReaderTheme {
   const dark = settings.theme === 'dark';
-  const palette = { light: '#2b5548', dark: '#82bda8', lightOn: '#f5faf8', darkOn: '#0b120f' };
-  const background = { base: '#fafaf8', surface2: '#f0efec', line: '#e3e1dc', lineStrong: '#d0cec9' };
+  const palette = { light: '#2f6555', dark: '#8bbfad', lightOn: '#f6fbf8', darkOn: '#0b130f' };
+  const background = { base: '#f8f8f4', surface: '#fbfbf7', surface2: '#eef1ec', line: '#e2e5dd', lineStrong: '#cfd4cb' };
   if (dark) {
     return {
       dark: true,
-      background: '#121210',
-      surface: '#1a1918',
-      surface2: '#242321',
-      line: '#302f2c',
-      lineStrong: '#454441',
-      ink: '#eceae6',
-      muted: '#a3a19b',
+      background: '#101410',
+      surface: '#171b17',
+      surface2: '#222820',
+      line: '#30372e',
+      lineStrong: '#465046',
+      ink: '#ebece7',
+      muted: '#9ca39a',
       primary: palette.dark,
-      primarySoft: alphaColor(palette.dark, 0.12),
-      mist: alphaColor(palette.dark, 0.12),
+      primarySoft: alphaColor(palette.dark, 0.13),
+      mist: alphaColor(palette.dark, 0.11),
       onPrimary: palette.darkOn,
       danger: '#d4817a',
       success: palette.dark
@@ -80,15 +80,15 @@ export function createTheme(settings: ReaderSettings): ReaderTheme {
   return {
     dark: false,
     background: background.base,
-    surface: background.base,
+    surface: background.surface,
     surface2: background.surface2,
     line: background.line,
     lineStrong: background.lineStrong,
-    ink: '#1c1b19',
-    muted: '#86847e',
+    ink: '#20211f',
+    muted: '#7f837b',
     primary: palette.light,
-    primarySoft: alphaColor(palette.light, 0.07),
-    mist: alphaColor(palette.light, 0.09),
+    primarySoft: alphaColor(palette.light, 0.06),
+    mist: alphaColor(palette.light, 0.065),
     onPrimary: palette.lightOn,
     danger: '#a35046',
     success: palette.light
@@ -206,7 +206,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface,
-      elevation: 2
+      elevation: 1
     },
     topicRowShell: {
       position: 'relative',
@@ -304,7 +304,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minWidth: 0
     },
     pillRail: {
-      gap: 4,
+      gap: 2,
+      paddingRight: 18,
       paddingVertical: 0
     },
     pill: {
@@ -314,17 +315,17 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderColor: 'transparent',
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 11,
+      paddingHorizontal: 8,
       paddingVertical: 4
     },
     pillActive: {
       backgroundColor: theme.mist,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.32 : 0.22)
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12)
     },
     pillText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 12,
+      fontSize: 11,
       fontWeight: '500'
     },
     pillTextActive: {
@@ -332,9 +333,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '600'
     },
     tabRail: {
-      gap: 24,
+      gap: 22,
       borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingRight: 18
     },
     tab: {
       minHeight: 40,
@@ -349,7 +351,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     tabText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '500'
     },
     tabTextActive: {
@@ -357,10 +359,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '600'
     },
     input: {
-      minHeight: 44,
+      minHeight: 42,
       backgroundColor: theme.surface,
-      borderColor: theme.lineStrong,
-      borderRadius: 10,
+      borderColor: theme.line,
+      borderRadius: 9,
       borderWidth: StyleSheet.hairlineWidth,
       color: theme.ink,
       fontFamily: appFontFamily,
@@ -375,7 +377,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     searchRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      gap: 8
+      gap: 7
     },
     flex: {
       flex: 1
@@ -387,14 +389,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8
     },
     button: {
-      minHeight: 42,
+      minHeight: 40,
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'row',
       gap: 6,
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 10,
+      borderRadius: 9,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 5
@@ -419,7 +421,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderRadius: 999,
       minHeight: 40,
       gap: 5,
-      backgroundColor: theme.surface2,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.045),
       borderColor: theme.line,
       paddingHorizontal: 10,
       paddingVertical: 0
@@ -471,12 +473,22 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       textAlign: 'center'
     },
     group: {
-      gap: 10,
+      gap: 8,
       backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 12,
+      borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
-      padding: 12
+      paddingHorizontal: 12,
+      paddingVertical: 10
+    },
+    groupList: {
+      gap: 7,
+      backgroundColor: 'transparent',
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderRadius: 0,
+      paddingHorizontal: 0,
+      paddingVertical: 12
     },
     menuButton: {
       alignItems: 'center',
@@ -487,10 +499,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     menuIcon: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 32,
-      height: 32,
-      borderRadius: 10,
-      backgroundColor: theme.surface2
+      width: 30,
+      height: 30,
+      borderRadius: 9,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.045)
     },
     menuLabel: {
       color: theme.ink,
@@ -519,7 +531,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderColor: theme.line,
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface2
+      backgroundColor: theme.surface
     },
     expandableBody: {
       gap: 10,
@@ -552,20 +564,23 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8
     },
     removableChip: {
-      minHeight: 44,
+      minHeight: 38,
       justifyContent: 'center',
-      backgroundColor: theme.surface2,
+      backgroundColor: theme.surface,
       borderColor: theme.line,
-      borderRadius: 999,
+      borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 11,
-      paddingVertical: 6
+      paddingHorizontal: 12,
+      paddingVertical: 5
+    },
+    removableChipPadded: {
+      paddingRight: 24
     },
     removableChipShell: {
       position: 'relative',
       justifyContent: 'center',
-      paddingRight: 5,
-      paddingTop: 5
+      paddingRight: 4,
+      paddingTop: 4
     },
     removableChipClose: {
       position: 'absolute',
@@ -573,17 +588,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       right: 0,
       alignItems: 'center',
       justifyContent: 'center',
-      width: 22,
-      height: 22,
+      width: 21,
+      height: 21,
       borderRadius: 11,
       backgroundColor: theme.surface,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth
-    },
-    inlineChipGroup: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: 2
     },
     loginPanel: {
       gap: 10
@@ -627,10 +637,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       gap: 8,
       backgroundColor: theme.surface,
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.16),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12),
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
-      elevation: 2,
+      elevation: 1,
       paddingHorizontal: 12,
       paddingVertical: 8
     },
@@ -691,6 +701,47 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       flexShrink: 0,
       gap: 4
+    },
+    topicMenuLayer: {
+      flex: 1
+    },
+    topicMenuDismissLayer: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0
+    },
+    topicOverflowMenu: {
+      position: 'absolute',
+      top: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 58 : 62,
+      right: 12,
+      minWidth: 154,
+      overflow: 'hidden',
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      elevation: 4
+    },
+    topicMenuItem: {
+      minHeight: 42,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 9,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 8
+    },
+    topicMenuItemLast: {
+      borderBottomWidth: 0
+    },
+    topicMenuItemText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      fontWeight: '600'
     },
     article: {
       width: '100%',

@@ -83,13 +83,11 @@ import {
   searchTopics
 } from './src/forumApi';
 import {
-  addSavedSearch,
   clearRecords,
   createEmptyReaderData,
   recordHistory,
   removeFollowedUsers,
   removeRecords,
-  removeSavedSearch,
   sanitizeReaderData,
   toggleFavorite,
   toggleFollowedUser,
@@ -3009,9 +3007,7 @@ export default function App() {
       onOpenExternalUrl={openExternalUrl}
       onOpenTopic={openTopic}
       onRemoveRecentSearch={removeRecentSearch}
-      onRemoveSavedSearch={(id) => commitReaderData((current) => removeSavedSearch(current, id))}
       onQueryChange={setSearchQuery}
-      onSaveSearch={() => commitReaderData((current) => addSavedSearch(current, searchQuery))}
       onScopeChange={setSearchScope}
       onSearch={() => runSearch()}
       onSearchSourceChange={setSearchSource}
@@ -3019,7 +3015,7 @@ export default function App() {
       onRetrySearchSource={retrySearchSource}
       onToggleFavorite={toggleTopicFavorite}
     />
-  ), [commitReaderData, loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchQuery, searchScope, searchSort, searchSource, styles, theme, toggleTopicFavorite, topicListStateInput, visibleSearchItems]);
+  ), [loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchScope, searchSort, searchSource, styles, theme, toggleTopicFavorite, topicListStateInput, visibleSearchItems]);
 
   const renderLibraryTab = useCallback(() => (
     <LibraryScreen

@@ -1,4 +1,4 @@
-import type { Category, FeedSource, Source, Topic, UserProfile } from './types';
+import type { Category, Source, Topic, UserProfile } from './types';
 
 export const readerDataVersion = 1;
 export const MAX_HISTORY_RECORDS = 1000;
@@ -20,13 +20,6 @@ export interface ReadingProgressRecord {
   updatedAt: string;
 }
 
-export interface SavedSearchRecord {
-  id: string;
-  query: string;
-  source: FeedSource;
-  savedAt: string;
-}
-
 export interface CategorySubscriptionRecord {
   source: Source;
   id: string;
@@ -45,7 +38,6 @@ export interface DeletedRecords {
   later: Record<string, string>;
   subscriptions: Record<string, string>;
   followedUsers: Record<string, string>;
-  savedSearches: Record<string, string>;
 }
 
 export interface ReaderSettings {
@@ -71,13 +63,11 @@ export interface ReaderData {
   progress: Record<string, ReadingProgressRecord>;
   subscriptions: Record<string, CategorySubscriptionRecord>;
   followedUsers: Record<string, FollowedUserRecord>;
-  savedSearches: SavedSearchRecord[];
   deletedRecords: DeletedRecords;
   settings: ReaderSettings;
 }
 
 const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
-const validFeedSources = new Set<FeedSource>(['all', 'v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
 const privateLocalSources = new Set<Source>(['yaohuo']);
 const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
 
@@ -107,10 +97,6 @@ function nowIso() {
 
 function isSource(value: unknown): value is Source {
   return typeof value === 'string' && validSources.has(value as Source);
-}
-
-function isFeedSource(value: unknown): value is FeedSource {
-  return typeof value === 'string' && validFeedSources.has(value as FeedSource);
 }
 
 function isTopic(value: unknown): value is Topic {
@@ -229,8 +215,7 @@ function createEmptyDeletedRecords(): DeletedRecords {
     history: {},
     later: {},
     subscriptions: {},
-    followedUsers: {},
-    savedSearches: {}
+    followedUsers: {}
   };
 }
 
@@ -243,7 +228,6 @@ export function createEmptyReaderData(): ReaderData {
     progress: {},
     subscriptions: {},
     followedUsers: {},
-    savedSearches: [],
     deletedRecords: createEmptyDeletedRecords(),
     settings: {
       trackedKeywords: [],
@@ -272,15 +256,6 @@ export function categoryKey(category: Pick<Category, 'source' | 'id'>) {
 
 export function userKey(user: Pick<UserProfile, 'source' | 'id'>) {
   return `${user.source}:${user.id}`;
-}
-
-function savedSearchKey(query: string) {
-  return query.trim().toLowerCase();
-}
-
-function normalizeSavedSearchDeletedKey(key: string) {
-  const raw = key.includes(':') ? key.split(':').slice(1).join(':') : key;
-  return savedSearchKey(raw);
 }
 
 function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
@@ -365,36 +340,6 @@ function normalizeSubscriptions(value: unknown): Record<string, CategorySubscrip
   return next;
 }
 
-function normalizeSavedSearches(value: unknown): SavedSearchRecord[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const records = new Map<string, SavedSearchRecord>();
-  for (const item of value) {
-    if (!item || typeof item.query !== 'string' || !isFeedSource(item.source)) {
-      continue;
-    }
-    const query = item.query.trim();
-    const id = savedSearchKey(query);
-    if (!id) {
-      continue;
-    }
-    const record: SavedSearchRecord = {
-      id,
-      query,
-      source: 'all',
-      savedAt: typeof item.savedAt === 'string' ? item.savedAt : nowIso()
-    };
-    const existing = records.get(id);
-    if (!existing || dateValue(record.savedAt) > dateValue(existing.savedAt)) {
-      records.set(id, record);
-    }
-  }
-  return Array.from(records.values())
-    .sort((a, b) => dateValue(b.savedAt) - dateValue(a.savedAt))
-    .slice(0, 30);
-}
-
 function normalizeFollowedUsers(value: unknown): Record<string, FollowedUserRecord> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -443,8 +388,7 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
     history: normalizeDeletedRecordMap(base.history),
     later: normalizeDeletedRecordMap(base.later),
     subscriptions: normalizeDeletedRecordMap(base.subscriptions),
-    followedUsers: normalizeDeletedRecordMap(base.followedUsers),
-    savedSearches: normalizeDeletedRecordMap(base.savedSearches, normalizeSavedSearchDeletedKey)
+    followedUsers: normalizeDeletedRecordMap(base.followedUsers)
   };
 }
 
@@ -484,7 +428,6 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     progress: limitRecordMap(normalizeProgress(data.progress), MAX_PROGRESS_RECORDS, (record) => record.updatedAt),
     subscriptions: normalizeSubscriptions(data.subscriptions),
     followedUsers: normalizeFollowedUsers(data.followedUsers),
-    savedSearches: normalizeSavedSearches(data.savedSearches),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
   };
@@ -516,14 +459,12 @@ export function sanitizeReaderDataForSync(value: unknown): ReaderData {
     progress: filterPrivateTopicRecords(data.progress),
     subscriptions: filterPrivateSubscriptions(data.subscriptions),
     followedUsers: Object.fromEntries(Object.entries(data.followedUsers).filter(([, record]) => !privateLocalSources.has(record.user.source))),
-    savedSearches: data.savedSearches.filter((record) => record.source !== 'yaohuo'),
     deletedRecords: {
       favorites: filterPrivateDeleted(data.deletedRecords.favorites),
       history: filterPrivateDeleted(data.deletedRecords.history),
       later: filterPrivateDeleted(data.deletedRecords.later),
       subscriptions: filterPrivateDeleted(data.deletedRecords.subscriptions),
-      followedUsers: filterPrivateDeleted(data.deletedRecords.followedUsers),
-      savedSearches: filterPrivateDeleted(data.deletedRecords.savedSearches)
+      followedUsers: filterPrivateDeleted(data.deletedRecords.followedUsers)
     }
   });
 }
@@ -586,30 +527,6 @@ function mergeTimedMapWithDeleted<T>(
   return { records, deleted };
 }
 
-function mergeSavedSearchesWithDeleted(local: ReaderData, remote: ReaderData) {
-  const records = new Map<string, SavedSearchRecord>();
-  const deleted = mergeDeletedMap(local.deletedRecords.savedSearches, remote.deletedRecords.savedSearches);
-  for (const record of [...local.savedSearches, ...remote.savedSearches]) {
-    const existing = records.get(record.id);
-    if (!existing || dateValue(record.savedAt) > dateValue(existing.savedAt)) {
-      records.set(record.id, record);
-    }
-  }
-  for (const [key, record] of records) {
-    if (dateValue(deleted[key]) >= dateValue(record.savedAt)) {
-      records.delete(key);
-    } else {
-      delete deleted[key];
-    }
-  }
-  return {
-    records: Array.from(records.values())
-      .sort((a, b) => dateValue(b.savedAt) - dateValue(a.savedAt))
-      .slice(0, 30),
-    deleted
-  };
-}
-
 function markDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string, deletedAt = nowIso()): DeletedRecords {
   return {
     ...deletedRecords,
@@ -650,7 +567,6 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     remote.deletedRecords.followedUsers,
     (record) => record.followedAt
   );
-  const savedSearches = mergeSavedSearchesWithDeleted(local, remote);
 
   return sanitizeReaderData({
     version: readerDataVersion,
@@ -660,14 +576,12 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     progress: mergeTimedMap(local.progress, remote.progress, (record) => record.updatedAt),
     subscriptions: subscriptions.records,
     followedUsers: followedUsers.records,
-    savedSearches: savedSearches.records,
     deletedRecords: {
       favorites: favorites.deleted,
       history: history.deleted,
       later: later.deleted,
       subscriptions: subscriptions.deleted,
-      followedUsers: followedUsers.deleted,
-      savedSearches: savedSearches.deleted
+      followedUsers: followedUsers.deleted
     },
     settings: remoteHasSettings ? remote.settings : local.settings
   });
@@ -757,22 +671,6 @@ export function toggleSubscription(data: ReaderData, category: Pick<Category, 's
   return { ...data, subscriptions: next, deletedRecords };
 }
 
-export function addSavedSearch(data: ReaderData, query: string): ReaderData {
-  const cleanQuery = query.trim();
-  if (!cleanQuery) {
-    return data;
-  }
-  const id = savedSearchKey(cleanQuery);
-  return {
-    ...data,
-    savedSearches: [
-      { id, query: cleanQuery, source: 'all' as FeedSource, savedAt: nowIso() },
-      ...data.savedSearches.filter((item) => item.id !== id)
-    ].slice(0, 30),
-    deletedRecords: clearDeleted(data.deletedRecords, 'savedSearches', id)
-  };
-}
-
 export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
   const summary = userSummary(user);
   const key = userKey(summary);
@@ -786,17 +684,6 @@ export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
     deletedRecords = clearDeleted(deletedRecords, 'followedUsers', key);
   }
   return { ...data, followedUsers: next, deletedRecords };
-}
-
-export function removeSavedSearch(data: ReaderData, id: string) {
-  if (!id || !data.savedSearches.some((item) => item.id === id)) {
-    return data;
-  }
-  return {
-    ...data,
-    savedSearches: data.savedSearches.filter((item) => item.id !== id),
-    deletedRecords: markDeleted(data.deletedRecords, 'savedSearches', id)
-  };
 }
 
 export function updateTopicRecord(

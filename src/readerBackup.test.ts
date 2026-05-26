@@ -20,15 +20,17 @@ describe('reader JSON backup', () => {
     expect(json).not.toContain('sidyaohuo');
   });
 
-  it('imports JSON and merges it with local reader data', () => {
+  it('imports JSON and merges it with local reader data while ignoring old saved searches', () => {
     const local = createEmptyReaderData();
     const remote = createEmptyReaderData();
-    remote.savedSearches = [{ id: 'all:test', source: 'all', query: 'test', savedAt: '2026-05-20T00:00:00.000Z' }];
+    const oldRemote = {
+      ...remote,
+      savedSearches: [{ id: 'all:test', source: 'all', query: 'test', savedAt: '2026-05-20T00:00:00.000Z' }]
+    };
 
-    const merged = importReaderBackupJson(local, JSON.stringify(remote));
+    const merged = importReaderBackupJson(local, JSON.stringify(oldRemote));
 
-    expect(merged.savedSearches).toHaveLength(1);
-    expect(merged.savedSearches[0].query).toBe('test');
+    expect(merged).not.toHaveProperty('savedSearches');
   });
 
   it('keeps local reader settings when importing old backups without settings', () => {
@@ -41,8 +43,7 @@ describe('reader JSON backup', () => {
       history: {},
       later: {},
       progress: {},
-      subscriptions: {},
-      savedSearches: []
+      subscriptions: {}
     };
 
     const merged = importReaderBackupJson(local, JSON.stringify(oldBackup));
@@ -60,7 +61,6 @@ describe('reader JSON backup', () => {
       later: {},
       progress: {},
       subscriptions: {},
-      savedSearches: [],
       settings: {
         ...createEmptyReaderData().settings,
         theme: 'dark',

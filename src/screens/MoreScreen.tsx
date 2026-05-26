@@ -169,10 +169,11 @@ function MoreScreen({
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
-      <View style={styles.group}>
+      <View style={styles.groupList}>
         <InfoRow icon={Activity} label="关于" value="Android 本机阅读器" styles={styles} theme={theme} />
       </View>
       <ExpandablePanel
+        quiet
         title="备份 / 恢复"
         meta={syncing ? '处理中' : backupJson ? '已有 JSON 内容' : 'JSON 导出和导入'}
         icon={DatabaseBackup}
@@ -194,6 +195,7 @@ function MoreScreen({
         />
       </ExpandablePanel>
       <ExpandablePanel
+        quiet
         title="账号与验证"
         meta={`NodeSeek ${hasNodeSeekLoginCookie ? '已登录' : '未登录'} · 妖火 ${hasYaohuoCookie ? '已登录' : '未登录'} · linux.do ${hasLinuxDoClearance ? '已验证' : '未验证'}`}
         icon={LogIn}
@@ -262,6 +264,7 @@ function MoreScreen({
         />
       </ExpandablePanel>
       <ExpandablePanel
+        quiet
         title="外观"
         meta="字号 · 白天/黑夜 · 阅读调节"
         icon={Settings}
@@ -279,6 +282,7 @@ function MoreScreen({
         />
       </ExpandablePanel>
       <ExpandablePanel
+        quiet
         title="状态检查"
         meta={statusBusy ? '检查中' : healthSummary || '来源状态'}
         icon={Activity}

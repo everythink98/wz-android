@@ -53,9 +53,10 @@ describe('Android App experience guards', () => {
     expect(yaohuoApiSource).not.toMatch(/\bserverFetcher\b/);
   });
 
-  it('keeps saved search creation keyword-only', () => {
-    expect(readerDataSource).toContain('export function addSavedSearch(data: ReaderData, query: string): ReaderData');
-    expect(readerDataSource).not.toContain('void source');
+  it('does not keep Android saved search data helpers', () => {
+    expect(readerDataSource).not.toContain('export function addSavedSearch');
+    expect(readerDataSource).not.toContain('export function removeSavedSearch');
+    expect(readerDataSource).not.toContain('SavedSearchRecord');
   });
 
   it('shows loading and failure states inside image preview', () => {
@@ -282,12 +283,14 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('searchSort === \'time\'');
   });
 
-  it('adds the missing Android-only search management controls', () => {
+  it('keeps Android search management focused on recent searches and source groups', () => {
     expect(searchScreenSource).toContain('最近搜索');
-    expect(searchScreenSource).toContain('onRemoveSavedSearch');
     expect(searchScreenSource).toContain('searchGroups');
     expect(appSource).toContain('retrySearchSource');
     expect(searchScreenSource).toContain('highlightQuery={query}');
+    expect(searchScreenSource).not.toContain('onSaveSearch');
+    expect(searchScreenSource).not.toContain('onRemoveSavedSearch');
+    expect(searchScreenSource).not.toContain('保存搜索');
   });
 
   it('keeps recent search removal attached to the search chip instead of a separate button', () => {
@@ -310,27 +313,20 @@ describe('Android App experience guards', () => {
     expect(appSource).not.toContain('onSearch={runSearch}');
   });
 
-  it('keeps saved searches keyword-only instead of binding them to a source tab', () => {
-    const selectSavedSearchBlock = searchScreenSource.match(/const selectSavedSearch = useCallback[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
-
-    expect(selectSavedSearchBlock).toContain('onQueryChange(saved.query);');
-    expect(selectSavedSearchBlock).not.toContain('onSearchSourceChange(saved.source);');
-    expect(searchScreenSource).toContain('<Text style={styles.pillText}>{item.query}</Text>');
-    expect(searchScreenSource).not.toContain('{item.query} · {sourceLabel(item.source)}');
+  it('keeps saved searches as backup-compatible data instead of Android search UI', () => {
+    expect(readerDataSource).not.toContain('savedSearches: SavedSearchRecord[]');
+    expect(readerDataSource).not.toContain('deletedRecords.savedSearches');
+    expect(searchScreenSource).not.toContain('readerData.savedSearches.map');
+    expect(searchScreenSource).not.toContain('const selectSavedSearch');
+    expect(searchScreenSource).not.toContain('删除保存搜索');
   });
 
-  it('shows remote search source groups before saved and recent search chips', () => {
+  it('shows remote search source groups before recent search chips', () => {
     const groupIndex = searchScreenSource.indexOf('{showRemoteGroups ? (');
-    const saveButtonIndex = searchScreenSource.indexOf('<AppButton label="保存搜索"');
-    const savedListIndex = searchScreenSource.indexOf('<Text style={styles.meta}>保存搜索</Text>');
     const recentListIndex = searchScreenSource.indexOf('<Text style={styles.meta}>最近搜索</Text>');
 
     expect(groupIndex).toBeGreaterThan(-1);
-    expect(saveButtonIndex).toBeGreaterThan(-1);
-    expect(savedListIndex).toBeGreaterThan(-1);
     expect(recentListIndex).toBeGreaterThan(-1);
-    expect(groupIndex).toBeLessThan(saveButtonIndex);
-    expect(groupIndex).toBeLessThan(savedListIndex);
     expect(groupIndex).toBeLessThan(recentListIndex);
   });
 

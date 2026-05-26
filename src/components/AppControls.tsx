@@ -31,7 +31,7 @@ export function PillRail({
 }) {
   const isTabs = variant === 'tabs';
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={24} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
       {items.map((item) => (
         <Pressable
           hitSlop={TOUCH_HIT_SLOP}
@@ -108,6 +108,7 @@ export function ExpandablePanel({
   expanded,
   icon,
   meta,
+  quiet = false,
   styles,
   theme,
   title,
@@ -118,6 +119,7 @@ export function ExpandablePanel({
   expanded?: boolean;
   icon?: LucideIcon;
   meta?: string;
+  quiet?: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   title: string;
@@ -140,7 +142,7 @@ export function ExpandablePanel({
   };
 
   return (
-    <View style={styles.group}>
+    <View style={quiet ? styles.groupList : styles.group}>
       <Pressable
         accessibilityLabel={panelExpanded ? `收起${title}` : `展开${title}`}
         accessibilityRole="button"
