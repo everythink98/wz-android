@@ -31,7 +31,7 @@ export function PillRail({
 }) {
   const isTabs = variant === 'tabs';
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={24} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
       {items.map((item) => (
         <Pressable
           hitSlop={TOUCH_HIT_SLOP}
