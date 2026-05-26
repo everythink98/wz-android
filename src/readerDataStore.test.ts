@@ -53,27 +53,17 @@ describe('reader data store', () => {
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
   });
 
-  it('migrates old SecureStore reader data into AsyncStorage without touching NodeSeek cookies', async () => {
-    const data = createEmptyReaderData();
-    secureStore.__store.set('reader-data', JSON.stringify(data));
+  it('starts with clean Android reader data when AsyncStorage is empty', async () => {
+    const oldData = createEmptyReaderData();
+    secureStore.__store.set('reader-data', JSON.stringify(oldData));
     secureStore.__store.set('nodeseek-cookie-header', 'session=secret');
 
-    await expect(loadReaderData()).resolves.toEqual(data);
+    await expect(loadReaderData()).resolves.toEqual(createEmptyReaderData());
 
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
-    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('reader-data');
+    expect(SecureStore.getItemAsync).not.toHaveBeenCalledWith('reader-data');
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('reader-data');
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
     expect(secureStore.__store.get('nodeseek-cookie-header')).toBe('session=secret');
-  });
-
-  it('falls back to old SecureStore reader data when AsyncStorage data is damaged', async () => {
-    const data = createEmptyReaderData();
-    asyncStorage.__store.set('reader-data', '{bad json');
-    secureStore.__store.set('reader-data', JSON.stringify(data));
-
-    await expect(loadReaderData()).resolves.toEqual(data);
-
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
-    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('reader-data');
   });
 
   it('replaces damaged AsyncStorage data with a clean reader data object', async () => {
@@ -86,7 +76,7 @@ describe('reader data store', () => {
   });
 
   it('rewrites structurally invalid AsyncStorage data as clean reader data', async () => {
-    asyncStorage.__store.set('reader-data', JSON.stringify({ version: 1, favorites: 'bad' }));
+    asyncStorage.__store.set('reader-data', JSON.stringify({ version: 2, favorites: 'bad' }));
 
     const data = await loadReaderData();
 

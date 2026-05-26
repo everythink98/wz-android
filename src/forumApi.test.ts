@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { getCategories, getFeed, getReply, getUserProfile, parseYaohuoFeedHtml, parseYaohuoLoginHtml, searchTopics } from './forumApi';
+import { getCategories, getFeed, getReply, getUserProfile, searchTopics } from './forumApi';
 import { clearV2exCacheForTest } from './localV2ex';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -45,32 +45,6 @@ describe('Android local forum facade', () => {
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
     expect(calls).toContain('https://www.nodeseek.com/categories/tech/page-2?sortBy=postTime');
     expect(calls).not.toMatch(/127\.0\.0\.1:3000|10\.0\.2\.2|\/api\/feed|\/api\/categories/);
-  });
-
-  it('uses local yaohuo HTML parsing without posting HTML to a parser endpoint', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ items: [], errors: {} })));
-
-    const result = await parseYaohuoFeedHtml({
-      html: '<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>',
-      category: '177',
-      page: 1,
-      fetcher
-    });
-    const login = await parseYaohuoLoginHtml({ html: '<html>首页</html>', url: 'https://yaohuo.me/wapindex.aspx?sid=-2', fetcher });
-
-    expect(result.items[0]).toMatchObject({ source: 'yaohuo', id: '123', title: '妖火主题' });
-    expect(login.loginRequired).toBe(false);
-    expect(fetcher).not.toHaveBeenCalled();
-  });
-
-  it('keeps yaohuo verification and login-expired detection local', async () => {
-    await expect(parseYaohuoFeedHtml({
-      html: '<script>window.CAPTCHA_CONFIG={}</script>',
-      url: 'https://yaohuo.me/bbs/book_list.aspx'
-    })).rejects.toMatchObject({
-      loginRequired: true,
-      reason: 'verification'
-    });
   });
 
   it('keeps single quoted-floor reads on linux.do public JSON endpoints', async () => {

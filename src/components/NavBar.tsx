@@ -32,30 +32,3 @@ export function TabBarIcon({
     </View>
   );
 }
-
-export function NavBar({
-  active,
-  styles,
-  theme,
-  onChange
-}: {
-  active: Screen;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onChange: (screen: Screen) => void;
-}) {
-  return (
-    <View style={styles.nav}>
-      {tabNavItems.map((item) => (
-        <TabBarIcon
-          key={item.value}
-          focused={active === item.value}
-          icon={item.icon}
-          label={item.label}
-          styles={styles}
-          theme={theme}
-        />
-      ))}
-    </View>
-  );
-}

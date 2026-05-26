@@ -34,8 +34,6 @@ function record(patch: Partial<TopicRecord> & { id: string; savedAt: string }): 
       source: patch.topic?.source ?? topic.source
     },
     savedAt: patch.savedAt,
-    tags: patch.tags,
-    note: patch.note,
     visitCount: patch.visitCount
   };
 }
@@ -56,12 +54,12 @@ describe('Android feature helpers', () => {
 
   it('filters library records and groups them by recency', () => {
     const records = [
-      record({ id: '1', savedAt: '2026-05-23T03:00:00.000Z', tags: ['server'] }),
-      record({ id: '2', savedAt: '2026-05-20T03:00:00.000Z', tags: ['app'], topic: { ...topic, category: 'App' } }),
-      record({ id: '3', savedAt: '2026-05-10T03:00:00.000Z' })
+      record({ id: '1', savedAt: '2026-05-23T03:00:00.000Z' }),
+      record({ id: '2', savedAt: '2026-05-20T03:00:00.000Z', topic: { ...topic, category: 'App' } }),
+      record({ id: '3', savedAt: '2026-05-10T03:00:00.000Z', topic: { ...topic, category: 'Other', categoryId: 'other' } })
     ];
 
-    expect(filterLibraryRecords(records, { source: 'all', category: 'Daily', tag: 'server' }).map((item) => item.topic.id)).toEqual(['1']);
+    expect(filterLibraryRecords(records, { source: 'all', category: 'Daily' }).map((item) => item.topic.id)).toEqual(['1']);
     expect(groupLibraryRecordsByTime(records, new Date('2026-05-23T12:00:00.000Z')).map((section) => section.label)).toEqual(['今天', '本周', '更早']);
   });
 
@@ -71,27 +69,22 @@ describe('Android feature helpers', () => {
       record({ id: '2', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'daily' } })
     ];
 
-    expect(filterLibraryRecords(records, { source: 'all', category: 'v2ex:daily', tag: 'all' }).map((item) => item.topic.id)).toEqual(['2']);
-    expect(filterLibraryRecords(records, { source: 'nodeseek', category: 'nodeseek:daily', tag: 'all' }).map((item) => item.topic.id)).toEqual(['1']);
+    expect(filterLibraryRecords(records, { source: 'all', category: 'v2ex:daily' }).map((item) => item.topic.id)).toEqual(['2']);
+    expect(filterLibraryRecords(records, { source: 'nodeseek', category: 'nodeseek:daily' }).map((item) => item.topic.id)).toEqual(['1']);
   });
 
   it('builds library category filters only from the selected source', () => {
-    const records = [
-      record({ id: '1', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'v2ex', category: '分享创造', categoryId: 'create' } }),
-      record({ id: '2', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'nodeseek', category: '日常', categoryId: 'daily' } }),
-      record({ id: '3', savedAt: '2026-05-20T00:00:00.000Z', topic: { ...topic, source: 'linuxdo', category: '4', categoryId: '4' } })
-    ];
     const categories: Category[] = [
       { source: 'v2ex', id: 'create', name: '分享创造' },
       { source: 'nodeseek', id: 'daily', name: '日常' },
       { source: 'linuxdo', id: '4', name: '开发调优' }
     ];
 
-    expect(libraryCategoryFilterItems(records, categories, 'linuxdo')).toEqual([
+    expect(libraryCategoryFilterItems(categories, 'linuxdo')).toEqual([
       { value: 'all', label: '全部' },
       { value: 'linuxdo:4', label: '开发调优' }
     ]);
-    expect(libraryCategoryFilterItems(records, categories, 'all').map((item) => item.value)).toEqual([
+    expect(libraryCategoryFilterItems(categories, 'all').map((item) => item.value)).toEqual([
       'all',
       'v2ex:create',
       'nodeseek:daily',

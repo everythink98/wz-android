@@ -293,10 +293,8 @@ function MoreScreen({
       >
         <MemoizedStatusCheckPanel
           healthDetails={healthDetails}
-          healthSummary={healthSummary}
           statusBusy={statusBusy}
           styles={styles}
-          theme={theme}
           onCheckHealth={onCheckHealth}
         />
       </ExpandablePanel>
@@ -641,17 +639,13 @@ const MemoizedAppearancePanel = memo(AppearancePanel);
 
 function StatusCheckPanel({
   healthDetails,
-  healthSummary,
   statusBusy,
   styles,
-  theme,
   onCheckHealth
 }: {
   healthDetails: HealthDetail[];
-  healthSummary: string;
   statusBusy: boolean;
   styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
   onCheckHealth: () => void;
 }) {
   return (

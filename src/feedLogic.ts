@@ -90,7 +90,7 @@ export function searchLocal(data: ReaderData, query: string, source: FeedSource)
       if (seen.has(key) || (source !== 'all' && topic.source !== source)) {
         return false;
       }
-      const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''} ${record.tags?.join(' ') || ''} ${record.note || ''}`.toLowerCase();
+      const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
       const matched = matchesSearchExpression(text, expression);
       if (matched) {
         seen.add(key);

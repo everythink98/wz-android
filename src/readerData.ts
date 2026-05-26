@@ -1,15 +1,12 @@
 import type { Category, Source, Topic, UserProfile } from './types';
 
-export const readerDataVersion = 1;
+export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 1000;
 export const MAX_PROGRESS_RECORDS = 1000;
 
 export interface TopicRecord {
   topic: Topic;
   savedAt: string;
-  updatedAt?: string;
-  tags?: string[];
-  note?: string;
   visitCount?: number;
 }
 
@@ -35,7 +32,6 @@ export interface FollowedUserRecord {
 export interface DeletedRecords {
   favorites: Record<string, string>;
   history: Record<string, string>;
-  later: Record<string, string>;
   subscriptions: Record<string, string>;
   followedUsers: Record<string, string>;
 }
@@ -56,10 +52,9 @@ export interface ReaderSettings {
 }
 
 export interface ReaderData {
-  version: 1;
+  version: 2;
   favorites: Record<string, TopicRecord>;
   history: Record<string, TopicRecord>;
-  later: Record<string, TopicRecord>;
   progress: Record<string, ReadingProgressRecord>;
   subscriptions: Record<string, CategorySubscriptionRecord>;
   followedUsers: Record<string, FollowedUserRecord>;
@@ -68,7 +63,6 @@ export interface ReaderData {
 }
 
 const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
-const privateLocalSources = new Set<Source>(['yaohuo']);
 const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
 
 function userProfileUrl(source: Source, id: string, fallback = '') {
@@ -213,7 +207,6 @@ function createEmptyDeletedRecords(): DeletedRecords {
   return {
     favorites: {},
     history: {},
-    later: {},
     subscriptions: {},
     followedUsers: {}
   };
@@ -224,7 +217,6 @@ export function createEmptyReaderData(): ReaderData {
     version: readerDataVersion,
     favorites: {},
     history: {},
-    later: {},
     progress: {},
     subscriptions: {},
     followedUsers: {},
@@ -269,17 +261,13 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
       continue;
     }
     const savedAt = typeof candidate.savedAt === 'string' ? candidate.savedAt : '';
-    const updatedAt = typeof candidate.updatedAt === 'string' ? candidate.updatedAt : undefined;
-    if (dateValue(savedAt) <= 0 || (updatedAt !== undefined && dateValue(updatedAt) <= 0)) {
+    if (dateValue(savedAt) <= 0) {
       continue;
     }
     const topic = topicSummary(candidate.topic);
     next[topicKey(topic)] = {
       topic,
       savedAt,
-      updatedAt,
-      tags: Array.isArray(candidate.tags) ? candidate.tags.filter((tag): tag is string => typeof tag === 'string') : undefined,
-      note: typeof candidate.note === 'string' ? candidate.note : undefined,
       visitCount: typeof candidate.visitCount === 'number' && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
     };
   }
@@ -386,7 +374,6 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
   return {
     favorites: normalizeDeletedRecordMap(base.favorites),
     history: normalizeDeletedRecordMap(base.history),
-    later: normalizeDeletedRecordMap(base.later),
     subscriptions: normalizeDeletedRecordMap(base.subscriptions),
     followedUsers: normalizeDeletedRecordMap(base.followedUsers)
   };
@@ -424,49 +411,12 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     version: readerDataVersion,
     favorites: normalizeRecordMap(data.favorites),
     history: limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
-    later: normalizeRecordMap(data.later),
     progress: limitRecordMap(normalizeProgress(data.progress), MAX_PROGRESS_RECORDS, (record) => record.updatedAt),
     subscriptions: normalizeSubscriptions(data.subscriptions),
     followedUsers: normalizeFollowedUsers(data.followedUsers),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
   };
-}
-
-function isPrivateTopicRecord(record: TopicRecord | ReadingProgressRecord) {
-  return privateLocalSources.has(record.topic.source);
-}
-
-function filterPrivateTopicRecords<T extends TopicRecord | ReadingProgressRecord>(records: Record<string, T>) {
-  return Object.fromEntries(Object.entries(records).filter(([, record]) => !isPrivateTopicRecord(record)));
-}
-
-function filterPrivateSubscriptions(records: Record<string, CategorySubscriptionRecord>) {
-  return Object.fromEntries(Object.entries(records).filter(([, record]) => !privateLocalSources.has(record.source)));
-}
-
-function filterPrivateDeleted(records: Record<string, string>) {
-  return Object.fromEntries(Object.entries(records).filter(([key]) => !key.startsWith('yaohuo:')));
-}
-
-export function sanitizeReaderDataForSync(value: unknown): ReaderData {
-  const data = sanitizeReaderData(value);
-  return sanitizeReaderData({
-    ...data,
-    favorites: filterPrivateTopicRecords(data.favorites),
-    history: filterPrivateTopicRecords(data.history),
-    later: filterPrivateTopicRecords(data.later),
-    progress: filterPrivateTopicRecords(data.progress),
-    subscriptions: filterPrivateSubscriptions(data.subscriptions),
-    followedUsers: Object.fromEntries(Object.entries(data.followedUsers).filter(([, record]) => !privateLocalSources.has(record.user.source))),
-    deletedRecords: {
-      favorites: filterPrivateDeleted(data.deletedRecords.favorites),
-      history: filterPrivateDeleted(data.deletedRecords.history),
-      later: filterPrivateDeleted(data.deletedRecords.later),
-      subscriptions: filterPrivateDeleted(data.deletedRecords.subscriptions),
-      followedUsers: filterPrivateDeleted(data.deletedRecords.followedUsers)
-    }
-  });
 }
 
 function dateValue(value: string | undefined) {
@@ -483,10 +433,6 @@ function mergeTimedMap<T>(local: Record<string, T>, remote: Record<string, T>, g
     }
   }
   return merged;
-}
-
-function topicRecordTime(record: TopicRecord) {
-  return record.updatedAt || record.savedAt;
 }
 
 function hasOwnObjectField(value: unknown, key: string) {
@@ -550,9 +496,8 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
   const local = sanitizeReaderData(localValue);
   const remote = sanitizeReaderData(remoteValue);
   const remoteHasSettings = hasOwnObjectField(remoteValue, 'settings');
-  const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, topicRecordTime);
-  const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, topicRecordTime);
-  const later = mergeTimedMapWithDeleted(local.later, remote.later, local.deletedRecords.later, remote.deletedRecords.later, topicRecordTime);
+  const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, (record) => record.savedAt);
+  const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, (record) => record.savedAt);
   const subscriptions = mergeTimedMapWithDeleted(
     local.subscriptions,
     remote.subscriptions,
@@ -572,14 +517,12 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     version: readerDataVersion,
     favorites: favorites.records,
     history: history.records,
-    later: later.records,
     progress: mergeTimedMap(local.progress, remote.progress, (record) => record.updatedAt),
     subscriptions: subscriptions.records,
     followedUsers: followedUsers.records,
     deletedRecords: {
       favorites: favorites.deleted,
       history: history.deleted,
-      later: later.deleted,
       subscriptions: subscriptions.deleted,
       followedUsers: followedUsers.deleted
     },
@@ -619,21 +562,6 @@ export function toggleFavorite(data: ReaderData, topic: Topic) {
     deletedRecords = clearDeleted(deletedRecords, 'favorites', key);
   }
   return { ...data, favorites: next, deletedRecords };
-}
-
-export function toggleLater(data: ReaderData, topic: Topic) {
-  const summary = topicSummary(topic);
-  const key = topicKey(summary);
-  const next = { ...data.later };
-  let deletedRecords = data.deletedRecords;
-  if (next[key]) {
-    delete next[key];
-    deletedRecords = markDeleted(deletedRecords, 'later', key);
-  } else {
-    next[key] = { topic: summary, savedAt: nowIso() };
-    deletedRecords = clearDeleted(deletedRecords, 'later', key);
-  }
-  return { ...data, later: next, deletedRecords };
 }
 
 export function updateProgress(data: ReaderData, topic: Topic, progress: { percent: number; scrollY: number }) {
@@ -686,31 +614,6 @@ export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
   return { ...data, followedUsers: next, deletedRecords };
 }
 
-export function updateTopicRecord(
-  data: ReaderData,
-  section: 'favorites' | 'history',
-  topic: Pick<Topic, 'source' | 'id'>,
-  patch: Pick<TopicRecord, 'tags' | 'note'>
-) {
-  const key = topicKey(topic);
-  const record = data[section][key];
-  if (!record) {
-    return data;
-  }
-  return {
-    ...data,
-    [section]: {
-      ...data[section],
-      [key]: {
-        ...record,
-        tags: normalizeStringList(patch.tags),
-        note: typeof patch.note === 'string' ? patch.note.trim() : '',
-        updatedAt: nowIso()
-      }
-    }
-  };
-}
-
 export function removeRecords(data: ReaderData, section: 'favorites' | 'history', topics: Array<Pick<Topic, 'source' | 'id'>>) {
   const next = { ...data[section] };
   let deletedRecords = data.deletedRecords;
@@ -749,52 +652,8 @@ export function clearRecords(data: ReaderData, section: 'history') {
   return removeRecords(data, section, Object.values(data[section]).map((record) => record.topic));
 }
 
-export function restoreRecords(data: ReaderData, section: 'favorites' | 'history', records: Record<string, TopicRecord>) {
-  const restored = normalizeRecordMap(records);
-  const deleted = { ...data.deletedRecords[section] };
-  for (const key of Object.keys(restored)) {
-    delete deleted[key];
-  }
-  return sanitizeReaderData({
-    ...data,
-    [section]: {
-      ...data[section],
-      ...restored
-    },
-    deletedRecords: {
-      ...data.deletedRecords,
-      [section]: deleted
-    }
-  });
-}
-
-export function exportFavoritesMarkdown(data: ReaderData) {
-  const records = Object.values(data.favorites)
-    .sort((left, right) => dateValue(right.savedAt) - dateValue(left.savedAt));
-  if (!records.length) {
-    return '# 收藏\n\n暂无收藏\n';
-  }
-  const lines = ['# 收藏', ''];
-  for (const record of records) {
-    const topic = record.topic;
-    lines.push(`- [${topic.title}](${topic.url})`);
-    lines.push(`  - 来源：${topic.source}${topic.category ? ` · ${topic.category}` : ''}`);
-    if (record.tags?.length) {
-      lines.push(`  - 标签：${record.tags.join(', ')}`);
-    }
-    if (record.note) {
-      lines.push(`  - 备注：${record.note}`);
-    }
-  }
-  return `${lines.join('\n')}\n`;
-}
-
 export function isFavorite(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
   return Boolean(data.favorites[topicKey(topic)]);
-}
-
-export function isLater(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
-  return Boolean(data.later[topicKey(topic)]);
 }
 
 export function isSubscribed(data: ReaderData, category: Pick<Category, 'source' | 'id'>) {

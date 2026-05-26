@@ -2985,9 +2985,8 @@ export default function App() {
       onOpenTopic={openTopic}
       onReadingFilterChange={setReadingFilter}
       onRefresh={refreshFeed}
-      onToggleFavorite={toggleTopicFavorite}
     />
-  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readerData, readingFilter, refreshFeed, shownFeedItems, styles, theme, toggleTopicFavorite, topicListStateInput]);
+  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readerData, readingFilter, refreshFeed, shownFeedItems, styles, theme, topicListStateInput]);
 
   const renderSearchTab = useCallback(() => (
     <SearchScreen
@@ -3013,9 +3012,8 @@ export default function App() {
       onSearchSourceChange={setSearchSource}
       onSortChange={setSearchSort}
       onRetrySearchSource={retrySearchSource}
-      onToggleFavorite={toggleTopicFavorite}
     />
-  ), [loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchScope, searchSort, searchSource, styles, theme, toggleTopicFavorite, topicListStateInput, visibleSearchItems]);
+  ), [loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchScope, searchSort, searchSource, styles, theme, topicListStateInput, visibleSearchItems]);
 
   const renderLibraryTab = useCallback(() => (
     <LibraryScreen

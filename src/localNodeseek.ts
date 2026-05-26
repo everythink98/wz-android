@@ -13,7 +13,6 @@ import {
   parseHtml,
   parsePositiveInteger,
   sanitizeContentHtml,
-  sortTopicsByCreatedAt,
   sortTopicsByTime,
   textExcerpt,
   toIsoString

@@ -40,8 +40,7 @@ export function FeedScreen({
   onLoadMore,
   onOpenTopic,
   onReadingFilterChange,
-  onRefresh,
-  onToggleFavorite
+  onRefresh
 }: {
   busy: boolean;
   categories: Category[];
@@ -63,9 +62,7 @@ export function FeedScreen({
   onOpenTopic: (topic: Topic) => void;
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
-  onToggleFavorite: (topic: Topic) => void;
 }) {
-  void onToggleFavorite;
   const listRefs = useRef<Partial<Record<FeedSource, FlatList<Topic> | null>>>({});
   const requestedFeedPageRef = useRef<number | null>(null);
   const pendingScrollOffsetRef = useRef<Partial<Record<FeedSource, number | null>>>({});

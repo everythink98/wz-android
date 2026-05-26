@@ -132,10 +132,6 @@ function originalPoster(topic: Record<string, unknown>, users: Map<string, Recor
   return isRecord(poster) ? users.get(String(poster.user_id)) : undefined;
 }
 
-function originalPosterUsername(topic: Record<string, unknown>, users: Map<string, Record<string, unknown>>) {
-  return String(originalPoster(topic, users)?.username || '');
-}
-
 function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string, authorData?: Record<string, unknown>): Topic | null {
   if (!isRecord(raw)) {
     return null;

@@ -2,27 +2,21 @@ import { describe, expect, it } from 'vitest';
 import {
   clearRecords,
   createEmptyReaderData,
-  exportFavoritesMarkdown,
   isFavorite,
-  isLater,
   isUserFollowed,
   MAX_HISTORY_RECORDS,
   MAX_PROGRESS_RECORDS,
   mergeReaderData,
   recordHistory,
-  removeRecords,
   removeFollowedUsers,
-  restoreRecords,
+  removeRecords,
   sanitizeReaderData,
-  sanitizeReaderDataForSync,
   toggleFavorite,
   toggleFollowedUser,
-  toggleLater,
   toggleSubscription,
   topicKey,
-  userKey,
-  updateTopicRecord,
-  updateProgress
+  updateProgress,
+  userKey
 } from './readerData';
 import type { Topic, UserProfile } from './types';
 
@@ -49,14 +43,37 @@ const profile: UserProfile = {
 };
 
 describe('Android reader data helpers', () => {
-  it('defaults Android appearance to light theme, forest green, and pea white', () => {
+  it('creates only the current Android reader data shape', () => {
     const data = createEmptyReaderData();
 
+    expect(data.version).toBe(2);
+    expect(data).not.toHaveProperty('later');
+    expect(data.deletedRecords).not.toHaveProperty('later');
+    expect(data).not.toHaveProperty('savedSearches');
+    expect(data.deletedRecords).not.toHaveProperty('savedSearches');
     expect(data.settings).toMatchObject({
       theme: 'light',
       palette: 'mint',
       background: 'warm'
     });
+  });
+
+  it('rejects old reader data versions instead of migrating old fields', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      version: 1,
+      favorites: {
+        [topicKey(topic)]: { topic, savedAt: '2026-05-20T00:00:00.000Z' }
+      },
+      later: {
+        [topicKey(topic)]: { topic, savedAt: '2026-05-20T00:00:00.000Z' }
+      },
+      savedSearches: [
+        { id: 'all:gpt', query: 'GPT', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' }
+      ]
+    });
+
+    expect(data).toEqual(createEmptyReaderData());
   });
 
   it('stores only a topic summary when recording history', () => {
@@ -69,36 +86,20 @@ describe('Android reader data helpers', () => {
 
     expect(data.history[topicKey(topic)].topic).toEqual(topic);
     expect(data.history[topicKey(topic)].visitCount).toBe(1);
+    expect(data.history[topicKey(topic)]).not.toHaveProperty('tags');
+    expect(data.history[topicKey(topic)]).not.toHaveProperty('note');
   });
 
-  it('keeps history tags and note when the same topic is opened again', () => {
-    let data = recordHistory(createEmptyReaderData(), topic);
-    data = updateTopicRecord(data, 'history', topic, { tags: [' follow '], note: ' keep this note ' });
-    const updatedAt = data.history[topicKey(topic)].updatedAt;
-
-    data = recordHistory(data, { ...topic, title: 'NodeSeek topic updated' });
-
-    expect(data.history[topicKey(topic)]).toMatchObject({
-      topic: { title: 'NodeSeek topic updated' },
-      tags: ['follow'],
-      note: 'keep this note',
-      updatedAt,
-      visitCount: 2
-    });
-  });
-
-  it('toggles favorites and later records independently', () => {
+  it('toggles favorites without keeping old later records', () => {
     let data = createEmptyReaderData();
     data = toggleFavorite(data, topic);
-    data = toggleLater(data, topic);
 
     expect(isFavorite(data, topic)).toBe(true);
-    expect(isLater(data, topic)).toBe(true);
 
     data = toggleFavorite(data, topic);
     expect(isFavorite(data, topic)).toBe(false);
-    expect(isLater(data, topic)).toBe(true);
     expect(data.deletedRecords.favorites[topicKey(topic)]).toEqual(expect.any(String));
+    expect(data).not.toHaveProperty('later');
   });
 
   it('tracks reading progress and subscriptions', () => {
@@ -153,43 +154,11 @@ describe('Android reader data helpers', () => {
     expect(data.deletedRecords.followedUsers[userKey(profile)]).toEqual(expect.any(String));
   });
 
-  it('ignores old saved search records while sanitizing reader data', () => {
+  it('drops sensitive NodeSeek fields while sanitizing reader data', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
-      savedSearches: [
-        { id: 'all:gpt', query: 'GPT', source: 'all', savedAt: '2026-05-20T01:00:00.000Z' },
-        { id: 'nodeseek:gpt', query: 'gpt', source: 'nodeseek', savedAt: '2026-05-20T03:00:00.000Z' },
-        { id: 'linuxdo:gpt', query: ' GPT ', source: 'linuxdo', savedAt: '2026-05-20T02:00:00.000Z' }
-      ],
-      deletedRecords: {
-        favorites: {},
-        history: {},
-        later: {},
-        subscriptions: {},
-        followedUsers: {},
-        savedSearches: {
-          'nodeseek:gpt': '2026-05-20T01:30:00.000Z'
-        }
-      }
-    });
-
-    expect(data).not.toHaveProperty('savedSearches');
-    expect(data.deletedRecords).not.toHaveProperty('savedSearches');
-  });
-
-  it('drops sensitive NodeSeek fields while sanitizing synced data', () => {
-    const data = sanitizeReaderData({
-      version: 1,
-      favorites: {},
-      history: {},
-      later: {},
-      progress: {},
-      subscriptions: {},
       settings: {
-        trackedKeywords: ['AI'],
-        blockedKeywords: [],
-        blockedUsers: [],
-        blockedCategories: [],
+        ...createEmptyReaderData().settings,
         listDensity: 'compact'
       },
       nodeseekCookie: 'secret',
@@ -201,21 +170,12 @@ describe('Android reader data helpers', () => {
     expect(data.settings.listDensity).toBe('compact');
   });
 
-  it('keeps only reader appearance settings that can be shared safely', () => {
+  it('keeps only current Android appearance settings', () => {
     const data = sanitizeReaderData({
-      version: 1,
-      favorites: {},
-      history: {},
-      later: {},
-      progress: {},
-      subscriptions: {},
+      ...createEmptyReaderData(),
       settings: {
-        trackedKeywords: [],
-        blockedKeywords: [],
-        blockedUsers: [],
-        blockedCategories: [],
-        listDensity: 'loose',
-        theme: 'dark',
+        ...createEmptyReaderData().settings,
+        theme: 'system',
         palette: 'blue',
         background: 'gray',
         fontScale: 1.2,
@@ -227,8 +187,7 @@ describe('Android reader data helpers', () => {
     });
 
     expect(data.settings).toMatchObject({
-      listDensity: 'loose',
-      theme: 'dark',
+      theme: 'light',
       palette: 'mint',
       background: 'warm',
       fontScale: 1.2,
@@ -239,25 +198,7 @@ describe('Android reader data helpers', () => {
     expect(data.settings).not.toHaveProperty('nodeseekCookie');
   });
 
-  it('normalizes removed Android appearance choices to the maintained style', () => {
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      settings: {
-        ...createEmptyReaderData().settings,
-        theme: 'system',
-        palette: 'noir',
-        background: 'white'
-      }
-    });
-
-    expect(data.settings).toMatchObject({
-      theme: 'light',
-      palette: 'mint',
-      background: 'warm'
-    });
-  });
-
-  it('merges reader data without overwriting newer local or remote records', () => {
+  it('merges current reader data without overwriting newer local or remote records', () => {
     const localOnly: Topic = { ...topic, id: '1', title: 'Local only' };
     const remoteOnly: Topic = { ...topic, id: '2', title: 'Remote only' };
     const sharedLocal: Topic = { ...topic, id: '3', title: 'Local newer' };
@@ -284,27 +225,15 @@ describe('Android reader data helpers', () => {
     expect(merged.favorites[topicKey(sharedLocal)]?.topic.title).toBe('Local newer');
   });
 
-  it('updates record annotations and supports bulk removal, restore, and clear history', () => {
+  it('removes records and clears history with deletion markers', () => {
     const secondTopic: Topic = { ...topic, id: '2', title: 'Second topic' };
     let data = createEmptyReaderData();
     data = toggleFavorite(data, topic);
     data = toggleFavorite(data, secondTopic);
-    data = updateTopicRecord(data, 'favorites', topic, { tags: ['server', 'AI'], note: 'Read again' });
 
-    expect(data.favorites[topicKey(topic)]).toMatchObject({
-      tags: ['server', 'AI'],
-      note: 'Read again',
-      updatedAt: expect.any(String)
-    });
-
-    const removed = data.favorites;
     data = removeRecords(data, 'favorites', [topic, secondTopic]);
     expect(data.favorites).toEqual({});
     expect(Object.keys(data.deletedRecords.favorites)).toHaveLength(2);
-
-    data = restoreRecords(data, 'favorites', removed);
-    expect(Object.keys(data.favorites)).toHaveLength(2);
-    expect(data.deletedRecords.favorites).toEqual({});
 
     data = recordHistory(data, topic);
     data = recordHistory(data, secondTopic);
@@ -313,145 +242,13 @@ describe('Android reader data helpers', () => {
     expect(Object.keys(data.deletedRecords.history)).toHaveLength(2);
   });
 
-  it('exports favorites as markdown', () => {
-    let data = createEmptyReaderData();
-    data = toggleFavorite(data, topic);
-    data = updateTopicRecord(data, 'favorites', topic, { tags: ['server'], note: 'Good thread' });
-
-    expect(exportFavoritesMarkdown(data)).toContain('- [NodeSeek topic](https://www.nodeseek.com/post-723704-1)');
-    expect(exportFavoritesMarkdown(data)).toContain('标签：server');
-    expect(exportFavoritesMarkdown(data)).toContain('备注：Good thread');
-  });
-
-  it('applies remote reader settings when merging synced reader data', () => {
-    const local = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      settings: {
-        ...createEmptyReaderData().settings,
-        trackedKeywords: [],
-        blockedKeywords: [],
-        blockedUsers: [],
-        blockedCategories: [],
-        listDensity: 'standard'
-      }
-    });
-    const remote = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      settings: {
-        ...createEmptyReaderData().settings,
-        trackedKeywords: ['linux'],
-        blockedKeywords: ['广告'],
-        blockedUsers: ['spammer'],
-        blockedCategories: ['nodeseek:daily'],
-        listDensity: 'compact',
-        theme: 'dark',
-        palette: 'blue',
-        background: 'gray',
-        fontScale: 1.2,
-        lineHeight: 'loose',
-        contentWidth: 'wide',
-        fontFamily: 'serif'
-      }
-    });
-
-    const merged = mergeReaderData(local, remote);
-
-    expect(merged.settings).toMatchObject({
-      trackedKeywords: ['linux'],
-      blockedKeywords: ['广告'],
-      blockedUsers: ['spammer'],
-      blockedCategories: ['nodeseek:daily'],
-      listDensity: 'compact',
-      theme: 'dark',
-      palette: 'mint',
-      background: 'warm',
-      fontScale: 1.2,
-      lineHeight: 'loose',
-      contentWidth: 'wide',
-      fontFamily: 'serif'
-    });
-  });
-
-  it('keeps local reader settings when old remote data has no settings field', () => {
-    const local = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      settings: {
-        ...createEmptyReaderData().settings,
-        trackedKeywords: ['local'],
-        blockedKeywords: ['广告'],
-        blockedUsers: ['spammer'],
-        blockedCategories: ['nodeseek:daily'],
-        listDensity: 'loose',
-        theme: 'dark'
-      }
-    });
-    const remote = {
-      version: 1,
-      favorites: {},
-      history: {},
-      later: {},
-      progress: {},
-      subscriptions: {}
-    };
-
-    const merged = mergeReaderData(local, remote);
-
-    expect(merged.settings).toMatchObject({
-      trackedKeywords: ['local'],
-      blockedKeywords: ['广告'],
-      blockedUsers: ['spammer'],
-      blockedCategories: ['nodeseek:daily'],
-      listDensity: 'loose',
-      theme: 'dark'
-    });
-  });
-
-  it('keeps newer record annotations when their savedAt is older', () => {
-    const local = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(topic)]: {
-          topic,
-          savedAt: '2026-05-20T02:00:00.000Z',
-          updatedAt: '2026-05-20T05:00:00.000Z',
-          tags: ['local'],
-          note: 'local note'
-        }
-      }
-    });
-    const remote = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(topic)]: {
-          topic: { ...topic, title: 'Remote title' },
-          savedAt: '2026-05-20T04:00:00.000Z',
-          tags: ['remote'],
-          note: 'remote note'
-        }
-      }
-    });
-
-    const merged = mergeReaderData(local, remote);
-
-    expect(merged.favorites[topicKey(topic)]).toMatchObject({
-      savedAt: '2026-05-20T02:00:00.000Z',
-      updatedAt: '2026-05-20T05:00:00.000Z',
-      tags: ['local'],
-      note: 'local note',
-      topic: {
-        title: 'NodeSeek topic'
-      }
-    });
-  });
-
-  it('keeps newer local deletions from being restored by older remote records', () => {
+  it('lets newer deletion markers suppress older imported records', () => {
     const key = topicKey(topic);
     const local = sanitizeReaderData({
       ...createEmptyReaderData(),
       deletedRecords: {
         favorites: { [key]: '2026-05-20T05:00:00.000Z' },
         history: {},
-        later: {},
         subscriptions: {},
         followedUsers: {}
       }
@@ -469,14 +266,13 @@ describe('Android reader data helpers', () => {
     expect(merged.deletedRecords.favorites[key]).toBe('2026-05-20T05:00:00.000Z');
   });
 
-  it('lets newer remote records replace older local deletion markers', () => {
+  it('lets newer imported records replace older local deletion markers', () => {
     const key = topicKey(topic);
     const local = sanitizeReaderData({
       ...createEmptyReaderData(),
       deletedRecords: {
         favorites: { [key]: '2026-05-20T03:00:00.000Z' },
         history: {},
-        later: {},
         subscriptions: {},
         followedUsers: {}
       }
@@ -494,7 +290,7 @@ describe('Android reader data helpers', () => {
     expect(merged.deletedRecords.favorites[key]).toBeUndefined();
   });
 
-  it('keeps yaohuo data locally but removes it from shared sync data', () => {
+  it('keeps yaohuo data in local Android backups', () => {
     const yaohuoTopic: Topic = {
       ...topic,
       source: 'yaohuo',
@@ -505,43 +301,11 @@ describe('Android reader data helpers', () => {
     const local = sanitizeReaderData({
       ...createEmptyReaderData(),
       favorites: {
-        [topicKey(yaohuoTopic)]: { topic: yaohuoTopic, savedAt: '2026-05-20T02:00:00.000Z' },
-        [topicKey(topic)]: { topic, savedAt: '2026-05-20T03:00:00.000Z' }
-      },
-      history: {
         [topicKey(yaohuoTopic)]: { topic: yaohuoTopic, savedAt: '2026-05-20T02:00:00.000Z' }
-      },
-      progress: {
-        [topicKey(yaohuoTopic)]: {
-          topic: yaohuoTopic,
-          percent: 50,
-          scrollY: 100,
-          updatedAt: '2026-05-20T02:00:00.000Z'
-        }
-      },
-      subscriptions: {
-        'yaohuo:177': {
-          source: 'yaohuo',
-          id: '177',
-          name: '妖火茶馆',
-          subscribedAt: '2026-05-20T02:00:00.000Z'
-        }
-      },
-      deletedRecords: {
-        favorites: { 'yaohuo:1': '2026-05-20T04:00:00.000Z' },
-        history: {},
-        later: {},
-        subscriptions: { 'yaohuo:177': '2026-05-20T04:00:00.000Z' },
-        followedUsers: { 'yaohuo:7': '2026-05-20T04:00:00.000Z' }
       }
     });
 
     expect(local.favorites[topicKey(yaohuoTopic)]?.topic.title).toBe('妖火帖子');
-
-    const synced = sanitizeReaderDataForSync(local);
-
-    expect(synced.favorites[topicKey(topic)]?.topic.title).toBe('NodeSeek topic');
-    expect(JSON.stringify(synced)).not.toContain('yaohuo');
   });
 
   it('limits history and reading progress to the newest records', () => {
@@ -594,43 +358,6 @@ describe('Android reader data helpers', () => {
     expect(data.favorites[topicKey(topic)]?.topic.url).toBe(topic.url);
   });
 
-  it('drops topic records with invalid topic or record timestamps', () => {
-    const invalidTopicTime: Topic = { ...topic, id: 'bad-topic-time', createdAt: 'bad-date' };
-    const invalidSavedTime: Topic = { ...topic, id: 'bad-saved-time' };
-    const invalidProgressTime: Topic = { ...topic, id: 'bad-progress-time' };
-
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(invalidTopicTime)]: {
-          topic: invalidTopicTime,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        },
-        [topicKey(invalidSavedTime)]: {
-          topic: invalidSavedTime,
-          savedAt: 'not-a-date'
-        },
-        [topicKey(topic)]: {
-          topic,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        }
-      },
-      progress: {
-        [topicKey(invalidProgressTime)]: {
-          topic: invalidProgressTime,
-          percent: 30,
-          scrollY: 20,
-          updatedAt: 'invalid'
-        }
-      }
-    });
-
-    expect(data.favorites[topicKey(invalidTopicTime)]).toBeUndefined();
-    expect(data.favorites[topicKey(invalidSavedTime)]).toBeUndefined();
-    expect(data.progress[topicKey(invalidProgressTime)]).toBeUndefined();
-    expect(data.favorites[topicKey(topic)]?.topic.title).toBe(topic.title);
-  });
-
   it('removes sensitive query parameters from stored topic links', () => {
     const unsafeTopic: Topic = {
       ...topic,
@@ -656,24 +383,5 @@ describe('Android reader data helpers', () => {
     expect(url).not.toContain('secret');
     expect(params.has('sid')).toBe(false);
     expect(params.has('token')).toBe(false);
-  });
-
-  it('does not persist transient access requirement labels in local topic records', () => {
-    const restrictedTopic: Topic = {
-      ...topic,
-      accessRequirement: { type: 'level', label: '需等级' }
-    };
-
-    const data = sanitizeReaderData({
-      ...createEmptyReaderData(),
-      favorites: {
-        [topicKey(restrictedTopic)]: {
-          topic: restrictedTopic,
-          savedAt: '2026-05-20T03:00:00.000Z'
-        }
-      }
-    });
-
-    expect(data.favorites[topicKey(restrictedTopic)]?.topic.accessRequirement).toBeUndefined();
   });
 });

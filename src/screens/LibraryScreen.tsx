@@ -34,7 +34,7 @@ export function LibraryScreen({
   onTabChange
 }: {
   libraryTab: LibraryTab;
-  categories: Parameters<typeof libraryCategoryFilterItems>[1];
+  categories: Parameters<typeof libraryCategoryFilterItems>[0];
   followedUsers: FollowedUserRecord[];
   records: TopicRecord[];
   readerData: ReaderData;
@@ -56,7 +56,7 @@ export function LibraryScreen({
       ? followedUsers
       : followedUsers.filter((record) => record.user.source === sourceFilter)
   ), [followedUsers, sourceFilter]);
-  const categoryItems = useMemo(() => libraryCategoryFilterItems(records, categories, sourceFilter), [categories, records, sourceFilter]);
+  const categoryItems = useMemo(() => libraryCategoryFilterItems(categories, sourceFilter), [categories, sourceFilter]);
   const filteredRecords = useMemo(() => filterLibraryRecords(records, {
     source: sourceFilter,
     category: categoryFilter

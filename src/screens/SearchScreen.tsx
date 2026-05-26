@@ -51,8 +51,7 @@ export function SearchScreen({
   onScopeChange,
   onSearch,
   onSearchSourceChange,
-  onSortChange,
-  onToggleFavorite
+  onSortChange
 }: {
   busy: boolean;
   query: string;
@@ -76,9 +75,7 @@ export function SearchScreen({
   onSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
-  onToggleFavorite: (topic: Topic) => void;
 }) {
-  void onToggleFavorite;
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <MemoizedTopicCard
       highlightQuery={query}

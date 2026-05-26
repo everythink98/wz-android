@@ -1,6 +1,6 @@
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { yaohuoCategoriesResponse, parseYaohuoListHtml, checkYaohuoLoginHtml, parseYaohuoUserProfileHtml } from './localYaohuo';
+import { yaohuoCategoriesResponse, parseYaohuoUserProfileHtml } from './localYaohuo';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchSort } from './feedLogic';
 import type {
@@ -438,45 +438,4 @@ export async function searchTopics({
     v2ex: () => searchV2ex(adapterQuery, { ...options, sort })
   });
   return filterSearchItems(response, query, limit);
-}
-
-export interface YaohuoLoginCheckResponse {
-  source: 'yaohuo';
-  ok: boolean;
-  loginRequired: boolean;
-  reason?: string;
-  loginUrl: string;
-  message?: string;
-}
-
-export function parseYaohuoFeedHtml({
-  html,
-  category,
-  url,
-  page = 1,
-  limit = 20
-}: {
-  html: string;
-  category?: string;
-  url?: string;
-  page?: number;
-  limit?: number;
-  fetcher?: Fetcher;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}) {
-  return Promise.resolve().then(() => parseYaohuoListHtml(html, { classId: category, url, page, limit }));
-}
-
-export function parseYaohuoLoginHtml({
-  html,
-  url
-}: {
-  html: string;
-  url?: string;
-  fetcher?: Fetcher;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-}) {
-  return Promise.resolve(checkYaohuoLoginHtml(html, url));
 }

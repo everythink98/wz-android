@@ -19,27 +19,25 @@ describe('Android feed logic helpers', () => {
     data.settings.blockedKeywords = ['blocked'];
     data.favorites.nodeseek_1 = {
       topic,
-      savedAt: '2026-05-20T01:00:00.000Z',
-      tags: ['server']
+      savedAt: '2026-05-20T01:00:00.000Z'
     };
 
     expect(applyFeedFilter([
       topic,
       { ...topic, id: '2', title: 'blocked title' }
     ], data, 'all')).toEqual([topic]);
-    expect(searchLocal(data, 'server VPS', 'all')).toEqual([topic]);
+    expect(searchLocal(data, 'Hello VPS', 'all')).toEqual([topic]);
   });
 
   it('honors excluded terms in local search', () => {
     const data = createEmptyReaderData();
     data.favorites.nodeseek_1 = {
       topic: { ...topic, title: 'Hello VPS blocked' },
-      savedAt: '2026-05-20T01:00:00.000Z',
-      tags: ['server']
+      savedAt: '2026-05-20T01:00:00.000Z'
     };
 
-    expect(searchLocal(data, 'server -other', 'all')).toEqual([data.favorites.nodeseek_1.topic]);
-    expect(searchLocal(data, 'server -blocked', 'all')).toEqual([]);
+    expect(searchLocal(data, 'VPS -other', 'all')).toEqual([data.favorites.nodeseek_1.topic]);
+    expect(searchLocal(data, 'VPS -blocked', 'all')).toEqual([]);
   });
 
   it('filters blocked categories by source category id and display name', () => {
