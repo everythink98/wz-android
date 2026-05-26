@@ -94,11 +94,32 @@ function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: str
   return undefined;
 }
 
+const imageDimensionPattern = /\d{2,5}\s*[x×]\s*\d{2,5}\b/i;
+const imageFileSizePattern = /\b\d+(?:\.\d+)?\s*(?:bytes?|[KMGT]?B)\b/i;
+const imageMetadataPrefixPattern = /^(?:图片|image)\s*\d{2,5}\s*[x×]/i;
+
+function classTokens(value: string | undefined) {
+  return String(value || '')
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function removeForumImageMetadata(root: HTMLElement) {
+  root.querySelectorAll('div').forEach((node) => {
+    const text = decodeHtml(node.text).replace(/\s+/g, ' ').trim();
+    const looksLikeImageMetadata = classTokens(node.getAttribute('class')).includes('meta') || imageMetadataPrefixPattern.test(text);
+    if (!node.querySelector('img') && looksLikeImageMetadata && imageDimensionPattern.test(text) && imageFileSizePattern.test(text)) {
+      node.remove();
+    }
+  });
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   const root = parseHtml(html);
   for (const selector of ['script', 'style', 'iframe', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
+  removeForumImageMetadata(root);
   root.querySelectorAll('*').forEach((node) => {
     const attrs = { ...node.attributes };
     for (const [name, rawValue] of Object.entries(attrs)) {

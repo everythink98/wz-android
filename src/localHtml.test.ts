@@ -49,6 +49,69 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toContain('data:text/html');
   });
 
+  it('removes forum image dimension and file size metadata', () => {
+    const result = sanitizeContentHtml(`
+      <p>
+        <a class="lightbox" href="/uploads/default/original/1x/asset-123.png">
+          <img src="/uploads/default/original/1x/asset-123.png" alt="photo">
+          <div class="meta">
+            <span class="filename">camera-shot.png</span>
+            <span class="informations">1920×1080 210 KB</span>
+          </div>
+        </a>
+      </p>
+    `, 'https://linux.do');
+
+    expect(result).toContain('<img');
+    expect(result).not.toContain('camera-shot.png');
+    expect(result).not.toContain('1920×1080');
+    expect(result).not.toContain('210 KB');
+  });
+
+  it('keeps ordinary metadata text that is not image file metadata', () => {
+    const result = sanitizeContentHtml('<div class="meta">附件大小 210 KB</div>', 'https://linux.do');
+
+    expect(result).toContain('附件大小 210 KB');
+  });
+
+  it('removes classless image metadata text from forum image links', () => {
+    const result = sanitizeContentHtml(`
+      <a href="/uploads/default/original/1x/asset-123.png">
+        <img src="/uploads/default/original/1x/asset-123.png" alt="photo">
+        <div>图片1468×946 116 KB</div>
+      </a>
+    `, 'https://linux.do');
+
+    expect(result).toContain('<img');
+    expect(result).not.toContain('图片1468×946 116 KB');
+  });
+
+  it('keeps image wrappers while removing their metadata text', () => {
+    const result = sanitizeContentHtml(`
+      <div>
+        <a href="/uploads/default/original/1x/asset-123.png">
+          <img src="/uploads/default/original/1x/asset-123.png" alt="photo">
+          <div>图片1468×946 116 KB</div>
+        </a>
+      </div>
+    `, 'https://linux.do');
+
+    expect(result).toContain('<img');
+    expect(result).not.toContain('图片1468×946 116 KB');
+  });
+
+  it('removes image metadata text that uses the original image label', () => {
+    const result = sanitizeContentHtml(`
+      <a href="/uploads/default/original/1x/asset-123.png">
+        <img src="/uploads/default/original/1x/asset-123.png" alt="image">
+        <div>image1244×152 8.4 KB</div>
+      </a>
+    `, 'https://linux.do');
+
+    expect(result).toContain('<img');
+    expect(result).not.toContain('image1244×152 8.4 KB');
+  });
+
   it('decodes apostrophe entities', () => {
     expect(decodeHtml('A&apos;B')).toBe("A'B");
   });
