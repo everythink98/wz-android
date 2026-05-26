@@ -477,6 +477,30 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('showYaohuoLogin(errorMessage(error))');
   });
 
+  it('rehydrates saved yaohuo cookies into WebView before opening the login page', () => {
+    expect(appSource).toContain('restoreSavedYaohuoCookiesToWebView');
+    expect(appSource).toContain('buildYaohuoSetCookieHeaders(cookieHeader)');
+    expect(appSource).toContain('await CookieManager.setFromResponse(url, header)');
+    expect(appSource).toContain('setYaohuoLoginCookieHeader(cookieHeader)');
+    expect(appSource).toContain('onShowYaohuoLoginPanelChange={changeYaohuoLoginPanel}');
+    expect(moreScreenSource).toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
+  });
+
+  it('opens the yaohuo signed-in page instead of the login form when cookies are saved', () => {
+    expect(moreScreenSource).toContain("const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';");
+    expect(moreScreenSource).toContain('uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
+  });
+
+  it('reads and clears yaohuo cookies across http, https, root, and www hosts', () => {
+    const match = appSource.match(/const YAOHUO_COOKIE_URLS = \[([\s\S]*?)\];/);
+    const cookieUrls = match?.[1] || '';
+
+    expect(cookieUrls).toContain('YAOHUO_URL');
+    expect(cookieUrls).toContain("'https://www.yaohuo.me'");
+    expect(cookieUrls).toContain("'http://yaohuo.me'");
+    expect(cookieUrls).toContain("'http://www.yaohuo.me'");
+  });
+
   it('uses concise update wording for refresh and backup feedback', () => {
     expect(appSource).toContain("notify('正在更新列表')");
     expect(appSource).toContain("successMessage: '列表已更新'");
@@ -819,6 +843,23 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
     expect(moreScreenSource).toContain('linux.do 页面打开超时');
     expect(moreScreenSource).toContain('clearTimeout(timeout)');
+  });
+
+  it('opens external login and verification pages as full-screen WebView modals', () => {
+    expect(moreScreenSource).toContain('LoginWebViewModal');
+    expect(moreScreenSource).toContain('visible={showLoginPanel}');
+    expect(moreScreenSource).toContain('visible={showYaohuoLoginPanel}');
+    expect(moreScreenSource).toContain('visible={showLinuxDoPanel}');
+    expect(moreScreenSource).toContain('styles.loginWebViewModal');
+    expect(moreScreenSource).toContain('styles.loginWebViewBody');
+  });
+
+  it('keeps full-screen login modal controls below the Android status bar', () => {
+    expect(moreScreenSource).toContain("import { useSafeAreaInsets } from 'react-native-safe-area-context';");
+    expect(moreScreenSource).toContain('const insets = useSafeAreaInsets();');
+    expect(moreScreenSource).toContain('paddingTop: insets.top');
+    expect(moreScreenSource).toContain('paddingBottom: insets.bottom');
+    expect(moreScreenSource).not.toContain('<SafeAreaView');
   });
 
   it('clears stale linux.do verification errors after the WebView responds again', () => {

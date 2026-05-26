@@ -191,12 +191,26 @@ function quotedFloorsFromHtml(html: string, topicId?: string) {
   return [...floors];
 }
 
+function positiveNumber(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : undefined;
+}
+
+function likedFromActionsSummary(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const likeAction = value.find((item) => isRecord(item) && Number(item.id) === 2);
+  return isRecord(likeAction) ? Boolean(likeAction.acted) : undefined;
+}
+
 function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFloor = index + 1): Reply | null {
   if (!isRecord(raw)) {
     return null;
   }
   const contentHtml = sanitizeContentHtml(raw.cooked || '', BASE_URL);
   const quotedFloors = quotedFloorsFromHtml(contentHtml, topicId);
+  const liked = likedFromActionsSummary(raw.actions_summary);
   return {
     author: String(raw.username || ''),
     authorId: String(raw.username || '') || undefined,
@@ -205,7 +219,11 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     contentHtml,
     createdAt: toIsoString(raw.created_at),
     floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
-    ...(quotedFloors.length ? { quotedFloors } : {})
+    ...(quotedFloors.length ? { quotedFloors } : {}),
+    ...(positiveNumber(raw.id) ? { commentId: positiveNumber(raw.id) } : {}),
+    ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
+    ...(liked !== undefined ? { liked } : {}),
+    ...(positiveNumber(raw.bookmark_id) ? { bookmarkId: positiveNumber(raw.bookmark_id), bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {})
   };
 }
 
@@ -384,7 +402,11 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,
-    replyNextOffset: replyHasMore ? replies.length : null
+    replyNextOffset: replyHasMore ? replies.length : null,
+    ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
+    ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
+    ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
+    ...(positiveNumber(data.bookmark_id) ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {})
   };
 }
 
@@ -472,6 +494,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
   try {
     const data = await fetchLinuxDoJson<Record<string, unknown>>('/search.json', {
       q: query,
+      type_filter: 'topic',
       ...(page > 1 ? { page } : {})
     }, options);
     const users = usersById(data.users);

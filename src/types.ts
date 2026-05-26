@@ -41,6 +41,8 @@ export interface Reply {
   likeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+  bookmarkId?: number;
+  bookmarked?: boolean;
 }
 
 export interface Category {
@@ -69,6 +71,8 @@ export interface TopicDetail extends Topic {
   likeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+  bookmarkId?: number;
+  bookmarked?: boolean;
 }
 
 export interface UserProfile {

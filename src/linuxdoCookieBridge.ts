@@ -19,12 +19,17 @@ export interface LinuxDoAccess {
   userAgent?: string;
 }
 
-type LinuxDoCookieModule = { getClearance?: () => Promise<string | null> };
+type LinuxDoCookieModule = {
+  getClearance?: () => Promise<string | null>;
+  getLinuxDoCookieHeader?: () => Promise<string | null>;
+};
 type LinuxDoCookieStoreReader = () => Promise<Record<string, LinuxDoNativeCookie>>;
 
 const LINUXDO_ACCESS_STORAGE_KEY = 'linuxdo-clearance';
 const LINUXDO_COOKIE_URLS = ['https://linux.do/latest', 'https://linux.do', 'https://www.linux.do/latest', 'https://www.linux.do'];
 const LINUXDO_COOKIE_READ_TIMEOUT_MS = 1500;
+const LINUXDO_ACCESS_COOKIE_NAMES = ['cf_clearance', '_t', '_forum_session'] as const;
+const LINUXDO_LOGIN_COOKIE_NAMES = ['_t', '_forum_session'] as const;
 
 export function sanitizeLinuxDoUserAgent(userAgent?: string) {
   return String(userAgent || '')
@@ -59,7 +64,7 @@ export function mergeLinuxDoCookies(...maps: Array<Record<string, LinuxDoNativeC
   for (const map of maps) {
     for (const [key, cookie] of Object.entries(map || {})) {
       const name = cookie.name || key;
-      if (name === 'cf_clearance' && cookie.value && isLinuxDoDomain(cookie.domain)) {
+      if (LINUXDO_ACCESS_COOKIE_NAMES.includes(name as typeof LINUXDO_ACCESS_COOKIE_NAMES[number]) && cookie.value && isLinuxDoDomain(cookie.domain)) {
         merged[name] = { ...cookie, name };
       }
     }
@@ -72,19 +77,29 @@ export function canStoreLinuxDoClearance(cookies: Record<string, LinuxDoNativeCo
   return Boolean(cookie?.value && isLinuxDoDomain(cookie.domain));
 }
 
+export function canStoreLinuxDoLogin(cookies: Record<string, LinuxDoNativeCookie>) {
+  const cookie = cookies._t;
+  return Boolean(cookie?.value && isLinuxDoDomain(cookie.domain));
+}
+
 export function buildLinuxDoCookieHeader(cookies: Record<string, LinuxDoNativeCookie>) {
-  const cookie = cookies.cf_clearance;
-  if (!cookie?.value || !isLinuxDoDomain(cookie.domain)) {
-    return '';
-  }
-  return `cf_clearance=${cookie.value}`;
+  return LINUXDO_ACCESS_COOKIE_NAMES.map((name) => {
+    const cookie = cookies[name];
+    return cookie?.value && isLinuxDoDomain(cookie.domain) ? `${name}=${cookie.value}` : '';
+  }).filter(Boolean).join('; ');
+}
+
+export function removeLinuxDoLoginCookies(cookies: Record<string, LinuxDoNativeCookie>) {
+  const loginNames = new Set<string>(LINUXDO_LOGIN_COOKIE_NAMES);
+  return Object.fromEntries(Object.entries(cookies).filter(([name]) => !loginNames.has(name)));
 }
 
 export function summarizeLinuxDoCookies(cookies: Record<string, LinuxDoNativeCookie>) {
-  const names = Object.keys(cookies).filter((name) => name === 'cf_clearance').sort();
+  const names = Object.keys(cookies).filter((name) => LINUXDO_ACCESS_COOKIE_NAMES.includes(name as typeof LINUXDO_ACCESS_COOKIE_NAMES[number])).sort();
   return {
     names,
-    hasClearance: names.includes('cf_clearance')
+    hasClearance: names.includes('cf_clearance'),
+    loggedIn: canStoreLinuxDoLogin(cookies)
   };
 }
 
@@ -98,8 +113,8 @@ export function parseLinuxDoDocumentCookie(cookieHeader?: string) {
     }
     const name = clean.slice(0, separator).trim();
     const value = clean.slice(separator + 1).trim();
-    if (name === 'cf_clearance' && value) {
-      parsed.cf_clearance = { name, value, domain: 'linux.do' };
+    if (LINUXDO_ACCESS_COOKIE_NAMES.includes(name as typeof LINUXDO_ACCESS_COOKIE_NAMES[number]) && value) {
+      parsed[name] = { name, value, domain: 'linux.do' };
     }
   }
   return parsed;
@@ -180,7 +195,7 @@ export async function readLinuxDoCookiesFromStores({
   timeoutMs?: number;
 } = {}) {
   const androidStoreCookies = await withLinuxDoCookieReadTimeout(readAndroidStore(), {}, timeoutMs);
-  if (canStoreLinuxDoClearance(androidStoreCookies)) {
+  if (canStoreLinuxDoClearance(androidStoreCookies) && canStoreLinuxDoLogin(androidStoreCookies)) {
     return androidStoreCookies;
   }
   const cookieManagerCookies = await withLinuxDoCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs);
@@ -193,6 +208,13 @@ export async function readLinuxDoCookiesFromWebView() {
 
 export async function readLinuxDoClearanceFromAndroidWebViewStore() {
   const module = await linuxDoAndroidCookieModule();
+  if (module?.getLinuxDoCookieHeader) {
+    try {
+      return parseLinuxDoDocumentCookie(await module.getLinuxDoCookieHeader() || '');
+    } catch {
+      return {};
+    }
+  }
   if (!module?.getClearance) {
     return {};
   }
@@ -230,13 +252,24 @@ export async function loadLinuxDoAccess() {
 }
 
 export async function clearLinuxDoAccess() {
-  await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-  await Promise.all(LINUXDO_COOKIE_URLS.map((url) => CookieManager.clearByName(url, 'cf_clearance').catch(() => false)));
+  const savedAccess = await loadLinuxDoAccess();
+  const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
+  if (remainingHeader) {
+    await saveLinuxDoAccess(remainingHeader, savedAccess?.userAgent);
+  } else {
+    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+  }
+  await Promise.all(LINUXDO_COOKIE_URLS.flatMap((url) => (
+    LINUXDO_LOGIN_COOKIE_NAMES.map((name) => CookieManager.clearByName(url, name).catch(() => false))
+  )));
+  return loadLinuxDoAccess();
 }
 
 export function linuxDoAccessSummary(access: LinuxDoAccess | null) {
+  const cookies = parseLinuxDoDocumentCookie(access?.cookieHeader || '');
   return {
-    hasClearance: Boolean(access?.cookieHeader),
+    hasClearance: canStoreLinuxDoClearance(cookies),
+    loggedIn: canStoreLinuxDoLogin(cookies),
     savedAt: access?.savedAt
   };
 }

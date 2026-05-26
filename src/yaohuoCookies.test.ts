@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildYaohuoCookieHeader,
+  buildYaohuoSetCookieHeaders,
   canStoreYaohuoCookieHeader,
   hasYaohuoLoginCookie,
   mergeYaohuoCookies,
@@ -67,5 +68,13 @@ describe('yaohuo cookie helpers', () => {
       sidyaohuo: { name: 'sidyaohuo', value: 'abc' },
       guid: { name: 'GUID', value: 'guid' }
     });
+  });
+
+  it('builds Set-Cookie headers from saved yaohuo cookies for WebView reuse', () => {
+    expect(buildYaohuoSetCookieHeaders('sidyaohuo=abc; GUID=guid; bad=value; ASP.NET_SessionId=session')).toEqual([
+      'ASP.NET_SessionId=session; Domain=yaohuo.me; Path=/',
+      'GUID=guid; Domain=yaohuo.me; Path=/',
+      'sidyaohuo=abc; Domain=yaohuo.me; Path=/'
+    ]);
   });
 });

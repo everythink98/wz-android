@@ -1,5 +1,6 @@
-import { memo, type RefObject, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { memo, type ReactNode, type RefObject, useEffect, useState } from 'react';
+import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, CheckCircle, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
 import type { ReaderSettings } from '../readerData';
@@ -10,6 +11,7 @@ import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
+const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
 const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
 const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
 
@@ -44,6 +46,7 @@ function MoreScreen({
   hasNodeSeekLoginCookie,
   hasYaohuoCookie,
   hasLinuxDoClearance,
+  hasLinuxDoLogin,
   healthDetails,
   healthSummary,
   loginState,
@@ -65,6 +68,7 @@ function MoreScreen({
   syncing,
   theme,
   webViewRef,
+  yaohuoLoginCookieHeader,
   yaohuoLoginState,
   yaohuoWebViewRef,
   linuxDoCookieNames,
@@ -103,6 +107,7 @@ function MoreScreen({
   hasNodeSeekLoginCookie: boolean;
   hasYaohuoCookie: boolean;
   hasLinuxDoClearance: boolean;
+  hasLinuxDoLogin: boolean;
   healthDetails: HealthDetail[];
   healthSummary: string;
   loginState: string;
@@ -124,6 +129,7 @@ function MoreScreen({
   syncing: boolean;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
+  yaohuoLoginCookieHeader: string;
   yaohuoLoginState: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   linuxDoCookieNames: string[];
@@ -197,7 +203,7 @@ function MoreScreen({
       <ExpandablePanel
         quiet
         title="账号与验证"
-        meta={`NodeSeek ${hasNodeSeekLoginCookie ? '已登录' : '未登录'} · 妖火 ${hasYaohuoCookie ? '已登录' : '未登录'} · linux.do ${hasLinuxDoClearance ? '已验证' : '未验证'}`}
+        meta={`NodeSeek ${hasNodeSeekLoginCookie ? '已登录' : '未登录'} · 妖火 ${hasYaohuoCookie ? '已登录' : '未登录'} · linux.do ${hasLinuxDoLogin ? '已登录' : hasLinuxDoClearance ? '已验证' : '匿名可用'}`}
         icon={LogIn}
         expanded={accountExpanded}
         styles={styles}
@@ -232,6 +238,7 @@ function MoreScreen({
           showYaohuoLoginPanel={showYaohuoLoginPanel}
           styles={styles}
           theme={theme}
+          yaohuoLoginCookieHeader={yaohuoLoginCookieHeader}
           yaohuoLoginState={yaohuoLoginState}
           yaohuoWebViewRef={yaohuoWebViewRef}
           onCheckYaohuoLogin={onCheckYaohuoLogin}
@@ -243,6 +250,7 @@ function MoreScreen({
         <MemoizedLinuxDoVerifyPanel
           checking={checking}
           hasLinuxDoClearance={hasLinuxDoClearance}
+          hasLinuxDoLogin={hasLinuxDoLogin}
           accountExpanded={accountExpanded}
           linuxDoCookieNames={linuxDoCookieNames}
           linuxDoWebViewError={linuxDoWebViewError}
@@ -347,6 +355,63 @@ function BackupRestorePanel({
 
 const MemoizedBackupRestorePanel = memo(BackupRestorePanel);
 
+function LoginWebViewModal({
+  actions,
+  children,
+  error,
+  loading,
+  loadingText,
+  styles,
+  theme,
+  title,
+  subtitle,
+  visible,
+  onClose
+}: {
+  actions?: ReactNode;
+  children: ReactNode;
+  error?: string;
+  loading: boolean;
+  loadingText: string;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  title: string;
+  subtitle: string;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={[styles.loginWebViewModal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+        <View style={styles.loginWebViewHeader}>
+          <View style={styles.loginWebViewTitleBlock}>
+            <Text style={styles.loginWebViewTitle}>{title}</Text>
+            <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
+          </View>
+          <AppButton label="关闭" variant="ghost" styles={styles} onPress={onClose} />
+        </View>
+        {actions ? <View style={styles.loginWebViewToolbar}>{actions}</View> : null}
+        {error ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+        <View style={styles.loginWebViewBody}>
+          {loading ? (
+            <View style={styles.loading}>
+              <ActivityIndicator color={theme.primary} />
+              <Text style={styles.loadingText}>{loadingText}</Text>
+            </View>
+          ) : null}
+          {children}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function NodeSeekLoginPanel({
   accountExpanded,
   checking,
@@ -390,20 +455,24 @@ function NodeSeekLoginPanel({
     <>
       <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
       {hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
-      {showLoginPanel && accountExpanded ? (
-        <View style={styles.loginPanel}>
+      <LoginWebViewModal
+        visible={showLoginPanel}
+        title="NodeSeek 登录 / 验证"
+        subtitle={loginState}
+        loading={loadingLoginPage}
+        loadingText="正在打开 NodeSeek..."
+        styles={styles}
+        theme={theme}
+        onClose={() => onShowLoginPanelChange(false)}
+        actions={(
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
             <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => webViewRef.current?.reload()} />
           </View>
-          <View style={styles.webViewShell}>
-            {loadingLoginPage ? (
-              <View style={styles.loading}>
-                <ActivityIndicator color={theme.primary} />
-                <Text style={styles.loadingText}>正在打开 NodeSeek...</Text>
-              </View>
-            ) : null}
+        )}
+      >
+        {showLoginPanel && accountExpanded ? (
             <WebView
               ref={webViewRef}
               source={{ uri: NODESEEK_URL }}
@@ -420,9 +489,8 @@ function NodeSeekLoginPanel({
               onMessage={onHandleLoginMessage}
               onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
             />
-          </View>
-        </View>
-      ) : null}
+        ) : null}
+      </LoginWebViewModal>
     </>
   );
 }
@@ -437,6 +505,7 @@ function YaohuoLoginPanel({
   showYaohuoLoginPanel,
   styles,
   theme,
+  yaohuoLoginCookieHeader,
   yaohuoLoginState,
   yaohuoWebViewRef,
   onCheckYaohuoLogin,
@@ -452,6 +521,7 @@ function YaohuoLoginPanel({
   showYaohuoLoginPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
+  yaohuoLoginCookieHeader: string;
   yaohuoLoginState: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   onCheckYaohuoLogin: () => void;
@@ -463,32 +533,38 @@ function YaohuoLoginPanel({
   return (
     <>
       <MenuButton icon={LogIn} label="妖火登录" value={hasYaohuoCookie ? yaohuoLoginState : '未登录'} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
-      {showYaohuoLoginPanel && accountExpanded ? (
-        <View style={styles.loginPanel}>
+      <LoginWebViewModal
+        visible={showYaohuoLoginPanel}
+        title="妖火登录"
+        subtitle={hasYaohuoCookie ? yaohuoLoginState : '未登录'}
+        loading={loadingYaohuoLoginPage}
+        loadingText="正在打开妖火..."
+        styles={styles}
+        theme={theme}
+        onClose={() => onShowYaohuoLoginPanelChange(false)}
+        actions={(
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
             <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearYaohuoLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => yaohuoWebViewRef.current?.reload()} />
           </View>
-          <View style={styles.webViewShell}>
-            {loadingYaohuoLoginPage ? (
-              <View style={styles.loading}>
-                <ActivityIndicator color={theme.primary} />
-                <Text style={styles.loadingText}>正在打开妖火...</Text>
-              </View>
-            ) : null}
+        )}
+      >
+        {showYaohuoLoginPanel && accountExpanded ? (
             <WebView
               ref={yaohuoWebViewRef}
-              source={{ uri: YAOHUO_LOGIN_URL }}
+              source={{
+                uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL,
+                headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined
+              }}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
               onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
               onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
             />
-          </View>
-        </View>
-      ) : null}
+        ) : null}
+      </LoginWebViewModal>
     </>
   );
 }
@@ -499,6 +575,7 @@ function LinuxDoVerifyPanel({
   accountExpanded,
   checking,
   hasLinuxDoClearance,
+  hasLinuxDoLogin,
   linuxDoCookieNames,
   linuxDoWebViewError,
   linuxDoWebViewKey,
@@ -520,6 +597,7 @@ function LinuxDoVerifyPanel({
   accountExpanded: boolean;
   checking: boolean;
   hasLinuxDoClearance: boolean;
+  hasLinuxDoLogin: boolean;
   linuxDoCookieNames: string[];
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
@@ -550,26 +628,26 @@ function LinuxDoVerifyPanel({
   }, [loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
   return (
     <>
-      <MenuButton icon={LogIn} label="linux.do 验证" value={hasLinuxDoClearance ? `已保存 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '未验证'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
-      {showLinuxDoPanel && accountExpanded ? (
-        <View style={styles.loginPanel}>
+      <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '匿名可用'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
+      <LoginWebViewModal
+        visible={showLinuxDoPanel}
+        title="linux.do 登录 / 验证"
+        subtitle={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || '访问信息'}` : '匿名可用，登录后内容更完整'}
+        loading={loadingLinuxDoPage}
+        loadingText="正在打开 linux.do..."
+        error={linuxDoWebViewError}
+        styles={styles}
+        theme={theme}
+        onClose={() => onShowLinuxDoPanelChange(false)}
+        actions={(
           <View style={styles.actions}>
-            <AppButton label={checking ? '检测中' : '检测验证'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
-            <AppButton label="清除验证" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
+            <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
+            <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
           </View>
-          {linuxDoWebViewError ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{linuxDoWebViewError}</Text>
-            </View>
-          ) : null}
-          <View style={styles.webViewShell}>
-            {loadingLinuxDoPage ? (
-              <View style={styles.loading}>
-                <ActivityIndicator color={theme.primary} />
-                <Text style={styles.loadingText}>正在打开 linux.do...</Text>
-              </View>
-            ) : null}
+        )}
+      >
+        {showLinuxDoPanel && accountExpanded ? (
             <WebView
               key={linuxDoWebViewKey}
               ref={linuxDoWebViewRef}
@@ -604,9 +682,8 @@ function LinuxDoVerifyPanel({
               }}
               onShouldStartLoadWithRequest={handleLinuxDoNavigation}
             />
-          </View>
-        </View>
-      ) : null}
+        ) : null}
+      </LoginWebViewModal>
     </>
   );
 }

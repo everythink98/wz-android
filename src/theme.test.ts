@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { StyleSheet } from 'react-native';
 import { type ReaderSettings } from './readerData';
 import { alphaColor, contentWidthValue, createStyles, createTheme, fontFamilyValue, lineHeightMultiplier } from './theme';
 
@@ -72,9 +73,18 @@ describe('Android reader theme helpers', () => {
       position: 'absolute',
       top: 0,
       height: 24,
-      backgroundColor: theme.background
+      backgroundColor: theme.background,
+      elevation: 0
     });
     expect(styles.statusBarScrim.zIndex).toBeGreaterThan(10);
+  });
+
+  it('keeps the feed fixed header visually quiet', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.feedFixedHeader.elevation).toBe(0);
+    expect(styles.feedFixedHeader.borderBottomWidth).toBe(StyleSheet.hairlineWidth);
   });
 
   it('styles loading states as quiet content placeholders', () => {

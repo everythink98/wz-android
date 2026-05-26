@@ -23,12 +23,14 @@ vi.mock('react-native', () => ({
 import {
   buildLinuxDoCookieHeader,
   canStoreLinuxDoClearance,
+  canStoreLinuxDoLogin,
   isCloudflareChallengeResponse,
   linuxDoClearanceCookieFromValue,
   linuxDoCookieModuleFromReactNativeImport,
   mergeLinuxDoCookies,
   parseLinuxDoDocumentCookie,
   readLinuxDoCookiesFromStores,
+  removeLinuxDoLoginCookies,
   sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
 } from './linuxdoCookieBridge';
@@ -40,16 +42,24 @@ describe('linux.do Cloudflare helpers', () => {
     expect(isCloudflareChallengeResponse(new Response('ordinary forbidden', { status: 403 }))).toBe(false);
   });
 
-  it('stores only cf_clearance and never exposes the value in summaries', () => {
+  it('stores linux.do access cookies and never exposes values in summaries', () => {
     const cookies = mergeLinuxDoCookies({
       cf_clearance: { name: 'cf_clearance', value: 'secret', domain: '.linux.do' },
-      _t: { name: '_t', value: 'login-secret', domain: '.linux.do' }
+      _t: { name: '_t', value: 'login-secret', domain: '.linux.do' },
+      _forum_session: { name: '_forum_session', value: 'session-secret', domain: '.linux.do' },
+      analytics: { name: 'analytics', value: 'skip-me', domain: '.linux.do' }
     });
 
     expect(canStoreLinuxDoClearance(cookies)).toBe(true);
-    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=secret');
-    expect(summarizeLinuxDoCookies(cookies)).toEqual({ names: ['cf_clearance'], hasClearance: true });
+    expect(canStoreLinuxDoLogin(cookies)).toBe(true);
+    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=secret; _t=login-secret; _forum_session=session-secret');
+    expect(summarizeLinuxDoCookies(cookies)).toEqual({
+      names: ['_forum_session', '_t', 'cf_clearance'],
+      hasClearance: true,
+      loggedIn: true
+    });
     expect(JSON.stringify(summarizeLinuxDoCookies(cookies))).not.toContain('secret');
+    expect(JSON.stringify(cookies)).not.toContain('skip-me');
   });
 
   it('rejects cf_clearance cookies from other domains', () => {
@@ -71,11 +81,20 @@ describe('linux.do Cloudflare helpers', () => {
     expect(userAgent).toContain('Chrome/124.0.6367.219 Mobile Safari/537.36');
   });
 
-  it('reads cf_clearance from document.cookie fallback data', () => {
-    const cookies = parseLinuxDoDocumentCookie('_ga=analytics; cf_clearance=secret%3Dvalue; theme=light');
+  it('reads access cookies from document.cookie fallback data', () => {
+    const cookies = parseLinuxDoDocumentCookie('_ga=analytics; cf_clearance=secret%3Dvalue; _t=login; _forum_session=session; theme=light');
 
     expect(canStoreLinuxDoClearance(cookies)).toBe(true);
-    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=secret%3Dvalue');
+    expect(canStoreLinuxDoLogin(cookies)).toBe(true);
+    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=secret%3Dvalue; _t=login; _forum_session=session');
+  });
+
+  it('can remove linux.do login cookies while preserving public verification', () => {
+    const cookies = parseLinuxDoDocumentCookie('cf_clearance=clearance; _t=login; _forum_session=session');
+
+    expect(buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(cookies))).toBe('cf_clearance=clearance');
+    expect(canStoreLinuxDoClearance(removeLinuxDoLoginCookies(cookies))).toBe(true);
+    expect(canStoreLinuxDoLogin(removeLinuxDoLoginCookies(cookies))).toBe(false);
   });
 
   it('converts the Android WebView cookie store clearance value into a linux.do cookie', () => {
@@ -86,10 +105,8 @@ describe('linux.do Cloudflare helpers', () => {
     expect(linuxDoClearanceCookieFromValue('')).toEqual({});
   });
 
-  it('uses the Android WebView cookie store before CookieManager when clearance is present', async () => {
-    const readCookieManagerStore = vi.fn(async () => {
-      throw new Error('CookieManager should not be required when the Android store has clearance');
-    });
+  it('merges Android WebView clearance with CookieManager login cookies', async () => {
+    const readCookieManagerStore = vi.fn(async () => parseLinuxDoDocumentCookie('_t=login; _forum_session=session'));
 
     const cookies = await readLinuxDoCookiesFromStores({
       readAndroidStore: async () => linuxDoClearanceCookieFromValue('native-secret'),
@@ -97,8 +114,8 @@ describe('linux.do Cloudflare helpers', () => {
       timeoutMs: 1
     });
 
-    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=native-secret');
-    expect(readCookieManagerStore).not.toHaveBeenCalled();
+    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=native-secret; _t=login; _forum_session=session');
+    expect(readCookieManagerStore).toHaveBeenCalled();
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

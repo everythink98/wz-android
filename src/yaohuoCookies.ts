@@ -41,6 +41,26 @@ export function buildYaohuoCookieHeader(cookies: Record<string, YaohuoNativeCook
     .join('; ');
 }
 
+export function buildYaohuoSetCookieHeaders(cookieHeader: string) {
+  const cookies = new Map<string, string>();
+
+  for (const part of cookieHeader.split(';')) {
+    const separatorIndex = part.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const name = part.slice(0, separatorIndex).trim();
+    const value = part.slice(separatorIndex + 1).trim();
+    if (keptCookieNames.has(name) && value) {
+      cookies.set(name, value);
+    }
+  }
+
+  return Array.from(cookies.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}=${value}; Domain=yaohuo.me; Path=/`);
+}
+
 export function canStoreYaohuoCookieHeader(cookies: Record<string, YaohuoNativeCookie>) {
   return Boolean(buildYaohuoCookieHeader(cookies));
 }

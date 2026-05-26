@@ -41,11 +41,56 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   }
 
   @ReactMethod
+  fun getLinuxDoCookieHeader(promise: Promise) {
+    try {
+      promise.resolve(readLinuxDoCookieHeader())
+    } catch (_: Exception) {
+      promise.resolve(null)
+    }
+  }
+
+  @ReactMethod
   fun getNodeSeekCookieHeader(promise: Promise) {
     try {
       promise.resolve(readNodeSeekCookieHeader())
     } catch (_: Exception) {
       promise.resolve(null)
+    }
+  }
+
+  private fun readLinuxDoCookieHeader(): String? {
+    val cookieManagerValue = readLinuxDoCookieHeaderFromCookieManager()
+    if (!cookieManagerValue.isNullOrBlank()) {
+      return cookieManagerValue
+    }
+
+    val dataDir = File(reactContext.applicationInfo.dataDir)
+    val candidates = listOf(
+      File(dataDir, "app_webview/Default/Cookies"),
+      File(dataDir, "app_webview/Cookies")
+    )
+    for (candidate in candidates) {
+      val value = readLinuxDoCookieHeaderFrom(candidate)
+      if (!value.isNullOrBlank()) {
+        return value
+      }
+    }
+    return null
+  }
+
+  private fun readLinuxDoCookieHeaderFromCookieManager(): String? {
+    return try {
+      val cookieManager = CookieManager.getInstance()
+      cookieManager.flush()
+      for (url in linuxDoCookieUrls) {
+        val value = cookieManager.getCookie(url)
+        if (!value.isNullOrBlank()) {
+          return value
+        }
+      }
+      null
+    } catch (_: Exception) {
+      null
     }
   }
 
@@ -129,6 +174,42 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       }
     }
     return null
+  }
+
+  private fun readLinuxDoCookieHeaderFrom(cookieDb: File): String? {
+    if (!cookieDb.exists()) {
+      return null
+    }
+    var database: SQLiteDatabase? = null
+    return try {
+      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+      database.rawQuery(
+        """
+        SELECT name, value
+        FROM cookies
+        WHERE value != ''
+          AND name IN ('cf_clearance', '_t', '_forum_session')
+          AND (host_key = 'linux.do' OR host_key = '.linux.do' OR host_key LIKE '%.linux.do')
+        ORDER BY last_update_utc DESC
+        """.trimIndent(),
+        emptyArray()
+      ).use { cursor ->
+        val parts = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+        while (cursor.moveToNext()) {
+          val name = cursor.getString(0)
+          val value = cursor.getString(1)
+          if (!name.isNullOrBlank() && !value.isNullOrBlank() && seen.add(name)) {
+            parts.add("$name=$value")
+          }
+        }
+        parts.joinToString("; ").takeIf { it.isNotBlank() }
+      }
+    } catch (_: Exception) {
+      null
+    } finally {
+      database?.close()
+    }
   }
 
   private fun readClearanceFrom(cookieDb: File): String? {

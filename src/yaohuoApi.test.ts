@@ -333,6 +333,27 @@ describe('Android direct yaohuo API', () => {
     }));
   });
 
+  it('uses mobile browser-like headers for yaohuo read requests', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>'));
+
+    await getYaohuoFeedDirect({
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    expect(yaohuoFetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      credentials: 'include',
+      redirect: 'follow',
+      headers: expect.objectContaining({
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        Cookie: 'sidyaohuo=secret',
+        Referer: 'https://yaohuo.me/bbs/',
+        'Sec-Fetch-Site': 'same-origin',
+        'User-Agent': expect.stringContaining('Android')
+      })
+    }));
+  });
+
   it('fetches yaohuo topic and replies from Android before local parsing', async () => {
     const topic: Topic = {
       source: 'yaohuo',

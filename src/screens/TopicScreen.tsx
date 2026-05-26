@@ -146,6 +146,7 @@ function AuthorAvatar({
 
 export function TopicScreen({
   actionBusy,
+  canUseLinuxDoActions,
   canUseNodeSeekActions,
   canUseYaohuoActions,
   contentWidth,
@@ -179,6 +180,7 @@ export function TopicScreen({
   onBack,
   onCommentQueryChange,
   onInteract,
+  onLinuxDoBookmark,
   onShareTopic,
   onYaohuoFavorite,
   onYaohuoVote,
@@ -197,6 +199,7 @@ export function TopicScreen({
   onOpenUser
 }: {
   actionBusy: boolean;
+  canUseLinuxDoActions: boolean;
   canUseNodeSeekActions: boolean;
   canUseYaohuoActions: boolean;
   contentWidth: number;
@@ -230,6 +233,7 @@ export function TopicScreen({
   onBack: () => void;
   onCommentQueryChange: (value: string) => void;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onLinuxDoBookmark: () => void;
   onShareTopic: () => void;
   onYaohuoFavorite: () => void;
   onYaohuoVote: (voteId: string) => void;
@@ -252,7 +256,8 @@ export function TopicScreen({
   const canShowReplies = Boolean(topic && !topicLoading);
   const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
-  const canWrite = canWriteNodeSeek || canWriteYaohuo;
+  const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
+  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const repliesByFloor = useMemo(() => {
@@ -426,6 +431,12 @@ export function TopicScreen({
               ))}
             </View>
           ) : null}
+          {canWriteLinuxDo ? (
+            <View style={styles.topicPrimaryActions}>
+              <IconButton tiny icon={ThumbsUp} label={`${topic?.liked ? '取消赞' : '点赞'} ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              <IconButton tiny icon={BookMarked} label={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
+            </View>
+          ) : null}
         </View>
       );
     }
@@ -483,6 +494,7 @@ export function TopicScreen({
   }, [
     actionBusy,
     canWrite,
+    canWriteLinuxDo,
     canWriteNodeSeek,
     canWriteYaohuo,
     commentQuery,
@@ -495,6 +507,7 @@ export function TopicScreen({
     newReplyFloorStart,
     onCommentQueryChange,
     onInteract,
+    onLinuxDoBookmark,
     onReplyComposerOpenChange,
     onReplyContentChange,
     onReplyFilterChange,
@@ -773,6 +786,12 @@ function ReplyCard({
         {canWrite && source === 'yaohuo' ? (
           <View style={styles.replyActionRow}>
             <IconButton tiny icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+          </View>
+        ) : null}
+        {canWrite && source === 'linuxdo' ? (
+          <View style={styles.replyActionRow}>
+            <IconButton tiny icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+            <IconButton tiny icon={ThumbsUp} label={`${reply.liked ? '取消赞' : '点赞'} ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
           </View>
         ) : null}
       </View>

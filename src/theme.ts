@@ -116,7 +116,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       height: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) : 0,
       backgroundColor: theme.background,
       zIndex: 20,
-      elevation: 20
+      elevation: 0
     },
     content: {
       flex: 1
@@ -604,6 +604,45 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderColor: theme.line,
       borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface
+    },
+    loginWebViewModal: {
+      flex: 1,
+      backgroundColor: theme.background
+    },
+    loginWebViewHeader: {
+      alignItems: 'center',
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 12,
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 10
+    },
+    loginWebViewTitleBlock: {
+      flex: 1,
+      gap: 2
+    },
+    loginWebViewTitle: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 16,
+      fontWeight: '700'
+    },
+    loginWebViewSubtitle: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12
+    },
+    loginWebViewToolbar: {
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 8
+    },
+    loginWebViewBody: {
+      flex: 1,
       backgroundColor: theme.surface
     },
     hiddenBrowserWebViewHost: {

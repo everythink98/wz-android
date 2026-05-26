@@ -24,6 +24,7 @@ import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './fo
 import { isLinuxDoCloudflareError } from './appUtils';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import { clearV2exCacheForTest } from './localV2ex';
+import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{
@@ -385,6 +386,57 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
+  it('maps linux.do logged-in post state onto topic and reply actions', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 900,
+      title: 'linux.do logged in topic',
+      slug: 'linux-do-logged-in-topic',
+      created_at: '2026-05-20T00:00:00.000Z',
+      posts_count: 2,
+      views: 10,
+      bookmarked: true,
+      bookmark_id: 700,
+      post_stream: {
+        stream: [1001, 1002],
+        posts: [
+          {
+            id: 1001,
+            post_number: 1,
+            username: 'alice',
+            cooked: '<p>topic</p>',
+            created_at: '2026-05-20T00:00:00.000Z',
+            like_count: 3,
+            actions_summary: [{ id: 2, acted: true }]
+          },
+          {
+            id: 1002,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<p>reply</p>',
+            created_at: '2026-05-20T00:01:00.000Z',
+            like_count: 1,
+            actions_summary: [{ id: 2, acted: false }]
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '900', fetcher });
+
+    expect(topic).toMatchObject({
+      commentId: 1001,
+      liked: true,
+      likeCount: 3,
+      bookmarked: true,
+      bookmarkId: 700
+    });
+    expect(topic.replies[0]).toMatchObject({
+      commentId: 1002,
+      liked: false,
+      likeCount: 1
+    });
+  });
+
   it('evicts least recently used linux.do reply streams after the cache limit', async () => {
     const topicJsonCalls: string[] = [];
     const fetcher = vi.fn(async (input: string) => {
@@ -640,6 +692,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async (input: string) => {
       const url = new URL(input);
       const page = url.searchParams.get('page') || '1';
+      expect(url.searchParams.get('type_filter')).toBe('topic');
       return json({
         grouped_search_result: { more_full_page_results: page === '1' },
         topics: [{
@@ -662,6 +715,41 @@ describe('Android local sources', () => {
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['502']);
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('page=2');
+  });
+
+  it('sends saved linux.do login cookies when searching', async () => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
+      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+      savedAt: '2026-05-26T00:00:00.000Z',
+      source: 'webview',
+      userAgent: 'LinuxDo WebView UA'
+    }));
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.includes('/search.json')) {
+        return json({
+          topics: [{
+            id: 601,
+            title: 'linux logged in keyword',
+            slug: 'linux-logged-in-keyword',
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:00:00.000Z',
+            posts_count: 1
+          }],
+          users: []
+        });
+      }
+      throw new Error(`unexpected ${input} ${JSON.stringify(init)}`);
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['601']);
+    expect(fetcher).toHaveBeenCalledWith('https://linux.do/search.json?q=keyword&type_filter=topic', expect.objectContaining({
+      headers: expect.objectContaining({
+        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
+        'User-Agent': 'LinuxDo WebView UA'
+      })
+    }));
   });
 
   it('sends saved NodeSeek verification cookies when reading the Android feed', async () => {
