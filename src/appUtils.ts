@@ -1,6 +1,6 @@
 import { type MutableRefObject } from 'react';
 import { REQUEST_CANCELED_MESSAGE } from './request';
-import type { FeedSource, Source } from './types';
+import type { FeedSource, Source, Topic } from './types';
 
 export function sourceLabel(source: Source | FeedSource) {
   if (source === 'all') {
@@ -29,6 +29,82 @@ export function linuxDoExternalSearchItems(query: string) {
     { label: 'Bing', url: `https://www.bing.com/search?q=${encoded}` },
     { label: 'DuckDuckGo', url: `https://duckduckgo.com/?q=${encoded}` }
   ];
+}
+
+const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
+  '177': '妖火茶馆',
+  '213': '悬赏问答',
+  '201': '资源分享',
+  '197': '综合技术',
+  '204': '有奖活动',
+  '203': '免流分享',
+  '240': '贴图晒照',
+  '198': '投诉建议',
+  '199': '站务处理',
+  '288': '网站公告'
+};
+
+function forumLinkUrl(value: string, baseUrl?: string) {
+  try {
+    return new URL(value, baseUrl);
+  } catch {
+    return null;
+  }
+}
+
+function isForumHost(hostname: string, rootHost: string) {
+  const host = hostname.toLowerCase();
+  return host === rootHost || host.endsWith(`.${rootHost}`);
+}
+
+function internalTopic(source: Source, id: string, title: string, url: string, extra: Partial<Topic> = {}): Topic {
+  return {
+    source,
+    id,
+    title,
+    author: '',
+    url,
+    createdAt: new Date().toISOString(),
+    replyCount: 0,
+    ...extra
+  };
+}
+
+export function parseForumTopicLink(href: string, baseUrl?: string): Topic | null {
+  const url = forumLinkUrl(href, baseUrl);
+  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  const pathname = url.pathname;
+  if (isForumHost(host, 'nodeseek.com')) {
+    const id = pathname.match(/^\/post-(\d+)-\d+(?:\/)?$/i)?.[1];
+    return id ? internalTopic('nodeseek', id, 'NodeSeek 主题', `https://www.nodeseek.com/post-${id}-1`) : null;
+  }
+  if (isForumHost(host, 'linux.do')) {
+    const parts = pathname.split('/').filter(Boolean);
+    const id = parts[0]?.toLowerCase() === 't'
+      ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2])
+      : '';
+    return id && /^\d+$/.test(id) ? internalTopic('linuxdo', id, 'linux.do 主题', `https://linux.do/t/${id}`) : null;
+  }
+  if (isForumHost(host, 'v2ex.com')) {
+    const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
+    return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
+  }
+  if (isForumHost(host, 'yaohuo.me')) {
+    const id = pathname.match(/^\/bbs-(\d+)\.html$/i)?.[1]
+      || (/\/(?:view|book_re|book_view)\.aspx$/i.test(pathname) ? url.searchParams.get('id') || '' : '');
+    if (!id || !/^\d+$/.test(id)) {
+      return null;
+    }
+    const categoryId = url.searchParams.get('classid') || undefined;
+    return internalTopic('yaohuo', id, '妖火主题', `https://yaohuo.me/bbs-${id}.html`, {
+      categoryId,
+      category: categoryId ? YAOHUO_CATEGORY_NAMES[categoryId] : undefined
+    });
+  }
+  return null;
 }
 
 export function isYaohuoLoginRequiredError(error: unknown) {

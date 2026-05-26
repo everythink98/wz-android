@@ -38,8 +38,86 @@ describe('Android App UX upgrade guards', () => {
     expect(appSource).toContain('createBottomTabNavigator');
     expect(appSource).toContain('Stack.Navigator');
     expect(appSource).toContain('Tab.Navigator');
-    expect(appSource).toContain("navigationRef.navigate('Topic')");
-    expect(appSource).toContain("navigationRef.navigate('User')");
+    expect(appSource).toContain("StackActions.push('Topic')");
+    expect(appSource).toContain("StackActions.push('User')");
+  });
+
+  it('uses native stack background, slide transitions, and topic history for detail returns', () => {
+    expect(appSource).toContain('const navigationTheme = useMemo');
+    expect(appSource).toContain('<NavigationContainer ref={navigationRef} theme={navigationTheme}');
+    expect(appSource).toContain("animation: 'slide_from_right'");
+    expect(appSource).toContain('contentStyle: { backgroundColor: theme.background }');
+    expect(appSource).toContain('topicBackStackRef');
+    expect(appSource).toContain('const currentTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);');
+    expect(appSource).toContain('const opensDifferentTopic = topicKey(topic) !== currentTopicKey;');
+    expect(appSource).toContain("} else if (opensDifferentTopic) {");
+    expect(appSource).toContain('topicBackStackRef.current.push(topicSnapshot());');
+    expect(appSource).toContain('restoreTopicSnapshot(previousTopic);');
+    expect(appSource).toContain('navigationRef.goBack();');
+  });
+
+  it('keeps topic history stable after visiting user pages or refreshing the same topic', () => {
+    const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const openUserBlock = appSource.match(/const openUser = useCallback\(async \(user: UserProfile, nocache = false\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const goBackFromUserBlock = appSource.match(/const goBackFromUser = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('userReturnTopicRef');
+    expect(appSource).toContain('returnScreen: Exclude<Screen,');
+    expect(changeScreenBlock).toContain("const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';");
+    expect(changeScreenBlock).toContain('if (leavingTopicForUser) {');
+    expect(changeScreenBlock).toContain('topicAbortRef.current?.abort();');
+    expect(changeScreenBlock).toContain('setTopicBusy(false);');
+    expect(changeScreenBlock).toContain("if (nextScreen !== 'topic' && !leavingTopicForUser) {");
+    expect(openTopicBlock).toContain('topicBackStackRef.current = [];');
+    expect(openTopicBlock).toContain('const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;');
+    expect(openTopicBlock).toContain("if (screen !== 'topic' && !reopenExistingTopicScreen) {");
+    expect(openTopicBlock).toContain("if (!reopenExistingTopicScreen) {\n      changeScreen('topic');");
+    expect(openUserBlock).toContain("if (screen === 'topic') {");
+    expect(openUserBlock).toContain('userReturnTopicRef.current = {');
+    expect(openUserBlock).toContain('returnScreen: topicReturnScreenRef.current');
+    expect(goBackFromTopicBlock).toContain('const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();');
+    expect(goBackFromTopicBlock).toContain('if (canGoBack) {');
+    expect(goBackFromUserBlock).toContain('const returnTopic = userReturnScreenRef.current ===');
+    expect(goBackFromUserBlock).toContain('topicReturnScreenRef.current = returnTopic.returnScreen;');
+    expect(goBackFromUserBlock).toContain('topicBackStackRef.current = [...returnTopic.backStack];');
+    expect(goBackFromUserBlock).toContain('const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();');
+    expect(goBackFromUserBlock).toContain('const shouldReloadRestoredTopic = Boolean(returnTopic?.snapshot.selectedTopic && !returnTopic.snapshot.topicDetail && !returnTopic.snapshot.topicError);');
+    expect(goBackFromUserBlock).toContain('reopenExistingTopicScreenRef.current = true;');
+    expect(goBackFromUserBlock).toContain('const selectedReturnTopic = returnTopic.snapshot.selectedTopic;');
+    expect(goBackFromUserBlock).toContain('void openTopic(selectedReturnTopic);');
+    expect(restoreTopicSnapshotBlock).toContain('restoredTopic ? topicKey(restoredTopic) : null');
+  });
+
+  it('defers heavy topic restore work until native return animations finish', () => {
+    const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const goBackFromUserBlock = appSource.match(/const goBackFromUser = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('InteractionManager');
+    expect(appSource).toContain('runAfterNavigationInteractions');
+    expect(appSource).toContain('flushDeferredNavigationTask');
+    expect(appSource).toContain('transitionEnd');
+    expect(appSource).toContain('freezeOnBlur: true');
+    expect(goBackFromTopicBlock).toContain('runAfterNavigationInteractions(restorePreviousTopic);');
+    expect(goBackFromTopicBlock).toContain('runAfterNavigationInteractions(() => changeScreen(topicReturnScreenRef.current));');
+    expect(goBackFromUserBlock).toContain('runAfterNavigationInteractions(restoreReturnTopic);');
+  });
+
+  it('keeps linux.do verification retry from changing the existing topic return path', () => {
+    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(checkLinuxDoCookieBlock).toContain('const returnScreen = topicReturnScreenRef.current;');
+    expect(checkLinuxDoCookieBlock).toContain('const backStack = [...topicBackStackRef.current];');
+    expect(checkLinuxDoCookieBlock).toContain('const retryTopicKey = topicKey(pendingTopic);');
+    expect(checkLinuxDoCookieBlock).toContain('const hasPendingTopicScreen = Boolean(selectedTopic && topicKey(selectedTopic) === retryTopicKey);');
+    expect(checkLinuxDoCookieBlock).toContain('reopenExistingTopicScreenRef.current = true;');
+    expect(checkLinuxDoCookieBlock).toContain('navigationRef.goBack();');
+    expect(checkLinuxDoCookieBlock).toContain("setScreen('topic');");
+    expect(checkLinuxDoCookieBlock).toContain('await openTopic(pendingTopic, true);');
+    expect(checkLinuxDoCookieBlock).toContain('topicReturnScreenRef.current = returnScreen;');
+    expect(checkLinuxDoCookieBlock).toContain('topicBackStackRef.current = backStack;');
   });
 
   it('uses native pager tabs for the feed and keeps both tab rows outside the scrolling list', () => {

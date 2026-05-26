@@ -137,6 +137,17 @@ describe('Android reader theme helpers', () => {
     expect(styles.topicCard.borderRadius || 0).toBe(0);
   });
 
+  it('presents Android topic rows as unified forum threads', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.topicBadgeRow.flexDirection).toBe('row');
+    expect(styles.topicSourceBadge.backgroundColor).toBe(theme.mist);
+    expect(styles.topicCategoryBadge.borderColor).toBe(theme.line);
+    expect(styles.topicStatPill.backgroundColor).toBe(theme.surface2);
+    expect(styles.topicMetaRow.justifyContent).toBe('space-between');
+  });
+
   it('keeps reading typography and quotes quiet instead of decorative', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;

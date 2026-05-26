@@ -386,6 +386,46 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
+  it('refreshes linux.do reply stream when reloading the first reply page', async () => {
+    let topicJsonCalls = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      if (String(input).includes('/posts.json')) {
+        const url = new URL(String(input));
+        const postIds = url.searchParams.getAll('post_ids[]');
+        return json({
+          post_stream: {
+            posts: postIds.map((id) => ({
+              id: Number(id),
+              post_number: Number(id),
+              username: `reply ${id}`,
+              cooked: `<p>${id}</p>`,
+              created_at: `2026-05-20T00:0${id}:00.000Z`
+            }))
+          }
+        });
+      }
+      topicJsonCalls += 1;
+      return json({
+        id: 9901,
+        title: 'linux.do refresh replies',
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream: topicJsonCalls === 1 ? [1, 2] : [1, 2, 3],
+          posts: [
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+            { id: 2, post_number: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' }
+          ]
+        }
+      });
+    });
+
+    await getTopic({ source: 'linuxdo', id: '9901', fetcher, nocache: true });
+    const replies = await getReplies({ source: 'linuxdo', id: '9901', page: 1, offset: 0, limit: 30, fetcher });
+
+    expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
+    expect(fetcher.mock.calls.filter((call) => String(call[0]).includes('/t/9901.json'))).toHaveLength(2);
+  });
+
   it('maps linux.do logged-in post state onto topic and reply actions', async () => {
     const fetcher = vi.fn(async () => json({
       id: 900,

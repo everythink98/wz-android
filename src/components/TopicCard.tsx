@@ -50,19 +50,25 @@ export function TopicCard({
   }, [onOpenTopic, topic]);
   const metaParts = [
     topic.author || '未知作者',
-    `${topic.replyCount} 回复`,
-    topic.viewCount ? `${topic.viewCount} 浏览` : '',
     readerState.favorite ? '已收藏' : '',
     readerState.read ? '已读' : '',
     readerState.tracked ? '追踪命中' : '',
     topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
+  ].filter(Boolean).join(' · ');
+  const replyText = `${topic.replyCount} 回复`;
+  const statParts = [
+    replyText,
+    topic.viewCount ? `${topic.viewCount} 浏览` : ''
   ].filter(Boolean).join(' · ');
   return (
     <View style={styles.topicRowShell}>
       <View style={styles.topicCard}>
         <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
           <View style={styles.topicCardHead}>
-            <Text style={[styles.sourceText, styles.topicCardSource]} numberOfLines={1}>{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}</Text>
+            <View style={styles.topicBadgeRow}>
+              <Text style={styles.topicSourceBadge} numberOfLines={1}>{sourceLabel(topic.source)}</Text>
+              {topic.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{topic.category}</Text> : null}
+            </View>
             <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topicListDisplayTime(topic))}</Text>
           </View>
           <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
@@ -71,6 +77,7 @@ export function TopicCard({
         </Pressable>
         <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>
           <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>
+          <Text style={styles.topicStatPill} numberOfLines={1}>{statParts}</Text>
         </View>
       </View>
     </View>

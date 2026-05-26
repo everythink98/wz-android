@@ -237,6 +237,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'space-between',
       gap: 10
     },
+    topicBadgeRow: {
+      flex: 1,
+      minWidth: 0,
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6
+    },
     sourceText: {
       color: theme.muted,
       fontFamily: appFontFamily,
@@ -246,6 +254,34 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicCardSource: {
       flex: 1,
       minWidth: 0
+    },
+    topicSourceBadge: {
+      overflow: 'hidden',
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '700',
+      lineHeight: 16,
+      backgroundColor: theme.mist,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.16),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 2
+    },
+    topicCategoryBadge: {
+      overflow: 'hidden',
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      lineHeight: 16,
+      backgroundColor: 'transparent',
+      borderColor: theme.line,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 2
     },
     timeText: {
       flexShrink: 0,
@@ -295,6 +331,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicMetaRow: {
       alignItems: 'center',
       flexDirection: 'row',
+      justifyContent: 'space-between',
       gap: 8,
       paddingHorizontal: 16,
       paddingBottom: densityPadding + 1
@@ -302,6 +339,19 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     topicMetaText: {
       flex: 1,
       minWidth: 0
+    },
+    topicStatPill: {
+      flexShrink: 0,
+      overflow: 'hidden',
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      lineHeight: 16,
+      backgroundColor: theme.surface2,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 2
     },
     pillRail: {
       gap: 2,

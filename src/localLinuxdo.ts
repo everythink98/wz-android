@@ -420,15 +420,15 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   limit?: number;
   offset?: number | null;
 } = {}): Promise<RepliesResponse> {
-  let cached = cachedTopicStream(id);
+  const page = options.page || 1;
+  const limit = options.limit || 30;
+  let cached = page === 1 ? undefined : cachedTopicStream(id);
   if (!cached) {
     const data = await topicData(id, options);
     cacheTopicStream(id, data);
     cached = cachedTopicStream(id) || topicStreamState(data);
   }
   const stream = cached.stream;
-  const page = options.page || 1;
-  const limit = options.limit || 30;
   const firstPageReplyCount = cached.embeddedPostCount ? Math.min(limit, Math.max(cached.embeddedPostCount - 1, 0)) : limit;
   const previousReplyCount = page > 1
     ? typeof options.offset === 'number' ? options.offset : firstPageReplyCount + ((page - 2) * limit)

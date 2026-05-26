@@ -6,6 +6,7 @@ import {
   BackHandler,
   FlatList,
   Image,
+  InteractionManager,
   KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
@@ -21,7 +22,7 @@ import {
   View
 } from 'react-native';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import { CommonActions, NavigationContainer, createNavigationContainerRef, type NavigatorScreenParams } from '@react-navigation/native';
+import { CommonActions, DarkTheme, DefaultTheme, NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -165,6 +166,7 @@ import {
   isNodeSeekCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
+  parseForumTopicLink,
   sourceLabel,
   startAbortableRequest
 } from './src/appUtils';
@@ -210,6 +212,24 @@ type FeedSourceState = {
   page: number;
   refreshing: boolean;
 };
+type TopicSnapshot = {
+  selectedTopic: Topic | null;
+  topicDetail: TopicDetail | null;
+  topicReplies: Reply[];
+  topicError: string;
+  replyHasMore: boolean;
+  replyNextPage: number | null;
+  replyNextOffset: number | null;
+  unreadReplyCount: number;
+  commentQuery: string;
+  replyFilter: ReplyFilter;
+};
+type UserReturnTopic = {
+  returnScreen: Exclude<Screen, 'topic'>;
+  snapshot: TopicSnapshot;
+  backStack: TopicSnapshot[];
+};
+type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   Topic: undefined;
@@ -293,6 +313,7 @@ const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const PROGRESS_SAVE_DEBOUNCE_MS = 650;
 const PROGRESS_SAVE_MAX_PENDING_MS = 2000;
+const NAVIGATION_DEFERRED_TASK_FALLBACK_MS = 420;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
@@ -409,6 +430,10 @@ export default function App() {
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressMaxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topicScrollRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationTransitionTaskRef = useRef<(() => void) | null>(null);
+  const navigationTransitionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationInteractionTaskRef = useRef<DeferredNavigationTask | null>(null);
+  const navigationInteractionTaskIdRef = useRef(0);
   const pendingProgressRef = useRef<{ topic: Topic; percent: number; scrollY: number } | null>(null);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
@@ -417,7 +442,11 @@ export default function App() {
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
   const topicScrollRef = useRef<FlatList<TopicListItem>>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
+  const topicBackStackRef = useRef<TopicSnapshot[]>([]);
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
+  const userReturnTopicRef = useRef<UserReturnTopic | null>(null);
+  const reopenExistingTopicScreenRef = useRef(false);
+  const skipNextNavigationSyncRef = useRef(false);
   const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
@@ -551,6 +580,42 @@ export default function App() {
       topicScrollRestoreTimerRef.current = null;
     }
   }, []);
+  const cancelDeferredNavigationTask = useCallback(() => {
+    navigationInteractionTaskIdRef.current += 1;
+    navigationTransitionTaskRef.current = null;
+    if (navigationTransitionFallbackTimerRef.current) {
+      clearTimeout(navigationTransitionFallbackTimerRef.current);
+      navigationTransitionFallbackTimerRef.current = null;
+    }
+    navigationInteractionTaskRef.current?.cancel();
+    navigationInteractionTaskRef.current = null;
+  }, []);
+  const flushDeferredNavigationTask = useCallback(() => {
+    const task = navigationTransitionTaskRef.current;
+    if (!task) {
+      return;
+    }
+    navigationTransitionTaskRef.current = null;
+    if (navigationTransitionFallbackTimerRef.current) {
+      clearTimeout(navigationTransitionFallbackTimerRef.current);
+      navigationTransitionFallbackTimerRef.current = null;
+    }
+    navigationInteractionTaskRef.current?.cancel();
+    const taskId = ++navigationInteractionTaskIdRef.current;
+    const handle = InteractionManager.runAfterInteractions(() => {
+      if (navigationInteractionTaskIdRef.current !== taskId) {
+        return;
+      }
+      navigationInteractionTaskRef.current = null;
+      task();
+    });
+    navigationInteractionTaskRef.current = handle;
+  }, []);
+  const runAfterNavigationInteractions = useCallback((task: () => void) => {
+    cancelDeferredNavigationTask();
+    navigationTransitionTaskRef.current = task;
+    navigationTransitionFallbackTimerRef.current = setTimeout(flushDeferredNavigationTask, NAVIGATION_DEFERRED_TASK_FALLBACK_MS);
+  }, [cancelDeferredNavigationTask, flushDeferredNavigationTask]);
   const resetQuoteState = useCallback(() => {
     abortQuotedReplyRequests();
     expandedQuotesRef.current = {};
@@ -609,6 +674,22 @@ export default function App() {
   }, []);
 
   const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings]);
+  const navigationTheme = useMemo(() => {
+    const base = theme.dark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      dark: theme.dark,
+      colors: {
+        ...base.colors,
+        primary: theme.primary,
+        background: theme.background,
+        card: theme.surface,
+        text: theme.ink,
+        border: theme.line,
+        notification: theme.primary
+      }
+    };
+  }, [theme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
   const htmlBaseStyle = useMemo<HtmlBaseStyle>(() => ({
     color: theme.ink,
@@ -948,22 +1029,6 @@ export default function App() {
     };
     return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
   }, [openImagePreview, styles.inlineForumImage, styles.inlineForumImageText]);
-  const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
-    a: {
-      onPress: (event, href) => {
-        if (isPreviewableImageUrl(href)) {
-          event.stopPropagation?.();
-          openImagePreview(href);
-          return;
-        }
-        openExternalUrl(href);
-      }
-    },
-    img: {
-      enableExperimentalPercentWidth: true
-    }
-  }), [openExternalUrl, openImagePreview]);
-
   useEffect(() => () => {
     feedAbortRef.current?.abort();
     categoriesAbortRef.current?.abort();
@@ -981,7 +1046,8 @@ export default function App() {
     if (progressMaxSaveTimerRef.current) {
       clearTimeout(progressMaxSaveTimerRef.current);
     }
-  }, [clearTopicScrollRestoreTimer]);
+    cancelDeferredNavigationTask();
+  }, [cancelDeferredNavigationTask, clearTopicScrollRestoreTimer]);
 
   const persistReaderData = useCallback((next: ReaderData) => {
     readerDataRef.current = next;
@@ -1887,14 +1953,26 @@ export default function App() {
   }, [runSearch]);
 
   const changeScreen = useCallback((nextScreen: Screen) => {
+    const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';
     if (screen === 'more' && nextScreen !== 'more') {
       closeMorePanels();
     }
     if (screen === 'topic' && nextScreen !== 'topic') {
       flushPendingProgress();
     }
-    if (nextScreen !== 'topic') {
+    if (leavingTopicForUser) {
+      topicRequestIdRef.current += 1;
+      repliesRequestIdRef.current += 1;
+      topicAbortRef.current?.abort();
+      repliesAbortRef.current?.abort();
+      abortQuotedReplyRequests();
+      loadingMoreRepliesRef.current = false;
+      setLoadingMoreReplies(false);
+      setTopicBusy(false);
+    }
+    if (nextScreen !== 'topic' && !leavingTopicForUser) {
       clearTopicScrollRestoreTimer();
+      topicBackStackRef.current = [];
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
       topicAbortRef.current?.abort();
@@ -1906,6 +1984,9 @@ export default function App() {
       setLoadingMoreReplies(false);
       setTopicBusy(false);
     }
+    if (nextScreen !== 'user' && nextScreen !== 'topic') {
+      userReturnTopicRef.current = null;
+    }
     if (nextScreen !== 'user') {
       userRequestIdRef.current += 1;
       userAbortRef.current?.abort();
@@ -1914,10 +1995,52 @@ export default function App() {
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, screen]);
 
+  const topicSnapshot = useCallback((): TopicSnapshot => ({
+    selectedTopic,
+    topicDetail,
+    topicReplies,
+    topicError,
+    replyHasMore,
+    replyNextPage,
+    replyNextOffset,
+    unreadReplyCount,
+    commentQuery,
+    replyFilter
+  }), [commentQuery, replyFilter, replyHasMore, replyNextOffset, replyNextPage, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
+
+  const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
+    clearTopicScrollRestoreTimer();
+    setSelectedTopic(snapshot.selectedTopic);
+    setTopicDetail(snapshot.topicDetail);
+    setTopicReplies(snapshot.topicReplies);
+    setTopicError(snapshot.topicError);
+    setReplyHasMore(snapshot.replyHasMore);
+    setReplyNextPage(snapshot.replyNextPage);
+    setReplyNextOffset(snapshot.replyNextOffset);
+    setUnreadReplyCount(snapshot.unreadReplyCount);
+    setCommentQuery(snapshot.commentQuery);
+    setReplyFilter(snapshot.replyFilter);
+    setTopicBusy(false);
+    setLoadingMoreReplies(false);
+    loadingMoreRepliesRef.current = false;
+    const restoredTopic = snapshot.topicDetail || snapshot.selectedTopic;
+    currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
+  }, [clearTopicScrollRestoreTimer]);
+
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
     clearTopicScrollRestoreTimer();
-    if (screen !== 'topic') {
+    const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
+    reopenExistingTopicScreenRef.current = false;
+    const currentTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
+    const opensDifferentTopic = topicKey(topic) !== currentTopicKey;
+    if (screen !== 'topic' && !reopenExistingTopicScreen) {
       topicReturnScreenRef.current = screen;
+      topicBackStackRef.current = [];
+    } else if (opensDifferentTopic) {
+      topicBackStackRef.current.push(topicSnapshot());
+      if (navigationRef.isReady()) {
+        navigationRef.dispatch(StackActions.push('Topic'));
+      }
     }
     if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
       pendingLinuxDoTopicRef.current = null;
@@ -1942,7 +2065,9 @@ export default function App() {
     setYaohuoReplyTarget(null);
     setReplyFilter('all');
     resetQuoteState();
-    changeScreen('topic');
+    if (!reopenExistingTopicScreen) {
+      changeScreen('topic');
+    }
     setTopicBusy(true);
     const controller = startAbortableRequest(topicAbortRef);
     try {
@@ -2027,7 +2152,29 @@ export default function App() {
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [changeScreen, clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
+  }, [changeScreen, clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, selectedTopic, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
+
+  const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
+    a: {
+      onPress: (event, href) => {
+        if (isPreviewableImageUrl(href)) {
+          event.stopPropagation?.();
+          openImagePreview(href);
+          return;
+        }
+        const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);
+        if (appTopic) {
+          event.stopPropagation?.();
+          openTopic(appTopic);
+          return;
+        }
+        openExternalUrl(href);
+      }
+    },
+    img: {
+      enableExperimentalPercentWidth: true
+    }
+  }), [openExternalUrl, openImagePreview, openTopic, selectedTopic?.url, topicDetail?.url]);
 
   const refreshTopicReplies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     const detail = topicDetail || selectedTopic;
@@ -2240,8 +2387,31 @@ export default function App() {
 
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
+    cancelDeferredNavigationTask();
+    const previousTopic = topicBackStackRef.current.pop();
+    const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    if (previousTopic) {
+      topicRequestIdRef.current += 1;
+      repliesRequestIdRef.current += 1;
+      topicAbortRef.current?.abort();
+      repliesAbortRef.current?.abort();
+      const restorePreviousTopic = () => restoreTopicSnapshot(previousTopic);
+      if (canGoBack) {
+        navigationRef.goBack();
+        runAfterNavigationInteractions(restorePreviousTopic);
+      } else {
+        restorePreviousTopic();
+      }
+      return;
+    }
+    if (canGoBack) {
+      skipNextNavigationSyncRef.current = true;
+      navigationRef.goBack();
+      runAfterNavigationInteractions(() => changeScreen(topicReturnScreenRef.current));
+      return;
+    }
     changeScreen(topicReturnScreenRef.current);
-  }, [abortQuotedReplyRequests, changeScreen]);
+  }, [abortQuotedReplyRequests, cancelDeferredNavigationTask, changeScreen, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
   const openUser = useCallback(async (user: UserProfile, nocache = false) => {
     if (!user.id && !user.username) {
@@ -2250,6 +2420,15 @@ export default function App() {
     }
     if (screen !== 'user') {
       userReturnScreenRef.current = screen;
+    }
+    if (screen === 'topic') {
+      userReturnTopicRef.current = {
+        returnScreen: topicReturnScreenRef.current,
+        snapshot: topicSnapshot(),
+        backStack: [...topicBackStackRef.current]
+      };
+    } else if (screen !== 'user') {
+      userReturnTopicRef.current = null;
     }
     const requestUser = {
       ...user,
@@ -2321,11 +2500,50 @@ export default function App() {
       }
       finishAbortableRequest(userAbortRef, controller);
     }
-  }, [changeScreen, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
+  }, [changeScreen, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
 
   const goBackFromUser = useCallback(() => {
+    cancelDeferredNavigationTask();
+    const returnTopic = userReturnScreenRef.current === 'topic' ? userReturnTopicRef.current : null;
+    const shouldReloadRestoredTopic = Boolean(returnTopic?.snapshot.selectedTopic && !returnTopic.snapshot.topicDetail && !returnTopic.snapshot.topicError);
+    const restoreReturnTopic = () => {
+      if (!returnTopic) {
+        return;
+      }
+      topicReturnScreenRef.current = returnTopic.returnScreen;
+      topicBackStackRef.current = [...returnTopic.backStack];
+      restoreTopicSnapshot(returnTopic.snapshot);
+      userReturnTopicRef.current = null;
+    };
+    const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    if (canGoBack) {
+      skipNextNavigationSyncRef.current = true;
+      navigationRef.goBack();
+    }
     changeScreen(userReturnScreenRef.current);
-  }, [changeScreen]);
+    if (returnTopic?.snapshot.selectedTopic && shouldReloadRestoredTopic) {
+      const selectedReturnTopic = returnTopic.snapshot.selectedTopic;
+      const reloadRestoredTopic = () => {
+        reopenExistingTopicScreenRef.current = true;
+        void openTopic(selectedReturnTopic);
+      };
+      if (canGoBack) {
+        runAfterNavigationInteractions(() => {
+          restoreReturnTopic();
+          reloadRestoredTopic();
+        });
+      } else {
+        restoreReturnTopic();
+        reloadRestoredTopic();
+      }
+      return;
+    }
+    if (canGoBack && returnTopic) {
+      runAfterNavigationInteractions(restoreReturnTopic);
+    } else {
+      restoreReturnTopic();
+    }
+  }, [cancelDeferredNavigationTask, changeScreen, openTopic, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
   const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const detail = topicDetail || selectedTopic;
@@ -2617,15 +2835,27 @@ export default function App() {
       pendingLinuxDoTopicRef.current = null;
       if (pendingTopic) {
         const returnScreen = topicReturnScreenRef.current;
+        const backStack = [...topicBackStackRef.current];
+        const retryTopicKey = topicKey(pendingTopic);
+        const hasPendingTopicScreen = Boolean(selectedTopic && topicKey(selectedTopic) === retryTopicKey);
+        if (hasPendingTopicScreen) {
+          reopenExistingTopicScreenRef.current = true;
+          if (navigationRef.isReady() && navigationRef.canGoBack()) {
+            skipNextNavigationSyncRef.current = true;
+            navigationRef.goBack();
+          }
+          setScreen('topic');
+        }
         await openTopic(pendingTopic, true);
         topicReturnScreenRef.current = returnScreen;
+        topicBackStackRef.current = backStack;
       }
     } catch (error) {
       notify(errorMessage(error));
     } finally {
       setChecking(false);
     }
-  }, [linuxDoWebViewUserAgent, notify, openTopic, waitForLinuxDoClearance]);
+  }, [linuxDoWebViewUserAgent, notify, openTopic, selectedTopic, waitForLinuxDoClearance]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();
@@ -3178,7 +3408,7 @@ export default function App() {
         return true;
       }
       if (screen === 'user') {
-        changeScreen(userReturnScreenRef.current);
+        goBackFromUser();
         return true;
       }
       if (screen !== 'feed') {
@@ -3193,6 +3423,7 @@ export default function App() {
     changeScreen,
     closeYaohuoLoginPanel,
     goBackFromTopic,
+    goBackFromUser,
     imagePreview,
     screen,
     closeLinuxDoPanel,
@@ -3222,11 +3453,11 @@ export default function App() {
       return;
     }
     if (nextScreen === 'topic') {
-      navigationRef.navigate('Topic');
+      navigationRef.dispatch(StackActions.push('Topic'));
       return;
     }
     if (nextScreen === 'user') {
-      navigationRef.navigate('User');
+      navigationRef.dispatch(StackActions.push('User'));
       return;
     }
     if (nextScreen === 'feed' || nextScreen === 'search' || nextScreen === 'library' || nextScreen === 'more') {
@@ -3239,6 +3470,10 @@ export default function App() {
     }
   }, []);
   useEffect(() => {
+    if (skipNextNavigationSyncRef.current) {
+      skipNextNavigationSyncRef.current = false;
+      return;
+    }
     syncNavigationToScreen(screen);
   }, [screen, syncNavigationToScreen]);
 
@@ -3572,15 +3807,23 @@ export default function App() {
             />
           </View>
         ) : null}
-        <NavigationContainer ref={navigationRef} onReady={() => syncNavigationToScreen(screen)}>
-          <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <NavigationContainer ref={navigationRef} theme={navigationTheme} onReady={() => syncNavigationToScreen(screen)}>
+          <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', freezeOnBlur: true, contentStyle: { backgroundColor: theme.background } }}>
             <Stack.Screen name="MainTabs">
               {renderMainTabs}
             </Stack.Screen>
-            <Stack.Screen name="Topic">
+            <Stack.Screen name="Topic" listeners={{ transitionEnd: (event) => {
+              if (event.data.closing) {
+                flushDeferredNavigationTask();
+              }
+            } }}>
               {renderTopicScreen}
             </Stack.Screen>
-            <Stack.Screen name="User">
+            <Stack.Screen name="User" listeners={{ transitionEnd: (event) => {
+              if (event.data.closing) {
+                flushDeferredNavigationTask();
+              }
+            } }}>
               {renderUserScreen}
             </Stack.Screen>
           </Stack.Navigator>

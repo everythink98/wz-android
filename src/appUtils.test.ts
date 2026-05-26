@@ -6,6 +6,7 @@ import {
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
   linuxDoExternalSearchItems,
+  parseForumTopicLink,
   sourceLabel,
   startAbortableRequest,
   topicListDisplayTime
@@ -65,6 +66,65 @@ describe('Android app utils', () => {
       { label: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=site%3Alinux.do%20gpt%20plus' }
     ]);
     expect(linuxDoExternalSearchItems('')).toEqual([]);
+  });
+
+  it('recognizes four-site topic links that should stay inside the app', () => {
+    expect(parseForumTopicLink('https://www.nodeseek.com/post-123-2#reply', 'https://www.nodeseek.com/post-99-1')).toMatchObject({
+      source: 'nodeseek',
+      id: '123',
+      title: 'NodeSeek 主题',
+      url: 'https://www.nodeseek.com/post-123-1'
+    });
+    expect(parseForumTopicLink('/t/a-topic/456/2#post_8', 'https://linux.do/t/current/1')).toMatchObject({
+      source: 'linuxdo',
+      id: '456',
+      title: 'linux.do 主题',
+      url: 'https://linux.do/t/456'
+    });
+    expect(parseForumTopicLink('/t/456/2#post_8', 'https://linux.do/t/current/1')).toMatchObject({
+      source: 'linuxdo',
+      id: '456',
+      title: 'linux.do 主题',
+      url: 'https://linux.do/t/456'
+    });
+    expect(parseForumTopicLink('https://v2ex.com/t/789#reply1', 'https://www.v2ex.com/t/1')).toMatchObject({
+      source: 'v2ex',
+      id: '789',
+      title: 'V2EX 主题',
+      url: 'https://www.v2ex.com/t/789'
+    });
+    expect(parseForumTopicLink('book_re.aspx?id=321&classid=177&reply=1', 'https://yaohuo.me/bbs-1.html')).toMatchObject({
+      source: 'yaohuo',
+      id: '321',
+      title: '妖火主题',
+      categoryId: '177',
+      category: '妖火茶馆',
+      url: 'https://yaohuo.me/bbs-321.html'
+    });
+    expect(parseForumTopicLink('https://yaohuo.me/bbs/view.aspx?id=654&classid=213', 'https://yaohuo.me/bbs-1.html')).toMatchObject({
+      source: 'yaohuo',
+      id: '654',
+      title: '妖火主题',
+      categoryId: '213',
+      category: '悬赏问答',
+      url: 'https://yaohuo.me/bbs-654.html'
+    });
+    expect(parseForumTopicLink('/bbs/book_view.aspx?id=655&classid=201', 'https://yaohuo.me/bbs-1.html')).toMatchObject({
+      source: 'yaohuo',
+      id: '655',
+      title: '妖火主题',
+      categoryId: '201',
+      category: '资源分享',
+      url: 'https://yaohuo.me/bbs-655.html'
+    });
+  });
+
+  it('does not treat ordinary external links or non-topic forum links as app topics', () => {
+    expect(parseForumTopicLink('https://github.com/openai/codex', 'https://linux.do/t/1')).toBeNull();
+    expect(parseForumTopicLink('https://linux.do/u/alice', 'https://linux.do/t/1')).toBeNull();
+    expect(parseForumTopicLink('https://linux.do/t/not-a-topic', 'https://linux.do/t/1')).toBeNull();
+    expect(parseForumTopicLink('https://www.v2ex.com/go/create', 'https://www.v2ex.com/t/1')).toBeNull();
+    expect(parseForumTopicLink('mailto:test@example.com', 'https://www.nodeseek.com/post-1-1')).toBeNull();
   });
 
   it('uses active time for V2EX list display time', () => {

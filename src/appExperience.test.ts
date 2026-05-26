@@ -81,6 +81,15 @@ describe('Android App experience guards', () => {
     expect(androidUiSource).not.toContain('topicMetaPressable');
   });
 
+  it('shows Android feed rows as unified forum topics instead of source-first reader entries', () => {
+    expect(topicCardSource).toContain('styles.topicBadgeRow');
+    expect(topicCardSource).toContain('styles.topicSourceBadge');
+    expect(topicCardSource).toContain('styles.topicCategoryBadge');
+    expect(topicCardSource).toContain('styles.topicStatPill');
+    expect(topicCardSource).not.toContain("`${topic.replyCount} 回复`,");
+    expect(topicCardSource).not.toContain("{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}");
+  });
+
   it('switches Android feed sources through a page-level horizontal gesture', () => {
     expect(feedScreenSource).toContain("from 'react-native-tab-view'");
     expect(feedScreenSource).toContain('renderTabBar={() => null}');
@@ -253,6 +262,15 @@ describe('Android App experience guards', () => {
     expect(searchScreenSource).toContain('linux.do 老帖');
     expect(searchScreenSource).toContain('linuxDoExternalItems.map');
     expect(searchScreenSource).toContain('onOpenExternalUrl(item.url)');
+  });
+
+  it('keeps four-site topic links inside the Android topic detail flow', () => {
+    const htmlLinkBlock = appSource.match(/const htmlRenderersProps = useMemo<HtmlRenderersProps>\(\(\) => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('parseForumTopicLink');
+    expect(htmlLinkBlock).toContain('const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);');
+    expect(htmlLinkBlock).toContain('openTopic(appTopic);');
+    expect(htmlLinkBlock).toContain('openExternalUrl(href);');
   });
 
   it('offers category filters for Android search results like the mobile web page', () => {
