@@ -713,6 +713,43 @@ describe('Android App experience guards', () => {
     expect(topicScreenSource).toContain('const canWriteNodeSeek = Boolean(topic && topic.source === \'nodeseek\' && canUseNodeSeekActions);');
   });
 
+  it('keeps successful topic actions local instead of reopening the whole topic', () => {
+    expect(appSource).toContain('applyInteractionToTopic');
+    expect(appSource).toContain('applyInteractionToReplies');
+    expect(appSource).toContain('applyBookmarkToTopic');
+    expect(appSource).toContain('applyVoteOptionToTopic');
+    expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false \}/);
+  });
+
+  it('refreshes topic replies without resetting the topic body or reading state', () => {
+    const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async \(\{ silent = false \}: \{ silent\?: boolean \} = \{\}\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const refreshTopicBlock = appSource.match(/const refreshTopic = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const refreshWholeTopicBlock = appSource.match(/const refreshWholeTopic = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const submitReplyBlock = appSource.match(/const submitReply = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
+    expect(refreshRepliesBlock).toContain('getYaohuoRepliesDirect');
+    expect(refreshRepliesBlock).toContain('getReplies');
+    expect(refreshRepliesBlock).toContain('setTopicReplies((current) => mergeReplies(data.items, current));');
+    expect(refreshRepliesBlock).not.toContain('setTopicDetail(null)');
+    expect(refreshRepliesBlock).not.toContain("setCommentQuery('')");
+    expect(refreshRepliesBlock).not.toContain("setReplyFilter('all')");
+    expect(refreshRepliesBlock).not.toContain('resetQuoteState()');
+    expect(appSource).toMatch(/useEffect\(\(\) => \{\s*\n\s*setTopicDetail\(\(current\) => \{[\s\S]*?replies: topicReplies[\s\S]*?\n\s*}, \[topicReplies\]\);/);
+    expect(refreshTopicBlock).toContain('void refreshTopicReplies();');
+    expect(refreshTopicBlock).not.toContain('openTopic(');
+    expect(refreshWholeTopicBlock).toContain('void openTopic(detail, true);');
+    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(submitReplyBlock).toContain('await refreshTopicReplies({ silent: true });');
+    expect(topicScreenSource).toContain('onRefreshWholeTopic');
+    expect(topicScreenSource).toContain('刷新评论');
+    expect(topicScreenSource).toContain('刷新全文');
+  });
+
   it('closes More screen panels when navigating away from More', () => {
     const closePanelsBlock = appSource.match(/const closeMorePanels = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[closeLinuxDoPanel\]\);/)?.[1] || '';
     const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';

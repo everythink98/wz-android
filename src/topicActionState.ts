@@ -1,0 +1,87 @@
+import type { Reply, TopicDetail } from './types';
+
+type InteractionType = 'upvote' | 'like';
+type InteractionMode = 'add' | 'toggle';
+
+export type InteractionPatch = {
+  commentId: number;
+  type: InteractionType;
+  mode: InteractionMode;
+};
+
+function nextCount(value: number | undefined, delta: number) {
+  if (typeof value !== 'number') {
+    return delta > 0 ? delta : undefined;
+  }
+  return Math.max(0, value + delta);
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+function applyInteractionFields<T extends TopicDetail | Reply>(item: T, patch: InteractionPatch): T {
+  if (item.commentId !== patch.commentId) {
+    return item;
+  }
+  const activeField = patch.type === 'upvote' ? 'upvoted' : 'liked';
+  const countField = patch.type === 'upvote' ? 'upvoteCount' : 'likeCount';
+  const active = Boolean(item[activeField]);
+  const nextActive = patch.mode === 'toggle' ? !active : true;
+  const delta = nextActive === active ? 0 : nextActive ? 1 : -1;
+  return {
+    ...item,
+    [activeField]: nextActive,
+    [countField]: nextCount(item[countField], delta)
+  };
+}
+
+export function applyInteractionToTopic<T extends TopicDetail | null>(topic: T, patch: InteractionPatch): T {
+  return topic ? applyInteractionFields(topic, patch) as T : topic;
+}
+
+export function applyInteractionToReplies(replies: Reply[], patch: InteractionPatch) {
+  return replies.map((reply) => applyInteractionFields(reply, patch));
+}
+
+export function applyBookmarkToTopic<T extends TopicDetail | null>(
+  topic: T,
+  patch: { bookmarked: boolean; bookmarkId?: number }
+): T {
+  if (!topic) {
+    return topic;
+  }
+  return {
+    ...topic,
+    bookmarked: patch.bookmarked,
+    bookmarkId: patch.bookmarked ? patch.bookmarkId ?? topic.bookmarkId : undefined
+  } as T;
+}
+
+export function applyVoteOptionToTopic<T extends TopicDetail | null>(topic: T, voteId: string): T {
+  if (!topic?.voteOptions?.length) {
+    return topic;
+  }
+  return {
+    ...topic,
+    voteOptions: topic.voteOptions.map((option) => (
+      option.id === voteId
+        ? { ...option, count: nextCount(option.count, 1) }
+        : option
+    ))
+  } as T;
+}
+
+export function linuxDoBookmarkIdFromActionResult(value: unknown): number | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const nested = record.bookmark && typeof record.bookmark === 'object'
+    ? record.bookmark as Record<string, unknown>
+    : {};
+  return positiveInteger(record.id)
+    ?? positiveInteger(record.bookmark_id)
+    ?? positiveInteger(nested.id);
+}

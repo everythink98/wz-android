@@ -191,6 +191,7 @@ export function TopicScreen({
   onReplyFilterChange,
   onReplyToFloor,
   onRefreshTopic,
+  onRefreshWholeTopic,
   onVerifyLinuxDo,
   onSubmitReply,
   onTopicScroll,
@@ -244,6 +245,7 @@ export function TopicScreen({
   onReplyFilterChange: (filter: ReplyFilter) => void;
   onReplyToFloor: (reply: Reply) => void;
   onRefreshTopic: () => void;
+  onRefreshWholeTopic: () => void;
   onVerifyLinuxDo: () => void;
   onSubmitReply: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
@@ -565,7 +567,7 @@ export function TopicScreen({
             <Text style={styles.errorText}>{readableTopicError(topicError)}</Text>
             <View style={styles.actions}>
               {item.source === 'linuxdo' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
-              <AppButton label="重试" styles={styles} onPress={onRefreshTopic} />
+              <AppButton label="重试" styles={styles} onPress={onRefreshWholeTopic} />
             </View>
           </View>
         ) : null}
@@ -627,7 +629,11 @@ export function TopicScreen({
               </Pressable>
               <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onRefreshTopic)}>
                 <RefreshCw size={17} color={theme.ink} strokeWidth={1.8} />
-                <Text style={styles.topicMenuItemText}>刷新</Text>
+                <Text style={styles.topicMenuItemText}>刷新评论</Text>
+              </Pressable>
+              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onRefreshWholeTopic)}>
+                <RefreshCw size={17} color={theme.ink} strokeWidth={1.8} />
+                <Text style={styles.topicMenuItemText}>刷新全文</Text>
               </Pressable>
               <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={[styles.topicMenuItem, styles.topicMenuItemLast]} onPress={() => runTopicMenuAction(() => onOpenOriginal(item.url))}>
                 <ExternalLink size={17} color={theme.ink} strokeWidth={1.8} />
