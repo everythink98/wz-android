@@ -43,15 +43,15 @@ describe('Android reader theme helpers', () => {
     expect(fontFamilyValue('sans')).toBeUndefined();
   });
 
-  it('creates rgba colors and light theme tokens', () => {
+  it('creates rgba colors and Douban white light theme tokens', () => {
     expect(alphaColor('#2f6555', 0.065)).toBe('rgba(47, 101, 85, 0.065)');
     expect(createTheme(settings)).toMatchObject({
       dark: false,
-      background: '#f8f8f4',
-      surface: '#fbfbf7',
-      surface2: '#eef1ec',
-      line: '#e2e5dd',
-      lineStrong: '#cfd4cb',
+      background: '#ffffff',
+      surface: '#ffffff',
+      surface2: '#f5f5f5',
+      line: '#e7e7e7',
+      lineStrong: '#d9d9d9',
       primary: '#2f6555'
     });
   });
@@ -115,7 +115,7 @@ describe('Android reader theme helpers', () => {
     expect(styles.expandableStateIcon.borderWidth).toBe(1);
   });
 
-  it('keeps topic rows blended into the maintained pea white background', () => {
+  it('keeps topic rows blended into the maintained Douban white background', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
@@ -167,24 +167,24 @@ describe('Android reader theme helpers', () => {
 
     expect(theme).toMatchObject({
       dark: true,
-      background: '#101410',
-      surface: '#171b17',
-      surface2: '#222820',
-      line: '#30372e',
-      lineStrong: '#465046',
-      ink: '#ebece7',
-      muted: '#9ca39a',
-      primary: '#8bbfad'
+      background: '#171717',
+      surface: '#202020',
+      surface2: '#2b2b2b',
+      line: '#393939',
+      lineStrong: '#525252',
+      ink: '#eeeeee',
+      muted: '#a8a8a8',
+      primary: '#b7d8c9'
     });
     expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
   });
 
-  it('keeps list chrome and controls in a quiet pea white surface family', () => {
+  it('keeps list chrome and controls in a quiet Douban white surface family', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
-    expect(theme.surface).not.toBe(theme.background);
+    expect(theme.surface).toBe(theme.background);
     expect(styles.group.backgroundColor).toBe(theme.surface);
     expect(styles.button.backgroundColor).toBe(theme.surface);
     expect(styles.input.backgroundColor).toBe(theme.surface);
@@ -199,7 +199,7 @@ describe('Android reader theme helpers', () => {
     });
     expect(createTheme({ ...settings, theme: 'dark' })).toMatchObject({
       dark: true,
-      primary: '#8bbfad'
+      primary: '#b7d8c9'
     });
   });
 

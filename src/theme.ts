@@ -57,18 +57,18 @@ export function alphaColor(hex: string, alpha: number) {
 
 export function createTheme(settings: ReaderSettings): ReaderTheme {
   const dark = settings.theme === 'dark';
-  const palette = { light: '#2f6555', dark: '#8bbfad', lightOn: '#f6fbf8', darkOn: '#0b130f' };
-  const background = { base: '#f8f8f4', surface: '#fbfbf7', surface2: '#eef1ec', line: '#e2e5dd', lineStrong: '#cfd4cb' };
+  const palette = { light: '#2f6555', dark: '#b7d8c9', lightOn: '#f6fbf8', darkOn: '#111111' };
+  const background = { base: '#ffffff', surface: '#ffffff', surface2: '#f5f5f5', line: '#e7e7e7', lineStrong: '#d9d9d9' };
   if (dark) {
     return {
       dark: true,
-      background: '#101410',
-      surface: '#171b17',
-      surface2: '#222820',
-      line: '#30372e',
-      lineStrong: '#465046',
-      ink: '#ebece7',
-      muted: '#9ca39a',
+      background: '#171717',
+      surface: '#202020',
+      surface2: '#2b2b2b',
+      line: '#393939',
+      lineStrong: '#525252',
+      ink: '#eeeeee',
+      muted: '#a8a8a8',
       primary: palette.dark,
       primarySoft: alphaColor(palette.dark, 0.13),
       mist: alphaColor(palette.dark, 0.11),

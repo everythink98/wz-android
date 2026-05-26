@@ -797,7 +797,7 @@ describe('Android App experience guards', () => {
     expect(appSource).not.toContain('toggleCategorySubscription');
   });
 
-  it('keeps Android appearance settings to light or dark with fixed forest green and pea white', () => {
+  it('keeps Android appearance settings to light or dark with fixed forest green and Douban white', () => {
     const settingsPanelStart = moreScreenSource.indexOf('function SettingsPanel(');
     const settingsPanelEnd = moreScreenSource.indexOf('function ChipList(');
     const settingsPanelBlock = settingsPanelStart >= 0 && settingsPanelEnd > settingsPanelStart
