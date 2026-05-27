@@ -169,6 +169,40 @@ describe('Android topic detail reading layout', () => {
     expect(appSource).toContain('styles.inlineForumImage');
   });
 
+  it('renders forum emoji images when a source is available', () => {
+    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(htmlRenderersBlock).toContain('if (!src) {');
+    expect(htmlRenderersBlock).toContain('source={imageSourceFromUrl(src)}');
+    expect(htmlRenderersBlock).toContain('inlineForumImageAlignmentStyle');
+    expect(htmlRenderersBlock).not.toMatch(/if\s*\(isInlineForumImage\(props\.tnode\.attributes\)\)\s*\{\s*return <Text/);
+    expect(htmlRenderersBlock).not.toContain('if (!src || isInlineForumImage(attributes))');
+  });
+
+  it('keeps non-emoji inline images at the regular inline preview size', () => {
+    const htmlRenderersBlock = appSource.match(/const InlineForumImageRenderer: CustomMixedRenderer = \(props\) => \{[\s\S]*?\n    \};/)?.[0] || '';
+
+    expect(htmlRenderersBlock).toContain('const isInlineImage = isInlineForumImage(attributes);');
+    expect(htmlRenderersBlock).toContain('style={styles.inlineForumImage}');
+  });
+
+  it('does not nest forum emoji images inside text wrappers', () => {
+    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(htmlRenderersBlock).not.toContain(`if (isInlineForumImage(props.tnode.attributes)) {
+        return (
+          <Text`);
+    expect(htmlRenderersBlock).not.toContain(`if (isInlineImage) {
+        return (
+          <Text`);
+  });
+
+  it('preserves empty inline forum image nodes for custom rendering', () => {
+    const customModelBlock = topicScreenSource.match(/const HTML_CUSTOM_ELEMENT_MODELS = \{[\s\S]*?\n\};/)?.[0] || '';
+
+    expect(customModelBlock).toContain('isOpaque: true');
+  });
+
   it('keeps native controls large enough for touch use', () => {
     expect(themeSource).toMatch(/pill:\s*\{[\s\S]*minHeight:\s*40/);
     expect(themeSource).toMatch(/tab:\s*\{[\s\S]*minHeight:\s*40/);

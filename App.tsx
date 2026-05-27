@@ -133,7 +133,7 @@ import {
   applyVoteOptionToTopic,
   linuxDoBookmarkIdFromActionResult
 } from './src/topicActionState';
-import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
@@ -1016,8 +1016,11 @@ export default function App() {
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
-      if (isInlineForumImage(props.tnode.attributes)) {
+      if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
+      }
+      if (isInlineForumImage(props.tnode.attributes)) {
+        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return (
         <IMGElement
@@ -1034,8 +1037,12 @@ export default function App() {
       const attributes = ((props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {});
       const src = attributes.src || '';
       const label = attributes.alt || attributes.title || '';
-      if (!src || isInlineForumImage(attributes)) {
+      if (!src) {
         return <Text style={styles.inlineForumImageText}>{label}</Text>;
+      }
+      const isInlineImage = isInlineForumImage(attributes);
+      if (isInlineImage) {
+        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(attributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return (
         <Text
@@ -1050,7 +1057,7 @@ export default function App() {
       );
     };
     return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
-  }, [openImagePreview, styles.inlineForumImage, styles.inlineForumImageText]);
+  }, [htmlBaseStyle.lineHeight, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText]);
   useEffect(() => () => {
     feedAbortRef.current?.abort();
     categoriesAbortRef.current?.abort();

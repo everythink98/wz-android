@@ -75,7 +75,7 @@ describe('Android App UX upgrade guards', () => {
     expect(openTopicBlock).toContain('topicBackStackRef.current = [];');
     expect(openTopicBlock).toContain('const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;');
     expect(openTopicBlock).toContain("if (screen !== 'topic' && !reopenExistingTopicScreen) {");
-    expect(openTopicBlock).toContain("if (!reopenExistingTopicScreen) {\n      changeScreen('topic');");
+    expect(openTopicBlock).toMatch(/if \(!reopenExistingTopicScreen\) \{\s*changeScreen\('topic'\);/);
     expect(openUserBlock).toContain("if (screen === 'topic') {");
     expect(openUserBlock).toContain('userReturnTopicRef.current = {');
     expect(openUserBlock).toContain('returnScreen: topicReturnScreenRef.current');
@@ -137,8 +137,10 @@ describe('Android App UX upgrade guards', () => {
     expect(appControlsSource).toContain('withTiming');
     expect(searchScreenSource).toContain('expandedSearchGroups');
     expect(searchScreenSource).toContain('toggleSearchGroup');
-    expect(searchScreenSource).toContain('<ExpandablePanel');
-    expect(searchScreenSource).toContain('defaultExpanded');
+    expect(searchScreenSource).toContain('styles.searchGroupHeader');
+    expect(searchScreenSource).toContain('accessibilityState={{ expanded: item.expanded }}');
+    expect(searchScreenSource).not.toContain('<ExpandablePanel');
+    expect(searchScreenSource).toContain('!item.expanded');
     expect(searchScreenSource).toContain('buildSearchListItems');
     expect(searchListItemsSource).toContain("type: 'groupLoadMore'");
   });

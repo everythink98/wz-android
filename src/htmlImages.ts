@@ -59,18 +59,50 @@ export function isInlineForumImage(attributes: Record<string, string | undefined
   return isInlineForumImageAttributes(attributes);
 }
 
+export function inlineForumImageDisplaySize(attributes: Record<string, string | undefined>, scale = 1) {
+  const width = parseImageDimension(attributeValue(attributes, 'width'));
+  const height = parseImageDimension(attributeValue(attributes, 'height'));
+  let displayWidth = width || height || 20;
+  let displayHeight = height || width || 20;
+  const maxSize = 64;
+  const minSize = 12;
+  const maxDimension = Math.max(displayWidth, displayHeight);
+  if (maxDimension > maxSize) {
+    const ratio = maxSize / maxDimension;
+    displayWidth *= ratio;
+    displayHeight *= ratio;
+  }
+  const minDimension = Math.max(displayWidth, displayHeight);
+  if (minDimension < minSize) {
+    const ratio = minSize / Math.max(minDimension, 1);
+    displayWidth *= ratio;
+    displayHeight *= ratio;
+  }
+  const safeScale = safeImageScale(scale);
+  return {
+    width: Math.round(displayWidth * safeScale),
+    height: Math.round(displayHeight * safeScale)
+  };
+}
+
+export function inlineForumImageAlignmentStyle(attributes: Record<string, string | undefined>, scale = 1, lineHeight = 0) {
+  if (!isInlineForumImageAttributes(attributes)) {
+    return {};
+  }
+  const safeScale = safeImageScale(scale);
+  const displaySize = inlineForumImageDisplaySize(attributes, safeScale);
+  const resolvedLineHeight = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : Math.round(16 * safeScale * 1.62);
+  const translateY = Math.max(0, Math.round((resolvedLineHeight - displaySize.height) / 2));
+  return translateY > 0 ? { transform: [{ translateY }] } : {};
+}
+
 export function flowInlineImagesInMixedParagraphs(html: string) {
   try {
     const root = parseHtml(html);
     root.querySelectorAll('p').forEach((paragraph) => {
-      const images = paragraph.querySelectorAll('img');
-      if (!images.length || !paragraphHasTextOutsideImages(paragraph.innerHTML)) {
-        return;
-      }
-      images.forEach((image) => {
-        image.tagName = INLINE_FORUM_IMAGE_TAG;
-      });
+      flowImagesInMixedContainer(paragraph);
     });
+    flowImagesInMixedContainer(root, true);
     return root.toString();
   } catch {
     return html;
@@ -210,6 +242,69 @@ function paragraphHasTextOutsideImages(html: string) {
   return textContentFromHtml(withoutImages).length > 0;
 }
 
+type ParsedImageNode = {
+  tagName: string;
+  attributes: Record<string, string | undefined>;
+  innerHTML?: string;
+  set_content?: (content: string) => void;
+  parentNode?: unknown;
+  parent?: unknown;
+};
+
+function flowImagesInMixedContainer(container: { innerHTML?: string; querySelectorAll?: (selector: string) => ParsedImageNode[]; childNodes?: unknown[] }, directOnly = false) {
+  const images = directOnly ? directChildImages(container) : (container.querySelectorAll?.('img') || []);
+  if (!images.length || !paragraphHasTextOutsideImages(container.innerHTML || '')) {
+    return;
+  }
+  images.forEach((image) => {
+    if (isInsideLightboxImage(image)) {
+      return;
+    }
+    const label = attributeValue(image.attributes, 'alt') || attributeValue(image.attributes, 'title') || attributeValue(image.attributes, 'src') || 'image';
+    image.tagName = INLINE_FORUM_IMAGE_TAG;
+    if (typeof image.set_content === 'function') {
+      image.set_content(label);
+    } else {
+      image.innerHTML = label;
+    }
+  });
+}
+
+function directChildImages(container: { childNodes?: unknown[] }) {
+  return (container.childNodes || []).filter((child): child is ParsedImageNode => (
+    safeTagName(child) === 'img'
+  ));
+}
+
+function isInsideLightboxImage(image: { parentNode?: unknown; parent?: unknown }) {
+  let current = image.parentNode || image.parent;
+  while (current && typeof current === 'object') {
+    const element = current as {
+      tagName?: string;
+      rawTagName?: string | null;
+      classNames?: string;
+      attributes?: Record<string, string | undefined>;
+      parentNode?: unknown;
+      parent?: unknown;
+    };
+    const tagName = safeTagName(element);
+    const className = String(element.classNames || element.attributes?.class || '');
+    if ((tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className)) || /(^|\s)lightbox-wrapper(\s|$)/i.test(className)) {
+      return true;
+    }
+    current = element.parentNode || element.parent;
+  }
+  return false;
+}
+
+function safeTagName(value: unknown) {
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+  const element = value as { rawTagName?: string | null; tagName?: string };
+  return String(element.rawTagName || element.tagName || '').toLowerCase();
+}
+
 function attributeValue(attributes: Record<string, string | undefined>, name: string) {
   return decodeHtmlAttribute(attributes[name] || attributes[name.toLowerCase()] || '').trim();
 }
@@ -247,6 +342,10 @@ function isInlineForumImageUrl(url: string) {
 function parseImageDimension(value: string) {
   const match = value.match(/^\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
+}
+
+function safeImageScale(scale: number) {
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
 }
 
 function isKnownForumImageHost(hostname: string) {

@@ -174,6 +174,19 @@ describe('Android reader theme helpers', () => {
     expect(styles.topicMetaRow.justifyContent).toBe('space-between');
   });
 
+  it('keeps search source headers quieter than result titles', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.searchGroupSourceMark).toBeUndefined();
+    expect(styles.searchGroupTitleRow.gap).toBeGreaterThan(8);
+    expect(styles.searchGroupTitleText.fontSize).toBeLessThan(styles.cardTitle.fontSize as number);
+    expect(styles.searchGroupTitleText.color).toBe(theme.ink);
+    expect(styles.searchGroupMetaText.color).toBe(theme.muted);
+    expect(styles.searchGroupChevron.opacity).toBeLessThan(1);
+    expect(styles.searchGroupMetaPill).toBeUndefined();
+  });
+
   it('keeps reading typography and quotes quiet instead of decorative', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;

@@ -6,6 +6,8 @@ import {
   flowInlineImagesInMixedParagraphs,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
+  inlineForumImageAlignmentStyle,
+  inlineForumImageDisplaySize,
   isHttpOrHttpsUrl,
   isPreviewableImageUrl,
   normalizeImagePreviewUrl
@@ -109,12 +111,55 @@ describe('Android HTML image preview helpers', () => {
     });
   });
 
+  it('does not treat a pure forum emoji reply as containing previewable images', () => {
+    const html = '<p><img class="emoji" src="https://linux.do/uploads/default/original/3X/smile.webp" alt=":smile:" title=":smile:" width="48" height="48"></p>';
+
+    expect(extractImageUrlsFromHtml(html)).toEqual([]);
+  });
+
+  it('uses the source dimensions for small forum emoji display', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'emoji',
+      src: 'https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15',
+      alt: ':joy:',
+      title: ':joy:',
+      width: '20',
+      height: '20'
+    })).toEqual({ width: 20, height: 20 });
+  });
+
+  it('nudges small forum emoji down to the middle of the text line', () => {
+    expect(inlineForumImageAlignmentStyle({
+      class: 'emoji',
+      src: 'https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15',
+      alt: ':joy:',
+      title: ':joy:',
+      width: '20',
+      height: '20'
+    }, 1, 26)).toEqual({ transform: [{ translateY: 3 }] });
+  });
+
   it('marks images mixed with paragraph text as inline while keeping standalone images block-like', () => {
     const mixed = '<p>hello 😟<img alt="image" src="https://cdn.example.com/sticker.png"></p>';
     const standalone = '<p><img alt="image" src="https://cdn.example.com/photo.jpg"></p>';
 
-    expect(flowInlineImagesInMixedParagraphs(mixed)).toContain('<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png"></forum-inline-image>');
+    expect(flowInlineImagesInMixedParagraphs(mixed)).toContain('<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png">image</forum-inline-image>');
     expect(flowInlineImagesInMixedParagraphs(standalone)).toContain('<img alt="image" src="https://cdn.example.com/photo.jpg">');
+  });
+
+  it('renders forum emoji in mixed paragraphs through the inline image path', () => {
+    const html = '<p>hello <img class="emoji" src="https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15" alt=":joy:" title=":joy:" width="20" height="20"></p>';
+
+    expect(flowInlineImagesInMixedParagraphs(html)).toContain('<forum-inline-image class="emoji"');
+    expect(flowInlineImagesInMixedParagraphs(html)).not.toContain('<img class="emoji"');
+  });
+
+  it('does not turn lightbox gallery images into inline emoji-sized images', () => {
+    const html = '<p><div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411"></a></div><br>text <img class="emoji" src="https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15" alt=":joy:" title=":joy:" width="20" height="20"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411">');
+    expect(result).toContain('<forum-inline-image class="emoji"');
   });
 
   it('keeps real HTML images previewable even when their URLs have no file extension', () => {

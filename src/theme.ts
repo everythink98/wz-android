@@ -460,6 +460,44 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       gap: 7
     },
+    searchGroupHeader: {
+      minHeight: 44,
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 10,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingTop: 12,
+      paddingBottom: 7
+    },
+    searchGroupTitleRow: {
+      flex: 1,
+      minWidth: 0,
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10
+    },
+    searchGroupTitleText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 18
+    },
+    searchGroupMetaText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 17
+    },
+    searchGroupChevron: {
+      opacity: 0.78
+    },
     flex: {
       flex: 1
     },

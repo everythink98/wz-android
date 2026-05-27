@@ -884,7 +884,7 @@ describe('Android App experience guards', () => {
     expect(appControlsSource).toContain('const StateIcon = panelExpanded ? ChevronUp : ChevronDown;');
     expect(appControlsSource).toContain('accessibilityLabel={panelExpanded ? `收起${title}` : `展开${title}`}');
     expect(appControlsSource).toContain('styles.expandableStateIcon');
-    expect(searchScreenSource).toContain('<ExpandablePanel');
+    expect(searchScreenSource).toContain('styles.searchGroupHeader');
     expect(moreScreenSource).toContain('<ExpandablePanel');
   });
 

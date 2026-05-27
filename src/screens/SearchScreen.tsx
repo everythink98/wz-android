@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
-import { Search, X } from 'lucide-react-native';
+import { ChevronDown, ChevronUp, Search, X } from 'lucide-react-native';
 import type { FeedSource, Source, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
 import type { SearchSort } from '../feedLogic';
@@ -14,8 +14,8 @@ import {
   type SearchListItem
 } from '../searchListItems';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
-import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, ExpandablePanel, IconButton, LoadingState, PillRail } from '../components/AppControls';
+import { androidRipple, createStyles, type ReaderTheme } from '../theme';
+import { AppButton, EmptyText, IconButton, LoadingState, PillRail, TOUCH_HIT_SLOP } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
@@ -136,18 +136,23 @@ export function SearchScreen({
       return renderTopicCard(item.topic);
     }
     if (item.type === 'groupHeader') {
+      const Chevron = item.expanded ? ChevronUp : ChevronDown;
       return (
-        <ExpandablePanel
-          defaultExpanded
-          title={item.group.label}
-          meta={item.meta}
-          expanded={item.expanded}
-          styles={styles}
-          theme={theme}
-          onExpandedChange={(expanded) => toggleSearchGroup(item.group.source, expanded)}
+        <Pressable
+          accessibilityLabel={item.expanded ? `收起${item.group.label}搜索结果` : `展开${item.group.label}搜索结果`}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: item.expanded }}
+          android_ripple={androidRipple(theme.primarySoft)}
+          hitSlop={TOUCH_HIT_SLOP}
+          style={styles.searchGroupHeader}
+          onPress={() => toggleSearchGroup(item.group.source, !item.expanded)}
         >
-          {null}
-        </ExpandablePanel>
+          <View style={styles.searchGroupTitleRow}>
+            <Text style={styles.searchGroupTitleText}>{item.group.label}</Text>
+            <Text style={styles.searchGroupMetaText}>{item.meta}</Text>
+          </View>
+          <Chevron size={17} color={theme.muted} strokeWidth={1.8} style={styles.searchGroupChevron} />
+        </Pressable>
       );
     }
     if (item.type === 'groupError') {

@@ -48,7 +48,8 @@ const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle'
 const HTML_CUSTOM_ELEMENT_MODELS = {
   [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: INLINE_FORUM_IMAGE_TAG,
-    contentModel: HTMLContentModel.textual
+    contentModel: HTMLContentModel.textual,
+    isOpaque: true
   })
 };
 function stableTextHash(value: string) {
