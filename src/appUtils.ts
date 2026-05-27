@@ -204,19 +204,3 @@ export function finishAbortableRequest(ref: MutableRefObject<AbortController | n
   ref.current = null;
   return true;
 }
-
-export function settingsList(value: string[]) {
-  return Array.isArray(value) ? value : [];
-}
-
-export function appendUnique(items: string[], value: string) {
-  const clean = value.trim();
-  if (!clean) {
-    return items;
-  }
-  return [clean, ...items.filter((item) => item.toLowerCase() !== clean.toLowerCase())].slice(0, 100);
-}
-
-export function removeString(items: string[], value: string) {
-  return items.filter((item) => item !== value);
-}

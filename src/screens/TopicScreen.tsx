@@ -19,7 +19,7 @@ import {
   TRenderEngineProvider
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
 import type { Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
@@ -186,6 +186,7 @@ export function TopicScreen({
   onYaohuoVote,
   onLoadMoreReplies,
   onOpenOriginal,
+  onOpenReadingSettings,
   onReplyComposerOpenChange,
   onReplyContentChange,
   onReplyFilterChange,
@@ -240,6 +241,7 @@ export function TopicScreen({
   onYaohuoVote: (voteId: string) => void;
   onLoadMoreReplies: () => void;
   onOpenOriginal: (url: string) => void;
+  onOpenReadingSettings: () => void;
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
   onReplyFilterChange: (filter: ReplyFilter) => void;
@@ -367,6 +369,7 @@ export function TopicScreen({
             ) : null}
           </View>
           <PillRail
+            variant="subtabs"
             items={[
               { value: 'all', label: '全部' },
               { value: 'author', label: '只看楼主' },
@@ -634,6 +637,10 @@ export function TopicScreen({
               <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onRefreshWholeTopic)}>
                 <RefreshCw size={17} color={theme.ink} strokeWidth={1.8} />
                 <Text style={styles.topicMenuItemText}>刷新全文</Text>
+              </Pressable>
+              <Pressable accessibilityRole="menuitem" accessibilityLabel="阅读设置" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onOpenReadingSettings)}>
+                <Settings size={17} color={theme.ink} strokeWidth={1.8} />
+                <Text style={styles.topicMenuItemText}>阅读设置</Text>
               </Pressable>
               <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={[styles.topicMenuItem, styles.topicMenuItemLast]} onPress={() => runTopicMenuAction(() => onOpenOriginal(item.url))}>
                 <ExternalLink size={17} color={theme.ink} strokeWidth={1.8} />

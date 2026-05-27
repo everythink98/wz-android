@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
-const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
 const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
 const userScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'UserScreen.tsx'), 'utf8');
 const themeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'theme.ts'), 'utf8');
@@ -170,13 +169,6 @@ describe('Android topic detail reading layout', () => {
     expect(appSource).toContain('styles.inlineForumImage');
   });
 
-  it('keeps saved search records out of the Android search screen chrome', () => {
-    expect(searchScreenSource).not.toContain('readerData.savedSearches.map');
-    expect(searchScreenSource).not.toContain('const saved = readerData.savedSearches.find');
-    expect(searchScreenSource).not.toContain('onSearchSourceChange(saved.source);');
-    expect(searchScreenSource).not.toContain('items={readerData.savedSearches.map((item) => ({ value: item.query, label: item.query }))}');
-  });
-
   it('keeps native controls large enough for touch use', () => {
     expect(themeSource).toMatch(/pill:\s*\{[\s\S]*minHeight:\s*40/);
     expect(themeSource).toMatch(/tab:\s*\{[\s\S]*minHeight:\s*40/);
@@ -184,7 +176,7 @@ describe('Android topic detail reading layout', () => {
     expect(themeSource).toMatch(/buttonTiny:\s*\{[\s\S]*minHeight:\s*40/);
   });
 
-  it('ties selected backgrounds and login panels to the current theme', () => {
+  it('ties theme accent and login panels to the current theme', () => {
     expect(themeSource).toContain('mist: alphaColor(palette.light, 0.065)');
     expect(themeSource).toContain('mist: alphaColor(palette.dark, 0.11)');
     expect(themeSource).toContain('const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)))');

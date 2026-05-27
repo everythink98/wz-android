@@ -142,7 +142,7 @@ export function LibraryScreen({
       <PillRail
         items={[
           { value: 'favorites', label: '帖子' },
-          { value: 'users', label: '用户' },
+          { value: 'users', label: '关注用户' },
           { value: 'history', label: '历史' }
         ]}
         value={libraryTab}

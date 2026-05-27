@@ -530,11 +530,11 @@ function YaohuoLoginPanel({
 }) {
   return (
     <>
-      <MenuButton icon={LogIn} label="妖火登录" value={hasYaohuoCookie ? yaohuoLoginState : '未登录'} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
+      <MenuButton icon={LogIn} label="妖火登录" value={yaohuoLoginState} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
       <LoginWebViewModal
         visible={showYaohuoLoginPanel}
         title="妖火登录"
-        subtitle={hasYaohuoCookie ? yaohuoLoginState : '未登录'}
+        subtitle={yaohuoLoginState}
         loading={loadingYaohuoLoginPage}
         loadingText="正在打开妖火..."
         styles={styles}

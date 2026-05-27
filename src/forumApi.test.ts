@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { getCategories, getFeed, getReply, getUserProfile, searchTopics } from './forumApi';
+import { getCategories, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
 import { clearV2exCacheForTest } from './localV2ex';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -667,20 +667,18 @@ describe('Android local forum facade', () => {
     expect(result.items.map((item) => item.source)).toEqual(['nodeseek', 'linuxdo', 'v2ex']);
   });
 
-  it('keeps yaohuo facade fallbacks local without fetching', async () => {
+  it('keeps only yaohuo categories and user profiles on the shared forum facade', async () => {
     const fetcher = vi.fn(async () => {
       throw new Error('unexpected fetch');
     });
 
-    const feed = await getFeed({ source: 'yaohuo', fetcher });
     const categories = await getCategories({ source: 'yaohuo', fetcher });
-    const search = await searchTopics({ source: 'yaohuo', query: 'test', fetcher });
 
-    expect(feed).toMatchObject({ items: [], hasMore: false, nextPage: null });
-    expect(feed.errors.yaohuo).toBe('请先登录妖火');
+    await expect(getFeed({ source: 'yaohuo', fetcher })).rejects.toThrow('来源不支持');
+    expect(() => getTopic({ source: 'yaohuo', id: '1', fetcher })).toThrow('来源不支持');
+    expect(() => getReplies({ source: 'yaohuo', id: '1', page: 1, fetcher })).toThrow('来源不支持');
+    await expect(searchTopics({ source: 'yaohuo', query: 'test', fetcher })).rejects.toThrow('来源不支持');
     expect(categories.items[0]).toMatchObject({ source: 'yaohuo' });
-    expect(search).toMatchObject({ items: [] });
-    expect(search.errors.yaohuo).toBe('请先登录妖火');
     expect(fetcher).not.toHaveBeenCalled();
   });
 

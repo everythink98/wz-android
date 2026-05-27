@@ -35,7 +35,7 @@ describe('reader JSON backup', () => {
     expect(imported.version).toBe(2);
   });
 
-  it('rejects old backups instead of merging legacy fields', () => {
+  it('rejects non-current backup versions', () => {
     const local = createEmptyReaderData();
     local.settings.theme = 'dark';
     const oldBackup = {
@@ -69,7 +69,7 @@ describe('reader JSON backup', () => {
     expect(JSON.stringify(imported)).not.toContain('secret');
   });
 
-  it('ignores removed subscription and rule fields when importing current backups', () => {
+  it('imports current backups using only active Android fields', () => {
     const local = createEmptyReaderData();
     const remote = {
       ...createEmptyReaderData(),

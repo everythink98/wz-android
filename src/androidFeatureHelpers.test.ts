@@ -5,8 +5,7 @@ import {
   groupLibraryRecordsByTime,
   highlightHtml,
   highlightTextParts,
-  libraryCategoryFilterItems,
-  readerModeHtml
+  libraryCategoryFilterItems
 } from './androidFeatureHelpers';
 import type { Category, Reply, Topic } from './types';
 import type { TopicRecord } from './readerData';
@@ -99,9 +98,5 @@ describe('Android feature helpers', () => {
     ];
 
     expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
-  });
-
-  it('normalizes reader mode html noise', () => {
-    expect(readerModeHtml('<p></p><hr><hr><p>Body</p>')).toBe('<hr><p>Body</p>');
   });
 });

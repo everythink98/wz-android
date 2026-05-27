@@ -50,9 +50,6 @@ export interface Category {
   id: string;
   name: string;
   slug?: string;
-  description?: string;
-  parentCategoryId?: string;
-  topicCount?: number;
 }
 
 export interface TopicDetail extends Topic {

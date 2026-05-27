@@ -363,14 +363,17 @@ describe('Android local sources', () => {
       }, {
         id: 4,
         name: '开发调优',
-        slug: 'dev'
+        slug: 'dev',
+        description_text: '只用于原站说明',
+        parent_category_id: 2,
+        topic_count: 88
       }]
     }));
 
     const categories = await getCategories({ source: 'linuxdo', fetcher, nocache: true });
 
     expect(categories.items).toHaveLength(1);
-    expect(categories.items[0]).toMatchObject({
+    expect(categories.items[0]).toEqual({
       source: 'linuxdo',
       id: '4',
       name: '开发调优',

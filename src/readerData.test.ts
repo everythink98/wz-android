@@ -53,13 +53,13 @@ describe('Android reader data helpers', () => {
     expect(data).not.toHaveProperty('savedSearches');
     expect(data.deletedRecords).not.toHaveProperty('savedSearches');
     expect(data.settings).toMatchObject({
-      theme: 'light',
-      palette: 'mint',
-      background: 'warm'
+      theme: 'light'
     });
+    expect(data.settings).not.toHaveProperty('palette');
+    expect(data.settings).not.toHaveProperty('background');
   });
 
-  it('rejects old reader data versions instead of migrating old fields', () => {
+  it('accepts only the current Android reader data version', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
       version: 1,
@@ -91,7 +91,7 @@ describe('Android reader data helpers', () => {
     expect(data.history[topicKey(topic)]).not.toHaveProperty('note');
   });
 
-  it('toggles favorites without keeping old later records', () => {
+  it('toggles favorites with deletion markers only', () => {
     let data = createEmptyReaderData();
     data = toggleFavorite(data, topic);
 
@@ -103,7 +103,7 @@ describe('Android reader data helpers', () => {
     expect(data).not.toHaveProperty('later');
   });
 
-  it('tracks reading progress without keeping category subscriptions', () => {
+  it('tracks reading progress in the current progress map', () => {
     let data = createEmptyReaderData();
     data = updateProgress(data, topic, { percent: 125, scrollY: 88 });
 
@@ -188,17 +188,17 @@ describe('Android reader data helpers', () => {
 
     expect(data.settings).toMatchObject({
       theme: 'light',
-      palette: 'mint',
-      background: 'warm',
       fontScale: 1.2,
       lineHeight: 'loose',
       contentWidth: 'wide',
       fontFamily: 'serif'
     });
+    expect(data.settings).not.toHaveProperty('palette');
+    expect(data.settings).not.toHaveProperty('background');
     expect(data.settings).not.toHaveProperty('nodeseekCookie');
   });
 
-  it('silently drops old subscriptions and rule fields from current-version data', () => {
+  it('keeps current-version data limited to active Android fields', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
       subscriptions: {

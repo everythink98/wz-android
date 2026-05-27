@@ -196,14 +196,6 @@ export async function getFeed({
       nextCursor
     };
   }
-  if (source === 'yaohuo') {
-    return {
-      items: [],
-      errors: { yaohuo: '请先登录妖火' },
-      hasMore: false,
-      nextPage: null
-    };
-  }
   return pickSource(source, {
     nodeseek: () => getNodeSeekFeed(options),
     linuxdo: () => getLinuxDoFeed(options),
@@ -274,8 +266,7 @@ export function getTopic({
   return pickSource(source, {
     nodeseek: () => getNodeSeekTopic(id, options),
     linuxdo: () => getLinuxDoTopic(id, options),
-    v2ex: () => getV2exTopic(id, options),
-    yaohuo: async () => { throw new Error('请先登录妖火'); }
+    v2ex: () => getV2exTopic(id, options)
   });
 }
 
@@ -307,8 +298,7 @@ export function getReplies({
   return pickSource(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),
-    v2ex: async () => ({ items: [], hasMore: false, nextPage: null }),
-    yaohuo: async () => { throw new Error('请先登录妖火'); }
+    v2ex: async () => ({ items: [], hasMore: false, nextPage: null })
   });
 }
 
@@ -428,9 +418,6 @@ export async function searchTopics({
       hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
       nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
     };
-  }
-  if (source === 'yaohuo') {
-    return { items: [], errors: { yaohuo: '请先登录妖火' }, hasMore: false, nextPage: null };
   }
   const response = await pickSource(source, {
     nodeseek: () => searchNodeSeek(adapterQuery, options),

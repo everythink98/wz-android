@@ -88,12 +88,6 @@ export function stripHtml(html: string | undefined) {
     .trim();
 }
 
-export function readerModeHtml(html: string) {
-  return html
-    .replace(/<hr\b[^>]*>\s*(<hr\b[^>]*>\s*)+/gi, '<hr>')
-    .replace(/(<p>\s*<\/p>\s*)+/gi, '');
-}
-
 export function filterLibraryRecords(records: TopicRecord[], filter: LibraryFilter) {
   return records.filter((record) => (
     (filter.source === 'all' || record.topic.source === filter.source)

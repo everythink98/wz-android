@@ -214,11 +214,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       width: '100%',
       backgroundColor: topicRowBackground
     },
+    topicListSeparator: {
+      width: '100%',
+      height: 1,
+      backgroundColor: theme.line
+    },
     topicCard: {
       width: '100%',
       gap: 0,
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: topicRowBackground,
       borderRadius: 0
     },
@@ -379,6 +382,34 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '500'
     },
     pillTextActive: {
+      color: theme.primary,
+      fontWeight: '600'
+    },
+    subtabRail: {
+      gap: 20,
+      paddingRight: 18,
+      paddingVertical: 0
+    },
+    subtab: {
+      minHeight: 34,
+      justifyContent: 'center',
+      backgroundColor: 'transparent',
+      borderBottomColor: 'transparent',
+      borderBottomWidth: 2,
+      paddingHorizontal: 2,
+      paddingTop: 3,
+      paddingBottom: 5
+    },
+    subtabActive: {
+      borderBottomColor: theme.primary
+    },
+    subtabText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500'
+    },
+    subtabTextActive: {
       color: theme.primary,
       fontWeight: '600'
     },

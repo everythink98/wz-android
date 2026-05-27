@@ -20,8 +20,6 @@ vi.mock('react-native', () => ({
 describe('Android reader theme helpers', () => {
   const settings: ReaderSettings = {
     theme: 'light',
-    palette: 'mint',
-    background: 'warm',
     fontScale: 1,
     lineHeight: 'standard',
     contentWidth: 'standard',
@@ -127,6 +125,28 @@ describe('Android reader theme helpers', () => {
 
     expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
     expect(styles.topicCard.backgroundColor).toBe(theme.background);
+  });
+
+  it('draws feed list separators as stable but soft full-width rows', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.topicListSeparator.backgroundColor).toBe(theme.line);
+    expect(styles.topicListSeparator.height).toBe(1);
+    expect(styles.topicRowShell.borderBottomWidth || 0).toBe(0);
+    expect(styles.topicCard.borderBottomWidth || 0).toBe(0);
+  });
+
+  it('styles feed secondary tags as lightweight underline tabs', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.subtab.backgroundColor).toBe('transparent');
+    expect(styles.subtab.borderBottomColor).toBe('transparent');
+    expect(styles.subtabActive.borderBottomColor).toBe(theme.primary);
+    expect(styles.subtabActive.backgroundColor || 'transparent').toBe('transparent');
+    expect(styles.subtabTextActive.color).toBe(theme.primary);
+    expect(styles.subtabTextActive.fontWeight).toBe('600');
   });
 
   it('lays out topic rows as full-width rows with internal padding instead of floating cards', () => {

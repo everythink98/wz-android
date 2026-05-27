@@ -31,8 +31,6 @@ export interface DeletedRecords {
 export interface ReaderSettings {
   listDensity: 'compact' | 'standard' | 'loose';
   theme: 'light' | 'dark';
-  palette: 'mint';
-  background: 'warm';
   fontScale: number;
   lineHeight: 'compact' | 'standard' | 'loose';
   contentWidth: 'narrow' | 'standard' | 'wide';
@@ -189,8 +187,6 @@ export function createEmptyReaderData(): ReaderData {
     settings: {
       listDensity: 'standard',
       theme: 'light',
-      palette: 'mint',
-      background: 'warm',
       fontScale: 1,
       lineHeight: 'standard',
       contentWidth: 'standard',
@@ -328,8 +324,6 @@ function normalizeSettings(value: unknown): ReaderSettings {
   return {
     listDensity: base.listDensity === 'compact' || base.listDensity === 'loose' ? base.listDensity : 'standard',
     theme: base.theme === 'dark' ? 'dark' : 'light',
-    palette: 'mint',
-    background: 'warm',
     fontScale,
     lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'loose' ? base.lineHeight : 'standard',
     contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'wide' ? base.contentWidth : 'standard',

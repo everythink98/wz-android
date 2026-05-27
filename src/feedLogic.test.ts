@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeSearchResponses, mergeTopics, searchLocal } from './feedLogic';
+import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeTopics, searchLocal } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -84,26 +84,6 @@ describe('Android feed logic helpers', () => {
     expect(externalA.duplicateSources).toBeUndefined();
     expect(merged[0]).not.toBe(externalA);
     expect(merged[0].duplicateSources).toEqual(['NodeSeek']);
-  });
-
-  it('keeps merged search results source-balanced for the default relevance order', () => {
-    const newestYaohuo = Array.from({ length: 4 }, (_, index) => ({
-      ...topic,
-      source: 'yaohuo' as const,
-      id: `y${index}`,
-      title: `Yaohuo ${index}`,
-      url: `https://yaohuo.me/bbs-${index}.html`,
-      createdAt: `2026-05-20T00:0${index}:00.000Z`
-    }));
-    const baseItems: Topic[] = [
-      { ...topic, source: 'nodeseek', id: 'n1', title: 'NodeSeek result', createdAt: '2026-05-19T00:00:00.000Z' },
-      { ...topic, source: 'linuxdo', id: 'l1', title: 'linux.do result', createdAt: '2026-05-18T00:00:00.000Z' },
-      { ...topic, source: 'v2ex', id: 'v1', title: 'V2EX result', createdAt: '2026-05-17T00:00:00.000Z' }
-    ];
-
-    const merged = mergeSearchResponses({ items: baseItems, errors: {} }, { items: newestYaohuo, errors: {} });
-
-    expect(merged.items.slice(0, 4).map((item) => item.source)).toEqual(['yaohuo', 'nodeseek', 'linuxdo', 'v2ex']);
   });
 
   it('keeps merged feed results source-balanced after adding yaohuo items', () => {

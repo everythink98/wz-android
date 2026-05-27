@@ -31,7 +31,6 @@ const linuxDoBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src
 const nodeSeekBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'nodeseekCookieBridge.ts'), 'utf8');
 const forumApiSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'forumApi.ts'), 'utf8');
 const yaohuoApiSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'yaohuoApi.ts'), 'utf8');
-const readerDataSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'readerData.ts'), 'utf8');
 const linuxDoCookiePluginPath = join(process.cwd(), 'android-app', 'plugins', 'withLinuxDoCookieModule.js');
 const linuxDoCookiePluginSource = existsSync(linuxDoCookiePluginPath) ? readFileSync(linuxDoCookiePluginPath, 'utf8') : '';
 
@@ -51,12 +50,6 @@ describe('Android App experience guards', () => {
     expect(forumApiSource).not.toMatch(/export (?:async )?function (?:getFeed|getCategories|getTopic|getReplies|getReply|searchTopics)[\s\S]*?serverUrl\?: string/);
     expect(yaohuoApiSource).not.toMatch(/\bserverUrl\?: string\b/);
     expect(yaohuoApiSource).not.toMatch(/\bserverFetcher\b/);
-  });
-
-  it('does not keep Android saved search data helpers', () => {
-    expect(readerDataSource).not.toContain('export function addSavedSearch');
-    expect(readerDataSource).not.toContain('export function removeSavedSearch');
-    expect(readerDataSource).not.toContain('SavedSearchRecord');
   });
 
   it('shows loading and failure states inside image preview', () => {
@@ -109,6 +102,20 @@ describe('Android App experience guards', () => {
     expect(feedScreenSource).toContain('onEndReached={active ? requestFeedLoadMore : undefined}');
     expect(feedScreenSource).toContain('shouldLoadMoreFeedFromScroll(event.nativeEvent)');
     expect(feedScreenSource).toContain('requestedFeedPageRef.current === nextPage');
+  });
+
+  it('draws consistent separators between Android feed rows at the list level', () => {
+    expect(feedScreenSource).toContain('const renderTopicSeparator');
+    expect(feedScreenSource).toContain('ItemSeparatorComponent={active ? renderTopicSeparator : undefined}');
+    expect(feedScreenSource).toContain('style={styles.topicListSeparator}');
+  });
+
+  it('uses lightweight underline states for Android feed and topic secondary tabs', () => {
+    expect((feedScreenSource.match(/variant="subtabs"/g) || []).length).toBe(2);
+    expect((topicScreenSource.match(/variant="subtabs"/g) || []).length).toBe(1);
+    expect(appControlsSource).toContain("variant?: 'pills' | 'tabs' | 'subtabs';");
+    expect(searchScreenSource).not.toContain('variant="subtabs"');
+    expect(libraryScreenSource).not.toContain('variant="subtabs"');
   });
 
   it('supports native pull-to-refresh on the Android feed list', () => {
@@ -280,6 +287,7 @@ describe('Android App experience guards', () => {
     expect(openTopicBlock).toContain('clearTopicScrollRestoreTimer();');
     expect(openTopicBlock).toContain('const restoreTopicKey = topicKey(displayDetail);');
     expect(openTopicBlock).toContain('currentTopicKeyRef.current !== restoreTopicKey');
+    expect(openTopicBlock).toContain("notify(`已恢复到上次阅读位置 ${progress.percent}%`);");
   });
 
   it('offers linux.do external search shortcuts on the Android search screen', () => {
@@ -326,7 +334,7 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('searchSort === \'time\'');
   });
 
-  it('keeps Android search management focused on recent searches and source groups', () => {
+  it('uses recent searches and source groups instead of saved-search management', () => {
     expect(searchScreenSource).toContain('最近搜索');
     expect(searchScreenSource).toContain('searchGroups');
     expect(appSource).toContain('retrySearchSource');
@@ -334,6 +342,7 @@ describe('Android App experience guards', () => {
     expect(searchScreenSource).not.toContain('onSaveSearch');
     expect(searchScreenSource).not.toContain('onRemoveSavedSearch');
     expect(searchScreenSource).not.toContain('保存搜索');
+    expect(searchScreenSource).not.toContain('删除保存搜索');
   });
 
   it('keeps recent search removal attached to the search chip instead of a separate button', () => {
@@ -354,14 +363,6 @@ describe('Android App experience guards', () => {
   it('does not pass press or submit events as search source overrides', () => {
     expect(appSource).toContain('onSearch={() => runSearch()}');
     expect(appSource).not.toContain('onSearch={runSearch}');
-  });
-
-  it('keeps saved searches as backup-compatible data instead of Android search UI', () => {
-    expect(readerDataSource).not.toContain('savedSearches: SavedSearchRecord[]');
-    expect(readerDataSource).not.toContain('deletedRecords.savedSearches');
-    expect(searchScreenSource).not.toContain('readerData.savedSearches.map');
-    expect(searchScreenSource).not.toContain('const selectSavedSearch');
-    expect(searchScreenSource).not.toContain('删除保存搜索');
   });
 
   it('shows remote search source groups before recent search chips', () => {
@@ -534,6 +535,17 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
   });
 
+  it('shows yaohuo login detail instead of hiding detected cookies behind a generic state', () => {
+    const yaohuoLoginStateBlock = appSource.match(/const yaohuoLoginState = useMemo\(\(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
+    expect(yaohuoLoginStateBlock).toContain("return '未登录';");
+    expect(yaohuoLoginStateBlock).toContain("return yaohuoCookieNames.length ? `已登录：${yaohuoCookieNames.join(', ')}` : '已登录';");
+    expect(yaohuoLoginStateBlock).toContain("return `未登录，已检测 ${yaohuoCookieNames.length} 个 Cookie：${yaohuoCookieNames.join(', ')}`;");
+    expect(moreScreenSource).toContain('value={yaohuoLoginState}');
+    expect(moreScreenSource).toContain('subtitle={yaohuoLoginState}');
+    expect(moreScreenSource).not.toContain("hasYaohuoCookie ? yaohuoLoginState : '未登录'");
+  });
+
   it('reads and clears yaohuo cookies across http, https, root, and www hosts', () => {
     const match = appSource.match(/const YAOHUO_COOKIE_URLS = \[([\s\S]*?)\];/);
     const cookieUrls = match?.[1] || '';
@@ -672,6 +684,18 @@ describe('Android App experience guards', () => {
     expect(rememberBlock).toContain("notify(summary.loggedIn ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');");
     expect(rememberBlock).not.toContain('summary.loggedIn || webLoginDetectedRef.current');
     expect(loginMessageBlock).not.toContain('setHasNodeSeekLoginCookie(true);');
+  });
+
+  it('keeps detail reading settings reachable from the topic menu', () => {
+    expect(topicScreenSource).toContain('accessibilityLabel="阅读设置"');
+    expect(topicScreenSource).toContain('onOpenReadingSettings');
+    expect(appSource).toContain('openReadingSettingsFromTopic');
+    expect(appSource).toContain('onOpenReadingSettings={openReadingSettingsFromTopic}');
+  });
+
+  it('names the followed-user library tab explicitly', () => {
+    expect(libraryScreenSource).toContain("{ value: 'users', label: '关注用户' }");
+    expect(libraryScreenSource).not.toContain("{ value: 'users', label: '用户' }");
   });
 
   it('prevents expired NodeSeek WebView login cookies from being restored', () => {
@@ -824,9 +848,8 @@ describe('Android App experience guards', () => {
 
   it('keeps Android appearance settings to light or dark with fixed forest green and Douban white', () => {
     const settingsPanelStart = moreScreenSource.indexOf('function SettingsPanel(');
-    const settingsPanelEnd = moreScreenSource.indexOf('function ChipList(');
-    const settingsPanelBlock = settingsPanelStart >= 0 && settingsPanelEnd > settingsPanelStart
-      ? moreScreenSource.slice(settingsPanelStart, settingsPanelEnd)
+    const settingsPanelBlock = settingsPanelStart >= 0
+      ? moreScreenSource.slice(settingsPanelStart)
       : '';
 
     expect(moreScreenSource).toContain('meta="字号 · 白天/黑夜 · 阅读调节"');

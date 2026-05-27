@@ -367,10 +367,7 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
       source: 'linuxdo' as const,
       id: String(category.id),
       name: String(category.name || ''),
-      slug: typeof category.slug === 'string' ? category.slug : undefined,
-      description: typeof category.description_text === 'string' ? category.description_text : typeof category.description === 'string' ? category.description : undefined,
-      parentCategoryId: category.parent_category_id ? String(category.parent_category_id) : undefined,
-      topicCount: Number(category.topic_count || category.topics_all_time || 0) || undefined
+      slug: typeof category.slug === 'string' ? category.slug : undefined
     })).filter((category) => category.id && category.name),
     errors: {}
   };

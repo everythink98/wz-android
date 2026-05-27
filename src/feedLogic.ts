@@ -1,5 +1,5 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
-import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Topic } from './types';
+import type { Category, FeedResponse, FeedSource, Reply, Topic } from './types';
 import { dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUtils';
 
 export { dateTime } from './appUtils';
@@ -122,7 +122,6 @@ export function mergeTopics(current: Topic[], incoming: Topic[]) {
   }
   return next;
 }
-
 function duplicateExternalUrlKey(topic: Topic) {
   const key = topic.url.trim().toLowerCase();
   if (!key || key.includes('/topic/') || key.includes('/t/')) {
@@ -171,16 +170,6 @@ export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): Fee
     nextCursor: base.nextCursor ?? undefined
   };
 }
-export function mergeSearchResponses(base: SearchResponse, extra: SearchResponse): SearchResponse {
-  return {
-    items: balanceTopicsBySource(sortTopicsByActivity(mergeTopics(base.items, extra.items))),
-    errors: {
-      ...(base.errors || {}),
-      ...(extra.errors || {})
-    }
-  };
-}
-
 export function mergeSettledFeedResponses(
   base: PromiseSettledResult<FeedResponse>,
   extra: PromiseSettledResult<FeedResponse>
@@ -201,28 +190,6 @@ export function mergeSettledFeedResponses(
     ? extra.value
     : { items: [], errors: { yaohuo: errorMessage(extra.reason) } };
   return mergeFeedResponses(baseData, extraData);
-}
-
-export function mergeSettledSearchResponses(
-  base: PromiseSettledResult<SearchResponse>,
-  extra: PromiseSettledResult<SearchResponse>
-): SearchResponse {
-  if (base.status === 'rejected' && isCanceledRequest(base.reason)) {
-    throw base.reason;
-  }
-  if (extra.status === 'rejected' && isCanceledRequest(extra.reason)) {
-    throw extra.reason;
-  }
-  if (base.status === 'rejected' && extra.status === 'rejected') {
-    throw base.reason;
-  }
-  const baseData = base.status === 'fulfilled'
-    ? base.value
-    : { items: [], errors: { all: errorMessage(base.reason) } };
-  const extraData = extra.status === 'fulfilled'
-    ? extra.value
-    : { items: [], errors: { yaohuo: errorMessage(extra.reason) } };
-  return mergeSearchResponses(baseData, extraData);
 }
 
 export function mergeCategories(base: Category[], extra: Category[]) {
@@ -258,27 +225,4 @@ export function mergeReplies(current: Reply[], incoming: Reply[]) {
     }
   }
   return next;
-}
-
-export function recordsToTopics(records: Record<string, { topic: Topic; savedAt: string }>) {
-  return Object.values(records)
-    .sort((left, right) => dateTime(right.savedAt) - dateTime(left.savedAt))
-    .map((record) => record.topic);
-}
-
-export function removeRecord(data: ReaderData, section: 'favorites' | 'history', topic: Topic) {
-  const key = topicKey(topic);
-  const next = { ...data[section] };
-  delete next[key];
-  return {
-    ...data,
-    [section]: next,
-    deletedRecords: {
-      ...data.deletedRecords,
-      [section]: {
-        ...data.deletedRecords[section],
-        [key]: new Date().toISOString()
-      }
-    }
-  };
 }

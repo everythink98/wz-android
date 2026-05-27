@@ -178,6 +178,7 @@ export function FeedScreen({
       onOpenTopic={onOpenTopic}
     />
   ), [onOpenTopic, readerData, styles, theme, topicListStateInput]);
+  const renderTopicSeparator = useCallback(() => <View style={styles.topicListSeparator} />, [styles]);
   const categoryItems = useMemo(
     () => feedCategoryItems(categories, feedSource),
     [categories, feedSource]
@@ -226,6 +227,7 @@ export function FeedScreen({
         ) : active && feedItems.length > 0 && !busy ? (
           <Text style={styles.endOfListText}>已经到底了</Text>
         ) : null}
+        ItemSeparatorComponent={active ? renderTopicSeparator : undefined}
         renderItem={renderTopicItem}
       />
     );
@@ -241,6 +243,7 @@ export function FeedScreen({
     onRefresh,
     refreshing,
     renderTopicItem,
+    renderTopicSeparator,
     requestFeedLoadMore,
     restoreFeedScrollPosition,
     saveFeedScrollPosition,
@@ -260,6 +263,7 @@ export function FeedScreen({
         />
         {shouldUseReadingFilter(feedSource) ? (
           <PillRail
+            variant="subtabs"
             items={feedReadingFilterItems}
             value={readingFilter}
             resetScrollKey={secondaryRailResetKey}
@@ -268,6 +272,7 @@ export function FeedScreen({
           />
         ) : (
           <PillRail
+            variant="subtabs"
             items={categoryItems}
             value={categoryFilter}
             resetScrollKey={secondaryRailResetKey}

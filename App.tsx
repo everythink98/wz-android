@@ -328,6 +328,23 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
+function yaohuoCookieMapFromHeader(cookieHeader: string) {
+  const cookies: Record<string, YaohuoNativeCookie> = {};
+  for (const setCookieHeader of buildYaohuoSetCookieHeaders(cookieHeader)) {
+    const cookiePart = setCookieHeader.split(';', 1)[0] || '';
+    const separatorIndex = cookiePart.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const name = cookiePart.slice(0, separatorIndex).trim();
+    const value = cookiePart.slice(separatorIndex + 1).trim();
+    if (name && value) {
+      cookies[name] = { name, value, domain: 'yaohuo.me' };
+    }
+  }
+  return cookies;
+}
+
 function createFeedSourceState(): FeedSourceState {
   return {
     hasMore: false,
@@ -855,13 +872,13 @@ export default function App() {
   }, [cookieNames, hasNodeSeekCookie, hasNodeSeekLoginCookie, webLoginUserId]);
 
   const yaohuoLoginState = useMemo(() => {
-    if (!hasYaohuoCookie && yaohuoCookieNames.length === 0) {
-      return '未检测到登录 Cookie';
+    if (hasYaohuoCookie) {
+      return yaohuoCookieNames.length ? `已登录：${yaohuoCookieNames.join(', ')}` : '已登录';
     }
-    if (yaohuoCookieNames.length === 0) {
-      return '已保存妖火 Cookie';
+    if (yaohuoCookieNames.length) {
+      return `未登录，已检测 ${yaohuoCookieNames.length} 个 Cookie：${yaohuoCookieNames.join(', ')}`;
     }
-    return `已检测 ${yaohuoCookieNames.length} 个 Cookie：${yaohuoCookieNames.join(', ')}`;
+    return '未登录';
   }, [hasYaohuoCookie, yaohuoCookieNames]);
 
   const activeFeedState = feedStates[feedSource];
@@ -1143,7 +1160,9 @@ export default function App() {
         notify(summary.loggedIn ? '已找到本机保存的 NodeSeek 登录 Cookie。' : '已找到本机保存的 NodeSeek 验证信息。');
       }
       if (savedYaohuoCookie) {
-        setHasYaohuoCookie(true);
+        const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(savedYaohuoCookie));
+        setHasYaohuoCookie(yaohuoSummary.loggedIn);
+        setYaohuoCookieNames(yaohuoSummary.names);
         setYaohuoLoginCookieHeader(savedYaohuoCookie);
         notify('已找到本机保存的妖火 Cookie。');
       }
@@ -1336,9 +1355,13 @@ export default function App() {
     const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
     if (!cookieHeader) {
       setYaohuoLoginCookieHeader('');
+      setYaohuoCookieNames([]);
       return;
     }
     setYaohuoLoginCookieHeader(cookieHeader);
+    const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader));
+    setHasYaohuoCookie(summary.loggedIn);
+    setYaohuoCookieNames(summary.names);
     const headers = buildYaohuoSetCookieHeaders(cookieHeader);
     for (const url of YAOHUO_COOKIE_URLS) {
       for (const header of headers) {
@@ -2119,6 +2142,7 @@ export default function App() {
             return;
           }
           topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false });
+          notify(`已恢复到上次阅读位置 ${progress.percent}%`);
         }, 180);
       }
       if (nocache) {
@@ -2766,12 +2790,14 @@ export default function App() {
       const summary = summarizeYaohuoCookies(typedCookies);
       const cookieHeader = buildYaohuoCookieHeader(typedCookies);
       setYaohuoCookieNames(summary.names);
-      if (!canStoreYaohuoCookieHeader(typedCookies) || !cookieHeader) {
+      if (!summary.loggedIn || !canStoreYaohuoCookieHeader(typedCookies) || !cookieHeader) {
+        setHasYaohuoCookie(false);
         notify('没有检测到明确的妖火登录 Cookie。请确认已经登录后再试。');
         return;
       }
       const yaohuoLoginCheck = await checkYaohuoLoginDirect({ yaohuoCookie: cookieHeader });
       if (yaohuoLoginCheck.loginRequired || !yaohuoLoginCheck.ok) {
+        setHasYaohuoCookie(false);
         if (yaohuoLoginCheck.reason === 'expired') {
           await clearYaohuoLoginState();
         }
@@ -2968,6 +2994,14 @@ export default function App() {
     notify(message);
     changeLinuxDoPanel(true);
   }, [changeLinuxDoPanel, closeYaohuoLoginPanel, notify]);
+
+  const openReadingSettingsFromTopic = useCallback(() => {
+    setShowLoginPanel(false);
+    closeYaohuoLoginPanel();
+    closeLinuxDoPanel();
+    setShowSettingsPanel(true);
+    changeScreen('more');
+  }, [changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel]);
 
   const runLinuxDoRequest = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
@@ -3706,6 +3740,7 @@ export default function App() {
       onYaohuoVote={voteYaohuo}
       onLoadMoreReplies={loadMoreReplies}
       onOpenOriginal={openExternalUrl}
+      onOpenReadingSettings={openReadingSettingsFromTopic}
       onReplyComposerOpenChange={toggleReplyComposer}
       onReplyContentChange={setReplyContent}
       onReplyFilterChange={setReplyFilter}
@@ -3719,7 +3754,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, voteYaohuo, yaohuoReplyTarget]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, voteYaohuo, yaohuoReplyTarget]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen

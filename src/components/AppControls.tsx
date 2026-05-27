@@ -25,13 +25,14 @@ export function PillRail({
   onChange
 }: {
   items: Array<{ value: string; label: string }>;
-  variant?: 'pills' | 'tabs';
+  variant?: 'pills' | 'tabs' | 'subtabs';
   value: string;
   resetScrollKey?: string | number;
   styles: ReturnType<typeof createStyles>;
   onChange: (value: string) => void;
 }) {
   const isTabs = variant === 'tabs';
+  const isSubtabs = variant === 'subtabs';
   const scrollRef = useRef<ScrollView>(null);
   useEffect(() => {
     if (resetScrollKey !== undefined) {
@@ -39,17 +40,17 @@ export function PillRail({
     }
   }, [resetScrollKey]);
   return (
-    <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
+    <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail}>
       {items.map((item) => (
         <Pressable
           hitSlop={TOUCH_HIT_SLOP}
           key={`${item.value}-${item.label}`}
           accessibilityRole="button"
           accessibilityState={{ selected: value === item.value }}
-          style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : [styles.pill, value === item.value && styles.pillActive]}
+          style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : isSubtabs ? [styles.subtab, value === item.value && styles.subtabActive] : [styles.pill, value === item.value && styles.pillActive]}
           onPress={() => pressWithFeedback(() => onChange(item.value))}
         >
-          <Text style={isTabs ? [styles.tabText, value === item.value && styles.tabTextActive] : [styles.pillText, value === item.value && styles.pillTextActive]}>{item.label}</Text>
+          <Text style={isTabs ? [styles.tabText, value === item.value && styles.tabTextActive] : isSubtabs ? [styles.subtabText, value === item.value && styles.subtabTextActive] : [styles.pillText, value === item.value && styles.pillTextActive]}>{item.label}</Text>
         </Pressable>
       ))}
     </ScrollView>
