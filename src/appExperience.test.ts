@@ -9,6 +9,7 @@ const topicCardSource = readFileSync(join(process.cwd(), 'android-app', 'src', '
 const imagePreviewModalSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'ImagePreviewModal.tsx'), 'utf8');
 const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
+const searchListItemsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'searchListItems.ts'), 'utf8');
 const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'LibraryScreen.tsx'), 'utf8');
 const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
 const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
@@ -169,7 +170,7 @@ describe('Android App experience guards', () => {
     const runSearchBlock = appSource.match(/const runSearch = useCallback\(async \(sourceOverride\?: Source\) => \{([\s\S]*?)\n  \}, \[addRecentSearch/)?.[1] || '';
     const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
     const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
-    const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[loadNodeSeekCookieForSource/)?.[1] || '';
+    const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
 
     expect(loadFeedBlock).toContain('setFeedBusy(true);');
     expect(loadFeedBlock).toContain('setFeedBusy(false);');
@@ -308,10 +309,12 @@ describe('Android App experience guards', () => {
 
   it('offers category filters for Android search results like the mobile web page', () => {
     expect(searchScreenSource).toContain('searchCategoryOptions');
-    expect(searchScreenSource).toContain('searchResultCategoryKey(item)');
+    expect(searchListItemsSource).toContain('searchResultCategoryKey(item)');
     expect(searchScreenSource).toContain('setSearchCategoryFilter');
+    expect(searchScreenSource).toContain('filterSearchResultsByCategory');
     expect(searchScreenSource).toContain('filteredSearchResults');
-    expect(searchScreenSource).toContain('data={showRemoteGroups ? [] : filteredSearchResults}');
+    expect(searchScreenSource).toContain('buildSearchListItems');
+    expect(searchScreenSource).toContain('data={listItems}');
   });
 
   it('resets Android search category filters when the search context changes', () => {
@@ -355,7 +358,7 @@ describe('Android App experience guards', () => {
   });
 
   it('updates local search result highlighting when the query changes', () => {
-    const block = searchScreenSource.match(/const renderTopicItem = useCallback<ListRenderItem<Topic>>\(\([\s\S]*?\n  \), \[([\s\S]*?)\]\);/)?.[1] || '';
+    const block = searchScreenSource.match(/const renderTopicCard = useCallback\(\(item: Topic\) => \([\s\S]*?\n  \), \[([\s\S]*?)\]\);/)?.[1] || '';
 
     expect(block).toContain('query');
   });
@@ -366,26 +369,30 @@ describe('Android App experience guards', () => {
   });
 
   it('shows remote search source groups before recent search chips', () => {
-    const groupIndex = searchScreenSource.indexOf('{showRemoteGroups ? (');
+    const groupIndex = searchScreenSource.indexOf('data={listItems}');
     const recentListIndex = searchScreenSource.indexOf('<Text style={styles.meta}>最近搜索</Text>');
+    const footerIndex = searchScreenSource.indexOf('ListFooterComponent={footer}');
 
     expect(groupIndex).toBeGreaterThan(-1);
     expect(recentListIndex).toBeGreaterThan(-1);
-    expect(groupIndex).toBeLessThan(recentListIndex);
+    expect(footerIndex).toBeGreaterThan(-1);
+    expect(groupIndex).toBeLessThan(footerIndex);
+    expect(footerIndex).toBeGreaterThan(recentListIndex);
   });
 
   it('does not add a second empty result message below remote search groups', () => {
-    const listEmptyBlock = searchScreenSource.match(/ListEmptyComponent=\{[\s\S]*?\}\s*renderItem=\{renderTopicItem\}/)?.[0] || '';
+    const listEmptyBlock = searchScreenSource.match(/ListEmptyComponent=\{[\s\S]*?\}\s*renderItem=\{renderSearchListItem\}/)?.[0] || '';
 
     expect(listEmptyBlock).toContain('showRemoteGroups ? null : busy && query.trim()');
   });
 
   it('adds a load-more action to remote search source groups', () => {
-    expect(searchScreenSource).toContain('hasMore?: boolean;');
-    expect(searchScreenSource).toContain('nextPage?: number | null;');
-    expect(searchScreenSource).toContain('loadingMore?: boolean;');
+    expect(searchListItemsSource).toContain('hasMore?: boolean;');
+    expect(searchListItemsSource).toContain('nextPage?: number | null;');
+    expect(searchListItemsSource).toContain('loadingMore?: boolean;');
     expect(searchScreenSource).toContain('onLoadMoreSearchSource: (source: Source, page: number) => void;');
-    expect(searchScreenSource).toContain("label={group.loadingMore ? '加载中...' : `加载更多 ${group.label}`}");
+    expect(searchScreenSource).toContain("label={item.group.loadingMore ? '加载中...' : `加载更多 ${item.group.label}`}");
+    expect(searchListItemsSource).toContain("type: 'groupLoadMore'");
     expect(appSource).toContain('const loadMoreSearchSource = useCallback');
     expect(appSource).toContain('onLoadMoreSearchSource={loadMoreSearchSource}');
   });
@@ -530,6 +537,14 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
   });
 
+  it('does not mark saved yaohuo session cookies as logged in while loading sources', () => {
+    const loadCookieBlock = appSource.match(/const loadYaohuoCookieForSource = useCallback\(async \(source: FeedSource \| Source\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+
+    expect(loadCookieBlock).toContain("summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookie || ''))");
+    expect(loadCookieBlock).toContain('setHasYaohuoCookie(summary.loggedIn);');
+    expect(loadCookieBlock).not.toContain('setHasYaohuoCookie(Boolean(cookie));');
+  });
+
   it('opens the yaohuo signed-in page instead of the login form when cookies are saved', () => {
     expect(moreScreenSource).toContain("const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';");
     expect(moreScreenSource).toContain('uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
@@ -607,7 +622,7 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('showLinuxDoVerification');
     expect(appSource).toContain('isLinuxDoCloudflareError(error)');
     expect(topicScreenSource).toContain('label="去验证"');
-    expect(appSource).toContain('await openTopic(pendingTopic, true);');
+    expect(appSource).not.toContain('await openTopic(pendingTopic, true);');
   });
 
   it('sends NodeSeek Cloudflare feed errors to the NodeSeek verification panel', () => {
@@ -948,6 +963,21 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('clearTimeout(timeout)');
   });
 
+  it('does not reopen the linux.do verification loading state after the page is visible', () => {
+    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+
+    expect(linuxDoPanelBlock).toContain('linuxDoWebViewReadyRef');
+    expect(linuxDoPanelBlock).toContain('markLinuxDoPageReady');
+    expect(linuxDoPanelBlock).toContain('onLoadProgress');
+    expect(linuxDoPanelBlock).toContain('event.nativeEvent.progress >= 0.8');
+    expect(linuxDoPanelBlock).toContain('if (!linuxDoWebViewReadyRef.current) {');
+    expect(linuxDoPanelBlock).toContain('onSetLoadingLinuxDoPage(true);');
+  });
+
+  it('keeps login modal controls usable while a WebView loading badge is visible', () => {
+    expect(moreScreenSource).toContain('<View pointerEvents="none" style={styles.loading}>');
+  });
+
   it('opens external login and verification pages as full-screen WebView modals', () => {
     expect(moreScreenSource).toContain('LoginWebViewModal');
     expect(moreScreenSource).toContain('visible={showLoginPanel}');
@@ -974,7 +1004,7 @@ describe('Android App experience guards', () => {
   it('clears stale linux.do verification errors after a successful page load', () => {
     const block = moreScreenSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
 
-    expect(block).toContain('onSetLoadingLinuxDoPage(false);');
+    expect(block).toContain('markLinuxDoPageReady();');
     expect(block).toContain("if (!('code' in event.nativeEvent)) {");
     expect(block).toContain("onSetLinuxDoWebViewError('');");
   });
@@ -993,6 +1023,22 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('linuxDoWebViewRef.current?.stopLoading()');
     expect(appSource).toContain('onShowLinuxDoPanelChange={changeLinuxDoPanel}');
     expect(moreScreenSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
+  });
+
+  it('clears stale linux.do login cookies after expired write actions while preserving verification', () => {
+    const runLinuxDoBlock = appSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(runLinuxDoBlock).toContain('const remainingAccess = await clearLinuxDoAccess();');
+    expect(runLinuxDoBlock).toContain('setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));');
+    expect(runLinuxDoBlock).toContain("summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names");
+  });
+
+  it('resets linux.do verified state when status detection finds no cookie', () => {
+    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!cookieHeader\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+
+    expect(noCookieBlock).toContain('setHasLinuxDoClearance(false);');
+    expect(noCookieBlock).toContain('setHasLinuxDoLogin(false);');
   });
 
   it('reuses the linux.do verification WebView user agent for local requests', () => {

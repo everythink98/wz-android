@@ -139,7 +139,6 @@ export function ExpandablePanel({
   const Icon = icon;
   const StateIcon = panelExpanded ? ChevronUp : ChevronDown;
   const bodyStyle = useAnimatedStyle(() => ({
-    maxHeight: withTiming(panelExpanded ? 6000 : 0, { duration: 210 }),
     opacity: withTiming(panelExpanded ? 1 : 0, { duration: 160 }),
     transform: [{ translateY: withTiming(panelExpanded ? 0 : -4, { duration: 160 }) }]
   }), [panelExpanded]);
@@ -173,7 +172,7 @@ export function ExpandablePanel({
           <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
         </View>
       </Pressable>
-      <Animated.View pointerEvents={panelExpanded ? 'auto' : 'none'} style={[styles.expandableBody, bodyStyle]}>
+      <Animated.View pointerEvents={panelExpanded ? 'auto' : 'none'} style={[styles.expandableBody, { display: panelExpanded ? 'flex' : 'none' }, bodyStyle]}>
         {children}
       </Animated.View>
     </View>

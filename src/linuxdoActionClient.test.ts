@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { runLinuxDoAction } from './linuxdoActionClient';
+import { checkLinuxDoLoginAccess, runLinuxDoAction } from './linuxdoActionClient';
 import { buildLinuxDoLikeRequest } from './linuxdoActions';
 
 describe('linux.do action client', () => {
@@ -88,6 +88,41 @@ describe('linux.do action client', () => {
     })).rejects.toMatchObject({
       source: 'linuxdo',
       reason: 'permission'
+    });
+  });
+
+  it('checks linux.do login access with the saved login cookies', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ csrf: 'csrf-token' }), {
+      headers: { 'content-type': 'application/json' }
+    }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+      userAgent: 'LinuxDo WebView UA',
+      fetcher
+    });
+
+    expect(result).toEqual({ ok: true, message: '登录可用' });
+    expect(fetcher).toHaveBeenCalledWith('https://linux.do/session/csrf', expect.objectContaining({
+      headers: expect.objectContaining({
+        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
+        'User-Agent': 'LinuxDo WebView UA'
+      })
+    }));
+  });
+
+  it('marks linux.do login expired when CSRF access is unauthorized', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请先登录'] }), { status: 401 }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      loginRequired: true,
+      message: 'linux.do 登录已失效，请重新登录'
     });
   });
 });

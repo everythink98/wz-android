@@ -109,7 +109,7 @@ import {
   buildLinuxDoReplyRequest,
   type LinuxDoActionRequest
 } from './src/linuxdoActions';
-import { runLinuxDoAction } from './src/linuxdoActionClient';
+import { checkLinuxDoLoginAccess, runLinuxDoAction } from './src/linuxdoActionClient';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   buildLinuxDoCookieHeader,
@@ -179,6 +179,8 @@ import {
 } from './src/yaohuoApi';
 import type { Fetcher } from './src/request';
 import { filterRepliesByQuery } from './src/androidFeatureHelpers';
+import { safeFileName } from './src/backupFiles';
+import { buildLocalStatusResult } from './src/statusLogic';
 import { TabBarIcon, tabNavItems } from './src/components/NavBar';
 import { triggerPressFeedback } from './src/components/AppControls';
 import { ImagePreviewModal } from './src/components/ImagePreviewModal';
@@ -187,9 +189,10 @@ import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedMore
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
 import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, Screen, YaohuoReplyTarget } from './src/appTypes';
 import { LibraryScreen } from './src/screens/LibraryScreen';
-import { SearchScreen, type SearchGroup, type SearchScope } from './src/screens/SearchScreen';
+import { SearchScreen, type SearchScope } from './src/screens/SearchScreen';
 import { UserScreen } from './src/screens/UserScreen';
 import { nodeSeekUserIdFromValue, topicWithAuthorFallback } from './src/userNavigation';
+import type { SearchGroup } from './src/searchListItems';
 
 type NodeSeekBrowserFetchRequest = {
   id: number;
@@ -415,11 +418,6 @@ function searchHistoryFromRaw(raw: string | null) {
   } catch {
     return [];
   }
-}
-
-function safeFileName(value: string, extension: string) {
-  const clean = value.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 72);
-  return `${clean || 'forum-reader'}-${Date.now()}.${extension}`;
 }
 
 export default function App() {
@@ -1188,7 +1186,8 @@ export default function App() {
       return undefined;
     }
     const cookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    setHasYaohuoCookie(Boolean(cookie));
+    const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookie || ''));
+    setHasYaohuoCookie(summary.loggedIn);
     return cookie || undefined;
   }, []);
 
@@ -2853,6 +2852,7 @@ export default function App() {
       const cookieHeader = buildLinuxDoCookieHeader(cookies);
       setLinuxDoCookieNames(summary.names);
       if (!cookieHeader) {
+        setHasLinuxDoClearance(false);
         setHasLinuxDoLogin(false);
         notify('没有检测到 linux.do 登录或验证信息；匿名阅读仍可使用。');
         return;
@@ -2862,31 +2862,13 @@ export default function App() {
       setHasLinuxDoLogin(summary.loggedIn);
       setLinuxDoWebViewError('');
       notify(summary.loggedIn ? 'linux.do 登录信息已保存在本机。' : 'linux.do 验证信息已保存在本机。');
-      const pendingTopic = pendingLinuxDoTopicRef.current;
       pendingLinuxDoTopicRef.current = null;
-      if (pendingTopic) {
-        const returnScreen = topicReturnScreenRef.current;
-        const backStack = [...topicBackStackRef.current];
-        const retryTopicKey = topicKey(pendingTopic);
-        const hasPendingTopicScreen = Boolean(selectedTopic && topicKey(selectedTopic) === retryTopicKey);
-        if (hasPendingTopicScreen) {
-          reopenExistingTopicScreenRef.current = true;
-          if (navigationRef.isReady() && navigationRef.canGoBack()) {
-            skipNextNavigationSyncRef.current = true;
-            navigationRef.goBack();
-          }
-          setScreen('topic');
-        }
-        await openTopic(pendingTopic, true);
-        topicReturnScreenRef.current = returnScreen;
-        topicBackStackRef.current = backStack;
-      }
     } catch (error) {
       notify(errorMessage(error));
     } finally {
       setChecking(false);
     }
-  }, [linuxDoWebViewUserAgent, notify, openTopic, selectedTopic, waitForLinuxDoClearance]);
+  }, [linuxDoWebViewUserAgent, notify, waitForLinuxDoClearance]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();
@@ -3030,7 +3012,10 @@ export default function App() {
       return result ?? true;
     } catch (error) {
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
+        const remainingAccess = await clearLinuxDoAccess();
+        setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));
         setHasLinuxDoLogin(false);
+        setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names);
         showLinuxDoLogin(errorMessage(error));
         return false;
       }
@@ -3341,10 +3326,15 @@ export default function App() {
     try {
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
       const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
-      const linuxDoAccess = await loadLinuxDoAccess();
-      const access = linuxDoAccessSummary(linuxDoAccess);
-      setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
-      setHasLinuxDoLogin(access.loggedIn);
+      let linuxDoAccess = await loadLinuxDoAccess();
+      let access = linuxDoAccessSummary(linuxDoAccess);
+      const linuxDoLoginPromise = linuxDoAccess?.cookieHeader && access.loggedIn
+        ? checkLinuxDoLoginAccess({
+          cookieHeader: linuxDoAccess.cookieHeader,
+          userAgent: linuxDoAccess.userAgent || linuxDoWebViewUserAgentRef.current,
+          signal: controller.signal
+        })
+        : Promise.resolve(undefined);
       const yaohuoStatusPromise = yaohuoCookie
         ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
@@ -3360,49 +3350,55 @@ export default function App() {
         }),
         getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
         getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal }),
-        yaohuoStatusPromise
+        yaohuoStatusPromise,
+        linuxDoLoginPromise
       ] as const);
       const yaohuoCheck = checks[3];
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
       const yaohuoMessage = yaohuoCheck.status === 'fulfilled'
         ? (yaohuoOk ? '登录可用' : yaohuoCheck.value.message || '未登录')
         : errorMessage(yaohuoCheck.reason);
-      const status = {
-        nodeseek: checks[0].status === 'fulfilled',
-        v2ex: checks[1].status === 'fulfilled',
-        linuxdo: checks[2].status === 'fulfilled',
-        yaohuo: yaohuoOk
-      };
-      setHealthDetails([
-        {
-          label: 'NodeSeek',
-          ok: status.nodeseek,
-          message: checks[0].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[0].reason)
+      const linuxDoLogin = checks[4].status === 'fulfilled' ? checks[4].value : undefined;
+      if (linuxDoLogin?.loginRequired) {
+        linuxDoAccess = await clearLinuxDoAccess();
+        access = linuxDoAccessSummary(linuxDoAccess);
+      }
+      const result = buildLocalStatusResult({
+        sourceChecks: {
+          nodeseek: {
+            ok: checks[0].status === 'fulfilled',
+            message: checks[0].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[0].reason)
+          },
+          v2ex: {
+            ok: checks[1].status === 'fulfilled',
+            message: checks[1].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[1].reason)
+          },
+          linuxdo: {
+            ok: checks[2].status === 'fulfilled',
+            message: checks[2].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[2].reason)
+          },
+          yaohuo: {
+            ok: yaohuoOk,
+            message: yaohuoMessage
+          }
         },
-        {
-          label: 'V2EX',
-          ok: status.v2ex,
-          message: checks[1].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[1].reason)
-        },
-        {
-          label: 'linux.do',
-          ok: status.linuxdo,
-          message: checks[2].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[2].reason)
-        },
-        {
-          label: '妖火',
-          ok: status.yaohuo,
-          message: yaohuoMessage
-        },
-        {
-          label: 'linux.do 登录',
-          ok: status.linuxdo,
-          message: access.loggedIn ? `已登录 ${access.savedAt || ''}` : access.hasClearance ? `已验证 ${access.savedAt || ''}` : '匿名可用'
-        }
-      ]);
-      const sourceStatus = feedSources.map((source) => `${sourceLabel(source)} ${status[source] ? '可用' : '不可用'}`).join(' · ');
-      const linuxDoText = access.loggedIn ? `linux.do：已登录 ${access.savedAt || ''}` : access.hasClearance ? `linux.do：已验证 ${access.savedAt || ''}` : 'linux.do：匿名可用';
-      setHealthSummary(`${sourceStatus} · ${linuxDoText}`);
+        linuxDoAccess: access,
+        linuxDoLogin
+      });
+      const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
+      if (yaohuoExpired) {
+        await clearYaohuoLoginState();
+      }
+      setHasYaohuoCookie(result.hasYaohuoLogin);
+      setYaohuoCookieNames(yaohuoExpired ? [] : summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || '')).names);
+      if (!yaohuoCookie || result.hasYaohuoLogin) {
+        setYaohuoLoginCookieHeader(yaohuoCookie || '');
+      }
+      setHasLinuxDoClearance(result.hasLinuxDoClearance);
+      setHasLinuxDoLogin(result.hasLinuxDoLogin);
+      setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names);
+      setHealthDetails(result.details);
+      setHealthSummary(result.summary);
       notify('状态已更新');
     } catch (error) {
       if (!isCanceledRequest(error)) {
@@ -3413,7 +3409,7 @@ export default function App() {
         setStatusBusy(false);
       }
     }
-  }, [loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify]);
+  }, [clearYaohuoLoginState, loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {

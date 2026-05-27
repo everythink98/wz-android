@@ -4,7 +4,15 @@ import { Search, X } from 'lucide-react-native';
 import type { FeedSource, Source, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
 import type { SearchSort } from '../feedLogic';
-import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
+import { linuxDoExternalSearchItems } from '../appUtils';
+import {
+  buildSearchListItems,
+  filterSearchGroupsByCategory,
+  filterSearchResultsByCategory,
+  searchCategoryOptions,
+  type SearchGroup,
+  type SearchListItem
+} from '../searchListItems';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, ExpandablePanel, IconButton, LoadingState, PillRail } from '../components/AppControls';
@@ -12,22 +20,6 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 export type SearchScope = 'remote' | 'local';
-
-export type SearchGroup = {
-  source: Source;
-  label: string;
-  items: Topic[];
-  error?: string;
-  loading?: boolean;
-  loadingMore?: boolean;
-  hasMore?: boolean;
-  nextPage?: number | null;
-};
-
-function searchResultCategoryKey(item: Topic) {
-  const category = item.categoryId || item.category?.replace(/^#/, '');
-  return category ? `${item.source}:${category}` : '';
-}
 
 export function SearchScreen({
   busy,
@@ -78,8 +70,8 @@ export function SearchScreen({
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
 }) {
-  const listRef = useRef<FlatList<Topic>>(null);
-  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
+  const listRef = useRef<FlatList<SearchListItem>>(null);
+  const renderTopicCard = useCallback((item: Topic) => (
     <MemoizedTopicCard
       highlightQuery={query}
       readerState={getTopicListItemState(readerData, item, topicListStateInput)}
@@ -116,81 +108,14 @@ export function SearchScreen({
       [source]: expanded
     }));
   }, []);
-  const searchCategoryOptions = useMemo(() => {
-    const counts = new Map<string, { label: string; count: number }>();
-    for (const item of results) {
-      const key = searchResultCategoryKey(item);
-      if (!key || !item.category) {
-        continue;
-      }
-      const current = counts.get(key);
-      counts.set(key, {
-        label: `${sourceLabel(item.source)} · ${item.category}`,
-        count: (current?.count || 0) + 1
-      });
-    }
-    return [...counts.entries()].map(([value, item]) => ({
-      value,
-      label: `${item.label} ${item.count}`
-    }));
-  }, [results]);
+  const searchCategoryItems = useMemo(() => searchCategoryOptions(results), [results]);
   useEffect(() => {
-    if (searchCategoryFilter !== 'all' && !searchCategoryOptions.some((item) => item.value === searchCategoryFilter)) {
+    if (searchCategoryFilter !== 'all' && !searchCategoryItems.some((item) => item.value === searchCategoryFilter)) {
       setSearchCategoryFilter('all');
     }
-  }, [searchCategoryFilter, searchCategoryOptions]);
-  const filteredSearchResults = useMemo(() => (
-    searchCategoryFilter === 'all'
-      ? results
-      : results.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
-  ), [results, searchCategoryFilter]);
-  const visibleSearchGroups = useMemo(() => searchGroups.map((group) => ({
-    ...group,
-    items: searchCategoryFilter === 'all'
-      ? group.items
-      : group.items.filter((item) => searchResultCategoryKey(item) === searchCategoryFilter)
-  })), [searchCategoryFilter, searchGroups]);
-  const renderedSearchGroups = useMemo(() => visibleSearchGroups.map((group) => (
-    <ExpandablePanel
-      defaultExpanded
-      key={group.source}
-      title={group.label}
-      meta={group.loading ? '搜索中' : group.error ? '读取失败' : `${group.items.length} 条${group.hasMore ? ' · 可继续加载' : ''}`}
-      expanded={expandedSearchGroups[group.source] ?? true}
-      styles={styles}
-      theme={theme}
-      onExpandedChange={(expanded) => toggleSearchGroup(group.source, expanded)}
-    >
-      {group.error ? (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{group.error}</Text>
-          <AppButton label={`重试 ${group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(group.source)} />
-        </View>
-      ) : null}
-      {group.loading ? <LoadingState text={`${group.label} 搜索中...`} styles={styles} theme={theme} /> : null}
-      {group.items.map((item) => (
-        <MemoizedTopicCard
-          key={topicKey(item)}
-          highlightQuery={query}
-          readerState={getTopicListItemState(readerData, item, topicListStateInput)}
-          styles={styles}
-          theme={theme}
-          topic={item}
-          onOpenTopic={onOpenTopic}
-        />
-      ))}
-      {!group.loading && !group.error && !group.items.length ? <EmptyText text="这个来源没有结果" styles={styles} /> : null}
-      {!group.loading && !group.error && group.hasMore && group.nextPage ? (
-        <AppButton
-          label={group.loadingMore ? '加载中...' : `加载更多 ${group.label}`}
-          variant="ghost"
-          styles={styles}
-          disabled={busy || group.loadingMore}
-          onPress={() => onLoadMoreSearchSource(group.source, group.nextPage || 1)}
-        />
-      ) : null}
-    </ExpandablePanel>
-  )), [busy, expandedSearchGroups, onLoadMoreSearchSource, onOpenTopic, onRetrySearchSource, query, readerData, styles, theme, toggleSearchGroup, topicListStateInput, visibleSearchGroups]);
+  }, [searchCategoryFilter, searchCategoryItems]);
+  const filteredSearchResults = useMemo(() => filterSearchResultsByCategory(results, searchCategoryFilter), [results, searchCategoryFilter]);
+  const visibleSearchGroups = useMemo(() => filterSearchGroupsByCategory(searchGroups, searchCategoryFilter), [searchCategoryFilter, searchGroups]);
   const linuxDoExternalItems = useMemo(() => (
     scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
       ? linuxDoExternalSearchItems(query)
@@ -198,6 +123,72 @@ export function SearchScreen({
   ), [query, scope, searchSource]);
   const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
   const showSearchSort = scope === 'remote' && searchSource === 'v2ex';
+  const listItems = useMemo(() => buildSearchListItems({
+    busy,
+    expandedGroups: expandedSearchGroups,
+    filteredResults: filteredSearchResults,
+    groups: visibleSearchGroups,
+    query,
+    remote: showRemoteGroups
+  }), [busy, expandedSearchGroups, filteredSearchResults, query, showRemoteGroups, visibleSearchGroups]);
+  const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
+    if (item.type === 'topic') {
+      return renderTopicCard(item.topic);
+    }
+    if (item.type === 'groupHeader') {
+      return (
+        <ExpandablePanel
+          defaultExpanded
+          title={item.group.label}
+          meta={item.meta}
+          expanded={item.expanded}
+          styles={styles}
+          theme={theme}
+          onExpandedChange={(expanded) => toggleSearchGroup(item.group.source, expanded)}
+        >
+          {null}
+        </ExpandablePanel>
+      );
+    }
+    if (item.type === 'groupError') {
+      return (
+        <View style={styles.errorBox}>
+          <Text style={styles.errorText}>{item.group.error}</Text>
+          <AppButton label={`重试 ${item.group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(item.group.source)} />
+        </View>
+      );
+    }
+    if (item.type === 'groupLoading') {
+      return <LoadingState text={`${item.group.label} 搜索中...`} styles={styles} theme={theme} />;
+    }
+    if (item.type === 'groupEmpty') {
+      return <EmptyText text="这个来源没有结果" styles={styles} />;
+    }
+    if (item.type === 'groupLoadMore') {
+      return (
+        <AppButton
+          label={item.group.loadingMore ? '加载中...' : `加载更多 ${item.group.label}`}
+          variant="ghost"
+          styles={styles}
+          disabled={busy || item.group.loadingMore}
+          onPress={() => onLoadMoreSearchSource(item.group.source, item.page)}
+        />
+      );
+    }
+    return <EmptyText text={item.text} styles={styles} />;
+  }, [busy, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme, toggleSearchGroup]);
+  const keySearchListItem = useCallback((item: SearchListItem) => {
+    if (item.type === 'topic') {
+      return `topic:${item.groupSource || item.topic.source}:${topicKey(item.topic)}`;
+    }
+    if (item.type === 'groupHeader') {
+      return `${item.group.source}:header`;
+    }
+    if (item.type === 'empty') {
+      return 'empty';
+    }
+    return `${item.group.source}:${item.type}`;
+  }, []);
   useEffect(() => {
     if (scrollToTopSignal > 0) {
       listRef.current?.scrollToOffset({ offset: 0, animated: true });
@@ -256,9 +247,9 @@ export function SearchScreen({
           onChange={(value) => onSortChange(value as SearchSort)}
         />
       ) : null}
-      {searchCategoryOptions.length ? (
+      {searchCategoryItems.length ? (
         <PillRail
-          items={[{ value: 'all', label: '分类全部' }, ...searchCategoryOptions]}
+          items={[{ value: 'all', label: '分类全部' }, ...searchCategoryItems]}
           value={searchCategoryFilter}
           styles={styles}
           onChange={setSearchCategoryFilter}
@@ -274,11 +265,11 @@ export function SearchScreen({
           </View>
         </View>
       ) : null}
-      {showRemoteGroups ? (
-        <View style={styles.stack}>
-          {visibleSearchGroups.length ? renderedSearchGroups : <EmptyText text={busy ? '正在搜索...' : '暂无搜索结果'} styles={styles} />}
-        </View>
-      ) : null}
+    </View>
+  );
+
+  const footer = (
+    <View style={styles.stack}>
       {recentSearches.length ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>最近搜索</Text>
@@ -310,15 +301,16 @@ export function SearchScreen({
       ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.contentInner}
-      data={showRemoteGroups ? [] : filteredSearchResults}
-      keyExtractor={topicKey}
+      data={listItems}
+      keyExtractor={keySearchListItem}
       keyboardShouldPersistTaps="handled"
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
+      ListFooterComponent={footer}
       ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()
         ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
         : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
-      renderItem={renderTopicItem}
+      renderItem={renderSearchListItem}
     />
   );
 }

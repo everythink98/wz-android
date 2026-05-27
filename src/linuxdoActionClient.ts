@@ -147,3 +147,48 @@ export async function runLinuxDoAction({
   }
   return data;
 }
+
+export async function checkLinuxDoLoginAccess({
+  cookieHeader,
+  fetcher = fetch,
+  signal,
+  timeoutMs,
+  userAgent
+}: {
+  cookieHeader: string;
+  fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  userAgent?: string;
+}) {
+  const cleanCookie = cookieHeader.trim();
+  if (!cleanCookie || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(cleanCookie))) {
+    return {
+      ok: false,
+      loginRequired: true,
+      message: 'linux.do 登录已失效，请重新登录'
+    };
+  }
+  try {
+    await getCsrfToken({ cookieHeader: cleanCookie, fetcher, signal, timeoutMs, userAgent });
+    return {
+      ok: true,
+      message: '登录可用'
+    };
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+    if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
+      return {
+        ok: false,
+        loginRequired: true,
+        message: 'linux.do 登录已失效，请重新登录'
+      };
+    }
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : 'linux.do 登录检查失败'
+    };
+  }
+}

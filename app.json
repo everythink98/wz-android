@@ -13,6 +13,9 @@
     "android": {
       "package": "com.wz.reader",
       "versionCode": 3,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
@@ -20,7 +23,6 @@
     },
     "plugins": [
       "./plugins/withLinuxDoCookieModule",
-      "./plugins/withAndroidCleartextTraffic",
       "expo-secure-store"
     ]
   }

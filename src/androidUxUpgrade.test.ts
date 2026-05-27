@@ -6,6 +6,7 @@ const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'u
 const appControlsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'AppControls.tsx'), 'utf8');
 const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
+const searchListItemsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'searchListItems.ts'), 'utf8');
 const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
 const packageSource = readFileSync(join(process.cwd(), 'android-app', 'package.json'), 'utf8');
 const babelSource = readFileSync(join(process.cwd(), 'android-app', 'babel.config.js'), 'utf8');
@@ -105,19 +106,16 @@ describe('Android App UX upgrade guards', () => {
     expect(goBackFromUserBlock).toContain('runAfterNavigationInteractions(restoreReturnTopic);');
   });
 
-  it('keeps linux.do verification retry from changing the existing topic return path', () => {
+  it('keeps linux.do verification checks from auto-returning to the old topic', () => {
     const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(checkLinuxDoCookieBlock).toContain('const returnScreen = topicReturnScreenRef.current;');
-    expect(checkLinuxDoCookieBlock).toContain('const backStack = [...topicBackStackRef.current];');
-    expect(checkLinuxDoCookieBlock).toContain('const retryTopicKey = topicKey(pendingTopic);');
-    expect(checkLinuxDoCookieBlock).toContain('const hasPendingTopicScreen = Boolean(selectedTopic && topicKey(selectedTopic) === retryTopicKey);');
-    expect(checkLinuxDoCookieBlock).toContain('reopenExistingTopicScreenRef.current = true;');
-    expect(checkLinuxDoCookieBlock).toContain('navigationRef.goBack();');
-    expect(checkLinuxDoCookieBlock).toContain("setScreen('topic');");
-    expect(checkLinuxDoCookieBlock).toContain('await openTopic(pendingTopic, true);');
-    expect(checkLinuxDoCookieBlock).toContain('topicReturnScreenRef.current = returnScreen;');
-    expect(checkLinuxDoCookieBlock).toContain('topicBackStackRef.current = backStack;');
+    expect(checkLinuxDoCookieBlock).toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(checkLinuxDoCookieBlock).not.toContain('const returnScreen = topicReturnScreenRef.current;');
+    expect(checkLinuxDoCookieBlock).not.toContain('const backStack = [...topicBackStackRef.current];');
+    expect(checkLinuxDoCookieBlock).not.toContain('reopenExistingTopicScreenRef.current = true;');
+    expect(checkLinuxDoCookieBlock).not.toContain('navigationRef.goBack();');
+    expect(checkLinuxDoCookieBlock).not.toContain("setScreen('topic');");
+    expect(checkLinuxDoCookieBlock).not.toContain('await openTopic(pendingTopic, true);');
   });
 
   it('uses native pager tabs for the feed and keeps both tab rows outside the scrolling list', () => {
@@ -141,7 +139,13 @@ describe('Android App UX upgrade guards', () => {
     expect(searchScreenSource).toContain('toggleSearchGroup');
     expect(searchScreenSource).toContain('<ExpandablePanel');
     expect(searchScreenSource).toContain('defaultExpanded');
-    expect(searchScreenSource).toContain('group.hasMore');
+    expect(searchScreenSource).toContain('buildSearchListItems');
+    expect(searchListItemsSource).toContain("type: 'groupLoadMore'");
+  });
+
+  it('does not cap expanded panel content with a fixed height', () => {
+    expect(appControlsSource).not.toContain('maxHeight: withTiming(panelExpanded ? 6000 : 0');
+    expect(appControlsSource).toContain("display: panelExpanded ? 'flex' : 'none'");
   });
 
   it('makes More screen sections explicit collapsible panels and renders WebViews only when opened', () => {

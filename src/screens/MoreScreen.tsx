@@ -1,4 +1,4 @@
-import { memo, type ReactNode, type RefObject, useEffect, useState } from 'react';
+import { memo, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -398,7 +398,7 @@ function LoginWebViewModal({
         ) : null}
         <View style={styles.loginWebViewBody}>
           {loading ? (
-            <View style={styles.loading}>
+            <View pointerEvents="none" style={styles.loading}>
               <ActivityIndicator color={theme.primary} />
               <Text style={styles.loadingText}>{loadingText}</Text>
             </View>
@@ -614,6 +614,16 @@ function LinuxDoVerifyPanel({
   onSetLoadingLinuxDoPage: (value: boolean) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
+  const linuxDoWebViewReadyRef = useRef(false);
+  const markLinuxDoPageReady = () => {
+    linuxDoWebViewReadyRef.current = true;
+    onSetLoadingLinuxDoPage(false);
+  };
+
+  useEffect(() => {
+    linuxDoWebViewReadyRef.current = false;
+  }, [linuxDoWebViewKey, showLinuxDoPanel]);
+
   useEffect(() => {
     if (!showLinuxDoPanel || !loadingLinuxDoPage) {
       return undefined;
@@ -657,8 +667,13 @@ function LinuxDoVerifyPanel({
               thirdPartyCookiesEnabled
               userAgent={linuxDoWebViewUserAgent}
               injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
+              onLoadProgress={(event) => {
+                if (event.nativeEvent.progress >= 0.8) {
+                  markLinuxDoPageReady();
+                }
+              }}
               onLoadEnd={(event) => {
-                onSetLoadingLinuxDoPage(false);
+                markLinuxDoPageReady();
                 if (!('code' in event.nativeEvent)) {
                   onSetLinuxDoWebViewError('');
                 }
@@ -666,7 +681,9 @@ function LinuxDoVerifyPanel({
               }}
               onLoadStart={() => {
                 onSetLinuxDoWebViewError('');
-                onSetLoadingLinuxDoPage(true);
+                if (!linuxDoWebViewReadyRef.current) {
+                  onSetLoadingLinuxDoPage(true);
+                }
               }}
               onMessage={onHandleLinuxDoMessage}
               onError={(event) => {
