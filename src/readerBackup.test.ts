@@ -17,6 +17,8 @@ describe('reader JSON backup', () => {
 
     expect(parsed.version).toBe(2);
     expect(parsed).not.toHaveProperty('later');
+    expect(parsed).not.toHaveProperty('subscriptions');
+    expect(parsed.deletedRecords).not.toHaveProperty('subscriptions');
     expect(json).not.toContain('secret');
     expect(json).not.toContain('nodeseekCookie');
     expect(json).not.toContain('sidyaohuo');
@@ -65,6 +67,36 @@ describe('reader JSON backup', () => {
 
     expect(imported.settings.theme).toBe('dark');
     expect(JSON.stringify(imported)).not.toContain('secret');
+  });
+
+  it('ignores removed subscription and rule fields when importing current backups', () => {
+    const local = createEmptyReaderData();
+    const remote = {
+      ...createEmptyReaderData(),
+      subscriptions: {
+        'v2ex:create': { source: 'v2ex', id: 'create', name: '分享创造', subscribedAt: '2026-05-20T00:00:00.000Z' }
+      },
+      deletedRecords: {
+        ...createEmptyReaderData().deletedRecords,
+        subscriptions: { 'v2ex:create': '2026-05-20T01:00:00.000Z' }
+      },
+      settings: {
+        ...createEmptyReaderData().settings,
+        trackedKeywords: ['linux'],
+        blockedKeywords: ['广告'],
+        blockedUsers: ['spammer'],
+        blockedCategories: ['v2ex:create']
+      }
+    };
+
+    const imported = importReaderBackupJson(local, JSON.stringify(remote));
+
+    expect(imported).not.toHaveProperty('subscriptions');
+    expect(imported.deletedRecords).not.toHaveProperty('subscriptions');
+    expect(imported.settings).not.toHaveProperty('trackedKeywords');
+    expect(imported.settings).not.toHaveProperty('blockedKeywords');
+    expect(imported.settings).not.toHaveProperty('blockedUsers');
+    expect(imported.settings).not.toHaveProperty('blockedCategories');
   });
 
   it('keeps yaohuo reader records in current local JSON backups', () => {

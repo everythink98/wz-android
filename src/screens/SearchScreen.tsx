@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
 import { Search, X } from 'lucide-react-native';
 import type { FeedSource, Source, Topic } from '../types';
@@ -40,6 +40,7 @@ export function SearchScreen({
   scope,
   searchSource,
   sort,
+  scrollToTopSignal,
   styles,
   theme,
   onOpenExternalUrl,
@@ -63,6 +64,7 @@ export function SearchScreen({
   scope: SearchScope;
   searchSource: FeedSource;
   sort: SearchSort;
+  scrollToTopSignal: number;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onOpenExternalUrl: (url: string) => void;
@@ -76,6 +78,7 @@ export function SearchScreen({
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
 }) {
+  const listRef = useRef<FlatList<Topic>>(null);
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item }) => (
     <MemoizedTopicCard
       highlightQuery={query}
@@ -195,6 +198,11 @@ export function SearchScreen({
   ), [query, scope, searchSource]);
   const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
   const showSearchSort = scope === 'remote' && searchSource === 'v2ex';
+  useEffect(() => {
+    if (scrollToTopSignal > 0) {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+  }, [scrollToTopSignal]);
 
   const header = (
     <View style={styles.stack}>
@@ -299,6 +307,7 @@ export function SearchScreen({
 
   return (
     <FlatList
+      ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.contentInner}
       data={showRemoteGroups ? [] : filteredSearchResults}

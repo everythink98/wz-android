@@ -890,6 +890,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       lineHeight: Math.round(30 * titleFontScale)
     },
     loadingState: {
+      width: '100%',
       alignItems: 'stretch',
       justifyContent: 'center',
       gap: 12,
@@ -952,9 +953,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replyHeader: {
       width: '100%',
       gap: 10,
-      borderTopColor: theme.background,
-      borderTopWidth: 12,
-      paddingTop: 16
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 12
     },
     replyList: {
       width: '100%',

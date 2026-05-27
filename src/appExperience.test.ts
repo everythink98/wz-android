@@ -111,6 +111,31 @@ describe('Android App experience guards', () => {
     expect(feedScreenSource).toContain('requestedFeedPageRef.current === nextPage');
   });
 
+  it('supports native pull-to-refresh on the Android feed list', () => {
+    expect(feedScreenSource).toContain('RefreshControl');
+    expect(feedScreenSource).toContain('refreshControl={active ? (');
+    expect(feedScreenSource).toContain('refreshing={refreshing}');
+    expect(feedScreenSource).toContain('onRefresh={onRefresh}');
+  });
+
+  it('scrolls the active bottom tab back to the top when it is pressed again', () => {
+    expect(appSource).toContain('const [tabScrollToTopSignals, setTabScrollToTopSignals]');
+    expect(appSource).toContain('const requestTabScrollToTop = useCallback((target: keyof MainTabParamList) => {');
+    expect(appSource).toContain('if (screen === targetScreen) {');
+    expect(appSource).toContain('requestTabScrollToTop(targetScreen);');
+    expect(feedScreenSource).toContain('scrollToTopSignal');
+    expect(searchScreenSource).toContain('scrollToTopSignal');
+    expect(libraryScreenSource).toContain('scrollToTopSignal');
+    expect(appSource).toContain('moreScrollRef.current?.scrollTo({ y: 0, animated: true });');
+  });
+
+  it('resets the secondary feed rail scroll when the primary source tab changes', () => {
+    expect(feedScreenSource).toContain('const secondaryRailResetKey = feedSource;');
+    expect(feedScreenSource).toContain('resetScrollKey={secondaryRailResetKey}');
+    expect(appControlsSource).toContain('resetScrollKey');
+    expect(appControlsSource).toContain('scrollRef.current?.scrollTo({ x: 0, animated: false });');
+  });
+
   it('keeps all-feed reading filters from reusing the remote feed paginator', () => {
     expect(appSource).toContain('shouldAllowFeedRemotePagination');
     expect(appSource).toContain('const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);');

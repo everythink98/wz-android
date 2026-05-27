@@ -138,7 +138,7 @@ import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
 import { feedSources, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './src/feedCategoryRail';
-import { normalizeTrackedKeywords, type NormalizedTopicListStateInput } from './src/topicListItemState';
+import { type NormalizedTopicListStateInput } from './src/topicListItemState';
 import {
   contentWidthValue,
   createStyles,
@@ -441,6 +441,7 @@ export default function App() {
   const currentTopicKeyRef = useRef<string | null>(null);
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
   const topicScrollRef = useRef<FlatList<TopicListItem>>(null);
+  const moreScrollRef = useRef<ScrollView>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const topicBackStackRef = useRef<TopicSnapshot[]>([]);
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
@@ -489,6 +490,12 @@ export default function App() {
   const [readerDataLoaded, setReaderDataLoaded] = useState(false);
   const readerDataRef = useRef<ReaderData>(readerData);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
+  const [tabScrollToTopSignals, setTabScrollToTopSignals] = useState<Record<keyof MainTabParamList, number>>({
+    feed: 0,
+    search: 0,
+    library: 0,
+    more: 0
+  });
   const [feedStates, setFeedStates] = useState<Record<FeedSource, FeedSourceState>>(() => createFeedStates());
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -1100,9 +1107,7 @@ export default function App() {
     setReaderData(next);
     void persistReaderData(next);
   }, [persistReaderData]);
-  const topicListStateInput = useMemo<NormalizedTopicListStateInput>(() => ({
-    trackedKeywords: normalizeTrackedKeywords(readerData.settings.trackedKeywords)
-  }), [readerData.settings.trackedKeywords]);
+  const topicListStateInput = useMemo<NormalizedTopicListStateInput>(() => ({}), []);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
@@ -3502,6 +3507,16 @@ export default function App() {
     commitReaderData((current) => clearRecords(current, 'history'));
   }, [commitReaderData]);
 
+  const requestTabScrollToTop = useCallback((target: keyof MainTabParamList) => {
+    if (target === 'more') {
+      moreScrollRef.current?.scrollTo({ y: 0, animated: true });
+    }
+    setTabScrollToTopSignals((current) => ({
+      ...current,
+      [target]: current[target] + 1
+    }));
+  }, []);
+
   const renderFeedTab = useCallback(() => (
     <FeedScreen
       busy={feedBusy || actionBusy}
@@ -3516,6 +3531,7 @@ export default function App() {
       topicListStateInput={topicListStateInput}
       readingFilter={readingFilter}
       refreshing={activeFeedState.refreshing}
+      scrollToTopSignal={tabScrollToTopSignals.feed}
       styles={styles}
       theme={theme}
       onCategoryChange={setCategoryFilter}
@@ -3530,7 +3546,7 @@ export default function App() {
       onReadingFilterChange={setReadingFilter}
       onRefresh={refreshFeed}
     />
-  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readerData, readingFilter, refreshFeed, shownFeedItems, styles, theme, topicListStateInput]);
+  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readerData, readingFilter, refreshFeed, shownFeedItems, styles, tabScrollToTopSignals.feed, theme, topicListStateInput]);
 
   const renderSearchTab = useCallback(() => (
     <SearchScreen
@@ -3544,6 +3560,7 @@ export default function App() {
       scope={searchScope}
       searchSource={searchSource}
       sort={searchSort}
+      scrollToTopSignal={tabScrollToTopSignals.search}
       styles={styles}
       theme={theme}
       onLoadMoreSearchSource={loadMoreSearchSource}
@@ -3557,7 +3574,7 @@ export default function App() {
       onSortChange={setSearchSort}
       onRetrySearchSource={retrySearchSource}
     />
-  ), [loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchScope, searchSort, searchSource, styles, theme, topicListStateInput, visibleSearchItems]);
+  ), [loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchScope, searchSort, searchSource, styles, tabScrollToTopSignals.search, theme, topicListStateInput, visibleSearchItems]);
 
   const renderLibraryTab = useCallback(() => (
     <LibraryScreen
@@ -3566,6 +3583,7 @@ export default function App() {
       libraryTab={libraryTab}
       records={libraryRecords}
       readerData={readerData}
+      scrollToTopSignal={tabScrollToTopSignals.library}
       topicListStateInput={topicListStateInput}
       styles={styles}
       theme={theme}
@@ -3576,10 +3594,10 @@ export default function App() {
       onRemoveUser={removeFollowedUser}
       onTabChange={setLibraryTab}
     />
-  ), [categories, clearHistory, followedUserRecords, libraryRecords, libraryTab, openTopic, openUser, readerData, removeFollowedUser, removeLibraryTopic, styles, theme, topicListStateInput]);
+  ), [categories, clearHistory, followedUserRecords, libraryRecords, libraryTab, openTopic, openUser, readerData, removeFollowedUser, removeLibraryTopic, styles, tabScrollToTopSignals.library, theme, topicListStateInput]);
 
   const renderMoreTab = useCallback(() => (
-    <ScrollView style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
       <MemoizedMoreScreen
         checking={checking}
         hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
@@ -3745,7 +3763,11 @@ export default function App() {
       screenListeners={({ route }) => ({
         tabPress: () => {
           triggerPressFeedback();
-          changeScreen(route.name as keyof MainTabParamList);
+          const targetScreen = route.name as keyof MainTabParamList;
+          if (screen === targetScreen) {
+            requestTabScrollToTop(targetScreen);
+          }
+          changeScreen(targetScreen);
         }
       })}
     >
@@ -3762,7 +3784,7 @@ export default function App() {
         {renderMoreTab}
       </Tab.Screen>
     </Tab.Navigator>
-  ), [changeScreen, renderFeedTab, renderLibraryTab, renderMoreTab, renderSearchTab, styles, theme]);
+  ), [changeScreen, renderFeedTab, renderLibraryTab, renderMoreTab, renderSearchTab, requestTabScrollToTop, screen, styles, theme]);
 
   return (
     <SafeAreaProvider>

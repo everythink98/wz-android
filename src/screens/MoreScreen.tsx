@@ -1,12 +1,11 @@
 import { memo, type ReactNode, type RefObject, useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Modal, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, CheckCircle, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
 import type { ReaderSettings } from '../readerData';
 import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
 import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from '../appUrls';
-import { appendUnique, removeString, settingsList } from '../appUtils';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
 
@@ -285,7 +284,6 @@ function MoreScreen({
           settings={settings}
           showSettingsPanel={showSettingsPanel}
           styles={styles}
-          theme={theme}
           onUpdateSettings={onUpdateSettings}
         />
       </ExpandablePanel>
@@ -694,19 +692,17 @@ function AppearancePanel({
   settings,
   showSettingsPanel,
   styles,
-  theme,
   onUpdateSettings
 }: {
   settings: ReaderSettings;
   showSettingsPanel: boolean;
   styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   return (
     <View style={styles.stack}>
       {showSettingsPanel ? (
-        <SettingsPanel settings={settings} styles={styles} theme={theme} onUpdateSettings={onUpdateSettings} />
+        <SettingsPanel settings={settings} styles={styles} onUpdateSettings={onUpdateSettings} />
       ) : null}
     </View>
   );
@@ -749,16 +745,12 @@ export const MemoizedMoreScreen = memo(MoreScreen);
 function SettingsPanel({
   settings,
   styles,
-  theme,
   onUpdateSettings
 }: {
   settings: ReaderSettings;
   styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
-  const [trackedKeyword, setTrackedKeyword] = useState('');
-  const [blockedKeyword, setBlockedKeyword] = useState('');
   return (
     <View style={styles.stack}>
       <SettingRail title="字号" items={[
@@ -790,93 +782,6 @@ function SettingsPanel({
         { value: 'sans', label: '无衬线' },
         { value: 'serif', label: '衬线' }
       ]} value={settings.fontFamily} styles={styles} onChange={(value) => onUpdateSettings({ fontFamily: value as ReaderSettings['fontFamily'] })} />
-      <View style={styles.settingGroup}>
-        <Text style={styles.panelTitle}>追踪关键词</Text>
-        <View style={styles.searchRow}>
-          <TextInput
-            style={[styles.input, styles.flex]}
-            value={trackedKeyword}
-            onChangeText={setTrackedKeyword}
-            placeholder="关键词"
-            placeholderTextColor={theme.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <AppButton
-            label="添加"
-            styles={styles}
-            onPress={() => {
-              const value = trackedKeyword.trim();
-              if (value) {
-                onUpdateSettings({ trackedKeywords: appendUnique(settingsList(settings.trackedKeywords), value) });
-                setTrackedKeyword('');
-              }
-            }}
-          />
-        </View>
-        <ChipList items={settings.trackedKeywords} styles={styles} onRemove={(value) => onUpdateSettings({ trackedKeywords: removeString(settingsList(settings.trackedKeywords), value) })} />
-      </View>
-      <View style={styles.settingGroup}>
-        <Text style={styles.panelTitle}>屏蔽关键词</Text>
-        <View style={styles.searchRow}>
-          <TextInput
-            style={[styles.input, styles.flex]}
-            value={blockedKeyword}
-            onChangeText={setBlockedKeyword}
-            placeholder="关键词"
-            placeholderTextColor={theme.muted}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <AppButton
-            label="添加"
-            styles={styles}
-            onPress={() => {
-              const value = blockedKeyword.trim();
-              if (value) {
-                onUpdateSettings({ blockedKeywords: appendUnique(settingsList(settings.blockedKeywords), value) });
-                setBlockedKeyword('');
-              }
-            }}
-          />
-        </View>
-        <ChipList items={settings.blockedKeywords} styles={styles} onRemove={(value) => onUpdateSettings({ blockedKeywords: removeString(settingsList(settings.blockedKeywords), value) })} />
-      </View>
-      {settings.blockedUsers.length ? (
-        <View style={styles.settingGroup}>
-          <Text style={styles.panelTitle}>已屏蔽用户</Text>
-          <ChipList items={settings.blockedUsers} styles={styles} onRemove={(value) => onUpdateSettings({ blockedUsers: removeString(settingsList(settings.blockedUsers), value) })} />
-        </View>
-      ) : null}
-      {settings.blockedCategories.length ? (
-        <View style={styles.settingGroup}>
-          <Text style={styles.panelTitle}>已屏蔽节点</Text>
-          <ChipList items={settings.blockedCategories} styles={styles} onRemove={(value) => onUpdateSettings({ blockedCategories: removeString(settingsList(settings.blockedCategories), value) })} />
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
-function ChipList({
-  items,
-  styles,
-  onRemove
-}: {
-  items: string[];
-  styles: ReturnType<typeof createStyles>;
-  onRemove: (value: string) => void;
-}) {
-  if (!items.length) {
-    return <Text style={styles.meta}>暂无</Text>;
-  }
-  return (
-    <View style={styles.chipWrap}>
-      {items.map((item) => (
-        <Pressable accessibilityRole="button" key={item} style={styles.removableChip} onPress={() => onRemove(item)}>
-          <Text style={styles.pillText}>{item} ×</Text>
-        </Pressable>
-      ))}
     </View>
   );
 }

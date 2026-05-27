@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
@@ -20,18 +20,26 @@ export function PillRail({
   items,
   variant = 'pills',
   value,
+  resetScrollKey,
   styles,
   onChange
 }: {
   items: Array<{ value: string; label: string }>;
   variant?: 'pills' | 'tabs';
   value: string;
+  resetScrollKey?: string | number;
   styles: ReturnType<typeof createStyles>;
   onChange: (value: string) => void;
 }) {
   const isTabs = variant === 'tabs';
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    if (resetScrollKey !== undefined) {
+      scrollRef.current?.scrollTo({ x: 0, animated: false });
+    }
+  }, [resetScrollKey]);
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
+    <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : styles.pillRail}>
       {items.map((item) => (
         <Pressable
           hitSlop={TOUCH_HIT_SLOP}

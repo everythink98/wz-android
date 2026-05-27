@@ -7,6 +7,7 @@ const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 
 const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
 const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'LibraryScreen.tsx'), 'utf8');
 const listSource = [topicCardSource, feedScreenSource, searchScreenSource, libraryScreenSource].join('\n');
+const removedTrackedMark = `追${''}踪命中`;
 
 describe('Android topic list swipe layout', () => {
   it('does not attach swipe actions to feed, search, or library topic rows', () => {
@@ -29,7 +30,7 @@ describe('Android topic list swipe layout', () => {
   it('keeps topic row metadata as passive reading information', () => {
     expect(topicCardSource).toContain('const metaParts = [');
     expect(topicCardSource).toContain("readerState.favorite ? '已收藏' : ''");
-    expect(topicCardSource).toContain("readerState.tracked ? '追踪命中' : ''");
+    expect(topicCardSource).not.toContain(removedTrackedMark);
   });
 
   it('does not make the full topic row transparent when a topic is marked read', () => {

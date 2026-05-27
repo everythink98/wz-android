@@ -128,6 +128,12 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('replyActionRow');
   });
 
+  it('uses a thin reply divider and aligned pending state in topic details', () => {
+    expect(themeSource).not.toContain('borderTopWidth: 12');
+    expect(themeSource).toMatch(/replyHeader:\s*\{[\s\S]*width:\s*'100%'[\s\S]*borderTopWidth:\s*StyleSheet\.hairlineWidth/);
+    expect(themeSource).toMatch(/loadingState:\s*\{[\s\S]*width:\s*'100%'/);
+  });
+
   it('does not show the copy-quote action in reply cards', () => {
     const replyCard = topicScreenSource.match(/function ReplyCard\([\s\S]*?\n\}/)?.[0] || '';
 

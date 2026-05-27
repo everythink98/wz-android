@@ -5,32 +5,22 @@ export interface TopicListItemState {
   favorite: boolean;
   listDensity: ReaderSettings['listDensity'];
   read: boolean;
-  tracked: boolean;
 }
 
-export interface NormalizedTopicListStateInput {
-  trackedKeywords: string[];
-}
-
-export function normalizeTrackedKeywords(keywords: string[]) {
-  return keywords.map((keyword) => keyword.toLowerCase());
-}
+export type NormalizedTopicListStateInput = Record<string, never>;
 
 export function getTopicListItemState(data: ReaderData, topic: Topic, input?: NormalizedTopicListStateInput): TopicListItemState {
   const key = topicKey(topic);
-  const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
-  const trackedKeywords = input?.trackedKeywords || normalizeTrackedKeywords(data.settings.trackedKeywords);
+  void input;
   return {
     favorite: Boolean(data.favorites[key]),
     listDensity: data.settings.listDensity,
-    read: Boolean(data.history[key]),
-    tracked: trackedKeywords.some((keyword) => text.includes(keyword))
+    read: Boolean(data.history[key])
   };
 }
 
 export function topicListItemStatesEqual(left: TopicListItemState, right: TopicListItemState) {
   return left.favorite === right.favorite
     && left.listDensity === right.listDensity
-    && left.read === right.read
-    && left.tracked === right.tracked;
+    && left.read === right.read;
 }

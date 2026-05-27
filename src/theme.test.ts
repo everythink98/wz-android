@@ -26,11 +26,7 @@ describe('Android reader theme helpers', () => {
     lineHeight: 'standard',
     contentWidth: 'standard',
     fontFamily: 'sans',
-    listDensity: 'standard',
-    blockedKeywords: [],
-    blockedUsers: [],
-    blockedCategories: [],
-    trackedKeywords: []
+    listDensity: 'standard'
   };
 
   it('keeps reader layout helper values stable', () => {
@@ -98,6 +94,16 @@ describe('Android reader theme helpers', () => {
     expect(styles.loadingPlaceholderLine.borderRadius).toBe(999);
     expect(styles.loadingPlaceholderLineShort.width).toBe('42%');
     expect(styles.loadingPlaceholderLineMuted.width).toBe('68%');
+  });
+
+  it('keeps topic loading and reply sections aligned with a light divider', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.loadingState.width).toBe('100%');
+    expect(styles.replyHeader.width).toBe('100%');
+    expect(styles.replyHeader.borderTopWidth).toBe(StyleSheet.hairlineWidth);
+    expect(styles.replyHeader.borderTopColor).toBe(theme.line);
   });
 
   it('makes foldable panel state icons visible and tappable', () => {

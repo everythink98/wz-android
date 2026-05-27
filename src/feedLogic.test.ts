@@ -14,9 +14,8 @@ describe('Android feed logic helpers', () => {
     replyCount: 1
   };
 
-  it('filters blocked topics and searches saved local records', () => {
+  it('searches saved local records without list-management filters', () => {
     const data = createEmptyReaderData();
-    data.settings.blockedKeywords = ['blocked'];
     data.favorites.nodeseek_1 = {
       topic,
       savedAt: '2026-05-20T01:00:00.000Z'
@@ -25,7 +24,7 @@ describe('Android feed logic helpers', () => {
     expect(applyFeedFilter([
       topic,
       { ...topic, id: '2', title: 'blocked title' }
-    ], data, 'all')).toEqual([topic]);
+    ], data, 'all')).toHaveLength(2);
     expect(searchLocal(data, 'Hello VPS', 'all')).toEqual([topic]);
   });
 
@@ -40,30 +39,16 @@ describe('Android feed logic helpers', () => {
     expect(searchLocal(data, 'VPS -blocked', 'all')).toEqual([]);
   });
 
-  it('filters blocked categories by source category id and display name', () => {
+  it('keeps only unread, read, and favorite as local reading filters', () => {
     const data = createEmptyReaderData();
-    data.settings.blockedCategories = ['nodeseek:daily', 'v2ex:分享创造'];
+    const readTopic: Topic = { ...topic, id: '2' };
+    const favoriteTopic: Topic = { ...topic, id: '3' };
+    data.history['nodeseek:2'] = { topic: readTopic, savedAt: '2026-05-20T01:00:00.000Z' };
+    data.favorites['nodeseek:3'] = { topic: favoriteTopic, savedAt: '2026-05-20T01:00:00.000Z' };
 
-    const nodeseekTopic: Topic = { ...topic, id: '2', categoryId: 'daily', category: '日常' };
-    const v2exTopic: Topic = { ...topic, source: 'v2ex', id: '3', categoryId: 'create', category: '分享创造' };
-    const visibleTopic: Topic = { ...topic, id: '4', categoryId: 'tech', category: '技术' };
-
-    expect(applyFeedFilter([nodeseekTopic, v2exTopic, visibleTopic], data, 'all')).toEqual([visibleTopic]);
-  });
-
-  it('matches subscribed categories by category id even when the display name is absent', () => {
-    const data = createEmptyReaderData();
-    data.subscriptions['nodeseek:daily'] = {
-      source: 'nodeseek',
-      id: 'daily',
-      name: '日常',
-      subscribedAt: '2026-05-20T00:00:00.000Z'
-    };
-
-    const subscribedTopic: Topic = { ...topic, id: '2', categoryId: 'daily', category: undefined };
-    const otherTopic: Topic = { ...topic, id: '3', categoryId: 'tech', category: undefined };
-
-    expect(applyFeedFilter([subscribedTopic, otherTopic], data, 'subscribed')).toEqual([subscribedTopic]);
+    expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'unread')).toEqual([topic, favoriteTopic]);
+    expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'read')).toEqual([readTopic]);
+    expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'favorite')).toEqual([favoriteTopic]);
   });
 
   it('deduplicates topics and replies by stable keys', () => {

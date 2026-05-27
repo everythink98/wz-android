@@ -23,7 +23,6 @@ describe('Android topic list item state', () => {
       ...data,
       settings: {
         ...data.settings,
-        trackedKeywords: ['动画'],
         listDensity: 'loose'
       }
     };
@@ -34,8 +33,7 @@ describe('Android topic list item state', () => {
     expect(getTopicListItemState(data, topic)).toEqual({
       favorite: true,
       listDensity: 'loose',
-      read: true,
-      tracked: true
+      read: true
     });
   });
 

@@ -9,16 +9,13 @@ const categories: Category[] = [
 ];
 
 describe('Android feed category rail', () => {
-  it('keeps the original reading filters for the all feed', () => {
+  it('keeps only the common reading filters for the all feed', () => {
     expect(shouldUseReadingFilter('all')).toBe(true);
     expect(feedReadingFilterItems.map((item) => item.label)).toEqual([
       '全部',
       '未读',
       '已读',
-      '收藏',
-      '我的订阅',
-      '最近活跃',
-      '热门'
+      '收藏'
     ]);
   });
 
@@ -48,9 +45,6 @@ describe('Android feed category rail', () => {
     expect(shouldAllowFeedRemotePagination('all', 'unread')).toBe(false);
     expect(shouldAllowFeedRemotePagination('all', 'read')).toBe(false);
     expect(shouldAllowFeedRemotePagination('all', 'favorite')).toBe(false);
-    expect(shouldAllowFeedRemotePagination('all', 'subscribed')).toBe(false);
-    expect(shouldAllowFeedRemotePagination('all', 'active')).toBe(false);
-    expect(shouldAllowFeedRemotePagination('all', 'hot')).toBe(false);
     expect(shouldAllowFeedRemotePagination('nodeseek', 'all')).toBe(true);
     expect(shouldAllowFeedRemotePagination('nodeseek', 'favorite')).toBe(true);
   });

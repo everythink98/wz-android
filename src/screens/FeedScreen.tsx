@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FlatList, Text, View, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { FlatList, RefreshControl, Text, View, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { TabView } from 'react-native-tab-view';
 import { ChevronUp, RefreshCw } from 'lucide-react-native';
 import type { Category, FeedSource, Topic } from '../types';
@@ -33,6 +33,7 @@ export function FeedScreen({
   topicListStateInput,
   readingFilter,
   refreshing,
+  scrollToTopSignal,
   styles,
   theme,
   onCategoryChange,
@@ -54,6 +55,7 @@ export function FeedScreen({
   topicListStateInput: NormalizedTopicListStateInput;
   readingFilter: ReadingFilter;
   refreshing: boolean;
+  scrollToTopSignal: number;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onCategoryChange: (categoryId: string) => void;
@@ -70,6 +72,7 @@ export function FeedScreen({
   const [showFloatingActions, setShowFloatingActions] = useState(false);
   const [scrollRestoreReady, setScrollRestoreReady] = useState(false);
   const activeIndex = Math.max(0, feedSourceItems.findIndex((item) => item.value === feedSource));
+  const secondaryRailResetKey = feedSource;
 
   const requestFeedLoadMore = useCallback(() => {
     if (!feedHasMore || busy || loadingMore) {
@@ -151,6 +154,12 @@ export function FeedScreen({
     onRefresh();
   }, [onRefresh, scrollToFeedTop]);
 
+  useEffect(() => {
+    if (scrollToTopSignal > 0) {
+      scrollToFeedTop();
+    }
+  }, [scrollToFeedTop, scrollToTopSignal]);
+
   const handleFeedPageChange = useCallback((index: number) => {
     const next = feedSourceItems[index];
     if (!next || next.value === feedSource) {
@@ -190,6 +199,14 @@ export function FeedScreen({
         data={active ? feedItems : []}
         keyExtractor={topicKey}
         keyboardShouldPersistTaps="handled"
+        refreshControl={active ? (
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[theme.primary]}
+            tintColor={theme.primary}
+          />
+        ) : undefined}
         onScroll={active ? handleScroll : undefined}
         scrollEventThrottle={64}
         onMomentumScrollEnd={active ? saveFeedScrollPosition : undefined}
@@ -221,6 +238,8 @@ export function FeedScreen({
     feedSource,
     handleScroll,
     loadingMore,
+    onRefresh,
+    refreshing,
     renderTopicItem,
     requestFeedLoadMore,
     restoreFeedScrollPosition,
@@ -243,6 +262,7 @@ export function FeedScreen({
           <PillRail
             items={feedReadingFilterItems}
             value={readingFilter}
+            resetScrollKey={secondaryRailResetKey}
             styles={styles}
             onChange={(value) => onReadingFilterChange(value as ReadingFilter)}
           />
@@ -250,6 +270,7 @@ export function FeedScreen({
           <PillRail
             items={categoryItems}
             value={categoryFilter}
+            resetScrollKey={secondaryRailResetKey}
             styles={styles}
             onChange={onCategoryChange}
           />

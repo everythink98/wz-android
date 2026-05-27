@@ -17,10 +17,7 @@ export const feedReadingFilterItems = [
   { value: 'all', label: '全部' },
   { value: 'unread', label: '未读' },
   { value: 'read', label: '已读' },
-  { value: 'favorite', label: '收藏' },
-  { value: 'subscribed', label: '我的订阅' },
-  { value: 'active', label: '最近活跃' },
-  { value: 'hot', label: '热门' }
+  { value: 'favorite', label: '收藏' }
 ];
 
 export function shouldUseReadingFilter(source: FeedSource) {

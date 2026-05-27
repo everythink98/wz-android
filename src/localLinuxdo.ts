@@ -384,7 +384,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const data = await topicData(id, options);
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
-  const categoryMap = categoryMapFromData(data);
+  const categoryMap = await categoryMapForTopics(data, [data], categoryMapFromData(data), options);
   const topic = normalizeTopic(data, categoryMap, isRecord(firstPost) ? String(firstPost.username || '') : '', isRecord(firstPost) ? firstPost : undefined);
   if (!topic) {
     throw new Error('linux.do 主题不存在');

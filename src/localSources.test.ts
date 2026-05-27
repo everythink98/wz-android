@@ -297,6 +297,40 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/site.json');
   });
 
+  it('maps linux.do topic category ids through site categories before showing details', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/site.json')) {
+        return json({
+          categories: [
+            { id: 4, name: '开发调优' }
+          ]
+        });
+      }
+      return json({
+        id: 404,
+        title: 'linux.do mapped detail category',
+        slug: 'mapped-detail-category',
+        category_id: 4,
+        created_at: '2026-05-21T00:00:00.000Z',
+        posts_count: 1,
+        post_stream: {
+          stream: [1],
+          posts: [
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-21T00:00:00.000Z' }
+          ]
+        }
+      });
+    });
+
+    const topic = await getTopic({ source: 'linuxdo', id: '404', fetcher });
+
+    expect(topic).toMatchObject({
+      categoryId: '4',
+      category: '开发调优'
+    });
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/site.json');
+  });
+
   it('labels linux.do feed topics without a category as uncategorized', async () => {
     const fetcher = vi.fn(async () => json({
       topic_list: {

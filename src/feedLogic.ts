@@ -3,7 +3,7 @@ import type { Category, FeedResponse, FeedSource, Reply, SearchResponse, Topic }
 import { dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUtils';
 
 export { dateTime } from './appUtils';
-export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite' | 'subscribed' | 'active' | 'hot';
+export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';
 export type LibraryTab = 'favorites' | 'users' | 'history';
 
@@ -41,39 +41,16 @@ export function positiveSearchQuery(query: string) {
 }
 
 export function applyFeedFilter(items: Topic[], data: ReaderData, filter: ReadingFilter) {
-  const visible = items.filter((topic) => {
-    const text = topicText(topic);
-    const categories = topicCategoryKeys(topic);
-    return !includesAnyKeyword(text, data.settings.blockedKeywords)
-      && !data.settings.blockedUsers.some((user) => topic.author?.toLowerCase() === user.toLowerCase())
-      && !data.settings.blockedCategories.some((blocked) => categories.includes(blocked.toLowerCase()));
-  });
-
   if (filter === 'unread') {
-    return visible.filter((topic) => !data.history[topicKey(topic)]);
+    return items.filter((topic) => !data.history[topicKey(topic)]);
   }
   if (filter === 'read') {
-    return visible.filter((topic) => Boolean(data.history[topicKey(topic)]));
+    return items.filter((topic) => Boolean(data.history[topicKey(topic)]));
   }
   if (filter === 'favorite') {
-    return visible.filter((topic) => Boolean(data.favorites[topicKey(topic)]));
+    return items.filter((topic) => Boolean(data.favorites[topicKey(topic)]));
   }
-  if (filter === 'subscribed') {
-    return visible.filter((topic) => Object.values(data.subscriptions).some((subscription) => (
-      subscription.source === topic.source
-      && topicCategoryValues(topic).some((category) => (
-        category.toLowerCase() === subscription.id.toLowerCase()
-        || category.toLowerCase() === subscription.name.toLowerCase()
-      ))
-    )));
-  }
-  if (filter === 'active') {
-    return [...visible].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
-  }
-  if (filter === 'hot') {
-    return [...visible].sort((left, right) => (right.replyCount + (right.viewCount || 0) / 100) - (left.replyCount + (left.viewCount || 0) / 100));
-  }
-  return visible;
+  return items;
 }
 
 export function searchLocal(data: ReaderData, query: string, source: FeedSource) {
@@ -194,7 +171,6 @@ export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): Fee
     nextCursor: base.nextCursor ?? undefined
   };
 }
-
 export function mergeSearchResponses(base: SearchResponse, extra: SearchResponse): SearchResponse {
   return {
     items: balanceTopicsBySource(sortTopicsByActivity(mergeTopics(base.items, extra.items))),
@@ -305,20 +281,4 @@ export function removeRecord(data: ReaderData, section: 'favorites' | 'history',
       }
     }
   };
-}
-
-export function topicText(topic: Topic) {
-  return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
-}
-
-function topicCategoryValues(topic: Topic) {
-  return [topic.categoryId, topic.category?.replace(/^#/, '')].filter((value): value is string => Boolean(value));
-}
-
-function topicCategoryKeys(topic: Topic) {
-  return topicCategoryValues(topic).map((value) => `${topic.source}:${value}`.toLowerCase());
-}
-
-export function includesAnyKeyword(text: string, keywords: string[]) {
-  return keywords.some((keyword) => text.includes(keyword.toLowerCase()));
 }

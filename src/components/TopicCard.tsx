@@ -52,7 +52,6 @@ export function TopicCard({
     topic.author || '未知作者',
     readerState.favorite ? '已收藏' : '',
     readerState.read ? '已读' : '',
-    readerState.tracked ? '追踪命中' : '',
     topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
   ].filter(Boolean).join(' · ');
   const replyText = `${topic.replyCount} 回复`;

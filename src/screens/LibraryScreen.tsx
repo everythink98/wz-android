@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, Text, View, type ListRenderItem } from 'react-native';
 import { Star } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile } from '../types';
@@ -23,6 +23,7 @@ export function LibraryScreen({
   followedUsers,
   records,
   readerData,
+  scrollToTopSignal,
   topicListStateInput,
   styles,
   theme,
@@ -38,6 +39,7 @@ export function LibraryScreen({
   followedUsers: FollowedUserRecord[];
   records: TopicRecord[];
   readerData: ReaderData;
+  scrollToTopSignal: number;
   topicListStateInput: NormalizedTopicListStateInput;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -49,6 +51,7 @@ export function LibraryScreen({
   onTabChange: (tab: LibraryTab) => void;
 }) {
   type LibraryListItem = { type: 'section'; key: string; label: string } | { type: 'record'; key: string; record: TopicRecord };
+  const listRef = useRef<FlatList<FollowedUserRecord | LibraryListItem>>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const userRecords = useMemo(() => (
@@ -74,6 +77,11 @@ export function LibraryScreen({
       setCategoryFilter('all');
     }
   }, [categoryFilter, categoryItems]);
+  useEffect(() => {
+    if (scrollToTopSignal > 0) {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+  }, [scrollToTopSignal]);
   const confirmRemoveFavorite = useCallback((topic: Topic) => {
     Alert.alert('确定取消收藏吗？', topic.title || '这条收藏将从本机移除。', [
       { text: '取消', style: 'cancel' },
@@ -166,6 +174,7 @@ export function LibraryScreen({
 
   return (
     <FlatList
+      ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.contentInner}
       data={libraryTab === 'users' ? userRecords : listItems}

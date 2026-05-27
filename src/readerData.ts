@@ -17,13 +17,6 @@ export interface ReadingProgressRecord {
   updatedAt: string;
 }
 
-export interface CategorySubscriptionRecord {
-  source: Source;
-  id: string;
-  name: string;
-  subscribedAt: string;
-}
-
 export interface FollowedUserRecord {
   user: UserProfile;
   followedAt: string;
@@ -32,15 +25,10 @@ export interface FollowedUserRecord {
 export interface DeletedRecords {
   favorites: Record<string, string>;
   history: Record<string, string>;
-  subscriptions: Record<string, string>;
   followedUsers: Record<string, string>;
 }
 
 export interface ReaderSettings {
-  trackedKeywords: string[];
-  blockedKeywords: string[];
-  blockedUsers: string[];
-  blockedCategories: string[];
   listDensity: 'compact' | 'standard' | 'loose';
   theme: 'light' | 'dark';
   palette: 'mint';
@@ -56,7 +44,6 @@ export interface ReaderData {
   favorites: Record<string, TopicRecord>;
   history: Record<string, TopicRecord>;
   progress: Record<string, ReadingProgressRecord>;
-  subscriptions: Record<string, CategorySubscriptionRecord>;
   followedUsers: Record<string, FollowedUserRecord>;
   deletedRecords: DeletedRecords;
   settings: ReaderSettings;
@@ -183,31 +170,10 @@ function clampPercent(value: unknown) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function normalizeStringList(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const item of value) {
-    if (typeof item !== 'string') {
-      continue;
-    }
-    const clean = item.trim();
-    const key = clean.toLowerCase();
-    if (clean && !seen.has(key)) {
-      seen.add(key);
-      result.push(clean);
-    }
-  }
-  return result.slice(0, 100);
-}
-
 function createEmptyDeletedRecords(): DeletedRecords {
   return {
     favorites: {},
     history: {},
-    subscriptions: {},
     followedUsers: {}
   };
 }
@@ -218,14 +184,9 @@ export function createEmptyReaderData(): ReaderData {
     favorites: {},
     history: {},
     progress: {},
-    subscriptions: {},
     followedUsers: {},
     deletedRecords: createEmptyDeletedRecords(),
     settings: {
-      trackedKeywords: [],
-      blockedKeywords: [],
-      blockedUsers: [],
-      blockedCategories: [],
       listDensity: 'standard',
       theme: 'light',
       palette: 'mint',
@@ -307,27 +268,6 @@ function normalizeProgress(value: unknown): Record<string, ReadingProgressRecord
   return next;
 }
 
-function normalizeSubscriptions(value: unknown): Record<string, CategorySubscriptionRecord> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  const next: Record<string, CategorySubscriptionRecord> = {};
-  for (const record of Object.values(value)) {
-    const candidate = record as Partial<CategorySubscriptionRecord>;
-    if (!isSource(candidate.source) || !candidate.id || !candidate.name) {
-      continue;
-    }
-    const subscription = {
-      source: candidate.source,
-      id: String(candidate.id),
-      name: candidate.name,
-      subscribedAt: typeof candidate.subscribedAt === 'string' ? candidate.subscribedAt : nowIso()
-    };
-    next[categoryKey(subscription)] = subscription;
-  }
-  return next;
-}
-
 function normalizeFollowedUsers(value: unknown): Record<string, FollowedUserRecord> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
@@ -374,7 +314,6 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
   return {
     favorites: normalizeDeletedRecordMap(base.favorites),
     history: normalizeDeletedRecordMap(base.history),
-    subscriptions: normalizeDeletedRecordMap(base.subscriptions),
     followedUsers: normalizeDeletedRecordMap(base.followedUsers)
   };
 }
@@ -387,10 +326,6 @@ function normalizeSettings(value: unknown): ReaderSettings {
     ? Math.max(0.9, Math.min(1.25, Math.round(base.fontScale * 100) / 100))
     : 1;
   return {
-    trackedKeywords: normalizeStringList(base.trackedKeywords),
-    blockedKeywords: normalizeStringList(base.blockedKeywords),
-    blockedUsers: normalizeStringList(base.blockedUsers),
-    blockedCategories: normalizeStringList(base.blockedCategories),
     listDensity: base.listDensity === 'compact' || base.listDensity === 'loose' ? base.listDensity : 'standard',
     theme: base.theme === 'dark' ? 'dark' : 'light',
     palette: 'mint',
@@ -412,7 +347,6 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     favorites: normalizeRecordMap(data.favorites),
     history: limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
     progress: limitRecordMap(normalizeProgress(data.progress), MAX_PROGRESS_RECORDS, (record) => record.updatedAt),
-    subscriptions: normalizeSubscriptions(data.subscriptions),
     followedUsers: normalizeFollowedUsers(data.followedUsers),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
@@ -498,13 +432,6 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
   const remoteHasSettings = hasOwnObjectField(remoteValue, 'settings');
   const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, (record) => record.savedAt);
   const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, (record) => record.savedAt);
-  const subscriptions = mergeTimedMapWithDeleted(
-    local.subscriptions,
-    remote.subscriptions,
-    local.deletedRecords.subscriptions,
-    remote.deletedRecords.subscriptions,
-    (record) => record.subscribedAt
-  );
   const followedUsers = mergeTimedMapWithDeleted(
     local.followedUsers,
     remote.followedUsers,
@@ -518,12 +445,10 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     favorites: favorites.records,
     history: history.records,
     progress: mergeTimedMap(local.progress, remote.progress, (record) => record.updatedAt),
-    subscriptions: subscriptions.records,
     followedUsers: followedUsers.records,
     deletedRecords: {
       favorites: favorites.deleted,
       history: history.deleted,
-      subscriptions: subscriptions.deleted,
       followedUsers: followedUsers.deleted
     },
     settings: remoteHasSettings ? remote.settings : local.settings
@@ -578,25 +503,6 @@ export function updateProgress(data: ReaderData, topic: Topic, progress: { perce
       }
     }
   };
-}
-
-export function toggleSubscription(data: ReaderData, category: Pick<Category, 'source' | 'id' | 'name'>) {
-  const key = categoryKey(category);
-  const next = { ...data.subscriptions };
-  let deletedRecords = data.deletedRecords;
-  if (next[key]) {
-    delete next[key];
-    deletedRecords = markDeleted(deletedRecords, 'subscriptions', key);
-  } else {
-    next[key] = {
-      source: category.source,
-      id: category.id,
-      name: category.name,
-      subscribedAt: nowIso()
-    };
-    deletedRecords = clearDeleted(deletedRecords, 'subscriptions', key);
-  }
-  return { ...data, subscriptions: next, deletedRecords };
 }
 
 export function toggleFollowedUser(data: ReaderData, user: UserProfile) {
@@ -654,10 +560,6 @@ export function clearRecords(data: ReaderData, section: 'history') {
 
 export function isFavorite(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
   return Boolean(data.favorites[topicKey(topic)]);
-}
-
-export function isSubscribed(data: ReaderData, category: Pick<Category, 'source' | 'id'>) {
-  return Boolean(data.subscriptions[categoryKey(category)]);
 }
 
 export function isUserFollowed(data: ReaderData, user: Pick<UserProfile, 'source' | 'id'>) {

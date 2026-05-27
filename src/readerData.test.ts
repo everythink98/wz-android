@@ -13,7 +13,6 @@ import {
   sanitizeReaderData,
   toggleFavorite,
   toggleFollowedUser,
-  toggleSubscription,
   topicKey,
   updateProgress,
   userKey
@@ -47,7 +46,9 @@ describe('Android reader data helpers', () => {
     const data = createEmptyReaderData();
 
     expect(data.version).toBe(2);
+    expect(data).not.toHaveProperty('subscriptions');
     expect(data).not.toHaveProperty('later');
+    expect(data.deletedRecords).not.toHaveProperty('subscriptions');
     expect(data.deletedRecords).not.toHaveProperty('later');
     expect(data).not.toHaveProperty('savedSearches');
     expect(data.deletedRecords).not.toHaveProperty('savedSearches');
@@ -102,13 +103,12 @@ describe('Android reader data helpers', () => {
     expect(data).not.toHaveProperty('later');
   });
 
-  it('tracks reading progress and subscriptions', () => {
+  it('tracks reading progress without keeping category subscriptions', () => {
     let data = createEmptyReaderData();
     data = updateProgress(data, topic, { percent: 125, scrollY: 88 });
-    data = toggleSubscription(data, { source: 'nodeseek', id: '日常', name: '日常' });
 
     expect(data.progress[topicKey(topic)].percent).toBe(100);
-    expect(data.subscriptions['nodeseek:日常']?.name).toBe('日常');
+    expect(data).not.toHaveProperty('subscriptions');
   });
 
   it('stores followed users separately from favorite topics', () => {
@@ -198,6 +198,33 @@ describe('Android reader data helpers', () => {
     expect(data.settings).not.toHaveProperty('nodeseekCookie');
   });
 
+  it('silently drops old subscriptions and rule fields from current-version data', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      subscriptions: {
+        'nodeseek:daily': { source: 'nodeseek', id: 'daily', name: '日常', subscribedAt: '2026-05-20T00:00:00.000Z' }
+      },
+      deletedRecords: {
+        ...createEmptyReaderData().deletedRecords,
+        subscriptions: { 'nodeseek:daily': '2026-05-20T01:00:00.000Z' }
+      },
+      settings: {
+        ...createEmptyReaderData().settings,
+        trackedKeywords: ['linux'],
+        blockedKeywords: ['广告'],
+        blockedUsers: ['spammer'],
+        blockedCategories: ['nodeseek:daily']
+      }
+    });
+
+    expect(data).not.toHaveProperty('subscriptions');
+    expect(data.deletedRecords).not.toHaveProperty('subscriptions');
+    expect(data.settings).not.toHaveProperty('trackedKeywords');
+    expect(data.settings).not.toHaveProperty('blockedKeywords');
+    expect(data.settings).not.toHaveProperty('blockedUsers');
+    expect(data.settings).not.toHaveProperty('blockedCategories');
+  });
+
   it('merges current reader data without overwriting newer local or remote records', () => {
     const localOnly: Topic = { ...topic, id: '1', title: 'Local only' };
     const remoteOnly: Topic = { ...topic, id: '2', title: 'Remote only' };
@@ -249,7 +276,6 @@ describe('Android reader data helpers', () => {
       deletedRecords: {
         favorites: { [key]: '2026-05-20T05:00:00.000Z' },
         history: {},
-        subscriptions: {},
         followedUsers: {}
       }
     });
@@ -273,7 +299,6 @@ describe('Android reader data helpers', () => {
       deletedRecords: {
         favorites: { [key]: '2026-05-20T03:00:00.000Z' },
         history: {},
-        subscriptions: {},
         followedUsers: {}
       }
     });
