@@ -102,6 +102,7 @@ export function flowInlineImagesInMixedParagraphs(html: string) {
     root.querySelectorAll('p').forEach((paragraph) => {
       flowImagesInMixedContainer(paragraph);
     });
+    flowQuoteTitleAvatars(root);
     flowImagesInMixedContainer(root, true);
     return root.toString();
   } catch {
@@ -247,16 +248,40 @@ type ParsedImageNode = {
   attributes: Record<string, string | undefined>;
   innerHTML?: string;
   set_content?: (content: string) => void;
+  querySelectorAll?: (selector: string) => ParsedImageNode[];
   parentNode?: unknown;
   parent?: unknown;
 };
 
-function flowImagesInMixedContainer(container: { innerHTML?: string; querySelectorAll?: (selector: string) => ParsedImageNode[]; childNodes?: unknown[] }, directOnly = false) {
+function flowQuoteTitleAvatars(root: { querySelectorAll?: (selector: string) => ParsedImageNode[] }) {
+  root.querySelectorAll?.('aside').forEach((aside) => {
+    const className = String(aside.attributes?.class || '');
+    if (!/(^|\s)quote(\s|$)/i.test(className)) {
+      return;
+    }
+    aside.querySelectorAll?.('div').forEach((container) => {
+      const containerClass = String(container.attributes?.class || '');
+      if (/(^|\s)quote-title__text-content(\s|$)/i.test(containerClass)) {
+        container.tagName = 'span';
+      }
+      if (/(^|\s)title(\s|$)/i.test(containerClass)) {
+        flowImagesInMixedContainer(container, true, isForumAvatarImageAttributes);
+      }
+    });
+  });
+}
+
+function flowImagesInMixedContainer(
+  container: { innerHTML?: string; querySelectorAll?: (selector: string) => ParsedImageNode[]; childNodes?: unknown[] },
+  directOnly = false,
+  shouldFlowImage: (attributes: Record<string, string | undefined>) => boolean = () => true
+) {
   const images = directOnly ? directChildImages(container) : (container.querySelectorAll?.('img') || []);
-  if (!images.length || !paragraphHasTextOutsideImages(container.innerHTML || '')) {
+  const flowableImages = images.filter((image) => shouldFlowImage(image.attributes));
+  if (!flowableImages.length || !paragraphHasTextOutsideImages(container.innerHTML || '')) {
     return;
   }
-  images.forEach((image) => {
+  flowableImages.forEach((image) => {
     if (isInsideLightboxImage(image)) {
       return;
     }
@@ -319,11 +344,23 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
   const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
+  const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
   const urlMarksEmoji = isInlineForumImageUrl(src);
+  const urlMarksAvatar = /(^|\/)user_avatar\//i.test(src);
   const titleMarksEmoji = /^:[a-z0-9_+.-]+:$/i.test(title);
   const altMarksEmoji = /^:[a-z0-9_+.-]+:$/i.test(alt);
   const hasEmojiMarker = classMarksEmoji || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
-  return hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji);
+  return (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
+    || ((classMarksAvatar || urlMarksAvatar) && hasSmallSize);
+}
+
+function isForumAvatarImageAttributes(attributes: Record<string, string | undefined>) {
+  const className = attributeValue(attributes, 'class');
+  const src = attributeValue(attributes, 'src');
+  const width = parseImageDimension(attributeValue(attributes, 'width'));
+  const height = parseImageDimension(attributeValue(attributes, 'height'));
+  const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
+  return hasSmallSize && (/(^|\s)(avatar|user-avatar)(\s|$)/i.test(className) || /(^|\/)user_avatar\//i.test(src));
 }
 
 function isInlineForumImageUrl(url: string) {

@@ -162,6 +162,17 @@ describe('Android HTML image preview helpers', () => {
     expect(result).toContain('<forum-inline-image class="emoji"');
   });
 
+  it('renders forum avatar images in quote headers through the inline image path', () => {
+    const avatar = 'https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png';
+    const html = `<aside class="quote"><div class="title"><div class="quote-controls"></div><img alt="" width="24" height="24" src="${avatar}" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/1">Quoted topic</a></div></div><blockquote><p>quoted text</p></blockquote></aside><p><img src="https://cdn.example.com/photo.jpg"></p>`;
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar">');
+    expect(result).toContain('<span class="quote-title__text-content">');
+    expect(result).not.toContain('<img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar">');
+    expect(extractImageUrlsFromHtml(result)).toEqual(['https://cdn.example.com/photo.jpg']);
+  });
+
   it('keeps real HTML images previewable even when their URLs have no file extension', () => {
     const result = createImagePreviewList({
       tappedUrl: 'https://www.nodeseek.com/api/attachments/123',
