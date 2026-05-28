@@ -32,6 +32,7 @@ function HighlightedText({
 
 export function TopicCard({
   highlightQuery = '',
+  hideReplyCount = false,
   topic,
   readerState,
   styles,
@@ -39,6 +40,7 @@ export function TopicCard({
   onOpenTopic
 }: {
   highlightQuery?: string;
+  hideReplyCount?: boolean;
   topic: Topic;
   readerState: TopicListItemState;
   styles: ReturnType<typeof createStyles>;
@@ -54,7 +56,7 @@ export function TopicCard({
     readerState.read ? '已读' : '',
     topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
   ].filter(Boolean).join(' · ');
-  const replyText = `${topic.replyCount} 回复`;
+  const replyText = hideReplyCount ? '' : `${topic.replyCount} 回复`;
   const statParts = [
     replyText,
     topic.viewCount ? `${topic.viewCount} 浏览` : ''
@@ -76,7 +78,7 @@ export function TopicCard({
         </Pressable>
         <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>
           <Text style={[styles.meta, styles.topicMetaText]} numberOfLines={1}>{metaParts}</Text>
-          <Text style={styles.topicStatPill} numberOfLines={1}>{statParts}</Text>
+          {statParts ? <Text style={styles.topicStatPill} numberOfLines={1}>{statParts}</Text> : null}
         </View>
       </View>
     </View>
@@ -95,6 +97,7 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.topic.lastReplyAt === next.topic.lastReplyAt
   && previous.styles === next.styles
   && previous.theme === next.theme
+  && previous.hideReplyCount === next.hideReplyCount
   && previous.highlightQuery === next.highlightQuery
   && previous.onOpenTopic === next.onOpenTopic
   && topicListItemStatesEqual(previous.readerState, next.readerState)

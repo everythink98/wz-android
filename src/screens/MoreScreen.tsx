@@ -660,6 +660,7 @@ function LinuxDoVerifyPanel({
               key={linuxDoWebViewKey}
               ref={linuxDoWebViewRef}
               source={{ uri: LINUXDO_VERIFY_URL }}
+              androidLayerType="software"
               javaScriptEnabled
               domStorageEnabled
               cacheEnabled

@@ -719,10 +719,11 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
   const html = await fetchTopicHtml(id, page, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  if (!postData) {
+  const rendered = postData ? null : parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER);
+  if (!postData && !rendered) {
     throw new Error('NodeSeek 主题解析失败');
   }
-  return { html, postData };
+  return { html, postData, rendered };
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
@@ -746,10 +747,30 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
 }): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const { html, postData } = await fetchTopicPageData(id, page, options);
-  const comments = arrayField(postData.comments);
+  const { html, postData, rendered } = await fetchTopicPageData(id, page, options);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? options.offset as number : 0;
+  if (rendered) {
+    const source = page <= 1 ? rendered.replies : rendered.replies.map((reply, index) => ({
+      ...reply,
+      floor: reply.floor ?? (hasOffset ? offset + index + 1 : ((page - 1) * limit) + index + 1)
+    }));
+    const items = page <= 1 ? source.slice(offset, offset + limit) : source;
+    const consumed = offset + items.length;
+    const hasPageRemainder = page <= 1 && consumed < source.length;
+    const nextPage = nextNodeSeekPostPage(html, id, page);
+    const hasMore = hasPageRemainder || Boolean(nextPage);
+    return {
+      items,
+      hasMore,
+      nextPage: hasMore ? (hasPageRemainder ? page : nextPage || page + 1) : null,
+      nextOffset: hasMore ? consumed : null
+    };
+  }
+  if (!postData) {
+    throw new Error('NodeSeek 主题解析失败');
+  }
+  const comments = arrayField(postData.comments);
   if (page <= 1) {
     const allReplies = normalizeReplies(comments, { skipFirst: true });
     const items = allReplies.slice(offset, offset + limit);

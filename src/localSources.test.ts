@@ -1062,6 +1062,45 @@ describe('Android local sources', () => {
     });
   });
 
+  it('refreshes NodeSeek replies from rendered topic HTML when embedded postData is absent', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743003-1">NodeSeek rendered replies</a>
+      <div id="0" data-comment-id="10232700" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-05-22T15:55:11.000Z"></time>
+        <article class="post-content"><p>正文</p></article>
+      </div>
+      <li id="1" data-comment-id="10232701" class="content-item">
+        <div class="author-info"><a href="/space/2" class="author-name">bob</a></div>
+        <time datetime="2026-05-22T15:59:06.000Z"></time>
+        <article class="post-content"><p>旧回复</p></article>
+      </li>
+      <li id="2" data-comment-id="10232702" class="content-item">
+        <div class="author-info"><a href="/space/3" class="author-name">carol</a></div>
+        <time datetime="2026-05-22T16:01:06.000Z"></time>
+        <article class="post-content"><p>新增回复</p></article>
+      </li>
+    `));
+
+    const replies = await getNodeSeekReplies('743003', {
+      fetcher,
+      page: 1,
+      offset: 0,
+      limit: 30
+    });
+
+    expect(replies.items).toHaveLength(2);
+    expect(replies.items.map((item) => item.author)).toEqual(['bob', 'carol']);
+    expect(replies.items.map((item) => item.floor)).toEqual([1, 2]);
+    expect(replies.items[1]).toMatchObject({
+      commentId: 10232702,
+      contentHtml: expect.stringContaining('新增回复')
+    });
+    expect(replies.hasMore).toBe(false);
+    expect(replies.nextPage).toBeNull();
+    expect(replies.nextOffset).toBeNull();
+  });
+
   it('reads V2EX public JSON, HTML pages, topic detail, and SOV2EX search directly', async () => {
     clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {

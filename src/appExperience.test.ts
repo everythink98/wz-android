@@ -13,6 +13,7 @@ const searchListItemsSource = readFileSync(join(process.cwd(), 'android-app', 's
 const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'LibraryScreen.tsx'), 'utf8');
 const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
 const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
+const userScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'UserScreen.tsx'), 'utf8');
 const navBarSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'NavBar.tsx'), 'utf8');
 const androidUiSource = [
   appSource,
@@ -82,6 +83,13 @@ describe('Android App experience guards', () => {
     expect(topicCardSource).toContain('styles.topicStatPill');
     expect(topicCardSource).not.toContain("`${topic.replyCount} 回复`,");
     expect(topicCardSource).not.toContain("{sourceLabel(topic.source)}{topic.category ? ` · ${topic.category}` : ''}");
+  });
+
+  it('hides reply counts only for NodeSeek user profile topic rows', () => {
+    expect(topicCardSource).toContain('hideReplyCount?: boolean');
+    expect(topicCardSource).toContain("hideReplyCount ? '' : `${topic.replyCount} 回复`");
+    expect(topicCardSource).toContain('{statParts ? <Text style={styles.topicStatPill}');
+    expect(userScreenSource).toContain("hideReplyCount={item.topic.source === 'nodeseek'}");
   });
 
   it('switches Android feed sources through a page-level horizontal gesture', () => {
@@ -1016,6 +1024,12 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
     expect(moreScreenSource).toContain('onRenderProcessGone={() =>');
     expect(moreScreenSource).toContain('linux.do 验证页面已停止');
+  });
+
+  it('keeps the linux.do verification WebView off the emulator GPU path', () => {
+    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+
+    expect(linuxDoPanelBlock).toContain('androidLayerType="software"');
   });
 
   it('stops the linux.do verification WebView before hiding it', () => {

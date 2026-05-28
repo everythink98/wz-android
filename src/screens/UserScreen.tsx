@@ -149,6 +149,7 @@ export function UserScreen({
         styles={styles}
         theme={theme}
         topic={item.topic}
+        hideReplyCount={item.topic.source === 'nodeseek'}
         onOpenTopic={onOpenTopic}
       />
     );
