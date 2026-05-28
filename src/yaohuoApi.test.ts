@@ -6,7 +6,7 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
-import { parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml } from './localYaohuo';
+import { parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
@@ -383,6 +383,73 @@ describe('Android direct yaohuo API', () => {
     expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1', expect.any(Object));
     expect(detail.replyCount).toBe(1);
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
+  });
+
+  it('keeps yaohuo resource download content rendered outside the main post block', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 软件资源 (阅2) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent">
+        <!--listS--><p>软件说明</p><!--listE-->
+      </div>
+      <div class="intro">版本介绍：免登录使用修图特权。</div>
+      <div class="download">下载地址：<a href="https://pan.quark.cn/s/abc">夸克网盘</a><br>提取码：1234</div>
+      更多回帖(1)
+      <a href="/bbs/book_list.aspx?classid=201">资源分享</a>
+    `, {
+      id: '456',
+      url: 'https://yaohuo.me/bbs-456.html'
+    });
+
+    expect(detail.contentHtml).toContain('软件说明');
+    expect(detail.contentHtml).toContain('版本介绍：免登录使用修图特权。');
+    expect(detail.contentHtml).toContain('下载地址');
+    expect(detail.contentHtml).toContain('夸克网盘');
+    expect(detail.contentHtml).toContain('提取码：1234');
+    expect(detail.contentHtml).toContain('https://pan.quark.cn/s/abc');
+    expect(detail.contentHtml).not.toContain('更多回帖');
+  });
+
+  it('keeps yaohuo markdown resource body when the bbscontent wrapper is malformed', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div id="book-view-content" class="content">
+        <div class="Postinfo"><span>[标题]</span>Hypic醒图国际版 v8.7.0 免登录使用所有特权<span>(阅276)</span><br/><span>[时间]<span>2026-05-28 16:54</span></span></div>
+        <div class="dashed"></div>
+        <div class="bbscontent"><!--listS-->
+          <div class="markdown-container">
+            <h1 id="hypic">Hypic 醒图国际版</h1>
+            <h2 id="section">应用简介</h2>
+            <p>Hypic（醒图国际版）是一款功能强大的专业照片编辑应用。</p>
+            <h2 id="section-1">版本特色</h2>
+            <ul>
+              <li><strong>解锁会员</strong>：所有VIP功能全部免费。</li>
+              <li><strong>免登录使用</strong>：无需注册登录。</li>
+            </ul>
+            <h2 id="section-2">核心亮点功能</h2>
+            <ul>
+              <li><strong>AI头像生成</strong>：一键创建个性化数字肖像。</li>
+            </ul>
+            <hr />
+            <p><strong>温馨提示</strong>：此为国际版，请酌情使用。</p>
+          </div><br/><br/><!--listE-->
+          <div id="KL_show_next_list" style="display:none"></div>
+          <div class='attachment'><span class='attachmenSum'>共有1个附件(扣50个妖晶)</span><div class='attachmentinfo'><span class="downloadname"><span class="attachmentnumber">1.</span><span class='attachmentname'><span class='attachmentitle'>Hypic醒图国际版 v8.7.0 免登录使用所有特权</span></span><span class="downloadlink"><span class="downloadurl"><a class="urlbtn" href="/bbs/download.aspx?siteid=1000&amp;classid=201&amp;book_id=1540797&amp;id=927771">夸克网盘下载</a></span><span class="downloadcount">(1次)</span></span><span class="attachmentNote"></span></div>
+        </div></div></div></div>
+        <div class="louzhuxinxi subtitle"><span>[楼主]</span><a href="/bbs/userinfo.aspx?touserid=36925">李慕婉o</a></div>
+        更多回帖(1)
+    `, {
+      id: '1540797',
+      url: 'https://yaohuo.me/bbs-1540797.html'
+    });
+
+    expect(detail.contentHtml).toContain('应用简介');
+    expect(detail.contentHtml).toContain('Hypic（醒图国际版）');
+    expect(detail.contentHtml).toContain('版本特色');
+    expect(detail.contentHtml).toContain('核心亮点功能');
+    expect(detail.contentHtml).toContain('温馨提示');
+    expect(detail.contentHtml).toContain('夸克网盘下载');
+    expect(detail.contentHtml).not.toContain('李慕婉o');
+    expect(detail.contentHtml).not.toContain('更多回帖');
   });
 
   it('fetches later reply pages from Android using the topic category id', async () => {

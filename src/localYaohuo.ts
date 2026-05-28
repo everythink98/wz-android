@@ -1,3 +1,4 @@
+import type { HTMLElement } from 'node-html-parser';
 import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
   absoluteUrl,
@@ -308,9 +309,146 @@ export function parseYaohuoListHtml(html: string, { classId, limit = 30, page = 
 }
 
 function extractMarkedContent(html: string, start: string, end: string) {
+  const marked = extractMarkedContentBounds(html, start, end);
+  return marked ? marked.content : html;
+}
+
+const yaohuoDownloadContentPattern = /下载|网盘|提取码|提取密码|解压密码|访问码|夸克|百度云?|蓝奏|123云盘|迅雷|天翼云|阿里云盘|城通|apk\b|pan\.|quark|lanzou|123pan|aliyundrive|cloud\.189|ctfile|uc\.cn/i;
+const yaohuoNonPostClassNames = new Set(['content', 'subtitle', 'line1', 'line2', 'listdata', 'page', 'pager', 'nav', 'footer', 'header']);
+const yaohuoPostBoundaryTextPattern = /原站收藏|回复列表|更多回帖|评论内查找|楼层目录|写回复|只看楼主|只看带图|倒序/;
+const yaohuoRawPostBoundaryPatterns = [
+  /<div\b[^>]*class=["'][^"']*\blouzhuxinxi\b[^"']*["'][^>]*>/i,
+  /<div\b[^>]*class=["'][^"']*\brecontent\b[^"']*["'][^>]*>/i,
+  /<div\b[^>]*class=["'][^"']*\bline[12]\b[^"']*["'][^>]*>/i,
+  /更多回帖\s*\(/i
+];
+
+function extractMarkedContentBounds(html: string, start: string, end: string) {
   const startIndex = html.indexOf(start);
-  const endIndex = html.indexOf(end, startIndex + start.length);
-  return startIndex >= 0 && endIndex > startIndex ? html.slice(startIndex + start.length, endIndex) : html;
+  const contentStart = startIndex + start.length;
+  const endIndex = html.indexOf(end, contentStart);
+  return startIndex >= 0 && endIndex > contentStart
+    ? { content: html.slice(contentStart, endIndex), endIndex: endIndex + end.length }
+    : null;
+}
+
+function firstYaohuoRawPostBoundaryIndex(html: string) {
+  return yaohuoRawPostBoundaryPatterns
+    .map((pattern) => html.search(pattern))
+    .filter((index) => index >= 0)
+    .sort((left, right) => left - right)[0] ?? -1;
+}
+
+function extractRawYaohuoPostContent(html: string) {
+  const marked = extractMarkedContentBounds(html, '<!--listS-->', '<!--listE-->');
+  if (!marked) {
+    return '';
+  }
+  const rest = html.slice(marked.endIndex);
+  const boundaryIndex = firstYaohuoRawPostBoundaryIndex(rest);
+  const followingContent = (boundaryIndex >= 0 ? rest.slice(0, boundaryIndex) : rest)
+    .replace(/^\s*(?:<\/div>\s*)+/, '');
+  return [marked.content, followingContent]
+    .filter((part) => textContentFromHtml(part))
+    .join('\n');
+}
+
+function hasAncestor(node: HTMLElement, ancestor: HTMLElement | null | undefined) {
+  let current = node.parentNode;
+  while (current) {
+    if (current === ancestor) {
+      return true;
+    }
+    current = current.parentNode;
+  }
+  return false;
+}
+
+function hasExcludedYaohuoClass(node: HTMLElement) {
+  return String(node.getAttribute('class') || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .some((name) => yaohuoNonPostClassNames.has(name));
+}
+
+function isHtmlElementNode(node: unknown): node is HTMLElement {
+  return Boolean(node && typeof node === 'object' && 'tagName' in node && typeof (node as HTMLElement).getAttribute === 'function');
+}
+
+function isYaohuoPostBoundaryNode(node: HTMLElement) {
+  if (hasExcludedYaohuoClass(node)) {
+    return true;
+  }
+  const href = node.getAttribute('href') || '';
+  if (/book_list\.aspx|book_re\.aspx/i.test(href)) {
+    return true;
+  }
+  const html = node.toString();
+  const text = elementText(node);
+  return isYaohuoPostBoundaryText(text, html);
+}
+
+function isYaohuoPostBoundaryText(text: string, html = '') {
+  return yaohuoPostBoundaryTextPattern.test(text) && !yaohuoDownloadContentPattern.test(`${text} ${html}`);
+}
+
+function collectFollowingYaohuoPostContent(mainContent: HTMLElement | null | undefined) {
+  const parent = mainContent?.parentNode;
+  if (!parent) {
+    return [];
+  }
+  const chunks: string[] = [];
+  let afterMainContent = false;
+  for (const node of parent.childNodes) {
+    if (node === mainContent) {
+      afterMainContent = true;
+      continue;
+    }
+    if (!afterMainContent) {
+      continue;
+    }
+    const html = node.toString();
+    const text = textContentFromHtml(html);
+    if (!text) {
+      continue;
+    }
+    if (isYaohuoPostBoundaryText(text, html)) {
+      break;
+    }
+    if (isHtmlElementNode(node) && isYaohuoPostBoundaryNode(node)) {
+      break;
+    }
+    chunks.push(html);
+  }
+  return chunks;
+}
+
+function collectYaohuoDownloadContent(root: ReturnType<typeof parseHtml>, mainContent: HTMLElement | null | undefined) {
+  const selected: HTMLElement[] = [];
+  for (const node of root.querySelectorAll('div, p, table, ul, ol, a')) {
+    if (node === mainContent || hasAncestor(node, mainContent) || (mainContent && hasAncestor(mainContent, node))) {
+      continue;
+    }
+    if (hasExcludedYaohuoClass(node)) {
+      continue;
+    }
+    const html = node.toString();
+    const text = elementText(node);
+    if (!yaohuoDownloadContentPattern.test(`${text} ${html}`)) {
+      continue;
+    }
+    if (selected.some((parent) => hasAncestor(node, parent))) {
+      continue;
+    }
+    selected.push(node);
+  }
+  return selected.map((node) => node.toString());
+}
+
+function appendYaohuoPostContent(contentHtml: string, root: ReturnType<typeof parseHtml>, mainContent: HTMLElement | null | undefined) {
+  const followingContent = collectFollowingYaohuoPostContent(mainContent);
+  const extraHtml = followingContent.length ? followingContent : collectYaohuoDownloadContent(root, mainContent);
+  return [contentHtml, ...extraHtml].filter((part) => textContentFromHtml(part)).join('\n');
 }
 
 function parseVoteOptions(html: string) {
@@ -342,8 +480,10 @@ function topicTitle(root: ReturnType<typeof parseHtml>) {
 export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; url?: string }): TopicDetail {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
-  const bbsContent = root.querySelector('div.bbscontent')?.innerHTML || '';
-  const contentHtml = extractMarkedContent(bbsContent, '<!--listS-->', '<!--listE-->');
+  const bbsContentElement = root.querySelector('div.bbscontent');
+  const bbsContent = bbsContentElement?.innerHTML || '';
+  const contentHtml = extractRawYaohuoPostContent(html)
+    || appendYaohuoPostContent(extractMarkedContent(bbsContent, '<!--listS-->', '<!--listE-->'), root, bbsContentElement);
   const contentText = elementText(root.querySelector('div.content'));
   const classId = root.querySelectorAll('a[href*="classid="]').map((link) => link.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1]).find(Boolean);
   const author = elementText(root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')) || elementText(root.querySelector('div.subtitle a'));
