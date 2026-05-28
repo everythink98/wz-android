@@ -238,6 +238,15 @@ function imageAttributesFromText(value: string): Record<string, string> {
   return attributes;
 }
 
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function paragraphHasTextOutsideImages(html: string) {
   const withoutImages = html.replace(/<img\b[^>]*>/gi, ' ');
   return textContentFromHtml(withoutImages).length > 0;
@@ -253,6 +262,46 @@ type ParsedImageNode = {
   parent?: unknown;
 };
 
+function quoteTitleTextNode(title: ParsedImageNode) {
+  return title.querySelectorAll?.('div').find((node) => {
+    const className = String(node.attributes?.class || '');
+    return /(^|\s)quote-title__text-content(\s|$)/i.test(className);
+  }) || title;
+}
+
+function decodePathSegment(value: string) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function usernameFromForumAvatarUrl(value: string) {
+  const clean = value.trim();
+  const match = clean.match(/(?:^|\/)user_avatar\/(?:[^/?#]+\/)?([^/?#]+)\/\d+(?:\/|$)/i)
+    || clean.match(/(?:^|\/)letter_avatar\/([^/?#]+)\/\d+(?:\/|$)/i);
+  return match ? decodePathSegment(match[1]).trim() : '';
+}
+
+function quoteTitleAvatarUsername(title: ParsedImageNode) {
+  const avatar = title.querySelectorAll?.('img').find((node) => isForumAvatarImageAttributes(node.attributes));
+  return avatar ? usernameFromForumAvatarUrl(attributeValue(avatar.attributes, 'src')) : '';
+}
+
+function addQuoteTitleUsername(aside: ParsedImageNode, title: ParsedImageNode) {
+  const username = attributeValue(aside.attributes, 'data-username') || attributeValue(aside.attributes, 'data-display-name') || quoteTitleAvatarUsername(title);
+  if (!username) {
+    return;
+  }
+  const target = quoteTitleTextNode(title);
+  const titleText = textContentFromHtml(target.innerHTML || '').trim();
+  if (titleText.toLowerCase().startsWith(`${username.toLowerCase()}:`) || /quote-title__username/i.test(target.innerHTML || '')) {
+    return;
+  }
+  target.innerHTML = `<strong class="quote-title__username">${escapeHtmlText(username)}</strong><span class="quote-title__separator"> · </span>${target.innerHTML || ''}`;
+}
+
 function flowQuoteTitleAvatars(root: { querySelectorAll?: (selector: string) => ParsedImageNode[] }) {
   root.querySelectorAll?.('aside').forEach((aside) => {
     const className = String(aside.attributes?.class || '');
@@ -265,6 +314,7 @@ function flowQuoteTitleAvatars(root: { querySelectorAll?: (selector: string) => 
         container.tagName = 'span';
       }
       if (/(^|\s)title(\s|$)/i.test(containerClass)) {
+        addQuoteTitleUsername(aside, container);
         flowImagesInMixedContainer(container, true, isForumAvatarImageAttributes);
       }
     });

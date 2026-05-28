@@ -16,10 +16,13 @@ import {
   HTMLElementModel,
   RenderHTMLConfigProvider,
   RenderHTMLSource,
-  TRenderEngineProvider
+  TChildrenRenderer,
+  TRenderEngineProvider,
+  useTNodeChildrenProps,
+  type CustomBlockRenderer
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, ChevronLeft, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, CheckCircle, ChevronDown, ChevronLeft, ChevronUp, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
 import type { Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
@@ -29,7 +32,7 @@ import { formatDateTime, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
-import { createStyles, type ReaderTheme } from '../theme';
+import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
 import { REPLY_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
@@ -52,6 +55,16 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
     isOpaque: true
   })
 };
+
+function htmlTagName(tnode: unknown) {
+  return ((tnode as { tagName?: string }).tagName || '').toLowerCase();
+}
+
+function hasHtmlClass(tnode: unknown, className: string) {
+  const classValue = ((tnode as { attributes?: Record<string, string | undefined> }).attributes?.class || '');
+  return classValue.split(/\s+/).includes(className);
+}
+
 function stableTextHash(value: string) {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -341,6 +354,52 @@ export function TopicScreen({
     setTopicMenuOpen(false);
     action();
   }, []);
+  const topicHtmlRenderers = useMemo<HtmlRenderers>(() => {
+    const QuoteAsideRenderer: CustomBlockRenderer = (props) => {
+      const [expanded, setExpanded] = useState(false);
+      const tchildrenProps = useTNodeChildrenProps(props);
+      const { TDefaultRenderer, ...defaultRendererProps } = props;
+      if (!hasHtmlClass(props.tnode, 'quote')) {
+        return <TDefaultRenderer {...defaultRendererProps} />;
+      }
+
+      const quoteTitleChildren = props.tnode.children.filter((child) => htmlTagName(child) === 'div' && hasHtmlClass(child, 'title'));
+      const quoteHeaderChildren = quoteTitleChildren.length ? quoteTitleChildren : props.tnode.children.slice(0, 1);
+      const quoteBodyChildren = props.tnode.children.filter((child) => !quoteHeaderChildren.includes(child));
+      const StateIcon = expanded ? ChevronUp : ChevronDown;
+
+      return (
+        <View style={styles.quoteBox}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            android_ripple={androidRipple(theme.primarySoft)}
+            disabled={!quoteBodyChildren.length}
+            style={styles.quotePanelHeader}
+            onPress={() => setExpanded((value) => !value)}
+          >
+            <View style={styles.quoteAuthorSummary}>
+              <TChildrenRenderer {...tchildrenProps} tchildren={quoteHeaderChildren} />
+            </View>
+            {quoteBodyChildren.length ? (
+              <View style={styles.quotePanelState}>
+                <Text style={styles.quotePanelStateText}>{expanded ? '收起' : '展开'}</Text>
+                <View style={styles.quotePanelStateIcon}>
+                  <StateIcon size={16} color={theme.primary} strokeWidth={1.9} />
+                </View>
+              </View>
+            ) : null}
+          </Pressable>
+          {expanded && quoteBodyChildren.length ? (
+            <View style={[styles.quoteBody, styles.quotePanelBody]}>
+              <TChildrenRenderer {...tchildrenProps} tchildren={quoteBodyChildren} />
+            </View>
+          ) : null}
+        </View>
+      );
+    };
+    return { ...htmlRenderers, aside: QuoteAsideRenderer };
+  }, [htmlRenderers, styles, theme.primary, theme.primarySoft]);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'content') {
       return (
@@ -583,7 +642,7 @@ export function TopicScreen({
   return (
     <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
       <RenderHTMLConfigProvider
-        renderers={htmlRenderers}
+        renderers={topicHtmlRenderers}
         renderersProps={htmlRenderersProps}
         defaultTextProps={{ selectable: true }}
         enableExperimentalBRCollapsing
@@ -744,19 +803,45 @@ function ReplyCard({
             {quotedFloors.map((quotedFloor) => {
               const key = `${replyFloor}:${quotedFloor}`;
               const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
+              const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];
+              const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup || '未知作者';
+              const quotedUser = quotedReply ? userFromReply(quotedReply, source) : source && quotedAuthorFromMarkup ? {
+                source,
+                id: quotedAuthorFromMarkup,
+                username: quotedAuthorFromMarkup,
+                displayName: quotedAuthorFromMarkup,
+                url: '',
+                topics: []
+              } : null;
               const expanded = Boolean(expandedQuotes[key]);
               const loading = Boolean(loadingQuotedFloors[key]);
               return (
                 <View key={key} style={styles.quoteBox}>
-                  <View style={styles.actions}>
+                  <View style={styles.quoteHeader}>
+                    <Pressable
+                      accessibilityRole="button"
+                      disabled={!quotedUser}
+                      style={styles.quoteAuthorSummary}
+                      onPress={() => {
+                        if (quotedUser) {
+                          onOpenUser(quotedUser);
+                        }
+                      }}
+                    >
+                      {quotedReply ? <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
+                      <View style={styles.quoteAuthorTextBlock}>
+                        <Text style={styles.quoteAuthorText} numberOfLines={1}>{quotedAuthorName}</Text>
+                        <Text style={styles.replyMeta}>引用 #{quotedFloor}{quotedReply ? '' : ' · 楼层未加载'}</Text>
+                      </View>
+                    </Pressable>
                     <AppButton
-                      label={loading ? '读取引用' : expanded ? `收起引用 #${quotedFloor}` : `展开引用 #${quotedFloor}`}
+                      compact
+                      label={loading ? '读取' : expanded ? '收起' : '展开'}
                       variant="ghost"
                       styles={styles}
                       disabled={loading}
                       onPress={() => onToggleQuotedFloor({ replyFloor, quotedFloor, quotedReply })}
                     />
-                    {quotedReply ? <Text style={styles.meta}>已加载</Text> : <Text style={styles.meta}>引用楼层未加载</Text>}
                   </View>
                   {expanded && quotedReply ? (
                     <View style={styles.quoteBody}>

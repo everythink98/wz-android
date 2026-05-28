@@ -1157,8 +1157,69 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingHorizontal: 12,
       paddingVertical: 8
     },
+    quoteHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      justifyContent: 'space-between'
+    },
+    quotePanelHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      minHeight: 44,
+      justifyContent: 'space-between'
+    },
+    quoteAuthorSummary: {
+      alignItems: 'center',
+      flex: 1,
+      flexDirection: 'row',
+      gap: 8,
+      minWidth: 0
+    },
+    quotePanelState: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 0,
+      gap: 6
+    },
+    quotePanelStateText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '600',
+      lineHeight: 18
+    },
+    quotePanelStateIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 30,
+      height: 30,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.26 : 0.18),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06)
+    },
+    quoteAuthorTextBlock: {
+      flex: 1,
+      gap: 1,
+      minWidth: 0
+    },
+    quoteAuthorText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '600',
+      lineHeight: 18
+    },
     quoteBody: {
       paddingTop: 4
+    },
+    quotePanelBody: {
+      borderTopColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.14),
+      borderTopWidth: StyleSheet.hairlineWidth,
+      marginTop: 2,
+      paddingTop: 8
     },
     quoteAuthorRow: {
       alignItems: 'center',

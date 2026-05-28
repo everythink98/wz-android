@@ -3,9 +3,12 @@ import type { CategoriesResponse, FeedResponse, Reply, RepliesResponse, SearchRe
 import {
   accessRequirementFromObject,
   absoluteUrl,
+  decodeHtml,
   isRecord,
+  parseHtml,
   sanitizeContentHtml,
   sortTopicsByCreatedAt,
+  textContentFromHtml,
   textExcerpt,
   toIsoString
 } from './localHtml';
@@ -172,23 +175,55 @@ function avatarUrl(value: unknown) {
   return text ? absoluteUrl(text.replace('{size}', '96'), BASE_URL) : undefined;
 }
 
-function quotedFloorsFromHtml(html: string, topicId?: string) {
-  const floors = new Set<number>();
-  for (const match of html.matchAll(/<aside\b[^>]*>/gi)) {
-    const tag = match[0];
-    if (!/\bclass=["'][^"']*\bquote\b[^"']*["']/i.test(tag)) {
-      continue;
-    }
-    const dataTopic = tag.match(/\bdata-topic=["'](\d+)["']/i)?.[1];
-    const dataPost = tag.match(/\bdata-post=["'](\d+)["']/i)?.[1];
-    if (topicId && dataTopic && dataTopic !== topicId) {
-      continue;
-    }
-    if (dataPost) {
-      floors.add(Number(dataPost));
-    }
+function quotedAuthorFromTitle(value: string) {
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text.match(/^([^:：]{1,64})\s*[:：]/)?.[1]?.trim()
+    || text.match(/([^:：\s]{1,64})\s*[:：]\s*$/)?.[1]?.trim()
+    || '';
+}
+
+function quotedAuthorFromAvatarUrl(value: string) {
+  const clean = value.trim();
+  const match = clean.match(/(?:^|\/)user_avatar\/(?:[^/?#]+\/)?([^/?#]+)\/\d+(?:\/|$)/i)
+    || clean.match(/(?:^|\/)letter_avatar\/([^/?#]+)\/\d+(?:\/|$)/i);
+  if (!match) {
+    return '';
   }
-  return [...floors];
+  try {
+    return decodeURIComponent(match[1]).trim();
+  } catch {
+    return match[1].trim();
+  }
+}
+
+function quotedReferencesFromHtml(html: string, topicId?: string) {
+  const floors = new Set<number>();
+  const authors: Record<number, string> = {};
+  const root = parseHtml(html);
+  root.querySelectorAll('aside').forEach((node) => {
+    const className = String(node.getAttribute('class') || '');
+    if (!/\bquote\b/i.test(className)) {
+      return;
+    }
+    const dataTopic = String(node.getAttribute('data-topic') || '');
+    const dataPost = String(node.getAttribute('data-post') || '');
+    if (topicId && dataTopic && dataTopic !== topicId) {
+      return;
+    }
+    const floor = Number(dataPost);
+    if (!Number.isFinite(floor) || floor <= 0) {
+      return;
+    }
+    floors.add(floor);
+
+    const author = decodeHtml(node.getAttribute('data-username') || node.getAttribute('data-display-name') || '').trim()
+      || quotedAuthorFromAvatarUrl(String(node.querySelector('.title img')?.getAttribute('src') || ''))
+      || quotedAuthorFromTitle(textContentFromHtml(node.querySelector('.title')?.toString() || ''));
+    if (author) {
+      authors[floor] = author;
+    }
+  });
+  return { floors: [...floors], authors };
 }
 
 function positiveNumber(value: unknown) {
@@ -209,7 +244,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     return null;
   }
   const contentHtml = sanitizeContentHtml(raw.cooked || '', BASE_URL);
-  const quotedFloors = quotedFloorsFromHtml(contentHtml, topicId);
+  const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
   const liked = likedFromActionsSummary(raw.actions_summary);
   return {
     author: String(raw.username || ''),
@@ -219,7 +254,8 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     contentHtml,
     createdAt: toIsoString(raw.created_at),
     floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
-    ...(quotedFloors.length ? { quotedFloors } : {}),
+    ...(quotedReferences.floors.length ? { quotedFloors: quotedReferences.floors } : {}),
+    ...(Object.keys(quotedReferences.authors).length ? { quotedAuthors: quotedReferences.authors } : {}),
     ...(positiveNumber(raw.id) ? { commentId: positiveNumber(raw.id) } : {}),
     ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
     ...(liked !== undefined ? { liked } : {}),

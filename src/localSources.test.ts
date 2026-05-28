@@ -423,6 +423,58 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
+  it('keeps linux.do quote author names from quote markup', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 910,
+      title: 'linux.do quoted author',
+      created_at: '2026-05-20T00:00:00.000Z',
+      post_stream: {
+        stream: [1, 2],
+        posts: [
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+          {
+            id: 2,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+            created_at: '2026-05-20T00:02:00.000Z'
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '910', fetcher });
+
+    expect(topic.replies[0].quotedFloors).toEqual([1]);
+    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
+  });
+
+  it('keeps linux.do quote author names from quote avatar URLs', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 911,
+      title: 'linux.do quoted author avatar',
+      created_at: '2026-05-20T00:00:00.000Z',
+      post_stream: {
+        stream: [1, 2],
+        posts: [
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+          {
+            id: 2,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<aside data-post="1" class="quote" data-topic="911"><div class="title"><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/alice/48/1.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/911/1">Quoted topic</a></div></div><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+            created_at: '2026-05-20T00:02:00.000Z'
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '911', fetcher });
+
+    expect(topic.replies[0].quotedFloors).toEqual([1]);
+    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
+  });
+
   it('refreshes linux.do reply stream when reloading the first reply page', async () => {
     let topicJsonCalls = 0;
     const fetcher = vi.fn(async (input: string) => {

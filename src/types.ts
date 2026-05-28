@@ -36,6 +36,7 @@ export interface Reply {
   createdAt: string;
   floor?: number;
   quotedFloors?: number[];
+  quotedAuthors?: Record<number, string>;
   commentId?: number;
   upvoteCount?: number;
   likeCount?: number;

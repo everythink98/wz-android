@@ -141,6 +141,51 @@ describe('Android topic detail reading layout', () => {
     expect(replyCard).not.toContain('icon={Copy}');
   });
 
+  it('shows the quoted author beside the quote expand control', () => {
+    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
+    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
+      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      : '';
+
+    expect(replyCard).toContain('styles.quoteHeader');
+    expect(replyCard).toContain('styles.quoteAuthorSummary');
+    expect(replyCard).toContain('const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];');
+    expect(replyCard).toContain("const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup || '未知作者';");
+    expect(replyCard).toContain('quotedReply ? <AuthorAvatar small name={quotedReply.author}');
+    expect(replyCard).toContain('{quotedAuthorName}');
+    expect(replyCard).toContain("label={loading ? '读取' : expanded ? '收起' : '展开'}");
+    expect(themeSource).toContain('quoteHeader');
+    expect(themeSource).toContain('quoteAuthorSummary');
+    expect(themeSource).toContain('quoteAuthorText');
+  });
+
+  it('collapses native linux.do HTML quote blocks behind an expand control', () => {
+    const rendererStart = topicScreenSource.indexOf('const QuoteAsideRenderer: CustomBlockRenderer');
+    const rendererEnd = topicScreenSource.indexOf('return { ...htmlRenderers, aside: QuoteAsideRenderer };', rendererStart);
+    const quoteRenderer = rendererStart >= 0 && rendererEnd > rendererStart
+      ? topicScreenSource.slice(rendererStart, rendererEnd)
+      : '';
+
+    expect(topicScreenSource).toContain('type CustomBlockRenderer');
+    expect(topicScreenSource).toContain('TChildrenRenderer');
+    expect(topicScreenSource).toContain('useTNodeChildrenProps');
+    expect(topicScreenSource).toContain('const topicHtmlRenderers = useMemo<HtmlRenderers>');
+    expect(topicScreenSource).toContain('renderers={topicHtmlRenderers}');
+    expect(quoteRenderer).toContain("hasHtmlClass(props.tnode, 'quote')");
+    expect(quoteRenderer).toContain('accessibilityState={{ expanded }}');
+    expect(quoteRenderer).toContain('android_ripple={androidRipple(theme.primarySoft)}');
+    expect(quoteRenderer).toContain('const StateIcon = expanded ? ChevronUp : ChevronDown;');
+    expect(quoteRenderer).toContain('styles.quotePanelHeader');
+    expect(quoteRenderer).toContain('styles.quotePanelState');
+    expect(quoteRenderer).toContain("expanded ? '收起' : '展开'");
+    expect(quoteRenderer).toContain('setExpanded((value) => !value)');
+    expect(quoteRenderer).toContain('expanded && quoteBodyChildren.length');
+    expect(themeSource).toContain('quotePanelHeader');
+    expect(themeSource).toContain('quotePanelState');
+    expect(themeSource).toContain('quotePanelStateIcon');
+  });
+
   it('shows author avatar slots in topic detail and replies without rewriting detail HTML', () => {
     expect(topicScreenSource).toContain('function AuthorAvatar');
     expect(topicScreenSource).toContain('SvgXml');

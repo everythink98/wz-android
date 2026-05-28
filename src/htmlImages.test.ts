@@ -173,6 +173,22 @@ describe('Android HTML image preview helpers', () => {
     expect(extractImageUrlsFromHtml(result)).toEqual(['https://cdn.example.com/photo.jpg']);
   });
 
+  it('shows linux.do quote usernames from quote metadata in quote headers', () => {
+    const html = '<aside class="quote" data-username="alice"><div class="title"><div class="quote-controls"></div><div class="quote-title__text-content"><a href="https://linux.do/t/topic/1">Quoted topic</a></div></div><blockquote><p>quoted text</p></blockquote></aside>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<strong class="quote-title__username">alice</strong>');
+    expect(result).toContain('<span class="quote-title__separator"> · </span>');
+  });
+
+  it('falls back to linux.do quote header avatar URLs when quote metadata has no username', () => {
+    const html = '<aside class="quote" data-post="913" data-topic="1957183"><div class="title"><div class="quote-controls"></div><img alt="" width="24" height="24" src="https://cdn.ldstatic.com/user_avatar/linux.do/haleclipse/48/1130851_2.png" class="avatar"><div class="quote-title__text-content"><a href="https://linux.do/t/topic/1957183/913">Cursor++ 轻指南 v0.0.10</a></div></div><blockquote><p>quoted text</p></blockquote></aside>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<strong class="quote-title__username">haleclipse</strong>');
+    expect(result).toContain('<span class="quote-title__separator"> · </span>');
+  });
+
   it('keeps real HTML images previewable even when their URLs have no file extension', () => {
     const result = createImagePreviewList({
       tappedUrl: 'https://www.nodeseek.com/api/attachments/123',
