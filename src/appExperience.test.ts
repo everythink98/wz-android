@@ -739,6 +739,8 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string) => {');
     expect(appSource).toContain('onHttpError={(event) => {');
     expect(appSource).toContain('if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {');
+    expect(appSource).toContain('if (event.nativeEvent.statusCode === 403) {');
+    expect(appSource).toContain('nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = event.nativeEvent.statusCode;');
     expect(appSource).toContain('NodeSeek 页面返回错误');
     expect(appSource).toContain('onRenderProcessGone={() => {');
     expect(appSource).toContain('NodeSeek 页面读取进程已停止');
@@ -814,14 +816,20 @@ describe('Android App experience guards', () => {
   });
 
   it('refreshes topic replies without resetting the topic body or reading state', () => {
-    const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async \(\{ silent = false \}: \{ silent\?: boolean \} = \{\}\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async \(\{ silent = false, afterSubmit = false \}: \{ silent\?: boolean; afterSubmit\?: boolean \} = \{\}\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const refreshTopicBlock = appSource.match(/const refreshTopic = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const refreshWholeTopicBlock = appSource.match(/const refreshWholeTopic = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const submitReplyBlock = appSource.match(/const submitReply = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(refreshRepliesBlock).toContain('getYaohuoRepliesDirect');
     expect(refreshRepliesBlock).toContain('getReplies');
-    expect(refreshRepliesBlock).toContain('setTopicReplies((current) => mergeReplies(data.items, current));');
+    expect(refreshRepliesBlock).toContain('mergeReplies(data.items, current)');
+    expect(appSource).toContain('afterSubmit = false');
+    expect(appSource).toContain('replyRefreshTarget');
+    expect(refreshRepliesBlock).toContain('const { page: targetPage, offset: targetOffset } = replyRefreshTarget({');
+    expect(refreshRepliesBlock).toContain('replyNextPage');
+    expect(refreshRepliesBlock).toContain('afterSubmit ? mergeReplies(current, data.items) : mergeReplies(data.items, current)');
+    expect(refreshRepliesBlock).toContain('if (!afterSubmit) {');
     expect(refreshRepliesBlock).not.toContain('setTopicDetail(null)');
     expect(refreshRepliesBlock).not.toContain("setCommentQuery('')");
     expect(refreshRepliesBlock).not.toContain("setReplyFilter('all')");
@@ -833,7 +841,7 @@ describe('Android App experience guards', () => {
     expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
     expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
     expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
-    expect(submitReplyBlock).toContain('await refreshTopicReplies({ silent: true });');
+    expect(submitReplyBlock.match(/await refreshTopicReplies\(\{ silent: true, afterSubmit: true \}\);/g) || []).toHaveLength(3);
     expect(topicScreenSource).toContain('onRefreshWholeTopic');
     expect(topicScreenSource).toContain('刷新评论');
     expect(topicScreenSource).toContain('刷新全文');

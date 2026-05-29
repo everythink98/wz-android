@@ -178,7 +178,7 @@ import {
   searchYaohuoDirect
 } from './src/yaohuoApi';
 import type { Fetcher } from './src/request';
-import { filterRepliesByQuery } from './src/androidFeatureHelpers';
+import { filterRepliesByQuery, REPLY_PAGE_SIZE, replyRefreshTarget } from './src/androidFeatureHelpers';
 import { safeFileName } from './src/backupFiles';
 import { buildLocalStatusResult } from './src/statusLogic';
 import { TabBarIcon, tabNavItems } from './src/components/NavBar';
@@ -206,6 +206,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
+  httpErrorStatus?: number;
 };
 type FeedSourceState = {
   hasMore: boolean;
@@ -277,8 +278,8 @@ function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
   return typeof value === 'string' ? value : undefined;
 }
 
-function nodeSeekBrowserResponse(html: string, challenge: boolean) {
-  const status = challenge ? 403 : 200;
+function nodeSeekBrowserResponse(html: string, challenge: boolean, httpErrorStatus?: number) {
+  const status = challenge ? 403 : httpErrorStatus || 200;
   const headerValues: Record<string, string> = {
     'content-type': 'text/html'
   };
@@ -1358,7 +1359,7 @@ export default function App() {
         await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')));
       }).catch(() => undefined);
     }
-    current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge)));
+    current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
     startNextNodeSeekBrowserFetch();
   }, [saveNodeSeekCookieHeader, startNextNodeSeekBrowserFetch]);
 
@@ -2250,7 +2251,7 @@ export default function App() {
     }
   }), [openExternalUrl, openImagePreview, openTopic, selectedTopic?.url, topicDetail?.url]);
 
-  const refreshTopicReplies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+  const refreshTopicReplies = useCallback(async ({ silent = false, afterSubmit = false }: { silent?: boolean; afterSubmit?: boolean } = {}) => {
     const detail = topicDetail || selectedTopic;
     if (!detail) {
       return false;
@@ -2273,21 +2274,28 @@ export default function App() {
         return false;
       }
       controller = startAbortableRequest(repliesAbortRef);
+      const expectedReplyCount = Math.max(detail.replyCount || 0, topicReplies.length) + 1;
+      const { page: targetPage, offset: targetOffset } = replyRefreshTarget({
+        source: detail.source,
+        afterSubmit,
+        expectedReplyCount,
+        replyNextPage
+      });
       const data = detail.source === 'yaohuo'
         ? await getYaohuoRepliesDirect({
           id: detail.id,
           categoryId: detail.categoryId,
-          page: 1,
-          limit: 30,
+          page: targetPage,
+          limit: REPLY_PAGE_SIZE,
           yaohuoCookie,
           signal: controller.signal
         })
         : await getReplies({
           source: detail.source,
           id: detail.id,
-          page: 1,
-          limit: 30,
-          offset: 0,
+          page: targetPage,
+          limit: REPLY_PAGE_SIZE,
+          offset: targetOffset,
           fetcher: nodeSeekFetchWithWebView,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
@@ -2296,10 +2304,12 @@ export default function App() {
       if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
         return false;
       }
-      setTopicReplies((current) => mergeReplies(data.items, current));
-      setReplyHasMore(Boolean(data.hasMore && data.nextPage));
-      setReplyNextPage(data.nextPage ?? null);
-      setReplyNextOffset(data.nextOffset ?? null);
+      setTopicReplies((current) => afterSubmit ? mergeReplies(current, data.items) : mergeReplies(data.items, current));
+      if (!afterSubmit) {
+        setReplyHasMore(Boolean(data.hasMore && data.nextPage));
+        setReplyNextPage(data.nextPage ?? null);
+        setReplyNextOffset(data.nextOffset ?? null);
+      }
       if (!silent) {
         notify(`评论已更新${data.items.length ? `，读取 ${data.items.length} 条` : ''}`);
       }
@@ -2339,7 +2349,7 @@ export default function App() {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
-  }, [clearYaohuoLoginState, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, openTopic, selectedTopic, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicDetail]);
+  }, [clearYaohuoLoginState, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, openTopic, replyNextPage, selectedTopic, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicDetail, topicReplies.length]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -3185,7 +3195,7 @@ export default function App() {
         setReplyContent('');
         setReplyComposerOpen(false);
         setYaohuoReplyTarget(null);
-        await refreshTopicReplies({ silent: true });
+        await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
       return;
     }
@@ -3203,7 +3213,7 @@ export default function App() {
         setReplyContent('');
         setReplyComposerOpen(false);
         setYaohuoReplyTarget(null);
-        await refreshTopicReplies({ silent: true });
+        await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
       return;
     }
@@ -3215,7 +3225,7 @@ export default function App() {
     if (submitted) {
       setReplyContent('');
       setReplyComposerOpen(false);
-      await refreshTopicReplies({ silent: true });
+      await refreshTopicReplies({ silent: true, afterSubmit: true });
     }
   }, [notify, refreshTopicReplies, replyContent, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail, yaohuoReplyTarget]);
 
@@ -3978,6 +3988,12 @@ export default function App() {
               }}
               onHttpError={(event) => {
                 if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {
+                  return;
+                }
+                if (event.nativeEvent.statusCode === 403) {
+                  if (nodeSeekBrowserFetchCurrentRef.current?.id === nodeSeekBrowserFetchRequest.id) {
+                    nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = event.nativeEvent.statusCode;
+                  }
                   return;
                 }
                 failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, `NodeSeek 页面返回错误 ${event.nativeEvent.statusCode}`);

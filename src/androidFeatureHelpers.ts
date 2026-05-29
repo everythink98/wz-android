@@ -1,4 +1,4 @@
-import type { Category, FeedSource, Reply } from './types';
+import type { Category, FeedSource, Reply, Source } from './types';
 import type { TopicRecord } from './readerData';
 
 export interface HighlightPart {
@@ -15,6 +15,8 @@ export interface LibrarySection {
   label: string;
   records: TopicRecord[];
 }
+
+export const REPLY_PAGE_SIZE = 30;
 
 export function libraryCategoryKey(source: FeedSource, categoryId: string) {
   return source === 'all' ? categoryId : `${source}:${categoryId}`;
@@ -143,4 +145,36 @@ export function filterRepliesByQuery(replies: Reply[], query: string) {
     const text = stripHtml(reply.contentHtml).toLowerCase();
     return terms.every((term) => text.includes(term.toLowerCase()));
   });
+}
+
+function replyPageForExpectedCount(count: number) {
+  return Math.max(1, Math.ceil(Math.max(1, count) / REPLY_PAGE_SIZE));
+}
+
+function replyOffsetForExpectedCount(count: number) {
+  return (replyPageForExpectedCount(count) - 1) * REPLY_PAGE_SIZE;
+}
+
+export function replyRefreshTarget({
+  source,
+  afterSubmit,
+  expectedReplyCount,
+  replyNextPage
+}: {
+  source: Source;
+  afterSubmit: boolean;
+  expectedReplyCount: number;
+  replyNextPage?: number | null;
+}) {
+  if (!afterSubmit) {
+    return { page: 1, offset: 0 };
+  }
+  const offset = source === 'yaohuo' ? 0 : replyOffsetForExpectedCount(expectedReplyCount);
+  if (source === 'nodeseek' && replyNextPage === 1) {
+    return { page: 1, offset };
+  }
+  return {
+    page: replyPageForExpectedCount(expectedReplyCount),
+    offset
+  };
 }

@@ -5,7 +5,8 @@ import {
   groupLibraryRecordsByTime,
   highlightHtml,
   highlightTextParts,
-  libraryCategoryFilterItems
+  libraryCategoryFilterItems,
+  replyRefreshTarget
 } from './androidFeatureHelpers';
 import type { Category, Reply, Topic } from './types';
 import type { TopicRecord } from './readerData';
@@ -98,5 +99,17 @@ describe('Android feature helpers', () => {
     ];
 
     expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
+  });
+
+  it('keeps NodeSeek submit refresh on page one when reply pagination is still page-one offset based', () => {
+    expect(replyRefreshTarget({
+      source: 'nodeseek',
+      afterSubmit: true,
+      expectedReplyCount: 61,
+      replyNextPage: 1
+    })).toEqual({
+      page: 1,
+      offset: 60
+    });
   });
 });
