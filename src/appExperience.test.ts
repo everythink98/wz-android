@@ -630,7 +630,6 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('showLinuxDoVerification');
     expect(appSource).toContain('isLinuxDoCloudflareError(error)');
     expect(topicScreenSource).toContain('label="去验证"');
-    expect(appSource).not.toContain('await openTopic(pendingTopic, true);');
   });
 
   it('sends NodeSeek Cloudflare feed errors to the NodeSeek verification panel', () => {
@@ -963,6 +962,52 @@ describe('Android App experience guards', () => {
     const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
 
     expect(block).toContain('pendingLinuxDoTopicRef.current = null;');
+  });
+
+  it('returns to the pending linux.do topic after a verified panel close', () => {
+    const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+
+    expect(appSource).toContain('linuxDoPendingTopicVerifiedRef');
+    expect(appSource).toContain('linuxDoVerifiedRetryTopicKeyRef');
+    expect(appSource).toContain('openTopicRef');
+    expect(block).toContain('const pendingTopic = pendingLinuxDoTopicRef.current;');
+    expect(block).toContain('linuxDoPendingTopicVerifiedRef.current');
+    expect(block).toContain('linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);');
+    expect(block).toContain("setScreen('topic');");
+    expect(block).toContain('openTopicRef.current?.(pendingTopic, true);');
+  });
+
+  it('does not loop back into linux.do verification when the verified retry is still blocked', () => {
+    const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const cloudflareBlock = openTopicBlock.match(/if \(isLinuxDoCloudflareError\(error\)\) \{([\s\S]*?)\n        \}/)?.[1] || '';
+    const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
+    expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current && linuxDoVerifiedRetryTopicKeyRef.current !== topicKey(topic)');
+    expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
+    expect(changeScreenBlock).toContain("if (nextScreen !== 'topic')");
+    expect(changeScreenBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
+    expect(cloudflareBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === topicKey(topic)');
+    expect(cloudflareBlock).toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(cloudflareBlock).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
+    expect(cloudflareBlock).toContain('return;');
+  });
+
+  it('lets Android user profiles load more topic pages', () => {
+    expect(userScreenSource).toContain('loadingMoreTopics');
+    expect(userScreenSource).toContain('加载更多帖子');
+    expect(userScreenSource).toContain('autoLoadArmedRef');
+    expect(userScreenSource).toContain('const armAutoLoad = useCallback');
+    expect(userScreenSource).toContain('const handleEndReached = useCallback');
+    expect(userScreenSource).toContain('autoLoadArmedRef.current = false;');
+    expect(userScreenSource).toContain('onEndReached={handleEndReached}');
+    expect(userScreenSource).toContain('onEndReachedThreshold={0.5}');
+    expect(userScreenSource).toContain('onScrollBeginDrag={armAutoLoad}');
+    expect(userScreenSource).toContain('onMomentumScrollBegin={armAutoLoad}');
+    expect(appSource).toContain('const loadMoreUserTopics = useCallback(async () => {');
+    expect(appSource).toContain('cursor: current.nextTopicsCursor');
+    expect(appSource).toContain('topics: mergeTopics(previous.topics, nextProfile.topics)');
+    expect(appSource).toContain('userLoadingMoreCursorRef');
+    expect(appSource).toContain('userLoadingMoreCursorRef.current === current.nextTopicsCursor');
   });
 
   it('does not let the linux.do verification page stay loading forever', () => {

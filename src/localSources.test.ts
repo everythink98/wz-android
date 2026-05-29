@@ -846,6 +846,101 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('page=2');
   });
 
+  it('uses Discourse latest-topic search ordering for linux.do searches', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      expect(url.pathname).toBe('/search.json');
+      expect(url.searchParams.get('q')).toBe('keyword order:latest_topic');
+      expect(url.searchParams.get('type_filter')).toBe('topic');
+      return json({
+        topics: [{
+          id: 605,
+          title: 'linux latest keyword',
+          slug: 'linux-latest-keyword',
+          created_at: '2026-05-21T00:00:00.000Z',
+          bumped_at: '2026-05-21T00:00:00.000Z',
+          posts_count: 1
+        }],
+        users: []
+      });
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['605']);
+  });
+
+  it('maps linux.do search result category ids through site categories', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('linux.do/search.json')) {
+        return json({
+          topics: [{
+            id: 701,
+            title: 'linux category keyword',
+            slug: 'linux-category-keyword',
+            category_id: 4,
+            created_at: '2026-05-21T00:00:00.000Z',
+            bumped_at: '2026-05-21T00:00:00.000Z',
+            posts_count: 1
+          }],
+          users: []
+        });
+      }
+      if (input.includes('linux.do/site.json')) {
+        return json({
+          categories: [{
+            id: 4,
+            name: '开发调优',
+            slug: 'dev'
+          }]
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+
+    expect(search.items[0]).toMatchObject({
+      id: '701',
+      categoryId: '4',
+      category: '开发调优'
+    });
+    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/site.json');
+  });
+
+  it('orders linux.do search results by creation time newest first', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('linux.do/search.json')) {
+        return json({
+          topics: [
+            {
+              id: 801,
+              title: 'linux older keyword',
+              slug: 'linux-older-keyword',
+              created_at: '2026-05-20T00:00:00.000Z',
+              bumped_at: '2026-05-28T00:00:00.000Z',
+              posts_count: 1
+            },
+            {
+              id: 802,
+              title: 'linux newer keyword',
+              slug: 'linux-newer-keyword',
+              created_at: '2026-05-22T00:00:00.000Z',
+              bumped_at: '2026-05-22T00:00:00.000Z',
+              posts_count: 1
+            }
+          ],
+          users: []
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['802', '801']);
+  });
+
   it('sends saved linux.do login cookies when searching', async () => {
     vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
       cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
@@ -873,7 +968,12 @@ describe('Android local sources', () => {
     const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
 
     expect(search.items.map((item) => item.id)).toEqual(['601']);
-    expect(fetcher).toHaveBeenCalledWith('https://linux.do/search.json?q=keyword&type_filter=topic', expect.objectContaining({
+    const [input, init] = fetcher.mock.calls[0];
+    const url = new URL(String(input));
+    expect(url.pathname).toBe('/search.json');
+    expect(url.searchParams.get('q')).toBe('keyword order:latest_topic');
+    expect(url.searchParams.get('type_filter')).toBe('topic');
+    expect(init).toEqual(expect.objectContaining({
       headers: expect.objectContaining({
         Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'User-Agent': 'LinuxDo WebView UA'

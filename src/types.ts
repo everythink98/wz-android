@@ -86,6 +86,8 @@ export interface UserProfile {
   replyCount?: number;
   postCount?: number;
   topics: Topic[];
+  hasMoreTopics?: boolean;
+  nextTopicsCursor?: string | null;
 }
 
 export interface FeedResponse {

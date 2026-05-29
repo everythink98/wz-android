@@ -439,6 +439,7 @@ export default function App() {
   const topicAbortRef = useRef<AbortController | null>(null);
   const userRequestIdRef = useRef(0);
   const userAbortRef = useRef<AbortController | null>(null);
+  const userLoadingMoreCursorRef = useRef<string | null>(null);
   const backupAbortRef = useRef<AbortController | null>(null);
   const statusAbortRef = useRef<AbortController | null>(null);
   const actionAbortRef = useRef<AbortController | null>(null);
@@ -464,6 +465,9 @@ export default function App() {
   const reopenExistingTopicScreenRef = useRef(false);
   const skipNextNavigationSyncRef = useRef(false);
   const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
+  const linuxDoPendingTopicVerifiedRef = useRef(false);
+  const linuxDoVerifiedRetryTopicKeyRef = useRef<string | null>(null);
+  const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const nodeSeekBrowserFetchIdRef = useRef(0);
@@ -532,6 +536,7 @@ export default function App() {
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userBusy, setUserBusy] = useState(false);
+  const [userLoadingMore, setUserLoadingMore] = useState(false);
   const [userError, setUserError] = useState('');
   const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
   const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
@@ -1432,10 +1437,19 @@ export default function App() {
   }, []);
 
   const closeLinuxDoPanel = useCallback(() => {
+    const pendingTopic = pendingLinuxDoTopicRef.current;
+    const shouldOpenPendingTopic = Boolean(pendingTopic && linuxDoPendingTopicVerifiedRef.current);
     linuxDoWebViewRef.current?.stopLoading();
     pendingLinuxDoTopicRef.current = null;
+    linuxDoPendingTopicVerifiedRef.current = false;
     setShowLinuxDoPanel(false);
     setLoadingLinuxDoPage(false);
+    if (pendingTopic && shouldOpenPendingTopic) {
+      linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);
+      reopenExistingTopicScreenRef.current = true;
+      setScreen('topic');
+      void openTopicRef.current?.(pendingTopic, true);
+    }
   }, []);
 
   const changeLinuxDoPanel = useCallback((visible: boolean) => {
@@ -1456,6 +1470,7 @@ export default function App() {
   }, [closeLinuxDoPanel]);
 
   const showLinuxDoVerification = useCallback((message = 'linux.do 需要完成 Cloudflare 验证') => {
+    linuxDoPendingTopicVerifiedRef.current = false;
     setScreen('more');
     setShowLoginPanel(false);
     closeYaohuoLoginPanel();
@@ -1994,6 +2009,9 @@ export default function App() {
     if (screen === 'topic' && nextScreen !== 'topic') {
       flushPendingProgress();
     }
+    if (nextScreen !== 'topic') {
+      linuxDoVerifiedRetryTopicKeyRef.current = null;
+    }
     if (leavingTopicForUser) {
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
@@ -2025,6 +2043,7 @@ export default function App() {
       userRequestIdRef.current += 1;
       userAbortRef.current?.abort();
       setUserBusy(false);
+      setUserLoadingMore(false);
     }
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, screen]);
@@ -2078,6 +2097,10 @@ export default function App() {
     }
     if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
       pendingLinuxDoTopicRef.current = null;
+      linuxDoPendingTopicVerifiedRef.current = false;
+    }
+    if (linuxDoVerifiedRetryTopicKeyRef.current && linuxDoVerifiedRetryTopicKeyRef.current !== topicKey(topic)) {
+      linuxDoVerifiedRetryTopicKeyRef.current = null;
     }
     const requestId = ++topicRequestIdRef.current;
     repliesRequestIdRef.current += 1;
@@ -2154,11 +2177,19 @@ export default function App() {
       if (nocache) {
         notify('主题已更新');
       }
+      linuxDoVerifiedRetryTopicKeyRef.current = null;
     } catch (error) {
       if (requestId === topicRequestIdRef.current) {
         const message = errorMessage(error);
         setTopicError(message);
         if (isLinuxDoCloudflareError(error)) {
+          if (linuxDoVerifiedRetryTopicKeyRef.current === topicKey(topic)) {
+            linuxDoVerifiedRetryTopicKeyRef.current = null;
+            pendingLinuxDoTopicRef.current = null;
+            linuxDoPendingTopicVerifiedRef.current = false;
+            notify(message);
+            return;
+          }
           pendingLinuxDoTopicRef.current = topic;
           setLinuxDoCookieNames([]);
           showLinuxDoVerification(message);
@@ -2188,6 +2219,7 @@ export default function App() {
       finishAbortableRequest(topicAbortRef, controller);
     }
   }, [changeScreen, clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, selectedTopic, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
+  openTopicRef.current = openTopic;
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
     a: {
@@ -2413,6 +2445,7 @@ export default function App() {
   }, [notify, selectedTopic, topicDetail]);
 
   const verifyLinuxDoFromTopic = useCallback(() => {
+    linuxDoVerifiedRetryTopicKeyRef.current = null;
     const detail = topicDetail || selectedTopic;
     if (detail?.source === 'linuxdo') {
       pendingLinuxDoTopicRef.current = detail;
@@ -2477,6 +2510,8 @@ export default function App() {
     setUserProfile(null);
     setUserError('');
     setUserBusy(true);
+    setUserLoadingMore(false);
+    userLoadingMoreCursorRef.current = null;
     changeScreen('user');
     const controller = startAbortableRequest(userAbortRef);
     try {
@@ -2532,10 +2567,86 @@ export default function App() {
     } finally {
       if (requestId === userRequestIdRef.current) {
         setUserBusy(false);
+        setUserLoadingMore(false);
       }
       finishAbortableRequest(userAbortRef, controller);
     }
   }, [changeScreen, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
+
+  const loadMoreUserTopics = useCallback(async () => {
+    const current = userProfile;
+    if (!current?.hasMoreTopics || !current.nextTopicsCursor || userBusy || userLoadingMore || userLoadingMoreCursorRef.current === current.nextTopicsCursor) {
+      return;
+    }
+    const requestId = ++userRequestIdRef.current;
+    const controller = startAbortableRequest(userAbortRef);
+    userLoadingMoreCursorRef.current = current.nextTopicsCursor;
+    setUserLoadingMore(true);
+    setUserError('');
+    try {
+      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
+        loadYaohuoCookieForSource(current.source),
+        loadNodeSeekCookieForSource(current.source)
+      ]);
+      if (requestId !== userRequestIdRef.current) {
+        return;
+      }
+      if (current.source === 'yaohuo' && !yaohuoCookie) {
+        showYaohuoLogin();
+        setUserError('请先登录妖火后再查看用户主页');
+        return;
+      }
+      const nextProfile = await getUserProfile({
+        source: current.source,
+        id: current.id,
+        username: current.username,
+        fetcher: nodeSeekFetchWithWebView,
+        nodeSeekCookie,
+        nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+        yaohuoCookie,
+        cursor: current.nextTopicsCursor,
+        signal: controller.signal
+      });
+      if (requestId !== userRequestIdRef.current) {
+        return;
+      }
+      setUserProfile((previous) => {
+        if (!previous || previous.source !== current.source || previous.id !== current.id) {
+          return previous;
+        }
+        return {
+          ...previous,
+          topics: mergeTopics(previous.topics, nextProfile.topics),
+          hasMoreTopics: nextProfile.hasMoreTopics,
+          nextTopicsCursor: nextProfile.nextTopicsCursor
+        };
+      });
+      notify('用户帖子已加载更多');
+    } catch (error) {
+      if (requestId === userRequestIdRef.current && !isCanceledRequest(error)) {
+        const message = errorMessage(error);
+        setUserError(message);
+        if (isLinuxDoCloudflareError(error)) {
+          showLinuxDoVerification(message);
+          return;
+        }
+        if (isNodeSeekCloudflareError(error)) {
+          showNodeSeekVerification(message);
+          return;
+        }
+        if (isYaohuoLoginRequiredError(error) || isYaohuoLoginExpiredError(error)) {
+          showYaohuoLogin();
+        }
+        notify(message);
+      }
+    } finally {
+      if (requestId === userRequestIdRef.current) {
+        setUserLoadingMore(false);
+        userLoadingMoreCursorRef.current = null;
+      }
+      finishAbortableRequest(userAbortRef, controller);
+    }
+  }, [loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, userBusy, userLoadingMore, userProfile]);
 
   const goBackFromUser = useCallback(() => {
     cancelDeferredNavigationTask();
@@ -2861,6 +2972,7 @@ export default function App() {
       if (!cookieHeader) {
         setHasLinuxDoClearance(false);
         setHasLinuxDoLogin(false);
+        linuxDoPendingTopicVerifiedRef.current = false;
         notify('没有检测到 linux.do 登录或验证信息；匿名阅读仍可使用。');
         return;
       }
@@ -2869,8 +2981,9 @@ export default function App() {
       setHasLinuxDoLogin(summary.loggedIn);
       setLinuxDoWebViewError('');
       notify(summary.loggedIn ? 'linux.do 登录信息已保存在本机。' : 'linux.do 验证信息已保存在本机。');
-      pendingLinuxDoTopicRef.current = null;
+      linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);
     } catch (error) {
+      linuxDoPendingTopicVerifiedRef.current = false;
       notify(errorMessage(error));
     } finally {
       setChecking(false);
@@ -3770,7 +3883,9 @@ export default function App() {
       styles={styles}
       theme={theme}
       topicListStateInput={topicListStateInput}
+      loadingMoreTopics={userLoadingMore}
       onBack={goBackFromUser}
+      onLoadMoreTopics={loadMoreUserTopics}
       onOpenOriginal={openExternalUrl}
       onOpenTopic={openTopic}
       onRefresh={() => {
@@ -3781,7 +3896,7 @@ export default function App() {
       }}
       onToggleFollow={toggleUserFollow}
     />
-  ), [currentUserFollowed, goBackFromUser, openExternalUrl, openTopic, openUser, readerData, selectedUser, styles, theme, toggleUserFollow, topicListStateInput, userBusy, userError, userProfile]);
+  ), [currentUserFollowed, goBackFromUser, loadMoreUserTopics, openExternalUrl, openTopic, openUser, readerData, selectedUser, styles, theme, toggleUserFollow, topicListStateInput, userBusy, userError, userLoadingMore, userProfile]);
 
   const renderMainTabs = useCallback(() => (
     <Tab.Navigator

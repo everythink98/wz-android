@@ -145,19 +145,33 @@ function topicSummary(topic: Topic): Topic {
 
 function userSummary(user: UserProfile): UserProfile {
   const id = String(user.id || user.username || '').trim();
+  const username = user.username || user.displayName || '';
+  const displayName = cleanUserDisplayName(user);
+  const topicCount = cleanUserStat(user.source, user.topicCount);
+  const replyCount = cleanUserStat(user.source, user.replyCount);
+  const postCount = user.source === 'yaohuo'
+    ? topicCount && replyCount ? topicCount + replyCount : undefined
+    : cleanUserStat(user.source, user.postCount) || (topicCount && replyCount ? topicCount + replyCount : undefined);
+  const topics = Array.isArray(user.topics)
+    ? user.topics.filter(isTopic).map(topicSummary).map((topic) => (
+      user.source === 'yaohuo' && isPollutedYaohuoUserText(topic.author)
+        ? { ...topic, author: displayName || username || id }
+        : topic
+    )).slice(0, 50)
+    : [];
   return {
     source: user.source,
     id,
-    username: user.username || user.displayName || '',
-    displayName: user.displayName,
+    username,
+    displayName,
     avatar: user.avatar ? sanitizeTopicUrl(user.avatar) : undefined,
     url: sanitizeTopicUrl(userProfileUrl(user.source, id, user.url)),
     bio: user.bio,
     joinedAt: user.joinedAt,
-    topicCount: typeof user.topicCount === 'number' ? user.topicCount : undefined,
-    replyCount: typeof user.replyCount === 'number' ? user.replyCount : undefined,
-    postCount: typeof user.postCount === 'number' ? user.postCount : undefined,
-    topics: Array.isArray(user.topics) ? user.topics.filter(isTopic).map(topicSummary).slice(0, 50) : []
+    topicCount,
+    replyCount,
+    postCount,
+    topics
   };
 }
 
@@ -174,6 +188,32 @@ function createEmptyDeletedRecords(): DeletedRecords {
     history: {},
     followedUsers: {}
   };
+}
+
+function cleanUserDisplayName(user: UserProfile) {
+  const displayName = String(user.displayName || '').trim();
+  if (
+    user.source === 'yaohuo'
+    && isPollutedYaohuoUserText(displayName)
+  ) {
+    return user.username || user.id;
+  }
+  return displayName || undefined;
+}
+
+function cleanUserStat(source: Source, value: unknown) {
+  if (typeof value !== 'number') {
+    return undefined;
+  }
+  if (source === 'yaohuo' && value > 999_999) {
+    return undefined;
+  }
+  return value;
+}
+
+function isPollutedYaohuoUserText(value: unknown) {
+  const text = String(value || '').trim();
+  return !text || text.length > 32 || /正在论坛|查看更多|动态|人气|留言板|小时前|分钟前|今天|昨天/.test(text);
 }
 
 export function createEmptyReaderData(): ReaderData {

@@ -145,6 +145,46 @@ describe('Android reader data helpers', () => {
     expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
   });
 
+  it('drops polluted yaohuo followed user display names during sanitizing', () => {
+    const data = sanitizeReaderData({
+      version: 2,
+      favorites: {},
+      history: {},
+      progress: {},
+      followedUsers: {
+        'yaohuo:36925': {
+          user: {
+            source: 'yaohuo',
+            id: '36925',
+            username: '李慕婉o',
+            displayName: '369256小时前正在论坛查询标题:醒图7小时前查看更多动态人气值4,443空间人气6今日人气留言板',
+            url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=36925',
+            topicCount: 1659,
+            replyCount: 3698222,
+            postCount: 3699881,
+            topics: [{
+              ...topic,
+              source: 'yaohuo',
+              id: '1540797',
+              author: '369256小时前正在论坛查询标题:醒图7小时前查看更多动态人气值4,443空间人气6今日人气留言板',
+              authorId: '36925',
+              authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=36925',
+              url: 'https://yaohuo.me/bbs/book_view.aspx?siteid=1000&classid=201&id=1540797'
+            }]
+          },
+          followedAt: '2026-05-28T15:31:33.012Z'
+        }
+      },
+      deletedRecords: { favorites: {}, history: {}, followedUsers: {} }
+    });
+
+    expect(data.followedUsers['yaohuo:36925']?.user.displayName).toBe('李慕婉o');
+    expect(data.followedUsers['yaohuo:36925']?.user.topicCount).toBe(1659);
+    expect(data.followedUsers['yaohuo:36925']?.user.replyCount).toBeUndefined();
+    expect(data.followedUsers['yaohuo:36925']?.user.postCount).toBeUndefined();
+    expect(data.followedUsers['yaohuo:36925']?.user.topics[0].author).toBe('李慕婉o');
+  });
+
   it('removes followed users with deletion markers', () => {
     let data = toggleFollowedUser(createEmptyReaderData(), profile);
 

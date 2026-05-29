@@ -509,12 +509,17 @@ function topicMatchesSearch(topic: Topic, query: string) {
   return matchesSearchExpression(searchExpressionText(topic), parseSearchExpression(query));
 }
 
+function linuxDoSearchQuery(query: string) {
+  const clean = query.trim();
+  return /\border:/i.test(clean) ? clean : `${clean} order:latest_topic`.trim();
+}
+
 async function searchLatestLinuxDoTopics(query: string, options: LinuxDoOptions & { limit?: number; page?: number }): Promise<SearchResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
   const latest = await getLinuxDoFeed({ ...options, limit: 100, page });
   return {
-    items: latest.items.filter((topic) => topicMatchesSearch(topic, query)).slice(0, limit),
+    items: sortTopicsByCreatedAt(latest.items.filter((topic) => topicMatchesSearch(topic, query))).slice(0, limit),
     errors: {},
     hasMore: Boolean(latest.hasMore),
     nextPage: latest.hasMore ? latest.nextPage ?? page + 1 : null
@@ -526,7 +531,7 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
   const page = options.page || 1;
   try {
     const data = await fetchLinuxDoJson<Record<string, unknown>>('/search.json', {
-      q: query,
+      q: linuxDoSearchQuery(query),
       type_filter: 'topic',
       ...(page > 1 ? { page } : {})
     }, options);
@@ -535,14 +540,14 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
     if (Array.isArray(data.posts)) {
       data.posts.filter(isRecord).forEach((post) => postsByTopicId.set(String(post.topic_id), post));
     }
-    const categoryMap = categoryMapFromData(data);
     const topics = Array.isArray(data.topics) ? data.topics : [];
-    const items = topics.slice(0, limit).map((topic) => {
+    const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
+    const items = sortTopicsByCreatedAt(topics.map((topic) => {
       const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
       const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
       const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
       return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
-    }).filter(Boolean) as Topic[];
+    }).filter(Boolean) as Topic[]).slice(0, limit);
     const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
     const hasMore = Boolean(grouped.more_full_page_results) || topics.length > limit;
     if (!items.length && query.trim()) {

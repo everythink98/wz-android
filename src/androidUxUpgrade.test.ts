@@ -109,7 +109,7 @@ describe('Android App UX upgrade guards', () => {
   it('keeps linux.do verification checks from auto-returning to the old topic', () => {
     const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(checkLinuxDoCookieBlock).toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(checkLinuxDoCookieBlock).toContain('linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);');
     expect(checkLinuxDoCookieBlock).not.toContain('const returnScreen = topicReturnScreenRef.current;');
     expect(checkLinuxDoCookieBlock).not.toContain('const backStack = [...topicBackStackRef.current];');
     expect(checkLinuxDoCookieBlock).not.toContain('reopenExistingTopicScreenRef.current = true;');

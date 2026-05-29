@@ -70,4 +70,16 @@ describe('Android search list items', () => {
       { value: 'v2ex:问与答', label: 'V2EX · 问与答 1' }
     ]);
   });
+
+  it('does not expose linux.do uncategorized search filters', () => {
+    const options = searchCategoryOptions([
+      { ...topic('1', 'linuxdo', '未分类'), categoryId: '101' },
+      { ...topic('2', 'linuxdo', '未分类'), categoryId: '102' },
+      topic('3', 'linuxdo', '开发调优')
+    ]);
+
+    expect(options).toEqual([
+      { value: 'linuxdo:开发调优', label: 'linux.do · 开发调优 1' }
+    ]);
+  });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Text, View, type ListRenderItem } from 'react-native';
 import { SvgXml } from 'react-native-svg';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
@@ -83,7 +83,9 @@ export function UserScreen({
   styles,
   theme,
   topicListStateInput,
+  loadingMoreTopics,
   onBack,
+  onLoadMoreTopics,
   onOpenOriginal,
   onOpenTopic,
   onRefresh,
@@ -98,7 +100,9 @@ export function UserScreen({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topicListStateInput: NormalizedTopicListStateInput;
+  loadingMoreTopics: boolean;
   onBack: () => void;
+  onLoadMoreTopics: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
   onRefresh: () => void;
@@ -110,7 +114,18 @@ export function UserScreen({
     { type: 'profile', key: 'profile' },
     ...topics.map((topic) => ({ type: 'topic' as const, key: `${topic.source}:${topic.id}`, topic }))
   ], [topics]);
+  const autoLoadArmedRef = useRef(false);
   const followTarget = profile || requestedUser;
+  const armAutoLoad = useCallback(() => {
+    autoLoadArmedRef.current = true;
+  }, []);
+  const handleEndReached = useCallback(() => {
+    if (!profile?.hasMoreTopics || busy || loadingMoreTopics || !autoLoadArmedRef.current) {
+      return;
+    }
+    autoLoadArmedRef.current = false;
+    onLoadMoreTopics();
+  }, [busy, loadingMoreTopics, onLoadMoreTopics, profile?.hasMoreTopics]);
   const renderItem = useCallback<ListRenderItem<UserListItem>>(({ item }) => {
     if (item.type === 'profile') {
       return (
@@ -177,6 +192,15 @@ export function UserScreen({
         keyExtractor={(item) => item.key}
         keyboardShouldPersistTaps="handled"
         {...TOPIC_LIST_PERFORMANCE_PROPS}
+        ListFooterComponent={profile?.hasMoreTopics ? (
+          <View style={styles.actions}>
+            <AppButton label={loadingMoreTopics ? '正在加载...' : '加载更多帖子'} styles={styles} disabled={loadingMoreTopics} onPress={onLoadMoreTopics} />
+          </View>
+        ) : null}
+        onEndReached={handleEndReached}
+        onEndReachedThreshold={0.5}
+        onScrollBeginDrag={armAutoLoad}
+        onMomentumScrollBegin={armAutoLoad}
         renderItem={renderItem}
       />
     </View>

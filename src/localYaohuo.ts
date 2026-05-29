@@ -151,14 +151,47 @@ function extractUserIdFromHref(href?: string) {
     || String(href || '').match(/userinfo(?:\.aspx)?\/?(\d+)/i)?.[1];
 }
 
-function profileStats(text: string) {
-  const topicCount = parsePositiveInteger(text.match(/(?:主题|帖子|发帖)\s*[:：]?\s*(\d+)/)?.[1]);
-  const replyCount = parsePositiveInteger(text.match(/(?:回复|回帖)\s*[:：]?\s*(\d+)/)?.[1]);
+function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
+  const topicCount = profileStructuredStatValue(root, 'posts') || profileStatValue(text, '主题|帖子|贴子|发帖');
+  const replyCount = profileStructuredStatValue(root, 'replies') || profileStatValue(text, '回复|回帖');
   return {
     topicCount: topicCount || undefined,
     replyCount: replyCount || undefined,
-    postCount: topicCount || replyCount ? topicCount + replyCount : undefined
+    postCount: topicCount && replyCount ? topicCount + replyCount : undefined
   };
+}
+
+function profileStructuredStatValue(root: ReturnType<typeof parseHtml>, className: string) {
+  for (const element of root.querySelectorAll('.uinfo-stat')) {
+    const classes = String(element.getAttribute('class') || '').split(/\s+/);
+    if (!classes.includes(className)) {
+      continue;
+    }
+    const value = parsePositiveInteger(elementText(element.querySelector('.value')));
+    if (value) {
+      return value;
+    }
+  }
+  return 0;
+}
+
+function profileStatValue(text: string, labels: string) {
+  const pattern = new RegExp(`(?:^|[^\\d])(?:${labels})\\s*(?:[:：]?\\s*|[（(]\\s*)([\\d,]{1,6})(?!\\d)`, 'g');
+  for (const match of text.matchAll(pattern)) {
+    const value = parsePositiveInteger(match[1]);
+    if (value) {
+      return value;
+    }
+  }
+  return 0;
+}
+
+function safeYaohuoProfileName(value: unknown) {
+  const text = String(value || '').trim();
+  if (!text || text.length > 32 || /正在论坛|查看更多|动态|人气|留言板|小时前|分钟前|今天|昨天/.test(text)) {
+    return '';
+  }
+  return text;
 }
 
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
@@ -257,13 +290,74 @@ function nextPageFromHtml(html: string, page: number, itemCount: number, limit: 
     return null;
   }
   const root = parseHtml(html);
-  const href = root.querySelectorAll('a[href]').find((link) => /下一页|下页/.test(elementText(link)))?.getAttribute('href') || '';
+  const href = root.querySelectorAll('a[href]').find((link) => /^(下一页|下页)$/.test(elementText(link)))?.getAttribute('href') || '';
   const next = href.match(/[?&]page=(\d+)/i)?.[1];
   if (next) {
     return Number(next);
   }
   const total = parsePositiveInteger(root.querySelector('input[name="getTotal"], input#Action_getTotal')?.getAttribute('value'));
   return total && total > page * limit && itemCount ? page + 1 : null;
+}
+
+function queryValue(url: URL, name: string) {
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key.toLowerCase() === name.toLowerCase()) {
+      return value;
+    }
+  }
+  return '';
+}
+
+function isYaohuoUserTopicListUrl(url: URL, userId: string) {
+  return /\/bbs\/book_list(?:_search)?\.aspx$/i.test(url.pathname)
+    && queryValue(url, 'action').toLowerCase() === 'search'
+    && queryValue(url, 'type').toLowerCase() === 'pub'
+    && queryValue(url, 'key') === userId;
+}
+
+export function yaohuoUserProfileTopicListUrl(html: string, userId: string, currentUrl = BASE_URL) {
+  const root = parseHtml(html);
+  const href = root.querySelectorAll('a[href]').find((link) => {
+    const text = elementText(link);
+    const rawHref = link.getAttribute('href') || '';
+    return /贴子|帖子|发帖/.test(text) && /book_list(?:_search)?\.aspx/i.test(rawHref);
+  })?.getAttribute('href') || '';
+  const nextUrl = absoluteUrl(href, currentUrl);
+  if (!nextUrl) {
+    return '';
+  }
+  try {
+    const parsed = new URL(nextUrl);
+    if (!isYaohuoUserTopicListUrl(parsed, userId)) {
+      return '';
+    }
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+export function yaohuoTopicListNextPageUrl(html: string, currentUrl: string, page: number, itemCount: number, limit = 30) {
+  if (!itemCount) {
+    return '';
+  }
+  const root = parseHtml(html);
+  const href = root.querySelectorAll('a[href]').find((link) => /^(下一页|下页)$/.test(elementText(link)))?.getAttribute('href') || '';
+  const linkedUrl = absoluteUrl(href, currentUrl);
+  if (linkedUrl) {
+    return linkedUrl;
+  }
+  const nextPage = nextPageFromHtml(html, page, itemCount, limit);
+  if (!nextPage) {
+    return '';
+  }
+  try {
+    const parsed = new URL(currentUrl);
+    parsed.searchParams.set('page', String(nextPage));
+    return parsed.toString();
+  } catch {
+    return '';
+  }
 }
 
 export function parseYaohuoListHtml(html: string, { classId, limit = 30, page = 1, url }: { classId?: string; limit?: number; page?: number; url?: string } = {}): FeedResponse {
@@ -568,11 +662,11 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   const visibleText = elementText(root);
-  const displayName = visibleText.match(/(?:昵称|用户名|用户)\s*[:：]\s*([^\s<]+)/)?.[1]
-    || elementText(root.querySelector('.username, .user-name, h1'))
+  const displayName = safeYaohuoProfileName(visibleText.match(/(?:昵称|用户名)\s*[:：]\s*([^\s<]+)/)?.[1])
+    || safeYaohuoProfileName(elementText(root.querySelector('.username, .user-name, h1')))
     || username
     || id;
-  const stats = profileStats(visibleText);
+  const stats = profileStats(root, visibleText);
   const seen = new Set<string>();
   const rows = [
     ...root.querySelectorAll('.listdata, div.line1, div.line2'),

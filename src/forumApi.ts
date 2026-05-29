@@ -1,6 +1,6 @@
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { yaohuoCategoriesResponse, parseYaohuoUserProfileHtml } from './localYaohuo';
+import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuo';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchSort } from './feedLogic';
 import type {
@@ -35,6 +35,16 @@ function sortByTime<T extends { createdAt: string; lastReplyAt?: string }>(items
   return [...items].sort((left, right) => (
     Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
   ));
+}
+
+function pageNumberFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const page = Number(parsed.searchParams.get('page') || '1');
+    return Number.isFinite(page) && page > 0 ? page : 1;
+  } catch {
+    return 1;
+  }
 }
 
 type AllFeedCursorState = {
@@ -332,6 +342,7 @@ export function getUserProfile({
   nodeSeekCookie,
   nodeSeekUserAgent,
   yaohuoCookie,
+  cursor,
   signal,
   timeoutMs
 }: {
@@ -342,6 +353,7 @@ export function getUserProfile({
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   yaohuoCookie?: string;
+  cursor?: string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<UserProfile> {
@@ -356,22 +368,101 @@ export function getUserProfile({
       }
       const targetId = id || username || '';
       const url = `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(targetId)}&siteid=1000`;
-      const response = await fetchWithTimeout(url, {
-        headers: {
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          Cookie: yaohuoCookie,
-          Referer: 'https://yaohuo.me/bbs/'
+      const headers = {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Cookie: yaohuoCookie,
+        Referer: 'https://yaohuo.me/bbs/'
+      };
+      const readHtml = async (pageUrl: string) => {
+        const response = await fetchWithTimeout(pageUrl, { headers }, { fetcher, signal, timeoutMs });
+        const html = await response.text();
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
-      }, { fetcher, signal, timeoutMs });
-      const html = await response.text();
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        return {
+          html,
+          url: response.url || pageUrl
+        };
+      };
+      const readProfilePage = async (pageUrl: string) => {
+        const page = await readHtml(pageUrl);
+        return {
+          ...page,
+          profile: parseYaohuoUserProfileHtml(page.html, {
+            id: targetId,
+            username,
+            url: page.url
+          })
+        };
+      };
+      const readTopicPage = async (pageUrl: string) => {
+        const page = await readHtml(pageUrl);
+        const pageNumber = pageNumberFromUrl(page.url);
+        const result = parseYaohuoListHtml(page.html, {
+          classId: '0',
+          limit: 30,
+          page: pageNumber,
+          url: page.url
+        });
+        return {
+          ...page,
+          result,
+          nextUrl: yaohuoTopicListNextPageUrl(page.html, page.url, pageNumber, result.items.length, 30)
+        };
+      };
+      const seen = new Set<string>();
+      const topics: Topic[] = [];
+      const addTopics = (items: Topic[], authorFallback?: string) => {
+        for (const topic of items) {
+          if (!seen.has(topic.id)) {
+            seen.add(topic.id);
+            topics.push(topic.author || !authorFallback ? topic : { ...topic, author: authorFallback });
+          }
+        }
+      };
+
+      if (cursor) {
+        const topicPage = await readTopicPage(cursor);
+        addTopics(topicPage.result.items, username || targetId);
+        return {
+          source: 'yaohuo',
+          id: targetId,
+          username: username || targetId,
+          displayName: username || targetId,
+          url,
+          topics: sortTopicsByCreatedAt(topics).slice(0, 30),
+          hasMoreTopics: Boolean(topicPage.nextUrl),
+          nextTopicsCursor: topicPage.nextUrl || null
+        };
       }
-      return parseYaohuoUserProfileHtml(html, {
-        id: targetId,
-        username,
-        url: response.url || url
-      });
+
+      const firstPage = await readProfilePage(url);
+      const authorFallback = firstPage.profile.displayName || firstPage.profile.username || targetId;
+      let nextUrl = yaohuoUserProfileTopicListUrl(firstPage.html, targetId, firstPage.url);
+      if (!nextUrl) {
+        return {
+          ...firstPage.profile,
+          hasMoreTopics: false,
+          nextTopicsCursor: null
+        };
+      }
+
+      const visited = new Set<string>();
+      for (let page = 1; nextUrl && topics.length < 30 && page <= 10; page += 1) {
+        if (visited.has(nextUrl)) {
+          break;
+        }
+        visited.add(nextUrl);
+        const pageResult = await readTopicPage(nextUrl);
+        addTopics(pageResult.result.items, authorFallback);
+        nextUrl = pageResult.nextUrl;
+      }
+      return {
+        ...firstPage.profile,
+        topics: sortTopicsByCreatedAt(topics).slice(0, 30),
+        hasMoreTopics: Boolean(nextUrl),
+        nextTopicsCursor: nextUrl || null
+      };
     }
   });
 }

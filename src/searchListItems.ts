@@ -26,9 +26,16 @@ export function searchResultCategoryKey(item: Topic) {
   return category ? `${item.source}:${category}` : '';
 }
 
+function isHiddenSearchCategory(item: Topic) {
+  return item.source === 'linuxdo' && item.category === '未分类';
+}
+
 export function searchCategoryOptions(results: Topic[]) {
   const counts = new Map<string, { label: string; count: number }>();
   for (const item of results) {
+    if (isHiddenSearchCategory(item)) {
+      continue;
+    }
     const key = searchResultCategoryKey(item);
     if (!key || !item.category) {
       continue;
