@@ -32,6 +32,7 @@ const localLinuxDoSource = readFileSync(join(process.cwd(), 'android-app', 'src'
 const linuxDoBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'linuxdoCookieBridge.ts'), 'utf8');
 const nodeSeekBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'nodeseekCookieBridge.ts'), 'utf8');
 const forumApiSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'forumApi.ts'), 'utf8');
+const feedLogicSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'feedLogic.ts'), 'utf8');
 const yaohuoApiSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'yaohuoApi.ts'), 'utf8');
 const linuxDoCookiePluginPath = join(process.cwd(), 'android-app', 'plugins', 'withLinuxDoCookieModule.js');
 const linuxDoCookiePluginSource = existsSync(linuxDoCookiePluginPath) ? readFileSync(linuxDoCookiePluginPath, 'utf8') : '';
@@ -106,11 +107,21 @@ describe('Android App experience guards', () => {
     expect(feedScreenSource).toContain('当前筛选没有匹配主题');
   });
 
-  it('loads additional feed pages automatically near the end of the list', () => {
-    expect(feedScreenSource).toContain('onEndReachedThreshold={0.6}');
-    expect(feedScreenSource).toContain('onEndReached={active ? requestFeedLoadMore : undefined}');
+  it('loads one additional feed page per new near-bottom scroll movement', () => {
     expect(feedScreenSource).toContain('shouldLoadMoreFeedFromScroll(event.nativeEvent)');
     expect(feedScreenSource).toContain('requestedFeedPageRef.current === nextPage');
+    expect(feedScreenSource).toContain('lastAutoLoadMoreOffsetRef.current');
+    expect(feedScreenSource).not.toContain('onEndReached={active ? requestFeedLoadMore : undefined}');
+  });
+
+  it('pauses automatic feed load-more retries after a failure until the user drags again', () => {
+    expect(appSource).toContain('loadMoreFailureSignal');
+    expect(appSource).toContain('markFeedLoadMoreFailed(requestSource);');
+    expect(appSource).toContain('加载下一页失败');
+    expect(feedScreenSource).toContain('loadMoreFailureSignal');
+    expect(feedScreenSource).toContain('autoLoadPausedAfterFailureRef');
+    expect(feedScreenSource).toContain('pausedAfterFailure: autoLoadPausedAfterFailureRef.current');
+    expect(feedScreenSource).toContain('onScrollBeginDrag={active ? handleScrollBeginDrag : undefined}');
   });
 
   it('draws consistent separators between Android feed rows at the list level', () => {
@@ -194,6 +205,68 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('topicBusy={topicBusy}');
   });
 
+  it('ignores stale Android status check results after a newer check starts', () => {
+    const statusBlock = appSource.match(/const checkLocalStatus = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
+    const checksIndex = statusBlock.indexOf('const checks = await Promise.allSettled');
+    const staleGuardIndex = statusBlock.indexOf('if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {');
+    const resultIndex = statusBlock.indexOf('const result = buildLocalStatusResult');
+    const catchBlock = statusBlock.match(/} catch \(error\) \{([\s\S]*?)\n    } finally \{/)?.[1] || '';
+
+    expect(appSource).toContain('const statusRequestIdRef = useRef(0);');
+    expect(statusBlock).toContain('const requestId = ++statusRequestIdRef.current;');
+    expect(staleGuardIndex).toBeGreaterThan(checksIndex);
+    expect(staleGuardIndex).toBeLessThan(resultIndex);
+    expect(catchBlock).toContain('requestId === statusRequestIdRef.current');
+    expect(catchBlock).toContain('!controller.signal.aborted');
+  });
+
+  it('ignores stale Android backup and restore operations after a newer backup action starts', () => {
+    const importBlock = appSource.match(/const importBackup = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[backupJson/)?.[1] || '';
+    const exportBlock = appSource.match(/const exportBackup = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify\]\);/)?.[1] || '';
+    const exportFileBlock = appSource.match(/const exportBackupFile = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify, shareTextFile\]\);/)?.[1] || '';
+    const importFileBlock = appSource.match(/const importBackupFile = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify, replaceReaderData\]\);/)?.[1] || '';
+
+    expect(appSource).toContain('const backupRequestIdRef = useRef(0);');
+    for (const block of [importBlock, exportBlock, exportFileBlock, importFileBlock]) {
+      expect(block).toContain('const requestId = ++backupRequestIdRef.current;');
+      expect(block).toContain('requestId !== backupRequestIdRef.current');
+    }
+  });
+
+  it('ignores stale Android login checks after a newer login check starts', () => {
+    const checkLoginBlock = appSource.match(/const checkLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify/)?.[1] || '';
+    const checkYaohuoBlock = appSource.match(/const checkYaohuoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
+    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[linuxDoWebViewUserAgent/)?.[1] || '';
+    const saveNodeSeekBlock = appSource.match(/const saveNodeSeekCookieHeader = useCallback\(async \([\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
+    const rememberNodeSeekBlock = appSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const checkingRequestIdRef = useRef(0);');
+    for (const block of [checkLoginBlock, checkYaohuoBlock, checkLinuxDoBlock]) {
+      expect(block).toContain('const requestId = ++checkingRequestIdRef.current;');
+      expect(block).toContain('requestId === checkingRequestIdRef.current');
+      expect(block).toContain('if (requestId === checkingRequestIdRef.current) {');
+    }
+    expect(saveNodeSeekBlock).toContain('isCurrent = () => true');
+    expect(saveNodeSeekBlock).toContain('if (!isCurrent()) {');
+    expect(rememberNodeSeekBlock).toContain('saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current, isCurrent })');
+    expect(checkYaohuoBlock.indexOf('if (requestId !== checkingRequestIdRef.current) {', checkYaohuoBlock.indexOf('await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);'))).toBeGreaterThan(-1);
+  });
+
+  it('ignores stale Android write action results after a newer action starts', () => {
+    const runNodeSeekBlock = appSource.match(/const runNodeSeekRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const runYaohuoBlock = appSource.match(/const runYaohuoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const runLinuxDoBlock = appSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const actionRequestIdRef = useRef(0);');
+    for (const block of [runNodeSeekBlock, runYaohuoBlock, runLinuxDoBlock]) {
+      expect(block).toContain('const requestId = ++actionRequestIdRef.current;');
+      expect(block).toContain('requestId !== actionRequestIdRef.current');
+      expect(block).toContain('controller.signal.aborted');
+      expect(block).toContain('options.isCurrent?.() === false');
+      expect(block).toContain('isCanceledRequest(error)');
+    }
+  });
+
   it('clears search loading when search parameters cancel the active request', () => {
     const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchScope, searchSource\]\);/)?.[0] || '';
 
@@ -223,7 +296,8 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('type FeedSourceState = {');
     expect(appSource).toContain('const [feedStates, setFeedStates]');
     expect(appSource).toContain('[requestSource]: {');
-    expect(appSource).toContain('items: reset ? data.items : mergeTopics(previous.items, data.items)');
+    expect(appSource).toContain('const nextPageState = nextFeedPageState(previous, data, {');
+    expect(appSource).toContain('...nextPageState');
   });
 
   it('clears stale per-source feed loading flags after a superseded request ends', () => {
@@ -405,6 +479,20 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('onLoadMoreSearchSource={loadMoreSearchSource}');
   });
 
+  it('clears stale search load-more flags when retrying a source', () => {
+    const runSearchBlock = appSource.match(/const runSearch = useCallback\(async \(sourceOverride\?: Source\) => \{([\s\S]*?)\n  \}, \[addRecentSearch/)?.[1] || '';
+
+    expect(runSearchBlock).toContain('const nextGroups = searchGroupsRef.current.map((group) => (');
+    expect(runSearchBlock).toContain('group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }');
+    expect(runSearchBlock).toContain('searchGroupsRef.current = nextGroups;');
+  });
+
+  it('clears stale search load-more flags when another source starts loading more', () => {
+    const loadMoreSearchBlock = appSource.match(/const loadMoreSearchSource = useCallback\(async \(source: Source, page: number\) => \{([\s\S]*?)\n  \}, \[notify/)?.[1] || '';
+
+    expect(loadMoreSearchBlock).toContain('group.source === source ? { ...group, loadingMore: true, error: undefined } : { ...group, loadingMore: false }');
+  });
+
   it('keeps Android favorites as a simple list with confirmed unfavorite actions', () => {
     expect(appSource).not.toContain('libraryUndo');
     expect(libraryScreenSource).toContain('Alert.alert');
@@ -466,8 +554,8 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps feed pagination available when an empty source page still has a next page', () => {
-    expect(appSource).toContain('hasMore: Boolean(data.hasMore && (data.nextPage || data.nextCursor))');
-    expect(appSource).not.toContain('hasMore: Boolean(data.items.length && data.hasMore && (data.nextPage || data.nextCursor))');
+    expect(feedLogicSource).toContain('reset || items.length > previous.items.length');
+    expect(feedLogicSource).toContain('Boolean(response.hasMore && (response.nextPage || response.nextCursor) && addedItems)');
   });
 
   it('removes temporary cache files after exporting backup or markdown text', () => {
@@ -486,14 +574,13 @@ describe('Android App experience guards', () => {
     expect(block).toContain('await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);');
   });
 
-  it('restores feed scroll position after both storage and list content are ready', () => {
+  it('resets feed scroll position when the source, category, or reading filter changes', () => {
     const block = feedScreenSource;
 
-    expect(block).toContain('const [scrollRestoreReady, setScrollRestoreReady] = useState(false);');
-    expect(block).toContain('setScrollRestoreReady(false);');
-    expect(block).toContain('setScrollRestoreReady(true);');
-    expect(block).toContain('if (scrollRestoreReady && offset && feedItems.length) {');
-    expect(block).toContain('restoreFeedScrollPosition();');
+    expect(block).toContain('pendingScrollTopRef.current[feedSource] = true;');
+    expect(block).toContain('scrollFeedToTop(feedSource, false);');
+    expect(block).toContain('completePendingFeedScrollReset');
+    expect(block).not.toContain('AsyncStorage.getItem(scrollStorageKey)');
   });
 
   it('bypasses feed caches when loading additional feed pages', () => {
@@ -515,6 +602,33 @@ describe('Android App experience guards', () => {
     expect(guardIndex).toBeGreaterThan(-1);
     expect(cookieIndex).toBeGreaterThan(-1);
     expect(guardIndex).toBeLessThan(cookieIndex);
+  });
+
+  it('stops reply load-more when the next page adds no new replies', () => {
+    const block = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const staleRequestGuardIndex = block.indexOf('if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {');
+    const currentRepliesIndex = block.indexOf('const currentReplies = topicRepliesRef.current;');
+
+    expect(appSource).toContain('const topicRepliesRef = useRef<Reply[]>(topicReplies);');
+    expect(appSource).toContain('topicRepliesRef.current = topicReplies;');
+    expect(block).toContain('const currentReplies = topicRepliesRef.current;');
+    expect(block).toContain('const previousReplyCount = currentReplies.length;');
+    expect(block).toContain('const mergedReplies = mergeReplies(currentReplies, data.items);');
+    expect(block).toContain('setReplyHasMore(Boolean(data.hasMore && data.nextPage && mergedReplies.length > previousReplyCount));');
+    expect(currentRepliesIndex).toBeGreaterThan(staleRequestGuardIndex);
+  });
+
+  it('requires a fresh user scroll before auto-loading another reply page', () => {
+    expect(topicScreenSource).toContain('autoLoadRepliesArmedRef');
+    expect(topicScreenSource).toContain('const armReplyAutoLoad = useCallback');
+    expect(topicScreenSource).toContain('const handleReplyEndReached = useCallback');
+    expect(topicScreenSource).toContain('const requestReplyLoadMore = useCallback');
+    expect(topicScreenSource).toContain('autoLoadRepliesArmedRef.current = false;');
+    expect(topicScreenSource).toMatch(/useEffect\(\(\) => \{\r?\n    setTopicMenuOpen\(false\);\r?\n    autoLoadRepliesArmedRef\.current = false;\r?\n  \}, \[item\?\.id, item\?\.source\]\);/);
+    expect(topicScreenSource).toContain('onEndReached={handleReplyEndReached}');
+    expect(topicScreenSource).toContain('onPress={requestReplyLoadMore}');
+    expect(topicScreenSource).toContain('onScrollBeginDrag={armReplyAutoLoad}');
+    expect(topicScreenSource).toContain('onMomentumScrollBegin={armReplyAutoLoad}');
   });
 
   it('clears stale WebView cookies when stored login state is invalidated', () => {
@@ -644,7 +758,9 @@ describe('Android App experience guards', () => {
   it('saves NodeSeek WebView verification cookies before returning to lists', () => {
     expect(appSource).toContain('readNodeSeekCookiesFromWebView');
     expect(appSource).toContain('rememberCurrentNodeSeekCookies');
-    expect(appSource).toContain('onRememberNodeSeekCookies={rememberCurrentNodeSeekCookies}');
+    expect(appSource).toContain('rememberVisibleNodeSeekCookies');
+    expect(appSource).toContain('onRememberNodeSeekCookies={rememberVisibleNodeSeekCookies}');
+    expect(appSource).toContain('showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId');
     expect(appSource).toContain('nodeSeekWebViewCookieHeaderRef');
     expect(appSource).toContain('nodeSeekWebViewUserAgentRef');
     expect(appSource).toContain('sanitizeNodeSeekUserAgent(data.userAgent)');
@@ -672,6 +788,21 @@ describe('Android App experience guards', () => {
     expect(statusBlock).toContain('loadNodeSeekCookieForSource');
     expect(statusBlock).toContain('nodeSeekCookie');
     expect(statusBlock).toContain('nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current');
+  });
+
+  it('ignores stale Android category results after a newer category request starts', () => {
+    const categoriesBlock = appSource.match(/const loadCategories = useCallback\(async \(source: FeedSource = 'all'\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const dataIndex = categoriesBlock.indexOf('const data = await getCategories({');
+    const staleGuardIndex = categoriesBlock.indexOf('if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {');
+    const setCategoriesIndex = categoriesBlock.indexOf('setCategories((current) =>');
+    const catchBlock = categoriesBlock.match(/} catch \(error\) \{([\s\S]*?)\n    } finally \{/)?.[1] || '';
+
+    expect(appSource).toContain('const categoriesRequestIdRef = useRef(0);');
+    expect(categoriesBlock).toContain('const requestId = ++categoriesRequestIdRef.current;');
+    expect(staleGuardIndex).toBeGreaterThan(dataIndex);
+    expect(staleGuardIndex).toBeLessThan(setCategoriesIndex);
+    expect(catchBlock).toContain('requestId === categoriesRequestIdRef.current');
+    expect(catchBlock).toContain('!controller.signal.aborted');
   });
 
   it('reloads a single source category list only when that source is missing categories', () => {
@@ -805,14 +936,24 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps successful topic actions local instead of reopening the whole topic', () => {
+    const interactBlock = appSource.match(/const interact = useCallback\(async \(type: 'upvote' \| 'like', commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const bookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const voteBlock = appSource.match(/const voteYaohuo = useCallback\(async \(voteId: string\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+
     expect(appSource).toContain('applyInteractionToTopic');
     expect(appSource).toContain('applyInteractionToReplies');
     expect(appSource).toContain('applyBookmarkToTopic');
     expect(appSource).toContain('applyVoteOptionToTopic');
-    expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?\{ refreshTopic: false \}/);
-    expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?\{ refreshTopic: false \}/);
-    expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?\{ refreshTopic: false \}/);
-    expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(interactBlock).toContain('const requestTopicKey = detail ? topicKey(detail) : null;');
+    expect(interactBlock).toContain('currentTopicKeyRef.current !== requestTopicKey');
+    expect(bookmarkBlock).toContain('const requestTopicKey = topicKey(detail);');
+    expect(bookmarkBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
+    expect(voteBlock).toContain('const requestTopicKey = topicKey(detail);');
+    expect(voteBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
   });
 
   it('refreshes topic replies without resetting the topic body or reading state', () => {
@@ -838,9 +979,11 @@ describe('Android App experience guards', () => {
     expect(refreshTopicBlock).toContain('void refreshTopicReplies();');
     expect(refreshTopicBlock).not.toContain('openTopic(');
     expect(refreshWholeTopicBlock).toContain('void openTopic(detail, true);');
-    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
-    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
-    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?\{ refreshTopic: false \}/);
+    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(submitReplyBlock).toContain('const requestTopicKey = topicKey(detail);');
+    expect(submitReplyBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(submitReplyBlock.match(/await refreshTopicReplies\(\{ silent: true, afterSubmit: true \}\);/g) || []).toHaveLength(3);
     expect(topicScreenSource).toContain('onRefreshWholeTopic');
     expect(topicScreenSource).toContain('刷新评论');
@@ -848,11 +991,11 @@ describe('Android App experience guards', () => {
   });
 
   it('closes More screen panels when navigating away from More', () => {
-    const closePanelsBlock = appSource.match(/const closeMorePanels = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[closeLinuxDoPanel\]\);/)?.[1] || '';
+    const closePanelsBlock = appSource.match(/const closeMorePanels = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
     const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
-    expect(closePanelsBlock).toContain('setShowLoginPanel(false);');
-    expect(closePanelsBlock).toContain('setShowYaohuoLoginPanel(false);');
+    expect(closePanelsBlock).toContain('changeNodeSeekLoginPanel(false);');
+    expect(closePanelsBlock).toContain('closeYaohuoLoginPanel();');
     expect(closePanelsBlock).toContain('closeLinuxDoPanel();');
     expect(closePanelsBlock).toContain('setShowSettingsPanel(false);');
     expect(changeScreenBlock).toContain("if (screen === 'more' && nextScreen !== 'more') {");
@@ -1006,14 +1149,20 @@ describe('Android App experience guards', () => {
     expect(userScreenSource).toContain('autoLoadArmedRef');
     expect(userScreenSource).toContain('const armAutoLoad = useCallback');
     expect(userScreenSource).toContain('const handleEndReached = useCallback');
+    expect(userScreenSource).toContain('const requestUserTopicLoadMore = useCallback');
     expect(userScreenSource).toContain('autoLoadArmedRef.current = false;');
+    expect(userScreenSource).toMatch(/useEffect\(\(\) => \{\s*autoLoadArmedRef\.current = false;\s*\}, \[user\?\.id, user\?\.source, user\?\.username\]\);/);
     expect(userScreenSource).toContain('onEndReached={handleEndReached}');
+    expect(userScreenSource).toContain('onPress={requestUserTopicLoadMore}');
     expect(userScreenSource).toContain('onEndReachedThreshold={0.5}');
     expect(userScreenSource).toContain('onScrollBeginDrag={armAutoLoad}');
     expect(userScreenSource).toContain('onMomentumScrollBegin={armAutoLoad}');
     expect(appSource).toContain('const loadMoreUserTopics = useCallback(async () => {');
     expect(appSource).toContain('cursor: current.nextTopicsCursor');
-    expect(appSource).toContain('topics: mergeTopics(previous.topics, nextProfile.topics)');
+    expect(appSource).toContain('const mergedTopics = mergeTopics(previous.topics, nextProfile.topics);');
+    expect(appSource).toContain('topics: mergedTopics');
+    expect(appSource).toContain('hasMoreTopics: Boolean(nextProfile.hasMoreTopics && nextProfile.nextTopicsCursor && mergedTopics.length > previous.topics.length)');
+    expect(appSource).toContain('nextTopicsCursor: mergedTopics.length > previous.topics.length ? nextProfile.nextTopicsCursor : null');
     expect(appSource).toContain('userLoadingMoreCursorRef');
     expect(appSource).toContain('userLoadingMoreCursorRef.current === current.nextTopicsCursor');
   });

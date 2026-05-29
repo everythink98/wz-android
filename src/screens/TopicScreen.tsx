@@ -1,4 +1,4 @@
-import { memo, type RefObject, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   type ListRenderItem,
@@ -330,6 +330,7 @@ export function TopicScreen({
   const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
   const itemSource = topic?.source;
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
+  const autoLoadRepliesArmedRef = useRef(false);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -398,8 +399,23 @@ export function TopicScreen({
       setFloorOpen(false);
     }
   }, [topicListItems, topicScrollRef]);
+  const armReplyAutoLoad = useCallback(() => {
+    autoLoadRepliesArmedRef.current = true;
+  }, []);
+  const handleReplyEndReached = useCallback(() => {
+    if (!replyHasMore || loadingMoreReplies || !autoLoadRepliesArmedRef.current) {
+      return;
+    }
+    autoLoadRepliesArmedRef.current = false;
+    onLoadMoreReplies();
+  }, [loadingMoreReplies, onLoadMoreReplies, replyHasMore]);
+  const requestReplyLoadMore = useCallback(() => {
+    autoLoadRepliesArmedRef.current = false;
+    onLoadMoreReplies();
+  }, [onLoadMoreReplies]);
   useEffect(() => {
     setTopicMenuOpen(false);
+    autoLoadRepliesArmedRef.current = false;
   }, [item?.id, item?.source]);
   const runTopicMenuAction = useCallback((action: () => void) => {
     triggerPressFeedback();
@@ -752,17 +768,15 @@ export function TopicScreen({
           onMomentumScrollEnd={onTopicScroll}
           onScrollEndDrag={onTopicScroll}
           onEndReachedThreshold={0.55}
-          onEndReached={() => {
-            if (replyHasMore && !loadingMoreReplies) {
-              onLoadMoreReplies();
-            }
-          }}
+          onEndReached={handleReplyEndReached}
+          onScrollBeginDrag={armReplyAutoLoad}
+          onMomentumScrollBegin={armReplyAutoLoad}
           extraData={quoteStateVersion}
           {...REPLY_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
           ListFooterComponent={canShowReplies && replyHasMore ? (
             <View style={[styles.topicFooter, topicColumnStyle]}>
-              <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={onLoadMoreReplies} />
+              <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
             </View>
           ) : null}
           renderItem={renderReplyItem}

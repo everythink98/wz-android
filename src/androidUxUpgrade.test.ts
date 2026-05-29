@@ -125,7 +125,7 @@ describe('Android App UX upgrade guards', () => {
     expect(feedScreenSource).toContain('styles.feedFixedHeader');
     expect(feedScreenSource).toContain('styles.feedPager');
     expect(feedScreenSource).toContain('listRefs');
-    expect(feedScreenSource).toContain('scrollToFeedTop');
+    expect(feedScreenSource).toContain('scrollFeedToTop');
     expect(feedScreenSource).toContain('onRefreshPress');
     expect(feedScreenSource).not.toContain('ListHeaderComponent={header}');
     expect(feedScreenSource).not.toContain('PanResponder');

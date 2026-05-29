@@ -116,6 +116,9 @@ export function UserScreen({
   ], [topics]);
   const autoLoadArmedRef = useRef(false);
   const followTarget = profile || requestedUser;
+  useEffect(() => {
+    autoLoadArmedRef.current = false;
+  }, [user?.id, user?.source, user?.username]);
   const armAutoLoad = useCallback(() => {
     autoLoadArmedRef.current = true;
   }, []);
@@ -126,6 +129,10 @@ export function UserScreen({
     autoLoadArmedRef.current = false;
     onLoadMoreTopics();
   }, [busy, loadingMoreTopics, onLoadMoreTopics, profile?.hasMoreTopics]);
+  const requestUserTopicLoadMore = useCallback(() => {
+    autoLoadArmedRef.current = false;
+    onLoadMoreTopics();
+  }, [onLoadMoreTopics]);
   const renderItem = useCallback<ListRenderItem<UserListItem>>(({ item }) => {
     if (item.type === 'profile') {
       return (
@@ -194,7 +201,7 @@ export function UserScreen({
         {...TOPIC_LIST_PERFORMANCE_PROPS}
         ListFooterComponent={profile?.hasMoreTopics ? (
           <View style={styles.actions}>
-            <AppButton label={loadingMoreTopics ? '正在加载...' : '加载更多帖子'} styles={styles} disabled={loadingMoreTopics} onPress={onLoadMoreTopics} />
+            <AppButton label={loadingMoreTopics ? '正在加载...' : '加载更多帖子'} styles={styles} disabled={loadingMoreTopics} onPress={requestUserTopicLoadMore} />
           </View>
         ) : null}
         onEndReached={handleEndReached}

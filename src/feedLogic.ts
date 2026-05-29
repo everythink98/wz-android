@@ -170,6 +170,43 @@ export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): Fee
     nextCursor: base.nextCursor ?? undefined
   };
 }
+
+export function nextFeedPageState(
+  previous: { items: Topic[]; page: number; hasMore: boolean; nextCursor?: string },
+  response: FeedResponse,
+  { requestedPage, reset }: { requestedPage: number; reset: boolean }
+) {
+  const items = reset ? response.items : mergeTopics(previous.items, response.items);
+  const addedItems = reset || items.length > previous.items.length;
+  const failedLoadMore = !reset && Boolean(Object.keys(response.errors || {}).length);
+  if (failedLoadMore) {
+    return {
+      items,
+      page: previous.page,
+      nextCursor: previous.nextCursor,
+      hasMore: previous.hasMore
+    };
+  }
+  return {
+    items,
+    page: addedItems && response.nextPage ? response.nextPage - 1 : requestedPage,
+    nextCursor: response.nextCursor ?? undefined,
+    hasMore: Boolean(response.hasMore && (response.nextPage || response.nextCursor) && addedItems)
+  };
+}
+
+export function shouldFetchAggregatedBaseFeed({
+  page,
+  cursor,
+  hasYaohuoCookie
+}: {
+  page: number;
+  cursor?: string;
+  hasYaohuoCookie: boolean;
+}) {
+  return page <= 1 || Boolean(cursor) || !hasYaohuoCookie;
+}
+
 export function mergeSettledFeedResponses(
   base: PromiseSettledResult<FeedResponse>,
   extra: PromiseSettledResult<FeedResponse>

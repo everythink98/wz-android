@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeTopics, searchLocal } from './feedLogic';
+import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -115,5 +115,55 @@ describe('Android feed logic helpers', () => {
     );
 
     expect(merged.items.slice(0, 4).map((item) => item.source)).toEqual(['v2ex', 'yaohuo', 'nodeseek', 'linuxdo']);
+  });
+
+  it('stops feed pagination when a load-more response adds no visible topics', () => {
+    const next = nextFeedPageState({
+      items: [topic],
+      page: 1,
+      hasMore: true
+    }, {
+      items: [{ ...topic }],
+      errors: {},
+      hasMore: true,
+      nextPage: 6
+    }, {
+      requestedPage: 2,
+      reset: false
+    });
+
+    expect(next.items).toEqual([topic]);
+    expect(next.hasMore).toBe(false);
+    expect(next.page).toBe(2);
+  });
+
+  it('preserves feed pagination when a load-more response has errors', () => {
+    const next = nextFeedPageState({
+      items: [topic],
+      page: 1,
+      hasMore: true,
+      nextCursor: 'cursor-before'
+    }, {
+      items: [{ ...topic, id: '2', url: 'https://example.com/2' }],
+      errors: { v2ex: '读取失败' },
+      hasMore: true,
+      nextPage: 3,
+      nextCursor: 'cursor-after'
+    }, {
+      requestedPage: 2,
+      reset: false
+    });
+
+    expect(next.items.map((item) => item.id)).toEqual(['1', '2']);
+    expect(next.hasMore).toBe(true);
+    expect(next.page).toBe(1);
+    expect(next.nextCursor).toBe('cursor-before');
+  });
+
+  it('skips the non-yaohuo aggregate feed after its cursor is exhausted while yaohuo can continue', () => {
+    expect(shouldFetchAggregatedBaseFeed({ page: 1, hasYaohuoCookie: true })).toBe(true);
+    expect(shouldFetchAggregatedBaseFeed({ page: 2, cursor: 'base-cursor', hasYaohuoCookie: true })).toBe(true);
+    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true })).toBe(false);
+    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: false })).toBe(true);
   });
 });

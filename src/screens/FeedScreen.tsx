@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FlatList, RefreshControl, Text, View, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { TabView } from 'react-native-tab-view';
 import { ChevronUp, RefreshCw } from 'lucide-react-native';
 import type { Category, FeedSource, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from '../feedCategoryRail';
-import { shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
+import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
 import type { ReadingFilter } from '../feedLogic';
 import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
@@ -14,11 +13,7 @@ import { AppButton, EmptyText, FloatingIconButton, LoadingState, PillRail } from
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
-const FEED_SCROLL_STORAGE_PREFIX = 'reader-feed-scroll';
-
-function feedScrollStorageKey(source: FeedSource, category: string, readingFilter: ReadingFilter) {
-  return `${FEED_SCROLL_STORAGE_PREFIX}:${source}:${category || 'all'}:${readingFilter}`;
-}
+const AUTO_LOAD_SCROLL_STEP = 80;
 
 export function FeedScreen({
   busy,
@@ -28,6 +23,7 @@ export function FeedScreen({
   feedItems,
   feedPage,
   feedSource,
+  loadMoreFailureSignal,
   loadingMore,
   readerData,
   topicListStateInput,
@@ -50,6 +46,7 @@ export function FeedScreen({
   feedItems: Topic[];
   feedPage: number;
   feedSource: FeedSource;
+  loadMoreFailureSignal: number;
   loadingMore: boolean;
   readerData: ReaderData;
   topicListStateInput: NormalizedTopicListStateInput;
@@ -67,37 +64,53 @@ export function FeedScreen({
 }) {
   const listRefs = useRef<Partial<Record<FeedSource, FlatList<Topic> | null>>>({});
   const requestedFeedPageRef = useRef<number | null>(null);
-  const pendingScrollOffsetRef = useRef<Partial<Record<FeedSource, number | null>>>({});
-  const scrollStorageKey = useMemo(() => feedScrollStorageKey(feedSource, categoryFilter, readingFilter), [categoryFilter, feedSource, readingFilter]);
+  const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
+  const autoLoadPausedAfterFailureRef = useRef(false);
+  const pendingScrollTopRef = useRef<Partial<Record<FeedSource, boolean>>>({});
   const [showFloatingActions, setShowFloatingActions] = useState(false);
-  const [scrollRestoreReady, setScrollRestoreReady] = useState(false);
   const activeIndex = Math.max(0, feedSourceItems.findIndex((item) => item.value === feedSource));
   const secondaryRailResetKey = feedSource;
 
-  const requestFeedLoadMore = useCallback(() => {
+  const requestFeedLoadMore = useCallback((source: 'button' | 'scroll' = 'button', offsetY = 0) => {
     if (!feedHasMore || busy || loadingMore) {
       return;
+    }
+    if (source === 'scroll') {
+      if (!shouldAllowFeedAutoLoadRequest({
+        pausedAfterFailure: autoLoadPausedAfterFailureRef.current,
+        lastOffset: lastAutoLoadMoreOffsetRef.current,
+        offsetY,
+        minStep: AUTO_LOAD_SCROLL_STEP
+      })) {
+        return;
+      }
     }
     const nextPage = feedPage + 1;
     if (requestedFeedPageRef.current === nextPage) {
       return;
     }
     requestedFeedPageRef.current = nextPage;
+    if (source === 'button') {
+      autoLoadPausedAfterFailureRef.current = false;
+    }
+    if (source === 'scroll') {
+      lastAutoLoadMoreOffsetRef.current = offsetY;
+    }
     onLoadMore();
   }, [busy, feedHasMore, feedPage, loadingMore, onLoadMore]);
 
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const nextVisible = shouldShowFeedFloatingActions(event.nativeEvent.contentOffset.y);
+    const offsetY = Math.max(0, event.nativeEvent.contentOffset.y);
+    const nextVisible = shouldShowFeedFloatingActions(offsetY);
     setShowFloatingActions((current) => current === nextVisible ? current : nextVisible);
     if (shouldLoadMoreFeedFromScroll(event.nativeEvent)) {
-      requestFeedLoadMore();
+      requestFeedLoadMore('scroll', offsetY);
     }
   }, [requestFeedLoadMore]);
 
-  const saveFeedScrollPosition = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offset = Math.max(0, Math.round(event.nativeEvent.contentOffset.y));
-    void AsyncStorage.setItem(scrollStorageKey, String(offset)).catch(() => undefined);
-  }, [scrollStorageKey]);
+  const handleScrollBeginDrag = useCallback(() => {
+    autoLoadPausedAfterFailureRef.current = false;
+  }, []);
 
   useEffect(() => {
     if (!busy && !loadingMore) {
@@ -106,68 +119,58 @@ export function FeedScreen({
   }, [busy, loadingMore]);
 
   useEffect(() => {
-    requestedFeedPageRef.current = null;
-    setShowFloatingActions(false);
-    pendingScrollOffsetRef.current[feedSource] = null;
-    setScrollRestoreReady(false);
-    let active = true;
-    AsyncStorage.getItem(scrollStorageKey)
-      .then((value) => {
-        if (!active) {
-          return;
-        }
-        const offset = Number(value || 0);
-        if (Number.isFinite(offset) && offset > 0) {
-          pendingScrollOffsetRef.current[feedSource] = offset;
-        }
-      })
-      .catch(() => undefined)
-      .then(() => {
-        if (active) {
-          setScrollRestoreReady(true);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [feedSource, scrollStorageKey]);
-
-  const restoreFeedScrollPosition = useCallback(() => {
-    const offset = pendingScrollOffsetRef.current[feedSource];
-    if (scrollRestoreReady && offset && feedItems.length) {
-      pendingScrollOffsetRef.current[feedSource] = null;
-      requestAnimationFrame(() => listRefs.current[feedSource]?.scrollToOffset({ offset, animated: false }));
+    if (loadMoreFailureSignal > 0) {
+      autoLoadPausedAfterFailureRef.current = true;
+      lastAutoLoadMoreOffsetRef.current = null;
     }
-  }, [feedItems.length, feedSource, scrollRestoreReady]);
+  }, [loadMoreFailureSignal]);
 
-  useEffect(() => {
-    restoreFeedScrollPosition();
-  }, [restoreFeedScrollPosition]);
-
-  const scrollToFeedTop = useCallback((source: FeedSource = feedSource) => {
-    listRefs.current[source]?.scrollToOffset({ offset: 0, animated: true });
+  const scrollFeedToTop = useCallback((source: FeedSource = feedSource, animated = true) => {
+    const listRef = listRefs.current[source];
+    if (listRef) {
+      listRef.scrollToOffset({ offset: 0, animated });
+      pendingScrollTopRef.current[source] = false;
+    } else {
+      pendingScrollTopRef.current[source] = true;
+    }
     setShowFloatingActions(false);
   }, [feedSource]);
 
+  const completePendingFeedScrollReset = useCallback(() => {
+    if (pendingScrollTopRef.current[feedSource]) {
+      scrollFeedToTop(feedSource, false);
+    }
+  }, [feedSource, scrollFeedToTop]);
+
+  useEffect(() => {
+    requestedFeedPageRef.current = null;
+    lastAutoLoadMoreOffsetRef.current = null;
+    autoLoadPausedAfterFailureRef.current = false;
+    pendingScrollTopRef.current[feedSource] = true;
+    scrollFeedToTop(feedSource, false);
+  }, [categoryFilter, feedSource, readingFilter, scrollFeedToTop]);
+
   const onRefreshPress = useCallback(() => {
-    scrollToFeedTop();
+    autoLoadPausedAfterFailureRef.current = false;
+    scrollFeedToTop();
     onRefresh();
-  }, [onRefresh, scrollToFeedTop]);
+  }, [onRefresh, scrollFeedToTop]);
 
   useEffect(() => {
     if (scrollToTopSignal > 0) {
-      scrollToFeedTop();
+      scrollFeedToTop();
     }
-  }, [scrollToFeedTop, scrollToTopSignal]);
+  }, [scrollFeedToTop, scrollToTopSignal]);
 
   const handleFeedPageChange = useCallback((index: number) => {
     const next = feedSourceItems[index];
     if (!next || next.value === feedSource) {
       return;
     }
-    scrollToFeedTop(next.value);
+    pendingScrollTopRef.current[next.value] = true;
+    scrollFeedToTop(next.value, false);
     onFeedSourceChange(next.value);
-  }, [feedSource, onFeedSourceChange, scrollToFeedTop]);
+  }, [feedSource, onFeedSourceChange, scrollFeedToTop]);
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
     <MemoizedTopicCard
@@ -209,12 +212,9 @@ export function FeedScreen({
           />
         ) : undefined}
         onScroll={active ? handleScroll : undefined}
+        onScrollBeginDrag={active ? handleScrollBeginDrag : undefined}
         scrollEventThrottle={64}
-        onMomentumScrollEnd={active ? saveFeedScrollPosition : undefined}
-        onScrollEndDrag={active ? saveFeedScrollPosition : undefined}
-        onContentSizeChange={active ? restoreFeedScrollPosition : undefined}
-        onEndReachedThreshold={0.6}
-        onEndReached={active ? requestFeedLoadMore : undefined}
+        onContentSizeChange={active ? completePendingFeedScrollReset : undefined}
         {...FEED_LIST_PERFORMANCE_PROPS}
         ListEmptyComponent={active && busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={active ? feedEmptyText : ''} styles={styles} />}
         ListFooterComponent={active && feedHasMore ? (
@@ -222,7 +222,7 @@ export function FeedScreen({
             label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
             styles={styles}
             disabled={busy || loadingMore}
-            onPress={requestFeedLoadMore}
+            onPress={() => requestFeedLoadMore('button')}
           />
         ) : active && feedItems.length > 0 && !busy ? (
           <Text style={styles.endOfListText}>已经到底了</Text>
@@ -239,14 +239,14 @@ export function FeedScreen({
     feedPage,
     feedSource,
     handleScroll,
+    handleScrollBeginDrag,
     loadingMore,
     onRefresh,
     refreshing,
     renderTopicItem,
     renderTopicSeparator,
     requestFeedLoadMore,
-    restoreFeedScrollPosition,
-    saveFeedScrollPosition,
+    completePendingFeedScrollReset,
     styles,
     theme
   ]);
@@ -291,7 +291,7 @@ export function FeedScreen({
       {showFloatingActions ? (
         <View style={styles.feedFloatingActions}>
           <FloatingIconButton icon={RefreshCw} label="刷新" styles={styles} theme={theme} loading={refreshing} disabled={refreshing} onPress={onRefreshPress} />
-          <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={() => scrollToFeedTop()} />
+          <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={() => scrollFeedToTop()} />
         </View>
       ) : null}
     </View>

@@ -26,3 +26,20 @@ export function shouldLoadMoreFeedFromScroll(metrics: FeedScrollMetrics, thresho
   const remainingDistance = contentHeight - (offsetY + viewportHeight);
   return remainingDistance <= viewportHeight * thresholdRatio;
 }
+
+export function shouldAllowFeedAutoLoadRequest({
+  pausedAfterFailure,
+  lastOffset,
+  offsetY,
+  minStep = 80
+}: {
+  pausedAfterFailure: boolean;
+  lastOffset: number | null;
+  offsetY: number;
+  minStep?: number;
+}) {
+  if (pausedAfterFailure) {
+    return false;
+  }
+  return lastOffset === null || offsetY > lastOffset + minStep;
+}

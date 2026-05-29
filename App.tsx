@@ -152,7 +152,9 @@ import {
   mergeReplies,
   mergeSettledFeedResponses,
   mergeTopics,
+  nextFeedPageState,
   searchLocal,
+  shouldFetchAggregatedBaseFeed,
   sortTopicsByCreatedAt,
   type LibraryTab,
   type ReadingFilter,
@@ -211,6 +213,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
 type FeedSourceState = {
   hasMore: boolean;
   items: Topic[];
+  loadMoreFailureSignal: number;
   loadingMore: boolean;
   nextCursor?: string;
   page: number;
@@ -232,6 +235,10 @@ type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
   snapshot: TopicSnapshot;
   backStack: TopicSnapshot[];
+};
+type ActionRunOptions = {
+  refreshTopic?: boolean;
+  isCurrent?: () => boolean;
 };
 type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 type RootStackParamList = {
@@ -353,6 +360,7 @@ function createFeedSourceState(): FeedSourceState {
   return {
     hasMore: false,
     items: [],
+    loadMoreFailureSignal: 0,
     page: 1,
     refreshing: false,
     loadingMore: false
@@ -426,6 +434,7 @@ export default function App() {
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
   const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
+  const nodeSeekLoginPanelRequestRef = useRef(0);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
   const saveQueueRef = useRef(Promise.resolve());
@@ -433,6 +442,7 @@ export default function App() {
   const feedSourceRequestIdRef = useRef<Partial<Record<FeedSource, number>>>({});
   const feedLoadingRef = useRef(false);
   const feedAbortRef = useRef<AbortController | null>(null);
+  const categoriesRequestIdRef = useRef(0);
   const categoriesAbortRef = useRef<AbortController | null>(null);
   const searchRequestIdRef = useRef(0);
   const searchAbortRef = useRef<AbortController | null>(null);
@@ -441,8 +451,12 @@ export default function App() {
   const userRequestIdRef = useRef(0);
   const userAbortRef = useRef<AbortController | null>(null);
   const userLoadingMoreCursorRef = useRef<string | null>(null);
+  const backupRequestIdRef = useRef(0);
   const backupAbortRef = useRef<AbortController | null>(null);
+  const statusRequestIdRef = useRef(0);
   const statusAbortRef = useRef<AbortController | null>(null);
+  const checkingRequestIdRef = useRef(0);
+  const actionRequestIdRef = useRef(0);
   const actionAbortRef = useRef<AbortController | null>(null);
   const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const progressMaxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -540,6 +554,7 @@ export default function App() {
   const [userLoadingMore, setUserLoadingMore] = useState(false);
   const [userError, setUserError] = useState('');
   const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
+  const topicRepliesRef = useRef<Reply[]>(topicReplies);
   const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
   const [replyNextOffset, setReplyNextOffset] = useState<number | null>(null);
   const [replyHasMore, setReplyHasMore] = useState(false);
@@ -558,6 +573,7 @@ export default function App() {
   const loadingQuotedFloorsRef = useRef(loadingQuotedFloors);
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
+  const showLoginPanelRef = useRef(showLoginPanel);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
@@ -567,6 +583,8 @@ export default function App() {
   readerDataRef.current = readerData;
   const searchGroupsRef = useRef<SearchGroup[]>(searchGroups);
   searchGroupsRef.current = searchGroups;
+  topicRepliesRef.current = topicReplies;
+  showLoginPanelRef.current = showLoginPanel;
   const currentTopic = topicDetail || selectedTopic;
   currentTopicKeyRef.current = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   useEffect(() => {
@@ -1213,18 +1231,29 @@ export default function App() {
 
   const saveNodeSeekCookieHeader = useCallback(async (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    { verifiedByPage = false }: { verifiedByPage?: boolean } = {}
+    { verifiedByPage = false, isCurrent = () => true }: { verifiedByPage?: boolean; isCurrent?: () => boolean } = {}
   ) => {
     const summary = summarizeNodeSeekCookies(cookies);
     const cookieHeader = buildCookieHeader(cookies);
-    setCookieNames(summary.names);
-    setHasNodeSeekLoginCookie(summary.loggedIn);
+    if (!isCurrent()) {
+      return '';
+    }
     if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
       await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
       await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+      if (!isCurrent()) {
+        return '';
+      }
+      setCookieNames(summary.names);
+      setHasNodeSeekLoginCookie(summary.loggedIn);
       setHasNodeSeekCookie(true);
       return cookieHeader;
     }
+    if (!isCurrent()) {
+      return '';
+    }
+    setCookieNames(summary.names);
+    setHasNodeSeekLoginCookie(summary.loggedIn);
     return '';
   }, []);
 
@@ -1418,6 +1447,13 @@ export default function App() {
     closeYaohuoLoginPanel();
   }, [closeYaohuoLoginPanel, restoreSavedYaohuoCookiesToWebView]);
 
+  const changeNodeSeekLoginPanel = useCallback((visible: boolean) => {
+    nodeSeekLoginPanelRequestRef.current += 1;
+    webViewRef.current?.stopLoading();
+    setLoadingLoginPage(visible);
+    setShowLoginPanel(visible);
+  }, []);
+
   const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
     setScreen('more');
     changeYaohuoLoginPanel(true);
@@ -1426,14 +1462,14 @@ export default function App() {
 
   const showNodeSeekVerification = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证') => {
     setScreen('more');
-    setShowLoginPanel(true);
+    changeNodeSeekLoginPanel(true);
     closeYaohuoLoginPanel();
     setShowLinuxDoPanel(false);
     setShowSettingsPanel(false);
     setHasNodeSeekCookie(false);
     setHasNodeSeekLoginCookie(false);
     notify(message);
-  }, [closeYaohuoLoginPanel, notify]);
+  }, [changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
   const resetLinuxDoWebView = useCallback(() => {
     linuxDoWebViewRef.current?.stopLoading();
@@ -1470,24 +1506,23 @@ export default function App() {
   }, [closeLinuxDoPanel, resetLinuxDoWebView]);
 
   const closeMorePanels = useCallback(() => {
-    setShowLoginPanel(false);
-    yaohuoLoginPanelRequestRef.current += 1;
-    setShowYaohuoLoginPanel(false);
+    changeNodeSeekLoginPanel(false);
+    closeYaohuoLoginPanel();
     closeLinuxDoPanel();
     setShowSettingsPanel(false);
-  }, [closeLinuxDoPanel]);
+  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel]);
 
   const showLinuxDoVerification = useCallback((message = 'linux.do 需要完成 Cloudflare 验证') => {
     linuxDoPendingTopicVerifiedRef.current = false;
     setScreen('more');
-    setShowLoginPanel(false);
+    changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     setShowSettingsPanel(false);
     changeLinuxDoPanel(true);
     setHasLinuxDoClearance(false);
     setHasLinuxDoLogin(false);
     notify(message);
-  }, [changeLinuxDoPanel, closeYaohuoLoginPanel, notify]);
+  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
   const clearStoredYaohuoLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
@@ -1538,6 +1573,7 @@ export default function App() {
   }, [clearNodeSeekLoginState]);
 
   const loadCategories = useCallback(async (source: FeedSource = 'all') => {
+    const requestId = ++categoriesRequestIdRef.current;
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
       const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
@@ -1549,6 +1585,9 @@ export default function App() {
         nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
         signal: controller.signal
       });
+      if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {
+        return;
+      }
       if (source !== 'all' && !data.items.length) {
         return;
       }
@@ -1562,13 +1601,23 @@ export default function App() {
         notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
       }
     } catch (error) {
-      if (!isCanceledRequest(error)) {
+      if (requestId === categoriesRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
   }, [loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify, showNodeSeekVerification]);
+
+  const markFeedLoadMoreFailed = useCallback((source: FeedSource) => {
+    setFeedStates((current) => ({
+      ...current,
+      [source]: {
+        ...current[source],
+        loadMoreFailureSignal: current[source].loadMoreFailureSignal + 1
+      }
+    }));
+  }, []);
 
   const loadFeed = useCallback(async ({
     page = 1,
@@ -1635,24 +1684,31 @@ export default function App() {
         return;
       }
       if (source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
+        const message = '请先登录妖火。';
+        if (isLoadMore) {
+          markFeedLoadMoreFailed(requestSource);
+        }
+        showYaohuoLogin(isLoadMore ? `加载下一页失败：${message}` : message);
         return;
       }
       let data: FeedResponse;
       if (source === 'all' && yaohuoCookie) {
+        const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({ page, cursor, hasYaohuoCookie: true });
         const [baseResult, yaohuoResult] = await Promise.allSettled([
-          getFeed({
-            source,
-            page,
-            cursor,
-            limit: 30,
-            category: category || undefined,
-            nocache,
-            fetcher: nodeSeekFetchWithWebView,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-            signal: controller.signal
-          }),
+          shouldFetchBaseFeed
+            ? getFeed({
+              source,
+              page,
+              cursor,
+              limit: 30,
+              category: category || undefined,
+              nocache,
+              fetcher: nodeSeekFetchWithWebView,
+              nodeSeekCookie,
+              nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+              signal: controller.signal
+            })
+            : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null }),
           getYaohuoFeedDirect({
             yaohuoCookie,
             page,
@@ -1688,44 +1744,60 @@ export default function App() {
       }
       setFeedStates((current) => {
         const previous = current[requestSource];
+        const nextPageState = nextFeedPageState(previous, data, {
+          requestedPage: page,
+          reset
+        });
         return {
           ...current,
           [requestSource]: {
             ...previous,
-            items: reset ? data.items : mergeTopics(previous.items, data.items),
-            page: data.nextPage ? data.nextPage - 1 : page,
-            nextCursor: data.nextCursor ?? undefined,
-            hasMore: Boolean(data.hasMore && (data.nextPage || data.nextCursor))
+            ...nextPageState
           }
         };
       });
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
         if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
-          showNodeSeekVerification(data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证');
+          const message = data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证';
+          if (isLoadMore) {
+            markFeedLoadMoreFailed(requestSource);
+          }
+          showNodeSeekVerification(isLoadMore ? `加载下一页失败：${message}` : message);
           return;
         }
-        notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
+        const message = errors.map(([sourceName, error]) => `${sourceLabel(sourceName as Source)}：${error}`).join('；');
+        if (isLoadMore) {
+          markFeedLoadMoreFailed(requestSource);
+          notify(`加载下一页失败：${message}`);
+        } else {
+          notify(message);
+        }
       } else if (successMessage) {
         notify(successMessage);
       }
     } catch (error) {
       if (requestId === feedRequestIdRef.current) {
+        const message = errorMessage(error);
+        const notice = isLoadMore ? `加载下一页失败：${message}` : message;
+        if (isLoadMore && !isCanceledRequest(error)) {
+          markFeedLoadMoreFailed(requestSource);
+        }
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
             await clearYaohuoLoginState();
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
-            showYaohuoLogin(errorMessage(error));
+            showYaohuoLogin(notice);
           }
           return;
         }
         if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
+          showNodeSeekVerification(notice);
           return;
         }
         if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
+          notify(notice);
         }
       }
     } finally {
@@ -1746,7 +1818,7 @@ export default function App() {
       }
       finishAbortableRequest(feedAbortRef, controller);
     }
-  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, showNodeSeekVerification, showYaohuoLogin]);
+  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, markFeedLoadMoreFailed, nodeSeekFetchWithWebView, notify, showNodeSeekVerification, showYaohuoLogin]);
 
   const loadFeedRef = useRef(loadFeed);
   useEffect(() => {
@@ -1848,12 +1920,18 @@ export default function App() {
         ? searchSort
         : 'relevance';
     if (sourceOverride) {
-      setSearchGroups((current) => current.map((group) => group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : group));
+      const nextGroups = searchGroupsRef.current.map((group) => (
+        group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }
+      ));
+      searchGroupsRef.current = nextGroups;
+      setSearchGroups(nextGroups);
     } else {
       setSearchItems([]);
-      setSearchGroups(searchScope === 'remote'
+      const nextGroups = searchScope === 'remote'
         ? activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }))
-        : []);
+        : [];
+      searchGroupsRef.current = nextGroups;
+      setSearchGroups(nextGroups);
     }
     setSearchBusy(true);
     try {
@@ -1928,7 +2006,7 @@ export default function App() {
       return;
     }
     const markedGroups = searchGroupsRef.current.map((group) => (
-      group.source === source ? { ...group, loadingMore: true, error: undefined } : group
+      group.source === source ? { ...group, loadingMore: true, error: undefined } : { ...group, loadingMore: false }
     ));
     searchGroupsRef.current = markedGroups;
     setSearchGroups(markedGroups);
@@ -2392,10 +2470,14 @@ export default function App() {
       if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
         return;
       }
-      setTopicReplies((current) => mergeReplies(current, data.items));
-      setReplyHasMore(Boolean(data.hasMore && data.nextPage));
-      setReplyNextPage(data.nextPage ?? null);
-      setReplyNextOffset(data.nextOffset ?? null);
+      const currentReplies = topicRepliesRef.current;
+      const previousReplyCount = currentReplies.length;
+      const mergedReplies = mergeReplies(currentReplies, data.items);
+      const addedReplies = mergedReplies.length > previousReplyCount;
+      setTopicReplies(mergedReplies);
+      setReplyHasMore(Boolean(data.hasMore && data.nextPage && mergedReplies.length > previousReplyCount));
+      setReplyNextPage(addedReplies ? data.nextPage ?? null : null);
+      setReplyNextOffset(addedReplies ? data.nextOffset ?? null : null);
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
@@ -2631,11 +2713,12 @@ export default function App() {
         if (!previous || previous.source !== current.source || previous.id !== current.id) {
           return previous;
         }
+        const mergedTopics = mergeTopics(previous.topics, nextProfile.topics);
         return {
           ...previous,
-          topics: mergeTopics(previous.topics, nextProfile.topics),
-          hasMoreTopics: nextProfile.hasMoreTopics,
-          nextTopicsCursor: nextProfile.nextTopicsCursor
+          topics: mergedTopics,
+          hasMoreTopics: Boolean(nextProfile.hasMoreTopics && nextProfile.nextTopicsCursor && mergedTopics.length > previous.topics.length),
+          nextTopicsCursor: mergedTopics.length > previous.topics.length ? nextProfile.nextTopicsCursor : null
         };
       });
       notify('用户帖子已加载更多');
@@ -2883,15 +2966,24 @@ export default function App() {
     return mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader));
   }, [probeLoginPage]);
 
-  const rememberCurrentNodeSeekCookies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+  const rememberCurrentNodeSeekCookies = useCallback(async ({ silent = false, isCurrent = () => true }: { silent?: boolean; isCurrent?: () => boolean } = {}) => {
     const cookies = await readCurrentNodeSeekCookies();
+    if (!isCurrent()) {
+      return false;
+    }
     const summary = summarizeNodeSeekCookies(cookies);
-    const cookieHeader = await saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current });
+    const cookieHeader = await saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current, isCurrent });
     if (cookieHeader) {
+      if (!isCurrent()) {
+        return false;
+      }
       if (!silent) {
         notify(summary.loggedIn ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');
       }
       return true;
+    }
+    if (!isCurrent()) {
+      return false;
     }
     if (!silent) {
       notify('没有检测到明确的 NodeSeek Cookie。请完成验证或登录后再试。');
@@ -2905,21 +2997,38 @@ export default function App() {
   }, []);
 
   const checkLogin = useCallback(async () => {
+    const requestId = ++checkingRequestIdRef.current;
     setChecking(true);
     try {
-      await rememberCurrentNodeSeekCookies();
+      await rememberCurrentNodeSeekCookies({ isCurrent: () => requestId === checkingRequestIdRef.current && showLoginPanelRef.current });
     } catch (error) {
-      notify(errorMessage(error));
+      if (requestId === checkingRequestIdRef.current) {
+        notify(errorMessage(error));
+      }
     } finally {
-      setChecking(false);
+      if (requestId === checkingRequestIdRef.current) {
+        setChecking(false);
+      }
     }
   }, [notify, rememberCurrentNodeSeekCookies]);
 
+  const rememberVisibleNodeSeekCookies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    const requestId = nodeSeekLoginPanelRequestRef.current;
+    return rememberCurrentNodeSeekCookies({
+      silent,
+      isCurrent: () => showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId
+    });
+  }, [rememberCurrentNodeSeekCookies]);
+
   const checkYaohuoCookie = useCallback(async () => {
+    const requestId = ++checkingRequestIdRef.current;
     setChecking(true);
     try {
       await CookieManager.flush();
       const cookieMaps = await Promise.all(YAOHUO_COOKIE_URLS.map(async (url) => CookieManager.get(url)));
+      if (requestId !== checkingRequestIdRef.current) {
+        return;
+      }
       const typedCookies = mergeYaohuoCookies(...cookieMaps as Array<Record<string, YaohuoNativeCookie>>);
       const summary = summarizeYaohuoCookies(typedCookies);
       const cookieHeader = buildYaohuoCookieHeader(typedCookies);
@@ -2930,22 +3039,37 @@ export default function App() {
         return;
       }
       const yaohuoLoginCheck = await checkYaohuoLoginDirect({ yaohuoCookie: cookieHeader });
+      if (requestId !== checkingRequestIdRef.current) {
+        return;
+      }
       if (yaohuoLoginCheck.loginRequired || !yaohuoLoginCheck.ok) {
         setHasYaohuoCookie(false);
         if (yaohuoLoginCheck.reason === 'expired') {
           await clearYaohuoLoginState();
+          if (requestId !== checkingRequestIdRef.current) {
+            return;
+          }
         }
         notify(yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。');
         return;
       }
       await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);
+      if (requestId !== checkingRequestIdRef.current) {
+        return;
+      }
       setHasYaohuoCookie(true);
       setYaohuoLoginCookieHeader(cookieHeader);
       notify('已检测到妖火登录 Cookie，已保存在本机。');
     } catch (error) {
+      if (requestId !== checkingRequestIdRef.current) {
+        return;
+      }
       if (isYaohuoLoginRequiredError(error)) {
         if (isYaohuoLoginExpiredError(error)) {
           await clearYaohuoLoginState();
+          if (requestId !== checkingRequestIdRef.current) {
+            return;
+          }
           notify('妖火登录已失效，请重新登录。');
         } else {
           notify(errorMessage(error));
@@ -2954,7 +3078,9 @@ export default function App() {
       }
       notify(errorMessage(error));
     } finally {
-      setChecking(false);
+      if (requestId === checkingRequestIdRef.current) {
+        setChecking(false);
+      }
     }
   }, [clearYaohuoLoginState, notify]);
 
@@ -2979,10 +3105,14 @@ export default function App() {
   }, [readCurrentLinuxDoCookies]);
 
   const checkLinuxDoCookie = useCallback(async () => {
+    const requestId = ++checkingRequestIdRef.current;
     setChecking(true);
     setLinuxDoWebViewError('');
     try {
       const cookies = await waitForLinuxDoClearance();
+      if (requestId !== checkingRequestIdRef.current) {
+        return;
+      }
       const summary = summarizeLinuxDoCookies(cookies);
       const cookieHeader = buildLinuxDoCookieHeader(cookies);
       setLinuxDoCookieNames(summary.names);
@@ -2994,16 +3124,23 @@ export default function App() {
         return;
       }
       await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
+      if (requestId !== checkingRequestIdRef.current) {
+        return;
+      }
       setHasLinuxDoClearance(true);
       setHasLinuxDoLogin(summary.loggedIn);
       setLinuxDoWebViewError('');
       notify(summary.loggedIn ? 'linux.do 登录信息已保存在本机。' : 'linux.do 验证信息已保存在本机。');
       linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);
     } catch (error) {
-      linuxDoPendingTopicVerifiedRef.current = false;
-      notify(errorMessage(error));
+      if (requestId === checkingRequestIdRef.current) {
+        linuxDoPendingTopicVerifiedRef.current = false;
+        notify(errorMessage(error));
+      }
     } finally {
-      setChecking(false);
+      if (requestId === checkingRequestIdRef.current) {
+        setChecking(false);
+      }
     }
   }, [linuxDoWebViewUserAgent, notify, waitForLinuxDoClearance]);
 
@@ -3031,12 +3168,13 @@ export default function App() {
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
     success: string,
-    options: { refreshTopic?: boolean } = {}
+    options: ActionRunOptions = {}
   ) => {
     if (!hasNodeSeekLoginCookie) {
       notify('请先在“更多”里登录并检测 NodeSeek Cookie。');
       return false;
     }
+    const requestId = ++actionRequestIdRef.current;
     const controller = startAbortableRequest(actionAbortRef);
     setActionBusy(true);
     try {
@@ -3046,14 +3184,23 @@ export default function App() {
         request: requestFactory(),
         signal: controller.signal
       });
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
+        return false;
+      }
       notify(success);
       if (options.refreshTopic === true && topicDetail?.source === 'nodeseek') {
         await openTopic(topicDetail, true);
       }
       return true;
     } catch (error) {
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false || isCanceledRequest(error)) {
+        return false;
+      }
       if (isNodeSeekLoginRequiredError(error)) {
         await clearNodeSeekLoginCookiesOnly();
+        if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
+          return false;
+        }
       }
       notify(errorMessage(error));
       return false;
@@ -3067,13 +3214,17 @@ export default function App() {
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
     success: string,
-    options: { refreshTopic?: boolean } = {}
+    options: ActionRunOptions = {}
   ) => {
     const cookieHeader = await loadYaohuoCookieForSource('yaohuo');
     if (!cookieHeader) {
+      if (options.isCurrent?.() === false) {
+        return false;
+      }
       showYaohuoLogin();
       return false;
     }
+    const requestId = ++actionRequestIdRef.current;
     const controller = startAbortableRequest(actionAbortRef);
     setActionBusy(true);
     try {
@@ -3082,6 +3233,9 @@ export default function App() {
         request: requestFactory(cookieHeader),
         signal: controller.signal
       });
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
+        return false;
+      }
       const resultConfirmed = result.message !== '操作结果无法确认，请刷新原帖核对';
       notify(result.message === '操作已提交' ? success : result.message);
       if (options.refreshTopic === true && topicDetail?.source === 'yaohuo') {
@@ -3089,9 +3243,15 @@ export default function App() {
       }
       return resultConfirmed ? result : false;
     } catch (error) {
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false || isCanceledRequest(error)) {
+        return false;
+      }
       if (isYaohuoLoginRequiredError(error)) {
         if (isYaohuoLoginExpiredError(error)) {
           await clearYaohuoLoginState();
+          if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
+            return false;
+          }
         }
         showYaohuoLogin(errorMessage(error));
         return false;
@@ -3107,32 +3267,36 @@ export default function App() {
 
   const showLinuxDoLogin = useCallback((message = 'linux.do 登录后才能操作，匿名仍可阅读。') => {
     setScreen('more');
-    setShowLoginPanel(false);
+    changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     setShowSettingsPanel(false);
     notify(message);
     changeLinuxDoPanel(true);
-  }, [changeLinuxDoPanel, closeYaohuoLoginPanel, notify]);
+  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
   const openReadingSettingsFromTopic = useCallback(() => {
-    setShowLoginPanel(false);
+    changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     closeLinuxDoPanel();
     setShowSettingsPanel(true);
     changeScreen('more');
-  }, [changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel]);
+  }, [changeNodeSeekLoginPanel, changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel]);
 
   const runLinuxDoRequest = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
     success: string,
-    options: { refreshTopic?: boolean } = {}
+    options: ActionRunOptions = {}
   ) => {
     const access = await loadLinuxDoAccess();
     if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
+      if (options.isCurrent?.() === false) {
+        return false;
+      }
       setHasLinuxDoLogin(false);
       showLinuxDoLogin();
       return false;
     }
+    const requestId = ++actionRequestIdRef.current;
     const controller = startAbortableRequest(actionAbortRef);
     setActionBusy(true);
     try {
@@ -3142,14 +3306,23 @@ export default function App() {
         request: requestFactory(),
         signal: controller.signal
       });
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
+        return false;
+      }
       notify(success);
       if (options.refreshTopic === true && topicDetail?.source === 'linuxdo') {
         await openTopic(topicDetail, true);
       }
       return result ?? true;
     } catch (error) {
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false || isCanceledRequest(error)) {
+        return false;
+      }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
         const remainingAccess = await clearLinuxDoAccess();
+        if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
+          return false;
+        }
         setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));
         setHasLinuxDoLogin(false);
         setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names);
@@ -3170,6 +3343,7 @@ export default function App() {
     if (!detail || (detail.source !== 'nodeseek' && detail.source !== 'yaohuo' && detail.source !== 'linuxdo')) {
       return;
     }
+    const requestTopicKey = topicKey(detail);
     if (!replyContent.trim()) {
       notify('请输入回复内容');
       return;
@@ -3189,9 +3363,12 @@ export default function App() {
           toUserId: yaohuoReplyTarget?.authorId
         }),
         '回复已提交',
-        { refreshTopic: false }
+        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
       );
       if (submitted) {
+        if (currentTopicKeyRef.current !== requestTopicKey) {
+          return;
+        }
         setReplyContent('');
         setReplyComposerOpen(false);
         setYaohuoReplyTarget(null);
@@ -3207,9 +3384,12 @@ export default function App() {
           replyToPostNumber: yaohuoReplyTarget?.floor
         }),
         '回复已提交',
-        { refreshTopic: false }
+        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
       );
       if (submitted) {
+        if (currentTopicKeyRef.current !== requestTopicKey) {
+          return;
+        }
         setReplyContent('');
         setReplyComposerOpen(false);
         setYaohuoReplyTarget(null);
@@ -3220,9 +3400,12 @@ export default function App() {
     const submitted = await runNodeSeekRequest(
       () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent }),
       '回复已提交',
-      { refreshTopic: false }
+      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
     if (submitted) {
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
       setReplyContent('');
       setReplyComposerOpen(false);
       await refreshTopicReplies({ silent: true, afterSubmit: true });
@@ -3263,6 +3446,7 @@ export default function App() {
       return;
     }
     const detail = topicDetail || selectedTopic;
+    const requestTopicKey = detail ? topicKey(detail) : null;
     if (detail?.source === 'linuxdo') {
       if (type !== 'like') {
         return;
@@ -3275,9 +3459,12 @@ export default function App() {
       const submitted = await runLinuxDoRequest(
         () => buildLinuxDoLikeRequest({ postId: commentId, liked }),
         liked ? '已取消点赞' : '点赞已提交',
-        { refreshTopic: false }
+        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
       );
       if (submitted) {
+        if (currentTopicKeyRef.current !== requestTopicKey) {
+          return;
+        }
         const patch = { commentId, type: 'like' as const, mode: 'toggle' as const };
         setTopicDetail((current) => applyInteractionToTopic(current, patch));
         setTopicReplies((current) => applyInteractionToReplies(current, patch));
@@ -3287,9 +3474,12 @@ export default function App() {
     const submitted = await runNodeSeekRequest(
       () => buildNodeSeekInteractionRequest({ type, commentId }),
       type === 'upvote' ? '点赞请求已提交' : '加鸡腿请求已提交',
-      { refreshTopic: false }
+      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
     if (submitted) {
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
       const patch = { commentId, type, mode: 'add' as const };
       setTopicDetail((current) => applyInteractionToTopic(current, patch));
       setTopicReplies((current) => applyInteractionToReplies(current, patch));
@@ -3307,7 +3497,7 @@ export default function App() {
         classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
       }),
       '原站收藏已提交',
-      { refreshTopic: false }
+      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === topicKey(detail) }
     );
   }, [runYaohuoRequest, selectedTopic, topicDetail]);
 
@@ -3316,6 +3506,7 @@ export default function App() {
     if (!detail || detail.source !== 'linuxdo') {
       return;
     }
+    const requestTopicKey = topicKey(detail);
     const bookmarked = Boolean((detail as TopicDetail).bookmarked);
     const result = await runLinuxDoRequest(
       () => buildLinuxDoBookmarkRequest({
@@ -3325,9 +3516,12 @@ export default function App() {
         bookmarkId: (detail as TopicDetail).bookmarkId
       }),
       bookmarked ? '已取消原站收藏' : '原站收藏已提交',
-      { refreshTopic: false }
+      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
     if (result) {
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
       setTopicDetail((current) => applyBookmarkToTopic(current, {
         bookmarked: !bookmarked,
         bookmarkId: bookmarked ? undefined : linuxDoBookmarkIdFromActionResult(result)
@@ -3340,6 +3534,7 @@ export default function App() {
     if (!detail || detail.source !== 'yaohuo') {
       return;
     }
+    const requestTopicKey = topicKey(detail);
     const submitted = await runYaohuoRequest(
       () => buildYaohuoVoteRequest({
         topicId: detail.id,
@@ -3347,27 +3542,40 @@ export default function App() {
         voteId
       }),
       '投票已提交',
-      { refreshTopic: false }
+      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
     if (submitted) {
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
       setTopicDetail((current) => applyVoteOptionToTopic(current, voteId));
     }
   }, [runYaohuoRequest, selectedTopic, topicDetail]);
 
   const importBackup = useCallback(async () => {
+    const requestId = ++backupRequestIdRef.current;
     const controller = startAbortableRequest(backupAbortRef);
     setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
+      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+        return;
+      }
       if (!backupJson.trim()) {
         notify('请先粘贴备份 JSON');
         return;
       }
       const merged = importReaderBackupJson(readerDataRef.current, backupJson);
+      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+        return;
+      }
       await replaceReaderData(merged);
+      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+        return;
+      }
       notify('备份已恢复，本机资料已合并');
     } catch (error) {
-      if (!isCanceledRequest(error)) {
+      if (requestId === backupRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -3378,14 +3586,18 @@ export default function App() {
   }, [backupJson, notify, replaceReaderData]);
 
   const exportBackup = useCallback(async () => {
+    const requestId = ++backupRequestIdRef.current;
     const controller = startAbortableRequest(backupAbortRef);
     setSyncing(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
+      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+        return;
+      }
       setBackupJson(exportReaderBackupJson(readerDataRef.current));
       notify('备份 JSON 已生成');
     } catch (error) {
-      if (!isCanceledRequest(error)) {
+      if (requestId === backupRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -3420,32 +3632,54 @@ export default function App() {
   }, [notify]);
 
   const exportBackupFile = useCallback(async () => {
+    const requestId = ++backupRequestIdRef.current;
     try {
       await saveQueueRef.current.catch(() => undefined);
+      if (requestId !== backupRequestIdRef.current) {
+        return;
+      }
       const content = exportReaderBackupJson(readerDataRef.current);
       setBackupJson(content);
       await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
+      if (requestId !== backupRequestIdRef.current) {
+        return;
+      }
       notify('备份文件已生成');
     } catch (error) {
-      notify(errorMessage(error));
+      if (requestId === backupRequestIdRef.current) {
+        notify(errorMessage(error));
+      }
     }
   }, [notify, shareTextFile]);
 
   const importBackupFile = useCallback(async () => {
+    const requestId = ++backupRequestIdRef.current;
     try {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         type: ['application/json', 'text/json', '*/*']
       });
+      if (requestId !== backupRequestIdRef.current) {
+        return;
+      }
       if (result.canceled || !result.assets?.[0]?.uri) {
         return;
       }
       const pickedUri = result.assets[0].uri;
       try {
         const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
+        if (requestId !== backupRequestIdRef.current) {
+          return;
+        }
         setBackupJson(content);
         const merged = importReaderBackupJson(readerDataRef.current, content);
+        if (requestId !== backupRequestIdRef.current) {
+          return;
+        }
         await replaceReaderData(merged);
+        if (requestId !== backupRequestIdRef.current) {
+          return;
+        }
         notify('备份已恢复，本机资料已合并');
       } finally {
         if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
@@ -3453,11 +3687,14 @@ export default function App() {
         }
       }
     } catch (error) {
-      notify(errorMessage(error));
+      if (requestId === backupRequestIdRef.current) {
+        notify(errorMessage(error));
+      }
     }
   }, [notify, replaceReaderData]);
 
   const checkLocalStatus = useCallback(async () => {
+    const requestId = ++statusRequestIdRef.current;
     const controller = startAbortableRequest(statusAbortRef);
     setStatusBusy(true);
     try {
@@ -3490,6 +3727,9 @@ export default function App() {
         yaohuoStatusPromise,
         linuxDoLoginPromise
       ] as const);
+      if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
+        return;
+      }
       const yaohuoCheck = checks[3];
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
       const yaohuoMessage = yaohuoCheck.status === 'fulfilled'
@@ -3498,6 +3738,9 @@ export default function App() {
       const linuxDoLogin = checks[4].status === 'fulfilled' ? checks[4].value : undefined;
       if (linuxDoLogin?.loginRequired) {
         linuxDoAccess = await clearLinuxDoAccess();
+        if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
+          return;
+        }
         access = linuxDoAccessSummary(linuxDoAccess);
       }
       const result = buildLocalStatusResult({
@@ -3525,6 +3768,9 @@ export default function App() {
       const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
       if (yaohuoExpired) {
         await clearYaohuoLoginState();
+        if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
+          return;
+        }
       }
       setHasYaohuoCookie(result.hasYaohuoLogin);
       setYaohuoCookieNames(yaohuoExpired ? [] : summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || '')).names);
@@ -3538,7 +3784,7 @@ export default function App() {
       setHealthSummary(result.summary);
       notify('状态已更新');
     } catch (error) {
-      if (!isCanceledRequest(error)) {
+      if (requestId === statusRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -3555,7 +3801,7 @@ export default function App() {
         return true;
       }
       if (showLoginPanel) {
-        setShowLoginPanel(false);
+        changeNodeSeekLoginPanel(false);
         return true;
       }
       if (showYaohuoLoginPanel) {
@@ -3593,6 +3839,7 @@ export default function App() {
   }, [
     closeImagePreview,
     changeScreen,
+    changeNodeSeekLoginPanel,
     closeYaohuoLoginPanel,
     goBackFromTopic,
     goBackFromUser,
@@ -3693,6 +3940,7 @@ export default function App() {
       feedItems={shownFeedItems}
       feedPage={activeFeedState.page}
       feedSource={feedSource}
+      loadMoreFailureSignal={activeFeedState.loadMoreFailureSignal}
       loadingMore={activeFeedState.loadingMore}
       readerData={readerData}
       topicListStateInput={topicListStateInput}
@@ -3800,7 +4048,7 @@ export default function App() {
         onCheckHealth={checkLocalStatus}
         onCheckIn={checkIn}
         onCheckLogin={checkLogin}
-        onRememberNodeSeekCookies={rememberCurrentNodeSeekCookies}
+        onRememberNodeSeekCookies={rememberVisibleNodeSeekCookies}
         onCheckYaohuoLogin={checkYaohuoCookie}
         onCheckLinuxDoCookie={checkLinuxDoCookie}
         onClearLogin={clearLogin}
@@ -3821,14 +4069,14 @@ export default function App() {
         onSetLoadingLinuxDoPage={setLoadingLinuxDoPage}
         onSetLinuxDoWebViewError={setLinuxDoWebViewError}
         onResetLinuxDoWebView={resetLinuxDoWebView}
-        onShowLoginPanelChange={setShowLoginPanel}
+        onShowLoginPanelChange={changeNodeSeekLoginPanel}
         onShowYaohuoLoginPanelChange={changeYaohuoLoginPanel}
         onShowLinuxDoPanelChange={changeLinuxDoPanel}
         onShowSettingsPanelChange={setShowSettingsPanel}
         onUpdateSettings={updateSettings}
       />
     </ScrollView>
-  ), [backupJson, changeLinuxDoPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, rememberCurrentNodeSeekCookies, resetLinuxDoWebView, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, syncing, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
+  ), [backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, syncing, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
 
   const renderTopicScreen = useCallback(() => (
     <TopicScreen
