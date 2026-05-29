@@ -25,6 +25,7 @@ export interface Topic {
   excerpt?: string;
   accessRequirement?: AccessRequirement;
   duplicateSources?: string[];
+  tags?: string[];
 }
 
 export interface Reply {
@@ -40,10 +41,18 @@ export interface Reply {
   commentId?: number;
   upvoteCount?: number;
   likeCount?: number;
+  dislikeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+  disliked?: boolean;
+  isOp?: boolean;
+  hot?: boolean;
+  pinned?: boolean;
+  signatureHtml?: string;
   bookmarkId?: number;
   bookmarked?: boolean;
+  replyTargetAuthor?: string;
+  thanksCount?: number;
 }
 
 export interface Category {
@@ -67,10 +76,15 @@ export interface TopicDetail extends Topic {
   commentId?: number;
   upvoteCount?: number;
   likeCount?: number;
+  dislikeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+  disliked?: boolean;
   bookmarkId?: number;
   bookmarked?: boolean;
+  collectionCount?: number;
+  collected?: boolean;
+  locked?: boolean;
 }
 
 export interface UserProfile {

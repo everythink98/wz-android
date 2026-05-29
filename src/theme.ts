@@ -945,11 +945,79 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 12,
       paddingBottom: 4
     },
+    topicStatRail: {
+      alignSelf: 'flex-start',
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      minHeight: 40
+    },
+    nodeSeekStatPill: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 4,
+      justifyContent: 'center',
+      minHeight: 40,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.045),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.22 : 0.12),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 10,
+      paddingVertical: 0
+    },
+    nodeSeekStatLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      lineHeight: 16
+    },
+    nodeSeekStatValue: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      lineHeight: 16
+    },
+    topicTagRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      paddingTop: 2
+    },
+    topicTagText: {
+      overflow: 'hidden',
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      lineHeight: 16,
+      paddingHorizontal: 8,
+      paddingVertical: 4
+    },
     articleBody: {
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth,
       marginTop: 2,
       paddingTop: 16
+    },
+    htmlTableScroll: {
+      marginBottom: 12,
+      marginTop: 10
+    },
+    htmlTableScrollContent: {
+      paddingRight: 12
+    },
+    htmlTableFrame: {
+      minWidth: 520,
+      borderColor: theme.line,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      overflow: 'hidden'
     },
     articleTitle: {
       color: theme.ink,
@@ -1101,12 +1169,43 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minWidth: 0,
       gap: 2
     },
+    replyAuthorNameRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      minWidth: 0
+    },
     replyAuthor: {
       color: theme.ink,
+      flexShrink: 1,
       fontFamily: appFontFamily,
       fontSize: 14,
       fontWeight: '600',
       lineHeight: 19
+    },
+    replyOpBadge: {
+      overflow: 'hidden',
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.32 : 0.22),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 10,
+      fontWeight: '700',
+      lineHeight: 14,
+      paddingHorizontal: 6
+    },
+    replyContextBadge: {
+      overflow: 'hidden',
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.36 : 0.26),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 10,
+      fontWeight: '700',
+      lineHeight: 14,
+      paddingHorizontal: 6
     },
     replyTime: {
       color: theme.muted,
@@ -1118,8 +1217,44 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 10,
       paddingLeft: 42
     },
+    replyTargetPill: {
+      alignSelf: 'flex-start',
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.16),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 10,
+      paddingVertical: 5
+    },
+    replyTargetText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 16
+    },
     replyBody: {
       paddingTop: 0
+    },
+    replySignature: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 8
+    },
+    replyStatRail: {
+      alignSelf: 'flex-start',
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      minHeight: 40
+    },
+    replyThanksText: {
+      alignSelf: 'flex-start',
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      lineHeight: 16
     },
     replyActionRow: {
       alignItems: 'center',

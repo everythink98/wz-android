@@ -7,6 +7,7 @@ import {
   Image,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View
@@ -87,6 +88,57 @@ function getReplyKey(reply: Reply) {
     reply.contentHtml || ''
   ].join('|');
   return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
+}
+
+type NodeSeekStat = { label: string; value: number };
+
+function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeekStat | null {
+  return typeof value === 'number' ? { label, value } : null;
+}
+
+function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount'>) {
+  return [
+    visibleNodeSeekStat('点赞', item.upvoteCount),
+    visibleNodeSeekStat('鸡腿', item.likeCount),
+    visibleNodeSeekStat('反对', item.dislikeCount)
+  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+}
+
+function nodeSeekTopicReactionStats(item: Pick<TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount' | 'collectionCount'>) {
+  return [
+    ...nodeSeekReactionStats(item),
+    visibleNodeSeekStat('原站收藏', item.collectionCount)
+  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+}
+
+function nodeSeekTopicPassiveStats(item: Pick<TopicDetail, 'dislikeCount' | 'collectionCount'>) {
+  return [
+    visibleNodeSeekStat('反对', item.dislikeCount),
+    visibleNodeSeekStat('原站收藏', item.collectionCount)
+  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+}
+
+function nodeSeekReplyPassiveStats(item: Pick<Reply, 'dislikeCount'>) {
+  return [
+    visibleNodeSeekStat('反对', item.dislikeCount)
+  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+}
+
+function NodeSeekStatPill({
+  label,
+  styles,
+  value
+}: {
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+  value: number;
+}) {
+  return (
+    <View style={styles.nodeSeekStatPill}>
+      <Text style={styles.nodeSeekStatLabel}>{label}</Text>
+      <Text style={styles.nodeSeekStatValue}>{value}</Text>
+    </View>
+  );
 }
 
 function topicListItemKey(item: TopicListItem) {
@@ -398,7 +450,20 @@ export function TopicScreen({
         </View>
       );
     };
-    return { ...htmlRenderers, aside: QuoteAsideRenderer };
+    const TableRenderer: CustomBlockRenderer = (props) => {
+      const { TDefaultRenderer, ...defaultRendererProps } = props;
+      if (htmlTagName(props.tnode) !== 'table') {
+        return <TDefaultRenderer {...defaultRendererProps} />;
+      }
+      return (
+        <ScrollView horizontal style={styles.htmlTableScroll} contentContainerStyle={styles.htmlTableScrollContent}>
+          <View style={styles.htmlTableFrame}>
+            <TDefaultRenderer {...defaultRendererProps} />
+          </View>
+        </ScrollView>
+      );
+    };
+    return { ...htmlRenderers, aside: QuoteAsideRenderer, table: TableRenderer };
   }, [htmlRenderers, styles, theme.primary, theme.primarySoft]);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'content') {
@@ -471,12 +536,24 @@ export function TopicScreen({
     }
 
     if (listItem.type === 'topicActions') {
+      const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
+      const topicPassiveStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicPassiveStats(topic) : [];
       return (
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
+          {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
+            <View style={styles.topicStatRail}>
+              {topicReactionStats.map((stat) => (
+                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+              ))}
+            </View>
+          ) : null}
           {canWriteNodeSeek ? (
             <View style={styles.topicPrimaryActions}>
               <IconButton tiny icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
               <IconButton tiny icon={Drumstick} label={`加鸡腿 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              {topicPassiveStats.map((stat) => (
+                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+              ))}
             </View>
           ) : null}
           {canWriteYaohuo ? (
@@ -546,6 +623,7 @@ export function TopicScreen({
           repliesByFloor={repliesByFloor}
           styles={styles}
           theme={theme}
+          topicAuthor={item?.author}
           onInteract={onInteract}
           onReplyToFloor={onReplyToFloor}
           onToggleQuotedFloor={onToggleQuotedFloor}
@@ -624,6 +702,13 @@ export function TopicScreen({
             </View>
           </Pressable>
           {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
+          {item.tags?.length ? (
+            <View style={styles.topicTagRow}>
+              {item.tags.map((tag) => (
+                <Text key={tag} style={styles.topicTagText}>{tag}</Text>
+              ))}
+            </View>
+          ) : null}
         </View>
         {topicError ? (
           <View style={styles.errorBox}>
@@ -747,6 +832,7 @@ function ReplyCard({
   source,
   styles,
   theme,
+  topicAuthor,
   onInteract,
   onOpenUser,
   onReplyToFloor,
@@ -766,6 +852,7 @@ function ReplyCard({
   source?: Source;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
+  topicAuthor?: string;
   onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
   onOpenUser: (user: UserProfile) => void;
   onReplyToFloor: (reply: Reply) => void;
@@ -775,6 +862,17 @@ function ReplyCard({
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const replyUser = userFromReply(reply, source);
+  const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
+  const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
+  const nodeSeekReplyPassiveStatItems = source === 'nodeseek' ? nodeSeekReplyPassiveStats(reply) : [];
+  const replyTargetUser = source && reply.replyTargetAuthor ? {
+    source,
+    id: reply.replyTargetAuthor,
+    username: reply.replyTargetAuthor,
+    displayName: reply.replyTargetAuthor,
+    url: '',
+    topics: []
+  } : null;
   return (
     <View style={styles.replyCard}>
       <Pressable
@@ -789,7 +887,12 @@ function ReplyCard({
       >
         <AuthorAvatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
-          <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
+          <View style={styles.replyAuthorNameRow}>
+            <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
+            {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
+            {reply.hot ? <Text style={styles.replyContextBadge}>热门</Text> : null}
+            {reply.pinned ? <Text style={styles.replyContextBadge}>置顶</Text> : null}
+          </View>
           <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
         </View>
         <View style={styles.replyFloorBadge}>
@@ -870,16 +973,51 @@ function ReplyCard({
             })}
           </View>
         ) : null}
+        {reply.replyTargetAuthor ? (
+          <Pressable
+            accessibilityRole="button"
+            disabled={!replyTargetUser}
+            style={styles.replyTargetPill}
+            onPress={() => {
+              if (replyTargetUser) {
+                onOpenUser(replyTargetUser);
+              }
+            }}
+          >
+            <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
+          </Pressable>
+        ) : null}
         <View style={styles.replyBody}>
           <MemoizedHtmlContent
             contentWidth={replyContentWidth}
             html={highlightedHtml}
           />
         </View>
+        {reply.signatureHtml ? (
+          <View style={styles.replySignature}>
+            <MemoizedHtmlContent
+              contentWidth={replyContentWidth}
+              html={reply.signatureHtml}
+            />
+          </View>
+        ) : null}
+        {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
+          <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
+        ) : null}
+        {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
+          <View style={styles.replyStatRail}>
+            {nodeSeekReplyReactionStats.map((stat) => (
+              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+            ))}
+          </View>
+        ) : null}
         {canWrite && source === 'nodeseek' ? (
           <View style={styles.replyActionRow}>
             <IconButton tiny icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
             <IconButton tiny icon={Drumstick} label={`加鸡腿 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+            {nodeSeekReplyPassiveStatItems.map((stat) => (
+              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+            ))}
           </View>
         ) : null}
         {canWrite && source === 'yaohuo' ? (
@@ -914,6 +1052,7 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     || previous.source !== next.source
     || previous.styles !== next.styles
     || previous.theme !== next.theme
+    || previous.topicAuthor !== next.topicAuthor
   ) {
     return false;
   }

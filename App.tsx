@@ -833,16 +833,23 @@ export default function App() {
     },
     table: {
       backgroundColor: 'transparent',
-      borderColor: theme.line
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth
     },
     th: {
       color: theme.ink,
       backgroundColor: theme.surface2,
-      borderColor: theme.line
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 7
     },
     td: {
       color: theme.ink,
-      borderColor: theme.line
+      borderColor: theme.line,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 7
     }
     };
   }, [readerData.settings.fontScale, theme]);

@@ -6,8 +6,10 @@ import {
   absoluteUrl,
   accessRequirementFromObject,
   accessRequirementFromText,
+  decodeHtml,
   elementText,
   isRecord,
+  parsePositiveInteger,
   parseHtml,
   sanitizeContentHtml,
   sortTopicsByCreatedAt,
@@ -34,6 +36,23 @@ interface V2exOptions {
   timeoutMs?: number;
 }
 
+type V2exHtmlReplyMeta = {
+  commentId?: number;
+  createdAt?: string;
+  floor?: number;
+  replyTargetAuthor?: string;
+  thanksCount?: number;
+};
+
+type V2exHtmlDetail = {
+  supplementHtml: string;
+  tags: string[];
+  viewCount?: number;
+  replies: Reply[];
+  repliesByCommentId: Map<number, V2exHtmlReplyMeta>;
+  repliesByFloor: Map<number, V2exHtmlReplyMeta>;
+};
+
 function isV2exHost(hostname: string) {
   const host = hostname.toLowerCase();
   return host === 'v2ex.com' || host.endsWith('.v2ex.com');
@@ -51,6 +70,15 @@ function safeTopicUrl(id: string, raw?: unknown) {
 
 function memberUrl(username: string) {
   return `${BASE_URL}/member/${encodeURIComponent(username)}`;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function v2exLastReplyAt(raw: Record<string, unknown>, createdAt: string) {
@@ -118,12 +146,17 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
   }
   const nodeLink = element.querySelector('a.node');
   const categoryId = nodeIdFromHref(nodeLink?.getAttribute('href')) || fallbackCategory;
-  const memberLink = element.querySelector('a[href^="/member/"]');
+  const memberLink = element.querySelector('.topic_info strong a[href^="/member/"]')
+    || element.querySelector('strong a[href^="/member/"]')
+    || element.querySelector('a[href^="/member/"]');
   const memberHref = memberLink?.getAttribute('href') || '';
   const memberName = elementText(memberLink);
   const avatar = element.querySelector('img.avatar')?.getAttribute('src');
   const timestamp = element.querySelector('span[title]')?.getAttribute('title');
-  const countText = element.querySelector('.count_livid,.count_orange')?.text || '';
+  const replyBadge = element.querySelector(`td[align="right"] a[href*="/t/${id}#reply"].count_livid,td[align="right"] a[href*="/t/${id}#reply"].count_orange`)
+    || element.querySelector('td[align="right"] .count_livid,td[align="right"] .count_orange')
+    || element.querySelector('.count_livid');
+  const countText = replyBadge?.text || href.match(/#reply(\d+)/)?.[1] || '';
   const createdAt = toIsoString(timestamp) || new Date().toISOString();
   const accessRequirement = accessRequirementFromText(elementText(element).replace(title, ' '));
   return {
@@ -142,6 +175,186 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
     replyCount: Number.parseInt(String(countText || '0'), 10) || 0,
     excerpt: '',
     ...(accessRequirement ? { accessRequirement } : {})
+  };
+}
+
+function v2exReplyTargetAuthor(value: unknown) {
+  const text = String(value || '')
+    .replace(/^<p>/i, '')
+    .replace(/<\/p>$/i, '')
+    .trim();
+  const linked = text.match(/^@<a\b[^>]*href=["']\/member\/([^"']+)["'][^>]*>/i);
+  if (linked) {
+    return decodeURIComponent(linked[1]);
+  }
+  const plain = text.match(/^@([A-Za-z0-9_-]{1,32})\b/);
+  return plain ? plain[1] : undefined;
+}
+
+function parseV2exThanksCount(value: unknown) {
+  const text = decodeHtml(String(value || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+  if (!/(thanks?|感谢|谢)/i.test(text)) {
+    return undefined;
+  }
+  const count = parsePositiveInteger(text);
+  return count > 0 ? count : undefined;
+}
+
+function interactionTypeName(value: unknown) {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (isRecord(value)) {
+    return String(value['@id'] || value.name || value.url || '');
+  }
+  return '';
+}
+
+function statCountByInteraction(data: unknown, pattern: RegExp) {
+  if (!isRecord(data)) {
+    return undefined;
+  }
+  const rawStats = data.interactionStatistic;
+  const stats = Array.isArray(rawStats) ? rawStats : rawStats ? [rawStats] : [];
+  for (const stat of stats) {
+    if (!isRecord(stat) || !pattern.test(interactionTypeName(stat.interactionType))) {
+      continue;
+    }
+    const count = parsePositiveInteger(stat.userInteractionCount);
+    if (count > 0) {
+      return count;
+    }
+  }
+  return undefined;
+}
+
+function parseV2exViewCount(root: ReturnType<typeof parseHtml>) {
+  for (const script of root.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      const parsed = JSON.parse(script.text);
+      const viewCount = statCountByInteraction(parsed, /ViewAction/i);
+      if (typeof viewCount === 'number') {
+        return viewCount;
+      }
+    } catch {
+      // Ignore unrelated structured data.
+    }
+  }
+  return undefined;
+}
+
+function parseV2exTags(root: ReturnType<typeof parseHtml>) {
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const element of root.querySelectorAll('a.tag')) {
+    const tag = elementText(element);
+    if (tag && !seen.has(tag)) {
+      seen.add(tag);
+      tags.push(tag);
+    }
+  }
+  return tags;
+}
+
+function parseV2exSupplements(root: ReturnType<typeof parseHtml>) {
+  return root.querySelectorAll('.subtle')
+    .map((element, index) => {
+      const content = element.querySelector('.topic_content')?.innerHTML || '';
+      if (!content.trim()) {
+        return '';
+      }
+      const titleTime = element.querySelector('.fade span[title]')?.getAttribute('title') || '';
+      const displayTime = titleTime ? toIsoString(titleTime) || titleTime : '';
+      const label = `补充 ${index + 1}${displayTime ? ` · ${displayTime}` : ''}`;
+      return `<blockquote><p><strong>${escapeHtml(label)}</strong></p>${sanitizeContentHtml(content, BASE_URL)}</blockquote>`;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
+  const repliesByCommentId = new Map<number, V2exHtmlReplyMeta>();
+  const repliesByFloor = new Map<number, V2exHtmlReplyMeta>();
+  const replies: Reply[] = [];
+  for (const element of root.querySelectorAll('[id^="r_"]')) {
+    const commentId = parsePositiveInteger(String(element.getAttribute('id') || '').replace(/^r_/, ''));
+    const floor = parsePositiveInteger(element.querySelector('.no')?.text);
+    const createdAt = toIsoString(element.querySelector('.ago')?.getAttribute('title'));
+    const replyContent = element.querySelector('.reply_content')?.innerHTML || '';
+    const thanksCount = element.querySelectorAll('.small')
+      .map((item) => parseV2exThanksCount(item.text))
+      .find((count): count is number => typeof count === 'number');
+    const replyTargetAuthor = v2exReplyTargetAuthor(replyContent);
+    const meta: V2exHtmlReplyMeta = {
+      ...(commentId ? { commentId } : {}),
+      ...(floor ? { floor } : {}),
+      ...(createdAt ? { createdAt } : {}),
+      ...(thanksCount ? { thanksCount } : {}),
+      ...(replyTargetAuthor ? { replyTargetAuthor } : {})
+    };
+    if (commentId) {
+      repliesByCommentId.set(commentId, meta);
+    }
+    if (floor) {
+      repliesByFloor.set(floor, meta);
+    }
+    const authorLink = element.querySelector('strong a[href^="/member/"]')
+      || element.querySelector('a.dark[href^="/member/"]')
+      || element.querySelector('a[href^="/member/"]');
+    const author = elementText(authorLink);
+    const authorHref = authorLink?.getAttribute('href') || '';
+    const contentHtml = sanitizeContentHtml(replyContent, BASE_URL);
+    if (author || contentHtml) {
+      replies.push({
+        author,
+        authorId: author || undefined,
+        authorAvatar: absoluteUrl(element.querySelector('img.avatar')?.getAttribute('src'), BASE_URL),
+        authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : author ? memberUrl(author) : undefined,
+        contentHtml,
+        createdAt,
+        ...(floor ? { floor } : {}),
+        ...(commentId ? { commentId } : {}),
+        ...(replyTargetAuthor ? { replyTargetAuthor } : {}),
+        ...(typeof thanksCount === 'number' ? { thanksCount } : {})
+      });
+    }
+  }
+  return { replies, repliesByCommentId, repliesByFloor };
+}
+
+function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
+  const root = parseHtml(html);
+  const replyMeta = parseV2exReplyMeta(root);
+  return {
+    supplementHtml: parseV2exSupplements(root),
+    tags: parseV2exTags(root),
+    viewCount: parseV2exViewCount(root),
+    replies: replyMeta.replies,
+    repliesByCommentId: replyMeta.repliesByCommentId,
+    repliesByFloor: replyMeta.repliesByFloor
+  };
+}
+
+function appendV2exSupplementHtml(contentHtml: string, supplementHtml: string) {
+  return [contentHtml, supplementHtml].filter((part) => String(part || '').trim()).join('\n');
+}
+
+function parseV2exAllTabPage(html: string, limit: number) {
+  const root = parseHtml(html);
+  const items = root.querySelectorAll('.cell.item')
+    .map((element) => normalizeHtmlTopic(element))
+    .filter(Boolean) as Topic[];
+  const hasRecentLink = root.querySelectorAll('a[href]').some((link) => {
+    try {
+      return new URL(link.getAttribute('href') || '', BASE_URL).pathname === '/recent';
+    } catch {
+      return false;
+    }
+  });
+  return {
+    items: items.slice(0, limit),
+    hasMore: items.length > limit || hasRecentLink,
+    nextPage: items.length > limit || hasRecentLink ? 2 : null
   };
 }
 
@@ -239,10 +452,18 @@ export async function getV2exFeed(options: V2exOptions & {
 } = {}): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
+  if (!options.category && page === 1) {
+    const html = await fetchText(`${BASE_URL}/?tab=all`, options);
+    return { ...parseV2exAllTabPage(html, limit), errors: {} };
+  }
   if (options.category || page > 1) {
     const htmlResult = await fetchHtmlWindow({ ...options, page, limit });
     if (htmlResult) {
-      return { ...htmlResult, errors: {} };
+      return {
+        ...htmlResult,
+        nextPage: htmlResult.hasMore ? htmlResult.nextPage : null,
+        errors: {}
+      };
     }
   }
   const data = await loadLatest(options);
@@ -301,15 +522,40 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
     return null;
   }
   const member = isRecord(raw.member) ? raw.member : {};
+  const contentHtml = sanitizeContentHtml(raw.content_rendered || raw.content || '', BASE_URL);
+  const commentId = typeof raw.id === 'number' ? raw.id : parsePositiveInteger(raw.id);
+  const replyTargetAuthor = v2exReplyTargetAuthor(raw.content_rendered || raw.content || contentHtml);
   return {
     author: String(member.username || ''),
     authorId: typeof member.username === 'string' ? member.username : undefined,
     authorAvatar: absoluteUrl(member.avatar_large || member.avatar_normal || member.avatar_mini, BASE_URL),
     authorUrl: typeof member.username === 'string' ? memberUrl(member.username) : undefined,
-    contentHtml: sanitizeContentHtml(raw.content_rendered || raw.content || '', BASE_URL),
+    contentHtml,
     createdAt: toIsoString(raw.created),
-    floor: index + 1
+    floor: index + 1,
+    ...(commentId ? { commentId } : {}),
+    ...(replyTargetAuthor ? { replyTargetAuthor } : {})
   };
+}
+
+function mergeV2exReplyMeta(replies: Reply[], detail: V2exHtmlDetail | null) {
+  if (!detail) {
+    return replies;
+  }
+  return replies.map((reply, index) => {
+    const meta = (reply.commentId ? detail.repliesByCommentId.get(reply.commentId) : undefined)
+      || detail.repliesByFloor.get(reply.floor || index + 1);
+    if (!meta) {
+      return reply;
+    }
+    return {
+      ...reply,
+      ...(meta.createdAt ? { createdAt: meta.createdAt } : {}),
+      ...(meta.floor ? { floor: meta.floor } : {}),
+      ...(meta.replyTargetAuthor && !reply.replyTargetAuthor ? { replyTargetAuthor: meta.replyTargetAuthor } : {}),
+      ...(typeof meta.thanksCount === 'number' ? { thanksCount: meta.thanksCount } : {})
+    };
+  });
 }
 
 function parseV2exMemberTopics(html: string, username: string, avatar?: string) {
@@ -416,19 +662,36 @@ export async function getV2exUserProfile(id: string, username: string, options: 
 }
 
 export async function getV2exTopic(id: string, options: V2exOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
-  const [topicData, replyData] = await Promise.all([
+  const [topicData, replyResult, detailHtml] = await Promise.all([
     fetchJson<unknown[]>(`${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`, options),
     fetchJson<unknown[]>(`${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`, options)
+      .then((data) => ({ data }))
+      .catch((error: unknown) => ({ error })),
+    fetchText(`${BASE_URL}/t/${encodeURIComponent(id)}`, options).catch(() => '')
   ]);
   const topic = normalizeApiTopic(Array.isArray(topicData) ? topicData[0] : null);
   if (!topic) {
     throw new Error('V2EX 主题不存在');
   }
   const rawTopic = Array.isArray(topicData) && isRecord(topicData[0]) ? topicData[0] : {};
+  const htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml) : null;
+  const apiReplies = 'data' in replyResult && Array.isArray(replyResult.data)
+    ? mergeV2exReplyMeta(replyResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
+    : [];
+  if (!apiReplies.length && 'error' in replyResult && topic.replyCount > 0 && !htmlDetail?.replies.length) {
+    throw replyResult.error instanceof Error ? replyResult.error : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
+  }
+  const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
   return {
     ...topic,
-    contentHtml: sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL),
-    replies: (Array.isArray(replyData) ? replyData : []).map(normalizeReply).filter(Boolean) as Reply[],
+    ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
+    ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
+    replyCount: replies.length || topic.replyCount,
+    contentHtml: appendV2exSupplementHtml(
+      sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL),
+      htmlDetail?.supplementHtml || ''
+    ),
+    replies,
     replyHasMore: false,
     replyNextPage: null
   };

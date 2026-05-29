@@ -103,7 +103,8 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).not.toContain('icon={Heart}');
     expect(topicScreenSource).toContain("onInteract('like', topic?.commentId)");
     expect(topicScreenSource).toContain("onInteract('like', reply.commentId)");
-    expect(topicScreenSource).not.toContain('感谢');
+    expect(yaohuoTopicAction).not.toContain('感谢');
+    expect(yaohuoReplyAction).not.toContain('感谢');
     expect(yaohuoTopicAction).not.toContain('加鸡腿');
     expect(yaohuoReplyAction).not.toContain('加鸡腿');
   });
@@ -125,6 +126,64 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('replyContentArea');
     expect(topicScreenSource).toContain('replyBody');
     expect(topicScreenSource).toContain('replyActionRow');
+  });
+
+  it('shows forum reply context without requiring V2EX login actions', () => {
+    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
+    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
+      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      : '';
+
+    expect(replyCard).toContain('reply.isOp');
+    expect(replyCard).toContain('styles.replyOpBadge');
+    expect(replyCard).toContain('reply.hot');
+    expect(replyCard).toContain('热门');
+    expect(replyCard).toContain('reply.pinned');
+    expect(replyCard).toContain('置顶');
+    expect(replyCard).toContain('reply.replyTargetAuthor');
+    expect(replyCard).toContain('styles.replyTargetPill');
+    expect(replyCard).toContain('reply.signatureHtml');
+    expect(replyCard).toContain('styles.replySignature');
+    expect(replyCard).toContain('reply.thanksCount');
+    expect(replyCard).not.toContain('source === \'v2ex\' ? (');
+    expect(themeSource).toContain('replyContextBadge');
+    expect(themeSource).toContain('replySignature');
+  });
+
+  it('shows NodeSeek topic reaction counts without mixing them with local favorite state', () => {
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
+      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
+      : '';
+
+    expect(topicScreenSource).toContain('NodeSeekStatPill');
+    expect(topicScreenSource).toContain('nodeSeekTopicReactionStats');
+    expect(topicScreenSource).toContain('nodeSeekTopicPassiveStats');
+    expect(topicScreenSource).toContain('collectionCount');
+    expect(topicScreenSource).toContain('原站收藏');
+    expect(topicScreenSource).toContain('topicStatRail');
+    expect(topicScreenSource).toContain('replyStatRail');
+    expect(themeSource).toContain('nodeSeekStatPill');
+    expect(themeSource).toContain('nodeSeekStatValue');
+    expect(topicActionRenderer).toContain('topicPassiveStats.map');
+    expect(topicActionRenderer).not.toContain('topicPassiveStats.length ? (');
+    expect(themeSource).toMatch(/nodeSeekStatPill:\s*\{[\s\S]*minHeight:\s*40[\s\S]*paddingVertical:\s*0/);
+    expect(themeSource).toMatch(/topicStatRail:\s*\{[\s\S]*minHeight:\s*40/);
+  });
+
+  it('wraps detail HTML tables in a horizontal reader area', () => {
+    const rendererBlock = topicScreenSource.match(/const topicHtmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?return \{ \.\.\.htmlRenderers[\s\S]*?\};/)?.[0] || '';
+
+    expect(topicScreenSource).toContain('ScrollView');
+    expect(rendererBlock).toContain('TableRenderer');
+    expect(rendererBlock).toContain("htmlTagName(props.tnode) !== 'table'");
+    expect(rendererBlock).toContain('horizontal');
+    expect(rendererBlock).toContain('styles.htmlTableScroll');
+    expect(rendererBlock).toContain('styles.htmlTableFrame');
+    expect(themeSource).toContain('htmlTableScroll');
+    expect(themeSource).toContain('htmlTableFrame');
   });
 
   it('uses a thin reply divider and aligned pending state in topic details', () => {
@@ -162,7 +221,7 @@ describe('Android topic detail reading layout', () => {
 
   it('collapses native linux.do HTML quote blocks behind an expand control', () => {
     const rendererStart = topicScreenSource.indexOf('const QuoteAsideRenderer: CustomBlockRenderer');
-    const rendererEnd = topicScreenSource.indexOf('return { ...htmlRenderers, aside: QuoteAsideRenderer };', rendererStart);
+    const rendererEnd = topicScreenSource.indexOf('const TableRenderer: CustomBlockRenderer', rendererStart);
     const quoteRenderer = rendererStart >= 0 && rendererEnd > rendererStart
       ? topicScreenSource.slice(rendererStart, rendererEnd)
       : '';

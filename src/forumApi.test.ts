@@ -808,6 +808,14 @@ describe('Android local forum facade', () => {
           headers: { 'content-type': 'application/json' }
         });
       }
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/401#reply0">V2EX topic</a></span>
+            <span class="topic_info"><a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp; <strong><a href="/member/neo">neo</a></strong> &nbsp;•&nbsp; <span title="2026-05-18 08:00:00 +08:00"></span></span>
+          </div>
+        `);
+      }
       if (input.includes('/api/topics/latest.json')) {
         return new Response(JSON.stringify([{
           id: 401,
@@ -923,7 +931,7 @@ describe('Android local forum facade', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.nodeseek.com/page-2');
   });
 
-  it('keeps V2EX next pages available in the aggregated Android feed when latest JSON exactly fills one app page', async () => {
+  it('keeps V2EX next pages available in the aggregated Android feed after the all tab', async () => {
     clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
@@ -934,11 +942,12 @@ describe('Android local forum facade', () => {
           headers: { 'content-type': 'application/json' }
         });
       }
-      if (input.includes('/api/topics/latest.json')) {
-        return new Response(JSON.stringify([
-          { id: 301, title: 'V2EX latest newer', url: 'https://www.v2ex.com/t/301', created: 1780000100, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } },
-          { id: 300, title: 'V2EX latest older', url: 'https://www.v2ex.com/t/300', created: 1780000000, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } }
-        ]));
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(`
+          <div class="cell item"><a class="topic-link" href="/t/301#reply0">V2EX all newer</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:01:00 +08:00"></span></div>
+          <div class="cell item"><a class="topic-link" href="/t/300#reply0">V2EX all older</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:00:00 +08:00"></span></div>
+          <a href="/recent">更多新主题</a>
+        `);
       }
       if (input.includes('/recent?p=1')) {
         return new Response(`
@@ -979,11 +988,12 @@ describe('Android local forum facade', () => {
           headers: { 'content-type': 'application/json' }
         });
       }
-      if (input.includes('/api/topics/latest.json')) {
-        return new Response(JSON.stringify([
-          { id: 501, title: 'V2EX latest newest', url: 'https://www.v2ex.com/t/501', created: 1780000500, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } },
-          { id: 500, title: 'V2EX latest older', url: 'https://www.v2ex.com/t/500', created: 1780000400, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } }
-        ]));
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(`
+          <div class="cell item"><a class="topic-link" href="/t/501#reply0">V2EX all newest</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:05:00 +08:00"></span></div>
+          <div class="cell item"><a class="topic-link" href="/t/500#reply0">V2EX all older</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:04:00 +08:00"></span></div>
+          <a href="/recent">更多新主题</a>
+        `);
       }
       if (input.includes('/recent?p=1')) {
         return new Response(`

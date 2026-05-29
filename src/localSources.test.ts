@@ -138,6 +138,170 @@ describe('Android local sources', () => {
     expect(feed.nextPage).toBeNull();
   });
 
+  it('shows NodeSeek embedded list comments as replies excluding the original post', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      rotateTopics: [
+        { postId: 202, titleText: 'NodeSeek no replies', titleLink: '/post-202-1', op: { name: 'alice' }, comments: 1 },
+        { postId: 203, titleText: 'NodeSeek replies', titleLink: '/post-203-1', op: { name: 'bob' }, comments: 4 }
+      ]
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const feed = await getFeed({ source: 'nodeseek', fetcher });
+
+    expect(feed.items.map((item) => item.replyCount)).toEqual([0, 3]);
+  });
+
+  it('keeps NodeSeek detail reply metadata from embedded comments', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 204,
+        title: 'NodeSeek detail metadata',
+        views: '2.2k',
+        collectionCount: 4,
+        collected: false,
+        locked: 0,
+        op: { uid: 9891, name: 'alice' },
+        category: 'daily',
+        categoryWord: '日常',
+        categoryLink: '/categories/daily',
+        comments: [
+          {
+            commentId: 10,
+            floorIndex: 0,
+            poster: { name: 'alice', uid: 9891, isOp: true, info: '楼主', avatar: '/avatar/9891.png', profile: '/space/9891' },
+            markdown: '正文',
+            time: { createdDate: '2026-05-20T00:00:00.000Z' },
+            upvoteCount: 1,
+            likeCount: 0,
+            dislikeCount: 0
+          },
+          {
+            commentId: 12,
+            floorIndex: 15,
+            hot: true,
+            pined: true,
+            poster: { name: 'bob', uid: 42, avatar: '/avatar/42.png', profile: '/space/42' },
+            markdown: '热门回复',
+            signature: '签名 **内容**',
+            time: { createdDate: '2026-05-20T00:15:00.000Z' },
+            upvoteCount: 0,
+            likeCount: 2,
+            dislikeCount: 1,
+            disliked: true
+          },
+          {
+            commentId: 11,
+            floorIndex: 1,
+            poster: { name: 'alice', uid: 9891, isOp: true, info: '楼主', avatar: '/avatar/9891.png', profile: '/space/9891' },
+            markdown: '楼主回复',
+            time: { createdDate: '2026-05-20T00:01:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const topic = await getNodeSeekTopic('204', { fetcher });
+
+    expect(topic).toMatchObject({
+      categoryId: 'daily',
+      category: '日常',
+      collectionCount: 4,
+      collected: false,
+      locked: false
+    });
+    expect(topic.authorId).toBe('9891');
+    expect(topic.replies[0]).toMatchObject({
+      author: 'bob',
+      authorId: '42',
+      authorUrl: 'https://www.nodeseek.com/space/42',
+      floor: 15,
+      hot: true,
+      pinned: true,
+      upvoteCount: 0,
+      likeCount: 2,
+      dislikeCount: 1,
+      disliked: true
+    });
+    expect(topic.replies[0]).toHaveProperty('signatureHtml', expect.stringContaining('<strong>内容</strong>'));
+    expect(topic.replies[1]).toMatchObject({
+      author: 'alice',
+      authorId: '9891',
+      floor: 1,
+      isOp: true
+    });
+  });
+
+  it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <h1>Rendered NodeSeek detail</h1>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/9891" class="author-name">alice</a><span class="is-poster">楼主</span></div>
+        <span class="content-category"><a href="/categories/daily">日常</a></span>
+        <time datetime="2026-05-20T00:00:00.000Z"></time>
+        <article class="post-content"><p>正文</p></article>
+        <div class="comment-menu">
+          <div title="点赞" class="menu-item"><span>1</span></div>
+          <div title="加鸡腿" class="menu-item"><span>0</span></div>
+          <div title="反对" class="menu-item"><span>0</span></div>
+          <div title="收藏" class="menu-item"><span>4</span></div>
+        </div>
+      </div>
+      <ul>
+        <li id="15" data-comment-id="102" class="content-item">
+          <div class="author-info"><a href="/space/42" class="author-name">bob</a></div>
+          <time datetime="2026-05-20T00:15:00.000Z"></time>
+          <div class="floor-link-wrapper"><div class="hot-badge"></div><a class="floor-link" href="#15">#15</a></div>
+          <article class="post-content"><p>热门回复</p></article>
+          <div class="signature"><p>签名内容</p></div>
+          <div class="comment-menu">
+            <div title="点赞" class="menu-item"><span>0</span></div>
+            <div title="加鸡腿" class="menu-item"><span>2</span></div>
+            <div title="反对" class="menu-item"><span>1</span></div>
+          </div>
+        </li>
+        <li id="1" data-comment-id="101" class="content-item">
+          <div class="author-info"><a href="/space/9891" class="author-name">alice</a><span class="is-poster">楼主</span></div>
+          <time datetime="2026-05-20T00:01:00.000Z"></time>
+          <a class="floor-link" href="#1">#1</a>
+          <article class="post-content"><p>楼主回复</p></article>
+          <div class="comment-menu">
+            <div title="点赞" class="menu-item"><span>0</span></div>
+            <div title="加鸡腿" class="menu-item"><span>0</span></div>
+            <div title="反对" class="menu-item"><span>0</span></div>
+          </div>
+        </li>
+      </ul>
+    `));
+
+    const topic = await getNodeSeekTopic('205', { fetcher });
+
+    expect(topic).toMatchObject({
+      categoryId: 'daily',
+      category: '日常',
+      upvoteCount: 1,
+      likeCount: 0,
+      dislikeCount: 0,
+      collectionCount: 4
+    });
+    expect(topic.replies[0]).toMatchObject({
+      author: 'bob',
+      authorId: '42',
+      floor: 15,
+      hot: true,
+      upvoteCount: 0,
+      likeCount: 2,
+      dislikeCount: 1
+    });
+    expect(topic.replies[0]).toHaveProperty('signatureHtml', expect.stringContaining('签名内容'));
+    expect(topic.replies[1]).toMatchObject({
+      author: 'alice',
+      floor: 1,
+      isOp: true
+    });
+  });
+
   it('continues NodeSeek replies from page one when the first page has more embedded replies', async () => {
     const comments = [
       { poster: { name: 'alice' }, markdown: '正文' },
@@ -1256,6 +1420,9 @@ describe('Android local sources', () => {
   it('reads V2EX public JSON, HTML pages, topic detail, and SOV2EX search directly', async () => {
     clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return html('<div class="cell item"><a href="/member/neo"><img class="avatar" src="//cdn.v2ex.com/a.png" alt="neo"></a><span class="item_title"><a class="topic-link" href="/t/121#reply3">V2EX latest</a></span><span class="topic_info"><a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp; <strong><a href="/member/neo">neo</a></strong> &nbsp;•&nbsp; <span title="2026-05-28 20:35:00 +08:00"></span></span><td width="70" align="right"><a href="/t/121#reply3" class="count_livid">3</a></td></div><a href="/recent">更多新主题</a>');
+      }
       if (input.includes('/api/topics/latest.json')) {
         return json([{
           id: 121,
@@ -1305,53 +1472,250 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/feed|http:\/\/10\.0\.2\.2|http:\/\/127\.0\.0\.1:3000/);
   });
 
-  it('does not let stale V2EX last_touched predate topic creation on Android', async () => {
+  it('reads the V2EX all feed from the origin all tab instead of the latest API', async () => {
     clearV2exCacheForTest();
-    const fetcher = vi.fn(async () => json([{
-      id: 701,
-      title: 'Fresh V2EX topic',
-      url: 'https://www.v2ex.com/t/701',
-      created: 1780000500,
-      last_touched: 1780000000,
-      replies: 0,
-      node: { name: 'create', title: '分享创造' },
-      member: { username: 'neo' }
-    }]));
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return html(`
+          <div class="cell item">
+            <a href="/member/alice"><img class="avatar" src="//cdn.v2ex.com/a.png" alt="alice"></a>
+            <span class="item_title"><a class="topic-link" href="/t/801#reply2">V2EX all active topic</a></span>
+            <span class="topic_info">
+              <a class="node" href="/go/qna">问与答</a> &nbsp;•&nbsp;
+              <strong><a href="/member/alice">alice</a></strong> &nbsp;•&nbsp;
+              <span title="2026-05-29 08:30:00 +08:00">Just Now</span> &nbsp;•&nbsp;
+              Lastly replied by <strong><a href="/member/bob">bob</a></strong>
+            </span>
+            <td width="70" align="right"><a href="/t/801#reply2" class="count_livid">2</a></td>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
 
     const feed = await getFeed({ source: 'v2ex', limit: 1, fetcher });
 
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual(['https://www.v2ex.com/?tab=all']);
     expect(feed.items[0]).toMatchObject({
+      id: '801',
+      title: 'V2EX all active topic',
+      author: 'alice',
+      categoryId: 'qna',
+      replyCount: 2,
+      lastReplyAt: '2026-05-29T00:30:00.000Z'
+    });
+  });
+
+  it('uses the V2EX topic reply badge instead of vote counts in HTML lists', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/go/create?p=1')) {
+        return html(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/802#reply357">V2EX voted topic</a></span>
+            <span class="topic_info">
+              <div class="votes"><a class="count_orange">1</a></div>
+              <a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp;
+              <strong><a href="/member/alice">alice</a></strong> &nbsp;•&nbsp;
+              <span title="2026-05-29 08:20:00 +08:00">10 mins ago</span>
+            </span>
+            <td width="70" align="right"><a href="/t/802#reply357" class="count_livid">357</a></td>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const feed = await getFeed({ source: 'v2ex', category: 'create', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      id: '802',
+      replyCount: 357
+    });
+  });
+
+  it('does not let stale V2EX last_touched predate topic creation on Android', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 701,
+          title: 'Fresh V2EX topic',
+          url: 'https://www.v2ex.com/t/701',
+          created: 1780000500,
+          last_touched: 1780000000,
+          replies: 0,
+          node: { name: 'create', title: '分享创造' },
+          member: { username: 'neo' }
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '701', fetcher });
+
+    expect(topic).toMatchObject({
       createdAt: '2026-05-28T20:35:00.000Z',
       lastReplyAt: '2026-05-28T20:35:00.000Z',
       replyCount: 0
     });
   });
 
-  it('keeps V2EX feed pagination open when latest JSON is shorter than the app page', async () => {
+  it('enriches V2EX topic details from the origin HTML without login-only actions', async () => {
     clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('/api/topics/latest.json')) {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 810,
+          title: 'V2EX enriched detail',
+          url: 'https://www.v2ex.com/t/810',
+          created: 1780000000,
+          last_touched: 1780000200,
+          replies: 1,
+          node: { name: 'create', title: '分享创造' },
+          member: { username: 'neo' },
+          content_rendered: '<p>detail body</p>'
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
         return json([
-          { id: 501, title: 'V2EX latest newer', url: 'https://www.v2ex.com/t/501', created: 1780000500, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } },
-          { id: 500, title: 'V2EX latest older', url: 'https://www.v2ex.com/t/500', created: 1780000400, replies: 0, node: { name: 'create', title: '分享创造' }, member: { username: 'neo' } }
+          { id: 7001, member: { username: 'alice' }, content_rendered: '<p>first reply</p>', created: 1780000100 },
+          { id: 7002, member: { username: 'neo' }, content_rendered: '@<a href="/member/alice">alice</a> answer', created: 1780000200 }
         ]);
+      }
+      if (input === 'https://www.v2ex.com/t/810') {
+        return html(`
+          <script type="application/ld+json">
+            {"interactionStatistic":[
+              {"interactionType":"https://schema.org/ViewAction","userInteractionCount":743},
+              {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":2}
+            ]}
+          </script>
+          <a href="/tag/开户" class="tag">开户</a>
+          <a href="/tag/券商" class="tag"><span></span> 券商</a>
+          <div class="subtle">
+            <span class="fade">Supplement 1 &nbsp;·&nbsp; <span title="2026-05-28 10:24:10 +08:00">23h ago</span></span>
+            <div class="topic_content"><p>补充正文 <img src="/supplement.svg" /></p></div>
+          </div>
+          <div id="r_7001" class="cell"><span class="no">1</span><span class="ago" title="2026-05-28 10:01:40 +08:00">1h ago</span><div class="reply_content">first reply</div></div>
+          <div id="r_7002" class="cell"><span class="no">2</span><span class="ago" title="2026-05-28 10:03:20 +08:00">1h ago</span><span class="small">2 thanks</span><div class="reply_content">@<a href="/member/alice">alice</a> answer</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '810', fetcher });
+
+    expect(topic.replyCount).toBe(2);
+    expect(topic.viewCount).toBe(743);
+    expect(topic.tags).toEqual(['开户', '券商']);
+    expect(topic.contentHtml).toContain('补充 1');
+    expect(topic.contentHtml).toContain('补充正文');
+    expect(topic.contentHtml).toContain('https://www.v2ex.com/supplement.svg');
+    expect(topic.replies[0]).toMatchObject({ commentId: 7001, floor: 1 });
+    expect(topic.replies[1]).toMatchObject({
+      author: 'neo',
+      commentId: 7002,
+      floor: 2,
+      replyTargetAuthor: 'alice',
+      thanksCount: 2
+    });
+  });
+
+  it('falls back to V2EX origin HTML replies when the public replies API times out', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 811,
+          title: 'V2EX fallback detail',
+          url: 'https://www.v2ex.com/t/811',
+          created: 1780000000,
+          replies: 2,
+          node: { name: 'create', title: '分享创造' },
+          member: { username: 'neo' },
+          content_rendered: '<p>detail body</p>'
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        throw new Error('请求超时，请稍后重试');
+      }
+      if (input === 'https://www.v2ex.com/t/811') {
+        return html(`
+          <div id="r_7101" class="cell">
+            <img class="avatar" src="//cdn.v2ex.com/a.png" />
+            <span class="no">1</span>
+            <strong><a href="/member/alice" class="dark">alice</a></strong>
+            <span class="ago" title="2026-05-28 10:01:40 +08:00">1h ago</span>
+            <div class="reply_content">first html reply</div>
+          </div>
+          <div id="r_7102" class="cell">
+            <img class="avatar" src="//cdn.v2ex.com/b.png" />
+            <span class="no">2</span>
+            <strong><a href="/member/bob" class="dark">bob</a></strong>
+            <span class="ago" title="2026-05-28 10:03:20 +08:00">1h ago</span>
+            <span class="small">3 thanks</span>
+            <div class="reply_content">@<a href="/member/alice">alice</a> second html reply</div>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '811', fetcher });
+
+    expect(topic.replyCount).toBe(2);
+    expect(topic.replies).toHaveLength(2);
+    expect(topic.replies[0]).toMatchObject({
+      author: 'alice',
+      authorAvatar: 'https://cdn.v2ex.com/a.png',
+      commentId: 7101,
+      contentHtml: expect.stringContaining('first html reply'),
+      floor: 1
+    });
+    expect(topic.replies[1]).toMatchObject({
+      author: 'bob',
+      commentId: 7102,
+      floor: 2,
+      replyTargetAuthor: 'alice',
+      thanksCount: 3
+    });
+  });
+
+  it('keeps V2EX all feed pagination open through the recent HTML list', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return html(`
+          <div class="cell item"><a class="topic-link" href="/t/501#reply0">V2EX all first</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:05:00 +08:00"></span></div>
+          <div class="cell item"><a class="topic-link" href="/t/500#reply0">V2EX all second</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:04:00 +08:00"></span></div>
+          <div class="cell item"><a class="topic-link" href="/t/499#reply0">V2EX all third</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:03:00 +08:00"></span></div>
+          <a href="/recent">更多新主题</a>
+        `);
       }
       if (input.includes('/recent?p=1')) {
         return html(`
-          <div class="cell"><a class="topic-link" href="/t/501#reply1">V2EX latest newer</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:05:00"></span></div>
-          <div class="cell"><a class="topic-link" href="/t/500#reply1">V2EX latest older</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:04:00"></span></div>
-          <div class="cell"><a class="topic-link" href="/t/499#reply1">V2EX html newer</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:03:00"></span></div>
-          <div class="cell"><a class="topic-link" href="/t/498#reply1">V2EX html older</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:02:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/501#reply1">V2EX all first duplicate</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:05:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/500#reply1">V2EX all second duplicate</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:04:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/499#reply1">V2EX all third duplicate</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:03:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/498#reply1">V2EX recent first</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:02:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/497#reply1">V2EX recent second</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:01:00"></span></div>
+          <div class="cell"><a class="topic-link" href="/t/496#reply1">V2EX recent third</a><a class="node" href="/go/create">分享创造</a><a href="/member/neo">neo</a><span title="2026-05-20 00:00:00"></span></div>
         `);
       }
       throw new Error(`unexpected ${input}`);
     });
 
     const first = await getFeed({ source: 'v2ex', limit: 3, fetcher });
+    const second = await getFeed({ source: 'v2ex', page: first.nextPage ?? 2, limit: 3, fetcher });
 
     expect(first.items.map((item) => item.id)).toEqual(['501', '500', '499']);
     expect(first.hasMore).toBe(true);
     expect(first.nextPage).toBe(2);
+    expect(second.items.map((item) => item.id)).toEqual(['498', '497', '496']);
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/recent?p=1');
   });
 

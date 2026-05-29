@@ -137,6 +137,40 @@ function parseViewCount(value: unknown) {
   return count || undefined;
 }
 
+function optionalInteger(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+  const match = String(value).replace(/,/g, '').match(/\d+/);
+  return match ? Number(match[0]) : undefined;
+}
+
+function optionalBoolean(value: unknown) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no'].includes(normalized)) {
+      return false;
+    }
+  }
+  return undefined;
+}
+
+function nodeSeekEmbeddedUserId(user: Record<string, unknown>) {
+  return String(user.uid || user.id || user.userId || user.user_id || user.member_id || '').trim();
+}
+
 function integerFromElement(element: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
   return parsePositiveInteger(elementText(element) || element?.getAttribute('title'));
 }
@@ -181,6 +215,14 @@ function nodeSeekCreatedAt(raw: Record<string, unknown>) {
   return toIsoString(raw.created_at || raw.createdAt || raw.createdDate || time.created_at || time.createdAt || time.createdDate || raw.time);
 }
 
+function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>) {
+  const explicitReplyCount = raw.replyCount ?? raw.replies ?? raw.reply_count;
+  if (explicitReplyCount !== undefined && explicitReplyCount !== null && explicitReplyCount !== '') {
+    return parsePositiveInteger(explicitReplyCount);
+  }
+  return Math.max(parsePositiveInteger(raw.comments ?? raw.commentCount ?? raw.comment_count) - 1, 0);
+}
+
 function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const id = String(raw.postId || raw.id || '').trim();
   const title = String(raw.titleText || raw.title || '').trim();
@@ -206,7 +248,7 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
     url: safeNodeSeekTopicUrl(id, raw.titleLink || raw.url),
     createdAt,
     lastReplyAt,
-    replyCount: Number(raw.comments || raw.commentCount || 0),
+    replyCount: nodeSeekEmbeddedReplyCount(raw),
     viewCount: parseViewCount(raw.views || raw.viewCount),
     excerpt: textExcerpt(raw.content || raw.markdown || ''),
     ...(accessRequirement ? { accessRequirement } : {})
@@ -528,20 +570,31 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
   const source = skipFirst ? comments.slice(1) : comments;
   return source.slice(start).filter(isRecord).map((comment, index) => {
     const poster = isRecord(comment.poster) ? comment.poster : {};
-    const authorId = String(poster.id || poster.userId || poster.user_id || '').trim();
+    const authorId = nodeSeekEmbeddedUserId(poster);
+    const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? spaceUrl(authorId) : undefined);
+    const signatureHtml = String(comment.signature || '').trim()
+      ? markdownToHtml(comment.signature)
+      : undefined;
+    const floorIndex = optionalInteger(comment.floorIndex ?? comment.floor);
     return {
       author: String(poster.name || ''),
       authorAvatar: absoluteUrl(poster.avatar, BASE_URL),
       authorId: authorId || undefined,
-      authorUrl: authorId ? spaceUrl(authorId) : undefined,
+      authorUrl,
       contentHtml: markdownToHtml(comment.markdown),
       createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
-      floor: floorOffset + start + index + 1,
-      commentId: typeof comment.commentId === 'number' ? comment.commentId : undefined,
-      upvoteCount: typeof comment.upvoteCount === 'number' ? comment.upvoteCount : undefined,
-      likeCount: typeof comment.likeCount === 'number' ? comment.likeCount : undefined,
-      upvoted: typeof comment.upvoted === 'boolean' ? comment.upvoted : undefined,
-      liked: typeof comment.liked === 'boolean' ? comment.liked : undefined
+      floor: floorIndex ?? floorOffset + start + index + 1,
+      commentId: optionalInteger(comment.commentId),
+      upvoteCount: optionalInteger(comment.upvoteCount),
+      likeCount: optionalInteger(comment.likeCount),
+      dislikeCount: optionalInteger(comment.dislikeCount),
+      upvoted: optionalBoolean(comment.upvoted),
+      liked: optionalBoolean(comment.liked),
+      disliked: optionalBoolean(comment.disliked),
+      isOp: poster.isOp === true || String(poster.info || '').trim() === '楼主' || undefined,
+      hot: comment.hot === true || undefined,
+      pinned: comment.pined === true || comment.pinned === true || undefined,
+      signatureHtml
     };
   });
 }
@@ -552,6 +605,17 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const op = isRecord(data.op) ? data.op : {};
   const poster = isRecord(first.poster) ? first.poster : {};
   const category = isRecord(data.category) ? data.category : isRecord(data.node) ? data.node : {};
+  const categoryLink = String(data.categoryLink || '');
+  const categoryId = typeof category.key === 'string'
+    ? category.key
+    : typeof data.category === 'string'
+      ? data.category
+      : categoryLink.match(/\/categories\/([^/?#]+)/)?.[1];
+  const categoryName = typeof category.name === 'string'
+    ? category.name
+    : typeof data.categoryWord === 'string'
+      ? data.categoryWord
+      : undefined;
   const allReplies = normalizeReplies(comments, { skipFirst: true });
   const replies = allReplies.slice(0, replyLimit);
   const createdAt = toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
@@ -562,7 +626,8 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   }
   const lastReplyAt = toIsoString(lastCommentDate || data.updatedDate) || createdAt;
   const accessRequirement = accessRequirementFromObject(data);
-  const authorId = String(op.userId || op.user_id || op.id || poster.id || poster.userId || poster.user_id || '').trim();
+  const authorId = nodeSeekEmbeddedUserId(op) || nodeSeekEmbeddedUserId(poster);
+  const authorUrl = absoluteUrl(op.profile || poster.profile, BASE_URL) || (authorId ? spaceUrl(authorId) : undefined);
   return {
     source: 'nodeseek',
     id,
@@ -570,9 +635,9 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     author: String(op.name || poster.name || ''),
     authorAvatar: absoluteUrl(op.avatar || poster.avatar, BASE_URL),
     authorId: authorId || undefined,
-    authorUrl: authorId ? spaceUrl(authorId) : undefined,
-    categoryId: typeof category.key === 'string' ? category.key : undefined,
-    category: typeof category.name === 'string' ? category.name : undefined,
+    authorUrl,
+    categoryId,
+    category: categoryName,
     url,
     createdAt,
     lastReplyAt,
@@ -580,11 +645,16 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     viewCount: parseViewCount(data.views),
     excerpt: textExcerpt(first.markdown),
     contentHtml: markdownToHtml(first.markdown),
-    commentId: typeof first.commentId === 'number' ? first.commentId : undefined,
-    upvoteCount: typeof first.upvoteCount === 'number' ? first.upvoteCount : undefined,
-    likeCount: typeof first.likeCount === 'number' ? first.likeCount : undefined,
-    upvoted: typeof first.upvoted === 'boolean' ? first.upvoted : undefined,
-    liked: typeof first.liked === 'boolean' ? first.liked : undefined,
+    commentId: optionalInteger(first.commentId),
+    upvoteCount: optionalInteger(first.upvoteCount),
+    likeCount: optionalInteger(first.likeCount),
+    dislikeCount: optionalInteger(first.dislikeCount),
+    upvoted: optionalBoolean(first.upvoted),
+    liked: optionalBoolean(first.liked),
+    disliked: optionalBoolean(first.disliked),
+    collectionCount: optionalInteger(data.collectionCount),
+    collected: optionalBoolean(data.collected),
+    locked: optionalBoolean(data.locked),
     ...(accessRequirement ? { accessRequirement } : {}),
     replies,
     replyHasMore: allReplies.length > replyLimit,
@@ -637,6 +707,48 @@ function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>[
   return /^\d+$/.test(id) ? Number(id) : fallback;
 }
 
+function renderedNodeSeekReactionItem(element: HTMLElement | null | undefined, keywords: string[]) {
+  if (!element) {
+    return null;
+  }
+  return element.querySelectorAll('.comment-menu .menu-item').find((item) => {
+    const haystack = [
+      item.getAttribute('title'),
+      item.getAttribute('aria-label'),
+      item.getAttribute('class'),
+      item.innerHTML
+    ].join(' ').toLowerCase();
+    return keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+  }) || null;
+}
+
+function renderedNodeSeekReactionCount(element: HTMLElement | null | undefined, keywords: string[]) {
+  const item = renderedNodeSeekReactionItem(element, keywords);
+  if (!item) {
+    return undefined;
+  }
+  return optionalInteger(
+    elementText(item.querySelector('span'))
+    || item.getAttribute('data-count')
+    || item.getAttribute('title')
+    || elementText(item)
+  );
+}
+
+function renderedNodeSeekReactionClicked(element: HTMLElement | null | undefined, keywords: string[]) {
+  const item = renderedNodeSeekReactionItem(element, keywords);
+  return item ? String(item.getAttribute('class') || '').split(/\s+/).includes('clicked') || undefined : undefined;
+}
+
+function renderedNodeSeekSignature(element: HTMLElement | null | undefined) {
+  const signature = element?.querySelector('.signature, .post-signature, .content-signature');
+  return signature?.innerHTML ? sanitizeContentHtml(signature.innerHTML, BASE_URL) : undefined;
+}
+
+function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
+  return Boolean(element?.querySelector('.is-poster, .poster-badge') || elementText(element?.querySelector('.role-tag')).trim() === '楼主') || undefined;
+}
+
 function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 30): TopicDetail | null {
   const root = parseHtml(html);
   const firstContentItem = root.querySelector('.content-item');
@@ -680,7 +792,17 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
       floor: renderedNodeSeekFloor(row, index + 1),
-      commentId: renderedNodeSeekCommentId(row)
+      commentId: renderedNodeSeekCommentId(row),
+      upvoteCount: renderedNodeSeekReactionCount(row, ['点赞', 'good-one', 'upvote']),
+      likeCount: renderedNodeSeekReactionCount(row, ['加鸡腿', 'chicken-leg']),
+      dislikeCount: renderedNodeSeekReactionCount(row, ['反对', 'bad-one', 'oppose', 'dislike']),
+      upvoted: renderedNodeSeekReactionClicked(row, ['点赞', 'good-one', 'upvote']),
+      liked: renderedNodeSeekReactionClicked(row, ['加鸡腿', 'chicken-leg']),
+      disliked: renderedNodeSeekReactionClicked(row, ['反对', 'bad-one', 'oppose', 'dislike']),
+      isOp: renderedNodeSeekIsOp(row),
+      hot: Boolean(row.querySelector('.hot-badge')) || undefined,
+      pinned: Boolean(row.querySelector('.pined-badge, .pinned-badge, .pin-badge')) || undefined,
+      signatureHtml: renderedNodeSeekSignature(row)
     };
   });
   const replies = allReplies.slice(0, replyLimit);
@@ -704,6 +826,13 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     excerpt: textExcerpt(contentHtml),
     contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
     commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,
+    upvoteCount: renderedNodeSeekReactionCount(firstContentItem, ['点赞', 'good-one', 'upvote']),
+    likeCount: renderedNodeSeekReactionCount(firstContentItem, ['加鸡腿', 'chicken-leg']),
+    dislikeCount: renderedNodeSeekReactionCount(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike']),
+    upvoted: renderedNodeSeekReactionClicked(firstContentItem, ['点赞', 'good-one', 'upvote']),
+    liked: renderedNodeSeekReactionClicked(firstContentItem, ['加鸡腿', 'chicken-leg']),
+    disliked: renderedNodeSeekReactionClicked(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike']),
+    collectionCount: renderedNodeSeekReactionCount(firstContentItem, ['收藏', 'star', 'favorite', 'collect', 'bookmark']),
     replies,
     replyHasMore: allReplies.length > replyLimit,
     replyNextPage: allReplies.length > replyLimit ? 1 : null,
