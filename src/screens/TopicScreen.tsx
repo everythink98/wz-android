@@ -35,7 +35,7 @@ import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMA
 import { splitTopicContentHtml } from '../topicContentSplit';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
-import { REPLY_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
@@ -772,7 +772,7 @@ export function TopicScreen({
           onScrollBeginDrag={armReplyAutoLoad}
           onMomentumScrollBegin={armReplyAutoLoad}
           extraData={quoteStateVersion}
-          {...REPLY_LIST_PERFORMANCE_PROPS}
+          {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
           ListFooterComponent={canShowReplies && replyHasMore ? (
             <View style={[styles.topicFooter, topicColumnStyle]}>

@@ -112,7 +112,11 @@ export function LibraryScreen({
         <View style={styles.libraryMetaBlock}>
           <Text style={styles.meta}>保存于 {formatDateTime(record.savedAt) || record.savedAt}{record.visitCount ? ` · ${record.visitCount} 次阅读` : ''}</Text>
         </View>
-        {libraryTab === 'history' ? <AppButton compact label="删除" variant="ghost" styles={styles} onPress={() => onRemove(record.topic)} /> : null}
+        {libraryTab === 'history' ? (
+          <View style={styles.libraryActionRow}>
+            <AppButton compact label="删除" variant="ghost" styles={styles} onPress={() => onRemove(record.topic)} />
+          </View>
+        ) : null}
       </View>
     );
   }, [confirmRemoveFavorite, libraryTab, onOpenTopic, onRemove, readerData, styles, theme, topicListStateInput]);
@@ -140,6 +144,7 @@ export function LibraryScreen({
         <Text style={styles.meta}>{libraryTab === 'users' ? `${userRecords.length} / ${followedUsers.length} 人` : filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`}</Text>
       </View>
       <PillRail
+        variant="tabs"
         items={[
           { value: 'favorites', label: '帖子' },
           { value: 'users', label: '关注用户' },
@@ -150,6 +155,7 @@ export function LibraryScreen({
         onChange={(value) => onTabChange(value as LibraryTab)}
       />
       <PillRail
+        variant="subtabs"
         items={[
           { value: 'all', label: '全部' },
           ...feedSources.map((source) => ({ value: source, label: sourceLabel(source) }))
@@ -160,6 +166,7 @@ export function LibraryScreen({
       />
       {libraryTab !== 'users' && categoryItems.length > 1 ? (
         <PillRail
+          variant="subtabs"
           items={categoryItems}
           value={categoryFilter}
           styles={styles}

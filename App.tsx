@@ -12,6 +12,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
+  Pressable,
   SafeAreaView,
   Share,
   ScrollView,
@@ -36,8 +37,8 @@ import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
-  IMGElement,
   useIMGElementProps,
+  useIMGElementState,
   type CustomBlockRenderer,
   type CustomMixedRenderer
 } from 'react-native-render-html';
@@ -493,6 +494,7 @@ export default function App() {
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
+  const screenRef = useRef<Screen>('feed');
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
@@ -523,6 +525,7 @@ export default function App() {
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
   const [readerDataLoaded, setReaderDataLoaded] = useState(false);
   const readerDataRef = useRef<ReaderData>(readerData);
+  const readerDataStateRef = useRef<ReaderData>(readerData);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [tabScrollToTopSignals, setTabScrollToTopSignals] = useState<Record<keyof MainTabParamList, number>>({
     feed: 0,
@@ -580,7 +583,11 @@ export default function App() {
   const [healthSummary, setHealthSummary] = useState('');
   const [healthDetails, setHealthDetails] = useState<HealthDetail[]>([]);
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
-  readerDataRef.current = readerData;
+  screenRef.current = screen;
+  if (readerDataStateRef.current !== readerData) {
+    readerDataStateRef.current = readerData;
+    readerDataRef.current = readerData;
+  }
   const searchGroupsRef = useRef<SearchGroup[]>(searchGroups);
   searchGroupsRef.current = searchGroups;
   topicRepliesRef.current = topicReplies;
@@ -1047,21 +1054,46 @@ export default function App() {
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
+      const imageSource = imageSourceFromUrl(src, imageProps.source);
+      const imageState = useIMGElementState({
+        ...imageProps,
+        source: imageSource,
+        style: [imageProps.style, { resizeMode: 'contain' }]
+      });
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
       if (isInlineForumImage(props.tnode.attributes)) {
         return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
+      const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
+      const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
+      const content = imageState.type === 'success' ? (
+        <Image
+          source={imageState.source}
+          style={[{ resizeMode: 'contain' as const }, imageState.dimensions, imageState.imageStyle]}
+          resizeMethod="none"
+          onError={(event) => imageState.onError(event.nativeEvent.error as unknown as Error)}
+        />
+      ) : imageState.type === 'loading' ? (
+        <View style={imageState.dimensions} />
+      ) : (
+        <View style={[{ borderColor: theme.line, borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center' as const, overflow: 'hidden' as const }, imageState.dimensions]}>
+          <Text numberOfLines={2} style={styles.inlineForumImageText}>{imageState.alt || '图片加载失败'}</Text>
+        </View>
+      );
       return (
-        <IMGElement
-          {...imageProps}
-          source={imageSourceFromUrl(src, imageProps.source)}
+        <Pressable
+          accessibilityLabel={imageState.alt || '查看图片'}
+          accessibilityRole="button"
+          style={sharedContainerStyle}
           onPress={(event) => {
             event.stopPropagation?.();
             openImagePreview(src);
           }}
-        />
+        >
+          {content}
+        </Pressable>
       );
     };
     const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
@@ -1075,17 +1107,7 @@ export default function App() {
       if (isInlineImage) {
         return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(attributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
-      return (
-        <Text
-          onPress={isPreviewableImageUrl(src) ? () => openImagePreview(src) : undefined}
-          style={styles.inlineForumImageText}
-        >
-          <Image
-            source={imageSourceFromUrl(src)}
-            style={styles.inlineForumImage}
-          />
-        </Text>
-      );
+      return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
     return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
   }, [htmlBaseStyle.lineHeight, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText]);
@@ -1157,7 +1179,10 @@ export default function App() {
       percent: pending.percent,
       scrollY: pending.scrollY
     });
-    setReaderData(next);
+    readerDataRef.current = next;
+    if (screenRef.current !== 'topic') {
+      setReaderData(next);
+    }
     void persistReaderData(next);
   }, [persistReaderData]);
   const topicListStateInput = useMemo<NormalizedTopicListStateInput>(() => ({}), []);
@@ -2093,6 +2118,7 @@ export default function App() {
       closeMorePanels();
     }
     if (screen === 'topic' && nextScreen !== 'topic') {
+      screenRef.current = nextScreen;
       flushPendingProgress();
     }
     if (nextScreen !== 'topic') {

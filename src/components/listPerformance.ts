@@ -25,3 +25,8 @@ export const REPLY_LIST_PERFORMANCE_PROPS = {
   updateCellsBatchingPeriod: 50,
   windowSize: 7
 };
+
+export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
+  ...REPLY_LIST_PERFORMANCE_PROPS,
+  removeClippedSubviews: false
+};

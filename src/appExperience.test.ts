@@ -74,6 +74,13 @@ describe('Android App experience guards', () => {
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(url)');
   });
 
+  it('shows the main image preview from the original asset on Android', () => {
+    const previewImageBlock = imagePreviewModalSource.match(/<Image[\s\S]*?source=\{imageSourceFromUrl\(uri\)\}[\s\S]*?\/>/)?.[0] || '';
+
+    expect(previewImageBlock).toContain('resizeMethod="none"');
+    expect(previewImageBlock).toContain('resizeMode="contain"');
+  });
+
   it('shows Android feed rows as unified forum topics instead of source-first reader entries', () => {
     expect(topicCardSource).toContain('styles.topicBadgeRow');
     expect(topicCardSource).toContain('styles.topicSourceBadge');
@@ -127,12 +134,12 @@ describe('Android App experience guards', () => {
     expect(feedScreenSource).toContain('style={styles.topicListSeparator}');
   });
 
-  it('uses lightweight underline states for Android feed and topic secondary tabs', () => {
+  it('uses lightweight underline states for Android feed, library, and topic secondary tabs', () => {
     expect((feedScreenSource.match(/variant="subtabs"/g) || []).length).toBe(2);
+    expect((libraryScreenSource.match(/variant="subtabs"/g) || []).length).toBe(2);
     expect((topicScreenSource.match(/variant="subtabs"/g) || []).length).toBe(1);
     expect(appControlsSource).toContain("variant?: 'pills' | 'tabs' | 'subtabs';");
     expect(searchScreenSource).not.toContain('variant="subtabs"');
-    expect(libraryScreenSource).not.toContain('variant="subtabs"');
   });
 
   it('supports native pull-to-refresh on the Android feed list', () => {
@@ -353,11 +360,27 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('PROGRESS_SAVE_MAX_PENDING_MS');
   });
 
+  it('saves current topic scroll progress without re-rendering the visible detail page', () => {
+    const block = appSource.match(/const flushPendingProgress = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[persistReaderData\]\);/)?.[1] || '';
+
+    expect(appSource).toContain("const screenRef = useRef<Screen>('feed');");
+    expect(appSource).toContain('screenRef.current = screen;');
+    expect(appSource).toContain('const readerDataStateRef = useRef<ReaderData>(readerData);');
+    expect(appSource).toContain('if (readerDataStateRef.current !== readerData) {');
+    expect(block).toContain('readerDataRef.current = next;');
+    expect(block).toContain("if (screenRef.current !== 'topic')");
+    expect(block).toContain("if (screenRef.current !== 'topic') {\n      setReaderData(next);\n    }");
+    expect(block.indexOf('readerDataRef.current = next;')).toBeLessThan(block.indexOf("if (screenRef.current !== 'topic')"));
+    expect(block).not.toContain('readerDataRef.current = next;\n    setReaderData(next);');
+  });
+
   it('saves pending topic progress before leaving the topic screen', () => {
     const block = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(block).toContain("if (screen === 'topic' && nextScreen !== 'topic') {");
+    expect(block).toContain('screenRef.current = nextScreen;');
     expect(block).toContain('flushPendingProgress();');
+    expect(block.indexOf('screenRef.current = nextScreen;')).toBeLessThan(block.indexOf('flushPendingProgress();'));
   });
 
   it('guards delayed topic scroll restoration against stale topics', () => {

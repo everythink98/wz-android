@@ -265,11 +265,12 @@ describe('Android topic detail reading layout', () => {
     expect(userScreenSource).toContain('uri && !imageFailed');
   });
 
-  it('renders mixed paragraph images as inline media instead of centered block images', () => {
+  it('only sends forum emoji and avatar images through the inline media path', () => {
     expect(topicScreenSource).toContain('flowInlineImagesInMixedParagraphs');
     expect(topicScreenSource).toContain('INLINE_FORUM_IMAGE_TAG');
     expect(topicScreenSource).toContain('HTMLContentModel.textual');
     expect(appSource).toContain('styles.inlineForumImage');
+    expect(topicScreenSource).not.toContain('replaceInlineImagesWithAltText');
   });
 
   it('renders forum emoji images when a source is available', () => {
@@ -282,11 +283,31 @@ describe('Android topic detail reading layout', () => {
     expect(htmlRenderersBlock).not.toContain('if (!src || isInlineForumImage(attributes))');
   });
 
-  it('keeps non-emoji inline images at the regular inline preview size', () => {
+  it('keeps accidental non-emoji inline image nodes out of the tiny image path', () => {
     const htmlRenderersBlock = appSource.match(/const InlineForumImageRenderer: CustomMixedRenderer = \(props\) => \{[\s\S]*?\n    \};/)?.[0] || '';
 
     expect(htmlRenderersBlock).toContain('const isInlineImage = isInlineForumImage(attributes);');
-    expect(htmlRenderersBlock).toContain('style={styles.inlineForumImage}');
+    expect(htmlRenderersBlock).toContain('return <Text style={styles.inlineForumImageText}>{label || src}</Text>;');
+    expect(htmlRenderersBlock).not.toContain('onPress={isPreviewableImageUrl(src) ? () => openImagePreview(src) : undefined}');
+  });
+
+  it('decodes block topic images from the original asset on Android', () => {
+    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(htmlRenderersBlock).toContain('useIMGElementState');
+    expect(htmlRenderersBlock).toContain('source={imageState.source}');
+    expect(htmlRenderersBlock).toContain('resizeMethod="none"');
+    expect(appSource).not.toContain('PixelRatio');
+    expect(htmlRenderersBlock).not.toContain("resizeMethod: 'resize'");
+    expect(htmlRenderersBlock).not.toContain('resizeMultiplier');
+  });
+
+  it('keeps topic detail image cells mounted while scrolling through very tall images', () => {
+    const topicListBlock = topicScreenSource.match(/<FlatList[\s\S]*?renderItem=\{renderReplyItem\}/)?.[0] || '';
+
+    expect(topicScreenSource).toContain('TOPIC_DETAIL_LIST_PERFORMANCE_PROPS');
+    expect(topicListBlock).toContain('{...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}');
+    expect(topicListBlock).not.toContain('{...REPLY_LIST_PERFORMANCE_PROPS}');
   });
 
   it('does not nest forum emoji images inside text wrappers', () => {

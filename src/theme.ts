@@ -821,7 +821,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     libraryMetaBlock: {
       gap: 3,
-      paddingTop: 2
+      paddingHorizontal: 16,
+      paddingTop: 0
+    },
+    libraryActionRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 16
     },
     libraryTopicRow: {
       alignItems: 'flex-start',

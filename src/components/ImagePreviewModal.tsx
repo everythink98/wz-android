@@ -81,6 +81,7 @@ export function ImagePreviewModal({
                 source={imageSourceFromUrl(uri)}
                 style={[styles.imagePreviewImage, { width: imageWidth, height: imageHeight }]}
                 resizeMode="contain"
+                resizeMethod="none"
                 onLoadStart={() => {
                   setImagePreviewLoading(true);
                   setImagePreviewFailed(false);

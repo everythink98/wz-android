@@ -324,7 +324,7 @@ function flowQuoteTitleAvatars(root: { querySelectorAll?: (selector: string) => 
 function flowImagesInMixedContainer(
   container: { innerHTML?: string; querySelectorAll?: (selector: string) => ParsedImageNode[]; childNodes?: unknown[] },
   directOnly = false,
-  shouldFlowImage: (attributes: Record<string, string | undefined>) => boolean = () => true
+  shouldFlowImage: (attributes: Record<string, string | undefined>) => boolean = isInlineForumImageAttributes
 ) {
   const images = directOnly ? directChildImages(container) : (container.querySelectorAll?.('img') || []);
   const flowableImages = images.filter((image) => shouldFlowImage(image.attributes));

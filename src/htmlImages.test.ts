@@ -75,6 +75,12 @@ describe('Android HTML image preview helpers', () => {
     expect(imageRequestHeadersForUrl('data:image/png;base64,abc')).toBeUndefined();
   });
 
+  it('keeps Imgur topic images on their original URL', () => {
+    expect(imageSourceFromUrl('https://i.imgur.com/hKWwFrX.jpeg')).toEqual({
+      uri: 'https://i.imgur.com/hKWwFrX.jpeg'
+    });
+  });
+
   it('adds a browser user agent for NodeSeek avatar images', () => {
     expect(imageRequestHeadersForUrl('https://www.nodeseek.com/avatar/48872.png')).toEqual({
       Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
@@ -139,11 +145,12 @@ describe('Android HTML image preview helpers', () => {
     }, 1, 26)).toEqual({ transform: [{ translateY: 3 }] });
   });
 
-  it('marks images mixed with paragraph text as inline while keeping standalone images block-like', () => {
+  it('keeps real images block-like even when mixed with paragraph text', () => {
     const mixed = '<p>hello 😟<img alt="image" src="https://cdn.example.com/sticker.png"></p>';
     const standalone = '<p><img alt="image" src="https://cdn.example.com/photo.jpg"></p>';
 
-    expect(flowInlineImagesInMixedParagraphs(mixed)).toContain('<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png">image</forum-inline-image>');
+    expect(flowInlineImagesInMixedParagraphs(mixed)).toContain('<img alt="image" src="https://cdn.example.com/sticker.png">');
+    expect(flowInlineImagesInMixedParagraphs(mixed)).not.toContain('<forum-inline-image alt="image" src="https://cdn.example.com/sticker.png">');
     expect(flowInlineImagesInMixedParagraphs(standalone)).toContain('<img alt="image" src="https://cdn.example.com/photo.jpg">');
   });
 
