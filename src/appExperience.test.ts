@@ -240,7 +240,7 @@ describe('Android App experience guards', () => {
   it('ignores stale Android login checks after a newer login check starts', () => {
     const checkLoginBlock = appSource.match(/const checkLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify/)?.[1] || '';
     const checkYaohuoBlock = appSource.match(/const checkYaohuoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
-    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[linuxDoWebViewUserAgent/)?.[1] || '';
+    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[closeLinuxDoPanel/)?.[1] || '';
     const saveNodeSeekBlock = appSource.match(/const saveNodeSeekCookieHeader = useCallback\(async \([\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
     const rememberNodeSeekBlock = appSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
@@ -1137,22 +1137,39 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale pending linux.do topics when closing the verification panel', () => {
-    const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+    const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
     expect(block).toContain('pendingLinuxDoTopicRef.current = null;');
   });
 
-  it('returns to the pending linux.do topic after a verified panel close', () => {
-    const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+  it('returns to the pending linux.do topic only after the verified panel is closed', () => {
+    const closeBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const afterCloseBlock = appSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('linuxDoPendingTopicVerifiedRef');
     expect(appSource).toContain('linuxDoVerifiedRetryTopicKeyRef');
+    expect(appSource).toContain('linuxDoPendingReopenTopicAfterCloseRef');
     expect(appSource).toContain('openTopicRef');
-    expect(block).toContain('const pendingTopic = pendingLinuxDoTopicRef.current;');
-    expect(block).toContain('linuxDoPendingTopicVerifiedRef.current');
-    expect(block).toContain('linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);');
-    expect(block).toContain("setScreen('topic');");
-    expect(block).toContain('openTopicRef.current?.(pendingTopic, true);');
+    expect(closeBlock).toContain('const pendingTopic = pendingLinuxDoTopicRef.current;');
+    expect(closeBlock).toContain('linuxDoPendingTopicVerifiedRef.current');
+    expect(closeBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = pendingTopic;');
+    expect(closeBlock).not.toContain("setScreen('topic');");
+    expect(closeBlock).not.toContain('openTopicRef.current?.(pendingTopic, true);');
+    expect(afterCloseBlock).toContain('const pendingTopic = linuxDoPendingReopenTopicAfterCloseRef.current;');
+    expect(afterCloseBlock).toContain('linuxDoPanelClosingSessionRef.current = null;');
+    expect(afterCloseBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
+    expect(afterCloseBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);');
+    expect(afterCloseBlock).toContain('InteractionManager.runAfterInteractions');
+    expect(afterCloseBlock).toContain("setScreen('topic');");
+    expect(afterCloseBlock).toContain('openTopicRef.current?.(pendingTopic, true);');
+  });
+
+  it('closes the linux.do verification panel automatically after detecting a pending topic', () => {
+    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(checkLinuxDoBlock).toContain('linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);');
+    expect(checkLinuxDoBlock).toContain('if (linuxDoPendingTopicVerifiedRef.current) {');
+    expect(checkLinuxDoBlock).toContain('closeLinuxDoPanel();');
   });
 
   it('does not loop back into linux.do verification when the verified retry is still blocked', () => {
@@ -1160,13 +1177,12 @@ describe('Android App experience guards', () => {
     const cloudflareBlock = openTopicBlock.match(/if \(isLinuxDoCloudflareError\(error\)\) \{([\s\S]*?)\n        \}/)?.[1] || '';
     const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
+    expect(appSource).toContain('const handleLinuxDoCloudflareForTopic = useCallback');
     expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current && linuxDoVerifiedRetryTopicKeyRef.current !== topicKey(topic)');
     expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
     expect(changeScreenBlock).toContain("if (nextScreen !== 'topic')");
     expect(changeScreenBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
-    expect(cloudflareBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === topicKey(topic)');
-    expect(cloudflareBlock).toContain('pendingLinuxDoTopicRef.current = null;');
-    expect(cloudflareBlock).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
+    expect(cloudflareBlock).toContain('handleLinuxDoCloudflareForTopic(topic, message);');
     expect(cloudflareBlock).toContain('return;');
   });
 
@@ -1213,10 +1229,58 @@ describe('Android App experience guards', () => {
     expect(linuxDoPanelBlock).toContain('onHandleLinuxDoMessage(event, linuxDoWebViewKey)');
   });
 
+  it('unmounts the linux.do verification WebView before hiding the modal', () => {
+    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);');
+    expect(closeLinuxDoBlock.indexOf('setMountLinuxDoWebView(false);')).toBeGreaterThan(-1);
+    expect(closeLinuxDoBlock.indexOf('setMountLinuxDoWebView(false);')).toBeLessThan(closeLinuxDoBlock.indexOf('setShowLinuxDoPanel(false);'));
+    expect(linuxDoPanelBlock).toContain('mountLinuxDoWebView');
+    expect(linuxDoPanelBlock).toContain('showLinuxDoPanel && accountExpanded && mountLinuxDoWebView');
+  });
+
+  it('does not let a new linux.do verification request cancel an in-flight close', () => {
+    const changeLinuxDoBlock = appSource.match(/const changeLinuxDoPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const showLinuxDoBlock = appSource.match(/const showLinuxDoVerification = useCallback\(\(message = 'linux\.do 需要完成 Cloudflare 验证'\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const afterCloseBlock = appSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const linuxDoPanelClosingSessionRef = useRef<number | null>(null);');
+    expect(closeLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current = nextSession;');
+    expect(afterCloseBlock).toContain('linuxDoPanelClosingSessionRef.current = null;');
+    expect(showLinuxDoBlock).not.toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
+    expect(changeLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current !== null');
+    expect(changeLinuxDoBlock.indexOf('linuxDoPanelClosingSessionRef.current !== null')).toBeLessThan(changeLinuxDoBlock.indexOf('resetLinuxDoWebView();'));
+    expect(showLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current !== null');
+    expect(showLinuxDoBlock.indexOf('linuxDoPanelClosingSessionRef.current !== null')).toBeLessThan(showLinuxDoBlock.indexOf("setScreen('more');"));
+  });
+
+  it('keeps linux.do verified retry failures from remounting the verification WebView', () => {
+    const retryBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(\(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const verifiedRetryBlock = retryBlock.match(/if \(linuxDoVerifiedRetryTopicKeyRef\.current === requestTopicKey\) \{([\s\S]*?)\n    \}/)?.[1] || '';
+
+    expect(retryBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
+    expect(verifiedRetryBlock).toContain('setMountLinuxDoWebView(false);');
+    expect(verifiedRetryBlock).toContain('setLoadingLinuxDoPage(false);');
+    expect(verifiedRetryBlock).not.toContain('showLinuxDoVerification(message);');
+  });
+
+  it('keeps linux.do verified retry failures in reply refreshes from reopening verification', () => {
+    const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(refreshRepliesBlock).toContain('handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
+    expect(loadMoreRepliesBlock).toContain('handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
+    expect(refreshRepliesBlock).not.toContain('showLinuxDoVerification(errorMessage(error))');
+    expect(loadMoreRepliesBlock).not.toContain('showLinuxDoVerification(errorMessage(error))');
+  });
+
   it('cancels in-flight linux.do verification checks when the panel closes or reloads', () => {
     const resetLinuxDoBlock = appSource.match(/const resetLinuxDoWebView = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
     const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
     const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const appStateBlock = appSource.match(/AppState\.addEventListener\('change', \(next\) => \{[\s\S]*?\n    \}\);/)?.[0] || '';
 
     expect(resetLinuxDoBlock).toContain('checkingRequestIdRef.current += 1;');
     expect(resetLinuxDoBlock).toContain('const nextSession = nextLinuxDoWebViewSession();');
@@ -1226,6 +1290,8 @@ describe('Android App experience guards', () => {
     expect(checkLinuxDoBlock).toContain('const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;');
     expect(checkLinuxDoBlock).toContain('linuxDoWebViewSession !== linuxDoWebViewSessionRef.current');
     expect(checkLinuxDoBlock).toContain('!showLinuxDoPanelRef.current');
+    expect(appStateBlock).toContain('checkingRequestIdRef.current += 1;');
+    expect(appStateBlock).toContain('linuxDoWebViewSessionRef.current += 1;');
   });
 
   it('does not reopen the linux.do verification loading state after the page is visible', () => {

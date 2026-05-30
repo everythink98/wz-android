@@ -118,17 +118,16 @@ describe('Android App UX upgrade guards', () => {
   });
 
   it('applies the one-time linux.do verified retry guard to reply refresh paths', () => {
+    const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(\(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async[\s\S]*?\n  \}, \[clearYaohuoLoginState/)?.[0] || '';
     const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[clearYaohuoLoginState/)?.[0] || '';
 
+    expect(cloudflareHandlerBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
+    expect(cloudflareHandlerBlock).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
+    expect(cloudflareHandlerBlock).toContain('showLinuxDoVerification(message);');
     for (const block of [refreshRepliesBlock, loadMoreRepliesBlock]) {
-      const guardIndex = block.indexOf('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
-      const verifyIndex = block.indexOf('showLinuxDoVerification(errorMessage(error));');
-
-      expect(guardIndex).toBeGreaterThan(-1);
-      expect(verifyIndex).toBeGreaterThan(-1);
-      expect(guardIndex).toBeLessThan(verifyIndex);
-      expect(block).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
+      expect(block).toContain('handleLinuxDoCloudflareForTopic(detail, errorMessage(error));');
+      expect(block).not.toContain('showLinuxDoVerification(errorMessage(error));');
     }
   });
 

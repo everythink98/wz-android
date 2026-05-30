@@ -55,6 +55,7 @@ function MoreScreen({
   linuxDoWebViewError,
   linuxDoWebViewKey,
   linuxDoWebViewUserAgent,
+  mountLinuxDoWebView,
   nodeSeekWebViewUserAgent,
   settings,
   backupJson,
@@ -116,6 +117,7 @@ function MoreScreen({
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
   linuxDoWebViewUserAgent: string;
+  mountLinuxDoWebView: boolean;
   nodeSeekWebViewUserAgent: string;
   settings: ReaderSettings;
   backupJson: string;
@@ -256,6 +258,7 @@ function MoreScreen({
           linuxDoWebViewKey={linuxDoWebViewKey}
           linuxDoWebViewRef={linuxDoWebViewRef}
           linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+          mountLinuxDoWebView={mountLinuxDoWebView}
           loadingLinuxDoPage={loadingLinuxDoPage}
           showLinuxDoPanel={showLinuxDoPanel}
           styles={styles}
@@ -579,6 +582,7 @@ function LinuxDoVerifyPanel({
   linuxDoWebViewKey,
   linuxDoWebViewRef,
   linuxDoWebViewUserAgent,
+  mountLinuxDoWebView,
   loadingLinuxDoPage,
   showLinuxDoPanel,
   styles,
@@ -601,6 +605,7 @@ function LinuxDoVerifyPanel({
   linuxDoWebViewKey: number;
   linuxDoWebViewRef: RefObject<WebView | null>;
   linuxDoWebViewUserAgent: string;
+  mountLinuxDoWebView: boolean;
   loadingLinuxDoPage: boolean;
   showLinuxDoPanel: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -655,7 +660,7 @@ function LinuxDoVerifyPanel({
           </View>
         )}
       >
-        {showLinuxDoPanel && accountExpanded ? (
+        {showLinuxDoPanel && accountExpanded && mountLinuxDoWebView ? (
             <WebView
               key={linuxDoWebViewKey}
               ref={linuxDoWebViewRef}
