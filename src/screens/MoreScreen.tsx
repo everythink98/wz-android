@@ -146,7 +146,7 @@ function MoreScreen({
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
-  onHandleLinuxDoMessage: (event: WebViewMessageEvent) => void;
+  onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
   onImportBackup: () => void;
   onExportBackup: () => void;
   onExportBackupFile: () => void;
@@ -154,8 +154,8 @@ function MoreScreen({
   onBackupJsonChange: (value: string) => void;
   onSetLoadingLoginPage: (value: boolean) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
-  onSetLoadingLinuxDoPage: (value: boolean) => void;
-  onSetLinuxDoWebViewError: (value: string) => void;
+  onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
+  onSetLinuxDoWebViewError: (value: string, webViewKey?: number) => void;
   onResetLinuxDoWebView: () => void;
   onShowLoginPanelChange: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
@@ -608,16 +608,16 @@ function LinuxDoVerifyPanel({
   onCheckLinuxDoCookie: () => void;
   onClearLinuxDoCookie: () => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
-  onHandleLinuxDoMessage: (event: WebViewMessageEvent) => void;
+  onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
   onResetLinuxDoWebView: () => void;
-  onSetLinuxDoWebViewError: (value: string) => void;
-  onSetLoadingLinuxDoPage: (value: boolean) => void;
+  onSetLinuxDoWebViewError: (value: string, webViewKey?: number) => void;
+  onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
   const linuxDoWebViewReadyRef = useRef(false);
   const markLinuxDoPageReady = () => {
     linuxDoWebViewReadyRef.current = true;
-    onSetLoadingLinuxDoPage(false);
+    onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
   };
 
   useEffect(() => {
@@ -629,11 +629,11 @@ function LinuxDoVerifyPanel({
       return undefined;
     }
     const timeout = setTimeout(() => {
-      onSetLoadingLinuxDoPage(false);
-      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。');
+      onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
+      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。', linuxDoWebViewKey);
     }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
+  }, [linuxDoWebViewKey, loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
   return (
     <>
       <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '匿名可用'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
@@ -676,25 +676,25 @@ function LinuxDoVerifyPanel({
               onLoadEnd={(event) => {
                 markLinuxDoPageReady();
                 if (!('code' in event.nativeEvent)) {
-                  onSetLinuxDoWebViewError('');
+                  onSetLinuxDoWebViewError('', linuxDoWebViewKey);
                 }
                 linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
               }}
               onLoadStart={() => {
-                onSetLinuxDoWebViewError('');
+                onSetLinuxDoWebViewError('', linuxDoWebViewKey);
                 if (!linuxDoWebViewReadyRef.current) {
-                  onSetLoadingLinuxDoPage(true);
+                  onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
                 }
               }}
-              onMessage={onHandleLinuxDoMessage}
+              onMessage={(event) => onHandleLinuxDoMessage(event, linuxDoWebViewKey)}
               onError={(event) => {
-                onSetLoadingLinuxDoPage(false);
-                onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+                onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
+                onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
-                onSetLoadingLinuxDoPage(false);
-                onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。');
+                onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
+                onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey);
               }}
               onShouldStartLoadWithRequest={handleLinuxDoNavigation}
             />

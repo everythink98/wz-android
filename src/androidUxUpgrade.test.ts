@@ -117,6 +117,21 @@ describe('Android App UX upgrade guards', () => {
     expect(checkLinuxDoCookieBlock).not.toContain('await openTopic(pendingTopic, true);');
   });
 
+  it('applies the one-time linux.do verified retry guard to reply refresh paths', () => {
+    const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async[\s\S]*?\n  \}, \[clearYaohuoLoginState/)?.[0] || '';
+    const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[clearYaohuoLoginState/)?.[0] || '';
+
+    for (const block of [refreshRepliesBlock, loadMoreRepliesBlock]) {
+      const guardIndex = block.indexOf('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
+      const verifyIndex = block.indexOf('showLinuxDoVerification(errorMessage(error));');
+
+      expect(guardIndex).toBeGreaterThan(-1);
+      expect(verifyIndex).toBeGreaterThan(-1);
+      expect(guardIndex).toBeLessThan(verifyIndex);
+      expect(block).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
+    }
+  });
+
   it('uses native pager tabs for the feed and keeps both tab rows outside the scrolling list', () => {
     expect(feedScreenSource).toContain("from 'react-native-tab-view'");
     expect(feedScreenSource).toContain('TabView');

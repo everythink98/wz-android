@@ -245,11 +245,18 @@ describe('Android App experience guards', () => {
     const rememberNodeSeekBlock = appSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const checkingRequestIdRef = useRef(0);');
-    for (const block of [checkLoginBlock, checkYaohuoBlock, checkLinuxDoBlock]) {
+    for (const block of [checkLoginBlock, checkYaohuoBlock]) {
       expect(block).toContain('const requestId = ++checkingRequestIdRef.current;');
       expect(block).toContain('requestId === checkingRequestIdRef.current');
       expect(block).toContain('if (requestId === checkingRequestIdRef.current) {');
     }
+    expect(checkLinuxDoBlock).toContain('const requestId = ++checkingRequestIdRef.current;');
+    expect(checkLinuxDoBlock).toContain('const isCurrentLinuxDoCheck = () => {');
+    expect(checkLinuxDoBlock).toContain('requestId !== checkingRequestIdRef.current');
+    expect(checkLinuxDoBlock).toContain('linuxDoWebViewSession !== linuxDoWebViewSessionRef.current');
+    expect(checkLinuxDoBlock).toContain('!showLinuxDoPanelRef.current');
+    expect(checkLinuxDoBlock).toContain('if (!isCurrentLinuxDoCheck()) {');
+    expect(checkLinuxDoBlock).toContain('if (isCurrentLinuxDoCheck()) {');
     expect(saveNodeSeekBlock).toContain('isCurrent = () => true');
     expect(saveNodeSeekBlock).toContain('if (!isCurrent()) {');
     expect(rememberNodeSeekBlock).toContain('saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current, isCurrent })');
@@ -921,7 +928,7 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('linuxDoWebViewError');
     expect(moreScreenSource).toContain('onSetLinuxDoWebViewError');
     expect(moreScreenSource).toContain('onError={(event) =>');
-    expect(moreScreenSource).toContain('onSetLoadingLinuxDoPage(false);');
+    expect(moreScreenSource).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
     expect(moreScreenSource).toContain('linux.do 页面加载失败');
   });
 
@@ -1193,6 +1200,34 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('clearTimeout(timeout)');
   });
 
+  it('ignores stale linux.do verification WebView events after closing or refreshing the panel', () => {
+    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoMessageBlock = appSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const linuxDoWebViewSessionRef = useRef(0);');
+    expect(appSource).toContain('webViewKey !== linuxDoWebViewSessionRef.current');
+    expect(linuxDoMessageBlock).toContain('webViewKey?: number');
+    expect(linuxDoMessageBlock).toContain('showLinuxDoPanelRef.current');
+    expect(linuxDoPanelBlock).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
+    expect(linuxDoPanelBlock).toContain("onSetLinuxDoWebViewError('', linuxDoWebViewKey);");
+    expect(linuxDoPanelBlock).toContain('onHandleLinuxDoMessage(event, linuxDoWebViewKey)');
+  });
+
+  it('cancels in-flight linux.do verification checks when the panel closes or reloads', () => {
+    const resetLinuxDoBlock = appSource.match(/const resetLinuxDoWebView = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(resetLinuxDoBlock).toContain('checkingRequestIdRef.current += 1;');
+    expect(resetLinuxDoBlock).toContain('const nextSession = nextLinuxDoWebViewSession();');
+    expect(closeLinuxDoBlock).toContain('checkingRequestIdRef.current += 1;');
+    expect(closeLinuxDoBlock).toContain('setChecking(false);');
+    expect(closeLinuxDoBlock).toContain('nextLinuxDoWebViewSession();');
+    expect(checkLinuxDoBlock).toContain('const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;');
+    expect(checkLinuxDoBlock).toContain('linuxDoWebViewSession !== linuxDoWebViewSessionRef.current');
+    expect(checkLinuxDoBlock).toContain('!showLinuxDoPanelRef.current');
+  });
+
   it('does not reopen the linux.do verification loading state after the page is visible', () => {
     const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
 
@@ -1201,7 +1236,7 @@ describe('Android App experience guards', () => {
     expect(linuxDoPanelBlock).toContain('onLoadProgress');
     expect(linuxDoPanelBlock).toContain('event.nativeEvent.progress >= 0.8');
     expect(linuxDoPanelBlock).toContain('if (!linuxDoWebViewReadyRef.current) {');
-    expect(linuxDoPanelBlock).toContain('onSetLoadingLinuxDoPage(true);');
+    expect(linuxDoPanelBlock).toContain('onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);');
   });
 
   it('keeps login modal controls usable while a WebView loading badge is visible', () => {
@@ -1228,7 +1263,7 @@ describe('Android App experience guards', () => {
   it('clears stale linux.do verification errors after the WebView responds again', () => {
     const linuxDoMessageBlock = appSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
-    expect(linuxDoMessageBlock).toContain("setLinuxDoWebViewError('');");
+    expect(linuxDoMessageBlock).toContain("setLinuxDoWebViewErrorForSession('', webViewKey);");
   });
 
   it('clears stale linux.do verification errors after a successful page load', () => {
@@ -1236,7 +1271,7 @@ describe('Android App experience guards', () => {
 
     expect(block).toContain('markLinuxDoPageReady();');
     expect(block).toContain("if (!('code' in event.nativeEvent)) {");
-    expect(block).toContain("onSetLinuxDoWebViewError('');");
+    expect(block).toContain("onSetLinuxDoWebViewError('', linuxDoWebViewKey);");
   });
 
   it('keeps linux.do verification WebView failures contained', () => {

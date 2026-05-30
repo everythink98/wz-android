@@ -483,6 +483,7 @@ export default function App() {
   const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
   const linuxDoPendingTopicVerifiedRef = useRef(false);
   const linuxDoVerifiedRetryTopicKeyRef = useRef<string | null>(null);
+  const linuxDoWebViewSessionRef = useRef(0);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
@@ -579,6 +580,7 @@ export default function App() {
   const showLoginPanelRef = useRef(showLoginPanel);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
+  const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [healthSummary, setHealthSummary] = useState('');
   const [healthDetails, setHealthDetails] = useState<HealthDetail[]>([]);
@@ -592,6 +594,7 @@ export default function App() {
   searchGroupsRef.current = searchGroups;
   topicRepliesRef.current = topicReplies;
   showLoginPanelRef.current = showLoginPanel;
+  showLinuxDoPanelRef.current = showLinuxDoPanel;
   const currentTopic = topicDetail || selectedTopic;
   currentTopicKeyRef.current = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   useEffect(() => {
@@ -1496,30 +1499,59 @@ export default function App() {
     notify(message);
   }, [changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
+  const nextLinuxDoWebViewSession = useCallback(() => {
+    const nextSession = linuxDoWebViewSessionRef.current + 1;
+    linuxDoWebViewSessionRef.current = nextSession;
+    setLinuxDoWebViewKey(nextSession);
+    return nextSession;
+  }, []);
+
+  const setLoadingLinuxDoPageForSession = useCallback((value: boolean, webViewKey?: number) => {
+    if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
+      return;
+    }
+    setLoadingLinuxDoPage(value);
+  }, []);
+
+  const setLinuxDoWebViewErrorForSession = useCallback((value: string, webViewKey?: number) => {
+    if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
+      return;
+    }
+    setLinuxDoWebViewError(value);
+  }, []);
+
   const resetLinuxDoWebView = useCallback(() => {
+    const nextSession = nextLinuxDoWebViewSession();
+    checkingRequestIdRef.current += 1;
     linuxDoWebViewRef.current?.stopLoading();
     linuxDoWebViewCookieHeaderRef.current = '';
     setLinuxDoWebViewCookieHeader('');
-    setLoadingLinuxDoPage(true);
-    setLinuxDoWebViewError('');
-    setLinuxDoWebViewKey((current) => current + 1);
-  }, []);
+    setChecking(false);
+    setLoadingLinuxDoPageForSession(true, nextSession);
+    setLinuxDoWebViewErrorForSession('', nextSession);
+  }, [nextLinuxDoWebViewSession, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession]);
 
   const closeLinuxDoPanel = useCallback(() => {
+    const nextSession = nextLinuxDoWebViewSession();
     const pendingTopic = pendingLinuxDoTopicRef.current;
     const shouldOpenPendingTopic = Boolean(pendingTopic && linuxDoPendingTopicVerifiedRef.current);
+    checkingRequestIdRef.current += 1;
     linuxDoWebViewRef.current?.stopLoading();
+    linuxDoWebViewCookieHeaderRef.current = '';
+    setLinuxDoWebViewCookieHeader('');
     pendingLinuxDoTopicRef.current = null;
     linuxDoPendingTopicVerifiedRef.current = false;
     setShowLinuxDoPanel(false);
-    setLoadingLinuxDoPage(false);
+    setChecking(false);
+    setLoadingLinuxDoPageForSession(false, nextSession);
+    setLinuxDoWebViewErrorForSession('', nextSession);
     if (pendingTopic && shouldOpenPendingTopic) {
       linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);
       reopenExistingTopicScreenRef.current = true;
       setScreen('topic');
       void openTopicRef.current?.(pendingTopic, true);
     }
-  }, []);
+  }, [nextLinuxDoWebViewSession, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession]);
 
   const changeLinuxDoPanel = useCallback((visible: boolean) => {
     if (visible) {
@@ -2429,6 +2461,13 @@ export default function App() {
           return false;
         }
         if (isLinuxDoCloudflareError(error)) {
+          if (linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey) {
+            linuxDoVerifiedRetryTopicKeyRef.current = null;
+            pendingLinuxDoTopicRef.current = null;
+            linuxDoPendingTopicVerifiedRef.current = false;
+            notify(errorMessage(error));
+            return false;
+          }
           pendingLinuxDoTopicRef.current = detail;
           setLinuxDoCookieNames([]);
           showLinuxDoVerification(errorMessage(error));
@@ -2516,6 +2555,13 @@ export default function App() {
           return;
         }
         if (isLinuxDoCloudflareError(error)) {
+          if (linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey) {
+            linuxDoVerifiedRetryTopicKeyRef.current = null;
+            pendingLinuxDoTopicRef.current = null;
+            linuxDoPendingTopicVerifiedRef.current = false;
+            notify(errorMessage(error));
+            return;
+          }
           pendingLinuxDoTopicRef.current = detail;
           setLinuxDoCookieNames([]);
           showLinuxDoVerification(errorMessage(error));
@@ -2952,7 +2998,13 @@ export default function App() {
     }
   }, []);
 
-  const handleLinuxDoMessage = useCallback((event: WebViewMessageEvent) => {
+  const handleLinuxDoMessage = useCallback((event: WebViewMessageEvent, webViewKey?: number) => {
+    if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
+      return;
+    }
+    if (!showLinuxDoPanelRef.current) {
+      return;
+    }
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
         type?: string;
@@ -2960,7 +3012,7 @@ export default function App() {
         cookie?: string;
       };
       if (data.type === 'linuxdo-webview') {
-        setLinuxDoWebViewError('');
+        setLinuxDoWebViewErrorForSession('', webViewKey);
       }
       if (data.type === 'linuxdo-webview' && typeof data.userAgent === 'string') {
         const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
@@ -2976,7 +3028,7 @@ export default function App() {
     } catch {
       // Ignore unrelated messages from the page.
     }
-  }, []);
+  }, [setLinuxDoWebViewErrorForSession]);
 
   const probeLoginPage = useCallback(async () => {
     webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
@@ -3131,11 +3183,24 @@ export default function App() {
 
   const checkLinuxDoCookie = useCallback(async () => {
     const requestId = ++checkingRequestIdRef.current;
+    const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;
+    const isCurrentLinuxDoCheck = () => {
+      if (requestId !== checkingRequestIdRef.current) {
+        return false;
+      }
+      if (linuxDoWebViewSession !== linuxDoWebViewSessionRef.current) {
+        return false;
+      }
+      if (!showLinuxDoPanelRef.current) {
+        return false;
+      }
+      return true;
+    };
     setChecking(true);
     setLinuxDoWebViewError('');
     try {
       const cookies = await waitForLinuxDoClearance();
-      if (requestId !== checkingRequestIdRef.current) {
+      if (!isCurrentLinuxDoCheck()) {
         return;
       }
       const summary = summarizeLinuxDoCookies(cookies);
@@ -3149,7 +3214,7 @@ export default function App() {
         return;
       }
       await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
-      if (requestId !== checkingRequestIdRef.current) {
+      if (!isCurrentLinuxDoCheck()) {
         return;
       }
       setHasLinuxDoClearance(true);
@@ -3158,12 +3223,12 @@ export default function App() {
       notify(summary.loggedIn ? 'linux.do 登录信息已保存在本机。' : 'linux.do 验证信息已保存在本机。');
       linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);
     } catch (error) {
-      if (requestId === checkingRequestIdRef.current) {
+      if (isCurrentLinuxDoCheck()) {
         linuxDoPendingTopicVerifiedRef.current = false;
         notify(errorMessage(error));
       }
     } finally {
-      if (requestId === checkingRequestIdRef.current) {
+      if (isCurrentLinuxDoCheck()) {
         setChecking(false);
       }
     }
@@ -4091,8 +4156,8 @@ export default function App() {
         onBackupJsonChange={setBackupJson}
         onSetLoadingLoginPage={setLoadingLoginPage}
         onSetLoadingYaohuoLoginPage={setLoadingYaohuoLoginPage}
-        onSetLoadingLinuxDoPage={setLoadingLinuxDoPage}
-        onSetLinuxDoWebViewError={setLinuxDoWebViewError}
+        onSetLoadingLinuxDoPage={setLoadingLinuxDoPageForSession}
+        onSetLinuxDoWebViewError={setLinuxDoWebViewErrorForSession}
         onResetLinuxDoWebView={resetLinuxDoWebView}
         onShowLoginPanelChange={changeNodeSeekLoginPanel}
         onShowYaohuoLoginPanelChange={changeYaohuoLoginPanel}
@@ -4101,7 +4166,7 @@ export default function App() {
         onUpdateSettings={updateSettings}
       />
     </ScrollView>
-  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
+  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
 
   const renderTopicScreen = useCallback(() => (
     <TopicScreen
