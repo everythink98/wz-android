@@ -1,16 +1,15 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
-const appControlsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'AppControls.tsx'), 'utf8');
-const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
-const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
-const searchListItemsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'searchListItems.ts'), 'utf8');
-const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
-const packageSource = readFileSync(join(process.cwd(), 'android-app', 'package.json'), 'utf8');
-const babelSource = readFileSync(join(process.cwd(), 'android-app', 'babel.config.js'), 'utf8');
-const appConfigSource = readFileSync(join(process.cwd(), 'android-app', 'app.json'), 'utf8');
+const appSource = readProjectFile('android-app', 'App.tsx');
+const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
+const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
+const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
+const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
+const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const packageSource = readProjectFile('android-app', 'package.json');
+const babelSource = readProjectFile('android-app', 'babel.config.js');
+const appConfigSource = readProjectFile('android-app', 'app.json');
 
 describe('Android App UX upgrade guards', () => {
   it('uses the mature navigation, pager, gesture, animation, safe-area, and feedback dependencies', () => {

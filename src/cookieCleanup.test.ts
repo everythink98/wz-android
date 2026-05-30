@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { clearCookieUrls, expiredCookieHeader } from './cookieCleanup';
+import { clearCookieUrls } from './cookieCleanup';
 
 describe('cookie cleanup helpers', () => {
   it('expires only cookies visible from the provided urls', async () => {
@@ -22,8 +22,8 @@ describe('cookie cleanup helpers', () => {
 
     expect(store.get).toHaveBeenCalledWith('https://www.nodeseek.com');
     expect(store.setFromResponse).toHaveBeenCalledTimes(2);
-    expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expiredCookieHeader('session'));
-    expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expiredCookieHeader('user'));
+    expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^session=; .*Max-Age=0; Path=\/$/));
+    expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^user=; .*Max-Age=0; Path=\/$/));
     expect(store.setFromResponse).not.toHaveBeenCalledWith('https://yaohuo.me', expect.any(String));
     expect(store.flush).toHaveBeenCalledTimes(1);
   });

@@ -265,7 +265,6 @@ export function getTopic({
 }: {
   source: Source;
   id: string;
-  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -297,7 +296,6 @@ export function getReplies({
   page: number;
   limit?: number;
   offset?: number | null;
-  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -323,7 +321,6 @@ export function getReply({
   source: Source;
   id: string;
   floor: number;
-  nocache?: boolean;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;

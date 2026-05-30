@@ -3,7 +3,6 @@ import {
   buildYaohuoCookieHeader,
   buildYaohuoSetCookieHeaders,
   canStoreYaohuoCookieHeader,
-  hasYaohuoLoginCookie,
   mergeYaohuoCookies,
   summarizeYaohuoCookies,
   type YaohuoNativeCookie
@@ -19,7 +18,7 @@ describe('yaohuo cookie helpers', () => {
       }
     };
 
-    expect(hasYaohuoLoginCookie(cookies)).toBe(true);
+    expect(summarizeYaohuoCookies(cookies).loggedIn).toBe(true);
     expect(canStoreYaohuoCookieHeader(cookies)).toBe(true);
   });
 
@@ -29,7 +28,7 @@ describe('yaohuo cookie helpers', () => {
       guid: { name: 'GUID', value: 'guid', domain: 'yaohuo.me' }
     };
 
-    expect(hasYaohuoLoginCookie(cookies)).toBe(false);
+    expect(summarizeYaohuoCookies(cookies).loggedIn).toBe(false);
     expect(buildYaohuoCookieHeader(cookies)).toBe('ASP.NET_SessionId=session; GUID=guid');
     expect(canStoreYaohuoCookieHeader(cookies)).toBe(true);
   });

@@ -1,9 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
-const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
+const appSource = readProjectFile('android-app', 'App.tsx');
+const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
 
 describe('Android App security review guards', () => {
   it('routes external links through the http/https protocol guard', () => {

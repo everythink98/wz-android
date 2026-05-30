@@ -506,19 +506,6 @@ function nextSearchPath(html: string, fallbackPage: number) {
   }
 }
 
-function mergeSearchTopics(existing: Topic[], incoming: Topic[]) {
-  const seen = new Set(existing.map((topic) => topic.id));
-  const next = [...existing];
-  for (const topic of incoming) {
-    if (!topic.id || seen.has(topic.id)) {
-      continue;
-    }
-    seen.add(topic.id);
-    next.push(topic);
-  }
-  return next;
-}
-
 function filterNodeSeekSearchTopics(html: string, query: string) {
   const expression = parseSearchExpression(query);
   return parseNodeSeekSearchTopics(html)
@@ -989,7 +976,6 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   }
 
   let items: Topic[] = [];
-  let searchFailed = false;
   let nextPage: number | null = null;
   try {
     const html = await fetchNodeSeekText(searchPath(trimmedQuery, page), options);
@@ -999,15 +985,7 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
     if (isNodeSeekCloudflareError(error)) {
       throw error;
     }
-    searchFailed = true;
-  }
-
-  if (searchFailed) {
-    const fallback = await getNodeSeekFeed({ ...options, limit: 100 });
-    const expression = parseSearchExpression(trimmedQuery);
-    items = mergeSearchTopics(items, fallback.items.filter((topic) => (
-      matchesSearchExpression(searchExpressionText(topic), expression)
-    )));
+    throw error;
   }
 
   return {

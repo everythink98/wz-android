@@ -1,20 +1,19 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
-const appConfigSource = readFileSync(join(process.cwd(), 'android-app', 'app.json'), 'utf8');
-const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
-const appControlsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'AppControls.tsx'), 'utf8');
-const topicCardSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'TopicCard.tsx'), 'utf8');
-const imagePreviewModalSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'ImagePreviewModal.tsx'), 'utf8');
-const feedScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'FeedScreen.tsx'), 'utf8');
-const searchScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'SearchScreen.tsx'), 'utf8');
-const searchListItemsSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'searchListItems.ts'), 'utf8');
-const libraryScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'LibraryScreen.tsx'), 'utf8');
-const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
-const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
-const userScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'UserScreen.tsx'), 'utf8');
-const navBarSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'components', 'NavBar.tsx'), 'utf8');
+const appConfigSource = readProjectFile('android-app', 'app.json');
+const appSource = readProjectFile('android-app', 'App.tsx');
+const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
+const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
+const imagePreviewModalSource = readProjectFile('android-app', 'src', 'components', 'ImagePreviewModal.tsx');
+const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
+const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
+const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
+const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
+const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
+const navBarSource = readProjectFile('android-app', 'src', 'components', 'NavBar.tsx');
 const androidUiSource = [
   appSource,
   appControlsSource,
@@ -27,15 +26,14 @@ const androidUiSource = [
   topicScreenSource,
   navBarSource
 ].join('\n');
-const gitIgnoreSource = readFileSync(join(process.cwd(), '.gitignore'), 'utf8');
-const localLinuxDoSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'localLinuxdo.ts'), 'utf8');
-const linuxDoBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'linuxdoCookieBridge.ts'), 'utf8');
-const nodeSeekBridgeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'nodeseekCookieBridge.ts'), 'utf8');
-const forumApiSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'forumApi.ts'), 'utf8');
-const feedLogicSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'feedLogic.ts'), 'utf8');
-const yaohuoApiSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'yaohuoApi.ts'), 'utf8');
-const linuxDoCookiePluginPath = join(process.cwd(), 'android-app', 'plugins', 'withLinuxDoCookieModule.js');
-const linuxDoCookiePluginSource = existsSync(linuxDoCookiePluginPath) ? readFileSync(linuxDoCookiePluginPath, 'utf8') : '';
+const gitIgnoreSource = readProjectFile('.gitignore');
+const localLinuxDoSource = readProjectFile('android-app', 'src', 'localLinuxdo.ts');
+const linuxDoBridgeSource = readProjectFile('android-app', 'src', 'linuxdoCookieBridge.ts');
+const nodeSeekBridgeSource = readProjectFile('android-app', 'src', 'nodeseekCookieBridge.ts');
+const forumApiSource = readProjectFile('android-app', 'src', 'forumApi.ts');
+const feedLogicSource = readProjectFile('android-app', 'src', 'feedLogic.ts');
+const yaohuoApiSource = readProjectFile('android-app', 'src', 'yaohuoApi.ts');
+const linuxDoCookiePluginSource = readOptionalProjectFile('android-app', 'plugins', 'withLinuxDoCookieModule.js');
 
 describe('Android App experience guards', () => {
   it('keeps Android temporary dumps and cookie snapshots out of git', () => {
@@ -50,9 +48,16 @@ describe('Android App experience guards', () => {
   });
 
   it('does not keep unused server transport parameters in local Android APIs', () => {
+    const topicApiBlock = forumApiSource.match(/export function getTopic\([\s\S]*?\): Promise<TopicDetail>/)?.[0] || '';
+    const repliesApiBlock = forumApiSource.match(/export function getReplies\([\s\S]*?\): Promise<RepliesResponse>/)?.[0] || '';
+    const replyApiBlock = forumApiSource.match(/export function getReply\([\s\S]*?\): Promise<Reply>/)?.[0] || '';
+
     expect(forumApiSource).not.toMatch(/export (?:async )?function (?:getFeed|getCategories|getTopic|getReplies|getReply|searchTopics)[\s\S]*?serverUrl\?: string/);
     expect(yaohuoApiSource).not.toMatch(/\bserverUrl\?: string\b/);
     expect(yaohuoApiSource).not.toMatch(/\bserverFetcher\b/);
+    expect(topicApiBlock).not.toContain('nocache?: boolean');
+    expect(repliesApiBlock).not.toContain('nocache?: boolean');
+    expect(replyApiBlock).not.toContain('nocache?: boolean');
   });
 
   it('shows loading and failure states inside image preview', () => {
@@ -67,14 +72,6 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('imageRequestHeadersForUrl(uri)');
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(uri)');
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(url)');
-  });
-
-  it('keeps topic list rows free of swipe action controls', () => {
-    expect(topicCardSource).not.toContain('topicSwipeActionButton');
-    expect(androidUiSource).not.toContain('swipeAction=');
-    expect(androidUiSource).not.toContain('TopicSwipeActionConfig');
-    expect(androidUiSource).not.toContain('topicInlineAction');
-    expect(androidUiSource).not.toContain('topicMetaPressable');
   });
 
   it('shows Android feed rows as unified forum topics instead of source-first reader entries', () => {

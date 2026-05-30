@@ -1,12 +1,11 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
 describe('Android release packaging', () => {
   it('builds only the 64-bit physical-device CPU architecture', () => {
-    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'android-app', 'package.json'), 'utf8'));
+    const packageJson = JSON.parse(readProjectFile('android-app', 'package.json'));
     const script = packageJson.scripts['release:android'];
-    const gradle = readFileSync(join(process.cwd(), 'android-app', 'scripts', 'android-release-apk.gradle'), 'utf8');
+    const gradle = readProjectFile('android-app', 'scripts', 'android-release-apk.gradle');
 
     expect(script).toContain('-PreactNativeArchitectures=arm64-v8a');
     expect(script).not.toContain('armeabi-v7a');
@@ -16,7 +15,7 @@ describe('Android release packaging', () => {
   });
 
   it('keeps formal signing optional and outside generated Android files', () => {
-    const gradle = readFileSync(join(process.cwd(), 'android-app', 'scripts', 'android-release-apk.gradle'), 'utf8');
+    const gradle = readProjectFile('android-app', 'scripts', 'android-release-apk.gradle');
 
     expect(gradle).toContain('WZ_ANDROID_KEYSTORE_PATH');
     expect(gradle).toContain('releaseSigningReady');
@@ -26,27 +25,25 @@ describe('Android release packaging', () => {
   });
 
   it('keeps Android permissions scoped down and release cleartext traffic disabled', () => {
-    const appConfig = JSON.parse(readFileSync(join(process.cwd(), 'android-app', 'app.json'), 'utf8'));
-    const mainManifestPath = join(process.cwd(), 'android-app', 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
-    const debugManifestPaths = [
-      join(process.cwd(), 'android-app', 'android', 'app', 'src', 'debug', 'AndroidManifest.xml'),
-      join(process.cwd(), 'android-app', 'android', 'app', 'src', 'debugOptimized', 'AndroidManifest.xml'),
+    const appConfig = JSON.parse(readProjectFile('android-app', 'app.json'));
+    const mainManifest = readOptionalProjectFile('android-app', 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+    const debugManifests = [
+      readOptionalProjectFile('android-app', 'android', 'app', 'src', 'debug', 'AndroidManifest.xml'),
+      readOptionalProjectFile('android-app', 'android', 'app', 'src', 'debugOptimized', 'AndroidManifest.xml'),
     ];
 
     expect(appConfig.expo.plugins).not.toContain('./plugins/withAndroidCleartextTraffic');
     expect(appConfig.expo.android.blockedPermissions).toContain('android.permission.SYSTEM_ALERT_WINDOW');
-    if (existsSync(mainManifestPath)) {
-      const mainManifest = readFileSync(mainManifestPath, 'utf8');
+    if (mainManifest) {
       expect(mainManifest).not.toContain('android:usesCleartextTraffic="true"');
       expect(mainManifest).toMatch(
         /<uses-permission(?=[^>]*android:name="android\.permission\.SYSTEM_ALERT_WINDOW")(?=[^>]*tools:node="remove")[^>]*\/>/,
       );
     }
-    for (const manifestPath of debugManifestPaths) {
-      if (!existsSync(manifestPath)) {
+    for (const manifest of debugManifests) {
+      if (!manifest) {
         continue;
       }
-      const manifest = readFileSync(manifestPath, 'utf8');
       expect(manifest).not.toContain('android.permission.SYSTEM_ALERT_WINDOW');
     }
   });

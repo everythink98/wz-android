@@ -8,7 +8,7 @@ interface CookieStore {
   flush(): Promise<void>;
 }
 
-export function expiredCookieHeader(name: string) {
+function expiredCookieHeader(name: string) {
   return `${name}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/`;
 }
 

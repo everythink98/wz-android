@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed } from './feedLogic';
+import { applyFeedFilter, dateTime, mergeReplies, mergeSettledFeedResponses, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -109,9 +109,9 @@ describe('Android feed logic helpers', () => {
       createdAt: '2026-05-20T00:03:00.000Z'
     };
 
-    const merged = mergeFeedResponses(
-      { items: baseItems, errors: {}, hasMore: false, nextPage: null },
-      { items: [yaohuoItem], errors: {}, hasMore: false, nextPage: null }
+    const merged = mergeSettledFeedResponses(
+      { status: 'fulfilled', value: { items: baseItems, errors: {}, hasMore: false, nextPage: null } },
+      { status: 'fulfilled', value: { items: [yaohuoItem], errors: {}, hasMore: false, nextPage: null } }
     );
 
     expect(merged.items.slice(0, 4).map((item) => item.source)).toEqual(['v2ex', 'yaohuo', 'nodeseek', 'linuxdo']);

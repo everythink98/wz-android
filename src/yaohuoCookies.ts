@@ -30,7 +30,7 @@ function normalizedCookieEntries(cookies: Record<string, YaohuoNativeCookie>) {
     ));
 }
 
-export function hasYaohuoLoginCookie(cookies: Record<string, YaohuoNativeCookie>) {
+function hasYaohuoLoginCookie(cookies: Record<string, YaohuoNativeCookie>) {
   return normalizedCookieEntries(cookies).some((cookie) => cookie.name === loginCookieName);
 }
 

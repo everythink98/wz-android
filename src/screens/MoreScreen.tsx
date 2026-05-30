@@ -64,7 +64,7 @@ function MoreScreen({
   showSettingsPanel,
   statusBusy,
   styles,
-  syncing,
+  backupBusy,
   theme,
   webViewRef,
   yaohuoLoginCookieHeader,
@@ -125,7 +125,7 @@ function MoreScreen({
   showSettingsPanel: boolean;
   statusBusy: boolean;
   styles: ReturnType<typeof createStyles>;
-  syncing: boolean;
+  backupBusy: boolean;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
   yaohuoLoginCookieHeader: string;
@@ -180,7 +180,7 @@ function MoreScreen({
       <ExpandablePanel
         quiet
         title="备份 / 恢复"
-        meta={syncing ? '处理中' : backupJson ? '已有 JSON 内容' : 'JSON 导出和导入'}
+        meta={backupBusy ? '处理中' : backupJson ? '已有 JSON 内容' : 'JSON 导出和导入'}
         icon={DatabaseBackup}
         expanded={backupExpanded}
         styles={styles}
@@ -189,7 +189,7 @@ function MoreScreen({
       >
         <MemoizedBackupRestorePanel
           backupJson={backupJson}
-          syncing={syncing}
+          backupBusy={backupBusy}
           styles={styles}
           theme={theme}
           onBackupJsonChange={onBackupJsonChange}
@@ -310,7 +310,7 @@ function MoreScreen({
 
 function BackupRestorePanel({
   backupJson,
-  syncing,
+  backupBusy,
   styles,
   theme,
   onBackupJsonChange,
@@ -320,7 +320,7 @@ function BackupRestorePanel({
   onImportBackupFile
 }: {
   backupJson: string;
-  syncing: boolean;
+  backupBusy: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onBackupJsonChange: (value: string) => void;
@@ -342,10 +342,10 @@ function BackupRestorePanel({
         multiline
       />
       <View style={styles.actions}>
-        <AppButton label={syncing ? '处理中' : '生成备份'} styles={styles} disabled={syncing} onPress={onExportBackup} />
-        <AppButton label={syncing ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackup} />
-        <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onExportBackupFile} />
-        <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={syncing} onPress={onImportBackupFile} />
+        <AppButton label={backupBusy ? '处理中' : '生成备份'} styles={styles} disabled={backupBusy} onPress={onExportBackup} />
+        <AppButton label={backupBusy ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={backupBusy} onPress={onImportBackup} />
+        <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={backupBusy} onPress={onExportBackupFile} />
+        <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={backupBusy} onPress={onImportBackupFile} />
       </View>
     </View>
   );

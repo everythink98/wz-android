@@ -33,7 +33,6 @@ interface LinuxDoOptions {
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
-  nocache?: boolean;
 }
 
 export class LinuxDoCloudflareError extends Error {

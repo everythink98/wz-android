@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
-const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
-const userScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'UserScreen.tsx'), 'utf8');
-const themeSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'theme.ts'), 'utf8');
+const appSource = readProjectFile('android-app', 'App.tsx');
+const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
+const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
 
 describe('Android topic detail reading layout', () => {
   it('uses render-html whitespace controls for cleaner native HTML output', () => {

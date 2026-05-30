@@ -1,12 +1,11 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readProjectFile } from './sourceTestUtils';
 
 const removedBlockLabel = (target: string) => `屏${''}蔽${target}`;
 
 describe('Android topic detail actions', () => {
   it('does not expose block author or node buttons in the topic detail screen', () => {
-    const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
+    const appSource = readProjectFile('android-app', 'App.tsx');
 
     expect(appSource).not.toContain(`label="${removedBlockLabel('作者')}"`);
     expect(appSource).not.toContain(`label="${removedBlockLabel('节点')}"`);

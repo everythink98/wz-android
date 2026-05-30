@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readFileSync(join(process.cwd(), 'android-app', 'App.tsx'), 'utf8');
-const moreScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'MoreScreen.tsx'), 'utf8');
-const topicScreenSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'screens', 'TopicScreen.tsx'), 'utf8');
-const topicContentSplitSource = readFileSync(join(process.cwd(), 'android-app', 'src', 'topicContentSplit.ts'), 'utf8');
+const appSource = readProjectFile('android-app', 'App.tsx');
+const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const topicContentSplitSource = readProjectFile('android-app', 'src', 'topicContentSplit.ts');
 
 describe('Android App performance guards', () => {
   it('cancels stale feed, search, topic, and backup/status requests before starting newer ones', () => {
@@ -116,6 +115,9 @@ describe('Android App performance guards', () => {
     expect(appSource).not.toContain('draftServerUrl');
     expect(appSource).not.toContain('normalizeServerUrl');
     expect(appSource).not.toContain('setServerUrl');
+    expect(appSource).not.toContain('syncing');
+    expect(moreScreenSource).not.toContain('syncing');
+    expect(appSource).toContain('backupBusy={backupBusy}');
     expect(appSource).toContain('backupJson={backupJson}');
     expect(appSource).toContain('onBackupJsonChange={setBackupJson}');
   });

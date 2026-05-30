@@ -505,7 +505,7 @@ export default function App() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [topicBusy, setTopicBusy] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
-  const [syncing, setSyncing] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [cookieNames, setCookieNames] = useState<string[]>([]);
   const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
@@ -2230,7 +2230,6 @@ export default function App() {
         : await getTopic({
           source: topic.source,
           id: topic.id,
-          nocache,
           fetcher: nodeSeekFetchWithWebView,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
@@ -3555,7 +3554,7 @@ export default function App() {
   const importBackup = useCallback(async () => {
     const requestId = ++backupRequestIdRef.current;
     const controller = startAbortableRequest(backupAbortRef);
-    setSyncing(true);
+    setBackupBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
       if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
@@ -3580,7 +3579,7 @@ export default function App() {
       }
     } finally {
       if (finishAbortableRequest(backupAbortRef, controller)) {
-        setSyncing(false);
+        setBackupBusy(false);
       }
     }
   }, [backupJson, notify, replaceReaderData]);
@@ -3588,7 +3587,7 @@ export default function App() {
   const exportBackup = useCallback(async () => {
     const requestId = ++backupRequestIdRef.current;
     const controller = startAbortableRequest(backupAbortRef);
-    setSyncing(true);
+    setBackupBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
       if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
@@ -3602,7 +3601,7 @@ export default function App() {
       }
     } finally {
       if (finishAbortableRequest(backupAbortRef, controller)) {
-        setSyncing(false);
+        setBackupBusy(false);
       }
     }
   }, [notify]);
@@ -4037,7 +4036,7 @@ export default function App() {
         showSettingsPanel={showSettingsPanel}
         statusBusy={statusBusy}
         styles={styles}
-        syncing={syncing}
+        backupBusy={backupBusy}
         theme={theme}
         webViewRef={webViewRef}
         yaohuoLoginCookieHeader={yaohuoLoginCookieHeader}
@@ -4076,7 +4075,7 @@ export default function App() {
         onUpdateSettings={updateSettings}
       />
     </ScrollView>
-  ), [backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, syncing, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
+  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
 
   const renderTopicScreen = useCallback(() => (
     <TopicScreen

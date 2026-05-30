@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, REQUEST_TIMEOUT_MESSAGE } from './request';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE } from './request';
+
+const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
 describe('Android request helpers', () => {
   it('passes an abort signal to the fetcher', async () => {

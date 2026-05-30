@@ -572,7 +572,7 @@ describe('Android local sources', () => {
       });
     });
 
-    const topic = await getTopic({ source: 'linuxdo', id: '900', fetcher, nocache: true });
+    const topic = await getTopic({ source: 'linuxdo', id: '900', fetcher });
     const replies = await getReplies({
       source: 'linuxdo',
       id: '900',
@@ -672,7 +672,7 @@ describe('Android local sources', () => {
       });
     });
 
-    await getTopic({ source: 'linuxdo', id: '9901', fetcher, nocache: true });
+    await getTopic({ source: 'linuxdo', id: '9901', fetcher });
     const replies = await getReplies({ source: 'linuxdo', id: '9901', page: 1, offset: 0, limit: 30, fetcher });
 
     expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
@@ -758,12 +758,12 @@ describe('Android local sources', () => {
     });
 
     for (let id = 8000; id < 8100; id += 1) {
-      await getTopic({ source: 'linuxdo', id: String(id), fetcher, nocache: true });
+      await getTopic({ source: 'linuxdo', id: String(id), fetcher });
     }
     await getReplies({ source: 'linuxdo', id: '8000', page: 2, offset: 0, limit: 1, fetcher });
 
     topicJsonCalls.length = 0;
-    await getTopic({ source: 'linuxdo', id: '8100', fetcher, nocache: true });
+    await getTopic({ source: 'linuxdo', id: '8100', fetcher });
     await getReplies({ source: 'linuxdo', id: '8001', page: 2, offset: 0, limit: 1, fetcher });
     await getReplies({ source: 'linuxdo', id: '8000', page: 2, offset: 0, limit: 1, fetcher });
 
@@ -882,6 +882,29 @@ describe('Android local sources', () => {
     expect(search.items).toEqual([]);
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
     expect(callUrls).toContain('https://www.nodeseek.com/search?q=xyz');
+    expect(callUrls).not.toContain('https://www.nodeseek.com/');
+  });
+
+  it('surfaces NodeSeek site search failures instead of filtering the latest feed', async () => {
+    const latestPayload = Buffer.from(JSON.stringify({
+      rotateTopics: [{
+        postId: 304,
+        titleText: 'failure latest incidental match',
+        titleLink: '/post-304-1',
+        op: { name: 'alice' },
+        time: { createdDate: '2026-05-21T00:00:00.000Z' }
+      }]
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=failure')) {
+        throw new Error('NodeSeek search failed');
+      }
+      return html(`<script>${latestPayload}</script>`);
+    });
+
+    await expect(searchTopics({ source: 'nodeseek', query: 'failure', fetcher })).rejects.toThrow('NodeSeek search failed');
+    const callUrls = fetcher.mock.calls.map((call) => call[0]);
+    expect(callUrls).toContain('https://www.nodeseek.com/search?q=failure');
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
   });
 
