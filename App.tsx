@@ -331,6 +331,7 @@ const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
 const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
 const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
+const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 const YAOHUO_DEFAULT_CLASS_ID = '177';
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
@@ -483,10 +484,12 @@ export default function App() {
   const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
   const linuxDoPendingTopicVerifiedRef = useRef(false);
   const linuxDoPendingReopenTopicAfterCloseRef = useRef<Topic | null>(null);
+  const linuxDoDismissedVerificationTopicKeyRef = useRef<string | null>(null);
   const linuxDoVerifiedRetryTopicKeyRef = useRef<string | null>(null);
   const linuxDoWebViewSessionRef = useRef(0);
   const linuxDoPanelClosingSessionRef = useRef<number | null>(null);
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPendingReopenTaskRef = useRef<DeferredNavigationTask | null>(null);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
@@ -1583,7 +1586,11 @@ export default function App() {
     linuxDoPanelClosingSessionRef.current = nextSession;
     linuxDoPendingReopenTopicAfterCloseRef.current = null;
     cancelLinuxDoPendingReopenTask();
+    if (pendingTopic && !shouldOpenPendingTopic) {
+      linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);
+    }
     if (pendingTopic && shouldOpenPendingTopic) {
+      linuxDoDismissedVerificationTopicKeyRef.current = null;
       linuxDoPendingReopenTopicAfterCloseRef.current = pendingTopic;
     }
     checkingRequestIdRef.current += 1;
@@ -1613,21 +1620,38 @@ export default function App() {
     if (showLinuxDoPanel || linuxDoPanelClosingSessionRef.current === null) {
       return;
     }
-    linuxDoPanelClosingSessionRef.current = null;
-    const pendingTopic = linuxDoPendingReopenTopicAfterCloseRef.current;
-    linuxDoPendingReopenTopicAfterCloseRef.current = null;
-    if (!pendingTopic) {
-      return;
+
+    if (linuxDoPanelCloseSettleTimerRef.current) {
+      clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
     }
-    linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);
-    cancelLinuxDoPendingReopenTask();
-    const task = InteractionManager.runAfterInteractions(() => {
-      linuxDoPendingReopenTaskRef.current = null;
-      reopenExistingTopicScreenRef.current = true;
-      setScreen('topic');
-      void openTopicRef.current?.(pendingTopic, true);
-    });
-    linuxDoPendingReopenTaskRef.current = task;
+    linuxDoPanelCloseSettleTimerRef.current = setTimeout(() => {
+      linuxDoPanelCloseSettleTimerRef.current = null;
+      if (showLinuxDoPanelRef.current || linuxDoPanelClosingSessionRef.current === null) {
+        return;
+      }
+      linuxDoPanelClosingSessionRef.current = null;
+      const pendingTopic = linuxDoPendingReopenTopicAfterCloseRef.current;
+      linuxDoPendingReopenTopicAfterCloseRef.current = null;
+      if (!pendingTopic) {
+        return;
+      }
+      linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);
+      cancelLinuxDoPendingReopenTask();
+      const task = InteractionManager.runAfterInteractions(() => {
+        linuxDoPendingReopenTaskRef.current = null;
+        reopenExistingTopicScreenRef.current = true;
+        setScreen('topic');
+        void openTopicRef.current?.(pendingTopic, true);
+      });
+      linuxDoPendingReopenTaskRef.current = task;
+    }, LINUXDO_PANEL_CLOSE_SETTLE_MS);
+
+    return () => {
+      if (linuxDoPanelCloseSettleTimerRef.current) {
+        clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
+        linuxDoPanelCloseSettleTimerRef.current = null;
+      }
+    };
   }, [cancelLinuxDoPendingReopenTask, showLinuxDoPanel]);
 
   const changeLinuxDoPanel = useCallback((visible: boolean) => {
@@ -1671,6 +1695,15 @@ export default function App() {
 
   const handleLinuxDoCloudflareForTopic = useCallback((topic: Topic, message: string) => {
     const requestTopicKey = topicKey(topic);
+    if (linuxDoDismissedVerificationTopicKeyRef.current === requestTopicKey) {
+      pendingLinuxDoTopicRef.current = null;
+      linuxDoPendingTopicVerifiedRef.current = false;
+      linuxDoPendingReopenTopicAfterCloseRef.current = null;
+      setMountLinuxDoWebView(false);
+      setLoadingLinuxDoPage(false);
+      notify(message);
+      return true;
+    }
     if (linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey) {
       linuxDoVerifiedRetryTopicKeyRef.current = null;
       pendingLinuxDoTopicRef.current = null;
@@ -2334,6 +2367,9 @@ export default function App() {
     clearTopicScrollRestoreTimer();
     const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
     reopenExistingTopicScreenRef.current = false;
+    if (!reopenExistingTopicScreen) {
+      linuxDoDismissedVerificationTopicKeyRef.current = null;
+    }
     const currentTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
     const opensDifferentTopic = topicKey(topic) !== currentTopicKey;
     if (screen !== 'topic' && !reopenExistingTopicScreen) {
@@ -2695,6 +2731,7 @@ export default function App() {
 
   const verifyLinuxDoFromTopic = useCallback(() => {
     linuxDoVerifiedRetryTopicKeyRef.current = null;
+    linuxDoDismissedVerificationTopicKeyRef.current = null;
     const detail = topicDetail || selectedTopic;
     if (detail?.source === 'linuxdo') {
       pendingLinuxDoTopicRef.current = detail;

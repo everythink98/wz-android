@@ -1142,6 +1142,21 @@ describe('Android App experience guards', () => {
     expect(block).toContain('pendingLinuxDoTopicRef.current = null;');
   });
 
+  it('does not let a stale linux.do topic verification reopen after manual close', () => {
+    const closeBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const cloudflareBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(\(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+
+    expect(appSource).toContain('const linuxDoDismissedVerificationTopicKeyRef = useRef<string | null>(null);');
+    expect(closeBlock).toContain('if (pendingTopic && !shouldOpenPendingTopic) {');
+    expect(closeBlock).toContain('linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);');
+    expect(cloudflareBlock).toContain('linuxDoDismissedVerificationTopicKeyRef.current === requestTopicKey');
+    expect(cloudflareBlock).toContain('setMountLinuxDoWebView(false);');
+    expect(cloudflareBlock).toContain('setLoadingLinuxDoPage(false);');
+    expect(openTopicBlock).toContain('if (!reopenExistingTopicScreen) {');
+    expect(openTopicBlock).toContain('linuxDoDismissedVerificationTopicKeyRef.current = null;');
+  });
+
   it('returns to the pending linux.do topic only after the verified panel is closed', () => {
     const closeBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
     const afterCloseBlock = appSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
@@ -1155,6 +1170,10 @@ describe('Android App experience guards', () => {
     expect(closeBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = pendingTopic;');
     expect(closeBlock).not.toContain("setScreen('topic');");
     expect(closeBlock).not.toContain('openTopicRef.current?.(pendingTopic, true);');
+    expect(appSource).toContain('LINUXDO_PANEL_CLOSE_SETTLE_MS');
+    expect(afterCloseBlock).toContain('linuxDoPanelCloseSettleTimerRef');
+    expect(afterCloseBlock).toContain('setTimeout(() =>');
+    expect(afterCloseBlock).toContain('}, LINUXDO_PANEL_CLOSE_SETTLE_MS);');
     expect(afterCloseBlock).toContain('const pendingTopic = linuxDoPendingReopenTopicAfterCloseRef.current;');
     expect(afterCloseBlock).toContain('linuxDoPanelClosingSessionRef.current = null;');
     expect(afterCloseBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
@@ -1247,8 +1266,11 @@ describe('Android App experience guards', () => {
     const afterCloseBlock = appSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoPanelClosingSessionRef = useRef<number | null>(null);');
+    expect(appSource).toContain('const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);');
     expect(closeLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current = nextSession;');
     expect(afterCloseBlock).toContain('linuxDoPanelClosingSessionRef.current = null;');
+    expect(afterCloseBlock.indexOf('setTimeout(() =>')).toBeGreaterThan(-1);
+    expect(afterCloseBlock.indexOf('linuxDoPanelClosingSessionRef.current = null;')).toBeGreaterThan(afterCloseBlock.indexOf('setTimeout(() =>'));
     expect(showLinuxDoBlock).not.toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
     expect(changeLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current !== null');
     expect(changeLinuxDoBlock.indexOf('linuxDoPanelClosingSessionRef.current !== null')).toBeLessThan(changeLinuxDoBlock.indexOf('resetLinuxDoWebView();'));
