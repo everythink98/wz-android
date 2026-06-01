@@ -195,22 +195,27 @@ function quotedAuthorFromAvatarUrl(value: string) {
   }
 }
 
+function localQuotedFloorFromAside(node: ReturnType<typeof parseHtml>, topicId?: string) {
+  const className = String(node.getAttribute('class') || '');
+  if (!/\bquote\b/i.test(className)) {
+    return undefined;
+  }
+  const dataTopic = String(node.getAttribute('data-topic') || '');
+  const dataPost = String(node.getAttribute('data-post') || '');
+  if (topicId && dataTopic && dataTopic !== topicId) {
+    return undefined;
+  }
+  const floor = Number(dataPost);
+  return Number.isFinite(floor) && floor > 0 ? floor : undefined;
+}
+
 function quotedReferencesFromHtml(html: string, topicId?: string) {
   const floors = new Set<number>();
   const authors: Record<number, string> = {};
   const root = parseHtml(html);
   root.querySelectorAll('aside').forEach((node) => {
-    const className = String(node.getAttribute('class') || '');
-    if (!/\bquote\b/i.test(className)) {
-      return;
-    }
-    const dataTopic = String(node.getAttribute('data-topic') || '');
-    const dataPost = String(node.getAttribute('data-post') || '');
-    if (topicId && dataTopic && dataTopic !== topicId) {
-      return;
-    }
-    const floor = Number(dataPost);
-    if (!Number.isFinite(floor) || floor <= 0) {
+    const floor = localQuotedFloorFromAside(node, topicId);
+    if (!floor) {
       return;
     }
     floors.add(floor);
@@ -223,6 +228,21 @@ function quotedReferencesFromHtml(html: string, topicId?: string) {
     }
   });
   return { floors: [...floors], authors };
+}
+
+function contentHtmlWithoutLocalQuoteAsides(html: string, topicId?: string) {
+  if (!topicId) {
+    return html;
+  }
+  const root = parseHtml(html);
+  let changed = false;
+  root.querySelectorAll('aside').forEach((node) => {
+    if (localQuotedFloorFromAside(node, topicId)) {
+      node.remove();
+      changed = true;
+    }
+  });
+  return changed ? root.toString() : html;
 }
 
 function positiveNumber(value: unknown) {
@@ -244,13 +264,14 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   }
   const contentHtml = sanitizeContentHtml(raw.cooked || '', BASE_URL);
   const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
+  const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
   const liked = likedFromActionsSummary(raw.actions_summary);
   return {
     author: String(raw.username || ''),
     authorId: String(raw.username || '') || undefined,
     authorAvatar: avatarUrl(raw.avatar_template),
     authorUrl: raw.username ? userUrl(String(raw.username)) : undefined,
-    contentHtml,
+    contentHtml: visibleContentHtml,
     createdAt: toIsoString(raw.created_at),
     floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
     ...(quotedReferences.floors.length ? { quotedFloors: quotedReferences.floors } : {}),

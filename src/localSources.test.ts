@@ -614,6 +614,33 @@ describe('Android local sources', () => {
     expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
   });
 
+  it('removes native linux.do quote markup after extracting same-topic quoted floors', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 912,
+      title: 'linux.do quoted markup',
+      created_at: '2026-05-20T00:00:00.000Z',
+      post_stream: {
+        stream: [1, 2],
+        posts: [
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+          {
+            id: 2,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<aside data-post="1" class="quote" data-topic="912" data-username="alice"><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+            created_at: '2026-05-20T00:02:00.000Z'
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '912', fetcher });
+
+    expect(topic.replies[0].quotedFloors).toEqual([1]);
+    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
+    expect(topic.replies[0].contentHtml).toBe('<p>Reply</p>');
+  });
+
   it('keeps linux.do quote author names from quote avatar URLs', async () => {
     const fetcher = vi.fn(async () => json({
       id: 911,
