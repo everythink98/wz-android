@@ -22,6 +22,8 @@ import {
   useWindowDimensions,
   View
 } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { QueryClient } from '@tanstack/react-query';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { CommonActions, DarkTheme, DefaultTheme, NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -436,6 +438,15 @@ export default function App() {
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
   const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
+  const queryClientRef = useRef(new QueryClient({
+    defaultOptions: {
+      queries: {
+        gcTime: 5 * 60 * 1000,
+        retry: false,
+        staleTime: 0
+      }
+    }
+  }));
   const nodeSeekLoginPanelRequestRef = useRef(0);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
@@ -473,7 +484,7 @@ export default function App() {
   const repliesRequestIdRef = useRef(0);
   const currentTopicKeyRef = useRef<string | null>(null);
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
-  const topicScrollRef = useRef<FlatList<TopicListItem>>(null);
+  const topicScrollRef = useRef<FlatList<TopicListItem> | null>(null);
   const moreScrollRef = useRef<ScrollView>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const topicBackStackRef = useRef<TopicSnapshot[]>([]);
@@ -1772,14 +1783,20 @@ export default function App() {
     const requestId = ++categoriesRequestIdRef.current;
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
-      const data = await getCategories({
-        source,
-        nocache: true,
-        fetcher: nodeSeekFetchWithWebView,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-        signal: controller.signal
+      const data = await queryClientRef.current.fetchQuery({
+        queryKey: ['android-categories', source, requestId],
+        queryFn: async () => {
+          const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
+          const data = await getCategories({
+            source,
+            nocache: true,
+            fetcher: nodeSeekFetchWithWebView,
+            nodeSeekCookie,
+            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+            signal: controller.signal
+          });
+          return data;
+        }
       });
       if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {
         return;
@@ -3921,21 +3938,24 @@ export default function App() {
       const yaohuoStatusPromise = yaohuoCookie
         ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
-      const checks = await Promise.allSettled([
-        getFeed({
-          source: 'nodeseek',
-          limit: 1,
-          nocache: true,
-          fetcher: nodeSeekFetchWithWebView,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          signal: controller.signal
-        }),
-        getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
-        getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal }),
-        yaohuoStatusPromise,
-        linuxDoLoginPromise
-      ] as const);
+      const checks = await queryClientRef.current.fetchQuery({
+        queryKey: ['android-status', requestId],
+        queryFn: async () => Promise.allSettled([
+          getFeed({
+            source: 'nodeseek',
+            limit: 1,
+            nocache: true,
+            fetcher: nodeSeekFetchWithWebView,
+            nodeSeekCookie,
+            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
+            signal: controller.signal
+          }),
+          getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
+          getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal }),
+          yaohuoStatusPromise,
+          linuxDoLoginPromise
+        ] as const)
+      });
       if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
         return;
       }
@@ -4415,9 +4435,10 @@ export default function App() {
   ), [changeScreen, renderFeedTab, renderLibraryTab, renderMoreTab, renderSearchTab, requestTabScrollToTop, screen, styles, theme]);
 
   return (
-    <SafeAreaProvider>
-      <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <SafeAreaView style={styles.screen}>
+    <GestureHandlerRootView style={styles.screen}>
+      <SafeAreaProvider>
+        <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <SafeAreaView style={styles.screen}>
         <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
         <View pointerEvents="none" style={styles.statusBarScrim} />
         {nodeSeekBrowserFetchRequest ? (
@@ -4493,8 +4514,9 @@ export default function App() {
           onSave={savePreviewImage}
           onSelect={selectPreviewImage}
         />
-        </SafeAreaView>
-      </KeyboardAvoidingView>
-    </SafeAreaProvider>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

@@ -1,32 +1,26 @@
 import { Platform } from 'react-native';
 
-const ANDROID_REMOVE_CLIPPED_SUBVIEWS = Platform.OS === 'android';
+const DEFAULT_DRAW_DISTANCE = Platform.OS === 'android' ? 900 : 700;
 
 export const FEED_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 12,
-  maxToRenderPerBatch: 8,
-  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
+  drawDistance: DEFAULT_DRAW_DISTANCE,
+  maxItemsInRecyclePool: 120
 };
 
 export const TOPIC_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 10,
-  maxToRenderPerBatch: 8,
-  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
+  drawDistance: DEFAULT_DRAW_DISTANCE,
+  maxItemsInRecyclePool: 80
 };
 
 export const REPLY_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 6,
-  maxToRenderPerBatch: 5,
-  removeClippedSubviews: ANDROID_REMOVE_CLIPPED_SUBVIEWS,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
+  drawDistance: Platform.OS === 'android' ? 800 : 600,
+  maxItemsInRecyclePool: 80
 };
 
 export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
-  ...REPLY_LIST_PERFORMANCE_PROPS,
-  removeClippedSubviews: false
+  initialNumToRender: 6,
+  maxToRenderPerBatch: 5,
+  removeClippedSubviews: false,
+  updateCellsBatchingPeriod: 50,
+  windowSize: 7
 };

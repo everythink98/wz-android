@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Image, Text, View, type ListRenderItem } from 'react-native';
+import { Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
+import { FlashList, type ListRenderItem } from '@shopify/flash-list';
 import { SvgXml } from 'react-native-svg';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
 import type { Topic, UserProfile } from '../types';
@@ -61,9 +63,10 @@ function ProfileAvatar({
           height="100%"
         />
       ) : uri && !imageFailed ? (
-        <Image
+        <ExpoImage
           source={imageSourceFromUrl(uri)}
           style={[styles.replyAvatarImage, styles.topicAvatar]}
+          contentFit="cover"
           onError={() => setImageFailed(true)}
         />
       ) : (
@@ -192,7 +195,7 @@ export function UserScreen({
           {user.url ? <IconButton iconOnly ghost icon={ExternalLink} label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(user.url)} /> : null}
         </View>
       </View>
-      <FlatList
+      <FlashList
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         data={listItems}

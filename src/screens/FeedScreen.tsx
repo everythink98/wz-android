@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, RefreshControl, Text, View, type ListRenderItem, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { RefreshControl, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabView } from 'react-native-tab-view';
 import { ChevronUp, RefreshCw } from 'lucide-react-native';
 import type { Category, FeedSource, Topic } from '../types';
@@ -62,7 +63,7 @@ export function FeedScreen({
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
 }) {
-  const listRefs = useRef<Partial<Record<FeedSource, FlatList<Topic> | null>>>({});
+  const listRefs = useRef<Partial<Record<FeedSource, FlashListRef<Topic> | null>>>({});
   const requestedFeedPageRef = useRef<number | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
   const autoLoadPausedAfterFailureRef = useRef(false);
@@ -194,7 +195,7 @@ export function FeedScreen({
     const routeSource = route.key as FeedSource;
     const active = routeSource === feedSource;
     return (
-      <FlatList
+      <FlashList
         ref={(ref) => {
           listRefs.current[routeSource] = ref;
         }}

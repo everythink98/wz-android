@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Category, Source, Topic, UserProfile } from './types';
 
 export const readerDataVersion = 2;
@@ -47,8 +48,55 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
-const validSources = new Set<Source>(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo']);
+const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
 const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
+
+const sourceSchema = z.enum(validSourceValues);
+const dateStringSchema = z.string().refine((value) => dateValue(value) > 0);
+const topicShapeSchema = z.object({
+  source: sourceSchema,
+  id: z.string().min(1),
+  title: z.string().min(1),
+  url: z.string().min(1),
+  createdAt: dateStringSchema,
+  lastReplyAt: dateStringSchema.optional()
+}).passthrough();
+const userProfileShapeSchema = z.object({
+  source: sourceSchema,
+  id: z.string().min(1),
+  username: z.string().min(1),
+  url: z.string().min(1),
+  topics: z.array(z.unknown()).optional()
+}).passthrough();
+const topicRecordSchema = z.object({
+  topic: topicShapeSchema,
+  savedAt: dateStringSchema
+}).passthrough();
+const readingProgressRecordSchema = z.object({
+  topic: topicShapeSchema,
+  updatedAt: dateStringSchema
+}).passthrough();
+const followedUserRecordSchema = z.object({
+  user: userProfileShapeSchema,
+  followedAt: dateStringSchema
+}).passthrough();
+const readerSettingsSchema = z.object({
+  listDensity: z.unknown().optional(),
+  theme: z.unknown().optional(),
+  fontScale: z.unknown().optional(),
+  lineHeight: z.unknown().optional(),
+  contentWidth: z.unknown().optional(),
+  fontFamily: z.unknown().optional()
+}).passthrough();
+const readerDataSchema = z.object({
+  version: z.literal(readerDataVersion),
+  favorites: z.record(z.string(), z.unknown()).optional(),
+  history: z.record(z.string(), z.unknown()).optional(),
+  progress: z.record(z.string(), z.unknown()).optional(),
+  followedUsers: z.record(z.string(), z.unknown()).optional(),
+  deletedRecords: z.unknown().optional(),
+  settings: z.unknown().optional()
+}).passthrough();
 
 function userProfileUrl(source: Source, id: string, fallback = '') {
   const cleanId = String(id || '').trim();
@@ -74,39 +122,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function isSource(value: unknown): value is Source {
-  return typeof value === 'string' && validSources.has(value as Source);
-}
-
 function isTopic(value: unknown): value is Topic {
-  const item = value as Partial<Topic>;
-  return Boolean(
-    item
-    && isSource(item.source)
-    && typeof item.id === 'string'
-    && item.id
-    && typeof item.title === 'string'
-    && item.title
-    && typeof item.url === 'string'
-    && item.url
-    && typeof item.createdAt === 'string'
-    && dateValue(item.createdAt) > 0
-    && (item.lastReplyAt === undefined || (typeof item.lastReplyAt === 'string' && dateValue(item.lastReplyAt) > 0))
-  );
+  return topicShapeSchema.safeParse(value).success;
 }
 
 function isUserProfile(value: unknown): value is UserProfile {
-  const item = value as Partial<UserProfile>;
-  return Boolean(
-    item
-    && isSource(item.source)
-    && typeof item.id === 'string'
-    && item.id
-    && typeof item.username === 'string'
-    && item.username
-    && typeof item.url === 'string'
-    && item.url
-  );
+  return userProfileShapeSchema.safeParse(value).success;
 }
 
 function sanitizeTopicUrl(value: string) {
@@ -253,7 +274,11 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
   }
   const next: Record<string, TopicRecord> = {};
   for (const record of Object.values(value)) {
-    const candidate = record as Partial<TopicRecord>;
+    const parsed = topicRecordSchema.safeParse(record);
+    if (!parsed.success) {
+      continue;
+    }
+    const candidate = parsed.data as unknown as Partial<TopicRecord>;
     if (!candidate.topic || !isTopic(candidate.topic)) {
       continue;
     }
@@ -285,7 +310,11 @@ function normalizeProgress(value: unknown): Record<string, ReadingProgressRecord
   }
   const next: Record<string, ReadingProgressRecord> = {};
   for (const record of Object.values(value)) {
-    const candidate = record as Partial<ReadingProgressRecord>;
+    const parsed = readingProgressRecordSchema.safeParse(record);
+    if (!parsed.success) {
+      continue;
+    }
+    const candidate = parsed.data as unknown as Partial<ReadingProgressRecord>;
     if (!candidate.topic || !isTopic(candidate.topic)) {
       continue;
     }
@@ -310,7 +339,11 @@ function normalizeFollowedUsers(value: unknown): Record<string, FollowedUserReco
   }
   const next: Record<string, FollowedUserRecord> = {};
   for (const record of Object.values(value)) {
-    const candidate = record as Partial<FollowedUserRecord>;
+    const parsed = followedUserRecordSchema.safeParse(record);
+    if (!parsed.success) {
+      continue;
+    }
+    const candidate = parsed.data as Partial<FollowedUserRecord>;
     if (!candidate.user || !isUserProfile(candidate.user)) {
       continue;
     }
@@ -355,9 +388,8 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
 }
 
 function normalizeSettings(value: unknown): ReaderSettings {
-  const base = value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+  const parsed = readerSettingsSchema.safeParse(value);
+  const base = parsed.success ? parsed.data as Record<string, unknown> : {};
   const fontScale = typeof base.fontScale === 'number' && Number.isFinite(base.fontScale)
     ? Math.max(0.9, Math.min(1.25, Math.round(base.fontScale * 100) / 100))
     : 1;
@@ -372,10 +404,11 @@ function normalizeSettings(value: unknown): ReaderSettings {
 }
 
 export function sanitizeReaderData(value: unknown): ReaderData {
-  if (!value || typeof value !== 'object' || (value as Partial<ReaderData>).version !== readerDataVersion) {
+  const parsed = readerDataSchema.safeParse(value);
+  if (!parsed.success) {
     return createEmptyReaderData();
   }
-  const data = value as Partial<ReaderData>;
+  const data = parsed.data as Partial<ReaderData>;
   return {
     version: readerDataVersion,
     favorites: normalizeRecordMap(data.favorites),

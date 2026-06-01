@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function readProjectFile(...segments: string[]) {
-  return readFileSync(join(process.cwd(), ...segments), 'utf8');
+  return readFileSync(join(process.cwd(), ...segments), 'utf8').replace(/\r\n/g, '\n');
 }
 
 export function readOptionalProjectFile(...segments: string[]) {
   const filePath = join(process.cwd(), ...segments);
-  return existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
+  return existsSync(filePath) ? readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n') : '';
 }

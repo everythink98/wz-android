@@ -4,7 +4,6 @@ import {
   type ListRenderItem,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View
 } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import {
   HTMLContentModel,
   HTMLElementModel,
@@ -199,9 +199,10 @@ function AuthorAvatar({
           height="100%"
         />
       ) : uri ? (
-        <Image
+        <ExpoImage
           source={imageSourceFromUrl(uri)}
           style={[styles.replyAvatarImage, small ? styles.replyAvatarSmall : styles.topicAvatar]}
+          contentFit="cover"
         />
       ) : (
         <Text style={[styles.replyAvatarText, small && styles.replyAvatarSmallText]}>{authorInitial(name)}</Text>

@@ -62,8 +62,9 @@ export function isInlineForumImage(attributes: Record<string, string | undefined
 export function inlineForumImageDisplaySize(attributes: Record<string, string | undefined>, scale = 1) {
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
-  let displayWidth = width || height || 20;
-  let displayHeight = height || width || 20;
+  const fallbackSize = isForumStickerImageAttributes(attributes) ? 64 : 20;
+  let displayWidth = width || height || fallbackSize;
+  let displayHeight = height || width || fallbackSize;
   const maxSize = 64;
   const minSize = 12;
   const maxDimension = Math.max(displayWidth, displayHeight);
@@ -394,14 +395,30 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
   const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
+  const classMarksSticker = /(^|\s)sticker(\s|$)/i.test(className);
   const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
   const urlMarksEmoji = isInlineForumImageUrl(src);
   const urlMarksAvatar = /(^|\/)user_avatar\//i.test(src);
-  const titleMarksEmoji = /^:[a-z0-9_+.-]+:$/i.test(title);
-  const altMarksEmoji = /^:[a-z0-9_+.-]+:$/i.test(alt);
-  const hasEmojiMarker = classMarksEmoji || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
+  const titleMarksEmoji = isForumEmojiLabel(title);
+  const altMarksEmoji = isForumEmojiLabel(alt);
+  const hasEmojiMarker = classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
   return (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
     || ((classMarksAvatar || urlMarksAvatar) && hasSmallSize);
+}
+
+function isForumStickerImageAttributes(attributes: Record<string, string | undefined>) {
+  const className = attributeValue(attributes, 'class');
+  return /(^|\s)sticker(\s|$)/i.test(className)
+    || isForumStickerLabel(attributeValue(attributes, 'title'))
+    || isForumStickerLabel(attributeValue(attributes, 'alt'));
+}
+
+function isForumEmojiLabel(value: string) {
+  return /^:[a-z0-9_+.-]+:$/i.test(value) || isForumStickerLabel(value);
+}
+
+function isForumStickerLabel(value: string) {
+  return /^xhj\d{3}$/i.test(value.trim());
 }
 
 function isForumAvatarImageAttributes(attributes: Record<string, string | undefined>) {

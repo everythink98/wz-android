@@ -161,6 +161,22 @@ describe('Android HTML image preview helpers', () => {
     expect(flowInlineImagesInMixedParagraphs(html)).not.toContain('<img class="emoji"');
   });
 
+  it('renders xhj sticker images in mixed paragraphs through the inline image path', () => {
+    const html = '<p>前两天刚买的bugnet，买早了<img alt="xhj032" src="https://cdn.example.com/xhj032.png"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image alt="xhj032"');
+    expect(result).not.toContain('<img alt="xhj032"');
+    expect(extractImageUrlsFromHtml(html)).toEqual([]);
+  });
+
+  it('uses a readable inline size for xhj sticker images without explicit dimensions', () => {
+    expect(inlineForumImageDisplaySize({
+      alt: 'xhj032',
+      src: 'https://cdn.example.com/xhj032.png'
+    })).toEqual({ width: 64, height: 64 });
+  });
+
   it('does not turn lightbox gallery images into inline emoji-sized images', () => {
     const html = '<p><div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411"></a></div><br>text <img class="emoji" src="https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15" alt=":joy:" title=":joy:" width="20" height="20"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);

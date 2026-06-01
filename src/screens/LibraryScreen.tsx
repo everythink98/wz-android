@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Pressable, Text, View, type ListRenderItem } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
+import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile } from '../types';
 import { type FollowedUserRecord, type ReaderData, type TopicRecord, userKey } from '../readerData';
@@ -51,7 +52,7 @@ export function LibraryScreen({
   onTabChange: (tab: LibraryTab) => void;
 }) {
   type LibraryListItem = { type: 'section'; key: string; label: string } | { type: 'record'; key: string; record: TopicRecord };
-  const listRef = useRef<FlatList<FollowedUserRecord | LibraryListItem>>(null);
+  const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const userRecords = useMemo(() => (
@@ -180,7 +181,7 @@ export function LibraryScreen({
   );
 
   return (
-    <FlatList
+    <FlashList
       ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.contentInner}

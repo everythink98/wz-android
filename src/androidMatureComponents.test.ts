@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest';
+import { readProjectFile } from './sourceTestUtils';
+
+const packageJson = JSON.parse(readProjectFile('android-app', 'package.json')) as {
+  dependencies?: Record<string, string>;
+};
+const appSource = readProjectFile('android-app', 'App.tsx');
+const imagePreviewSource = readProjectFile('android-app', 'src', 'components', 'ImagePreviewModal.tsx');
+const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
+const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
+const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
+const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
+const readerDataSource = readProjectFile('android-app', 'src', 'readerData.ts');
+
+describe('Android mature component replacements', () => {
+  it('declares mature Android replacement libraries in the Android app package', () => {
+    expect(packageJson.dependencies).toMatchObject({
+      '@shopify/flash-list': expect.any(String),
+      '@tanstack/react-query': expect.any(String),
+      'expo-image': expect.any(String),
+      'react-native-zoom-toolkit': expect.any(String),
+      zod: expect.any(String)
+    });
+  });
+
+  it('uses the zoom toolkit gallery for image preview gestures instead of hand-written zoom state', () => {
+    expect(imagePreviewSource).toContain("from 'react-native-zoom-toolkit'");
+    expect(imagePreviewSource).toContain('<Gallery');
+    expect(imagePreviewSource).toContain('initialIndex={preview.index}');
+    expect(imagePreviewSource).toContain('onIndexChange={onSelect}');
+    expect(imagePreviewSource).not.toContain('const [zoomed');
+    expect(imagePreviewSource).not.toContain('lastTapRef');
+    expect(imagePreviewSource).not.toContain('width * 1.8');
+  });
+
+  it('uses FlashList on stable long Android lists instead of hand-tuned FlatList rendering', () => {
+    for (const source of [feedScreenSource, searchScreenSource, libraryScreenSource, userScreenSource]) {
+      expect(source).toContain("from '@shopify/flash-list'");
+      expect(source).toContain('<FlashList');
+      expect(source).not.toMatch(/import\s+\{[^}]*\bFlatList\b[^}]*\}\s+from 'react-native'/);
+    }
+  });
+
+  it('keeps the rich topic detail screen on FlatList to avoid dynamic HTML image overlap', () => {
+    expect(topicScreenSource).toMatch(/import\s+\{[\s\S]*\bFlatList\b[\s\S]*\}\s+from 'react-native'/);
+    expect(topicScreenSource).toContain('<FlatList');
+    expect(topicScreenSource).not.toContain("from '@shopify/flash-list'");
+  });
+
+  it('keeps ordinary avatars and preview thumbnails on expo-image while preserving React Native Image for full-size detail images', () => {
+    expect(imagePreviewSource).toContain("import { Image as ExpoImage } from 'expo-image';");
+    expect(imagePreviewSource).toContain('<ExpoImage source={imageSourceFromUrl(url)}');
+    expect(topicScreenSource).toContain("import { Image as ExpoImage } from 'expo-image';");
+    expect(userScreenSource).toContain("import { Image as ExpoImage } from 'expo-image';");
+    expect(appSource).toContain("import {\n  AppState,");
+    expect(appSource).toContain('Image,');
+  });
+
+  it('uses Zod for reader data shape validation before applying existing merge and cleanup rules', () => {
+    expect(readerDataSource).toContain("from 'zod'");
+    expect(readerDataSource).toContain('readerDataSchema.safeParse');
+    expect(readerDataSource).toContain('topicRecordSchema');
+    expect(readerDataSource).toContain('followedUserRecordSchema');
+    expect(readerDataSource).toContain('readerSettingsSchema');
+  });
+
+  it('uses TanStack Query only for low-risk category and status read trials', () => {
+    expect(appSource).toContain("import { QueryClient } from '@tanstack/react-query';");
+    expect(appSource).toContain('const queryClientRef = useRef(new QueryClient');
+    expect(appSource).toContain("queryKey: ['android-categories'");
+    expect(appSource).toContain("queryKey: ['android-status'");
+    expect(appSource).not.toContain("queryKey: ['android-topic'");
+    expect(appSource).not.toContain("queryKey: ['android-replies'");
+  });
+});

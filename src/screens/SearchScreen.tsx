@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, Text, TextInput, View, type ListRenderItem } from 'react-native';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react-native';
 import type { FeedSource, Source, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
@@ -70,7 +71,7 @@ export function SearchScreen({
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
 }) {
-  const listRef = useRef<FlatList<SearchListItem>>(null);
+  const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const renderTopicCard = useCallback((item: Topic) => (
     <MemoizedTopicCard
       highlightQuery={query}
@@ -302,7 +303,7 @@ export function SearchScreen({
   );
 
   return (
-    <FlatList
+    <FlashList
       ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.contentInner}
