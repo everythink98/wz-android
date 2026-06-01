@@ -24,11 +24,13 @@ vi.mock('react-native', () => ({
 
 import {
   buildLinuxDoCookieHeader,
+  canAcceptLinuxDoAccessUpdate,
   canStoreLinuxDoAccess,
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
   clearLinuxDoWebViewClearance,
   clearLinuxDoSavedAccess,
+  hasFreshLinuxDoClearance,
   isCloudflareChallengeResponse,
   linuxDoClearanceCookieFromValue,
   linuxDoCookieModuleFromReactNativeImport,
@@ -73,6 +75,20 @@ describe('linux.do Cloudflare helpers', () => {
     expect(canStoreLinuxDoLogin(cookies)).toBe(true);
     expect(canStoreLinuxDoClearance(cookies)).toBe(false);
     expect(canStoreLinuxDoAccess(cookies)).toBe(false);
+  });
+
+  it('requires a fresh cf_clearance after opening linux.do verification', () => {
+    expect(hasFreshLinuxDoClearance(parseLinuxDoDocumentCookie('cf_clearance=old'), 'old')).toBe(false);
+    expect(hasFreshLinuxDoClearance(parseLinuxDoDocumentCookie('cf_clearance=new'), 'old')).toBe(true);
+    expect(hasFreshLinuxDoClearance(parseLinuxDoDocumentCookie('_t=login; _forum_session=session'), 'old')).toBe(false);
+    expect(hasFreshLinuxDoClearance(parseLinuxDoDocumentCookie('cf_clearance=first'), null)).toBe(true);
+  });
+
+  it('allows login cookie updates without a fresh cf_clearance outside forced verification', () => {
+    expect(canAcceptLinuxDoAccessUpdate(parseLinuxDoDocumentCookie('cf_clearance=old; _t=login; _forum_session=session'), 'old', false)).toBe(true);
+    expect(canAcceptLinuxDoAccessUpdate(parseLinuxDoDocumentCookie('cf_clearance=old'), 'old', false)).toBe(false);
+    expect(canAcceptLinuxDoAccessUpdate(parseLinuxDoDocumentCookie('cf_clearance=old; _t=login'), 'old', true)).toBe(false);
+    expect(canAcceptLinuxDoAccessUpdate(parseLinuxDoDocumentCookie('cf_clearance=new'), 'old', true)).toBe(true);
   });
 
   it('rejects cf_clearance cookies from other domains', () => {

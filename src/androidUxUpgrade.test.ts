@@ -171,6 +171,6 @@ describe('Android App UX upgrade guards', () => {
     expect(moreScreenSource).toContain('title="状态检查"');
     expect(moreScreenSource).toContain('showLoginPanel && accountExpanded');
     expect(moreScreenSource).toContain('showYaohuoLoginPanel && accountExpanded');
-    expect(moreScreenSource).toContain('showLinuxDoPanel && accountExpanded');
+    expect(moreScreenSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
   });
 });

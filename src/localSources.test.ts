@@ -22,6 +22,7 @@ vi.mock('react-native', () => ({
 
 import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
+import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import { clearV2exCacheForTest } from './localV2ex';
 import * as SecureStore from 'expo-secure-store';
@@ -1836,6 +1837,37 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       reason: 'cloudflare'
     });
+  });
+
+  it('retries a linux.do JSON read once through the WebView fallback after Cloudflare', async () => {
+    const normalFetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => json({
+      id: 42,
+      title: 'linux.do WebView fallback topic',
+      created_at: '2026-05-21T00:00:00.000Z',
+      posts_count: 1,
+      post_stream: {
+        stream: [1],
+        posts: [
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-21T00:00:00.000Z' }
+        ]
+      }
+    }));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
+
+    expect(topic.title).toBe('linux.do WebView fallback topic');
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(webViewCalls[0]?.[0]).toBe('https://linux.do/t/42.json');
   });
 
   it('reports non-JSON linux.do HTTP errors with the HTTP status', async () => {

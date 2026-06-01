@@ -572,8 +572,7 @@ function YaohuoLoginPanel({
 
 const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);
 
-function LinuxDoVerifyPanel({
-  accountExpanded,
+export function LinuxDoVerifyModal({
   checking,
   hasLinuxDoClearance,
   hasLinuxDoLogin,
@@ -596,7 +595,6 @@ function LinuxDoVerifyPanel({
   onSetLoadingLinuxDoPage,
   onShowLinuxDoPanelChange
 }: {
-  accountExpanded: boolean;
   checking: boolean;
   hasLinuxDoClearance: boolean;
   hasLinuxDoLogin: boolean;
@@ -640,75 +638,110 @@ function LinuxDoVerifyPanel({
     return () => clearTimeout(timeout);
   }, [linuxDoWebViewKey, loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
   return (
-    <>
-      <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '匿名可用'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
-      <LoginWebViewModal
-        visible={showLinuxDoPanel}
-        title="linux.do 登录 / 验证"
-        subtitle={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || '访问信息'}` : '匿名可用，登录后内容更完整'}
-        loading={loadingLinuxDoPage}
-        loadingText="正在打开 linux.do..."
-        error={linuxDoWebViewError}
-        styles={styles}
-        theme={theme}
-        onClose={() => onShowLinuxDoPanelChange(false)}
-        actions={(
-          <View style={styles.actions}>
-            <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
-            <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
-            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
-          </View>
-        )}
-      >
-        {showLinuxDoPanel && accountExpanded && mountLinuxDoWebView ? (
-            <WebView
-              key={linuxDoWebViewKey}
-              ref={linuxDoWebViewRef}
-              source={{ uri: LINUXDO_VERIFY_URL }}
-              androidLayerType="software"
-              javaScriptEnabled
-              domStorageEnabled
-              cacheEnabled
-              sharedCookiesEnabled
-              thirdPartyCookiesEnabled
-              userAgent={linuxDoWebViewUserAgent}
-              injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
-              onLoadProgress={(event) => {
-                if (event.nativeEvent.progress >= 0.8) {
-                  markLinuxDoPageReady();
-                }
-              }}
-              onLoadEnd={(event) => {
-                markLinuxDoPageReady();
-                if (!('code' in event.nativeEvent)) {
-                  onSetLinuxDoWebViewError('', linuxDoWebViewKey);
-                }
-                linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
-              }}
-              onLoadStart={() => {
-                onSetLinuxDoWebViewError('', linuxDoWebViewKey);
-                if (!linuxDoWebViewReadyRef.current) {
-                  onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
-                }
-              }}
-              onMessage={(event) => onHandleLinuxDoMessage(event, linuxDoWebViewKey)}
-              onError={(event) => {
-                onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-                onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey);
-              }}
-              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-              onRenderProcessGone={() => {
-                onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-                onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey);
-              }}
-              onShouldStartLoadWithRequest={handleLinuxDoNavigation}
-            />
-        ) : null}
-      </LoginWebViewModal>
-    </>
+    <LoginWebViewModal
+      visible={showLinuxDoPanel}
+      title="linux.do 登录 / 验证"
+      subtitle={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || '访问信息'}` : '匿名可用，登录后内容更完整'}
+      loading={loadingLinuxDoPage}
+      loadingText="正在打开 linux.do..."
+      error={linuxDoWebViewError}
+      styles={styles}
+      theme={theme}
+      onClose={() => onShowLinuxDoPanelChange(false)}
+      actions={(
+        <View style={styles.actions}>
+          <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
+          <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
+          <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
+        </View>
+      )}
+    >
+      {showLinuxDoPanel && mountLinuxDoWebView ? (
+        <WebView
+          key={linuxDoWebViewKey}
+          ref={linuxDoWebViewRef}
+          source={{ uri: LINUXDO_VERIFY_URL }}
+          androidLayerType="software"
+          javaScriptEnabled
+          domStorageEnabled
+          cacheEnabled
+          sharedCookiesEnabled
+          thirdPartyCookiesEnabled
+          userAgent={linuxDoWebViewUserAgent}
+          injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
+          onLoadProgress={(event) => {
+            if (event.nativeEvent.progress >= 0.8) {
+              markLinuxDoPageReady();
+            }
+          }}
+          onLoadEnd={(event) => {
+            markLinuxDoPageReady();
+            if (!('code' in event.nativeEvent)) {
+              onSetLinuxDoWebViewError('', linuxDoWebViewKey);
+            }
+            linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+          }}
+          onLoadStart={() => {
+            onSetLinuxDoWebViewError('', linuxDoWebViewKey);
+            if (!linuxDoWebViewReadyRef.current) {
+              onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
+            }
+          }}
+          onMessage={(event) => onHandleLinuxDoMessage(event, linuxDoWebViewKey)}
+          onError={(event) => {
+            onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
+            onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey);
+          }}
+          renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+          onRenderProcessGone={() => {
+            onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
+            onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey);
+          }}
+          onShouldStartLoadWithRequest={handleLinuxDoNavigation}
+        />
+      ) : null}
+    </LoginWebViewModal>
   );
 }
 
+function LinuxDoVerifyPanel({
+  hasLinuxDoClearance,
+  hasLinuxDoLogin,
+  linuxDoCookieNames,
+  showLinuxDoPanel,
+  styles,
+  theme,
+  onShowLinuxDoPanelChange
+}: {
+  accountExpanded: boolean;
+  checking: boolean;
+  hasLinuxDoClearance: boolean;
+  hasLinuxDoLogin: boolean;
+  linuxDoCookieNames: string[];
+  linuxDoWebViewError: string;
+  linuxDoWebViewKey: number;
+  linuxDoWebViewRef: RefObject<WebView | null>;
+  linuxDoWebViewUserAgent: string;
+  mountLinuxDoWebView: boolean;
+  loadingLinuxDoPage: boolean;
+  showLinuxDoPanel: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onCheckLinuxDoCookie: () => void;
+  onClearLinuxDoCookie: () => void;
+  handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
+  onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
+  onResetLinuxDoWebView: () => void;
+  onSetLinuxDoWebViewError: (value: string, webViewKey?: number) => void;
+  onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
+  onShowLinuxDoPanelChange: (value: boolean) => void;
+}) {
+  return (
+    <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '匿名可用'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
+  );
+}
+
+export const MemoizedLinuxDoVerifyModal = memo(LinuxDoVerifyModal);
 const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);
 
 function AppearancePanel({

@@ -116,13 +116,15 @@ import { checkLinuxDoLoginAccess, runLinuxDoAction } from './src/linuxdoActionCl
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   buildLinuxDoCookieHeader,
+  canAcceptLinuxDoAccessUpdate,
   canStoreLinuxDoAccess,
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
   clearLinuxDoAccess,
-  clearLinuxDoSavedAccess,
+  clearLinuxDoSavedClearance,
   clearLinuxDoWebViewClearance,
   linuxDoAccessSummary,
+  linuxDoClearanceValue,
   loadLinuxDoAccess,
   mergeLinuxDoCookies,
   parseLinuxDoDocumentCookie,
@@ -186,6 +188,7 @@ import {
   searchYaohuoDirect
 } from './src/yaohuoApi';
 import type { Fetcher } from './src/request';
+import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from './src/linuxdoFetchFallback';
 import { filterRepliesByQuery, REPLY_PAGE_SIZE, replyRefreshTarget } from './src/androidFeatureHelpers';
 import { safeFileName } from './src/backupFiles';
 import { buildLocalStatusResult } from './src/statusLogic';
@@ -193,7 +196,7 @@ import { TabBarIcon, tabNavItems } from './src/components/NavBar';
 import { triggerPressFeedback } from './src/components/AppControls';
 import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
-import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedMoreScreen } from './src/screens/MoreScreen';
+import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedLinuxDoVerifyModal, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
 import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, Screen, YaohuoReplyTarget } from './src/appTypes';
 import { LibraryScreen } from './src/screens/LibraryScreen';
@@ -209,6 +212,20 @@ type NodeSeekBrowserFetchRequest = {
   userAgent?: string;
 };
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
+  resolve: (response: Response) => void;
+  reject: (error: Error) => void;
+  timeout?: ReturnType<typeof setTimeout>;
+  abortSignal?: AbortSignal;
+  abortHandler?: () => void;
+  httpErrorStatus?: number;
+};
+type LinuxDoBrowserFetchRequest = {
+  id: number;
+  url: string;
+  cookie?: string;
+  userAgent?: string;
+};
+type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
   timeout?: ReturnType<typeof setTimeout>;
@@ -315,7 +332,42 @@ function nodeSeekBrowserResponse(html: string, challenge: boolean, httpErrorStat
   } as Response;
 }
 
+function linuxDoBrowserResponse(body: string, challenge: boolean, httpErrorStatus?: number) {
+  const status = challenge ? 403 : httpErrorStatus || 200;
+  const isJson = /^\s*[{[]/.test(body);
+  const headerValues: Record<string, string> = {
+    'content-type': isJson ? 'application/json' : 'text/html'
+  };
+  if (challenge) {
+    headerValues['cf-mitigated'] = 'challenge';
+  }
+  if (typeof Response !== 'undefined') {
+    return new Response(body, {
+      status,
+      headers: headerValues
+    });
+  }
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (name: string) => headerValues[name.toLowerCase()] || null
+    },
+    text: () => Promise.resolve(body)
+  } as Response;
+}
+
 function cleanupNodeSeekBrowserFetchRequest(request: PendingNodeSeekBrowserFetchRequest) {
+  if (request.timeout) {
+    clearTimeout(request.timeout);
+    request.timeout = undefined;
+  }
+  if (request.abortSignal && request.abortHandler) {
+    request.abortSignal.removeEventListener('abort', request.abortHandler);
+  }
+}
+
+function cleanupLinuxDoBrowserFetchRequest(request: PendingLinuxDoBrowserFetchRequest) {
   if (request.timeout) {
     clearTimeout(request.timeout);
     request.timeout = undefined;
@@ -328,6 +380,7 @@ function cleanupNodeSeekBrowserFetchRequest(request: PendingNodeSeekBrowserFetch
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
+const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const PROGRESS_SAVE_DEBOUNCE_MS = 650;
 const PROGRESS_SAVE_MAX_PENDING_MS = 2000;
 const NAVIGATION_DEFERRED_TASK_FALLBACK_MS = 420;
@@ -419,6 +472,52 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
 true;
 `;
 
+const LINUXDO_BROWSER_FETCH_SCRIPT = `
+(() => {
+  const requestId = __LINUXDO_BROWSER_FETCH_ID__;
+  const challengePattern = /just a moment|checking your browser|cf-browser-verification|challenge-running|challenge-platform|cf-turnstile|cf_chl_|attention required|enable javascript and cookies|请稍候|正在检查/i;
+  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || "").trim();
+  const pageHtml = () => document.documentElement ? document.documentElement.outerHTML : "";
+  const isChallengePage = () => {
+    const challengeText = [document.title || "", pageText(), pageHtml()].join(" ");
+    return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
+  };
+  const isInteractiveChallengePage = () => {
+    const challengeText = [document.title || "", pageText(), pageHtml()].join(" ");
+    return Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response']"))
+      || /cf-turnstile|attention required|verify you are human|请完成验证|正在进行安全验证/i.test(challengeText);
+  };
+  const jsonText = () => {
+    const text = pageText();
+    return /^\\s*[{[]/.test(text) ? text : "";
+  };
+  const postResult = () => {
+    const json = jsonText();
+    const challenge = isChallengePage() || isInteractiveChallengePage();
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: 'linuxdo-browser-fetch',
+      id: requestId,
+      url: location.href,
+      title: document.title || "",
+      challenge,
+      body: json || pageHtml(),
+      userAgent: navigator.userAgent || "",
+      cookie: document.cookie || ""
+    }));
+  };
+  const deadline = Date.now() + 8000;
+  const waitForReadablePage = () => {
+    if (isInteractiveChallengePage() || (!isChallengePage() && jsonText()) || Date.now() >= deadline) {
+      postResult();
+      return;
+    }
+    setTimeout(waitForReadablePage, 500);
+  };
+  waitForReadablePage();
+})();
+true;
+`;
+
 
 function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
@@ -441,6 +540,7 @@ export default function App() {
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
   const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
+  const linuxDoBrowserWebViewRef = useRef<WebView>(null);
   const queryClientRef = useRef(new QueryClient({
     defaultOptions: {
       queries: {
@@ -514,6 +614,12 @@ export default function App() {
   const rejectNodeSeekBrowserFetchRef = useRef<((request: PendingNodeSeekBrowserFetchRequest, message: string) => void) | null>(null);
   const linuxDoWebViewCookieHeaderRef = useRef('');
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
+  const linuxDoClearanceBeforeVerifyRef = useRef<string | null>(null);
+  const linuxDoRequireFreshClearanceRef = useRef(false);
+  const linuxDoBrowserFetchIdRef = useRef(0);
+  const linuxDoBrowserFetchCurrentRef = useRef<PendingLinuxDoBrowserFetchRequest | null>(null);
+  const linuxDoBrowserFetchQueueRef = useRef<PendingLinuxDoBrowserFetchRequest[]>([]);
+  const rejectLinuxDoBrowserFetchRef = useRef<((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null>(null);
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
@@ -543,6 +649,7 @@ export default function App() {
   const [hasLinuxDoLogin, setHasLinuxDoLogin] = useState(false);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(null);
+  const [linuxDoBrowserFetchRequest, setLinuxDoBrowserFetchRequest] = useState<LinuxDoBrowserFetchRequest | null>(null);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const [backupJson, setBackupJson] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
@@ -1271,7 +1378,8 @@ export default function App() {
       }
       const linuxDoSummary = linuxDoAccessSummary(linuxDoAccess);
       const linuxDoCookies = parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '');
-      setHasLinuxDoClearance(Boolean(linuxDoAccess?.cookieHeader));
+      linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(linuxDoCookies) || null;
+      setHasLinuxDoClearance(linuxDoSummary.hasClearance);
       setHasLinuxDoLogin(linuxDoSummary.loggedIn);
       setLinuxDoCookieNames(summarizeLinuxDoCookies(linuxDoCookies).names);
       if (linuxDoAccess?.userAgent) {
@@ -1466,6 +1574,128 @@ export default function App() {
     }
   }, [rejectNodeSeekBrowserFetch]);
 
+  const startNextLinuxDoBrowserFetch = useCallback(() => {
+    if (linuxDoBrowserFetchCurrentRef.current) {
+      return;
+    }
+    let next: PendingLinuxDoBrowserFetchRequest | null = null;
+    while (linuxDoBrowserFetchQueueRef.current.length) {
+      const candidate = linuxDoBrowserFetchQueueRef.current.shift() || null;
+      if (!candidate) {
+        continue;
+      }
+      if (candidate.abortSignal?.aborted) {
+        cleanupLinuxDoBrowserFetchRequest(candidate);
+        candidate.reject(new Error('请求已取消'));
+        continue;
+      }
+      next = candidate;
+      break;
+    }
+    if (next) {
+      next.timeout = setTimeout(() => {
+        rejectLinuxDoBrowserFetchRef.current?.(next, 'linux.do 页面读取超时');
+      }, LINUXDO_BROWSER_FETCH_TIMEOUT_MS);
+    }
+    linuxDoBrowserFetchCurrentRef.current = next;
+    setLinuxDoBrowserFetchRequest(next ? {
+      id: next.id,
+      url: next.url,
+      cookie: next.cookie,
+      userAgent: next.userAgent
+    } : null);
+  }, []);
+
+  const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string) => {
+    const queuedIndex = linuxDoBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
+    if (queuedIndex >= 0) {
+      linuxDoBrowserFetchQueueRef.current.splice(queuedIndex, 1);
+    }
+    if (linuxDoBrowserFetchCurrentRef.current?.id === request.id) {
+      linuxDoBrowserWebViewRef.current?.stopLoading();
+      linuxDoBrowserFetchCurrentRef.current = null;
+      setLinuxDoBrowserFetchRequest(null);
+    }
+    cleanupLinuxDoBrowserFetchRequest(request);
+    request.reject(new Error(message));
+    startNextLinuxDoBrowserFetch();
+  }, [startNextLinuxDoBrowserFetch]);
+  rejectLinuxDoBrowserFetchRef.current = rejectLinuxDoBrowserFetch;
+
+  const linuxDoFetchWithWebView: Fetcher = useCallback((input, init) => {
+    const url = String(input);
+    if (!isLinuxDoRequestUrl(url)) {
+      return fetch(input, init);
+    }
+    return new Promise<Response>((resolve, reject) => {
+      let request: PendingLinuxDoBrowserFetchRequest;
+      const id = ++linuxDoBrowserFetchIdRef.current;
+      const cookie = requestHeaderValue(init?.headers, 'cookie');
+      const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
+      request = {
+        id,
+        url,
+        cookie,
+        userAgent,
+        resolve,
+        reject,
+        abortSignal: init?.signal || undefined
+      };
+      request.abortHandler = () => {
+        rejectLinuxDoBrowserFetch(request, '请求已取消');
+      };
+      if (request.abortSignal) {
+        if (request.abortSignal.aborted) {
+          rejectLinuxDoBrowserFetch(request, '请求已取消');
+          return;
+        }
+        request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
+      }
+      linuxDoBrowserFetchQueueRef.current.push(request);
+      startNextLinuxDoBrowserFetch();
+    });
+  }, [rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
+
+  const forumFetchWithWebViewFallback = useMemo(() => createLinuxDoWebViewFallbackFetcher({
+    defaultFetcher: nodeSeekFetchWithWebView,
+    webViewFetcher: linuxDoFetchWithWebView
+  }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebView]);
+
+  const completeLinuxDoBrowserFetch = useCallback((data: {
+    id?: number;
+    body?: string;
+    cookie?: string;
+    userAgent?: string;
+    challenge?: boolean;
+  }) => {
+    const current = linuxDoBrowserFetchCurrentRef.current;
+    if (!current || data.id !== current.id) {
+      return;
+    }
+    cleanupLinuxDoBrowserFetchRequest(current);
+    linuxDoBrowserFetchCurrentRef.current = null;
+    setLinuxDoBrowserFetchRequest(null);
+    const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
+    if (userAgent) {
+      linuxDoWebViewUserAgentRef.current = userAgent;
+      setLinuxDoWebViewUserAgent(userAgent);
+    }
+    if (typeof data.cookie === 'string') {
+      linuxDoWebViewCookieHeaderRef.current = data.cookie;
+      setLinuxDoWebViewCookieHeader(data.cookie);
+      void CookieManager.flush().catch(() => undefined);
+    }
+    current.resolve(linuxDoBrowserResponse(data.body || '', Boolean(data.challenge), current.httpErrorStatus));
+    startNextLinuxDoBrowserFetch();
+  }, [startNextLinuxDoBrowserFetch]);
+
+  const failLinuxDoBrowserFetchById = useCallback((requestId: number, message: string) => {
+    const current = linuxDoBrowserFetchCurrentRef.current;
+    if (current?.id === requestId) {
+      rejectLinuxDoBrowserFetch(current, message);
+    }
+  }, [rejectLinuxDoBrowserFetch]);
+
   const restoreSavedYaohuoCookiesToWebView = useCallback(async () => {
     const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
     if (!cookieHeader) {
@@ -1538,15 +1768,26 @@ export default function App() {
     notify(message);
   }, [changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
-  const clearLinuxDoSavedAccessState = useCallback(async () => {
-    await clearLinuxDoSavedAccess();
+  const refreshLinuxDoClearanceState = useCallback(async () => {
+    const access = await clearLinuxDoSavedClearance();
     await clearLinuxDoWebViewClearance();
     linuxDoWebViewCookieHeaderRef.current = '';
     setLinuxDoWebViewCookieHeader('');
-    setHasLinuxDoClearance(false);
-    setHasLinuxDoLogin(false);
-    setLinuxDoCookieNames([]);
+    const summary = linuxDoAccessSummary(access);
+    setHasLinuxDoClearance(summary.hasClearance);
+    setHasLinuxDoLogin(summary.loggedIn);
+    setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names);
   }, []);
+
+  const rememberLinuxDoClearanceBeforeVerify = useCallback(async () => {
+    const [savedAccess, webViewCookies] = await Promise.all([
+      loadLinuxDoAccess(),
+      readLinuxDoCookiesFromWebView().catch(() => ({}))
+    ]);
+    const visibleCookies = parseLinuxDoDocumentCookie(linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader);
+    const cookies = mergeLinuxDoCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''), webViewCookies, visibleCookies);
+    linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(cookies) || null;
+  }, [linuxDoWebViewCookieHeader]);
 
   const nextLinuxDoWebViewSession = useCallback(() => {
     const nextSession = linuxDoWebViewSessionRef.current + 1;
@@ -1617,6 +1858,7 @@ export default function App() {
       linuxDoDismissedVerificationTopicKeyRef.current = null;
       linuxDoPendingReopenTopicAfterCloseRef.current = pendingTopic;
     }
+    linuxDoRequireFreshClearanceRef.current = false;
     checkingRequestIdRef.current += 1;
     if (linuxDoWebViewMountTimerRef.current) {
       clearTimeout(linuxDoWebViewMountTimerRef.current);
@@ -1683,12 +1925,16 @@ export default function App() {
       if (linuxDoPanelClosingSessionRef.current !== null) {
         return;
       }
+      if (!pendingLinuxDoTopicRef.current) {
+        linuxDoRequireFreshClearanceRef.current = false;
+        void rememberLinuxDoClearanceBeforeVerify();
+      }
       setShowLinuxDoPanel(true);
       resetLinuxDoWebView();
       return;
     }
     closeLinuxDoPanel();
-  }, [closeLinuxDoPanel, resetLinuxDoWebView]);
+  }, [closeLinuxDoPanel, rememberLinuxDoClearanceBeforeVerify, resetLinuxDoWebView]);
 
   const closeMorePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false);
@@ -1707,13 +1953,10 @@ export default function App() {
       return;
     }
     linuxDoPendingTopicVerifiedRef.current = false;
-    setScreen('more');
     changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     setShowSettingsPanel(false);
     changeLinuxDoPanel(true);
-    setHasLinuxDoClearance(false);
-    setHasLinuxDoLogin(false);
     notify(message);
   }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
@@ -1738,12 +1981,14 @@ export default function App() {
       notify(message);
       return true;
     }
-    await clearLinuxDoSavedAccessState();
+    linuxDoRequireFreshClearanceRef.current = true;
+    await rememberLinuxDoClearanceBeforeVerify();
+    await refreshLinuxDoClearanceState();
     pendingLinuxDoTopicRef.current = topic;
     setLinuxDoCookieNames([]);
     showLinuxDoVerification(message);
     return true;
-  }, [clearLinuxDoSavedAccessState, notify, showLinuxDoVerification]);
+  }, [notify, refreshLinuxDoClearanceState, rememberLinuxDoClearanceBeforeVerify, showLinuxDoVerification]);
 
   const clearStoredYaohuoLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
@@ -1804,7 +2049,7 @@ export default function App() {
           const data = await getCategories({
             source,
             nocache: true,
-            fetcher: nodeSeekFetchWithWebView,
+            fetcher: forumFetchWithWebViewFallback,
             nodeSeekCookie,
             nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
             signal: controller.signal
@@ -1834,7 +2079,7 @@ export default function App() {
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify, showNodeSeekVerification]);
+  }, [forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, notify, showNodeSeekVerification]);
 
   const markFeedLoadMoreFailed = useCallback((source: FeedSource) => {
     setFeedStates((current) => ({
@@ -1930,7 +2175,7 @@ export default function App() {
               limit: 30,
               category: category || undefined,
               nocache,
-              fetcher: nodeSeekFetchWithWebView,
+              fetcher: forumFetchWithWebViewFallback,
               nodeSeekCookie,
               nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
               signal: controller.signal
@@ -1960,7 +2205,7 @@ export default function App() {
           limit: 30,
           category: category || undefined,
           nocache,
-          fetcher: nodeSeekFetchWithWebView,
+          fetcher: forumFetchWithWebViewFallback,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
@@ -2045,7 +2290,7 @@ export default function App() {
       }
       finishAbortableRequest(feedAbortRef, controller);
     }
-  }, [categoryFilter, clearYaohuoLoginState, feedSource, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, markFeedLoadMoreFailed, nodeSeekFetchWithWebView, notify, showNodeSeekVerification, showYaohuoLogin]);
+  }, [categoryFilter, clearYaohuoLoginState, feedSource, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, markFeedLoadMoreFailed, notify, showNodeSeekVerification, showYaohuoLogin]);
 
   const loadFeedRef = useRef(loadFeed);
   useEffect(() => {
@@ -2103,7 +2348,7 @@ export default function App() {
           source,
           page,
           limit: 30,
-          fetcher: nodeSeekFetchWithWebView,
+          fetcher: forumFetchWithWebViewFallback,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           sort: source === 'v2ex' ? sort : 'relevance',
@@ -2126,7 +2371,7 @@ export default function App() {
       }
       return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
     }
-  }, [loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView]);
+  }, [forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource]);
 
   const runSearch = useCallback(async (sourceOverride?: Source) => {
     const query = searchQuery.trim();
@@ -2461,7 +2706,7 @@ export default function App() {
         : await getTopic({
           source: topic.source,
           id: topic.id,
-          fetcher: nodeSeekFetchWithWebView,
+          fetcher: forumFetchWithWebViewFallback,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
@@ -2525,7 +2770,7 @@ export default function App() {
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
-  }, [changeScreen, clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, resetQuoteState, screen, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
+  }, [changeScreen, clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, forumFetchWithWebViewFallback, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, resetQuoteState, screen, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
   openTopicRef.current = openTopic;
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
@@ -2595,7 +2840,7 @@ export default function App() {
           page: targetPage,
           limit: REPLY_PAGE_SIZE,
           offset: targetOffset,
-          fetcher: nodeSeekFetchWithWebView,
+          fetcher: forumFetchWithWebViewFallback,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
@@ -2646,7 +2891,7 @@ export default function App() {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
-  }, [clearYaohuoLoginState, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, openTopic, replyNextPage, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicDetail, topicReplies.length]);
+  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, openTopic, replyNextPage, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicDetail, topicReplies.length]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -2681,7 +2926,7 @@ export default function App() {
           page: replyNextPage,
           limit: 30,
           offset: replyNextOffset,
-          fetcher: nodeSeekFetchWithWebView,
+          fetcher: forumFetchWithWebViewFallback,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
@@ -2730,7 +2975,7 @@ export default function App() {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
-  }, [clearYaohuoLoginState, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, replyNextOffset, replyNextPage, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicDetail]);
+  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicDetail]);
 
   const refreshTopic = useCallback(() => {
     void refreshTopicReplies();
@@ -2763,13 +3008,15 @@ export default function App() {
   const verifyLinuxDoFromTopic = useCallback(async () => {
     linuxDoVerifiedRetryTopicKeyRef.current = null;
     linuxDoDismissedVerificationTopicKeyRef.current = null;
-    await clearLinuxDoSavedAccessState();
+    linuxDoRequireFreshClearanceRef.current = true;
+    await rememberLinuxDoClearanceBeforeVerify();
+    await refreshLinuxDoClearanceState();
     const detail = topicDetail || selectedTopic;
     if (detail?.source === 'linuxdo') {
       pendingLinuxDoTopicRef.current = detail;
     }
     showLinuxDoVerification();
-  }, [clearLinuxDoSavedAccessState, selectedTopic, showLinuxDoVerification, topicDetail]);
+  }, [refreshLinuxDoClearanceState, rememberLinuxDoClearanceBeforeVerify, selectedTopic, showLinuxDoVerification, topicDetail]);
 
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
@@ -2849,7 +3096,7 @@ export default function App() {
         source: requestUser.source,
         id: requestUser.id,
         username: requestUser.username,
-        fetcher: nodeSeekFetchWithWebView,
+        fetcher: forumFetchWithWebViewFallback,
         nodeSeekCookie,
         nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
         yaohuoCookie,
@@ -2889,7 +3136,7 @@ export default function App() {
       }
       finishAbortableRequest(userAbortRef, controller);
     }
-  }, [changeScreen, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
+  }, [changeScreen, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
 
   const loadMoreUserTopics = useCallback(async () => {
     const current = userProfile;
@@ -2918,7 +3165,7 @@ export default function App() {
         source: current.source,
         id: current.id,
         username: current.username,
-        fetcher: nodeSeekFetchWithWebView,
+        fetcher: forumFetchWithWebViewFallback,
         nodeSeekCookie,
         nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
         yaohuoCookie,
@@ -2965,7 +3212,7 @@ export default function App() {
       }
       finishAbortableRequest(userAbortRef, controller);
     }
-  }, [loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekFetchWithWebView, notify, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, userBusy, userLoadingMore, userProfile]);
+  }, [forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, userBusy, userLoadingMore, userProfile]);
 
   const goBackFromUser = useCallback(() => {
     cancelDeferredNavigationTask();
@@ -3113,6 +3360,24 @@ export default function App() {
       // Ignore unrelated messages from the page.
     }
   }, [completeNodeSeekBrowserFetch]);
+
+  const handleLinuxDoBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data) as {
+        type?: string;
+        id?: number;
+        body?: string;
+        cookie?: string;
+        userAgent?: string;
+        challenge?: boolean;
+      };
+      if (data.type === 'linuxdo-browser-fetch') {
+        completeLinuxDoBrowserFetch(data);
+      }
+    } catch {
+      // Ignore unrelated messages from the page.
+    }
+  }, [completeLinuxDoBrowserFetch]);
 
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -3311,9 +3576,16 @@ export default function App() {
 
   const readCurrentLinuxDoCookies = useCallback(async () => {
     await probeLinuxDoPage();
-    const nativeCookies = await readLinuxDoCookiesFromWebView();
+    const [savedAccess, nativeCookies] = await Promise.all([
+      loadLinuxDoAccess(),
+      readLinuxDoCookiesFromWebView()
+    ]);
     const linuxDoDocumentCookieHeader = linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader;
-    return mergeLinuxDoCookies(nativeCookies, parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader));
+    return mergeLinuxDoCookies(
+      parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''),
+      nativeCookies,
+      parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)
+    );
   }, [linuxDoWebViewCookieHeader, probeLinuxDoPage]);
 
   const waitForLinuxDoClearance = useCallback(async () => {
@@ -3354,17 +3626,11 @@ export default function App() {
       const summary = summarizeLinuxDoCookies(cookies);
       const cookieHeader = buildLinuxDoCookieHeader(cookies);
       setLinuxDoCookieNames(summary.names);
-      if (!canStoreLinuxDoAccess(cookies) || !cookieHeader) {
-        const pendingTopic = pendingLinuxDoTopicRef.current;
-        if (pendingTopic) {
-          linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);
-        }
-        pendingLinuxDoTopicRef.current = null;
-        linuxDoPendingReopenTopicAfterCloseRef.current = null;
+      if (!canStoreLinuxDoAccess(cookies) || !cookieHeader || !canAcceptLinuxDoAccessUpdate(cookies, linuxDoClearanceBeforeVerifyRef.current, linuxDoRequireFreshClearanceRef.current)) {
         setHasLinuxDoClearance(false);
-        setHasLinuxDoLogin(false);
+        setHasLinuxDoLogin(summary.loggedIn);
         linuxDoPendingTopicVerifiedRef.current = false;
-        notify('没有检测到 linux.do 验证信息。请完成验证后再试。');
+        notify('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
         return;
       }
       await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
@@ -3375,18 +3641,14 @@ export default function App() {
       setHasLinuxDoLogin(summary.loggedIn);
       setLinuxDoWebViewError('');
       notify(summary.loggedIn ? 'linux.do 登录信息已保存在本机。' : 'linux.do 验证信息已保存在本机。');
+      linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(cookies);
+      linuxDoRequireFreshClearanceRef.current = false;
       linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);
       if (linuxDoPendingTopicVerifiedRef.current) {
         closeLinuxDoPanel();
       }
     } catch (error) {
       if (isCurrentLinuxDoCheck()) {
-        const pendingTopic = pendingLinuxDoTopicRef.current;
-        if (pendingTopic) {
-          linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);
-        }
-        pendingLinuxDoTopicRef.current = null;
-        linuxDoPendingReopenTopicAfterCloseRef.current = null;
         linuxDoPendingTopicVerifiedRef.current = false;
         notify(errorMessage(error));
       }
@@ -3411,7 +3673,7 @@ export default function App() {
   const clearLinuxDoCookie = useCallback(async () => {
     const access = await clearLinuxDoAccess();
     const summary = linuxDoAccessSummary(access);
-    setHasLinuxDoClearance(Boolean(access?.cookieHeader));
+    setHasLinuxDoClearance(summary.hasClearance);
     setHasLinuxDoLogin(summary.loggedIn);
     setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names);
     resetLinuxDoWebView();
@@ -3972,7 +4234,7 @@ export default function App() {
             source: 'nodeseek',
             limit: 1,
             nocache: true,
-            fetcher: nodeSeekFetchWithWebView,
+            fetcher: forumFetchWithWebViewFallback,
             nodeSeekCookie,
             nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
             signal: controller.signal
@@ -4048,7 +4310,7 @@ export default function App() {
         setStatusBusy(false);
       }
     }
-  }, [clearYaohuoLoginState, loadNodeSeekCookieForSource, nodeSeekFetchWithWebView, notify]);
+  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, notify]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -4511,6 +4773,72 @@ export default function App() {
             />
           </View>
         ) : null}
+        {linuxDoBrowserFetchRequest ? (
+          <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
+            <WebView
+              key={`linuxdo-browser-fetch-${linuxDoBrowserFetchRequest.id}`}
+              ref={linuxDoBrowserWebViewRef}
+              source={{
+                uri: linuxDoBrowserFetchRequest.url,
+                headers: linuxDoBrowserFetchRequest.cookie ? { Cookie: linuxDoBrowserFetchRequest.cookie } : undefined
+              }}
+              javaScriptEnabled
+              sharedCookiesEnabled
+              thirdPartyCookiesEnabled
+              userAgent={linuxDoBrowserFetchRequest.userAgent || linuxDoWebViewUserAgent}
+              containerStyle={styles.hiddenBrowserWebView}
+              style={styles.hiddenBrowserWebView}
+              onLoadEnd={() => {
+                linuxDoBrowserWebViewRef.current?.injectJavaScript(
+                  LINUXDO_BROWSER_FETCH_SCRIPT.replace('__LINUXDO_BROWSER_FETCH_ID__', String(linuxDoBrowserFetchRequest.id))
+                );
+              }}
+              onMessage={handleLinuxDoBrowserFetchMessage}
+              onError={(event) => {
+                failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, event.nativeEvent.description || 'linux.do 页面加载失败');
+              }}
+              onHttpError={(event) => {
+                if (event.nativeEvent.url !== linuxDoBrowserFetchRequest.url) {
+                  return;
+                }
+                if (event.nativeEvent.statusCode === 403) {
+                  if (linuxDoBrowserFetchCurrentRef.current?.id === linuxDoBrowserFetchRequest.id) {
+                    linuxDoBrowserFetchCurrentRef.current.httpErrorStatus = event.nativeEvent.statusCode;
+                  }
+                  return;
+                }
+                failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, `linux.do 页面返回错误 ${event.nativeEvent.statusCode}`);
+              }}
+              onRenderProcessGone={() => {
+                failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止');
+              }}
+              renderError={() => <View style={styles.hiddenBrowserWebView} />}
+            />
+          </View>
+        ) : null}
+        <MemoizedLinuxDoVerifyModal
+          checking={checking}
+          hasLinuxDoClearance={hasLinuxDoClearance}
+          hasLinuxDoLogin={hasLinuxDoLogin}
+          linuxDoCookieNames={linuxDoCookieNames}
+          linuxDoWebViewError={linuxDoWebViewError}
+          linuxDoWebViewKey={linuxDoWebViewKey}
+          linuxDoWebViewRef={linuxDoWebViewRef}
+          linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+          mountLinuxDoWebView={mountLinuxDoWebView}
+          loadingLinuxDoPage={loadingLinuxDoPage}
+          showLinuxDoPanel={showLinuxDoPanel}
+          styles={styles}
+          theme={theme}
+          onCheckLinuxDoCookie={checkLinuxDoCookie}
+          onClearLinuxDoCookie={clearLinuxDoCookie}
+          handleLinuxDoNavigation={handleLinuxDoNavigation}
+          onHandleLinuxDoMessage={handleLinuxDoMessage}
+          onResetLinuxDoWebView={resetLinuxDoWebView}
+          onSetLinuxDoWebViewError={setLinuxDoWebViewErrorForSession}
+          onSetLoadingLinuxDoPage={setLoadingLinuxDoPageForSession}
+          onShowLinuxDoPanelChange={changeLinuxDoPanel}
+        />
         <NavigationContainer ref={navigationRef} theme={navigationTheme} onReady={() => syncNavigationToScreen(screen)}>
           <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', freezeOnBlur: true, contentStyle: { backgroundColor: theme.background } }}>
             <Stack.Screen name="MainTabs">

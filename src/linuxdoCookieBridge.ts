@@ -78,6 +78,23 @@ export function canStoreLinuxDoClearance(cookies: Record<string, LinuxDoNativeCo
   return Boolean(cookie?.value && isLinuxDoDomain(cookie.domain));
 }
 
+export function linuxDoClearanceValue(cookies: Record<string, LinuxDoNativeCookie>) {
+  const cookie = cookies.cf_clearance;
+  return cookie?.value && isLinuxDoDomain(cookie.domain) ? cookie.value : '';
+}
+
+export function hasFreshLinuxDoClearance(cookies: Record<string, LinuxDoNativeCookie>, previousClearance?: string | null) {
+  const current = linuxDoClearanceValue(cookies);
+  return Boolean(current && current !== (previousClearance || ''));
+}
+
+export function canAcceptLinuxDoAccessUpdate(cookies: Record<string, LinuxDoNativeCookie>, previousClearance?: string | null, requireFreshClearance = true) {
+  if (requireFreshClearance) {
+    return hasFreshLinuxDoClearance(cookies, previousClearance);
+  }
+  return hasFreshLinuxDoClearance(cookies, previousClearance) || canStoreLinuxDoLogin(cookies);
+}
+
 export function canStoreLinuxDoAccess(cookies: Record<string, LinuxDoNativeCookie>) {
   return canStoreLinuxDoClearance(cookies);
 }
@@ -97,6 +114,10 @@ export function buildLinuxDoCookieHeader(cookies: Record<string, LinuxDoNativeCo
 export function removeLinuxDoLoginCookies(cookies: Record<string, LinuxDoNativeCookie>) {
   const loginNames = new Set<string>(LINUXDO_LOGIN_COOKIE_NAMES);
   return Object.fromEntries(Object.entries(cookies).filter(([name]) => !loginNames.has(name)));
+}
+
+export function removeLinuxDoClearanceCookie(cookies: Record<string, LinuxDoNativeCookie>) {
+  return Object.fromEntries(Object.entries(cookies).filter(([name]) => name !== 'cf_clearance'));
 }
 
 export function summarizeLinuxDoCookies(cookies: Record<string, LinuxDoNativeCookie>) {
@@ -272,6 +293,17 @@ export async function clearLinuxDoAccess() {
 
 export async function clearLinuxDoSavedAccess() {
   await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+}
+
+export async function clearLinuxDoSavedClearance() {
+  const savedAccess = await loadLinuxDoAccess();
+  const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoClearanceCookie(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
+  if (remainingHeader) {
+    await saveLinuxDoAccess(remainingHeader, savedAccess?.userAgent);
+  } else {
+    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+  }
+  return loadLinuxDoAccess();
 }
 
 export async function clearLinuxDoWebViewClearance() {

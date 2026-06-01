@@ -888,8 +888,9 @@ describe('Android App experience guards', () => {
   it('uses a hidden WebView to read NodeSeek pages when normal fetch is blocked by Cloudflare', () => {
     expect(appSource).toContain('NODESEEK_BROWSER_FETCH_SCRIPT');
     expect(appSource).toContain('nodeSeekFetchWithWebView');
+    expect(appSource).toContain('defaultFetcher: nodeSeekFetchWithWebView');
     expect(appSource).toContain("type: 'nodeseek-browser-fetch'");
-    expect(appSource).toContain('fetcher: nodeSeekFetchWithWebView');
+    expect(appSource).toContain('fetcher: forumFetchWithWebViewFallback');
     expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
   });
 
@@ -1236,7 +1237,7 @@ describe('Android App experience guards', () => {
   });
 
   it('ignores stale linux.do verification WebView events after closing or refreshing the panel', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const linuxDoMessageBlock = appSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoWebViewSessionRef = useRef(0);');
@@ -1249,14 +1250,14 @@ describe('Android App experience guards', () => {
   });
 
   it('unmounts the linux.do verification WebView before hiding the modal', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);');
     expect(closeLinuxDoBlock.indexOf('setMountLinuxDoWebView(false);')).toBeGreaterThan(-1);
     expect(closeLinuxDoBlock.indexOf('setMountLinuxDoWebView(false);')).toBeLessThan(closeLinuxDoBlock.indexOf('setShowLinuxDoPanel(false);'));
     expect(linuxDoPanelBlock).toContain('mountLinuxDoWebView');
-    expect(linuxDoPanelBlock).toContain('showLinuxDoPanel && accountExpanded && mountLinuxDoWebView');
+    expect(linuxDoPanelBlock).toContain('showLinuxDoPanel && mountLinuxDoWebView');
   });
 
   it('does not let a new linux.do verification request cancel an in-flight close', () => {
@@ -1275,7 +1276,19 @@ describe('Android App experience guards', () => {
     expect(changeLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current !== null');
     expect(changeLinuxDoBlock.indexOf('linuxDoPanelClosingSessionRef.current !== null')).toBeLessThan(changeLinuxDoBlock.indexOf('resetLinuxDoWebView();'));
     expect(showLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current !== null');
-    expect(showLinuxDoBlock.indexOf('linuxDoPanelClosingSessionRef.current !== null')).toBeLessThan(showLinuxDoBlock.indexOf("setScreen('more');"));
+    expect(showLinuxDoBlock).not.toContain("setScreen('more');");
+  });
+
+  it('renders linux.do verification as a global modal instead of inside the More tab', () => {
+    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoModalBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const appReturnBlock = appSource.match(/return \(\s*<GestureHandlerRootView[\s\S]*?<NavigationContainer/)?.[0] || '';
+
+    expect(linuxDoPanelBlock).toContain('MenuButton');
+    expect(linuxDoPanelBlock).not.toContain('LoginWebViewModal');
+    expect(linuxDoModalBlock).toContain('LoginWebViewModal');
+    expect(linuxDoModalBlock).toContain('showLinuxDoPanel && mountLinuxDoWebView');
+    expect(appReturnBlock).toContain('<MemoizedLinuxDoVerifyModal');
   });
 
   it('keeps linux.do verified retry failures from remounting the verification WebView', () => {
@@ -1317,7 +1330,7 @@ describe('Android App experience guards', () => {
   });
 
   it('does not reopen the linux.do verification loading state after the page is visible', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('linuxDoWebViewReadyRef');
     expect(linuxDoPanelBlock).toContain('markLinuxDoPageReady');
@@ -1372,7 +1385,7 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps the linux.do verification WebView off the emulator GPU path', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('androidLayerType="software"');
   });
@@ -1394,23 +1407,51 @@ describe('Android App experience guards', () => {
 
   it('resets linux.do verified state when status detection finds no cookie', () => {
     const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader \|\| !canAcceptLinuxDoAccessUpdate\(cookies, linuxDoClearanceBeforeVerifyRef\.current, linuxDoRequireFreshClearanceRef\.current\)\) \{([\s\S]*?)\n      \}/)?.[1] || '';
 
     expect(noCookieBlock).toContain('setHasLinuxDoClearance(false);');
-    expect(noCookieBlock).toContain('setHasLinuxDoLogin(false);');
+    expect(noCookieBlock).toContain('setHasLinuxDoLogin(summary.loggedIn);');
   });
 
   it('cancels the pending linux.do topic return when verification detection fails', () => {
     const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader \|\| !canAcceptLinuxDoAccessUpdate\(cookies, linuxDoClearanceBeforeVerifyRef\.current, linuxDoRequireFreshClearanceRef\.current\)\) \{([\s\S]*?)\n      \}/)?.[1] || '';
     const catchBlock = checkLinuxDoCookieBlock.match(/catch \(error\) \{([\s\S]*?)\n    \} finally/)?.[1] || '';
+    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
-    expect(noCookieBlock).toContain('const pendingTopic = pendingLinuxDoTopicRef.current;');
-    expect(noCookieBlock).toContain('linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);');
-    expect(noCookieBlock).toContain('pendingLinuxDoTopicRef.current = null;');
-    expect(noCookieBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
-    expect(catchBlock).toContain('pendingLinuxDoTopicRef.current = null;');
-    expect(catchBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
+    expect(noCookieBlock).not.toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(noCookieBlock).not.toContain('linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);');
+    expect(catchBlock).not.toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(catchBlock).not.toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
+    expect(closeLinuxDoBlock).toContain('linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);');
+  });
+
+  it('requires a new linux.do cf_clearance before verification succeeds', () => {
+    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('const linuxDoClearanceBeforeVerifyRef = useRef<string | null>(null);');
+    expect(appSource).toContain('const linuxDoRequireFreshClearanceRef = useRef(false);');
+    expect(checkLinuxDoCookieBlock).toContain('canAcceptLinuxDoAccessUpdate(cookies, linuxDoClearanceBeforeVerifyRef.current, linuxDoRequireFreshClearanceRef.current)');
+    expect(checkLinuxDoCookieBlock).toContain('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
+  });
+
+  it('records saved linux.do clearance as the old value on startup', () => {
+    const startupBlock = appSource.match(/const linuxDoSummary = linuxDoAccessSummary\(linuxDoAccess\);[\s\S]*?if \(linuxDoAccess\?\.userAgent\)/)?.[0] || '';
+
+    expect(startupBlock).toContain("parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')");
+    expect(startupBlock).toContain('linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(linuxDoCookies) || null;');
+  });
+
+  it('requires fresh linux.do clearance only for forced verification flows', () => {
+    const changeLinuxDoBlock = appSource.match(/const changeLinuxDoPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const verifyFromTopicBlock = appSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(changeLinuxDoBlock).toContain('linuxDoRequireFreshClearanceRef.current = false;');
+    expect(cloudflareHandlerBlock).toContain('linuxDoRequireFreshClearanceRef.current = true;');
+    expect(verifyFromTopicBlock).toContain('linuxDoRequireFreshClearanceRef.current = true;');
+    expect(checkLinuxDoCookieBlock).toContain('linuxDoRequireFreshClearanceRef.current = false;');
   });
 
   it('requires linux.do cf_clearance before saving verification state', () => {
@@ -1418,7 +1459,7 @@ describe('Android App experience guards', () => {
 
     expect(appSource).toContain('canStoreLinuxDoAccess');
     expect(checkLinuxDoCookieBlock).toContain('!canStoreLinuxDoAccess(cookies)');
-    expect(checkLinuxDoCookieBlock).toContain('没有检测到 linux.do 验证信息。请完成验证后再试。');
+    expect(checkLinuxDoCookieBlock).toContain('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
     expect(checkLinuxDoCookieBlock).not.toContain('if (!cookieHeader) {');
   });
 
@@ -1426,10 +1467,10 @@ describe('Android App experience guards', () => {
     const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const verifyFromTopicBlock = appSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(appSource).toContain('clearLinuxDoSavedAccess');
-    expect(appSource).toContain('const clearLinuxDoSavedAccessState = useCallback');
-    expect(cloudflareHandlerBlock).toContain('await clearLinuxDoSavedAccessState();');
-    expect(verifyFromTopicBlock).toContain('await clearLinuxDoSavedAccessState();');
+    expect(appSource).toContain('clearLinuxDoSavedClearance');
+    expect(appSource).toContain('const refreshLinuxDoClearanceState = useCallback');
+    expect(cloudflareHandlerBlock).toContain('await refreshLinuxDoClearanceState();');
+    expect(verifyFromTopicBlock).toContain('await refreshLinuxDoClearanceState();');
   });
 
   it('reuses the linux.do verification WebView user agent for local requests', () => {
@@ -1449,6 +1490,14 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('linuxDoWebViewCookieHeaderRef');
     expect(appSource).toContain('parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)');
     expect(appSource).toContain('await probeLinuxDoPage();');
+  });
+
+  it('merges saved linux.do login cookies when detecting refreshed clearance', () => {
+    const readCurrentLinuxDoCookiesBlock = appSource.match(/const readCurrentLinuxDoCookies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(readCurrentLinuxDoCookiesBlock).toContain('loadLinuxDoAccess()');
+    expect(readCurrentLinuxDoCookiesBlock).toContain("parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')");
+    expect(readCurrentLinuxDoCookiesBlock).toContain('mergeLinuxDoCookies(');
   });
 
   it('can detect HttpOnly linux.do clearance from the Android WebView cookie store', () => {
@@ -1474,11 +1523,19 @@ describe('Android App experience guards', () => {
     expect(waitBlock).not.toContain('canStoreLinuxDoLogin(cookies)');
   });
 
+  it('returns quickly from the hidden linux.do WebView when manual verification is visible', () => {
+    const scriptBlock = appSource.match(/const LINUXDO_BROWSER_FETCH_SCRIPT = `[\s\S]*?`;/)?.[0] || '';
+
+    expect(scriptBlock).toContain('isInteractiveChallengePage');
+    expect(scriptBlock).toContain('if (isInteractiveChallengePage() || (!isChallengePage() && jsonText()) || Date.now() >= deadline)');
+    expect(scriptBlock).toContain('const challenge = isChallengePage() || isInteractiveChallengePage();');
+  });
+
   it('clears stale linux.do WebView clearance before topic-triggered verification', () => {
-    const clearSavedBlock = appSource.match(/const clearLinuxDoSavedAccessState = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
+    const clearSavedBlock = appSource.match(/const refreshLinuxDoClearanceState = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
 
     expect(appSource).toContain('clearLinuxDoWebViewClearance');
-    expect(clearSavedBlock).toContain('await clearLinuxDoSavedAccess();');
+    expect(clearSavedBlock).toContain('await clearLinuxDoSavedClearance();');
     expect(clearSavedBlock).toContain('await clearLinuxDoWebViewClearance();');
   });
 
