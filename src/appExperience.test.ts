@@ -1144,7 +1144,7 @@ describe('Android App experience guards', () => {
 
   it('does not let a stale linux.do topic verification reopen after manual close', () => {
     const closeBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
-    const cloudflareBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(\(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const cloudflareBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
     const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
 
     expect(appSource).toContain('const linuxDoDismissedVerificationTopicKeyRef = useRef<string | null>(null);');
@@ -1201,7 +1201,7 @@ describe('Android App experience guards', () => {
     expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
     expect(changeScreenBlock).toContain("if (nextScreen !== 'topic')");
     expect(changeScreenBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
-    expect(cloudflareBlock).toContain('handleLinuxDoCloudflareForTopic(topic, message);');
+    expect(cloudflareBlock).toContain('await handleLinuxDoCloudflareForTopic(topic, message);');
     expect(cloudflareBlock).toContain('return;');
   });
 
@@ -1279,7 +1279,7 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps linux.do verified retry failures from remounting the verification WebView', () => {
-    const retryBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(\(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const retryBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
     const verifiedRetryBlock = retryBlock.match(/if \(linuxDoVerifiedRetryTopicKeyRef\.current === requestTopicKey\) \{([\s\S]*?)\n    \}/)?.[1] || '';
 
     expect(retryBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
@@ -1292,8 +1292,8 @@ describe('Android App experience guards', () => {
     const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(refreshRepliesBlock).toContain('handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
-    expect(loadMoreRepliesBlock).toContain('handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
+    expect(refreshRepliesBlock).toContain('await handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
+    expect(loadMoreRepliesBlock).toContain('await handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
     expect(refreshRepliesBlock).not.toContain('showLinuxDoVerification(errorMessage(error))');
     expect(loadMoreRepliesBlock).not.toContain('showLinuxDoVerification(errorMessage(error))');
   });
@@ -1394,10 +1394,42 @@ describe('Android App experience guards', () => {
 
   it('resets linux.do verified state when status detection finds no cookie', () => {
     const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!cookieHeader\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader\) \{([\s\S]*?)\n      \}/)?.[1] || '';
 
     expect(noCookieBlock).toContain('setHasLinuxDoClearance(false);');
     expect(noCookieBlock).toContain('setHasLinuxDoLogin(false);');
+  });
+
+  it('cancels the pending linux.do topic return when verification detection fails', () => {
+    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader\) \{([\s\S]*?)\n      \}/)?.[1] || '';
+    const catchBlock = checkLinuxDoCookieBlock.match(/catch \(error\) \{([\s\S]*?)\n    \} finally/)?.[1] || '';
+
+    expect(noCookieBlock).toContain('const pendingTopic = pendingLinuxDoTopicRef.current;');
+    expect(noCookieBlock).toContain('linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);');
+    expect(noCookieBlock).toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(noCookieBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
+    expect(catchBlock).toContain('pendingLinuxDoTopicRef.current = null;');
+    expect(catchBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = null;');
+  });
+
+  it('requires linux.do cf_clearance before saving verification state', () => {
+    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('canStoreLinuxDoAccess');
+    expect(checkLinuxDoCookieBlock).toContain('!canStoreLinuxDoAccess(cookies)');
+    expect(checkLinuxDoCookieBlock).toContain('没有检测到 linux.do 验证信息。请完成验证后再试。');
+    expect(checkLinuxDoCookieBlock).not.toContain('if (!cookieHeader) {');
+  });
+
+  it('clears saved linux.do access before topic-triggered verification', () => {
+    const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const verifyFromTopicBlock = appSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('clearLinuxDoSavedAccess');
+    expect(appSource).toContain('const clearLinuxDoSavedAccessState = useCallback');
+    expect(cloudflareHandlerBlock).toContain('await clearLinuxDoSavedAccessState();');
+    expect(verifyFromTopicBlock).toContain('await clearLinuxDoSavedAccessState();');
   });
 
   it('reuses the linux.do verification WebView user agent for local requests', () => {
@@ -1431,11 +1463,23 @@ describe('Android App experience guards', () => {
   });
 
   it('waits briefly for linux.do clearance after Cloudflare verification finishes', () => {
+    const waitBlock = appSource.match(/const waitForLinuxDoClearance = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
     expect(appSource).toContain('LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS');
     expect(appSource).toContain('LINUXDO_CLEARANCE_DETECT_INTERVAL_MS');
     expect(appSource).toContain('const waitForLinuxDoClearance');
     expect(appSource).toContain('while (Date.now() < deadline)');
     expect(appSource).toContain('await new Promise((resolve) => setTimeout(resolve, LINUXDO_CLEARANCE_DETECT_INTERVAL_MS));');
+    expect(waitBlock).toContain('canStoreLinuxDoClearance(cookies)');
+    expect(waitBlock).not.toContain('canStoreLinuxDoLogin(cookies)');
+  });
+
+  it('clears stale linux.do WebView clearance before topic-triggered verification', () => {
+    const clearSavedBlock = appSource.match(/const clearLinuxDoSavedAccessState = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
+
+    expect(appSource).toContain('clearLinuxDoWebViewClearance');
+    expect(clearSavedBlock).toContain('await clearLinuxDoSavedAccess();');
+    expect(clearSavedBlock).toContain('await clearLinuxDoWebViewClearance();');
   });
 
   it('keeps the native linux.do cookie reader in a tracked Expo plugin', () => {
@@ -1444,6 +1488,18 @@ describe('Android App experience guards', () => {
     expect(linuxDoCookiePluginSource).toContain('android.webkit.CookieManager');
     expect(linuxDoCookiePluginSource).toContain('CookieManager.getInstance()');
     expect(linuxDoCookiePluginSource).toContain('cookieManager.getCookie(url)');
+    expect(linuxDoCookiePluginSource).toContain('fun clearLinuxDoClearanceCookies(promise: Promise)');
+    expect(linuxDoCookiePluginSource).toContain('database.delete(');
+    expect(linuxDoCookiePluginSource).toContain('arrayOf("cf_clearance")');
+  });
+
+  it('merges native linux.do cookies from CookieManager and WebView database', () => {
+    const readHeaderBlock = linuxDoCookiePluginSource.match(/private fun readLinuxDoCookieHeader\(\): String\? \{([\s\S]*?)\n  \}/)?.[1] || '';
+
+    expect(linuxDoCookiePluginSource).toContain('private fun mergeCookieHeaders');
+    expect(readHeaderBlock).toContain('val cookieHeaders = mutableListOf<String>()');
+    expect(readHeaderBlock).toContain('mergeCookieHeaders(cookieHeaders)');
+    expect(readHeaderBlock).not.toContain('return cookieManagerValue');
   });
 
   it('does not reuse stale linux.do WebView cookies after reset or clear', () => {

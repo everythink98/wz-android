@@ -62,10 +62,11 @@ export function isInlineForumImage(attributes: Record<string, string | undefined
 export function inlineForumImageDisplaySize(attributes: Record<string, string | undefined>, scale = 1) {
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
-  const fallbackSize = isForumStickerImageAttributes(attributes) ? 64 : 20;
+  const isSticker = isForumStickerImageAttributes(attributes);
+  const fallbackSize = isSticker ? 24 : 20;
   let displayWidth = width || height || fallbackSize;
   let displayHeight = height || width || fallbackSize;
-  const maxSize = 64;
+  const maxSize = isInlineForumImageAttributes(attributes) ? 24 : 64;
   const minSize = 12;
   const maxDimension = Math.max(displayWidth, displayHeight);
   if (maxDimension > maxSize) {
@@ -401,8 +402,10 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const urlMarksAvatar = /(^|\/)user_avatar\//i.test(src);
   const titleMarksEmoji = isForumEmojiLabel(title);
   const altMarksEmoji = isForumEmojiLabel(alt);
+  const labelMarksSticker = isForumStickerImageAttributes(attributes);
   const hasEmojiMarker = classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
-  return (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
+  return labelMarksSticker
+    || (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
     || ((classMarksAvatar || urlMarksAvatar) && hasSmallSize);
 }
 

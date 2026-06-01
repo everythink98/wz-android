@@ -50,6 +50,15 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   }
 
   @ReactMethod
+  fun clearLinuxDoClearanceCookies(promise: Promise) {
+    try {
+      promise.resolve(clearLinuxDoClearanceCookies())
+    } catch (_: Exception) {
+      promise.resolve(false)
+    }
+  }
+
+  @ReactMethod
   fun getNodeSeekCookieHeader(promise: Promise) {
     try {
       promise.resolve(readNodeSeekCookieHeader())
@@ -59,9 +68,10 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   }
 
   private fun readLinuxDoCookieHeader(): String? {
+    val cookieHeaders = mutableListOf<String>()
     val cookieManagerValue = readLinuxDoCookieHeaderFromCookieManager()
     if (!cookieManagerValue.isNullOrBlank()) {
-      return cookieManagerValue
+      cookieHeaders.add(cookieManagerValue)
     }
 
     val dataDir = File(reactContext.applicationInfo.dataDir)
@@ -72,10 +82,10 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     for (candidate in candidates) {
       val value = readLinuxDoCookieHeaderFrom(candidate)
       if (!value.isNullOrBlank()) {
-        return value
+        cookieHeaders.add(value)
       }
     }
-    return null
+    return mergeCookieHeaders(cookieHeaders)
   }
 
   private fun readLinuxDoCookieHeaderFromCookieManager(): String? {
@@ -166,6 +176,38 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     }
   }
 
+  private fun clearLinuxDoClearanceCookies(): Boolean {
+    val dataDir = File(reactContext.applicationInfo.dataDir)
+    val candidates = listOf(
+      File(dataDir, "app_webview/Default/Cookies"),
+      File(dataDir, "app_webview/Cookies")
+    )
+    var cleared = false
+    for (candidate in candidates) {
+      cleared = clearLinuxDoClearanceFrom(candidate) || cleared
+    }
+    return cleared
+  }
+
+  private fun clearLinuxDoClearanceFrom(cookieDb: File): Boolean {
+    if (!cookieDb.exists()) {
+      return false
+    }
+    var database: SQLiteDatabase? = null
+    return try {
+      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+      database.delete(
+        "cookies",
+        "name = ? AND (host_key = 'linux.do' OR host_key = '.linux.do' OR host_key LIKE '%.linux.do')",
+        arrayOf("cf_clearance")
+      ) > 0
+    } catch (_: Exception) {
+      false
+    } finally {
+      database?.close()
+    }
+  }
+
   private fun clearanceFromCookieHeader(cookieHeader: String?): String? {
     for (part in cookieHeader.orEmpty().split(";")) {
       val clean = part.trim()
@@ -174,6 +216,27 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       }
     }
     return null
+  }
+
+  private fun mergeCookieHeaders(cookieHeaders: List<String>): String? {
+    val wantedNames = setOf("cf_clearance", "_t", "_forum_session")
+    val parts = mutableListOf<String>()
+    val seen = mutableSetOf<String>()
+    for (cookieHeader in cookieHeaders) {
+      for (part in cookieHeader.split(";")) {
+        val clean = part.trim()
+        val separator = clean.indexOf("=")
+        if (separator <= 0) {
+          continue
+        }
+        val name = clean.substring(0, separator).trim()
+        val value = clean.substring(separator + 1).trim()
+        if (wantedNames.contains(name) && value.isNotBlank() && seen.add(name)) {
+          parts.add("$name=$value")
+        }
+      }
+    }
+    return parts.joinToString("; ").takeIf { it.isNotBlank() }
   }
 
   private fun readLinuxDoCookieHeaderFrom(cookieDb: File): String? {

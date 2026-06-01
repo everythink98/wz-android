@@ -170,11 +170,41 @@ describe('Android HTML image preview helpers', () => {
     expect(extractImageUrlsFromHtml(html)).toEqual([]);
   });
 
+  it('keeps NodeSeek xhj stickers inline even when the source declares large dimensions', () => {
+    const html = '<p>rt<br>有什么特别之处吗 <img alt="xhj032" title="xhj032" width="120" height="99" src="https://www.nodeseek.com/static/image/smiley/xhj032.png"><br><img alt="photo" src="https://www.nodeseek.com/api/attachments/123"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image alt="xhj032"');
+    expect(result).not.toContain('<img alt="xhj032"');
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://www.nodeseek.com/api/attachments/123']);
+  });
+
   it('uses a readable inline size for xhj sticker images without explicit dimensions', () => {
     expect(inlineForumImageDisplaySize({
       alt: 'xhj032',
       src: 'https://cdn.example.com/xhj032.png'
-    })).toEqual({ width: 64, height: 64 });
+    })).toEqual({ width: 24, height: 24 });
+  });
+
+  it('caps NodeSeek xhj stickers near text size when source dimensions are large', () => {
+    expect(inlineForumImageDisplaySize({
+      alt: 'xhj032',
+      title: 'xhj032',
+      src: 'https://cdn.example.com/xhj032.png',
+      width: '120',
+      height: '99'
+    })).toEqual({ width: 24, height: 20 });
+  });
+
+  it('caps generic forum emoji near text size when source dimensions are large', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'emoji',
+      alt: ':party:',
+      title: ':party:',
+      src: 'https://cdn.example.com/emoji/party.png',
+      width: '64',
+      height: '64'
+    })).toEqual({ width: 24, height: 24 });
   });
 
   it('does not turn lightbox gallery images into inline emoji-sized images', () => {

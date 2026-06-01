@@ -22,6 +22,7 @@ export interface LinuxDoAccess {
 type LinuxDoCookieModule = {
   getClearance?: () => Promise<string | null>;
   getLinuxDoCookieHeader?: () => Promise<string | null>;
+  clearLinuxDoClearanceCookies?: () => Promise<boolean>;
 };
 type LinuxDoCookieStoreReader = () => Promise<Record<string, LinuxDoNativeCookie>>;
 
@@ -75,6 +76,10 @@ export function mergeLinuxDoCookies(...maps: Array<Record<string, LinuxDoNativeC
 export function canStoreLinuxDoClearance(cookies: Record<string, LinuxDoNativeCookie>) {
   const cookie = cookies.cf_clearance;
   return Boolean(cookie?.value && isLinuxDoDomain(cookie.domain));
+}
+
+export function canStoreLinuxDoAccess(cookies: Record<string, LinuxDoNativeCookie>) {
+  return canStoreLinuxDoClearance(cookies);
 }
 
 export function canStoreLinuxDoLogin(cookies: Record<string, LinuxDoNativeCookie>) {
@@ -263,6 +268,19 @@ export async function clearLinuxDoAccess() {
     LINUXDO_LOGIN_COOKIE_NAMES.map((name) => CookieManager.clearByName(url, name).catch(() => false))
   )));
   return loadLinuxDoAccess();
+}
+
+export async function clearLinuxDoSavedAccess() {
+  await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+}
+
+export async function clearLinuxDoWebViewClearance() {
+  await Promise.all(LINUXDO_COOKIE_URLS.map((url) => CookieManager.clearByName(url, 'cf_clearance').catch(() => false)));
+  const module = await linuxDoAndroidCookieModule();
+  if (module?.clearLinuxDoClearanceCookies) {
+    await module.clearLinuxDoClearanceCookies().catch(() => false);
+  }
+  await CookieManager.flush().catch(() => undefined);
 }
 
 export function linuxDoAccessSummary(access: LinuxDoAccess | null) {

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import CookieManager from '@react-native-cookies/cookies';
+import * as SecureStore from 'expo-secure-store';
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
@@ -22,8 +24,11 @@ vi.mock('react-native', () => ({
 
 import {
   buildLinuxDoCookieHeader,
+  canStoreLinuxDoAccess,
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
+  clearLinuxDoWebViewClearance,
+  clearLinuxDoSavedAccess,
   isCloudflareChallengeResponse,
   linuxDoClearanceCookieFromValue,
   linuxDoCookieModuleFromReactNativeImport,
@@ -60,6 +65,14 @@ describe('linux.do Cloudflare helpers', () => {
     });
     expect(JSON.stringify(summarizeLinuxDoCookies(cookies))).not.toContain('secret');
     expect(JSON.stringify(cookies)).not.toContain('skip-me');
+  });
+
+  it('requires cf_clearance before storing linux.do access for topic retries', () => {
+    const cookies = parseLinuxDoDocumentCookie('_t=login; _forum_session=session');
+
+    expect(canStoreLinuxDoLogin(cookies)).toBe(true);
+    expect(canStoreLinuxDoClearance(cookies)).toBe(false);
+    expect(canStoreLinuxDoAccess(cookies)).toBe(false);
   });
 
   it('rejects cf_clearance cookies from other domains', () => {
@@ -116,6 +129,25 @@ describe('linux.do Cloudflare helpers', () => {
 
     expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=native-secret; _t=login; _forum_session=session');
     expect(readCookieManagerStore).toHaveBeenCalled();
+  });
+
+  it('can clear only the saved linux.do access state', async () => {
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+
+    await clearLinuxDoSavedAccess();
+
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+  });
+
+  it('can clear stale WebView linux.do clearance without clearing login cookies', async () => {
+    vi.mocked(CookieManager.clearByName).mockClear();
+
+    await clearLinuxDoWebViewClearance();
+
+    expect(CookieManager.clearByName).toHaveBeenCalledWith('https://linux.do/latest', 'cf_clearance');
+    expect(CookieManager.clearByName).toHaveBeenCalledWith('https://www.linux.do/latest', 'cf_clearance');
+    expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_t');
+    expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_forum_session');
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

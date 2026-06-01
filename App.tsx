@@ -116,9 +116,12 @@ import { checkLinuxDoLoginAccess, runLinuxDoAction } from './src/linuxdoActionCl
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   buildLinuxDoCookieHeader,
+  canStoreLinuxDoAccess,
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
   clearLinuxDoAccess,
+  clearLinuxDoSavedAccess,
+  clearLinuxDoWebViewClearance,
   linuxDoAccessSummary,
   loadLinuxDoAccess,
   mergeLinuxDoCookies,
@@ -1535,6 +1538,16 @@ export default function App() {
     notify(message);
   }, [changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
+  const clearLinuxDoSavedAccessState = useCallback(async () => {
+    await clearLinuxDoSavedAccess();
+    await clearLinuxDoWebViewClearance();
+    linuxDoWebViewCookieHeaderRef.current = '';
+    setLinuxDoWebViewCookieHeader('');
+    setHasLinuxDoClearance(false);
+    setHasLinuxDoLogin(false);
+    setLinuxDoCookieNames([]);
+  }, []);
+
   const nextLinuxDoWebViewSession = useCallback(() => {
     const nextSession = linuxDoWebViewSessionRef.current + 1;
     linuxDoWebViewSessionRef.current = nextSession;
@@ -1704,7 +1717,7 @@ export default function App() {
     notify(message);
   }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
-  const handleLinuxDoCloudflareForTopic = useCallback((topic: Topic, message: string) => {
+  const handleLinuxDoCloudflareForTopic = useCallback(async (topic: Topic, message: string) => {
     const requestTopicKey = topicKey(topic);
     if (linuxDoDismissedVerificationTopicKeyRef.current === requestTopicKey) {
       pendingLinuxDoTopicRef.current = null;
@@ -1725,11 +1738,12 @@ export default function App() {
       notify(message);
       return true;
     }
+    await clearLinuxDoSavedAccessState();
     pendingLinuxDoTopicRef.current = topic;
     setLinuxDoCookieNames([]);
     showLinuxDoVerification(message);
     return true;
-  }, [notify, showLinuxDoVerification]);
+  }, [clearLinuxDoSavedAccessState, notify, showLinuxDoVerification]);
 
   const clearStoredYaohuoLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
@@ -2485,7 +2499,7 @@ export default function App() {
         const message = errorMessage(error);
         setTopicError(message);
         if (isLinuxDoCloudflareError(error)) {
-          handleLinuxDoCloudflareForTopic(topic, message);
+          await handleLinuxDoCloudflareForTopic(topic, message);
           return;
         }
         if (isNodeSeekCloudflareError(error)) {
@@ -2611,7 +2625,7 @@ export default function App() {
           return false;
         }
         if (isLinuxDoCloudflareError(error)) {
-          handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
+          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
           return false;
         }
         if (isNodeSeekCloudflareError(error)) {
@@ -2696,7 +2710,7 @@ export default function App() {
           return;
         }
         if (isLinuxDoCloudflareError(error)) {
-          handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
+          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
           return;
         }
         if (isNodeSeekCloudflareError(error)) {
@@ -2746,15 +2760,16 @@ export default function App() {
     }
   }, [notify, selectedTopic, topicDetail]);
 
-  const verifyLinuxDoFromTopic = useCallback(() => {
+  const verifyLinuxDoFromTopic = useCallback(async () => {
     linuxDoVerifiedRetryTopicKeyRef.current = null;
     linuxDoDismissedVerificationTopicKeyRef.current = null;
+    await clearLinuxDoSavedAccessState();
     const detail = topicDetail || selectedTopic;
     if (detail?.source === 'linuxdo') {
       pendingLinuxDoTopicRef.current = detail;
     }
     showLinuxDoVerification();
-  }, [selectedTopic, showLinuxDoVerification, topicDetail]);
+  }, [clearLinuxDoSavedAccessState, selectedTopic, showLinuxDoVerification, topicDetail]);
 
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
@@ -3305,7 +3320,7 @@ export default function App() {
     const deadline = Date.now() + LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS;
     let cookies = await readCurrentLinuxDoCookies();
     while (Date.now() < deadline) {
-      if (canStoreLinuxDoClearance(cookies) || canStoreLinuxDoLogin(cookies)) {
+      if (canStoreLinuxDoClearance(cookies)) {
         return cookies;
       }
       await new Promise((resolve) => setTimeout(resolve, LINUXDO_CLEARANCE_DETECT_INTERVAL_MS));
@@ -3339,11 +3354,17 @@ export default function App() {
       const summary = summarizeLinuxDoCookies(cookies);
       const cookieHeader = buildLinuxDoCookieHeader(cookies);
       setLinuxDoCookieNames(summary.names);
-      if (!cookieHeader) {
+      if (!canStoreLinuxDoAccess(cookies) || !cookieHeader) {
+        const pendingTopic = pendingLinuxDoTopicRef.current;
+        if (pendingTopic) {
+          linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);
+        }
+        pendingLinuxDoTopicRef.current = null;
+        linuxDoPendingReopenTopicAfterCloseRef.current = null;
         setHasLinuxDoClearance(false);
         setHasLinuxDoLogin(false);
         linuxDoPendingTopicVerifiedRef.current = false;
-        notify('没有检测到 linux.do 登录或验证信息；匿名阅读仍可使用。');
+        notify('没有检测到 linux.do 验证信息。请完成验证后再试。');
         return;
       }
       await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
@@ -3360,6 +3381,12 @@ export default function App() {
       }
     } catch (error) {
       if (isCurrentLinuxDoCheck()) {
+        const pendingTopic = pendingLinuxDoTopicRef.current;
+        if (pendingTopic) {
+          linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);
+        }
+        pendingLinuxDoTopicRef.current = null;
+        linuxDoPendingReopenTopicAfterCloseRef.current = null;
         linuxDoPendingTopicVerifiedRef.current = false;
         notify(errorMessage(error));
       }
