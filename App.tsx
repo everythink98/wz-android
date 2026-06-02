@@ -189,6 +189,7 @@ import {
 } from './src/yaohuoApi';
 import type { Fetcher } from './src/request';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from './src/linuxdoFetchFallback';
+import { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from './src/linuxdoLevel';
 import { filterRepliesByQuery, REPLY_PAGE_SIZE, replyRefreshTarget } from './src/androidFeatureHelpers';
 import { safeFileName } from './src/backupFiles';
 import { buildLocalStatusResult } from './src/statusLogic';
@@ -620,6 +621,7 @@ export default function App() {
   const linuxDoBrowserFetchCurrentRef = useRef<PendingLinuxDoBrowserFetchRequest | null>(null);
   const linuxDoBrowserFetchQueueRef = useRef<PendingLinuxDoBrowserFetchRequest[]>([]);
   const rejectLinuxDoBrowserFetchRef = useRef<((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null>(null);
+  const linuxDoLevelRequestIdRef = useRef(0);
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
@@ -630,6 +632,9 @@ export default function App() {
   const [linuxDoWebViewKey, setLinuxDoWebViewKey] = useState(0);
   const [linuxDoWebViewUserAgent, setLinuxDoWebViewUserAgent] = useState(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const [linuxDoWebViewCookieHeader, setLinuxDoWebViewCookieHeader] = useState('');
+  const [linuxDoLevelProfile, setLinuxDoLevelProfile] = useState<LinuxDoLevelProfile | null>(null);
+  const [linuxDoLevelBusy, setLinuxDoLevelBusy] = useState(false);
+  const [linuxDoLevelError, setLinuxDoLevelError] = useState('');
   const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
   const [checking, setChecking] = useState(false);
   const [feedBusy, setFeedBusy] = useState(false);
@@ -654,6 +659,14 @@ export default function App() {
   const [backupJson, setBackupJson] = useState('');
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
   const [readerDataLoaded, setReaderDataLoaded] = useState(false);
+
+  const resetLinuxDoLevelState = useCallback(() => {
+    linuxDoLevelRequestIdRef.current += 1;
+    setLinuxDoLevelProfile(null);
+    setLinuxDoLevelError('');
+    setLinuxDoLevelBusy(false);
+  }, []);
+
   const readerDataRef = useRef<ReaderData>(readerData);
   const readerDataStateRef = useRef<ReaderData>(readerData);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
@@ -1777,7 +1790,8 @@ export default function App() {
     setHasLinuxDoClearance(summary.hasClearance);
     setHasLinuxDoLogin(summary.loggedIn);
     setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names);
-  }, []);
+    resetLinuxDoLevelState();
+  }, [resetLinuxDoLevelState]);
 
   const rememberLinuxDoClearanceBeforeVerify = useCallback(async () => {
     const [savedAccess, webViewCookies] = await Promise.all([
@@ -3629,6 +3643,7 @@ export default function App() {
       if (!canStoreLinuxDoAccess(cookies) || !cookieHeader || !canAcceptLinuxDoAccessUpdate(cookies, linuxDoClearanceBeforeVerifyRef.current, linuxDoRequireFreshClearanceRef.current)) {
         setHasLinuxDoClearance(false);
         setHasLinuxDoLogin(summary.loggedIn);
+        resetLinuxDoLevelState();
         linuxDoPendingTopicVerifiedRef.current = false;
         notify('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
         return;
@@ -3637,6 +3652,7 @@ export default function App() {
       if (!isCurrentLinuxDoCheck()) {
         return;
       }
+      resetLinuxDoLevelState();
       setHasLinuxDoClearance(true);
       setHasLinuxDoLogin(summary.loggedIn);
       setLinuxDoWebViewError('');
@@ -3657,7 +3673,7 @@ export default function App() {
         setChecking(false);
       }
     }
-  }, [closeLinuxDoPanel, linuxDoWebViewUserAgent, notify, waitForLinuxDoClearance]);
+  }, [closeLinuxDoPanel, linuxDoWebViewUserAgent, notify, resetLinuxDoLevelState, waitForLinuxDoClearance]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();
@@ -3676,9 +3692,43 @@ export default function App() {
     setHasLinuxDoClearance(summary.hasClearance);
     setHasLinuxDoLogin(summary.loggedIn);
     setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names);
+    resetLinuxDoLevelState();
     resetLinuxDoWebView();
     notify(summary.hasClearance ? '已清除 linux.do 登录信息，保留访问验证。' : '已清除本机保存的 linux.do 登录信息。');
-  }, [notify, resetLinuxDoWebView]);
+  }, [notify, resetLinuxDoLevelState, resetLinuxDoWebView]);
+
+  const refreshLinuxDoLevel = useCallback(async () => {
+    const requestId = ++linuxDoLevelRequestIdRef.current;
+    setLinuxDoLevelBusy(true);
+    setLinuxDoLevelError('');
+    try {
+      const access = await loadLinuxDoAccess();
+      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
+        setLinuxDoLevelProfile(null);
+        setLinuxDoLevelError('请先完成 linux.do 登录 / 验证。');
+        return;
+      }
+      const profile = await getLinuxDoLevelProfile({
+        cookieHeader: access.cookieHeader,
+        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
+        fetcher: forumFetchWithWebViewFallback
+      });
+      if (requestId !== linuxDoLevelRequestIdRef.current) {
+        return;
+      }
+      setLinuxDoLevelProfile(profile);
+      notify('linux.do 等级已更新。');
+    } catch (error) {
+      if (requestId !== linuxDoLevelRequestIdRef.current) {
+        return;
+      }
+      setLinuxDoLevelError(errorMessage(error));
+    } finally {
+      if (requestId === linuxDoLevelRequestIdRef.current) {
+        setLinuxDoLevelBusy(false);
+      }
+    }
+  }, [forumFetchWithWebViewFallback, notify]);
 
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
@@ -3841,6 +3891,7 @@ export default function App() {
         setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));
         setHasLinuxDoLogin(false);
         setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names);
+        resetLinuxDoLevelState();
         showLinuxDoLogin(errorMessage(error));
         return false;
       }
@@ -3851,7 +3902,7 @@ export default function App() {
         setActionBusy(false);
       }
     }
-  }, [notify, openTopic, showLinuxDoLogin, topicDetail]);
+  }, [notify, openTopic, resetLinuxDoLevelState, showLinuxDoLogin, topicDetail]);
 
   const submitReply = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -4260,6 +4311,7 @@ export default function App() {
           return;
         }
         access = linuxDoAccessSummary(linuxDoAccess);
+        resetLinuxDoLevelState();
       }
       const result = buildLocalStatusResult({
         sourceChecks: {
@@ -4310,7 +4362,7 @@ export default function App() {
         setStatusBusy(false);
       }
     }
-  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, notify]);
+  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, notify, resetLinuxDoLevelState]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -4546,6 +4598,9 @@ export default function App() {
         linuxDoWebViewError={linuxDoWebViewError}
         linuxDoWebViewKey={linuxDoWebViewKey}
         linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+        linuxDoLevelBusy={linuxDoLevelBusy}
+        linuxDoLevelError={linuxDoLevelError}
+        linuxDoLevelProfile={linuxDoLevelProfile}
         mountLinuxDoWebView={mountLinuxDoWebView}
         nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
         settings={readerData.settings}
@@ -4570,6 +4625,7 @@ export default function App() {
         onRememberNodeSeekCookies={rememberVisibleNodeSeekCookies}
         onCheckYaohuoLogin={checkYaohuoCookie}
         onCheckLinuxDoCookie={checkLinuxDoCookie}
+        onRefreshLinuxDoLevel={refreshLinuxDoLevel}
         onClearLogin={clearLogin}
         onClearYaohuoLogin={clearYaohuoLogin}
         onClearLinuxDoCookie={clearLinuxDoCookie}
@@ -4595,7 +4651,7 @@ export default function App() {
         onUpdateSettings={updateSettings}
       />
     </ScrollView>
-  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, mountLinuxDoWebView, nodeSeekWebViewUserAgent, readerData.settings, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
+  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, mountLinuxDoWebView, nodeSeekWebViewUserAgent, readerData.settings, refreshLinuxDoLevel, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
 
   const renderTopicScreen = useCallback(() => (
     <TopicScreen
