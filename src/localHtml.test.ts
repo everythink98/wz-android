@@ -41,10 +41,12 @@ describe('Android local HTML helpers', () => {
     const result = sanitizeContentHtml(`
       <a href="data:image/png;base64,abc123">image link</a>
       <img src="data:image/png;base64,abc123">
+      <img src="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=">
       <img src="data:text/html,hello">
     `, 'https://example.com/base/');
 
     expect(result).toContain('src="data:image/png;base64,abc123"');
+    expect(result).not.toContain('data:image/svg+xml');
     expect(result).not.toContain('href=');
     expect(result).not.toContain('data:text/html');
   });

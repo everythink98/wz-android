@@ -1,4 +1,4 @@
-import { parseHtml, textContentFromHtml } from './localHtml';
+import { isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 
 export interface ImagePreviewList {
@@ -16,25 +16,29 @@ const IMAGE_REQUEST_HEADER_HOSTS = [
 ];
 
 export function extractImageUrlsFromHtml(html: string): string[] {
+  return extractImagePreviewEntriesFromHtml(html).map((entry) => entry.previewUrl);
+}
+
+function extractImagePreviewEntriesFromHtml(html: string): ImagePreviewEntry[] {
   try {
     const root = parseHtml(html);
     return root.querySelectorAll('img')
       .filter((image) => !isInlineForumImageAttributes(image.attributes))
-      .map((image) => decodeHtmlAttribute(image.getAttribute('src') || '').trim())
-      .filter(Boolean);
+      .map((image) => imagePreviewEntryFromImage(image))
+      .filter((entry): entry is ImagePreviewEntry => Boolean(entry));
   } catch {
-    const urls: string[] = [];
+    const entries: ImagePreviewEntry[] = [];
     const imagePattern = /<img\b([^>]*)>/gi;
     let match = imagePattern.exec(html);
     while (match) {
       const attributes = imageAttributesFromText(match[1] || '');
-      const src = decodeHtmlAttribute(attributes.src || '').trim();
-      if (src && !isInlineForumImageAttributes(attributes)) {
-        urls.push(src);
+      const entry = !isInlineForumImageAttributes(attributes) ? imagePreviewEntryFromAttributes(attributes) : null;
+      if (entry) {
+        entries.push(entry);
       }
       match = imagePattern.exec(html);
     }
-    return urls;
+    return entries;
   }
 }
 
@@ -47,7 +51,7 @@ export function isPreviewableImageUrl(url: unknown): boolean {
     return false;
   }
   if (/^data:image\//i.test(clean)) {
-    return true;
+    return isAllowedDataImageUrl(clean);
   }
   if (/[/?&]api\/image-proxy(?:[/?#&=]|$)/i.test(clean) || /\/api\/image-proxy(?:[?#/]|$)/i.test(clean)) {
     return true;
@@ -57,6 +61,60 @@ export function isPreviewableImageUrl(url: unknown): boolean {
 
 export function isInlineForumImage(attributes: Record<string, string | undefined>) {
   return isInlineForumImageAttributes(attributes);
+}
+
+export function isForumInlineSizedImage(dimensions: { width?: number; height?: number } | null | undefined) {
+  const width = dimensions?.width || 0;
+  const height = dimensions?.height || 0;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return false;
+  }
+  const maxDimension = Math.max(width, height);
+  const minDimension = Math.min(width, height);
+  return maxDimension <= 96 && minDimension <= 64;
+}
+
+export function withForumImageDimensions(
+  attributes: Record<string, string | undefined>,
+  dimensions: { width?: number; height?: number } | null | undefined
+) {
+  const width = dimensions?.width || 0;
+  const height = dimensions?.height || 0;
+  if (!isForumInlineSizedImage(dimensions)) {
+    return attributes;
+  }
+  return {
+    ...attributes,
+    'data-forum-inline-sized': 'true',
+    width: String(Math.round(width)),
+    height: String(Math.round(height))
+  };
+}
+
+export function markInlineSizedImageHtml(html: string, url: string) {
+  const target = normalizeImagePreviewUrl(url);
+  if (!target) {
+    return html;
+  }
+  try {
+    const root = parseHtml(html);
+    let changed = false;
+    root.querySelectorAll('img').forEach((image) => {
+      const src = attributeValue(image.attributes, 'src');
+      if (normalizeImagePreviewUrl(src) !== target) {
+        return;
+      }
+      if (typeof image.setAttribute === 'function') {
+        image.setAttribute('data-forum-inline-sized', 'true');
+      } else {
+        image.attributes['data-forum-inline-sized'] = 'true';
+      }
+      changed = true;
+    });
+    return changed ? root.toString() : html;
+  } catch {
+    return html;
+  }
 }
 
 export function inlineForumImageDisplaySize(attributes: Record<string, string | undefined>, scale = 1) {
@@ -101,6 +159,7 @@ export function inlineForumImageAlignmentStyle(attributes: Record<string, string
 export function flowInlineImagesInMixedParagraphs(html: string) {
   try {
     const root = parseHtml(html);
+    upgradeBlockImageSources(root);
     root.querySelectorAll('p').forEach((paragraph) => {
       flowImagesInMixedContainer(paragraph);
     });
@@ -176,7 +235,7 @@ export function imageSourceFromUrl(url: string, source?: unknown) {
 
 export function dataImageFileFromUrl(url: unknown): { base64: string; extension: string } | null {
   const clean = decodeHtmlAttribute(url).trim();
-  const match = clean.match(/^data:image\/([a-z0-9.+-]+);base64,([\s\S]+)$/i);
+  const match = clean.match(/^data:image\/(png|jpe?g|gif|webp|avif);base64,([\s\S]+)$/i);
   if (!match) {
     return null;
   }
@@ -194,12 +253,104 @@ export function createImagePreviewList({
   htmlParts: string[];
 }): ImagePreviewList {
   const tapped = normalizeImagePreviewUrl(tappedUrl);
+  const entries = htmlParts.flatMap(extractImagePreviewEntriesFromHtml);
+  const tappedEntry = entries.find((entry) => entry.sourceUrls.some((url) => normalizeImagePreviewUrl(url) === tapped));
+  const tappedPreviewUrl = tappedEntry ? normalizeImagePreviewUrl(tappedEntry.previewUrl) : tapped;
   const urls = uniqueStrings([
-    ...htmlParts.flatMap((html) => extractImageUrlsFromHtml(html).map((url) => normalizeImagePreviewUrl(url))),
-    ...(tapped && !isInlineForumImageUrl(tapped) ? [tapped] : [])
+    ...entries.map((entry) => normalizeImagePreviewUrl(entry.previewUrl)),
+    ...(tappedPreviewUrl && !isInlineForumImageUrl(tappedPreviewUrl) ? [tappedPreviewUrl] : [])
   ]);
-  const index = Math.max(0, urls.findIndex((url) => url === tapped));
+  const index = Math.max(0, urls.findIndex((url) => url === tappedPreviewUrl));
   return { urls, index };
+}
+
+type ImagePreviewEntry = {
+  previewUrl: string;
+  sourceUrls: string[];
+};
+
+function imagePreviewEntryFromImage(image: ParsedImageNode): ImagePreviewEntry | null {
+  return imagePreviewEntryFromAttributes(image.attributes, lightboxHrefForImage(image));
+}
+
+function imagePreviewEntryFromAttributes(attributes: Record<string, string | undefined>, linkedUrl = ''): ImagePreviewEntry | null {
+  const sourceUrls = uniqueStrings([
+    linkedUrl,
+    ...srcsetImageUrls(attributeValue(attributes, 'srcset')),
+    attributeValue(attributes, 'data-original'),
+    attributeValue(attributes, 'data-src'),
+    attributeValue(attributes, 'src')
+  ].filter(isAllowedPreviewImageSource));
+  const previewUrl = firstAllowedPreviewImageSource([
+    linkedUrl,
+    bestSrcsetImageUrl(attributeValue(attributes, 'srcset')),
+    attributeValue(attributes, 'data-original'),
+    attributeValue(attributes, 'data-src'),
+    attributeValue(attributes, 'src')
+  ]);
+  return previewUrl ? { previewUrl, sourceUrls } : null;
+}
+
+function isAllowedPreviewImageSource(url: string) {
+  const clean = decodeHtmlAttribute(url).trim();
+  return Boolean(clean)
+    && (isHttpOrHttpsUrl(clean) || clean.startsWith('/') || clean.startsWith('//') || isPreviewableImageUrl(clean))
+    && (!/^data:image\//i.test(clean) || isAllowedDataImageUrl(clean));
+}
+
+function firstAllowedPreviewImageSource(urls: string[]) {
+  return urls.map((url) => decodeHtmlAttribute(url).trim()).find(isAllowedPreviewImageSource) || '';
+}
+
+function splitSrcsetCandidates(srcset: string) {
+  const candidates: string[] = [];
+  let current = '';
+  let dataUrlCommaSeen = false;
+  for (const char of String(srcset || '')) {
+    if (char === ',') {
+      if (current.trim().toLowerCase().startsWith('data:') && !dataUrlCommaSeen) {
+        current += char;
+        dataUrlCommaSeen = true;
+        continue;
+      }
+      candidates.push(current);
+      current = '';
+      dataUrlCommaSeen = false;
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) {
+    candidates.push(current);
+  }
+  return candidates;
+}
+
+function srcsetImageUrls(srcset: string) {
+  return splitSrcsetCandidates(srcset)
+    .map((candidate) => decodeHtmlAttribute(candidate.trim().split(/\s+/)[0] || '').trim())
+    .filter(isAllowedPreviewImageSource);
+}
+
+function bestSrcsetImageUrl(srcset: string) {
+  let bestUrl = '';
+  let bestScore = -1;
+  splitSrcsetCandidates(srcset).forEach((candidate, index) => {
+    const parts = candidate.trim().split(/\s+/);
+    const url = decodeHtmlAttribute(parts.shift() || '').trim();
+    if (!isAllowedPreviewImageSource(url)) {
+      return;
+    }
+    const descriptor = parts[0] || '';
+    const width = descriptor.match(/^(\d+(?:\.\d+)?)w$/i);
+    const density = descriptor.match(/^(\d+(?:\.\d+)?)x$/i);
+    const score = width ? Number(width[1]) : density ? Number(density[1]) * 100 : index;
+    if (score >= bestScore) {
+      bestUrl = url;
+      bestScore = score;
+    }
+  });
+  return bestUrl;
 }
 
 function decodeHtmlAttribute(value: unknown): string {
@@ -259,6 +410,7 @@ type ParsedImageNode = {
   attributes: Record<string, string | undefined>;
   innerHTML?: string;
   set_content?: (content: string) => void;
+  setAttribute?: (name: string, value: string) => void;
   querySelectorAll?: (selector: string) => ParsedImageNode[];
   parentNode?: unknown;
   parent?: unknown;
@@ -347,6 +499,22 @@ function flowImagesInMixedContainer(
   });
 }
 
+function upgradeBlockImageSources(root: { querySelectorAll?: (selector: string) => ParsedImageNode[] }) {
+  root.querySelectorAll?.('img').forEach((image) => {
+    if (isInlineForumImageAttributes(image.attributes)) {
+      return;
+    }
+    const entry = imagePreviewEntryFromImage(image);
+    if (entry?.previewUrl) {
+      if (typeof image.setAttribute === 'function') {
+        image.setAttribute('src', entry.previewUrl);
+      } else {
+        image.attributes.src = entry.previewUrl;
+      }
+    }
+  });
+}
+
 function directChildImages(container: { childNodes?: unknown[] }) {
   return (container.childNodes || []).filter((child): child is ParsedImageNode => (
     safeTagName(child) === 'img'
@@ -374,6 +542,30 @@ function isInsideLightboxImage(image: { parentNode?: unknown; parent?: unknown }
   return false;
 }
 
+function lightboxHrefForImage(image: { parentNode?: unknown; parent?: unknown }) {
+  let current = image.parentNode || image.parent;
+  while (current && typeof current === 'object') {
+    const element = current as {
+      tagName?: string;
+      rawTagName?: string | null;
+      classNames?: string;
+      attributes?: Record<string, string | undefined>;
+      parentNode?: unknown;
+      parent?: unknown;
+    };
+    const tagName = safeTagName(element);
+    const className = String(element.classNames || element.attributes?.class || '');
+    if (tagName === 'a' && /(^|\s)lightbox(\s|$)/i.test(className)) {
+      return attributeValue(element.attributes || {}, 'href');
+    }
+    if (/(^|\s)lightbox-wrapper(\s|$)/i.test(className)) {
+      return '';
+    }
+    current = element.parentNode || element.parent;
+  }
+  return '';
+}
+
 function safeTagName(value: unknown) {
   if (!value || typeof value !== 'object') {
     return '';
@@ -395,16 +587,20 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
+  const hasInlineSizedDimensions = isForumInlineSizedImage({ width, height });
   const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
   const classMarksSticker = /(^|\s)sticker(\s|$)/i.test(className);
   const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
+  const runtimeMarksInlineSized = /^true$/i.test(attributeValue(attributes, 'data-forum-inline-sized'));
   const urlMarksEmoji = isInlineForumImageUrl(src);
   const urlMarksAvatar = /(^|\/)user_avatar\//i.test(src);
   const titleMarksEmoji = isForumEmojiLabel(title);
   const altMarksEmoji = isForumEmojiLabel(alt);
   const labelMarksSticker = isForumStickerImageAttributes(attributes);
   const hasEmojiMarker = classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
-  return labelMarksSticker
+  return runtimeMarksInlineSized
+    || hasInlineSizedDimensions
+    || labelMarksSticker
     || (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
     || ((classMarksAvatar || urlMarksAvatar) && hasSmallSize);
 }
@@ -434,7 +630,7 @@ function isForumAvatarImageAttributes(attributes: Record<string, string | undefi
 }
 
 function isInlineForumImageUrl(url: string) {
-  const markers = new Set(['emoji', 'emojis', 'emoticon', 'emoticons', 'smiley', 'smilies', 'twemoji']);
+  const markers = new Set(['emoji', 'emojis', 'emoticon', 'emoticons', 'emotion', 'emotions', 'face', 'faces', 'smiley', 'smilies', 'twemoji']);
   try {
     const parsed = new URL(url);
     if (parsed.hostname.toLowerCase().includes('twemoji')) {

@@ -18,7 +18,7 @@ describe('Android App performance guards', () => {
 
   it('loads combined feed and grouped search without the project server', () => {
     expect(appSource).toContain('Promise.allSettled');
-    expect(appSource).toContain('mergeSettledFeedResponses');
+    expect(appSource).toContain('const applyFeedResponse = (data: FeedResponse) => {');
     expect(appSource).toContain('activeSources.map');
     expect(appSource).toContain('setSearchGroups');
     expect(appSource).toContain('onRetrySearchSource');

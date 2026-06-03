@@ -70,15 +70,27 @@ describe('Android App experience guards', () => {
   it('uses browser-like headers for Android reader images and image preview', () => {
     expect(appSource).toContain('imageSourceFromUrl(src, imageProps.source)');
     expect(appSource).toContain('imageRequestHeadersForUrl(uri)');
-    expect(imagePreviewModalSource).toContain('imageSourceFromUrl(uri)');
+    expect(imagePreviewModalSource).toContain('imageSourceFromUrl(activeUri)');
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(url)');
   });
 
   it('shows the main image preview from the original asset on Android', () => {
-    const previewImageBlock = imagePreviewModalSource.match(/<Image[\s\S]*?source=\{imageSourceFromUrl\(uri\)\}[\s\S]*?\/>/)?.[0] || '';
+    const previewImageBlock = imagePreviewModalSource.match(/<Image[\s\S]*?source=\{imageSourceFromUrl\(activeUri\)\}[\s\S]*?\/>/)?.[0] || '';
 
     expect(previewImageBlock).toContain('resizeMethod="none"');
     expect(previewImageBlock).toContain('resizeMode="contain"');
+  });
+
+  it('lets Android image preview zoom the fitted original image instead of a screen-sized bitmap', () => {
+    const previewImageBlock = imagePreviewModalSource.match(/<Image[\s\S]*?source=\{imageSourceFromUrl\(activeUri\)\}[\s\S]*?\/>/)?.[0] || '';
+
+    expect(imagePreviewModalSource).toContain("import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';");
+    expect(imagePreviewModalSource).toContain('Image.getSizeWithHeaders');
+    expect(imagePreviewModalSource).toContain('<ResumableZoom');
+    expect(imagePreviewModalSource).toContain('maxScale={imagePreviewMaxScale}');
+    expect(previewImageBlock).toContain('style={[styles.imagePreviewImage, imagePreviewSize]}');
+    expect(previewImageBlock).not.toContain('{ width, height }');
+    expect(imagePreviewModalSource).not.toContain('<Gallery');
   });
 
   it('shows Android feed rows as unified forum topics instead of source-first reader entries', () => {
@@ -227,13 +239,18 @@ describe('Android App experience guards', () => {
   it('ignores stale Android backup and restore operations after a newer backup action starts', () => {
     const importBlock = appSource.match(/const importBackup = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[backupJson/)?.[1] || '';
     const exportBlock = appSource.match(/const exportBackup = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify\]\);/)?.[1] || '';
-    const exportFileBlock = appSource.match(/const exportBackupFile = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify, shareTextFile\]\);/)?.[1] || '';
-    const importFileBlock = appSource.match(/const importBackupFile = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify, replaceReaderData\]\);/)?.[1] || '';
+    const exportFileBlock = appSource.match(/const exportBackupFile = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const importFileBlock = appSource.match(/const importBackupFile = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
 
     expect(appSource).toContain('const backupRequestIdRef = useRef(0);');
     for (const block of [importBlock, exportBlock, exportFileBlock, importFileBlock]) {
       expect(block).toContain('const requestId = ++backupRequestIdRef.current;');
       expect(block).toContain('requestId !== backupRequestIdRef.current');
+    }
+    for (const block of [exportFileBlock, importFileBlock]) {
+      expect(block).toContain('if (backupBusy) {');
+      expect(block).toContain('setBackupBusy(true);');
+      expect(block).toContain('setBackupBusy(false);');
     }
   });
 
@@ -276,6 +293,7 @@ describe('Android App experience guards', () => {
       expect(block).toContain('options.isCurrent?.() === false');
       expect(block).toContain('isCanceledRequest(error)');
     }
+    expect(runNodeSeekBlock).toContain('userAgent: nodeSeekWebViewUserAgentRef.current');
   });
 
   it('clears search loading when search parameters cancel the active request', () => {
@@ -290,7 +308,7 @@ describe('Android App experience guards', () => {
     const block = appSource.match(/const loadFeed = useCallback\(async \(\{([\s\S]*?)\n  \}, \[categoryFilter/)?.[1] || '';
     const guardIndex = block.indexOf('if (feedLoadingRef.current && !reset)');
     const markIndex = block.indexOf('feedLoadingRef.current = true;');
-    const cookieIndex = block.indexOf('await loadYaohuoCookieForSource(source)');
+    const cookieIndex = block.indexOf('loadYaohuoCookieForSource(source)');
 
     expect(guardIndex).toBeGreaterThan(-1);
     expect(markIndex).toBeGreaterThan(-1);
@@ -307,7 +325,7 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('type FeedSourceState = {');
     expect(appSource).toContain('const [feedStates, setFeedStates]');
     expect(appSource).toContain('[requestSource]: {');
-    expect(appSource).toContain('const nextPageState = nextFeedPageState(previous, data, {');
+    expect(appSource).toContain('const nextPageState = nextFeedPageState(previous,');
     expect(appSource).toContain('...nextPageState');
   });
 
@@ -514,6 +532,16 @@ describe('Android App experience guards', () => {
     expect(runSearchBlock).toContain('searchGroupsRef.current = nextGroups;');
   });
 
+  it('updates all-source search groups as each source finishes', () => {
+    const runSearchBlock = appSource.match(/const runSearch = useCallback\(async \(sourceOverride\?: Source\) => \{([\s\S]*?)\n  \}, \[addRecentSearch/)?.[1] || '';
+
+    expect(runSearchBlock).toContain('activeSources.map(async (source) => {');
+    expect(runSearchBlock).toContain('const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort);');
+    expect(runSearchBlock).toContain('currentGroup.source === source ? { ...group, loading: false } : currentGroup');
+    expect(runSearchBlock).toContain('setSearchItems(nextItems);');
+    expect(runSearchBlock).not.toContain('const groups = await Promise.all(activeSources.map((source) => runRemoteSearchSource');
+  });
+
   it('clears stale search load-more flags when another source starts loading more', () => {
     const loadMoreSearchBlock = appSource.match(/const loadMoreSearchSource = useCallback\(async \(source: Source, page: number\) => \{([\s\S]*?)\n  \}, \[notify/)?.[1] || '';
 
@@ -594,11 +622,40 @@ describe('Android App experience guards', () => {
   });
 
   it('removes the picked backup cache copy after importing it', () => {
-    const block = appSource.match(/const importBackupFile = useCallback\(async \(\) => \{[\s\S]*?\n  }, \[notify, replaceReaderData\]\);/)?.[0] || '';
+    const block = appSource.match(/const importBackupFile = useCallback\(async \(\) => \{[\s\S]*?\n  }, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(block).toContain('const pickedUri = result.assets[0].uri;');
     expect(block).toContain('pickedUri.startsWith(FileSystem.cacheDirectory)');
     expect(block).toContain('await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);');
+  });
+
+  it('confirms before clearing all Android history records', () => {
+    expect(libraryScreenSource).toContain('const confirmClearHistory = useCallback');
+    expect(libraryScreenSource).toContain("Alert.alert('清空历史？'");
+    expect(libraryScreenSource).toContain("onPress: onClearHistory");
+    expect(libraryScreenSource).toContain('onPress={confirmClearHistory}');
+  });
+
+  it('refreshes memoized topic cards when displayed topic fields change', () => {
+    const comparator = topicCardSource.match(/export const MemoizedTopicCard = memo\(TopicCard, \([\s\S]*?\)\);/)?.[0] || '';
+
+    expect(comparator).toContain('previous.topic.author === next.topic.author');
+    expect(comparator).toContain('previous.topic.authorId === next.topic.authorId');
+    expect(comparator).toContain('previous.topic.authorAvatar === next.topic.authorAvatar');
+    expect(comparator).toContain('previous.topic.authorUrl === next.topic.authorUrl');
+    expect(comparator).toContain('previous.topic.accessRequirement?.label === next.topic.accessRequirement?.label');
+    expect(comparator).toContain('stringArrayValuesEqual(previous.topic.duplicateSources, next.topic.duplicateSources)');
+    expect(comparator).toContain('stringArrayValuesEqual(previous.topic.tags, next.topic.tags)');
+  });
+
+  it('updates all-source feed as each aggregated source finishes', () => {
+    const loadFeedBlock = appSource.match(/const loadFeed = useCallback\(async \(\{([\s\S]*?)\n  \}, \[categoryFilter/)?.[1] || '';
+
+    expect(loadFeedBlock).toContain('const applyFeedResponse = (data: FeedResponse) => {');
+    expect(loadFeedBlock).toContain('const basePromise = shouldFetchBaseFeed');
+    expect(loadFeedBlock).toContain('const yaohuoPromise = getYaohuoFeedDirect');
+    expect(loadFeedBlock).toContain('await Promise.allSettled([basePromise, yaohuoPromise]);');
+    expect(loadFeedBlock).not.toContain('data = mergeSettledFeedResponses(baseResult, yaohuoResult);');
   });
 
   it('resets feed scroll position when the source, category, or reading filter changes', () => {
@@ -771,6 +828,13 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('showLinuxDoVerification');
     expect(appSource).toContain('isLinuxDoCloudflareError(error)');
     expect(topicScreenSource).toContain('label="去验证"');
+  });
+
+  it('sends linux.do level Cloudflare errors to the verification panel', () => {
+    const refreshLevelBlock = appSource.match(/const refreshLinuxDoLevel = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(refreshLevelBlock).toContain('isLinuxDoCloudflareError(error)');
+    expect(refreshLevelBlock).toContain("showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证')");
   });
 
   it('sends NodeSeek Cloudflare feed errors to the NodeSeek verification panel', () => {
@@ -1182,6 +1246,21 @@ describe('Android App experience guards', () => {
     expect(afterCloseBlock).toContain('InteractionManager.runAfterInteractions');
     expect(afterCloseBlock).toContain("setScreen('topic');");
     expect(afterCloseBlock).toContain('openTopicRef.current?.(pendingTopic, true);');
+  });
+
+  it('re-renders the topic screen after runtime tiny image detection updates', () => {
+    const renderTopicScreenBlock = appSource.match(/const renderTopicScreen = useCallback\(\(\) => \([\s\S]*?\n  \), \[([^\]]*)\]\);/)?.[1] || '';
+
+    expect(appSource).toContain('inlineSizedImageUrls={inlineSizedImageUrls}');
+    expect(renderTopicScreenBlock).toContain('inlineSizedImageUrls');
+  });
+
+  it('keeps runtime-detected tiny images out of the image-only reply filter', () => {
+    const filteredRepliesBlock = appSource.match(/const filteredReplies = useMemo\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(filteredRepliesBlock).toContain('inlineSizedImageUrls');
+    expect(filteredRepliesBlock).toContain('markInlineSizedImageHtml');
+    expect(filteredRepliesBlock).toContain('extractImageUrlsFromHtml');
   });
 
   it('closes the linux.do verification panel automatically after detecting a pending topic', () => {

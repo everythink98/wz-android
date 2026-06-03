@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, dateTime, mergeReplies, mergeSettledFeedResponses, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed } from './feedLogic';
+import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeSettledFeedResponses, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -115,6 +115,70 @@ describe('Android feed logic helpers', () => {
     );
 
     expect(merged.items.slice(0, 4).map((item) => item.source)).toEqual(['v2ex', 'yaohuo', 'nodeseek', 'linuxdo']);
+  });
+
+  it('preserves the base feed cursor when yaohuo results are merged progressively', () => {
+    const baseItem: Topic = {
+      ...topic,
+      source: 'nodeseek',
+      id: 'base',
+      url: 'https://www.nodeseek.com/post-1-1'
+    };
+    const yaohuoItem: Topic = {
+      ...topic,
+      source: 'yaohuo',
+      id: 'yaohuo',
+      url: 'https://yaohuo.me/bbs-1.html'
+    };
+
+    const merged = mergeFeedResponses({
+      items: [baseItem],
+      errors: {},
+      hasMore: true,
+      nextCursor: 'base-cursor',
+      nextPage: null
+    }, {
+      items: [yaohuoItem],
+      errors: {},
+      hasMore: true,
+      nextPage: 2
+    });
+
+    expect(merged.nextCursor).toBe('base-cursor');
+    expect(merged.nextPage).toBe(2);
+    expect(merged.hasMore).toBe(true);
+  });
+
+  it('preserves the base feed cursor when progressive feed results arrive in reverse order', () => {
+    const baseItem: Topic = {
+      ...topic,
+      source: 'nodeseek',
+      id: 'base-reverse',
+      url: 'https://www.nodeseek.com/post-2-1'
+    };
+    const yaohuoItem: Topic = {
+      ...topic,
+      source: 'yaohuo',
+      id: 'yaohuo-reverse',
+      url: 'https://yaohuo.me/bbs-2.html'
+    };
+
+    const merged = mergeFeedResponses({
+      items: [yaohuoItem],
+      errors: {},
+      hasMore: true,
+      nextPage: 2
+    }, {
+      items: [baseItem],
+      errors: {},
+      hasMore: true,
+      nextCursor: 'base-cursor-reverse',
+      nextPage: null
+    });
+
+    expect(merged.nextCursor).toBe('base-cursor-reverse');
+    expect(merged.nextPage).toBe(2);
+    expect(merged.hasMore).toBe(true);
   });
 
   it('stops feed pagination when a load-more response adds no visible topics', () => {

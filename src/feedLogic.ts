@@ -157,7 +157,7 @@ export function balanceTopicsBySource(items: Topic[]) {
   return balanced;
 }
 
-function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
+export function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedResponse {
   return {
     ...base,
     items: balanceTopicsBySource(sortTopicsByActivity(mergeTopics(base.items, extra.items))),
@@ -167,7 +167,7 @@ function mergeFeedResponses(base: FeedResponse, extra: FeedResponse): FeedRespon
     },
     hasMore: Boolean(base.hasMore || extra.hasMore),
     nextPage: base.nextPage ?? extra.nextPage ?? null,
-    nextCursor: base.nextCursor ?? undefined
+    nextCursor: base.nextCursor ?? extra.nextCursor ?? undefined
   };
 }
 

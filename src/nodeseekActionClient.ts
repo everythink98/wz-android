@@ -41,24 +41,28 @@ export async function runNodeSeekAction({
   request,
   fetcher = fetch,
   signal,
-  timeoutMs
+  timeoutMs,
+  userAgent
 }: {
   cookieHeader: string;
   request: NodeSeekActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
+  userAgent?: string;
 }) {
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
     throw new Error('请先检测 NodeSeek 登录');
   }
+  const cleanUserAgent = userAgent?.trim();
 
   const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, {
     method: request.method,
     headers: {
       ...NODESEEK_ACTION_HEADERS,
       ...request.headers,
+      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {}),
       cookie: cleanCookie
     },
     body: request.body

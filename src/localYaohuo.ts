@@ -135,6 +135,13 @@ function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
 
 function extractTopicParts(href?: string) {
   const url = absoluteUrl(href, BASE_URL) || '';
+  try {
+    if (url && new URL(url).hostname.toLowerCase() !== 'yaohuo.me') {
+      return { id: undefined, classId: undefined, url: '' };
+    }
+  } catch {
+    return { id: undefined, classId: undefined, url: '' };
+  }
   const id = url.match(/bbs-(\d+)\.html/i)?.[1]
     || url.match(/[?&]id=(\d+)/i)?.[1];
   const classId = url.match(/[?&]classid=(\d+)/i)?.[1];

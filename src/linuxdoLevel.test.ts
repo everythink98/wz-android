@@ -353,6 +353,24 @@ describe('linux.do level profile', () => {
     ]);
   });
 
+  it('reports Cloudflare verification instead of a malformed level payload', async () => {
+    const fetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge', 'content-type': 'text/html' }
+    }));
+
+    const error = await getLinuxDoLevelProfile({
+      cookieHeader: '_t=login',
+      fetcher
+    }).catch((caught) => caught);
+
+    expect(error).toMatchObject({
+      message: 'linux.do 需要完成 Cloudflare 验证',
+      source: 'linuxdo',
+      reason: 'cloudflare'
+    });
+  });
+
   it('uses the current session trust level when my summary omits it', async () => {
     const requests: string[] = [];
     const fetcher = vi.fn(async (input: string) => {

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
-import { Gallery } from 'react-native-zoom-toolkit';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
-import { imageSourceFromUrl, type ImagePreviewList } from '../htmlImages';
+import { imageRequestHeadersForUrl, imageSourceFromUrl, type ImagePreviewList } from '../htmlImages';
 import { createStyles } from '../theme';
 
 export function ImagePreviewModal({
@@ -26,38 +27,56 @@ export function ImagePreviewModal({
   const { width, height } = useWindowDimensions();
   const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
   const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
+  const [imagePreviewResolution, setImagePreviewResolution] = useState<{ width: number; height: number } | null>(null);
   const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
+  const activeIndex = preview?.index ?? 0;
+  const activeUri = preview?.urls[activeIndex] || '';
   useEffect(() => {
     setImagePreviewLoading(Boolean(preview));
     setImagePreviewFailed(false);
+    setImagePreviewResolution(null);
   }, [previewKey]);
 
-  const activeIndex = preview?.index ?? 0;
-  const renderPreviewImage = useCallback((uri: string, index: number) => (
-    <Image
-      source={imageSourceFromUrl(uri)}
-      style={[styles.imagePreviewImage, { width, height }]}
-      resizeMode="contain"
-      resizeMethod="none"
-      onLoadStart={() => {
-        if (index === activeIndex) {
-          setImagePreviewLoading(true);
-          setImagePreviewFailed(false);
-        }
-      }}
-      onLoadEnd={() => {
-        if (index === activeIndex) {
-          setImagePreviewLoading(false);
-        }
-      }}
-      onError={() => {
-        if (index === activeIndex) {
-          setImagePreviewLoading(false);
-          setImagePreviewFailed(true);
-        }
-      }}
-    />
-  ), [activeIndex, height, styles.imagePreviewImage, width]);
+  useEffect(() => {
+    if (!activeUri) {
+      return;
+    }
+    let canceled = false;
+    const headers = imageRequestHeadersForUrl(activeUri);
+    const onSuccess = (nextWidth: number, nextHeight: number) => {
+      if (!canceled) {
+        setImagePreviewResolution({ width: nextWidth, height: nextHeight });
+      }
+    };
+    const onFailure = () => {
+      if (!canceled) {
+        setImagePreviewResolution({ width, height });
+      }
+    };
+    if (headers) {
+      Image.getSizeWithHeaders(activeUri, headers, onSuccess, onFailure);
+    } else {
+      Image.getSize(activeUri, onSuccess, onFailure);
+    }
+    return () => {
+      canceled = true;
+    };
+  }, [activeUri, height, width]);
+
+  const imagePreviewSize = useMemo(() => {
+    if (!imagePreviewResolution?.width || !imagePreviewResolution.height) {
+      return { width, height };
+    }
+    return fitContainer(imagePreviewResolution.width / imagePreviewResolution.height, { width, height });
+  }, [height, imagePreviewResolution, width]);
+
+  const imagePreviewMaxScale = useMemo(() => {
+    if (!imagePreviewResolution?.width || !imagePreviewResolution.height || !imagePreviewSize.width || !imagePreviewSize.height) {
+      return 6;
+    }
+    const pixelScale = Math.max(imagePreviewResolution.width / imagePreviewSize.width, imagePreviewResolution.height / imagePreviewSize.height);
+    return Math.max(3, Math.min(8, pixelScale));
+  }, [imagePreviewResolution, imagePreviewSize]);
 
   if (!preview || preview.urls.length === 0) {
     return null;
@@ -66,7 +85,7 @@ export function ImagePreviewModal({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.imagePreviewOverlay}>
+      <GestureHandlerRootView style={styles.imagePreviewOverlay}>
         <View style={styles.imagePreviewTopBar}>
           <Text style={styles.imagePreviewCount}>{preview.index + 1} / {preview.urls.length}</Text>
           <View style={styles.imagePreviewTopActions}>
@@ -79,14 +98,30 @@ export function ImagePreviewModal({
           </View>
         </View>
         <View style={styles.imagePreviewScroll}>
-          <Gallery
+          <ResumableZoom
             key={previewKey}
-            data={preview.urls}
-            initialIndex={preview.index}
-            onIndexChange={onSelect}
-            keyExtractor={(item, index) => `${item}-${index}`}
-            renderItem={renderPreviewImage}
-          />
+            style={styles.imagePreviewScroll}
+            maxScale={imagePreviewMaxScale}
+            extendGestures
+          >
+            <Image
+              source={imageSourceFromUrl(activeUri)}
+              style={[styles.imagePreviewImage, imagePreviewSize]}
+              resizeMode="contain"
+              resizeMethod="none"
+              onLoadStart={() => {
+                setImagePreviewLoading(true);
+                setImagePreviewFailed(false);
+              }}
+              onLoadEnd={() => {
+                setImagePreviewLoading(false);
+              }}
+              onError={() => {
+                setImagePreviewLoading(false);
+                setImagePreviewFailed(true);
+              }}
+            />
+          </ResumableZoom>
         </View>
         {imagePreviewLoading ? (
           <View style={styles.imagePreviewState}>
@@ -118,7 +153,7 @@ export function ImagePreviewModal({
             </Pressable>
           </View>
         ) : null}
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

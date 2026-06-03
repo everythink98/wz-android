@@ -85,13 +85,17 @@ function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: str
     if (name === 'href' && (protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:')) {
       return next;
     }
-    if (name === 'src' && (protocol === 'http:' || protocol === 'https:' || /^data:image\//i.test(next))) {
+    if (name === 'src' && (protocol === 'http:' || protocol === 'https:' || isAllowedDataImageUrl(next))) {
       return next;
     }
   } catch {
     return undefined;
   }
   return undefined;
+}
+
+export function isAllowedDataImageUrl(value: unknown) {
+  return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,[\s\S]+$/i.test(String(value || '').trim());
 }
 
 const imageDimensionPattern = /\d{2,5}\s*[x×]\s*\d{2,5}\b/i;

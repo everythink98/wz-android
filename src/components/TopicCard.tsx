@@ -30,6 +30,16 @@ function HighlightedText({
   );
 }
 
+function stringArrayValuesEqual(left?: string[], right?: string[]) {
+  if (!left?.length && !right?.length) {
+    return true;
+  }
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
+}
+
 export function TopicCard({
   highlightQuery = '',
   hideReplyCount = false,
@@ -88,6 +98,10 @@ export function TopicCard({
 export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   topicKey(previous.topic) === topicKey(next.topic)
   && previous.topic.title === next.topic.title
+  && previous.topic.author === next.topic.author
+  && previous.topic.authorId === next.topic.authorId
+  && previous.topic.authorAvatar === next.topic.authorAvatar
+  && previous.topic.authorUrl === next.topic.authorUrl
   && previous.topic.excerpt === next.topic.excerpt
   && previous.topic.category === next.topic.category
   && previous.topic.categoryId === next.topic.categoryId
@@ -95,6 +109,9 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.topic.viewCount === next.topic.viewCount
   && previous.topic.createdAt === next.topic.createdAt
   && previous.topic.lastReplyAt === next.topic.lastReplyAt
+  && previous.topic.accessRequirement?.label === next.topic.accessRequirement?.label
+  && stringArrayValuesEqual(previous.topic.duplicateSources, next.topic.duplicateSources)
+  && stringArrayValuesEqual(previous.topic.tags, next.topic.tags)
   && previous.styles === next.styles
   && previous.theme === next.theme
   && previous.hideReplyCount === next.hideReplyCount

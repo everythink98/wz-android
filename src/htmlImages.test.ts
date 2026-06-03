@@ -6,6 +6,7 @@ import {
   flowInlineImagesInMixedParagraphs,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
+  isForumInlineSizedImage,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
   isHttpOrHttpsUrl,
@@ -21,11 +22,48 @@ describe('Android HTML image preview helpers', () => {
     ]);
   });
 
+  it('prefers original lightbox image URLs over optimized inline image URLs', () => {
+    const html = '<div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img src="https://cdn.example.com/optimized.png" alt="photo"></a></div>';
+
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/original.png']);
+    expect(createImagePreviewList({
+      tappedUrl: 'https://cdn.example.com/optimized.png',
+      htmlParts: [html]
+    })).toEqual({
+      urls: ['https://cdn.example.com/original.png'],
+      index: 0
+    });
+  });
+
+  it('prefers the sharpest srcset image when no original lightbox URL exists', () => {
+    const html = '<p><img src="https://cdn.example.com/small.jpg" srcset="https://cdn.example.com/small.jpg 1x, https://cdn.example.com/large.jpg 2x, https://cdn.example.com/wide.jpg 1200w" alt="photo"></p>';
+
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/wide.jpg']);
+  });
+
+  it('falls back to data-original and data-src before the visible image src', () => {
+    expect(extractImageUrlsFromHtml('<img src="https://cdn.example.com/thumb.jpg" data-original="https://cdn.example.com/original.jpg">')).toEqual([
+      'https://cdn.example.com/original.jpg'
+    ]);
+    expect(extractImageUrlsFromHtml('<img src="https://cdn.example.com/thumb.jpg" data-src="https://cdn.example.com/lazy.jpg">')).toEqual([
+      'https://cdn.example.com/lazy.jpg'
+    ]);
+  });
+
   it('recognizes direct image links and proxied image links only', () => {
     expect(isPreviewableImageUrl('https://cdn.example.com/a.webp?x=1')).toBe(true);
     expect(isPreviewableImageUrl('https://legacy.example.com/api/image-proxy?url=https%3A%2F%2Fcdn.example.com%2Fa')).toBe(true);
     expect(isPreviewableImageUrl('https://linux.do/images/emoji/twitter/slight_smile.png?v=12')).toBe(false);
     expect(isPreviewableImageUrl('https://example.com/topic/1')).toBe(false);
+  });
+
+  it('keeps svg data images out of preview and saving', () => {
+    expect(isPreviewableImageUrl('data:image/png;base64,abc')).toBe(true);
+    expect(isPreviewableImageUrl('data:image/svg+xml;base64,abc')).toBe(false);
+    expect(extractImageUrlsFromHtml('<img src="data:image/svg+xml;base64,abc"><img src="data:image/webp;base64,ok">')).toEqual([
+      'data:image/webp;base64,ok'
+    ]);
+    expect(dataImageFileFromUrl('data:image/svg+xml;base64,abc')).toBeNull();
   });
 
   it('allows external opening only for http and https URLs', () => {
@@ -123,6 +161,38 @@ describe('Android HTML image preview helpers', () => {
     expect(extractImageUrlsFromHtml(html)).toEqual([]);
   });
 
+  it('keeps V2EX tiny Imgur emoji-like images out of preview when dimensions are known', () => {
+    const html = '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>';
+
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://i.imgur.com/2ejt2Q6.png']);
+    expect(createImagePreviewList({
+      tappedUrl: 'https://i.imgur.com/2ejt2Q6.png',
+      htmlParts: [html]
+    })).toEqual({
+      urls: ['https://i.imgur.com/2ejt2Q6.png'],
+      index: 0
+    });
+  });
+
+  it('identifies real image dimensions that should be rendered as inline forum images', () => {
+    expect(isForumInlineSizedImage({ width: 20, height: 20 })).toBe(true);
+    expect(isForumInlineSizedImage({ width: 48, height: 36 })).toBe(true);
+    expect(isForumInlineSizedImage({ width: 2198, height: 912 })).toBe(false);
+    expect(isForumInlineSizedImage({ width: 320, height: 24 })).toBe(false);
+  });
+
+  it('keeps forum emoji paths from all Android sources out of preview', () => {
+    const html = [
+      '<img src="https://linux.do/images/emoji/twitter/slight_smile.png?v=12" alt=":slight_smile:" width="20" height="20">',
+      '<img src="https://www.nodeseek.com/static/image/smiley/xhj032.png" alt="xhj032" width="120" height="99">',
+      '<img src="https://www.v2ex.com/static/img/emoji/smile.png" alt=":smile:" width="20" height="20">',
+      '<img src="https://yaohuo.me/NetImages/face/1.gif" alt="微笑">',
+      '<img src="https://cdn.example.com/photo.jpg" alt="photo">'
+    ].join('');
+
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/photo.jpg']);
+  });
+
   it('uses the source dimensions for small forum emoji display', () => {
     expect(inlineForumImageDisplaySize({
       class: 'emoji',
@@ -211,7 +281,8 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p><div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411"></a></div><br>text <img class="emoji" src="https://cdn.ldstatic.com/images/emoji/twemoji/joy.png?v=15" alt=":joy:" title=":joy:" width="20" height="20"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('<img alt="image" src="https://cdn.example.com/optimized.png" width="689" height="411">');
+    expect(result).toContain('<img alt="image" src="https://cdn.example.com/original.png" width="689" height="411">');
+    expect(result).not.toContain('src="https://cdn.example.com/optimized.png"');
     expect(result).toContain('<forum-inline-image class="emoji"');
   });
 

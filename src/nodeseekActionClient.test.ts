@@ -44,6 +44,24 @@ describe('runNodeSeekAction', () => {
     }));
   });
 
+  it('uses the current NodeSeek WebView user agent for write requests when provided', async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ success: true }));
+    const userAgent = 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36';
+
+    await runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher,
+      userAgent
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      headers: expect.objectContaining({
+        'user-agent': userAgent
+      })
+    }));
+  });
+
   it('surfaces the high risk action message without retrying repeatedly', async () => {
     const fetcher = vi.fn(async () => jsonResponse({ message: 'high risk action' }, 403));
 

@@ -31,7 +31,7 @@ import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers
 import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
-import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG } from '../htmlImages';
+import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, markInlineSizedImageHtml } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
@@ -265,7 +265,8 @@ export function TopicScreen({
   onTopicScroll,
   onToggleQuotedFloor,
   onToggleFavorite,
-  onOpenUser
+  onOpenUser,
+  inlineSizedImageUrls
 }: {
   actionBusy: boolean;
   canUseLinuxDoActions: boolean;
@@ -321,6 +322,7 @@ export function TopicScreen({
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
   onToggleFavorite: (topic: Topic) => void;
   onOpenUser: (user: UserProfile) => void;
+  inlineSizedImageUrls: Record<string, true>;
 }) {
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
@@ -489,6 +491,7 @@ export function TopicScreen({
           <View style={styles.articleBody}>
             <MemoizedHtmlContent
               contentWidth={contentWidth}
+              inlineSizedImageUrls={inlineSizedImageUrls}
               html={listItem.html}
             />
           </View>
@@ -633,6 +636,7 @@ export function TopicScreen({
           canWrite={canWrite}
           contentWidth={Math.max(240, contentWidth - 28)}
           expandedQuotes={expandedQuotesRef.current}
+          inlineSizedImageUrls={inlineSizedImageUrls}
           loadedQuotedReplies={loadedQuotedRepliesRef.current}
           loadingQuotedFloors={loadingQuotedFloorsRef.current}
           reply={listItem.reply}
@@ -661,6 +665,7 @@ export function TopicScreen({
     contentWidth,
     expandedQuotesRef,
     floorOpen,
+    inlineSizedImageUrls,
     jumpToFloor,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
@@ -816,12 +821,17 @@ export function TopicScreen({
 
 function HtmlContent({
   contentWidth,
-  html
+  html,
+  inlineSizedImageUrls
 }: {
   contentWidth: number;
   html: string | undefined;
+  inlineSizedImageUrls: Record<string, true>;
 }) {
-  const source = useMemo(() => ({ html: flowInlineImagesInMixedParagraphs(html || '<p></p>') }), [html]);
+  const source = useMemo(() => {
+    const markedHtml = Object.keys(inlineSizedImageUrls).reduce((current, url) => markInlineSizedImageHtml(current, url), html || '<p></p>');
+    return { html: flowInlineImagesInMixedParagraphs(markedHtml) };
+  }, [html, inlineSizedImageUrls]);
   return (
     <RenderHTMLSource
       contentWidth={contentWidth}
@@ -840,6 +850,7 @@ function ReplyCard({
   isNew,
   loadedQuotedReplies,
   loadingQuotedFloors,
+  inlineSizedImageUrls,
   query,
   reply,
   replyFloor,
@@ -857,6 +868,7 @@ function ReplyCard({
   canWrite: boolean;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
+  inlineSizedImageUrls: Record<string, true>;
   isNew?: boolean;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
@@ -979,6 +991,7 @@ function ReplyCard({
                       </Pressable>
                       <MemoizedHtmlContent
                         contentWidth={Math.max(220, replyContentWidth - 24)}
+                        inlineSizedImageUrls={inlineSizedImageUrls}
                         html={quotedReply.contentHtml}
                       />
                     </View>
@@ -1005,6 +1018,7 @@ function ReplyCard({
         <View style={styles.replyBody}>
           <MemoizedHtmlContent
             contentWidth={replyContentWidth}
+            inlineSizedImageUrls={inlineSizedImageUrls}
             html={highlightedHtml}
           />
         </View>
@@ -1012,6 +1026,7 @@ function ReplyCard({
           <View style={styles.replySignature}>
             <MemoizedHtmlContent
               contentWidth={replyContentWidth}
+              inlineSizedImageUrls={inlineSizedImageUrls}
               html={reply.signatureHtml}
             />
           </View>
@@ -1056,6 +1071,7 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     previous.actionBusy !== next.actionBusy
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
+    || previous.inlineSizedImageUrls !== next.inlineSizedImageUrls
     || previous.isNew !== next.isNew
     || previous.onInteract !== next.onInteract
     || previous.onOpenUser !== next.onOpenUser

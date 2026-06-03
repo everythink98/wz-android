@@ -141,7 +141,7 @@ import {
   applyVoteOptionToTopic,
   linuxDoBookmarkIdFromActionResult
 } from './src/topicActionState';
-import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, type ImagePreviewList } from './src/htmlImages';
+import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, markInlineSizedImageHtml, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
@@ -157,8 +157,8 @@ import {
 import {
   applyFeedFilter,
   mergeCategories,
+  mergeFeedResponses,
   mergeReplies,
-  mergeSettledFeedResponses,
   mergeTopics,
   nextFeedPageState,
   searchLocal,
@@ -534,6 +534,10 @@ function searchHistoryFromRaw(raw: string | null) {
   } catch {
     return [];
   }
+}
+
+function normalizeImageCacheKey(url: string) {
+  return normalizeImagePreviewUrl(url).trim();
 }
 
 export default function App() {
@@ -1082,25 +1086,51 @@ export default function App() {
   );
   const currentUserFollowed = Boolean((userProfile || selectedUser) && isUserFollowed(readerData, (userProfile || selectedUser) as UserProfile));
   const visibleSearchItems = useMemo(() => searchItems, [searchItems]);
+  const [inlineSizedImageUrls, setInlineSizedImageUrls] = useState<Record<string, true>>({});
+  const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
+  inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
+  useEffect(() => {
+    setInlineSizedImageUrls({});
+  }, [selectedTopic?.id, selectedTopic?.source]);
   const filteredReplies = useMemo(() => {
     let base = topicReplies;
     if (replyFilter === 'author') {
       base = topicDetail ? topicReplies.filter((reply) => reply.author === topicDetail.author) : topicReplies;
     } else if (replyFilter === 'images') {
-      base = topicReplies.filter((reply) => extractImageUrlsFromHtml(reply.contentHtml).length > 0);
+      const inlineSizedUrls = Object.keys(inlineSizedImageUrls);
+      base = topicReplies.filter((reply) => {
+        const html = inlineSizedUrls.reduce((current, url) => markInlineSizedImageHtml(current, url), reply.contentHtml);
+        return extractImageUrlsFromHtml(html).length > 0;
+      });
     } else if (replyFilter === 'newest') {
       base = [...topicReplies].reverse();
     }
     return filterRepliesByQuery(base, commentQuery);
-  }, [commentQuery, replyFilter, topicDetail, topicReplies]);
+  }, [commentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicReplies]);
   const topicHtmlParts = useMemo(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map((reply) => reply.contentHtml || ''),
     ...Object.values(loadedQuotedReplies).map((reply) => reply.contentHtml || '')
   ].filter(Boolean), [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]);
+  const topicHtmlPreviewParts = useMemo(() => (
+    Object.keys(inlineSizedImageUrls).reduce((parts, url) => (
+      parts.map((html) => markInlineSizedImageHtml(html, url))
+    ), topicHtmlParts)
+  ), [inlineSizedImageUrls, topicHtmlParts]);
   const topicHtmlPartsRef = useRef<string[]>(topicHtmlParts);
-  topicHtmlPartsRef.current = topicHtmlParts;
+  topicHtmlPartsRef.current = topicHtmlPreviewParts;
+  const markImageInlineSized = useCallback((url: string) => {
+    const clean = normalizeImageCacheKey(url);
+    if (!clean || inlineSizedImageUrlsRef.current[clean]) {
+      return;
+    }
+    setInlineSizedImageUrls((current) => current[clean] ? current : { ...current, [clean]: true });
+  }, []);
   const openImagePreview = useCallback((url: string) => {
+    const clean = normalizeImageCacheKey(url);
+    if (clean && inlineSizedImageUrlsRef.current[clean]) {
+      return;
+    }
     const nextPreview = createImagePreviewList({
       tappedUrl: url,
       htmlParts: topicHtmlPartsRef.current
@@ -1209,11 +1239,18 @@ export default function App() {
         source: imageSource,
         style: [imageProps.style, { resizeMode: 'contain' }]
       });
+      const sizedAttributes = withForumImageDimensions(props.tnode.attributes, imageState.type === 'success' ? imageState.dimensions : null);
+      const runtimeInlineSized = !isInlineForumImage(props.tnode.attributes) && isForumInlineSizedImage(imageState.type === 'success' ? imageState.dimensions : null);
+      useEffect(() => {
+        if (runtimeInlineSized) {
+          markImageInlineSized(src);
+        }
+      }, [markImageInlineSized, runtimeInlineSized, src]);
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
-      if (isInlineForumImage(props.tnode.attributes)) {
-        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+      if (isInlineForumImage(sizedAttributes)) {
+        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(sizedAttributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(sizedAttributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
       const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
@@ -1259,7 +1296,7 @@ export default function App() {
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
     return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
-  }, [htmlBaseStyle.lineHeight, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText]);
+  }, [htmlBaseStyle.lineHeight, markImageInlineSized, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText]);
   useEffect(() => () => {
     feedAbortRef.current?.abort();
     categoriesAbortRef.current?.abort();
@@ -2164,8 +2201,34 @@ export default function App() {
     }
     setFeedBusy(true);
     try {
-      const yaohuoCookie = await loadYaohuoCookieForSource(source);
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
+      let hasAppliedFeedResponse = false;
+      let appliedFeedResponse: FeedResponse | null = null;
+      const applyFeedResponse = (data: FeedResponse) => {
+        if (requestId !== feedRequestIdRef.current || controller.signal.aborted) {
+          return;
+        }
+        appliedFeedResponse = appliedFeedResponse ? mergeFeedResponses(appliedFeedResponse, data) : data;
+        const shouldResetItems = reset && !hasAppliedFeedResponse;
+        hasAppliedFeedResponse = true;
+        setFeedStates((current) => {
+          const previous = current[requestSource];
+          const nextPageState = nextFeedPageState(previous, appliedFeedResponse as FeedResponse, {
+            requestedPage: page,
+            reset: shouldResetItems
+          });
+          return {
+            ...current,
+            [requestSource]: {
+              ...previous,
+              ...nextPageState
+            }
+          };
+        });
+      };
+      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
+        loadYaohuoCookieForSource(source),
+        loadNodeSeekCookieForSource(source)
+      ]);
       if (requestId !== feedRequestIdRef.current) {
         return;
       }
@@ -2177,42 +2240,60 @@ export default function App() {
         showYaohuoLogin(isLoadMore ? `加载下一页失败：${message}` : message);
         return;
       }
-      let data: FeedResponse;
+      let finalErrors: Partial<Record<FeedSource, string>> = {};
       if (source === 'all' && yaohuoCookie) {
         const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({ page, cursor, hasYaohuoCookie: true });
-        const [baseResult, yaohuoResult] = await Promise.allSettled([
-          shouldFetchBaseFeed
-            ? getFeed({
-              source,
-              page,
-              cursor,
-              limit: 30,
-              category: category || undefined,
-              nocache,
-              fetcher: forumFetchWithWebViewFallback,
-              nodeSeekCookie,
-              nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-              signal: controller.signal
-            })
-            : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null }),
-          getYaohuoFeedDirect({
-            yaohuoCookie,
+        const basePromise = shouldFetchBaseFeed
+          ? getFeed({
+            source,
             page,
+            cursor,
             limit: 30,
+            category: category || undefined,
+            nocache,
+            fetcher: forumFetchWithWebViewFallback,
+            nodeSeekCookie,
+            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
             signal: controller.signal
           })
-        ]);
-        data = mergeSettledFeedResponses(baseResult, yaohuoResult);
+          : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+        const yaohuoPromise = getYaohuoFeedDirect({
+          yaohuoCookie,
+          page,
+          limit: 30,
+          signal: controller.signal
+        });
+        void basePromise.then(applyFeedResponse).catch(() => undefined);
+        void yaohuoPromise.then(applyFeedResponse).catch(() => undefined);
+        const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
+        if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
+          throw baseResult.reason;
+        }
+        if (yaohuoResult.status === 'rejected' && isCanceledRequest(yaohuoResult.reason)) {
+          throw yaohuoResult.reason;
+        }
+        if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
+          throw baseResult.reason;
+        }
+        finalErrors = {
+          ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: errorMessage(baseResult.reason) }),
+          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: errorMessage(yaohuoResult.reason) })
+        };
       } else if (source === 'yaohuo') {
-        data = await getYaohuoFeedDirect({
+        const data = await getYaohuoFeedDirect({
           yaohuoCookie,
           page,
           limit: 30,
           category: category || undefined,
           signal: controller.signal
         });
+        if (requestId !== feedRequestIdRef.current) {
+          return;
+        }
+        applyFeedResponse(data);
+        finalErrors = data.errors || {};
       } else {
-        data = await getFeed({
+        const data = await getFeed({
           source,
           page,
           cursor,
@@ -2224,28 +2305,19 @@ export default function App() {
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
           signal: controller.signal
         });
+        if (requestId !== feedRequestIdRef.current) {
+          return;
+        }
+        applyFeedResponse(data);
+        finalErrors = data.errors || {};
       }
       if (requestId !== feedRequestIdRef.current) {
         return;
       }
-      setFeedStates((current) => {
-        const previous = current[requestSource];
-        const nextPageState = nextFeedPageState(previous, data, {
-          requestedPage: page,
-          reset
-        });
-        return {
-          ...current,
-          [requestSource]: {
-            ...previous,
-            ...nextPageState
-          }
-        };
-      });
-      const errors = Object.entries(data.errors || {});
+      const errors = Object.entries(finalErrors);
       if (errors.length) {
         if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
-          const message = data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证';
+          const message = finalErrors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证';
           if (isLoadMore) {
             markFeedLoadMoreFailed(requestSource);
           }
@@ -2429,16 +2501,27 @@ export default function App() {
         setSearchItems(searchLocal(readerData, query, searchSource));
         notify('本地搜索完成');
       } else {
-        const groups = await Promise.all(activeSources.map((source) => runRemoteSearchSource(source, query, 1, controller.signal, activeSort)));
+        await Promise.all(activeSources.map(async (source) => {
+          const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort);
+          if (requestId !== searchRequestIdRef.current) {
+            return;
+          }
+          const nextGroups = searchGroupsRef.current.map((currentGroup) => (
+            currentGroup.source === source ? { ...group, loading: false } : currentGroup
+          ));
+          searchGroupsRef.current = nextGroups;
+          setSearchGroups(nextGroups);
+          const nextItems = searchSource === 'all'
+            ? sortTopicsByCreatedAt(nextGroups.reduce<Topic[]>((items, currentGroup) => mergeTopics(items, currentGroup.items), []))
+            : nextGroups.reduce<Topic[]>((items, currentGroup) => mergeTopics(items, currentGroup.items), []);
+          setSearchItems(nextItems);
+        }));
         if (requestId !== searchRequestIdRef.current) {
           return;
         }
-        const nextGroups = sourceOverride
-          ? searchGroupsRef.current.map((group) => {
-            const updated = groups.find((item) => item.source === group.source);
-            return updated ? { ...updated, loading: false } : group;
-          })
-          : groups.map((group) => ({ ...group, loading: false }));
+        const nextGroups = searchGroupsRef.current.map((group) => (
+          activeSources.includes(group.source) ? { ...group, loading: false } : group
+        ));
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
         const mergedItems = searchSource === 'all'
@@ -3722,13 +3805,19 @@ export default function App() {
       if (requestId !== linuxDoLevelRequestIdRef.current) {
         return;
       }
+      if (isLinuxDoCloudflareError(error)) {
+        setLinuxDoLevelProfile(null);
+        setLinuxDoLevelError('linux.do 等级读取需要完成 Cloudflare 验证');
+        showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
+        return;
+      }
       setLinuxDoLevelError(errorMessage(error));
     } finally {
       if (requestId === linuxDoLevelRequestIdRef.current) {
         setLinuxDoLevelBusy(false);
       }
     }
-  }, [forumFetchWithWebViewFallback, notify]);
+  }, [forumFetchWithWebViewFallback, notify, showLinuxDoVerification]);
 
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
@@ -3747,7 +3836,8 @@ export default function App() {
       await runNodeSeekAction({
         cookieHeader: cookieHeader || '',
         request: requestFactory(),
-        signal: controller.signal
+        signal: controller.signal,
+        userAgent: nodeSeekWebViewUserAgentRef.current
       });
       if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
         return false;
@@ -4198,7 +4288,11 @@ export default function App() {
   }, [notify]);
 
   const exportBackupFile = useCallback(async () => {
+    if (backupBusy) {
+      return;
+    }
     const requestId = ++backupRequestIdRef.current;
+    setBackupBusy(true);
     try {
       await saveQueueRef.current.catch(() => undefined);
       if (requestId !== backupRequestIdRef.current) {
@@ -4215,11 +4309,19 @@ export default function App() {
       if (requestId === backupRequestIdRef.current) {
         notify(errorMessage(error));
       }
+    } finally {
+      if (requestId === backupRequestIdRef.current) {
+        setBackupBusy(false);
+      }
     }
-  }, [notify, shareTextFile]);
+  }, [backupBusy, notify, shareTextFile]);
 
   const importBackupFile = useCallback(async () => {
+    if (backupBusy) {
+      return;
+    }
     const requestId = ++backupRequestIdRef.current;
+    setBackupBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
@@ -4256,8 +4358,12 @@ export default function App() {
       if (requestId === backupRequestIdRef.current) {
         notify(errorMessage(error));
       }
+    } finally {
+      if (requestId === backupRequestIdRef.current) {
+        setBackupBusy(false);
+      }
     }
-  }, [notify, replaceReaderData]);
+  }, [backupBusy, notify, replaceReaderData]);
 
   const checkLocalStatus = useCallback(async () => {
     const requestId = ++statusRequestIdRef.current;
@@ -4665,6 +4771,7 @@ export default function App() {
       htmlRenderers={htmlRenderers}
       htmlRenderersProps={htmlRenderersProps}
       htmlTagsStyles={htmlTagsStyles}
+      inlineSizedImageUrls={inlineSizedImageUrls}
       expandedQuotesRef={expandedQuotesRef}
       loadedQuotedRepliesRef={loadedQuotedRepliesRef}
       loadingMoreReplies={loadingMoreReplies}
@@ -4710,7 +4817,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, voteYaohuo, yaohuoReplyTarget]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, voteYaohuo, yaohuoReplyTarget]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen

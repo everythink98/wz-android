@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { parse } from 'node-html-parser';
+import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import { fetchWithTimeout, type Fetcher } from './request';
 
 const BASE_URL = 'https://linux.do';
@@ -397,6 +398,15 @@ function normalizeSummaryPayload(data: unknown) {
   } as LinuxDoSummaryInput;
 }
 
+function linuxDoCloudflareError() {
+  const error = new Error('linux.do 需要完成 Cloudflare 验证');
+  Object.assign(error, {
+    source: 'linuxdo',
+    reason: 'cloudflare'
+  });
+  return error;
+}
+
 async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
   const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
     headers: {
@@ -411,11 +421,20 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
     signal: options.signal,
     timeoutMs: options.timeoutMs
   });
+  const text = await response.text();
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+    throw linuxDoCloudflareError();
+  }
   let data: unknown = null;
-  try {
-    data = await response.json();
-  } catch {
-    throw new Error('linux.do 等级数据格式不正确');
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!response.ok) {
+        throw new Error(`linux.do 等级数据读取失败：HTTP ${response.status}`);
+      }
+      throw new Error('linux.do 等级数据格式不正确');
+    }
   }
   if (!response.ok) {
     throw new Error(`linux.do 等级数据读取失败：HTTP ${response.status}`);

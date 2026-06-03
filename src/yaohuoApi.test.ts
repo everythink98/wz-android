@@ -145,6 +145,19 @@ describe('Android direct yaohuo API', () => {
     ]);
   });
 
+  it('ignores off-site links that look like yaohuo topic links', () => {
+    const result = parseYaohuoListHtml(`
+      <div class="listdata"><a href="https://evil.example/bbs-1539321.html">伪主题</a>/alice/阅1/05-20 10:00</div>
+      <div class="listdata"><a href="/bbs-1539322.html">站内主题</a>/bob/阅1/05-20 10:01</div>
+    `, {
+      classId: '177',
+      page: 1,
+      limit: 30
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['1539322']);
+  });
+
   it('parses current yaohuo listdata rows with multiple classes', () => {
     const result = parseYaohuoListHtml(`
       <!--listS-->

@@ -89,6 +89,12 @@ export function LibraryScreen({
       { text: '确定', style: 'destructive', onPress: () => onRemove(topic) }
     ]);
   }, [onRemove]);
+  const confirmClearHistory = useCallback(() => {
+    Alert.alert('清空历史？', '清空后无法恢复。', [
+      { text: '取消', style: 'cancel' },
+      { text: '清空', style: 'destructive', onPress: onClearHistory }
+    ]);
+  }, [onClearHistory]);
   const renderLibraryItem = useCallback<ListRenderItem<LibraryListItem>>(({ item }) => {
     if (item.type === 'section') {
       return <Text style={styles.librarySectionTitle}>{item.label}</Text>;
@@ -175,7 +181,7 @@ export function LibraryScreen({
         />
       ) : null}
       <View style={styles.actions}>
-        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={onClearHistory} /> : null}
+        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={confirmClearHistory} /> : null}
       </View>
     </View>
   );

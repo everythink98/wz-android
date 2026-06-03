@@ -24,11 +24,14 @@ describe('Android mature component replacements', () => {
     });
   });
 
-  it('uses the zoom toolkit gallery for image preview gestures instead of hand-written zoom state', () => {
+  it('uses the zoom toolkit for image preview gestures instead of hand-written zoom state', () => {
     expect(imagePreviewSource).toContain("from 'react-native-zoom-toolkit'");
-    expect(imagePreviewSource).toContain('<Gallery');
-    expect(imagePreviewSource).toContain('initialIndex={preview.index}');
-    expect(imagePreviewSource).toContain('onIndexChange={onSelect}');
+    expect(imagePreviewSource).toContain("import { GestureHandlerRootView } from 'react-native-gesture-handler';");
+    expect(imagePreviewSource).toContain('<ResumableZoom');
+    expect(imagePreviewSource).toContain('maxScale={imagePreviewMaxScale}');
+    expect(imagePreviewSource).toMatch(/<Modal[\s\S]*<GestureHandlerRootView style=\{styles\.imagePreviewOverlay\}>[\s\S]*<ResumableZoom/);
+    expect(imagePreviewSource).toMatch(/<\/GestureHandlerRootView>\s*<\/Modal>/);
+    expect(imagePreviewSource).toContain('onPress={() => onSelect(index)}');
     expect(imagePreviewSource).not.toContain('const [zoomed');
     expect(imagePreviewSource).not.toContain('lastTapRef');
     expect(imagePreviewSource).not.toContain('width * 1.8');
