@@ -952,7 +952,11 @@ describe('Android App experience guards', () => {
   it('uses a hidden WebView to read NodeSeek pages when normal fetch is blocked by Cloudflare', () => {
     expect(appSource).toContain('NODESEEK_BROWSER_FETCH_SCRIPT');
     expect(appSource).toContain('nodeSeekFetchWithWebView');
-    expect(appSource).toContain('defaultFetcher: nodeSeekFetchWithWebView');
+    expect(appSource).toContain('createNodeSeekWebViewFallbackFetcher');
+    expect(appSource).toContain('const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({');
+    expect(appSource).toContain('defaultFetcher: fetch');
+    expect(appSource).toContain('webViewFetcher: nodeSeekFetchWithWebView');
+    expect(appSource).toContain('defaultFetcher: nodeSeekFetchWithWebViewFallback');
     expect(appSource).toContain("type: 'nodeseek-browser-fetch'");
     expect(appSource).toContain('fetcher: forumFetchWithWebViewFallback');
     expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');

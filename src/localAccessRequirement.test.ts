@@ -48,6 +48,10 @@ describe('Android local access requirement detection', () => {
     });
   });
 
+  it('does not treat ordinary text mentioning level viewing as an access requirement', () => {
+    expect(accessRequirementFromText('这里讨论等级查看提示怎么写')).toBeUndefined();
+  });
+
   it('detects explicit access requirement object fields', () => {
     expect(accessRequirementFromObject({ access_requirement: 'login' })).toMatchObject({
       type: 'login',

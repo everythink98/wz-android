@@ -736,25 +736,76 @@ function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
   return Boolean(element?.querySelector('.is-poster, .poster-badge') || elementText(element?.querySelector('.role-tag')).trim() === '楼主') || undefined;
 }
 
-function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 30): TopicDetail | null {
-  const root = parseHtml(html);
-  const firstContentItem = root.querySelector('.content-item');
+function nodeSeekMetaContent(root: ReturnType<typeof parseHtml>, selector: string) {
+  return String(root.querySelector(selector)?.getAttribute('content') || '').trim();
+}
+
+function nodeSeekRenderedTitle(root: ReturnType<typeof parseHtml>, restrictedNotice?: string) {
   const titleElement = root.querySelector('.post-title a')
     || root.querySelector('a.post-title')
     || root.querySelector('article .post-title')
     || root.querySelector('.post-detail .post-title')
     || root.querySelector('.post-title')
     || root.querySelector('h1');
+  const title = elementText(titleElement)
+    || nodeSeekMetaContent(root, 'meta[property="og:title"]')
+    || nodeSeekMetaContent(root, 'meta[name="twitter:title"]')
+    || elementText(root.querySelector('title'));
+  if (title && title !== 'NodeSeek') {
+    return title;
+  }
+  return restrictedNotice ? '受限帖子' : title;
+}
+
+function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
+  const restricted = root.querySelector('.restricted-post')
+    || root.querySelector('.post-restricted');
+  const restrictedText = elementText(restricted);
+  if (accessRequirementFromText(restrictedText)) {
+    return restrictedText;
+  }
+  const readableContent = root.querySelectorAll('.post-content, .comment-content, .reply-content, .content-item .content')
+    .some((node) => elementText(node) || node.querySelector('img, video, pre, code'));
+  if (readableContent) {
+    return '';
+  }
+  const explicitText = root.querySelectorAll('.empty-state, .notice, .alert')
+    .map((node) => elementText(node))
+    .find((text) => accessRequirementFromText(text)) || '';
+  if (explicitText) {
+    return explicitText;
+  }
+  if (!root.querySelector('#nsk-body')) {
+    return '';
+  }
+  const bodyLeft = root.querySelector('#nsk-body-left') || root.querySelector('#nsk-body');
+  const candidates = (bodyLeft?.querySelectorAll('*') || [])
+    .filter((node) => !['script', 'style', 'svg'].includes(String(node.rawTagName || '').toLowerCase()))
+    .map((node) => elementText(node))
+    .filter((text) => text.length >= 4);
+  const accessCandidate = candidates.find((text) => accessRequirementFromText(text));
+  if (accessCandidate) {
+    return accessCandidate;
+  }
+  return '';
+}
+
+function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 30): TopicDetail | null {
+  const root = parseHtml(html);
+  const firstContentItem = root.querySelector('.content-item');
+  const restrictedNotice = nodeSeekRestrictedNotice(root);
   const contentElement = firstContentItem?.querySelector('.post-content')
+    || firstContentItem?.querySelector('.content')
     || root.querySelector('article .post-content')
     || root.querySelector('.post-detail .post-content')
-    || root.querySelector('.post-content')
-    || root.querySelector('.content');
-  const title = elementText(titleElement);
-  const contentHtml = contentElement?.innerHTML || '';
+    || root.querySelector('.post-content');
+  const title = nodeSeekRenderedTitle(root, restrictedNotice);
+  const renderedContentHtml = String(contentElement?.innerHTML || '').trim();
+  const contentHtml = renderedContentHtml || restrictedNotice;
   if (!title || !contentHtml) {
     return null;
   }
+  const accessRequirement = accessRequirementFromText(restrictedNotice);
   const authorContainer = firstContentItem || root.querySelector('article') || root.querySelector('.post-detail') || root;
   const categoryLink = firstContentItem?.querySelector('.content-category a[href*="/categories/"], a[href*="/categories/"]')
     || root.querySelector('article a[href*="/categories/"]')
@@ -812,6 +863,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     replyCount: allReplies.length,
     excerpt: textExcerpt(contentHtml),
     contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
+    ...(accessRequirement ? { accessRequirement } : {}),
     commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,
     upvoteCount: renderedNodeSeekReactionCount(firstContentItem, ['点赞', 'good-one', 'upvote']),
     likeCount: renderedNodeSeekReactionCount(firstContentItem, ['加鸡腿', 'chicken-leg']),

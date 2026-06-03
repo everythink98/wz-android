@@ -23,6 +23,7 @@ vi.mock('react-native', () => ({
 import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import { clearV2exCacheForTest } from './localV2ex';
 import * as SecureStore from 'expo-secure-store';
@@ -1239,6 +1240,51 @@ describe('Android local sources', () => {
     });
   });
 
+  it('uses normal fetch for NodeSeek when the HTML is already readable', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743010-1">NodeSeek normal detail</a>
+      <div class="content-item">
+        <article class="post-content"><p>正常正文</p></article>
+      </div>
+    `));
+    const webViewFetcher = vi.fn(async () => html('<html>webview fallback should not be used</html>'));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743010', fetcher });
+
+    expect(topic.title).toBe('NodeSeek normal detail');
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('retries NodeSeek through the WebView fallback only after Cloudflare', async () => {
+    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743011-1">NodeSeek fallback detail</a>
+      <div class="content-item">
+        <article class="post-content"><p>兜底正文</p></article>
+      </div>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743011', fetcher });
+
+    expect(topic.title).toBe('NodeSeek fallback detail');
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
+  });
+
   it('reads rendered NodeSeek WebView rows without picking footer post links', async () => {
     const fetcher = vi.fn(async () => html(`
       <ul>
@@ -1365,6 +1411,203 @@ describe('Android local sources', () => {
       commentId: 200,
       contentHtml: expect.stringContaining('回复内容')
     });
+  });
+
+  it('reads rendered NodeSeek topic title from meta fallback', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head>
+          <meta property="og:title" content="NodeSeek meta title" />
+        </head>
+        <body>
+          <div id="0" class="content-item">
+            <article class="post-content"><p>meta fallback 正文</p></article>
+          </div>
+        </body>
+      </html>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743012', fetcher });
+
+    expect(topic.title).toBe('NodeSeek meta title');
+    expect(topic.contentHtml).toContain('meta fallback 正文');
+  });
+
+  it('reads rendered NodeSeek topic bodies from content containers inside topic rows', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head>
+          <meta property="og:title" content="NodeSeek content container title" />
+        </head>
+        <body>
+          <div id="0" class="content-item">
+            <div class="content"><p>content 容器正文</p></div>
+          </div>
+        </body>
+      </html>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743019', fetcher });
+
+    expect(topic.title).toBe('NodeSeek content container title');
+    expect(topic.contentHtml).toContain('content 容器正文');
+    expect(topic.accessRequirement).toBeUndefined();
+  });
+
+  it('does not treat readable NodeSeek content containers as restricted because of page notices', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head>
+          <meta property="og:title" content="NodeSeek content container title" />
+        </head>
+        <body>
+          <div class="notice">登录后才能回复该主题。</div>
+          <div id="0" class="content-item">
+            <div class="content"><p>content 容器正文可正常阅读</p></div>
+          </div>
+        </body>
+      </html>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743021', fetcher });
+
+    expect(topic.title).toBe('NodeSeek content container title');
+    expect(topic.contentHtml).toContain('content 容器正文可正常阅读');
+    expect(topic.accessRequirement).toBeUndefined();
+  });
+
+  it('shows NodeSeek restricted topic notices instead of a parse failure', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head><title>NodeSeek</title></head>
+        <body>
+          <div id="nsk-body">
+            <div id="nsk-body-left">
+              <p>权限不足，需要等级 2 才能查看该主题。</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743013', fetcher });
+
+    expect(topic.title).toBe('受限帖子');
+    expect(topic.contentHtml).toContain('权限不足，需要等级 2 才能查看该主题。');
+    expect(topic.accessRequirement).toMatchObject({
+      type: 'level',
+      label: '需等级'
+    });
+  });
+
+  it('reads NodeSeek restricted notices wrapped in rendered topic containers', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head><title>NodeSeek</title></head>
+        <body>
+          <div class="content-item">
+            <div class="notice">登录后才能查看该主题。</div>
+          </div>
+        </body>
+      </html>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743018', fetcher });
+
+    expect(topic.title).toBe('受限帖子');
+    expect(topic.contentHtml).toContain('登录后才能查看该主题。');
+    expect(topic.accessRequirement).toMatchObject({
+      type: 'login',
+      label: '需登录'
+    });
+  });
+
+  it('reads NodeSeek restricted notices when an empty body placeholder is present', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head><title>NodeSeek</title></head>
+        <body>
+          <div class="post-detail">
+            <div class="post-content"></div>
+            <div class="notice">权限不足，需要等级 3 才能查看该主题。</div>
+          </div>
+        </body>
+      </html>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743020', fetcher });
+
+    expect(topic.title).toBe('受限帖子');
+    expect(topic.contentHtml).toContain('权限不足，需要等级 3 才能查看该主题。');
+    expect(topic.accessRequirement).toMatchObject({
+      type: 'level',
+      label: '需等级'
+    });
+  });
+
+  it('does not parse non-topic NodeSeek shell pages as restricted topics', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head><title>NodeSeek maintenance</title></head>
+        <body>
+          <div id="nsk-body">
+            <div id="nsk-body-left">
+              <p>页面暂时无法显示，请稍后重试。</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `));
+
+    await expect(getTopic({ source: 'nodeseek', id: '743016', fetcher })).rejects.toThrow('NodeSeek 主题解析失败');
+  });
+
+  it('does not parse generic NodeSeek content containers as topic body', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head><title>NodeSeek error</title></head>
+        <body>
+          <div class="content">临时错误页，不是主题正文。</div>
+        </body>
+      </html>
+    `));
+
+    await expect(getTopic({ source: 'nodeseek', id: '743017', fetcher })).rejects.toThrow('NodeSeek 主题解析失败');
+  });
+
+  it('does not mark normal NodeSeek body text as access restricted', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <main>
+        <article class="post-detail">
+          <h1 class="post-title">NodeSeek normal permission discussion</h1>
+          <div class="post-content"><p>这里讨论等级查看和登录提示文案，但帖子本身可以正常阅读。</p></div>
+        </article>
+      </main>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743014', fetcher });
+
+    expect(topic.title).toBe('NodeSeek normal permission discussion');
+    expect(topic.contentHtml).toContain('帖子本身可以正常阅读');
+    expect(topic.accessRequirement).toBeUndefined();
+  });
+
+  it('does not mark normal NodeSeek topics as restricted because of page notices', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <main>
+        <div class="notice">请登录后回复该主题。</div>
+        <article class="post-detail">
+          <h1 class="post-title">NodeSeek topic with login notice</h1>
+          <div class="post-content"><p>正文可以正常阅读。</p></div>
+        </article>
+      </main>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743015', fetcher });
+
+    expect(topic.title).toBe('NodeSeek topic with login notice');
+    expect(topic.contentHtml).toContain('正文可以正常阅读');
+    expect(topic.accessRequirement).toBeUndefined();
   });
 
   it('does not treat rendered NodeSeek category links as topic authors', async () => {

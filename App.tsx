@@ -189,6 +189,7 @@ import {
 } from './src/yaohuoApi';
 import type { Fetcher } from './src/request';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from './src/linuxdoFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekRequestUrl } from './src/nodeseekFetchFallback';
 import { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from './src/linuxdoLevel';
 import { filterRepliesByQuery, REPLY_PAGE_SIZE, replyRefreshTarget } from './src/androidFeatureHelpers';
 import { safeFileName } from './src/backupFiles';
@@ -284,14 +285,6 @@ function isNodeSeekLoginRequiredError(error: unknown) {
     && (error as { source?: unknown }).source === 'nodeseek'
     && (error as { loginRequired?: unknown }).loginRequired
   );
-}
-function isNodeSeekRequestUrl(input: string) {
-  try {
-    const host = new URL(input).hostname.toLowerCase();
-    return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
-  } catch {
-    return false;
-  }
 }
 function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
   const target = name.toLowerCase();
@@ -1706,10 +1699,15 @@ export default function App() {
     });
   }, [rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
 
+  const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({
+    defaultFetcher: fetch,
+    webViewFetcher: nodeSeekFetchWithWebView
+  }), [nodeSeekFetchWithWebView]);
+
   const forumFetchWithWebViewFallback = useMemo(() => createLinuxDoWebViewFallbackFetcher({
-    defaultFetcher: nodeSeekFetchWithWebView,
+    defaultFetcher: nodeSeekFetchWithWebViewFallback,
     webViewFetcher: linuxDoFetchWithWebView
-  }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebView]);
+  }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]);
 
   const completeLinuxDoBrowserFetch = useCallback((data: {
     id?: number;
