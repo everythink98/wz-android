@@ -601,6 +601,163 @@ describe('Android local sources', () => {
     }]);
   });
 
+  it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
+    const fetcher = vi.fn(async () => json({
+      topic_list: {
+        topics: [{
+          id: 406,
+          title: 'linux.do solved tagged topic',
+          slug: 'linux-status-topic',
+          category_id: 4,
+          created_at: '2026-06-04T00:00:00.000Z',
+          bumped_at: '2026-06-04T00:10:00.000Z',
+          posts_count: 2,
+          closed: true,
+          archived: true,
+          pinned: true,
+          slow_mode_seconds: 300,
+          has_accepted_answer: true,
+          tags: [
+            { name: '人工智能' },
+            { name: '快问快答' }
+          ]
+        }]
+      },
+      categories: [
+        { id: 4, name: '开发调优' }
+      ]
+    }));
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      id: '406',
+      tags: ['人工智能', '快问快答'],
+      closed: true,
+      archived: true,
+      pinned: true,
+      solved: true,
+      slowModeSeconds: 300
+    });
+  });
+
+  it('keeps linux.do accepted answers and special reply markers from topic JSON', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 407,
+      title: 'linux.do accepted answer topic',
+      slug: 'linux-accepted-answer-topic',
+      created_at: '2026-06-04T00:00:00.000Z',
+      posts_count: 2,
+      closed: true,
+      pinned: true,
+      slow_mode_seconds: 120,
+      tags: [{ name: '人工智能' }],
+      accepted_answers: [{
+        id: 2002,
+        post_number: 2,
+        username: 'bob'
+      }],
+      post_stream: {
+        stream: [2001, 2002],
+        posts: [
+          {
+            id: 2001,
+            post_number: 1,
+            username: 'alice',
+            cooked: '<p>body</p>',
+            created_at: '2026-06-04T00:00:00.000Z',
+            reactions: [
+              { id: 'heart', count: 2 },
+              { id: 'laughing', count: 1 }
+            ],
+            boosts: [{ id: 7 }]
+          },
+          {
+            id: 2002,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<p>answer</p>',
+            created_at: '2026-06-04T00:02:00.000Z',
+            accepted_answer: true,
+            wiki: true,
+            hidden: true,
+            post_type: 2,
+            action_code: 'closed.enabled',
+            needs_category_expert_approval: true,
+            post_folding_status: { status: 'folded' },
+            reactions: [{ id: 'distorted_face', count: 3 }],
+            boosts: [{ id: 9 }, { id: 10 }]
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '407', fetcher });
+
+    expect(topic).toMatchObject({
+      tags: ['人工智能'],
+      closed: true,
+      pinned: true,
+      solved: true,
+      acceptedAnswerFloor: 2,
+      slowModeSeconds: 120,
+      reactionSummary: [
+        { id: 'heart', count: 2 },
+        { id: 'laughing', count: 1 }
+      ],
+      boostCount: 1
+    });
+    expect(topic.replies[0]).toMatchObject({
+      acceptedAnswer: true,
+      wiki: true,
+      hidden: true,
+      folded: true,
+      needsApproval: true,
+      systemAction: true,
+      actionCode: 'closed.enabled',
+      reactionSummary: [{ id: 'distorted_face', count: 3 }],
+      boostCount: 2
+    });
+  });
+
+  it('uses linux.do boost_count when the boosts array is empty', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 408,
+      title: 'linux.do boost fallback topic',
+      slug: 'linux-boost-fallback-topic',
+      created_at: '2026-06-04T00:00:00.000Z',
+      posts_count: 2,
+      post_stream: {
+        stream: [2011, 2012],
+        posts: [
+          {
+            id: 2011,
+            post_number: 1,
+            username: 'alice',
+            cooked: '<p>body</p>',
+            created_at: '2026-06-04T00:00:00.000Z',
+            boosts: [],
+            boost_count: 4
+          },
+          {
+            id: 2012,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<p>reply</p>',
+            created_at: '2026-06-04T00:02:00.000Z',
+            boosts: [],
+            boost_count: 5
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '408', fetcher });
+
+    expect(topic.boostCount).toBe(4);
+    expect(topic.replies[0].boostCount).toBe(5);
+  });
+
   it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {
     const fetcher = vi.fn(async (_input: string) => {
       if (fetcher.mock.calls.length > 1) {

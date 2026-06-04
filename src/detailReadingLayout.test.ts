@@ -3,6 +3,7 @@ import { readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('android-app', 'App.tsx');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
 const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
 const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
 
@@ -199,6 +200,89 @@ describe('Android topic detail reading layout', () => {
     expect(replyCard).not.toContain('source === \'v2ex\' ? (');
     expect(themeSource).toContain('replyContextBadge');
     expect(themeSource).toContain('replySignature');
+  });
+
+  it('shows linux.do topic tags and special status badges in Android details', () => {
+    const header = topicScreenSource.match(/const listHeader = \([\s\S]*?\n  \);/)?.[0] || '';
+
+    expect(topicScreenSource).toContain('topicStatusBadges(item)');
+    expect(header).toContain('topicHeaderStatusBadges');
+    expect(header).toContain('styles.topicTagRow');
+    expect(header).toContain('styles.topicStatusRow');
+    expect(topicScreenSource).toContain('acceptedAnswerFloor');
+    expect(topicScreenSource).toContain('slowModeSeconds');
+    expect(topicScreenSource).toContain('已解决');
+    expect(topicScreenSource).toContain('慢速');
+    expect(themeSource).toContain('topicStatusRow');
+    expect(themeSource).toContain('topicStatusBadge');
+  });
+
+  it('shows linux.do accepted answers and special reply markers in Android replies', () => {
+    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
+    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
+      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      : '';
+
+    expect(replyCard).toContain('reply.acceptedAnswer');
+    expect(replyCard).toContain('已采纳');
+    expect(replyCard).toContain('reply.wiki');
+    expect(replyCard).toContain('Wiki');
+    expect(replyCard).toContain('reply.hidden');
+    expect(replyCard).toContain('已隐藏');
+    expect(replyCard).toContain('reply.folded');
+    expect(replyCard).toContain('已折叠');
+    expect(replyCard).toContain('reply.needsApproval');
+    expect(replyCard).toContain('待审批');
+    expect(replyCard).toContain('reply.systemAction');
+    expect(replyCard).toContain('系统');
+    expect(replyCard).toContain('reply.reactionSummary');
+    expect(replyCard).toContain('reply.boostCount');
+  });
+
+  it('shows linux.do source tags on Android topic cards', () => {
+    expect(topicScreenSource).toContain('topicStatusBadges');
+    expect(topicCardSource).toContain('visibleTopicTags.map');
+    expect(topicCardSource).toContain('styles.topicTagPill');
+  });
+
+  it('uses richer Android chip styling for tags and status markers', () => {
+    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
+    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
+      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      : '';
+
+    expect(themeSource).toContain('TOPIC_TAG_TONES');
+    expect(themeSource).toContain('topicTagColorStyle');
+    expect(themeSource).toContain('topicStatusBadgeColorStyle');
+    expect(themeSource).toContain('topicStatusBadgeTextColorStyle');
+    expect(themeSource).toContain('replyContextBadgeStyle');
+    expect(themeSource).toContain('topicTagMoreText');
+    expect(themeSource).toContain('topicStatusBadgeText');
+    expect(topicCardSource).toContain('TOPIC_CARD_TAG_LIMIT');
+    expect(topicCardSource).toContain('hiddenTopicTagCount');
+    expect(topicCardSource).toContain('topicTagColorStyle(tag, theme)');
+    expect(topicCardSource).toContain('styles.topicTagMoreText');
+    expect(topicScreenSource).toContain('topicStatusBadgeColorStyle(badge.tone, theme)');
+    expect(topicScreenSource).toContain('topicStatusBadgeTextColorStyle(badge.tone, theme)');
+    expect(topicScreenSource).toContain('topicTagColorStyle(tag, theme)');
+    expect(topicScreenSource).toContain('linuxDoReactionLabel');
+    expect(topicScreenSource).toContain("open_mouth: '惊讶'");
+    expect(replyCard).toContain("replyContextBadgeStyle('success', theme)");
+    expect(replyCard).toContain("replyContextBadgeStyle('warning', theme)");
+    expect(replyCard).toContain("replyContextBadgeStyle('danger', theme)");
+  });
+
+  it('centers Android source tag text inside stable pill containers', () => {
+    expect(topicCardSource).toContain('style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}');
+    expect(topicScreenSource).toContain('style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}');
+    expect(topicScreenSource).toContain('style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}');
+    expect(themeSource).toContain('topicTagPill');
+    expect(themeSource).toContain('topicStatusBadgeText');
+    expect(themeSource).toContain('justifyContent: \'center\'');
+    expect(themeSource).toContain('textAlignVertical: \'center\'');
+    expect(themeSource).toContain('includeFontPadding: false');
   });
 
   it('shows NodeSeek topic reaction counts without mixing them with local favorite state', () => {

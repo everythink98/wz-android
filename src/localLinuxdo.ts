@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
+import type { CategoriesResponse, FeedResponse, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   accessRequirementFromObject,
   absoluteUrl,
@@ -149,6 +149,9 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
   const authorName = author || String(createdBy.username || raw.last_poster_username || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
+  const tags = tagNames(raw.tags);
+  const acceptedAnswerFloor = acceptedAnswerPostNumber(raw);
+  const slowModeSeconds = positiveNumber(raw.slow_mode_seconds);
   return {
     source: 'linuxdo',
     id,
@@ -165,6 +168,13 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     replyCount: Number(raw.posts_count ? Math.max(Number(raw.posts_count) - 1, 0) : 0),
     viewCount: Number(raw.views || 0),
     excerpt: textExcerpt(raw.excerpt || ''),
+    ...(tags.length ? { tags } : {}),
+    ...(raw.closed === true ? { closed: true } : {}),
+    ...(raw.archived === true ? { archived: true } : {}),
+    ...(raw.pinned === true || raw.pinned_globally === true ? { pinned: true } : {}),
+    ...(raw.has_accepted_answer === true || acceptedAnswerFloor ? { solved: true } : {}),
+    ...(acceptedAnswerFloor ? { acceptedAnswerFloor } : {}),
+    ...(slowModeSeconds ? { slowModeSeconds } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
@@ -270,6 +280,56 @@ function stringArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
 }
 
+function tagNames(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => {
+    if (typeof item === 'string') {
+      return item.trim();
+    }
+    if (!isRecord(item)) {
+      return '';
+    }
+    return String(item.name || item.slug || '').trim();
+  }).filter(Boolean);
+}
+
+function acceptedAnswerPostNumber(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.accepted_answers)) {
+    return undefined;
+  }
+  const answer = value.accepted_answers.find(isRecord);
+  return positiveNumber(answer?.post_number);
+}
+
+function reactionSummary(value: unknown): ReactionSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value.filter(isRecord).map((item): ReactionSummary | null => {
+    const id = String(item.id || '').trim();
+    const count = positiveNumber(item.count);
+    return id && count ? { id, count } : null;
+  }).filter((item): item is ReactionSummary => Boolean(item));
+  return items.length ? items : undefined;
+}
+
+function boostCount(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.length : undefined;
+  }
+  return positiveNumber(value);
+}
+
+function boostCountFromPost(value: Record<string, unknown>) {
+  return boostCount(value.boosts) ?? boostCount(value.boost_count);
+}
+
+function replyTargetAuthor(value: unknown) {
+  return isRecord(value) ? String(value.username || value.name || '').trim() : '';
+}
+
 function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
   if (!isRecord(post) || !Array.isArray(post.polls)) {
     return undefined;
@@ -328,6 +388,11 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
   const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
   const liked = likedFromActionsSummary(raw.actions_summary);
+  const reactions = reactionSummary(raw.reactions);
+  const rawBoostCount = boostCountFromPost(raw);
+  const targetAuthor = replyTargetAuthor(raw.reply_to_user);
+  const postType = Number(raw.post_type);
+  const isSystemAction = Number.isFinite(postType) && postType !== 1;
   return {
     author: String(raw.username || ''),
     authorId: String(raw.username || '') || undefined,
@@ -341,6 +406,16 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     ...(positiveNumber(raw.id) ? { commentId: positiveNumber(raw.id) } : {}),
     ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
     ...(liked !== undefined ? { liked } : {}),
+    ...(targetAuthor ? { replyTargetAuthor: targetAuthor } : {}),
+    ...(raw.accepted_answer === true ? { acceptedAnswer: true } : {}),
+    ...(raw.wiki === true ? { wiki: true } : {}),
+    ...(raw.hidden === true || raw.deleted_at || raw.user_deleted === true ? { hidden: true } : {}),
+    ...(raw.post_folding_status ? { folded: true } : {}),
+    ...(raw.needs_category_expert_approval === true ? { needsApproval: true } : {}),
+    ...(isSystemAction ? { systemAction: true } : {}),
+    ...(raw.action_code ? { actionCode: String(raw.action_code) } : {}),
+    ...(reactions ? { reactionSummary: reactions } : {}),
+    ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
     ...(positiveNumber(raw.bookmark_id) ? { bookmarkId: positiveNumber(raw.bookmark_id), bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {})
   };
 }
@@ -510,6 +585,8 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
   const replyHasMore = totalPosts > replies.length + 1;
   const polls = normalizeDiscoursePolls(firstPost);
+  const firstPostReactions = reactionSummary(isRecord(firstPost) ? firstPost.reactions : undefined);
+  const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
   cacheTopicStream(id, data);
   cacheTopicStream(topic.id, data);
   return {
@@ -523,6 +600,8 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
     ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
     ...(polls ? { polls } : {}),
+    ...(firstPostReactions ? { reactionSummary: firstPostReactions } : {}),
+    ...(firstPostBoostCount ? { boostCount: firstPostBoostCount } : {}),
     ...(positiveNumber(data.bookmark_id) ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {})
   };
 }

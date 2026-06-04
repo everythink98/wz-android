@@ -4,8 +4,10 @@ import type { Topic } from '../types';
 import { topicKey } from '../readerData';
 import { formatRelativeTime, sourceLabel, topicListDisplayTime } from '../appUtils';
 import { highlightTextParts } from '../androidFeatureHelpers';
-import { androidRipple, createStyles, type ReaderTheme } from '../theme';
+import { androidRipple, createStyles, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../theme';
 import { topicListItemStatesEqual, type TopicListItemState } from '../topicListItemState';
+
+const TOPIC_CARD_TAG_LIMIT = 3;
 
 function HighlightedText({
   highlightStyle,
@@ -71,6 +73,8 @@ export function TopicCard({
     replyText,
     topic.viewCount ? `${topic.viewCount} 浏览` : ''
   ].filter(Boolean).join(' · ');
+  const visibleTopicTags = (topic.tags || []).slice(0, TOPIC_CARD_TAG_LIMIT);
+  const hiddenTopicTagCount = Math.max((topic.tags?.length || 0) - visibleTopicTags.length, 0);
   return (
     <View style={styles.topicRowShell}>
       <View style={styles.topicCard}>
@@ -84,6 +88,20 @@ export function TopicCard({
           </View>
           <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
           {topic.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{topic.accessRequirement.label}</Text> : null}
+          {visibleTopicTags.length ? (
+            <View style={styles.topicTagRow}>
+              {visibleTopicTags.map((tag, index) => (
+                <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
+                  <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>{tag}</Text>
+                </View>
+              ))}
+              {hiddenTopicTagCount ? (
+                <View style={[styles.topicTagPill, styles.topicTagMorePill]}>
+                  <Text style={styles.topicTagMoreText} numberOfLines={1}>+{hiddenTopicTagCount}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
           {topic.excerpt && readerState.listDensity === 'loose' ? <HighlightedText style={styles.excerpt} highlightStyle={styles.highlightText} numberOfLines={2} text={topic.excerpt} query={highlightQuery} /> : null}
         </Pressable>
         <View style={[styles.topicMetaRow, readerState.read && styles.topicCardRead]}>

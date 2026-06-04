@@ -26,6 +26,17 @@ export interface Topic {
   accessRequirement?: AccessRequirement;
   duplicateSources?: string[];
   tags?: string[];
+  closed?: boolean;
+  archived?: boolean;
+  pinned?: boolean;
+  solved?: boolean;
+  acceptedAnswerFloor?: number;
+  slowModeSeconds?: number;
+}
+
+export interface ReactionSummary {
+  id: string;
+  count: number;
 }
 
 export interface Reply {
@@ -53,6 +64,15 @@ export interface Reply {
   bookmarked?: boolean;
   replyTargetAuthor?: string;
   thanksCount?: number;
+  acceptedAnswer?: boolean;
+  wiki?: boolean;
+  hidden?: boolean;
+  folded?: boolean;
+  needsApproval?: boolean;
+  systemAction?: boolean;
+  actionCode?: string;
+  reactionSummary?: ReactionSummary[];
+  boostCount?: number;
 }
 
 export interface Category {
@@ -103,6 +123,8 @@ export interface TopicDetail extends Topic {
   collectionCount?: number;
   collected?: boolean;
   locked?: boolean;
+  reactionSummary?: ReactionSummary[];
+  boostCount?: number;
 }
 
 export interface UserProfile {

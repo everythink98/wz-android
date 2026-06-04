@@ -33,7 +33,7 @@ import { formatDateTime, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, markInlineSizedImageHtml } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
-import { androidRipple, createStyles, type ReaderTheme } from '../theme';
+import { androidRipple, createStyles, replyContextBadgeStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme, type StatusBadgeTone } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
@@ -91,6 +91,19 @@ function getReplyKey(reply: Reply) {
 }
 
 type NodeSeekStat = { label: string; value: number };
+type TopicStatusBadge = { label: string; tone: StatusBadgeTone };
+
+const LINUXDO_REACTION_LABELS: Record<string, string> = {
+  clap: '鼓掌',
+  confused: '困惑',
+  cry: '难过',
+  distorted_face: '难绷',
+  eyes: '关注',
+  heart: '喜欢',
+  laughing: '笑',
+  open_mouth: '惊讶',
+  rocket: '火箭'
+};
 
 function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeekStat | null {
   return typeof value === 'number' ? { label, value } : null;
@@ -115,6 +128,44 @@ function nodeSeekTopicPassiveStats(item: Pick<TopicDetail, 'dislikeCount' | 'col
   return [
     visibleNodeSeekStat('反对', item.dislikeCount),
     visibleNodeSeekStat('原站收藏', item.collectionCount)
+  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+}
+
+function slowModeLabel(seconds: number) {
+  return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`;
+}
+
+function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>) {
+  const badges: TopicStatusBadge[] = [];
+  if (item.solved) {
+    badges.push({ label: '已解决', tone: 'success' });
+  }
+  if (item.acceptedAnswerFloor) {
+    badges.push({ label: `采纳 #${item.acceptedAnswerFloor}`, tone: 'success' });
+  }
+  if (item.pinned) {
+    badges.push({ label: '置顶', tone: 'accent' });
+  }
+  if (item.closed) {
+    badges.push({ label: '已关闭', tone: 'danger' });
+  }
+  if (item.archived) {
+    badges.push({ label: '已归档', tone: 'neutral' });
+  }
+  if (item.slowModeSeconds) {
+    badges.push({ label: `慢速 ${slowModeLabel(item.slowModeSeconds)}`, tone: 'warning' });
+  }
+  return badges;
+}
+
+function linuxDoReactionLabel(id: string) {
+  return LINUXDO_REACTION_LABELS[id] || id.replace(/_/g, ' ');
+}
+
+function linuxDoReactionStats(item: Pick<Reply | TopicDetail, 'boostCount' | 'reactionSummary'>) {
+  return [
+    ...(item.reactionSummary || []).map((reaction) => ({ label: linuxDoReactionLabel(reaction.id), value: reaction.count })),
+    visibleNodeSeekStat('加电', item.boostCount)
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
 }
 
@@ -604,6 +655,7 @@ export function TopicScreen({
     if (listItem.type === 'topicActions') {
       const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
       const topicPassiveStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicPassiveStats(topic) : [];
+      const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic) : [];
       const topicPolls = topic ? topic.polls || [] : [];
       const canVotePollSource = Boolean(topic && (topic.source === 'nodeseek' || topic.source === 'linuxdo' || topic.source === 'yaohuo'));
       const canWritePollSource = Boolean(
@@ -628,6 +680,13 @@ export function TopicScreen({
               <IconButton tiny icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
               <IconButton tiny icon={Drumstick} label={`加鸡腿 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
               {topicPassiveStats.map((stat) => (
+                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+              ))}
+            </View>
+          ) : null}
+          {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
+            <View style={styles.topicStatRail}>
+              {linuxDoTopicReactionStats.map((stat) => (
                 <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
               ))}
             </View>
@@ -858,6 +917,7 @@ export function TopicScreen({
     return <EmptyText text="未选择主题" styles={styles} />;
   }
 
+  const topicHeaderStatusBadges = topicStatusBadges(item);
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
@@ -882,10 +942,21 @@ export function TopicScreen({
             </View>
           </Pressable>
           {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
+          {topicHeaderStatusBadges.length ? (
+            <View style={styles.topicStatusRow}>
+              {topicHeaderStatusBadges.map((badge) => (
+                <View key={badge.label} style={[styles.topicStatusBadge, topicStatusBadgeColorStyle(badge.tone, theme)]}>
+                  <Text style={[styles.topicStatusBadgeText, topicStatusBadgeTextColorStyle(badge.tone, theme)]} numberOfLines={1}>{badge.label}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
           {item.tags?.length ? (
             <View style={styles.topicTagRow}>
-              {item.tags.map((tag) => (
-                <Text key={tag} style={styles.topicTagText}>{tag}</Text>
+              {item.tags.map((tag, index) => (
+                <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
+                  <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>{tag}</Text>
+                </View>
               ))}
             </View>
           ) : null}
@@ -1050,6 +1121,7 @@ function ReplyCard({
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
   const nodeSeekReplyPassiveStatItems = source === 'nodeseek' ? nodeSeekReplyPassiveStats(reply) : [];
+  const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply) : [];
   const replyTargetUser = source && reply.replyTargetAuthor ? {
     source,
     id: reply.replyTargetAuthor,
@@ -1075,8 +1147,14 @@ function ReplyCard({
           <View style={styles.replyAuthorNameRow}>
             <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
             {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
-            {reply.hot ? <Text style={styles.replyContextBadge}>热门</Text> : null}
-            {reply.pinned ? <Text style={styles.replyContextBadge}>置顶</Text> : null}
+            {reply.hot ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text> : null}
+            {reply.pinned ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text> : null}
+            {reply.acceptedAnswer ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('success', theme)]}>已采纳</Text> : null}
+            {reply.wiki ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text> : null}
+            {reply.hidden ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text> : null}
+            {reply.folded ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text> : null}
+            {reply.needsApproval ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text> : null}
+            {reply.systemAction ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}>系统</Text> : null}
           </View>
           <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
         </View>
@@ -1191,6 +1269,13 @@ function ReplyCard({
         ) : null}
         {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
           <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
+        ) : null}
+        {source === 'linuxdo' && (reply.reactionSummary?.length || reply.boostCount) ? (
+          <View style={styles.replyStatRail}>
+            {linuxDoReplyReactionStats.map((stat) => (
+              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+            ))}
+          </View>
         ) : null}
         {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>

@@ -1,4 +1,4 @@
-import { Platform, StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
+import { Platform, StyleSheet, StatusBar as NativeStatusBar, type TextStyle } from 'react-native';
 import { type ReaderSettings } from './readerData';
 
 export interface ReaderTheme {
@@ -53,6 +53,74 @@ export function alphaColor(hex: string, alpha: number) {
   const green = (value >> 8) & 255;
   const blue = value & 255;
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+type ChipTone = { light: string; dark: string };
+
+export type StatusBadgeTone = 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning';
+
+const TOPIC_TAG_TONES: ChipTone[] = [
+  { light: '#2f6555', dark: '#9fd0bf' },
+  { light: '#386f8f', dark: '#9fc7e3' },
+  { light: '#8a6430', dark: '#dfbd78' },
+  { light: '#8f5963', dark: '#dfacb4' },
+  { light: '#6b5d91', dark: '#c0b2e0' },
+  { light: '#2d7072', dark: '#94d2d2' },
+  { light: '#657333', dark: '#c8d88a' },
+  { light: '#5d6874', dark: '#b8c2ca' }
+];
+
+const STATUS_BADGE_TONES: Record<StatusBadgeTone, ChipTone> = {
+  accent: { light: '#5f6f2e', dark: '#c9d887' },
+  danger: { light: '#a35046', dark: '#e09a91' },
+  info: { light: '#386f8f', dark: '#9fc7e3' },
+  neutral: { light: '#66706a', dark: '#b4bbb6' },
+  success: { light: '#2f6555', dark: '#9fd0bf' },
+  warning: { light: '#8a6430', dark: '#dfbd78' }
+};
+
+function stableToneIndex(label: string, toneCount: number) {
+  let hash = 0;
+  const text = label.trim().toLowerCase();
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash * 31) + text.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash) % toneCount;
+}
+
+function chipToneStyle(tone: ChipTone, theme: ReaderTheme): TextStyle {
+  const color = theme.dark ? tone.dark : tone.light;
+  return {
+    backgroundColor: alphaColor(color, theme.dark ? 0.17 : 0.085),
+    borderColor: alphaColor(color, theme.dark ? 0.42 : 0.22),
+    color
+  };
+}
+
+function chipToneTextStyle(tone: ChipTone, theme: ReaderTheme): TextStyle {
+  return {
+    color: theme.dark ? tone.dark : tone.light
+  };
+}
+
+export function topicTagColorStyle(label: string, theme: ReaderTheme): TextStyle {
+  return chipToneStyle(TOPIC_TAG_TONES[stableToneIndex(label, TOPIC_TAG_TONES.length)], theme);
+}
+
+export function topicTagTextColorStyle(label: string, theme: ReaderTheme): TextStyle {
+  return chipToneTextStyle(TOPIC_TAG_TONES[stableToneIndex(label, TOPIC_TAG_TONES.length)], theme);
+}
+
+export function topicStatusBadgeColorStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
+  return chipToneStyle(STATUS_BADGE_TONES[tone], theme);
+}
+
+export function topicStatusBadgeTextColorStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
+  return chipToneTextStyle(STATUS_BADGE_TONES[tone], theme);
+}
+
+export function replyContextBadgeStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
+  return chipToneStyle(STATUS_BADGE_TONES[tone], theme);
 }
 
 export function createTheme(settings: ReaderSettings): ReaderTheme {
@@ -264,13 +332,15 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 11,
       fontWeight: '700',
+      includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: theme.mist,
       borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.16),
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
-      paddingVertical: 2
+      paddingVertical: 2,
+      textAlignVertical: 'center'
     },
     topicCategoryBadge: {
       overflow: 'hidden',
@@ -278,13 +348,15 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 11,
       fontWeight: '600',
+      includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: 'transparent',
       borderColor: theme.line,
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
-      paddingVertical: 2
+      paddingVertical: 2,
+      textAlignVertical: 'center'
     },
     timeText: {
       flexShrink: 0,
@@ -323,13 +395,15 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 11,
       fontWeight: '600',
+      includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
       borderColor: alphaColor(theme.danger, 0.34),
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
-      paddingVertical: 3
+      paddingVertical: 3,
+      textAlignVertical: 'center'
     },
     topicMetaRow: {
       alignItems: 'center',
@@ -350,11 +424,13 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 11,
       fontWeight: '600',
+      includeFontPadding: false,
       lineHeight: 16,
       backgroundColor: theme.surface2,
       borderRadius: 999,
       paddingHorizontal: 8,
-      paddingVertical: 2
+      paddingVertical: 2,
+      textAlignVertical: 'center'
     },
     pillRail: {
       gap: 2,
@@ -1122,23 +1198,70 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       lineHeight: 16
     },
     topicTagRow: {
+      alignItems: 'center',
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 6,
       paddingTop: 2
     },
-    topicTagText: {
-      overflow: 'hidden',
+    topicTagPill: {
+      alignItems: 'center',
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center',
+      minHeight: 30,
+      paddingHorizontal: 9,
+      paddingVertical: 0
+    },
+    topicTagText: {
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
       lineHeight: 16,
+      textAlignVertical: 'center'
+    },
+    topicTagMorePill: {
+      backgroundColor: alphaColor(theme.muted, theme.dark ? 0.12 : 0.06),
+      borderColor: alphaColor(theme.muted, theme.dark ? 0.28 : 0.16)
+    },
+    topicTagMoreText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16,
+      textAlignVertical: 'center'
+    },
+    topicStatusRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      paddingTop: 2
+    },
+    topicStatusBadge: {
+      alignItems: 'center',
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.07),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.34 : 0.2),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      justifyContent: 'center',
+      minHeight: 28,
       paddingHorizontal: 8,
-      paddingVertical: 4
+      paddingVertical: 0
+    },
+    topicStatusBadgeText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16,
+      textAlignVertical: 'center'
     },
     articleBody: {
       borderTopColor: theme.line,
@@ -1512,8 +1635,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 10,
       fontWeight: '700',
+      includeFontPadding: false,
       lineHeight: 14,
-      paddingHorizontal: 6
+      paddingHorizontal: 6,
+      textAlignVertical: 'center'
     },
     replyContextBadge: {
       overflow: 'hidden',
@@ -1524,6 +1649,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 10,
       fontWeight: '700',
+      includeFontPadding: false,
       lineHeight: 14,
       paddingHorizontal: 6
     },
