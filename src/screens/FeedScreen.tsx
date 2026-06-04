@@ -201,7 +201,7 @@ export function FeedScreen({
         }}
         style={styles.content}
         contentContainerStyle={styles.feedListContentInner}
-        data={active ? feedItems : []}
+        data={feedItems}
         keyExtractor={topicKey}
         keyboardShouldPersistTaps="handled"
         refreshControl={active ? (

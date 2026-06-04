@@ -4143,19 +4143,14 @@ export default function App() {
         ...topicReplies
       ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean } | undefined);
       const liked = Boolean(target?.liked);
-      const submitted = await runLinuxDoRequest(
+      const patch = { commentId, type: 'like' as const, mode: 'toggle' as const };
+      setTopicDetail((current) => applyInteractionToTopic(current, patch));
+      setTopicReplies((current) => applyInteractionToReplies(current, patch));
+      await runLinuxDoRequest(
         () => buildLinuxDoLikeRequest({ postId: commentId, liked }),
         liked ? '已取消点赞' : '点赞已提交',
         { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
       );
-      if (submitted) {
-        if (currentTopicKeyRef.current !== requestTopicKey) {
-          return;
-        }
-        const patch = { commentId, type: 'like' as const, mode: 'toggle' as const };
-        setTopicDetail((current) => applyInteractionToTopic(current, patch));
-        setTopicReplies((current) => applyInteractionToReplies(current, patch));
-      }
       return;
     }
     if (detail?.source !== 'nodeseek') {
@@ -4175,19 +4170,14 @@ export default function App() {
     const successMessage = active
       ? type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
       : type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交';
-    const submitted = await runNodeSeekRequest(
+    const patch = { commentId, type, mode: 'toggle' as const };
+    setTopicDetail((current) => applyInteractionToTopic(current, patch));
+    setTopicReplies((current) => applyInteractionToReplies(current, patch));
+    await runNodeSeekRequest(
       () => buildNodeSeekInteractionRequest({ type, commentId, active }),
       successMessage,
       { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
-    if (submitted) {
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        return;
-      }
-      const patch = { commentId, type, mode: 'toggle' as const };
-      setTopicDetail((current) => applyInteractionToTopic(current, patch));
-      setTopicReplies((current) => applyInteractionToReplies(current, patch));
-    }
   }, [notify, runLinuxDoRequest, runNodeSeekRequest, selectedTopic, topicDetail, topicReplies]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
@@ -4212,7 +4202,8 @@ export default function App() {
     }
     const requestTopicKey = topicKey(detail);
     const collected = Boolean((detail as TopicDetail).collected);
-    const submitted = await runNodeSeekRequest(
+    setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: !collected }));
+    await runNodeSeekRequest(
       () => buildNodeSeekCollectionRequest({
         postId: detail.id,
         collected
@@ -4220,12 +4211,6 @@ export default function App() {
       collected ? '已取消原站收藏' : '原站收藏已提交',
       { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
-    if (submitted) {
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        return;
-      }
-      setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: !collected }));
-    }
   }, [runNodeSeekRequest, selectedTopic, topicDetail]);
 
   const bookmarkOnLinuxDoSite = useCallback(async () => {
@@ -4235,6 +4220,10 @@ export default function App() {
     }
     const requestTopicKey = topicKey(detail);
     const bookmarked = Boolean((detail as TopicDetail).bookmarked);
+    setTopicDetail((current) => applyBookmarkToTopic(current, {
+      bookmarked: !bookmarked,
+      bookmarkId: bookmarked ? undefined : (detail as TopicDetail).bookmarkId
+    }));
     const result = await runLinuxDoRequest(
       () => buildLinuxDoBookmarkRequest({
         bookmarkableId: detail.id,
@@ -4249,10 +4238,12 @@ export default function App() {
       if (currentTopicKeyRef.current !== requestTopicKey) {
         return;
       }
-      setTopicDetail((current) => applyBookmarkToTopic(current, {
-        bookmarked: !bookmarked,
-        bookmarkId: bookmarked ? undefined : linuxDoBookmarkIdFromActionResult(result)
-      }));
+      if (!bookmarked) {
+        const bookmarkId = linuxDoBookmarkIdFromActionResult(result);
+        if (bookmarkId) {
+          setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true, bookmarkId }));
+        }
+      }
     }
   }, [runLinuxDoRequest, selectedTopic, topicDetail]);
 

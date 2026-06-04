@@ -690,6 +690,11 @@ describe('Android App experience guards', () => {
     expect(block).not.toContain('AsyncStorage.getItem(scrollStorageKey)');
   });
 
+  it('keeps source tab scenes populated during pager transitions', () => {
+    expect(feedScreenSource).toContain('data={feedItems}');
+    expect(feedScreenSource).not.toContain('data={active ? feedItems : []}');
+  });
+
   it('bypasses feed caches when loading additional feed pages', () => {
     const block = appSource.match(/onLoadMore=\{\(\) => \{([\s\S]*?)\n      \}\}/)?.[1] || '';
 
@@ -1101,7 +1106,7 @@ describe('Android App experience guards', () => {
     expect(interactBlock).toContain('const requestTopicKey = detail ? topicKey(detail) : null;');
     expect(interactBlock).toContain('const active = Boolean(target?.[activeField]);');
     expect(interactBlock).toContain('mode: \'toggle\' as const');
-    expect(interactBlock).toContain('currentTopicKeyRef.current !== requestTopicKey');
+    expect(interactBlock).toContain('isCurrent: () => currentTopicKeyRef.current === requestTopicKey');
     expect(bookmarkBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(bookmarkBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(nodeSeekCollectionBlock).toContain('const requestTopicKey = topicKey(detail);');
@@ -1110,6 +1115,39 @@ describe('Android App experience guards', () => {
     expect(voteBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(voteBlock).toContain('voteIds: optionIds');
     expect(voteBlock).not.toContain('voteId: optionIds[0]');
+  });
+
+  it('updates visible reaction counts before waiting for the write request', () => {
+    const interactBlock = appSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const linuxDoBlock = interactBlock.match(/if \(detail\?\.source === 'linuxdo'\) \{([\s\S]*?)\n    if \(detail\?\.source !== 'nodeseek'\)/)?.[1] || '';
+    const nodeSeekBlock = interactBlock.match(/const activeFields: Record<InteractionType[\s\S]*?await runNodeSeekRequest\(/)?.[0] || '';
+    const linuxDoPatchIndex = linuxDoBlock.indexOf("const patch = { commentId, type: 'like' as const, mode: 'toggle' as const };");
+    const linuxDoRequestIndex = linuxDoBlock.indexOf('await runLinuxDoRequest(');
+    const nodeSeekPatchIndex = nodeSeekBlock.indexOf("const patch = { commentId, type, mode: 'toggle' as const };");
+    const nodeSeekRequestIndex = nodeSeekBlock.indexOf('await runNodeSeekRequest(');
+
+    expect(linuxDoPatchIndex).toBeGreaterThan(-1);
+    expect(linuxDoRequestIndex).toBeGreaterThan(-1);
+    expect(linuxDoPatchIndex).toBeLessThan(linuxDoRequestIndex);
+    expect(nodeSeekPatchIndex).toBeGreaterThan(-1);
+    expect(nodeSeekRequestIndex).toBeGreaterThan(-1);
+    expect(nodeSeekPatchIndex).toBeLessThan(nodeSeekRequestIndex);
+  });
+
+  it('updates original-site collection buttons before waiting for the write request', () => {
+    const nodeSeekCollectionBlock = appSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const linuxDoBookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const nodeSeekPatchIndex = nodeSeekCollectionBlock.indexOf('setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: !collected }));');
+    const nodeSeekRequestIndex = nodeSeekCollectionBlock.indexOf('await runNodeSeekRequest(');
+    const linuxDoPatchIndex = linuxDoBookmarkBlock.indexOf('setTopicDetail((current) => applyBookmarkToTopic(current, {');
+    const linuxDoRequestIndex = linuxDoBookmarkBlock.indexOf('const result = await runLinuxDoRequest(');
+
+    expect(nodeSeekPatchIndex).toBeGreaterThan(-1);
+    expect(nodeSeekRequestIndex).toBeGreaterThan(-1);
+    expect(nodeSeekPatchIndex).toBeLessThan(nodeSeekRequestIndex);
+    expect(linuxDoPatchIndex).toBeGreaterThan(-1);
+    expect(linuxDoRequestIndex).toBeGreaterThan(-1);
+    expect(linuxDoPatchIndex).toBeLessThan(linuxDoRequestIndex);
   });
 
   it('refreshes topic replies without resetting the topic body or reading state', () => {
