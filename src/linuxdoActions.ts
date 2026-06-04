@@ -1,6 +1,6 @@
 export interface LinuxDoActionRequest {
   path: string;
-  method: 'POST' | 'DELETE';
+  method: 'POST' | 'DELETE' | 'PUT';
   headers: Record<string, string>;
   body?: string;
 }
@@ -112,5 +112,34 @@ export function buildLinuxDoBookmarkRequest({
       bookmarkable_id: cleanPositiveInteger(bookmarkableId, '收藏对象 id'),
       bookmarkable_type: bookmarkableType
     }).toString()
+  };
+}
+
+export function buildLinuxDoPollVoteRequest({
+  postId,
+  pollName,
+  optionIds
+}: {
+  postId: string | number;
+  pollName: string;
+  optionIds: string[];
+}): LinuxDoActionRequest {
+  const cleanPollName = cleanRequiredText(pollName, '投票名称不正确');
+  const cleanOptions = optionIds.map((optionId) => String(optionId || '').trim()).filter(Boolean);
+  if (!cleanOptions.length) {
+    throw new Error('请选择投票选项');
+  }
+  const params = new URLSearchParams({
+    post_id: cleanPositiveInteger(postId, '帖子 id'),
+    poll_name: cleanPollName
+  });
+  cleanOptions.forEach((optionId) => params.append('options[]', optionId));
+  return {
+    path: '/polls/vote',
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: params.toString()
   };
 }

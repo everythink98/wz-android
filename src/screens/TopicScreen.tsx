@@ -23,10 +23,10 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, ChevronDown, ChevronLeft, ChevronUp, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Star, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
-import type { Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
+import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, YaohuoReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
@@ -116,6 +116,37 @@ function nodeSeekTopicPassiveStats(item: Pick<TopicDetail, 'dislikeCount' | 'col
     visibleNodeSeekStat('反对', item.dislikeCount),
     visibleNodeSeekStat('原站收藏', item.collectionCount)
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
+}
+
+function topicPollKey(poll: TopicPoll, index: number) {
+  return poll.id || poll.name || `poll-${index}`;
+}
+
+function pollTotalVotes(poll: TopicPoll) {
+  return poll.options.reduce((total, option) => total + (typeof option.count === 'number' ? option.count : 0), 0);
+}
+
+function pollChoiceRangeLabel(poll: TopicPoll) {
+  if (!poll.multiple) {
+    return undefined;
+  }
+  return [
+    typeof poll.min === 'number' ? `至少 ${poll.min} 项` : undefined,
+    typeof poll.max === 'number' ? `最多 ${poll.max} 项` : undefined
+  ].filter(Boolean).join('，') || undefined;
+}
+
+function pollSelectionRangeStatus(poll: TopicPoll, selectedCount: number) {
+  if (!poll.multiple) {
+    return undefined;
+  }
+  if (typeof poll.min === 'number' && selectedCount > 0 && selectedCount < poll.min) {
+    return `至少选择 ${poll.min} 项`;
+  }
+  if (typeof poll.max === 'number' && selectedCount > poll.max) {
+    return `最多选择 ${poll.max} 项`;
+  }
+  return undefined;
 }
 
 function nodeSeekReplyPassiveStats(item: Pick<Reply, 'dislikeCount'>) {
@@ -250,7 +281,7 @@ export function TopicScreen({
   onLinuxDoBookmark,
   onShareTopic,
   onYaohuoFavorite,
-  onYaohuoVote,
+  onVotePoll,
   onLoadMoreReplies,
   onOpenOriginal,
   onOpenReadingSettings,
@@ -306,7 +337,7 @@ export function TopicScreen({
   onLinuxDoBookmark: () => void;
   onShareTopic: () => void;
   onYaohuoFavorite: () => void;
-  onYaohuoVote: (voteId: string) => void;
+  onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onLoadMoreReplies: () => void;
   onOpenOriginal: (url: string) => void;
   onOpenReadingSettings: () => void;
@@ -359,6 +390,21 @@ export function TopicScreen({
     }
     return Math.max(...floors) - unreadReplyCount + 1;
   }, [sourceReplies, unreadReplyCount]);
+  const [pollSelections, setPollSelections] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    setPollSelections({});
+  }, [item?.id, item?.source]);
+  const togglePollSelection = useCallback((key: string, poll: TopicPoll, optionId: string) => {
+    setPollSelections((current) => {
+      const selected = current[key] || [];
+      const next = poll.multiple
+        ? selected.includes(optionId)
+          ? selected.filter((id) => id !== optionId)
+          : [...selected, optionId]
+        : [optionId];
+      return { ...current, [key]: next };
+    });
+  }, []);
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
   const topicContentHtml = topic?.contentHtml || '';
@@ -558,6 +604,16 @@ export function TopicScreen({
     if (listItem.type === 'topicActions') {
       const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
       const topicPassiveStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicPassiveStats(topic) : [];
+      const topicPolls = topic ? topic.polls || [] : [];
+      const canVotePollSource = Boolean(topic && (topic.source === 'nodeseek' || topic.source === 'linuxdo' || topic.source === 'yaohuo'));
+      const canWritePollSource = Boolean(
+        topic
+        && (
+          (topic.source === 'nodeseek' && canWriteNodeSeek)
+          || (topic.source === 'linuxdo' && canWriteLinuxDo)
+          || (topic.source === 'yaohuo' && canWriteYaohuo)
+        )
+      );
       return (
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
           {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
@@ -579,24 +635,124 @@ export function TopicScreen({
           {canWriteYaohuo ? (
             <View style={styles.topicPrimaryActions}>
               <IconButton tiny icon={BookMarked} label="原站收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
-              {(topic?.voteOptions || []).map((option) => (
-                <IconButton
-                  key={option.id}
-                  tiny
-                  icon={CheckCircle}
-                  label={`投票 ${option.label}${typeof option.count === 'number' ? ` ${option.count}` : ''}`}
-                  styles={styles}
-                  theme={theme}
-                  disabled={actionBusy}
-                  onPress={() => onYaohuoVote(option.id)}
-                />
-              ))}
             </View>
           ) : null}
           {canWriteLinuxDo ? (
             <View style={styles.topicPrimaryActions}>
               <IconButton tiny icon={ThumbsUp} label={`${topic?.liked ? '取消赞' : '点赞'} ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
               <IconButton tiny icon={BookMarked} label={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
+            </View>
+          ) : null}
+          {topicPolls.length ? (
+            <View style={styles.pollStack}>
+              {topicPolls.map((poll, index) => {
+                const pollKey = topicPollKey(poll, index);
+                const hasCounts = poll.options.some((option) => typeof option.count === 'number');
+                const totalVotes = pollTotalVotes(poll);
+                const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
+                const selectedSet = new Set(selectedOptionIds);
+                const linuxDoPollReady = topic?.source !== 'linuxdo' || Boolean(poll.postId && poll.name);
+                const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
+                const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !linuxDoPollReady);
+                const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
+                const pollStatus = poll.closed
+                  ? '已关闭'
+                  : poll.voted
+                    ? '已投票'
+                    : pollReadonly
+                      ? '只读结果'
+                      : !canWritePollSource
+                        ? '未登录'
+                        : !linuxDoPollReady
+                          ? '信息不完整'
+                          : '可投票';
+                const pollMetaItems = [
+                  poll.multiple ? '多选' : '单选',
+                  pollChoiceRangeLabel(poll),
+                  hasCounts ? `${totalVotes} 票` : undefined,
+                  typeof poll.public === 'boolean' ? (poll.public ? '公开' : '不公开') : undefined
+                ].filter((item): item is string => Boolean(item));
+                const submitLabel = poll.closed
+                  ? '投票已关闭'
+                  : poll.voted
+                    ? '已投票'
+                    : pollReadonly
+                      ? '只读结果'
+                      : !canWritePollSource
+                        ? '登录后投票'
+                        : !linuxDoPollReady
+                          ? '刷新后投票'
+                          : selectionRangeStatus || '提交投票';
+                const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
+                return (
+                  <View key={pollKey} style={styles.pollBlock}>
+                    <View style={styles.pollHeader}>
+                      <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
+                    </View>
+                    <View style={styles.pollOptionList}>
+                      {poll.options.map((option, optionIndex) => {
+                        const selected = selectedSet.has(option.id);
+                        const OptionIcon = poll.multiple
+                          ? selected ? CheckSquare : Square
+                          : selected ? CheckCircle : Circle;
+                        const percentValue = hasCounts && totalVotes > 0 && typeof option.count === 'number'
+                          ? Math.round((option.count / totalVotes) * 100)
+                          : undefined;
+                        const countText = typeof option.count === 'number'
+                          ? `${option.count} 票${percentValue !== undefined ? ` · ${percentValue}%` : ''}`
+                          : '';
+                        return (
+                          <Pressable
+                            key={option.id}
+                            accessibilityRole={poll.multiple ? 'checkbox' : 'radio'}
+                            accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
+                            android_ripple={androidRipple(theme.primarySoft)}
+                            disabled={pollOptionDisabled}
+                            style={[styles.pollOptionRow, optionIndex > 0 && styles.pollOptionDivider, selected && styles.pollOptionRowSelected]}
+                            onPress={() => {
+                              triggerPressFeedback();
+                              togglePollSelection(pollKey, poll, option.id);
+                            }}
+                          >
+                            {percentValue !== undefined ? (
+                              <View pointerEvents="none" style={[styles.pollOptionProgress, { width: `${percentValue}%` }]} />
+                            ) : null}
+                            <View style={styles.pollOptionContent}>
+                              <View style={styles.pollOptionIcon}>
+                                <OptionIcon size={18} color={selected ? theme.primary : theme.muted} strokeWidth={1.8} />
+                              </View>
+                              <View style={styles.pollOptionTextBlock}>
+                                <Text style={styles.pollOptionText}>{option.label}</Text>
+                                {countText ? <Text style={styles.pollOptionCount}>{countText}</Text> : null}
+                              </View>
+                            </View>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <View style={styles.pollFooter}>
+                      <View style={styles.pollMetaWrap}>
+                        {pollMetaItems.map((item) => (
+                          <Text key={item} style={styles.pollMetaPill}>{item}</Text>
+                        ))}
+                        <Text style={styles.pollStatePill}>{pollStatus}</Text>
+                      </View>
+                      {canVotePollSource ? (
+                        <View style={styles.pollSubmitRow}>
+                          <AppButton
+                            compact
+                            label={submitLabel}
+                            variant={submitDisabled ? 'ghost' : 'primary'}
+                            styles={styles}
+                            disabled={submitDisabled}
+                            onPress={() => onVotePoll(poll, selectedOptionIds)}
+                          />
+                        </View>
+                      ) : null}
+                    </View>
+                  </View>
+                );
+              })}
             </View>
           ) : null}
         </View>
@@ -681,7 +837,8 @@ export function TopicScreen({
     onToggleQuotedFloor,
     onOpenUser,
     onYaohuoFavorite,
-    onYaohuoVote,
+    onVotePoll,
+    pollSelections,
     quoteStateVersion,
     itemSource,
     replyComposerOpen,
@@ -692,6 +849,7 @@ export function TopicScreen({
     sourceReplies.length,
     styles,
     theme,
+    togglePollSelection,
     topic,
     topicColumnStyle
   ]);

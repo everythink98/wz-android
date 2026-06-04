@@ -952,6 +952,140 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 12,
       paddingBottom: 4
     },
+    pollStack: {
+      gap: 14,
+      paddingTop: 6
+    },
+    pollBlock: {
+      gap: 10,
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 14,
+      paddingBottom: 2
+    },
+    pollHeader: {
+      alignItems: 'flex-start',
+      gap: 8
+    },
+    pollTitle: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      fontWeight: '700',
+      lineHeight: 20,
+      width: '100%'
+    },
+    pollMetaWrap: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      justifyContent: 'flex-start',
+      width: '100%'
+    },
+    pollMetaPill: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.12),
+      borderRadius: 6,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 16,
+      paddingHorizontal: 7,
+      paddingVertical: 3
+    },
+    pollStatePill: {
+      backgroundColor: alphaColor(theme.ink, theme.dark ? 0.10 : 0.04),
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.16 : 0.08),
+      borderRadius: 6,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 16,
+      paddingHorizontal: 7,
+      paddingVertical: 3
+    },
+    pollOptionList: {
+      overflow: 'hidden',
+      backgroundColor: theme.surface,
+      borderColor: alphaColor(theme.ink, theme.dark ? 0.12 : 0.09),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    pollOptionRow: {
+      minHeight: 48,
+      backgroundColor: 'transparent',
+      overflow: 'hidden',
+      position: 'relative'
+    },
+    pollOptionDivider: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth
+    },
+    pollOptionRowSelected: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.14 : 0.06)
+    },
+    pollOptionProgress: {
+      position: 'absolute',
+      top: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.08)
+    },
+    pollOptionContent: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: 8,
+      minHeight: 48,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      position: 'relative',
+      width: '100%',
+      zIndex: 1
+    },
+    pollOptionIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 24,
+      height: 24,
+      marginTop: 1
+    },
+    pollOptionTextBlock: {
+      flex: 1,
+      minWidth: 0,
+      gap: 2
+    },
+    pollOptionText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      lineHeight: 20
+    },
+    pollOptionCount: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 17,
+      textAlign: 'left'
+    },
+    pollFooter: {
+      alignItems: 'flex-start',
+      gap: 8,
+      paddingTop: 2
+    },
+    pollSubmitRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      justifyContent: 'flex-start',
+      paddingTop: 0
+    },
     topicStatRail: {
       alignSelf: 'flex-start',
       alignItems: 'center',

@@ -1,5 +1,5 @@
 import type { HTMLElement } from 'node-html-parser';
-import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
+import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -554,7 +554,7 @@ function appendYaohuoPostContent(contentHtml: string, root: ReturnType<typeof pa
 
 function parseVoteOptions(html: string) {
   const root = parseHtml(html);
-  const options: Array<{ id: string; label: string; count?: number }> = [];
+  const options: TopicPollOption[] = [];
   root.querySelectorAll('.toupiao').forEach((element) => {
     element.innerHTML.split(/<br\s*\/?>/i).forEach((line) => {
       const id = line.match(/[?&]vid=(\d+)/i)?.[1];
@@ -565,11 +565,37 @@ function parseVoteOptions(html: string) {
       const count = parsePositiveInteger(text.match(/\((\d+)\)\s*$/)?.[1]);
       const label = text.replace(/^\[[^\]]+\]\s*/, '').replace(/\(\d+\)\s*$/, '').trim();
       if (label) {
-        options.push({ id, label, count });
+        options.push({ id, label, count, selected: /已投|已选|当前/i.test(text) });
       }
     });
   });
   return options;
+}
+
+function parseYaohuoVoteChoiceLimits(text: string) {
+  const min = parsePositiveInteger(text.match(/至少\s*(?:选择)?\s*(\d+)\s*项/i)?.[1]) || undefined;
+  const max = parsePositiveInteger(text.match(/(?:最多\s*(?:选择)?|可选)\s*(\d+)\s*项/i)?.[1]) || undefined;
+  return { min, max };
+}
+
+function parseVotePolls(html: string, topicId: string): TopicPoll[] | undefined {
+  const options = parseVoteOptions(html);
+  if (!options.length) {
+    return undefined;
+  }
+  const text = textContentFromHtml(html);
+  const { min, max } = parseYaohuoVoteChoiceLimits(text);
+  const multiple = /多选|可选\s*\d+\s*项|至少\s*(?:选择\s*)?\d+\s*项|至少\s*选择|最多\s*(?:选择)?\s*\d+\s*项/i.test(text);
+  return [{
+    id: `yaohuo-${topicId}`,
+    title: '投票',
+    voted: options.some((option) => option.selected) || /已投票|已经投票|您已投/i.test(text),
+    closed: /投票(?:已)?(?:结束|关闭|截止)|已结束投票/i.test(text),
+    multiple,
+    ...(min !== undefined ? { min } : {}),
+    ...(max !== undefined ? { max } : {}),
+    options
+  }];
 }
 
 function topicTitle(root: ReturnType<typeof parseHtml>) {
@@ -593,7 +619,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const createdAt = parseYaohuoDate(contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
-  const voteOptions = parseVoteOptions(html);
+  const polls = parseVotePolls(html, String(id || ''));
   return {
     source: 'yaohuo',
     id: String(id || ''),
@@ -611,7 +637,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     excerpt: textExcerpt(contentHtml),
     contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
     replies: [],
-    ...(voteOptions.length ? { voteOptions } : {})
+    ...(polls ? { polls } : {})
   };
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLinuxDoBookmarkRequest,
   buildLinuxDoLikeRequest,
+  buildLinuxDoPollVoteRequest,
   buildLinuxDoReplyRequest
 } from './linuxdoActions';
 
@@ -63,5 +64,23 @@ describe('linux.do action requests', () => {
       headers: {},
       body: undefined
     });
+  });
+
+  it('builds poll vote requests for Discourse polls', () => {
+    const request = buildLinuxDoPollVoteRequest({
+      postId: '1001',
+      pollName: 'poll',
+      optionIds: ['a1', 'b2']
+    });
+    const params = new URLSearchParams(request.body || '');
+
+    expect(request).toMatchObject({
+      path: '/polls/vote',
+      method: 'PUT',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' }
+    });
+    expect(params.get('post_id')).toBe('1001');
+    expect(params.get('poll_name')).toBe('poll');
+    expect(params.getAll('options[]')).toEqual(['a1', 'b2']);
   });
 });

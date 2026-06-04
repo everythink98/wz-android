@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
+import type { CategoriesResponse, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   accessRequirementFromObject,
   absoluteUrl,
@@ -250,12 +250,74 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+function nonNegativeNumber(value: unknown) {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
 function likedFromActionsSummary(value: unknown) {
   if (!Array.isArray(value)) {
     return undefined;
   }
   const likeAction = value.find((item) => isRecord(item) && Number(item.id) === 2);
   return isRecord(likeAction) ? Boolean(likeAction.acted) : undefined;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
+}
+
+function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
+  if (!isRecord(post) || !Array.isArray(post.polls)) {
+    return undefined;
+  }
+  const votesByPoll = isRecord(post.polls_votes) ? post.polls_votes : {};
+  const postId = positiveNumber(post.id);
+  const polls = post.polls.filter(isRecord).map((poll): TopicPoll | null => {
+    const name = String(poll.name || '').trim();
+    const selectedIds = new Set(stringArray(name ? votesByPoll[name] : undefined));
+    const rawOptions = Array.isArray(poll.options) ? poll.options : [];
+    const options = rawOptions.filter(isRecord).map((option): TopicPollOption | null => {
+      const id = String(option.id || '').trim();
+      const label = textContentFromHtml(String(option.html || option.label || ''));
+      if (!id || !label) {
+        return null;
+      }
+      const count = nonNegativeNumber(option.votes);
+      return {
+        id,
+        label,
+        ...(count !== undefined ? { count } : {}),
+        selected: selectedIds.has(id)
+      };
+    }).filter((option): option is TopicPollOption => Boolean(option));
+    if (!options.length) {
+      return null;
+    }
+    const type = String(poll.type || '').trim();
+    const closedByStatus = String(poll.status || '').trim().toLowerCase() === 'closed';
+    const closedByDate = Boolean(poll.close && Date.parse(String(poll.close)) <= Date.now());
+    const min = positiveNumber(poll.min);
+    const max = positiveNumber(poll.max);
+    return {
+      id: String(poll.id || name || '').trim() || undefined,
+      name: name || undefined,
+      postId: postId ? String(postId) : undefined,
+      title: textContentFromHtml(String(poll.title || '')).trim() || undefined,
+      public: typeof poll.public === 'boolean' ? poll.public : undefined,
+      closed: closedByStatus || closedByDate,
+      multiple: type === 'multiple',
+      ...(type === 'ranked_choice' || type === 'number' ? { readonly: true } : {}),
+      ...(min !== undefined ? { min } : {}),
+      ...(max !== undefined ? { max } : {}),
+      voted: selectedIds.size > 0,
+      options
+    };
+  }).filter((poll): poll is TopicPoll => Boolean(poll));
+  return polls.length ? polls : undefined;
 }
 
 function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFloor = index + 1): Reply | null {
@@ -447,6 +509,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const replies = replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[];
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
   const replyHasMore = totalPosts > replies.length + 1;
+  const polls = normalizeDiscoursePolls(firstPost);
   cacheTopicStream(id, data);
   cacheTopicStream(topic.id, data);
   return {
@@ -459,6 +522,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
     ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
     ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
+    ...(polls ? { polls } : {}),
     ...(positiveNumber(data.bookmark_id) ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {})
   };
 }

@@ -76,6 +76,57 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('styles.topicPostActionArea');
   });
 
+  it('renders unified poll blocks from topic polls instead of source-specific vote options', () => {
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
+      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
+      : '';
+
+    expect(topicScreenSource).toContain('topic.polls');
+    expect(topicScreenSource).toContain('onVotePoll');
+    expect(topicActionRenderer).toContain('styles.pollBlock');
+    expect(topicActionRenderer).toContain('styles.pollFooter');
+    expect(topicActionRenderer).toContain('styles.pollMetaPill');
+    expect(topicActionRenderer).toContain('styles.pollStatePill');
+    expect(topicActionRenderer).toContain('styles.pollOptionList');
+    expect(topicActionRenderer).toContain('styles.pollOptionDivider');
+    expect(topicActionRenderer).toContain('styles.pollOptionProgress');
+    expect(topicActionRenderer).toContain('styles.pollOptionContent');
+    expect(topicActionRenderer).not.toContain('voteOptions');
+  });
+
+  it('keeps poll result rows readable and stable on narrow detail screens', () => {
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
+      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
+      : '';
+
+    expect(topicActionRenderer).toContain('styles.pollOptionTextBlock');
+    expect(topicActionRenderer).not.toContain('styles.pollOptionRowDisabled');
+    expect(themeSource).toContain('pollOptionList');
+    expect(themeSource).toContain('pollOptionDivider');
+    expect(themeSource).toContain('pollOptionTextBlock');
+    expect(themeSource).toMatch(/pollOptionRow: \{[\s\S]*?minHeight: 48[\s\S]*?\n    \},/);
+    expect(themeSource.match(/pollOptionRow: \{[\s\S]*?\n    \},/)?.[0] || '').not.toContain('borderRadius');
+    expect(themeSource).toContain('pollHeader: {\n      alignItems: \'flex-start\',\n      gap: 8');
+    expect(themeSource).toContain('pollFooter:');
+  });
+
+  it('uses poll choice limits to keep multi-choice submissions valid', () => {
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
+      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
+      : '';
+
+    expect(topicScreenSource).toContain('pollChoiceRangeLabel');
+    expect(topicScreenSource).toContain('pollSelectionRangeStatus');
+    expect(topicActionRenderer).toContain('selectionRangeStatus');
+    expect(topicActionRenderer).toContain('Boolean(selectionRangeStatus)');
+  });
+
   it('does not repeat the original-site button at the bottom of the main post', () => {
     const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
     const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");

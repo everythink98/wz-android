@@ -70,6 +70,17 @@ describe('yaohuo action request builders', () => {
     });
   });
 
+  it('builds yaohuo multi-choice vote requests with every selected option id', () => {
+    expect(buildYaohuoVoteRequest({
+      topicId: '123',
+      classId: '177',
+      voteIds: ['55', '56']
+    })).toMatchObject({
+      path: '/bbs/book_view_toVote.aspx?siteid=1000&classid=177&vid=55&vid=56&vpage=1&lpage=2&id=123',
+      method: 'GET'
+    });
+  });
+
   it('rejects empty reply content and invalid ids', () => {
     expect(() => buildYaohuoReplyRequest({
       topicId: '123',
@@ -82,5 +93,11 @@ describe('yaohuo action request builders', () => {
       classId: '177',
       voteId: 'bad'
     })).toThrow('投票 id 不正确');
+
+    expect(() => buildYaohuoVoteRequest({
+      topicId: '123',
+      classId: '177',
+      voteIds: []
+    })).toThrow('请选择投票选项');
   });
 });

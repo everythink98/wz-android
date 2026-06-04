@@ -84,6 +84,25 @@ export function buildNodeSeekAttendanceRequest({
   };
 }
 
+export function buildNodeSeekVoteRequest({
+  optionIds
+}: {
+  optionIds: Array<string | number>;
+}): NodeSeekActionRequest {
+  const ids = optionIds.map((id) => cleanPositiveInteger(id, '投票选项')).filter(Boolean);
+  if (!ids.length) {
+    throw new Error('请选择投票选项');
+  }
+  return {
+    path: '/api/vote/voteforitem',
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ ids })
+  };
+}
+
 export function nodeSeekActionErrorMessage(data: unknown, status: number) {
   if (data && typeof data === 'object') {
     const record = data as Record<string, unknown>;

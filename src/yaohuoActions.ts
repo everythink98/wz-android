@@ -110,20 +110,27 @@ export function buildYaohuoFavoriteRequest({
 export function buildYaohuoVoteRequest({
   topicId,
   classId,
-  voteId
+  voteId,
+  voteIds
 }: {
   topicId: string | number;
   classId: string | number;
-  voteId: string | number;
+  voteId?: string | number;
+  voteIds?: Array<string | number>;
 }): YaohuoActionRequest {
+  const rawVoteIds = voteIds ?? (voteId !== undefined ? [voteId] : []);
+  if (!rawVoteIds.length) {
+    throw new Error('请选择投票选项');
+  }
+  const cleanVoteIds = rawVoteIds.map((id) => cleanPositiveInteger(id, '投票 id'));
   const params = new URLSearchParams({
     siteid: '1000',
-    classid: cleanPositiveInteger(classId, '分区 id'),
-    vid: cleanPositiveInteger(voteId, '投票 id'),
-    vpage: '1',
-    lpage: '2',
-    id: cleanPositiveInteger(topicId, '帖子 id')
+    classid: cleanPositiveInteger(classId, '分区 id')
   });
+  cleanVoteIds.forEach((id) => params.append('vid', id));
+  params.set('vpage', '1');
+  params.set('lpage', '2');
+  params.set('id', cleanPositiveInteger(topicId, '帖子 id'));
   return {
     path: `/bbs/book_view_toVote.aspx?${params.toString()}`,
     method: 'GET',

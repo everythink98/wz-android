@@ -48,6 +48,7 @@ import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
+  buildNodeSeekVoteRequest,
   type NodeSeekActionRequest
 } from './src/nodeseekActions';
 import { runNodeSeekAction } from './src/nodeseekActionClient';
@@ -109,6 +110,7 @@ import { exportReaderBackupJson, importReaderBackupJson } from './src/readerBack
 import {
   buildLinuxDoBookmarkRequest,
   buildLinuxDoLikeRequest,
+  buildLinuxDoPollVoteRequest,
   buildLinuxDoReplyRequest,
   type LinuxDoActionRequest
 } from './src/linuxdoActions';
@@ -133,12 +135,12 @@ import {
   sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
 } from './src/linuxdoCookieBridge';
-import type { Category, FeedResponse, FeedSource, Reply, Source, Topic, TopicDetail, UserProfile } from './src/types';
+import type { Category, FeedResponse, FeedSource, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from './src/types';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
   applyInteractionToTopic,
-  applyVoteOptionToTopic,
+  applyPollVoteToTopic,
   linuxDoBookmarkIdFromActionResult
 } from './src/topicActionState';
 import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, markInlineSizedImageHtml, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
@@ -441,6 +443,21 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
     || /^\\s*[{[]/.test((document.body?.innerText || document.documentElement?.innerText || "").trim());
+  const hasPendingVotePanel = () => {
+    const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
+      const style = window.getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") !== 0;
+    });
+    if (visibleMasks) {
+      return true;
+    }
+    return Array.from(document.querySelectorAll('input[name="vote-item"]')).some((input) => {
+      const inputId = input.getAttribute("id") || "";
+      const label = inputId ? document.querySelector('label[for="' + inputId.replace(/"/g, '\\"') + '"]') : null;
+      const labelText = (label?.querySelector(".vote-item-text")?.textContent || label?.textContent || "").trim();
+      return !(input.getAttribute("value") || "").trim() || !labelText;
+    });
+  };
   const postResult = () => {
     window.ReactNativeWebView.postMessage(JSON.stringify({
       type: 'nodeseek-browser-fetch',
@@ -453,9 +470,9 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
       cookie: document.cookie || ""
     }));
   };
-  const deadline = Date.now() + 8000;
+  const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
-    if ((!isChallengePage() && hasReadableContent()) || Date.now() >= deadline) {
+    if ((!isChallengePage() && hasReadableContent() && !hasPendingVotePanel()) || Date.now() >= deadline) {
       postResult();
       return;
     }
@@ -4183,28 +4200,59 @@ export default function App() {
     }
   }, [runLinuxDoRequest, selectedTopic, topicDetail]);
 
-  const voteYaohuo = useCallback(async (voteId: string) => {
+  const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
     const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'yaohuo') {
+    if (!detail || !['nodeseek', 'linuxdo', 'yaohuo'].includes(detail.source)) {
+      return;
+    }
+    if (!optionIds.length) {
+      notify('请选择投票选项');
       return;
     }
     const requestTopicKey = topicKey(detail);
-    const submitted = await runYaohuoRequest(
-      () => buildYaohuoVoteRequest({
-        topicId: detail.id,
-        classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-        voteId
-      }),
-      '投票已提交',
-      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-    );
+    let submitted: unknown = false;
+    if (detail.source === 'nodeseek') {
+      submitted = await runNodeSeekRequest(
+        () => buildNodeSeekVoteRequest({ optionIds }),
+        '投票已提交',
+        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+      );
+    } else if (detail.source === 'linuxdo') {
+      if (!poll.postId || !poll.name) {
+        notify('当前投票信息不完整，刷新主题后再试。');
+        return;
+      }
+      submitted = await runLinuxDoRequest(
+        () => buildLinuxDoPollVoteRequest({
+          postId: poll.postId || '',
+          pollName: poll.name || '',
+          optionIds
+        }),
+        '投票已提交',
+        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+      );
+    } else {
+      submitted = await runYaohuoRequest(
+        () => buildYaohuoVoteRequest({
+          topicId: detail.id,
+          classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+          voteIds: optionIds
+        }),
+        '投票已提交',
+        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+      );
+    }
     if (submitted) {
       if (currentTopicKeyRef.current !== requestTopicKey) {
         return;
       }
-      setTopicDetail((current) => applyVoteOptionToTopic(current, voteId));
+      setTopicDetail((current) => applyPollVoteToTopic(current, {
+        pollId: poll.id,
+        pollName: poll.name,
+        optionIds
+      }));
     }
-  }, [runYaohuoRequest, selectedTopic, topicDetail]);
+  }, [notify, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
   const importBackup = useCallback(async () => {
     const requestId = ++backupRequestIdRef.current;
@@ -4798,7 +4846,7 @@ export default function App() {
       onLinuxDoBookmark={bookmarkOnLinuxDoSite}
       onShareTopic={shareTopic}
       onYaohuoFavorite={favoriteOnYaohuoSite}
-      onYaohuoVote={voteYaohuo}
+      onVotePoll={votePoll}
       onLoadMoreReplies={loadMoreReplies}
       onOpenOriginal={openExternalUrl}
       onOpenReadingSettings={openReadingSettingsFromTopic}
@@ -4815,7 +4863,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, voteYaohuo, yaohuoReplyTarget]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll, yaohuoReplyTarget]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen

@@ -3,6 +3,7 @@ import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
+  buildNodeSeekVoteRequest,
   nodeSeekActionErrorMessage
 } from './nodeseekActions';
 
@@ -66,6 +67,23 @@ describe('NodeSeek action request builders', () => {
       headers: {},
       body: undefined
     });
+  });
+
+  it('builds a vote request with selected NodeSeek vote item ids', () => {
+    expect(buildNodeSeekVoteRequest({ optionIds: ['71', 72] })).toEqual({
+      path: '/api/vote/voteforitem',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        ids: [71, 72]
+      })
+    });
+  });
+
+  it('rejects empty NodeSeek vote selections', () => {
+    expect(() => buildNodeSeekVoteRequest({ optionIds: [] })).toThrow('请选择投票选项');
   });
 
   it('extracts a useful action error message without exposing raw internals', () => {

@@ -59,17 +59,39 @@ export function applyBookmarkToTopic<T extends TopicDetail | null>(
   } as T;
 }
 
-export function applyVoteOptionToTopic<T extends TopicDetail | null>(topic: T, voteId: string): T {
-  if (!topic?.voteOptions?.length) {
+export function applyPollVoteToTopic<T extends TopicDetail | null>(
+  topic: T,
+  patch: { pollId?: string; pollName?: string; optionIds: string[] }
+): T {
+  if (!topic?.polls?.length) {
     return topic;
   }
+  const selectedIds = new Set(patch.optionIds.map(String));
   return {
     ...topic,
-    voteOptions: topic.voteOptions.map((option) => (
-      option.id === voteId
-        ? { ...option, count: nextCount(option.count, 1) }
-        : option
-    ))
+    polls: topic.polls.map((poll) => {
+      const matchesPoll = patch.pollId
+        ? poll.id === patch.pollId
+        : patch.pollName
+          ? poll.name === patch.pollName
+          : topic.polls!.length === 1;
+      if (!matchesPoll) {
+        return poll;
+      }
+      return {
+        ...poll,
+        voted: true,
+        options: poll.options.map((option) => {
+          const selected = selectedIds.has(option.id);
+          const wasSelected = option.selected === true;
+          return {
+            ...option,
+            selected,
+            count: selected && !wasSelected ? nextCount(option.count, 1) : option.count
+          };
+        })
+      };
+    })
   } as T;
 }
 

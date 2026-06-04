@@ -62,14 +62,32 @@ export interface Category {
   slug?: string;
 }
 
+export interface TopicPollOption {
+  id: string;
+  label: string;
+  count?: number;
+  selected?: boolean;
+}
+
+export interface TopicPoll {
+  id?: string;
+  name?: string;
+  postId?: string;
+  title?: string;
+  multiple?: boolean;
+  voted?: boolean;
+  closed?: boolean;
+  public?: boolean;
+  readonly?: boolean;
+  min?: number;
+  max?: number;
+  options: TopicPollOption[];
+}
+
 export interface TopicDetail extends Topic {
   contentHtml: string;
   replies: Reply[];
-  voteOptions?: Array<{
-    id: string;
-    label: string;
-    count?: number;
-  }>;
+  polls?: TopicPoll[];
   replyHasMore?: boolean;
   replyNextPage?: number | null;
   replyNextOffset?: number | null;

@@ -3,7 +3,7 @@ import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
-import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
+import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -165,6 +165,248 @@ function optionalBoolean(value: unknown) {
     }
   }
   return undefined;
+}
+
+function extractNodeSeekVoteIds(...values: unknown[]) {
+  const ids = new Set<string>();
+  values.forEach((value) => {
+    const text = String(value || '');
+    for (const match of text.matchAll(/nsapp:\/\/vote\?id=(\d+)/gi)) {
+      ids.add(match[1]);
+    }
+  });
+  return [...ids];
+}
+
+function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): TopicPoll | null {
+  const source = isRecord(value) && isRecord(value.vote)
+    ? value.vote
+    : isRecord(value) && isRecord(value.detail)
+      ? value.detail
+      : isRecord(value)
+        ? value
+        : null;
+  if (!source) {
+    return null;
+  }
+  const pollId = String(source.id || source.voteId || fallbackId).trim();
+  const options = arrayField(source.items || source.options)
+    .filter(isRecord)
+    .map((item): TopicPollOption | null => {
+      const id = String(item.vote_item_id || item.id || item.itemId || '').trim();
+      const label = String(item.text || item.label || item.name || item.title || '').trim();
+      if (!id || !label) {
+        return null;
+      }
+      const count = optionalInteger(item.count ?? item.votes);
+      return {
+        id,
+        label,
+        ...(count !== undefined ? { count } : {}),
+        selected: optionalBoolean(item.voted ?? item.selected) === true
+      };
+    })
+    .filter((item): item is TopicPollOption => Boolean(item));
+  if (!pollId || !options.length) {
+    return null;
+  }
+  return {
+    id: pollId,
+    title: String(source.title || '').trim() || undefined,
+    public: optionalBoolean(source.isPublic ?? source.public),
+    closed: optionalBoolean(source.locked ?? source.closed),
+    multiple: optionalBoolean(source.multiple),
+    voted: optionalBoolean(source.voted) === true || options.some((option) => option.selected),
+    options
+  };
+}
+
+function nodeSeekElementHasAttribute(element: HTMLElement, name: string) {
+  return Object.prototype.hasOwnProperty.call(element.attributes, name);
+}
+
+function nodeSeekParentElement(element: HTMLElement | null | undefined) {
+  return element?.parentNode && 'rawTagName' in element.parentNode
+    ? element.parentNode as HTMLElement
+    : null;
+}
+
+function nearestNodeSeekLabel(element: HTMLElement) {
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (String(current.rawTagName || '').toLowerCase() === 'label') {
+      return current;
+    }
+    current = nodeSeekParentElement(current);
+  }
+  return null;
+}
+
+function nodeSeekPollCountFromElement(element: HTMLElement | null | undefined) {
+  if (!element) {
+    return undefined;
+  }
+  const dataCount = optionalInteger(
+    element.getAttribute('data-count')
+    || element.getAttribute('data-votes')
+    || element.getAttribute('aria-label')
+  );
+  if (dataCount !== undefined) {
+    return dataCount;
+  }
+  const text = elementText(element);
+  const match = text.match(/(\d[\d,]*)\s*(?:票|votes?)/i);
+  return match ? optionalInteger(match[1]) : undefined;
+}
+
+function cleanNodeSeekPollOptionLabel(value: string, countText?: string) {
+  let label = value;
+  if (countText) {
+    label = label.replace(countText, ' ');
+  }
+  return label
+    .replace(/\s*\d[\d,]*\s*(?:票|votes?)\b/gi, ' ')
+    .replace(/\s*[（(]\s*\d[\d,]*\s*(?:票|votes?)?\s*[)）]\s*/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function nodeSeekPollIdFromForm(form: HTMLElement, fallbackIndex: number) {
+  const hiddenId = form.querySelectorAll('input[type="hidden"]').find((input) => (
+    /^(?:vote_?id|id)$/i.test(String(input.getAttribute('name') || ''))
+    && String(input.getAttribute('value') || '').trim()
+  ));
+  const linkedId = elementText(form).match(/nsapp:\/\/vote\?id=(\d+)/i)?.[1];
+  const rawId = form.getAttribute('data-vote-id')
+    || form.getAttribute('data-voteid')
+    || form.getAttribute('data-id')
+    || hiddenId?.getAttribute('value')
+    || linkedId
+    || String(form.getAttribute('id') || '').match(/(?:vote|poll)[-_]?(\d+)/i)?.[1]
+    || '';
+  return String(rawId || `rendered-${fallbackIndex}`).trim();
+}
+
+function nodeSeekPollTitleFromForm(form: HTMLElement) {
+  const titleElement = form.querySelector('legend')
+    || form.querySelector('.vote-title')
+    || form.querySelector('.poll-title')
+    || form.querySelector('[data-title]')
+    || form.querySelector('h1, h2, h3, h4');
+  const title = titleElement?.getAttribute('data-title') || elementText(titleElement);
+  return title.trim() || undefined;
+}
+
+function nodeSeekPollOptionFromInput(form: HTMLElement, input: HTMLElement): TopicPollOption | null {
+  const id = String(
+    input.getAttribute('value')
+    || input.getAttribute('data-vote-item-id')
+    || input.getAttribute('data-item-id')
+    || input.getAttribute('id')
+    || ''
+  ).trim();
+  if (!id) {
+    return null;
+  }
+  const inputId = String(input.getAttribute('id') || '').trim();
+  const explicitLabel = inputId
+    ? form.querySelectorAll('label').find((label) => label.getAttribute('for') === inputId)
+    : null;
+  const labelContainer = nearestNodeSeekLabel(input) || explicitLabel || nodeSeekParentElement(input);
+  const countElement = labelContainer?.querySelector('.vote-count, .poll-count, .count, [data-count], [data-votes]');
+  const countText = elementText(countElement);
+  const label = cleanNodeSeekPollOptionLabel(elementText(labelContainer), countText);
+  if (!label) {
+    return null;
+  }
+  const count = nodeSeekPollCountFromElement(countElement) ?? nodeSeekPollCountFromElement(labelContainer);
+  return {
+    id,
+    label,
+    ...(count !== undefined ? { count } : {}),
+    selected: nodeSeekElementHasAttribute(input, 'checked') || /(?:selected|active|checked)/i.test(String(labelContainer?.getAttribute('class') || ''))
+  };
+}
+
+function parseRenderedNodeSeekPollForms(html: string) {
+  const root = parseHtml(`<body>${html}</body>`);
+  const forms = root.querySelectorAll('form').filter((form) => {
+    const marker = [
+      form.getAttribute('class'),
+      form.getAttribute('id'),
+      form.getAttribute('action'),
+      form.getAttribute('data-vote-id'),
+      form.getAttribute('data-voteid'),
+      elementText(form)
+    ].join(' ');
+    return /vote|poll/i.test(marker)
+      || form.querySelectorAll('input[type="radio"], input[type="checkbox"]').some((input) => /^(?:ids?|ids\[\]|vote|vote-item|option)$/i.test(String(input.getAttribute('name') || '')));
+  });
+  const polls = forms.map((form, index): TopicPoll | null => {
+    const inputs = form.querySelectorAll('input[type="radio"], input[type="checkbox"]');
+    const options = inputs
+      .map((input) => nodeSeekPollOptionFromInput(form, input))
+      .filter((option): option is TopicPollOption => Boolean(option));
+    if (!options.length) {
+      return null;
+    }
+    const formText = elementText(form);
+    const explicitMultiple = optionalBoolean(form.getAttribute('data-multiple') ?? form.getAttribute('multiple'));
+    const multiple = explicitMultiple ?? inputs.some((input) => String(input.getAttribute('type') || '').toLowerCase() === 'checkbox');
+    const publicState = /不公开|匿名/.test(formText)
+      ? false
+      : /公开/.test(formText)
+        ? true
+        : undefined;
+    const closed = /已关闭|投票关闭|closed/i.test(formText) || undefined;
+    const voted = options.some((option) => option.selected) || /已投票|已选择|voted/i.test(formText) || undefined;
+    return {
+      id: nodeSeekPollIdFromForm(form, index),
+      title: nodeSeekPollTitleFromForm(form),
+      multiple,
+      ...(publicState !== undefined ? { public: publicState } : {}),
+      ...(closed ? { closed } : {}),
+      ...(voted ? { voted } : {}),
+      options
+    };
+  }).filter((poll): poll is TopicPoll => Boolean(poll));
+  forms.forEach((form) => form.remove());
+  const cleaned = root.querySelector('body')?.innerHTML || '';
+  return {
+    html: cleaned.trim(),
+    polls: polls.length ? polls : undefined
+  };
+}
+
+function mergeNodeSeekPolls(...groups: Array<TopicPoll[] | undefined>) {
+  const seen = new Set<string>();
+  const polls: TopicPoll[] = [];
+  for (const group of groups) {
+    for (const poll of group || []) {
+      const key = poll.id || poll.name || JSON.stringify(poll.options.map((option) => option.id));
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      polls.push(poll);
+    }
+  }
+  return polls.length ? polls : undefined;
+}
+
+async function readNodeSeekPollsFromVoteLinks(values: unknown[], options: NodeSeekOptions) {
+  const ids = extractNodeSeekVoteIds(...values);
+  if (!ids.length) {
+    return undefined;
+  }
+  const polls = (await Promise.all(ids.map(async (id) => {
+    try {
+      return normalizeNodeSeekVoteInfo(await fetchNodeSeekJson(`/api/vote/info/${encodeURIComponent(id)}`, options), id);
+    } catch {
+      return null;
+    }
+  }))).filter((poll): poll is TopicPoll => Boolean(poll));
+  return polls.length ? polls : undefined;
 }
 
 function nodeSeekEmbeddedUserId(user: Record<string, unknown>) {
@@ -814,6 +1056,8 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     || root.querySelector('a[href*="/categories/"]');
   const categoryHref = categoryLink?.getAttribute('href') || '';
   const createdAt = renderedNodeSeekTime(firstContentItem?.querySelector('time') || root.querySelector('article time') || root.querySelector('.post-detail time') || root.querySelector('time')) || new Date().toISOString();
+  const renderedPolls = parseRenderedNodeSeekPollForms(renderedContentHtml);
+  const cleanedContentHtml = renderedContentHtml ? renderedPolls.html : contentHtml;
   const replyRows = root.querySelectorAll('.content-item, .comment-item, .comment-list > li, .comments > li, [id^="comment-"]').filter((row) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     return Boolean(replyContent?.innerHTML && row !== firstContentItem);
@@ -861,8 +1105,9 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     createdAt,
     lastReplyAt,
     replyCount: allReplies.length,
-    excerpt: textExcerpt(contentHtml),
-    contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
+    excerpt: textExcerpt(cleanedContentHtml || contentHtml),
+    contentHtml: sanitizeContentHtml(cleanedContentHtml, BASE_URL),
+    ...(renderedPolls.polls ? { polls: renderedPolls.polls } : {}),
     ...(accessRequirement ? { accessRequirement } : {}),
     commentId: firstContentItem ? renderedNodeSeekCommentId(firstContentItem) : undefined,
     upvoteCount: renderedNodeSeekReactionCount(firstContentItem, ['点赞', 'good-one', 'upvote']),
@@ -899,11 +1144,19 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   if (postData) {
-    return withNodeSeekReplyPagination(normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30), html, id, 1);
+    const comments = arrayField(postData.comments);
+    const first = isRecord(comments[0]) ? comments[0] : {};
+    const topic = normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30);
+    const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], options));
+    return withNodeSeekReplyPagination(polls ? { ...topic, polls } : topic, html, id, 1);
   }
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
   if (rendered) {
-    return withNodeSeekReplyPagination(rendered, html, id, 1);
+    const polls = mergeNodeSeekPolls(
+      rendered.polls,
+      await readNodeSeekPollsFromVoteLinks([rendered.contentHtml, html], options)
+    );
+    return withNodeSeekReplyPagination(polls ? { ...rendered, polls } : rendered, html, id, 1);
   }
   throw new Error('NodeSeek 主题解析失败');
 }

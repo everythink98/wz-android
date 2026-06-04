@@ -977,7 +977,7 @@ describe('Android App experience guards', () => {
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
     expect(appSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
     expect(appSource).toContain('document.body?.innerText');
-    expect(appSource).toContain('if ((!isChallengePage() && hasReadableContent()) || Date.now() >= deadline) {');
+    expect(appSource).toContain('if ((!isChallengePage() && hasReadableContent() && !hasPendingVotePanel()) || Date.now() >= deadline) {');
   });
 
   it('keeps the hidden NodeSeek browser fetch WebView out of the visible layout', () => {
@@ -991,6 +991,13 @@ describe('Android App experience guards', () => {
   it('does not mistake regular NodeSeek posts mentioning Cloudflare for verification pages', () => {
     expect(appSource).toContain('const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;');
     expect(appSource).not.toContain('just a moment|cloudflare|cf-turnstile|challenge-platform');
+  });
+
+  it('waits for NodeSeek embedded vote panels before returning hidden WebView HTML', () => {
+    expect(appSource).toContain('const hasPendingVotePanel = () =>');
+    expect(appSource).toContain('.embed-vote .form-mask');
+    expect(appSource).toContain('input[name="vote-item"]');
+    expect(appSource).toContain('!hasPendingVotePanel()');
   });
 
   it('stops the linux.do verification spinner when the WebView cannot load', () => {
@@ -1034,15 +1041,17 @@ describe('Android App experience guards', () => {
   it('keeps successful topic actions local instead of reopening the whole topic', () => {
     const interactBlock = appSource.match(/const interact = useCallback\(async \(type: 'upvote' \| 'like', commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const bookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const voteBlock = appSource.match(/const voteYaohuo = useCallback\(async \(voteId: string\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const voteBlock = appSource.match(/const votePoll = useCallback\(async \(poll: TopicPoll, optionIds: string\[\]\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(appSource).toContain('applyInteractionToTopic');
     expect(appSource).toContain('applyInteractionToReplies');
     expect(appSource).toContain('applyBookmarkToTopic');
-    expect(appSource).toContain('applyVoteOptionToTopic');
+    expect(appSource).toContain('applyPollVoteToTopic');
     expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(interactBlock).toContain('const requestTopicKey = detail ? topicKey(detail) : null;');
     expect(interactBlock).toContain('currentTopicKeyRef.current !== requestTopicKey');
@@ -1050,6 +1059,8 @@ describe('Android App experience guards', () => {
     expect(bookmarkBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(voteBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(voteBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
+    expect(voteBlock).toContain('voteIds: optionIds');
+    expect(voteBlock).not.toContain('voteId: optionIds[0]');
   });
 
   it('refreshes topic replies without resetting the topic body or reading state', () => {

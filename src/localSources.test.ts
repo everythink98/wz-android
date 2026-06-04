@@ -235,6 +235,142 @@ describe('Android local sources', () => {
     });
   });
 
+  it('loads NodeSeek vote info from nsapp vote links in topic content', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 759903,
+        title: 'NodeSeek poll topic',
+        op: { name: 'alice' },
+        comments: [
+          {
+            commentId: 10,
+            poster: { name: 'alice' },
+            markdown: '提交投票 nsapp://vote?id=2443',
+            time: { createdDate: '2026-06-03T00:00:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/vote/info/2443')) {
+        return json({
+          vote: {
+            id: 2443,
+            title: '公开投票',
+            isPublic: true,
+            locked: false,
+            multiple: true,
+            items: [
+              { vote_item_id: 71, text: '选项 A', count: 2, voted: false },
+              { vote_item_id: 72, text: '选项 B', count: 5, voted: true }
+            ]
+          }
+        });
+      }
+      return html(`<script>${payload}</script>`);
+    });
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls).toEqual([{
+      id: '2443',
+      title: '公开投票',
+      public: true,
+      closed: false,
+      multiple: true,
+      voted: true,
+      options: [
+        { id: '71', label: '选项 A', count: 2, selected: false },
+        { id: '72', label: '选项 B', count: 5, selected: true }
+      ]
+    }]);
+  });
+
+  it('maps rendered NodeSeek vote forms to unified polls and removes the raw form from content', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <h1>Rendered NodeSeek poll topic</h1>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/9891" class="author-name">alice</a></div>
+        <span class="content-category"><a href="/categories/daily">日常</a></span>
+        <time datetime="2026-06-03T00:00:00.000Z"></time>
+        <article class="post-content">
+          <form class="vote-form" data-vote-id="2443">
+            <div class="vote-title">常用系统</div>
+            <label><input type="radio" name="ids" value="71">Debian <span class="vote-count">13 票</span></label>
+            <label><input type="radio" name="ids" value="72" checked>ArchLinux <span class="vote-count">5 票</span></label>
+          </form>
+        </article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls).toEqual([{
+      id: '2443',
+      title: '常用系统',
+      multiple: false,
+      voted: true,
+      options: [
+        { id: '71', label: 'Debian', count: 13, selected: false },
+        { id: '72', label: 'ArchLinux', count: 5, selected: true }
+      ]
+    }]);
+    expect(topic.contentHtml).not.toContain('<form');
+    expect(topic.contentHtml).not.toContain('Debian');
+  });
+
+  it('maps hydrated NodeSeek embedded vote panels from the rendered page', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <h1>Rendered NodeSeek embedded poll topic</h1>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/9891" class="author-name">alice</a></div>
+        <time datetime="2026-06-03T00:00:00.000Z"></time>
+        <article class="post-content">
+          <p></p>
+          <div class="vote-panel">
+            <div class="embed-vote">
+              <form class="pure-form">
+                <h2>常用系统</h2>
+                <fieldset class="vote-stat-wrapper">
+                  <div class="vote-stat not-voted">
+                    <input id="vote-item-2443-71" name="vote-item" type="radio" value="71">
+                    <label for="vote-item-2443-71" class="pure-checkbox">
+                      <div class="vote-item-text">Debian</div>
+                      <span class="vote-count">13 票</span>
+                    </label>
+                  </div>
+                  <div class="vote-stat not-voted">
+                    <input id="vote-item-2443-72" name="vote-item" type="radio" value="72">
+                    <label for="vote-item-2443-72" class="pure-checkbox selected">
+                      <div class="vote-item-text">ArchLinux</div>
+                      <span class="vote-count">5 票</span>
+                    </label>
+                  </div>
+                </fieldset>
+                <div>nsapp://vote?id=2443 (公开投票)</div>
+              </form>
+            </div>
+          </div>
+        </article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls).toEqual([{
+      id: '2443',
+      title: '常用系统',
+      multiple: false,
+      public: true,
+      voted: true,
+      options: [
+        { id: '71', label: 'Debian', count: 13, selected: false },
+        { id: '72', label: 'ArchLinux', count: 5, selected: true }
+      ]
+    }]);
+    expect(topic.contentHtml).not.toContain('pure-form');
+  });
+
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {
     const fetcher = vi.fn(async () => html(`
       <h1>Rendered NodeSeek detail</h1>
@@ -405,6 +541,64 @@ describe('Android local sources', () => {
       'https://linux.do/t/42.json',
       expect.stringContaining('https://linux.do/t/42/posts.json')
     ]);
+  });
+
+  it('maps linux.do Discourse polls from topic JSON', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 42,
+      title: 'linux.do poll topic',
+      slug: 'linux-poll-topic',
+      created_at: '2026-06-03T00:00:00.000Z',
+      posts_count: 1,
+      post_stream: {
+        stream: [1001],
+        posts: [{
+          id: 1001,
+          username: 'alice',
+          cooked: '<p>投票正文</p>',
+          created_at: '2026-06-03T00:00:00.000Z',
+          post_number: 1,
+          polls: [{
+            id: 88,
+            name: 'poll',
+            title: '选择方向',
+            type: 'multiple',
+            status: 'open',
+            public: true,
+            min: 2,
+            max: 3,
+            options: [
+              { id: 'a1', html: '方案 A', votes: 0 },
+              { id: 'b2', html: '方案 B', votes: 4 },
+              { id: 'c3', html: '方案 C', votes: null }
+            ]
+          }],
+          polls_votes: {
+            poll: ['b2']
+          }
+        }]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
+
+    expect(topic.polls).toEqual([{
+      id: '88',
+      name: 'poll',
+      postId: '1001',
+      title: '选择方向',
+      public: true,
+      closed: false,
+      multiple: true,
+      min: 2,
+      max: 3,
+      voted: true,
+      options: [
+        { id: 'a1', label: '方案 A', count: 0, selected: false },
+        { id: 'b2', label: '方案 B', count: 4, selected: true },
+        { id: 'c3', label: '方案 C', selected: false }
+      ]
+    }]);
   });
 
   it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {

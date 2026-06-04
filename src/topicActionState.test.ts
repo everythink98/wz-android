@@ -5,7 +5,7 @@ import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
   applyInteractionToTopic,
-  applyVoteOptionToTopic,
+  applyPollVoteToTopic,
   linuxDoBookmarkIdFromActionResult
 } from './topicActionState';
 
@@ -84,19 +84,62 @@ describe('topic action state patches', () => {
     expect(linuxDoBookmarkIdFromActionResult({ success: true })).toBeUndefined();
   });
 
-  it('increments a submitted Yaohuo vote option locally', () => {
-    const next = applyVoteOptionToTopic({
+  it('marks a submitted poll vote locally', () => {
+    const next = applyPollVoteToTopic({
       ...topic,
       source: 'yaohuo',
-      voteOptions: [
-        { id: '7', label: 'A', count: 1 },
-        { id: '8', label: 'B' }
-      ]
-    }, '8');
+      polls: [{
+        id: 'yaohuo-1',
+        title: '投票',
+        multiple: false,
+        voted: false,
+        options: [
+          { id: '7', label: 'A', count: 1 },
+          { id: '8', label: 'B' }
+        ]
+      }]
+    }, {
+      pollId: 'yaohuo-1',
+      optionIds: ['8']
+    });
 
-    expect(next?.voteOptions).toEqual([
-      { id: '7', label: 'A', count: 1 },
-      { id: '8', label: 'B', count: 1 }
-    ]);
+    expect(next?.polls).toEqual([{
+      id: 'yaohuo-1',
+      title: '投票',
+      multiple: false,
+      voted: true,
+      options: [
+        { id: '7', label: 'A', count: 1, selected: false },
+        { id: '8', label: 'B', count: 1, selected: true }
+      ]
+    }]);
+  });
+
+  it('does not mark every anonymous poll as voted on multi-poll topics', () => {
+    const next = applyPollVoteToTopic({
+      ...topic,
+      polls: [
+        {
+          title: '投票 A',
+          voted: false,
+          options: [
+            { id: '1', label: 'A1' },
+            { id: '2', label: 'A2' }
+          ]
+        },
+        {
+          title: '投票 B',
+          voted: false,
+          options: [
+            { id: '3', label: 'B1' },
+            { id: '4', label: 'B2' }
+          ]
+        }
+      ]
+    }, {
+      optionIds: ['2']
+    });
+
+    expect(next?.polls?.map((poll) => poll.voted)).toEqual([false, false]);
   });
 });

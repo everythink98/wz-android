@@ -398,6 +398,58 @@ describe('Android direct yaohuo API', () => {
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
   });
 
+  it('maps yaohuo vote options to unified polls with state', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>
+      <div class="toupiao">
+        <a href="/bbs/book_view_toVote.aspx?vid=55">[投票] 选项 A (2)</a><br>
+        <a href="/bbs/book_view_toVote.aspx?vid=56">[已投] 选项 B (5)</a>
+      </div>
+      <span>已投票</span>
+      <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
+    `, {
+      id: '123',
+      url: 'https://yaohuo.me/bbs-123.html'
+    });
+
+    expect(detail.polls).toEqual([{
+      id: 'yaohuo-123',
+      title: '投票',
+      voted: true,
+      closed: false,
+      multiple: false,
+      options: [
+        { id: '55', label: '选项 A', count: 2, selected: false },
+        { id: '56', label: '选项 B', count: 5, selected: true }
+      ]
+    }]);
+  });
+
+  it('maps yaohuo multi-choice polls to selectable polls with choice limits', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 妖火多选投票 (阅2) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent"><!--listS--><p>多选，可选2项</p><!--listE--></div>
+      <div class="toupiao">
+        <a href="/bbs/book_view_toVote.aspx?vid=55">[投票] 选项 A (2)</a><br>
+        <a href="/bbs/book_view_toVote.aspx?vid=56">[投票] 选项 B (5)</a>
+      </div>
+      <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
+    `, {
+      id: '123',
+      url: 'https://yaohuo.me/bbs-123.html'
+    });
+
+    expect(detail.polls?.[0]).toMatchObject({
+      id: 'yaohuo-123',
+      multiple: true,
+      max: 2
+    });
+    expect(detail.polls?.[0]).not.toHaveProperty('readonly');
+  });
+
   it('keeps yaohuo resource download content rendered outside the main post block', () => {
     const detail = parseYaohuoTopicHtml(`
       <div class="content">[标题] 软件资源 (阅2) [时间] 2026-05-20 10:00</div>
