@@ -2246,7 +2246,7 @@ describe('Android local sources', () => {
             <div class="topic_content"><p>补充正文 <img src="/supplement.svg" /></p></div>
           </div>
           <div id="r_7001" class="cell"><span class="no">1</span><span class="ago" title="2026-05-28 10:01:40 +08:00">1h ago</span><div class="reply_content">first reply</div></div>
-          <div id="r_7002" class="cell"><span class="no">2</span><span class="ago" title="2026-05-28 10:03:20 +08:00">1h ago</span><span class="small">2 thanks</span><div class="reply_content">@<a href="/member/alice">alice</a> answer</div></div>
+          <div id="r_7002" class="cell"><span class="no">2</span><span class="ago" title="2026-05-28 10:03:20 +08:00">1h ago</span><span class="small fade"><img src="/static/img/heart_20250818.png" alt="heart"> 2</span><div class="reply_content">@<a href="/member/alice">alice</a> answer</div></div>
         `);
       }
       throw new Error(`unexpected ${input}`);

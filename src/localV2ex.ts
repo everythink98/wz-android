@@ -192,8 +192,11 @@ function v2exReplyTargetAuthor(value: unknown) {
 }
 
 function parseV2exThanksCount(value: unknown) {
-  const text = decodeHtml(String(value || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
-  if (!/(thanks?|感谢|谢)/i.test(text)) {
+  const raw = String(value || '');
+  const text = decodeHtml(raw.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+  const hasThanksText = /(thanks?|感谢|谢)/i.test(text);
+  const hasHeartIcon = /(?:^|[/_-])heart/i.test(raw);
+  if (!hasThanksText && !hasHeartIcon) {
     return undefined;
   }
   const count = parsePositiveInteger(text);
@@ -257,7 +260,9 @@ function parseV2exTags(root: ReturnType<typeof parseHtml>) {
 }
 
 function parseV2exSupplements(root: ReturnType<typeof parseHtml>) {
-  return root.querySelectorAll('.subtle')
+  const mainSupplements = root.querySelectorAll('#Main .subtle');
+  const supplements = mainSupplements.length ? mainSupplements : root.querySelectorAll('.subtle');
+  return supplements
     .map((element, index) => {
       const content = element.querySelector('.topic_content')?.innerHTML || '';
       if (!content.trim()) {
@@ -282,7 +287,7 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
     const createdAt = toIsoString(element.querySelector('.ago')?.getAttribute('title'));
     const replyContent = element.querySelector('.reply_content')?.innerHTML || '';
     const thanksCount = element.querySelectorAll('.small')
-      .map((item) => parseV2exThanksCount(item.text))
+      .map((item) => parseV2exThanksCount(item.innerHTML || item.text))
       .find((count): count is number => typeof count === 'number');
     const replyTargetAuthor = v2exReplyTargetAuthor(replyContent);
     const meta: V2exHtmlReplyMeta = {
