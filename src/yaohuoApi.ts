@@ -200,6 +200,8 @@ export async function getYaohuoTopicDirect({
 
   return {
     ...detail,
+    categoryId: detail.categoryId || topic.categoryId,
+    category: detail.category || topic.category,
     replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0, replies.items.length),
     replies: replies.items,
     replyHasMore: replies.hasMore,

@@ -398,6 +398,38 @@ describe('Android direct yaohuo API', () => {
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
   });
 
+  it('keeps the list category when yaohuo topic detail omits class links', async () => {
+    const topic: Topic = {
+      source: 'yaohuo',
+      id: '456',
+      title: '妖火资源帖',
+      author: 'alice',
+      url: 'https://yaohuo.me/bbs-456.html',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      replyCount: 0,
+      categoryId: '201',
+      category: '资源分享'
+    };
+    const yaohuoFetcher = vi.fn(async (input: string) => {
+      if (input.includes('book_re.aspx')) {
+        return new Response('');
+      }
+      return new Response('<div class="content">[标题] 妖火资源帖 (阅1) [时间] 2026-05-20 10:00</div><div class="subtitle"><a href="/userinfo.aspx">alice</a></div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>');
+    });
+
+    const detail = await getYaohuoTopicDirect({
+      topic,
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re.aspx?id=456&classid=201&page=1', expect.any(Object));
+    expect(detail).toMatchObject({
+      categoryId: '201',
+      category: '资源分享'
+    });
+  });
+
   it('maps yaohuo vote options to unified polls with state', () => {
     const detail = parseYaohuoTopicHtml(`
       <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-05-20 10:00</div>
@@ -425,6 +457,27 @@ describe('Android direct yaohuo API', () => {
         { id: '56', label: '选项 B', count: 5, selected: true }
       ]
     }]);
+  });
+
+  it('maps yaohuo vote options wrapped in block elements with vote suffix counts', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>
+      <div class="toupiao">
+        <p><a href="/bbs/book_view_toVote.aspx?vid=55">[投票] 选项 A（2）</a></p>
+        <ul><li><a href="/bbs/book_view_toVote.aspx?vid=56">[投票] 选项 B(3票)</a></li></ul>
+      </div>
+      <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
+    `, {
+      id: '123',
+      url: 'https://yaohuo.me/bbs-123.html'
+    });
+
+    expect(detail.polls?.[0].options).toEqual([
+      { id: '55', label: '选项 A', count: 2, selected: false },
+      { id: '56', label: '选项 B', count: 3, selected: false }
+    ]);
   });
 
   it('maps yaohuo multi-choice polls to selectable polls with choice limits', () => {
@@ -473,6 +526,33 @@ describe('Android direct yaohuo API', () => {
     expect(detail.contentHtml).toContain('提取码：1234');
     expect(detail.contentHtml).toContain('https://pan.quark.cn/s/abc');
     expect(detail.contentHtml).not.toContain('更多回帖');
+  });
+
+  it('keeps yaohuo activity reward status in topic content', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="rectangle-container">
+        <div class="notification-text"><i><svg></svg></i><span><span>派币</span><span>550000</span>已结束</span></div>
+      </div>
+      <div id="book-view-content" class="content">
+        <div class="paibi"><span class="lijin">礼金</span><span class="lijinshuzi">550000</span><span class="meiren">每人</span><span class="meirenshuzi">200</span><span class="shengyu">(<span>余</span><span>0</span>)</span></div>
+        <div class="Postinfo"><span>[标题]</span>49元开京东Plus会员<span>(阅45708)</span><br><span>[时间]<span>2025-10-28 01:20</span></span><span id="stamp-badge">获赏<span>1586</span></span></div>
+        <div class="bbscontent"><!--listS-->618期间开通双倍积分哦！<!--listE--></div>
+      </div>
+    `, {
+      id: '1478784',
+      url: 'https://yaohuo.me/bbs-1478784.html'
+    });
+
+    expect(detail).toMatchObject({
+      title: '49元开京东Plus会员',
+      viewCount: 45708
+    });
+    expect(detail.contentHtml).toContain('派币 550000 已结束');
+    expect(detail.contentHtml).toContain('礼金 550000 每人 200');
+    expect(detail.contentHtml).toContain('获赏 1586');
+    expect(detail.contentHtml).toContain('618期间开通双倍积分哦！');
+    expect(detail.contentHtml).toContain('<blockquote>');
+    expect(detail.contentHtml).not.toContain('<svg');
   });
 
   it('keeps yaohuo markdown resource body when the bbscontent wrapper is malformed', () => {
@@ -530,6 +610,35 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3', expect.any(Object));
+  });
+
+  it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {
+    const result = parseYaohuoRepliesHtml(`
+      <div class="recontent">
+        <div class="list-reply line1" id="floor-1732" data-floor="1732">
+          <span class="dinglouwenzi">[<span class="floornumber0" title="原1732楼">顶楼</span>]</span>
+          <span class="remoney">[<b>得金<span class="rewardnumber">666</span></b>]</span>
+          [<a class="replyicon" href="/bbs/book_re.aspx?siteid=1000&amp;classid=204&amp;page=1&amp;reply=1732&amp;id=1478784&amp;touserid=30878">回</a>]
+          <span class="retext"><img src="face/淡定.gif" class="ubbimg" />红包可能不一样</span><br>
+          <span class="renick"><a href="/bbs/userinfo.aspx?touserid=30878">妖友998</a></span>
+          <span class="retime">11-06 08:14</span>
+        </div>
+      </div>
+    `, { page: 1, limit: 30 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      floor: 1732,
+      author: '妖友998',
+      authorId: '30878'
+    });
+    expect(result.items[0].contentHtml).toContain('得金');
+    expect(result.items[0].contentHtml).toContain('666');
+    expect(result.items[0].contentHtml).toContain('红包可能不一样');
+    expect(result.items[0].contentHtml).toContain('https://yaohuo.me/bbs/face/');
+    expect(result.items[0].contentHtml).toContain('.gif');
+    expect(result.items[0].contentHtml).not.toContain('顶楼');
+    expect(result.items[0].contentHtml).not.toContain('replyicon');
   });
 
   it('uses the page offset as the fallback floor for yaohuo replies without floor labels', () => {

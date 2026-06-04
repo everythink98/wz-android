@@ -176,6 +176,32 @@ describe('Android local access requirement detection', () => {
     expect(topic.accessRequirement).toBeUndefined();
   });
 
+  it('keeps access requirement text from yaohuo topic details', () => {
+    const topic = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 妖火限制主题 (阅1) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx">alice</a></div>
+      <div class="bbscontent"><!--listS--><p>该内容需要等级达到 6 级后查看</p><!--listE--></div>
+    `, { id: '2', url: 'https://yaohuo.me/bbs-2.html' });
+
+    expect(topic.accessRequirement).toMatchObject({
+      type: 'level',
+      label: '需等级'
+    });
+  });
+
+  it('keeps yaohuo login requirement text without marking login tutorials', () => {
+    const topic = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 妖火登录限制主题 (阅1) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx">alice</a></div>
+      <div class="bbscontent"><!--listS--><p>未登录用户无法查看该内容</p><!--listE--></div>
+    `, { id: '3', url: 'https://yaohuo.me/bbs-3.html' });
+
+    expect(topic.accessRequirement).toMatchObject({
+      type: 'login',
+      label: '需登录'
+    });
+  });
+
   it('keeps access requirement text from NodeSeek HTML list fallback rows', async () => {
     const fetcher = vi.fn(async () => new Response(`
       <div>
