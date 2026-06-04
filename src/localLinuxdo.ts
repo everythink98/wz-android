@@ -370,7 +370,7 @@ function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
       public: typeof poll.public === 'boolean' ? poll.public : undefined,
       closed: closedByStatus || closedByDate,
       multiple: type === 'multiple',
-      ...(type === 'ranked_choice' || type === 'number' ? { readonly: true } : {}),
+      ...(type === 'ranked_choice' || type === 'number' ? { type, readonly: true } : {}),
       ...(min !== undefined ? { min } : {}),
       ...(max !== undefined ? { max } : {}),
       voted: selectedIds.size > 0,
@@ -393,6 +393,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const targetAuthor = replyTargetAuthor(raw.reply_to_user);
   const postType = Number(raw.post_type);
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
+  const polls = normalizeDiscoursePolls(raw);
   return {
     author: String(raw.username || ''),
     authorId: String(raw.username || '') || undefined,
@@ -416,6 +417,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     ...(raw.action_code ? { actionCode: String(raw.action_code) } : {}),
     ...(reactions ? { reactionSummary: reactions } : {}),
     ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
+    ...(polls ? { polls } : {}),
     ...(positiveNumber(raw.bookmark_id) ? { bookmarkId: positiveNumber(raw.bookmark_id), bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {})
   };
 }

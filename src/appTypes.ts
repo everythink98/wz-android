@@ -15,8 +15,11 @@ export type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['i
 export type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>;
 export type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
 export type HtmlTagsStyles = NonNullable<ComponentProps<typeof RenderHTML>['tagsStyles']>;
-export interface YaohuoReplyTarget {
+export interface ReplyTarget {
   floor: number;
   author?: string;
   authorId?: string;
+  commentId?: number;
 }
+
+export type YaohuoReplyTarget = ReplyTarget;

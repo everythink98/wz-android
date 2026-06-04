@@ -46,6 +46,7 @@ import {
 } from 'react-native-render-html';
 import {
   buildNodeSeekAttendanceRequest,
+  buildNodeSeekCollectionRequest,
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
@@ -140,8 +141,11 @@ import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
   applyInteractionToTopic,
+  applyNodeSeekCollectionToTopic,
+  applyPollVoteToReplies,
   applyPollVoteToTopic,
-  linuxDoBookmarkIdFromActionResult
+  linuxDoBookmarkIdFromActionResult,
+  type InteractionType
 } from './src/topicActionState';
 import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, markInlineSizedImageHtml, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
 import { clearCookieUrls } from './src/cookieCleanup';
@@ -202,7 +206,7 @@ import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
 import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedLinuxDoVerifyModal, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
-import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, Screen, YaohuoReplyTarget } from './src/appTypes';
+import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen } from './src/appTypes';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { SearchScreen, type SearchScope } from './src/screens/SearchScreen';
 import { UserScreen } from './src/screens/UserScreen';
@@ -723,7 +727,7 @@ export default function App() {
   const [commentQuery, setCommentQuery] = useState('');
   const [unreadReplyCount, setUnreadReplyCount] = useState(0);
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
-  const [yaohuoReplyTarget, setYaohuoReplyTarget] = useState<YaohuoReplyTarget | null>(null);
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [loadedQuotedReplies, setLoadedQuotedReplies] = useState<Record<number, Reply>>({});
@@ -2793,7 +2797,7 @@ export default function App() {
     setLoadingMoreReplies(false);
     setReplyContent('');
     setReplyComposerOpen(false);
-    setYaohuoReplyTarget(null);
+    setReplyTarget(null);
     setReplyFilter('all');
     resetQuoteState();
     if (!reopenExistingTopicScreen) {
@@ -4020,7 +4024,7 @@ export default function App() {
       return;
     }
     if (detail.source === 'yaohuo') {
-      if (yaohuoReplyTarget && !yaohuoReplyTarget.authorId) {
+      if (replyTarget && !replyTarget.authorId) {
         notify('当前楼层缺少用户 id，刷新主题后再试。');
         return;
       }
@@ -4030,8 +4034,8 @@ export default function App() {
           classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
           content: replyContent,
           sid: extractYaohuoSid(cookieHeader),
-          replyFloor: yaohuoReplyTarget?.floor,
-          toUserId: yaohuoReplyTarget?.authorId
+          replyFloor: replyTarget?.floor,
+          toUserId: replyTarget?.authorId
         }),
         '回复已提交',
         { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
@@ -4042,7 +4046,7 @@ export default function App() {
         }
         setReplyContent('');
         setReplyComposerOpen(false);
-        setYaohuoReplyTarget(null);
+        setReplyTarget(null);
         await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
       return;
@@ -4052,7 +4056,7 @@ export default function App() {
         () => buildLinuxDoReplyRequest({
           topicId: detail.id,
           content: replyContent,
-          replyToPostNumber: yaohuoReplyTarget?.floor
+          replyToPostNumber: replyTarget?.floor
         }),
         '回复已提交',
         { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
@@ -4063,13 +4067,13 @@ export default function App() {
         }
         setReplyContent('');
         setReplyComposerOpen(false);
-        setYaohuoReplyTarget(null);
+        setReplyTarget(null);
         await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
       return;
     }
     const submitted = await runNodeSeekRequest(
-      () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent }),
+      () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
       '回复已提交',
       { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
@@ -4079,14 +4083,15 @@ export default function App() {
       }
       setReplyContent('');
       setReplyComposerOpen(false);
+      setReplyTarget(null);
       await refreshTopicReplies({ silent: true, afterSubmit: true });
     }
-  }, [notify, refreshTopicReplies, replyContent, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail, yaohuoReplyTarget]);
+  }, [notify, refreshTopicReplies, replyContent, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
   const toggleReplyComposer = useCallback((open: boolean) => {
     setReplyComposerOpen(open);
     if (!open) {
-      setYaohuoReplyTarget(null);
+      setReplyTarget(null);
     }
   }, []);
 
@@ -4095,10 +4100,11 @@ export default function App() {
       notify('当前楼层信息不完整，刷新主题后再试。');
       return;
     }
-    setYaohuoReplyTarget({
+    setReplyTarget({
       floor: reply.floor,
       author: reply.author,
-      authorId: reply.authorId
+      authorId: reply.authorId,
+      commentId: reply.commentId
     });
     setReplyComposerOpen(true);
   }, [notify]);
@@ -4111,7 +4117,7 @@ export default function App() {
     );
   }, [runNodeSeekRequest]);
 
-  const interact = useCallback(async (type: 'upvote' | 'like', commentId?: number) => {
+  const interact = useCallback(async (type: InteractionType, commentId?: number) => {
     if (!commentId) {
       notify('当前内容缺少评论 id，刷新主题后再试。');
       return;
@@ -4142,16 +4148,33 @@ export default function App() {
       }
       return;
     }
+    if (detail?.source !== 'nodeseek') {
+      return;
+    }
+    const activeFields: Record<InteractionType, 'upvoted' | 'liked' | 'disliked'> = {
+      upvote: 'upvoted',
+      like: 'liked',
+      dislike: 'disliked'
+    };
+    const target = [
+      topicDetail,
+      ...topicReplies
+    ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as (Pick<TopicDetail | Reply, 'upvoted' | 'liked' | 'disliked'> | undefined);
+    const activeField = activeFields[type];
+    const active = Boolean(target?.[activeField]);
+    const successMessage = active
+      ? type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
+      : type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交';
     const submitted = await runNodeSeekRequest(
-      () => buildNodeSeekInteractionRequest({ type, commentId }),
-      type === 'upvote' ? '点赞请求已提交' : '加鸡腿请求已提交',
+      () => buildNodeSeekInteractionRequest({ type, commentId, active }),
+      successMessage,
       { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
     );
     if (submitted) {
       if (currentTopicKeyRef.current !== requestTopicKey) {
         return;
       }
-      const patch = { commentId, type, mode: 'add' as const };
+      const patch = { commentId, type, mode: 'toggle' as const };
       setTopicDetail((current) => applyInteractionToTopic(current, patch));
       setTopicReplies((current) => applyInteractionToReplies(current, patch));
     }
@@ -4171,6 +4194,29 @@ export default function App() {
       { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === topicKey(detail) }
     );
   }, [runYaohuoRequest, selectedTopic, topicDetail]);
+
+  const collectOnNodeSeekSite = useCallback(async () => {
+    const detail = topicDetail || selectedTopic;
+    if (!detail || detail.source !== 'nodeseek') {
+      return;
+    }
+    const requestTopicKey = topicKey(detail);
+    const collected = Boolean((detail as TopicDetail).collected);
+    const submitted = await runNodeSeekRequest(
+      () => buildNodeSeekCollectionRequest({
+        postId: detail.id,
+        collected
+      }),
+      collected ? '已取消原站收藏' : '原站收藏已提交',
+      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+    );
+    if (submitted) {
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        return;
+      }
+      setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: !collected }));
+    }
+  }, [runNodeSeekRequest, selectedTopic, topicDetail]);
 
   const bookmarkOnLinuxDoSite = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -4249,6 +4295,13 @@ export default function App() {
       setTopicDetail((current) => applyPollVoteToTopic(current, {
         pollId: poll.id,
         pollName: poll.name,
+        pollPostId: poll.postId,
+        optionIds
+      }));
+      setTopicReplies((current) => applyPollVoteToReplies(current, {
+        pollId: poll.id,
+        pollName: poll.name,
+        pollPostId: poll.postId,
         optionIds
       }));
     }
@@ -4540,7 +4593,7 @@ export default function App() {
       }
       if (replyComposerOpen) {
         setReplyComposerOpen(false);
-        setYaohuoReplyTarget(null);
+        setReplyTarget(null);
         return true;
       }
       if (screen === 'topic') {
@@ -4828,7 +4881,7 @@ export default function App() {
       replyComposerOpen={replyComposerOpen}
       replyContent={replyContent}
       replyFilter={replyFilter}
-      replyTarget={yaohuoReplyTarget}
+      replyTarget={replyTarget}
       replyHasMore={replyHasMore}
       replies={filteredReplies}
       selectedTopic={selectedTopic}
@@ -4844,6 +4897,7 @@ export default function App() {
       onCommentQueryChange={setCommentQuery}
       onInteract={interact}
       onLinuxDoBookmark={bookmarkOnLinuxDoSite}
+      onNodeSeekCollection={collectOnNodeSeekSite}
       onShareTopic={shareTopic}
       onYaohuoFavorite={favoriteOnYaohuoSite}
       onVotePoll={votePoll}
@@ -4863,7 +4917,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll, yaohuoReplyTarget]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen

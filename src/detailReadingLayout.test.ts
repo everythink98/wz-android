@@ -86,14 +86,15 @@ describe('Android topic detail reading layout', () => {
 
     expect(topicScreenSource).toContain('topic.polls');
     expect(topicScreenSource).toContain('onVotePoll');
-    expect(topicActionRenderer).toContain('styles.pollBlock');
-    expect(topicActionRenderer).toContain('styles.pollFooter');
-    expect(topicActionRenderer).toContain('styles.pollMetaPill');
-    expect(topicActionRenderer).toContain('styles.pollStatePill');
-    expect(topicActionRenderer).toContain('styles.pollOptionList');
-    expect(topicActionRenderer).toContain('styles.pollOptionDivider');
-    expect(topicActionRenderer).toContain('styles.pollOptionProgress');
-    expect(topicActionRenderer).toContain('styles.pollOptionContent');
+    expect(topicActionRenderer).toContain('<PollBlockList');
+    expect(topicScreenSource).toContain('styles.pollBlock');
+    expect(topicScreenSource).toContain('styles.pollFooter');
+    expect(topicScreenSource).toContain('styles.pollMetaPill');
+    expect(topicScreenSource).toContain('styles.pollStatePill');
+    expect(topicScreenSource).toContain('styles.pollOptionList');
+    expect(topicScreenSource).toContain('styles.pollOptionDivider');
+    expect(topicScreenSource).toContain('styles.pollOptionProgress');
+    expect(topicScreenSource).toContain('styles.pollOptionContent');
     expect(topicActionRenderer).not.toContain('voteOptions');
   });
 
@@ -104,7 +105,8 @@ describe('Android topic detail reading layout', () => {
       ? topicScreenSource.slice(topicActionStart, replyComposerStart)
       : '';
 
-    expect(topicActionRenderer).toContain('styles.pollOptionTextBlock');
+    expect(topicActionRenderer).toContain('<PollBlockList');
+    expect(topicScreenSource).toContain('styles.pollOptionTextBlock');
     expect(topicActionRenderer).not.toContain('styles.pollOptionRowDisabled');
     expect(themeSource).toContain('pollOptionList');
     expect(themeSource).toContain('pollOptionDivider');
@@ -124,8 +126,9 @@ describe('Android topic detail reading layout', () => {
 
     expect(topicScreenSource).toContain('pollChoiceRangeLabel');
     expect(topicScreenSource).toContain('pollSelectionRangeStatus');
-    expect(topicActionRenderer).toContain('selectionRangeStatus');
-    expect(topicActionRenderer).toContain('Boolean(selectionRangeStatus)');
+    expect(topicActionRenderer).toContain('<PollBlockList');
+    expect(topicScreenSource).toContain('selectionRangeStatus');
+    expect(topicScreenSource).toContain('Boolean(selectionRangeStatus)');
   });
 
   it('does not repeat the original-site button at the bottom of the main post', () => {
@@ -147,8 +150,8 @@ describe('Android topic detail reading layout', () => {
     const yaohuoReplyAction = topicScreenSource.match(/\{canWrite && source === 'yaohuo' \? \([\s\S]*?\n        \) : null\}/)?.[0] || '';
 
     expect(topicScreenSource).toContain('Drumstick');
-    expect(topicScreenSource).toContain("label={`加鸡腿 ${topic?.likeCount ?? ''}`}");
-    expect(topicScreenSource).toContain("label={`加鸡腿 ${reply.likeCount ?? ''}`}");
+    expect(topicScreenSource).toContain("label={`${topic?.liked ? '取消鸡腿' : '加鸡腿'} ${topic?.likeCount ?? ''}`}");
+    expect(topicScreenSource).toContain("label={`${reply.liked ? '取消鸡腿' : '加鸡腿'} ${reply.likeCount ?? ''}`}");
     expect(topicScreenSource).toContain('icon={Drumstick}');
     expect(topicScreenSource).not.toContain("createLucideIcon('ChickenLeg'");
     expect(topicScreenSource).not.toContain('icon={Heart}');
@@ -158,6 +161,29 @@ describe('Android topic detail reading layout', () => {
     expect(yaohuoReplyAction).not.toContain('感谢');
     expect(yaohuoTopicAction).not.toContain('加鸡腿');
     expect(yaohuoReplyAction).not.toContain('加鸡腿');
+  });
+
+  it('shows NodeSeek cancel, dislike, collection, and reply actions when logged in', () => {
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
+      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
+      : '';
+    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
+    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
+      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      : '';
+
+    expect(topicActionRenderer).toContain("label={`${topic?.upvoted ? '取消赞' : '点赞'} ${topic?.upvoteCount ?? ''}`}");
+    expect(topicActionRenderer).toContain("label={`${topic?.disliked ? '取消反对' : '反对'} ${topic?.dislikeCount ?? ''}`}");
+    expect(topicActionRenderer).toContain("label={topic?.collected ? '取消原站收藏' : '原站收藏'}");
+    expect(topicActionRenderer).toContain("onInteract('dislike', topic?.commentId)");
+    expect(topicActionRenderer).toContain('onNodeSeekCollection');
+    expect(replyCard).toContain("label={`${reply.upvoted ? '取消赞' : '点赞'} ${reply.upvoteCount ?? ''}`}");
+    expect(replyCard).toContain("label={`${reply.disliked ? '取消反对' : '反对'} ${reply.dislikeCount ?? ''}`}");
+    expect(replyCard).toContain("onInteract('dislike', reply.commentId)");
+    expect(replyCard).toContain('<IconButton tiny icon={MessageCircle} label="回复"');
   });
 
   it('keeps detail action buttons visually aligned and stable', () => {
@@ -200,6 +226,45 @@ describe('Android topic detail reading layout', () => {
     expect(replyCard).not.toContain('source === \'v2ex\' ? (');
     expect(themeSource).toContain('replyContextBadge');
     expect(themeSource).toContain('replySignature');
+  });
+
+  it('places targeted reply composers under the selected reply instead of above the list', () => {
+    const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+
+    expect(topicScreenSource).toContain("ReplyTarget | null");
+    expect(topicListItemsBlock).toContain('if (canWrite && replyComposerOpen && !replyTarget)');
+    expect(topicListItemsBlock).toContain('const targetReplyVisible = replyTarget ? replyItems.some((entry) => entry.type === \'reply\' && entry.replyFloor === replyTarget.floor) : false;');
+    expect(topicListItemsBlock).toContain('if (canWrite && replyComposerOpen && replyTarget && !targetReplyVisible)');
+    expect(topicListItemsBlock).toContain("items.push({ type: 'replyComposer', key: `reply-composer-hidden-target-${replyTarget.floor}`, replyFloor: replyTarget.floor });");
+    expect(topicListItemsBlock).toContain("const isTargetReply = replyTarget && entry.type === 'reply' && entry.replyFloor === replyTarget.floor;");
+    expect(topicListItemsBlock).toContain("items.push({ type: 'replyComposer', key: `reply-composer-${entry.replyFloor}`, replyFloor: entry.replyFloor });");
+  });
+
+  it('labels linux.do special poll types instead of calling them single choice polls', () => {
+    const pollBlockStart = topicScreenSource.indexOf('function PollBlockList');
+    const pollBlockEnd = topicScreenSource.indexOf('function nodeSeekReplyPassiveStats', pollBlockStart);
+    const pollBlock = pollBlockStart >= 0 && pollBlockEnd > pollBlockStart
+      ? topicScreenSource.slice(pollBlockStart, pollBlockEnd)
+      : '';
+
+    expect(topicScreenSource).toContain('function pollTypeLabel');
+    expect(topicScreenSource).toContain("ranked_choice: '排序投票'");
+    expect(topicScreenSource).toContain("number: '数字投票'");
+    expect(pollBlock).toContain('pollTypeLabel(poll)');
+    expect(pollBlock).not.toContain("poll.multiple ? '多选' : '单选'");
+  });
+
+  it('renders linux.do polls inside replies with the same poll block styling', () => {
+    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
+    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
+      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      : '';
+
+    expect(topicScreenSource).toContain('function PollBlockList');
+    expect(replyCard).toContain('polls={reply.polls || []}');
+    expect(replyCard).toContain('onVotePoll={onVotePoll}');
+    expect(topicScreenSource).toContain('styles.pollBlock');
   });
 
   it('shows linux.do topic tags and special status badges in Android details', () => {
@@ -301,8 +366,8 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('replyStatRail');
     expect(themeSource).toContain('nodeSeekStatPill');
     expect(themeSource).toContain('nodeSeekStatValue');
-    expect(topicActionRenderer).toContain('topicPassiveStats.map');
-    expect(topicActionRenderer).not.toContain('topicPassiveStats.length ? (');
+    expect(topicActionRenderer).toContain("label={topic?.collected ? '取消原站收藏' : '原站收藏'}");
+    expect(topicActionRenderer).not.toContain('topicPassiveStats.map');
     expect(themeSource).toMatch(/nodeSeekStatPill:\s*\{[\s\S]*minHeight:\s*40[\s\S]*paddingVertical:\s*0/);
     expect(themeSource).toMatch(/topicStatRail:\s*\{[\s\S]*minHeight:\s*40/);
   });

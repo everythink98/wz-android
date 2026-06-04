@@ -288,7 +288,7 @@ export function SearchScreen({
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`删除最近搜索 ${item}`}
-                  hitSlop={8}
+                  hitSlop={14}
                   style={styles.removableChipClose}
                   onPress={() => onRemoveRecentSearch(item)}
                 >

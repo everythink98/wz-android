@@ -5,6 +5,8 @@ export interface NodeSeekActionRequest {
   body?: string;
 }
 
+type NodeSeekInteractionType = 'upvote' | 'like' | 'dislike';
+
 function cleanPositiveInteger(value: string | number, name: string) {
   const number = typeof value === 'number' ? value : Number(String(value).trim());
   if (!Number.isInteger(number) || number <= 0) {
@@ -25,16 +27,27 @@ function randomToken(length = 16) {
 export function buildNodeSeekReplyRequest({
   postId,
   content,
-  csrfToken = randomToken()
+  csrfToken = randomToken(),
+  replyTarget
 }: {
   postId: string | number;
   content: string;
   csrfToken?: string;
+  replyTarget?: {
+    floor?: string | number;
+    author?: string;
+  } | null;
 }): NodeSeekActionRequest {
   const cleanContent = content.trim();
   if (!cleanContent) {
     throw new Error('请输入回复内容');
   }
+  const cleanPostId = cleanPositiveInteger(postId, '帖子 id');
+  const targetFloor = replyTarget?.floor ? cleanPositiveInteger(replyTarget.floor, '楼层') : undefined;
+  const targetAuthor = String(replyTarget?.author || '').trim();
+  const finalContent = targetFloor
+    ? `${targetAuthor ? `@${targetAuthor} ` : ''}[#${targetFloor}](https://www.nodeseek.com/post-${cleanPostId}-${targetFloor})\n\n${cleanContent}`
+    : cleanContent;
 
   return {
     path: '/api/content/new-comment',
@@ -44,29 +57,56 @@ export function buildNodeSeekReplyRequest({
       'csrf-token': csrfToken
     },
     body: JSON.stringify({
-      content: cleanContent,
+      content: finalContent,
       mode: 'new-comment',
-      postId: cleanPositiveInteger(postId, '帖子 id')
+      postId: cleanPostId
     })
   };
 }
 
 export function buildNodeSeekInteractionRequest({
   type,
-  commentId
+  commentId,
+  active = false
 }: {
-  type: 'upvote' | 'like';
+  type: NodeSeekInteractionType;
   commentId: string | number;
+  active?: boolean;
 }): NodeSeekActionRequest {
+  const paths: Record<NodeSeekInteractionType, string> = {
+    upvote: '/api/statistics/upvote',
+    like: '/api/statistics/like',
+    dislike: '/api/statistics/dislike'
+  };
   return {
-    path: type === 'upvote' ? '/api/statistics/upvote' : '/api/statistics/like',
+    path: paths[type],
     method: 'POST',
     headers: {
       'content-type': 'application/json'
     },
     body: JSON.stringify({
       commentId: cleanPositiveInteger(commentId, '评论 id'),
-      action: 'add'
+      action: active ? 'remove' : 'add'
+    })
+  };
+}
+
+export function buildNodeSeekCollectionRequest({
+  postId,
+  collected = false
+}: {
+  postId: string | number;
+  collected?: boolean;
+}): NodeSeekActionRequest {
+  return {
+    path: '/api/statistics/collection',
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      postId: cleanPositiveInteger(postId, '帖子 id'),
+      action: collected ? 'remove' : 'add'
     })
   };
 }

@@ -23,11 +23,11 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
-import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, YaohuoReplyTarget } from '../appTypes';
+import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
@@ -37,13 +37,14 @@ import { androidRipple, createStyles, replyContextBadgeStyle, topicStatusBadgeCo
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
+import type { InteractionType } from '../topicActionState';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
   | TopicListContentItem
   | { type: 'topicActions'; key: string }
   | { type: 'replyControls'; key: string }
-  | { type: 'replyComposer'; key: string }
+  | { type: 'replyComposer'; key: string; replyFloor?: number }
   | { type: 'emptyReplies'; key: string }
   | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
 
@@ -187,6 +188,14 @@ function pollChoiceRangeLabel(poll: TopicPoll) {
   ].filter(Boolean).join('，') || undefined;
 }
 
+function pollTypeLabel(poll: TopicPoll) {
+  const labels: Record<string, string> = {
+    ranked_choice: '排序投票',
+    number: '数字投票'
+  };
+  return (poll.type ? labels[poll.type] : undefined) || (poll.multiple ? '多选' : '单选');
+}
+
 function pollSelectionRangeStatus(poll: TopicPoll, selectedCount: number) {
   if (!poll.multiple) {
     return undefined;
@@ -198,6 +207,147 @@ function pollSelectionRangeStatus(poll: TopicPoll, selectedCount: number) {
     return `最多选择 ${poll.max} 项`;
   }
   return undefined;
+}
+
+function PollBlockList({
+  actionBusy,
+  canWritePollSource,
+  keyPrefix,
+  onTogglePollSelection,
+  onVotePoll,
+  pollSelections,
+  polls,
+  source,
+  styles,
+  theme
+}: {
+  actionBusy: boolean;
+  canWritePollSource: boolean;
+  keyPrefix: string;
+  onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
+  onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
+  pollSelections: Record<string, string[]>;
+  polls: TopicPoll[];
+  source?: Source;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+}) {
+  if (!polls.length) {
+    return null;
+  }
+  const canVotePollSource = source === 'nodeseek' || source === 'linuxdo' || source === 'yaohuo';
+  return (
+    <View style={styles.pollStack}>
+      {polls.map((poll, index) => {
+        const pollKey = `${keyPrefix}-${topicPollKey(poll, index)}`;
+        const hasCounts = poll.options.some((option) => typeof option.count === 'number');
+        const totalVotes = pollTotalVotes(poll);
+        const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
+        const selectedSet = new Set(selectedOptionIds);
+        const linuxDoPollReady = source !== 'linuxdo' || Boolean(poll.postId && poll.name);
+        const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
+        const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !linuxDoPollReady);
+        const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
+        const pollStatus = poll.closed
+          ? '已关闭'
+          : poll.voted
+            ? '已投票'
+            : pollReadonly
+              ? '只读结果'
+              : !canWritePollSource
+                ? '未登录'
+                : !linuxDoPollReady
+                  ? '信息不完整'
+                  : '可投票';
+        const pollMetaItems = [
+          pollTypeLabel(poll),
+          pollChoiceRangeLabel(poll),
+          hasCounts ? `${totalVotes} 票` : undefined,
+          typeof poll.public === 'boolean' ? (poll.public ? '公开' : '不公开') : undefined
+        ].filter((item): item is string => Boolean(item));
+        const submitLabel = poll.closed
+          ? '投票已关闭'
+          : poll.voted
+            ? '已投票'
+            : pollReadonly
+              ? '只读结果'
+              : !canWritePollSource
+                ? '登录后投票'
+                : !linuxDoPollReady
+                  ? '刷新后投票'
+                  : selectionRangeStatus || '提交投票';
+        const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
+        return (
+          <View key={pollKey} style={styles.pollBlock}>
+            <View style={styles.pollHeader}>
+              <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
+            </View>
+            <View style={styles.pollOptionList}>
+              {poll.options.map((option, optionIndex) => {
+                const selected = selectedSet.has(option.id);
+                const OptionIcon = poll.multiple
+                  ? selected ? CheckSquare : Square
+                  : selected ? CheckCircle : Circle;
+                const percentValue = hasCounts && totalVotes > 0 && typeof option.count === 'number'
+                  ? Math.round((option.count / totalVotes) * 100)
+                  : undefined;
+                const countText = typeof option.count === 'number'
+                  ? `${option.count} 票${percentValue !== undefined ? ` · ${percentValue}%` : ''}`
+                  : '';
+                return (
+                  <Pressable
+                    key={option.id}
+                    accessibilityRole={poll.multiple ? 'checkbox' : 'radio'}
+                    accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
+                    android_ripple={androidRipple(theme.primarySoft)}
+                    disabled={pollOptionDisabled}
+                    style={[styles.pollOptionRow, optionIndex > 0 && styles.pollOptionDivider, selected && styles.pollOptionRowSelected]}
+                    onPress={() => {
+                      triggerPressFeedback();
+                      onTogglePollSelection(pollKey, poll, option.id);
+                    }}
+                  >
+                    {percentValue !== undefined ? (
+                      <View pointerEvents="none" style={[styles.pollOptionProgress, { width: `${percentValue}%` }]} />
+                    ) : null}
+                    <View style={styles.pollOptionContent}>
+                      <View style={styles.pollOptionIcon}>
+                        <OptionIcon size={18} color={selected ? theme.primary : theme.muted} strokeWidth={1.8} />
+                      </View>
+                      <View style={styles.pollOptionTextBlock}>
+                        <Text style={styles.pollOptionText}>{option.label}</Text>
+                        {countText ? <Text style={styles.pollOptionCount}>{countText}</Text> : null}
+                      </View>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.pollFooter}>
+              <View style={styles.pollMetaWrap}>
+                {pollMetaItems.map((item) => (
+                  <Text key={item} style={styles.pollMetaPill}>{item}</Text>
+                ))}
+                <Text style={styles.pollStatePill}>{pollStatus}</Text>
+              </View>
+              {canVotePollSource ? (
+                <View style={styles.pollSubmitRow}>
+                  <AppButton
+                    compact
+                    label={submitLabel}
+                    variant={submitDisabled ? 'ghost' : 'primary'}
+                    styles={styles}
+                    disabled={submitDisabled}
+                    onPress={() => onVotePoll(poll, selectedOptionIds)}
+                  />
+                </View>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
 }
 
 function nodeSeekReplyPassiveStats(item: Pick<Reply, 'dislikeCount'>) {
@@ -330,6 +480,7 @@ export function TopicScreen({
   onCommentQueryChange,
   onInteract,
   onLinuxDoBookmark,
+  onNodeSeekCollection,
   onShareTopic,
   onYaohuoFavorite,
   onVotePoll,
@@ -370,7 +521,7 @@ export function TopicScreen({
   replyComposerOpen: boolean;
   replyContent: string;
   replyFilter: ReplyFilter;
-  replyTarget: YaohuoReplyTarget | null;
+  replyTarget: ReplyTarget | null;
   replyHasMore: boolean;
   replies: Reply[];
   selectedTopic: Topic | null;
@@ -384,8 +535,9 @@ export function TopicScreen({
   unreadReplyCount: number;
   onBack: () => void;
   onCommentQueryChange: (value: string) => void;
-  onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onInteract: (type: InteractionType, commentId?: number) => void;
   onLinuxDoBookmark: () => void;
+  onNodeSeekCollection: () => void;
   onShareTopic: () => void;
   onYaohuoFavorite: () => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
@@ -481,17 +633,27 @@ export function TopicScreen({
     }
     if (canShowReplies) {
       items.push({ type: 'replyControls', key: 'reply-controls' });
-      if (canWrite && replyComposerOpen) {
+      const targetReplyVisible = replyTarget ? replyItems.some((entry) => entry.type === 'reply' && entry.replyFloor === replyTarget.floor) : false;
+      if (canWrite && replyComposerOpen && !replyTarget) {
         items.push({ type: 'replyComposer', key: 'reply-composer' });
       }
+      if (canWrite && replyComposerOpen && replyTarget && !targetReplyVisible) {
+        items.push({ type: 'replyComposer', key: `reply-composer-hidden-target-${replyTarget.floor}`, replyFloor: replyTarget.floor });
+      }
       if (replyItems.length) {
-        items.push(...replyItems);
+        replyItems.forEach((entry) => {
+          items.push(entry);
+          const isTargetReply = replyTarget && entry.type === 'reply' && entry.replyFloor === replyTarget.floor;
+          if (canWrite && replyComposerOpen && isTargetReply) {
+            items.push({ type: 'replyComposer', key: `reply-composer-${entry.replyFloor}`, replyFloor: entry.replyFloor });
+          }
+        });
       } else {
         items.push({ type: 'emptyReplies', key: 'empty-replies' });
       }
     }
     return items;
-  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, topic, topicContentItems]);
+  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems]);
   const jumpToFloor = useCallback((floor: number) => {
     const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
     if (index >= 0) {
@@ -657,7 +819,6 @@ export function TopicScreen({
       const topicPassiveStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicPassiveStats(topic) : [];
       const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic) : [];
       const topicPolls = topic ? topic.polls || [] : [];
-      const canVotePollSource = Boolean(topic && (topic.source === 'nodeseek' || topic.source === 'linuxdo' || topic.source === 'yaohuo'));
       const canWritePollSource = Boolean(
         topic
         && (
@@ -677,11 +838,10 @@ export function TopicScreen({
           ) : null}
           {canWriteNodeSeek ? (
             <View style={styles.topicPrimaryActions}>
-              <IconButton tiny icon={ThumbsUp} label={`点赞 ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
-              <IconButton tiny icon={Drumstick} label={`加鸡腿 ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
-              {topicPassiveStats.map((stat) => (
-                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
-              ))}
+              <IconButton tiny icon={ThumbsUp} label={`${topic?.upvoted ? '取消赞' : '点赞'} ${topic?.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
+              <IconButton tiny icon={Drumstick} label={`${topic?.liked ? '取消鸡腿' : '加鸡腿'} ${topic?.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              <IconButton tiny icon={ThumbsDown} label={`${topic?.disliked ? '取消反对' : '反对'} ${topic?.dislikeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', topic?.commentId)} />
+              <IconButton tiny icon={BookMarked} label={topic?.collected ? '取消原站收藏' : '原站收藏'} styles={styles} theme={theme} disabled={actionBusy} onPress={onNodeSeekCollection} />
             </View>
           ) : null}
           {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
@@ -702,118 +862,18 @@ export function TopicScreen({
               <IconButton tiny icon={BookMarked} label={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
             </View>
           ) : null}
-          {topicPolls.length ? (
-            <View style={styles.pollStack}>
-              {topicPolls.map((poll, index) => {
-                const pollKey = topicPollKey(poll, index);
-                const hasCounts = poll.options.some((option) => typeof option.count === 'number');
-                const totalVotes = pollTotalVotes(poll);
-                const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
-                const selectedSet = new Set(selectedOptionIds);
-                const linuxDoPollReady = topic?.source !== 'linuxdo' || Boolean(poll.postId && poll.name);
-                const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
-                const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !linuxDoPollReady);
-                const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
-                const pollStatus = poll.closed
-                  ? '已关闭'
-                  : poll.voted
-                    ? '已投票'
-                    : pollReadonly
-                      ? '只读结果'
-                      : !canWritePollSource
-                        ? '未登录'
-                        : !linuxDoPollReady
-                          ? '信息不完整'
-                          : '可投票';
-                const pollMetaItems = [
-                  poll.multiple ? '多选' : '单选',
-                  pollChoiceRangeLabel(poll),
-                  hasCounts ? `${totalVotes} 票` : undefined,
-                  typeof poll.public === 'boolean' ? (poll.public ? '公开' : '不公开') : undefined
-                ].filter((item): item is string => Boolean(item));
-                const submitLabel = poll.closed
-                  ? '投票已关闭'
-                  : poll.voted
-                    ? '已投票'
-                    : pollReadonly
-                      ? '只读结果'
-                      : !canWritePollSource
-                        ? '登录后投票'
-                        : !linuxDoPollReady
-                          ? '刷新后投票'
-                          : selectionRangeStatus || '提交投票';
-                const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
-                return (
-                  <View key={pollKey} style={styles.pollBlock}>
-                    <View style={styles.pollHeader}>
-                      <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
-                    </View>
-                    <View style={styles.pollOptionList}>
-                      {poll.options.map((option, optionIndex) => {
-                        const selected = selectedSet.has(option.id);
-                        const OptionIcon = poll.multiple
-                          ? selected ? CheckSquare : Square
-                          : selected ? CheckCircle : Circle;
-                        const percentValue = hasCounts && totalVotes > 0 && typeof option.count === 'number'
-                          ? Math.round((option.count / totalVotes) * 100)
-                          : undefined;
-                        const countText = typeof option.count === 'number'
-                          ? `${option.count} 票${percentValue !== undefined ? ` · ${percentValue}%` : ''}`
-                          : '';
-                        return (
-                          <Pressable
-                            key={option.id}
-                            accessibilityRole={poll.multiple ? 'checkbox' : 'radio'}
-                            accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
-                            android_ripple={androidRipple(theme.primarySoft)}
-                            disabled={pollOptionDisabled}
-                            style={[styles.pollOptionRow, optionIndex > 0 && styles.pollOptionDivider, selected && styles.pollOptionRowSelected]}
-                            onPress={() => {
-                              triggerPressFeedback();
-                              togglePollSelection(pollKey, poll, option.id);
-                            }}
-                          >
-                            {percentValue !== undefined ? (
-                              <View pointerEvents="none" style={[styles.pollOptionProgress, { width: `${percentValue}%` }]} />
-                            ) : null}
-                            <View style={styles.pollOptionContent}>
-                              <View style={styles.pollOptionIcon}>
-                                <OptionIcon size={18} color={selected ? theme.primary : theme.muted} strokeWidth={1.8} />
-                              </View>
-                              <View style={styles.pollOptionTextBlock}>
-                                <Text style={styles.pollOptionText}>{option.label}</Text>
-                                {countText ? <Text style={styles.pollOptionCount}>{countText}</Text> : null}
-                              </View>
-                            </View>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                    <View style={styles.pollFooter}>
-                      <View style={styles.pollMetaWrap}>
-                        {pollMetaItems.map((item) => (
-                          <Text key={item} style={styles.pollMetaPill}>{item}</Text>
-                        ))}
-                        <Text style={styles.pollStatePill}>{pollStatus}</Text>
-                      </View>
-                      {canVotePollSource ? (
-                        <View style={styles.pollSubmitRow}>
-                          <AppButton
-                            compact
-                            label={submitLabel}
-                            variant={submitDisabled ? 'ghost' : 'primary'}
-                            styles={styles}
-                            disabled={submitDisabled}
-                            onPress={() => onVotePoll(poll, selectedOptionIds)}
-                          />
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-          ) : null}
+          <PollBlockList
+            actionBusy={actionBusy}
+            canWritePollSource={canWritePollSource}
+            keyPrefix="topic"
+            onTogglePollSelection={togglePollSelection}
+            onVotePoll={onVotePoll}
+            pollSelections={pollSelections}
+            polls={topicPolls}
+            source={topic?.source}
+            styles={styles}
+            theme={theme}
+          />
         </View>
       );
     }
@@ -854,13 +914,16 @@ export function TopicScreen({
           inlineSizedImageUrls={inlineSizedImageUrls}
           loadedQuotedReplies={loadedQuotedRepliesRef.current}
           loadingQuotedFloors={loadingQuotedFloorsRef.current}
+          onTogglePollSelection={togglePollSelection}
           reply={listItem.reply}
           replyFloor={listItem.replyFloor}
+          pollSelections={pollSelections}
           repliesByFloor={repliesByFloor}
           styles={styles}
           theme={theme}
           topicAuthor={item?.author}
           onInteract={onInteract}
+          onVotePoll={onVotePoll}
           onReplyToFloor={onReplyToFloor}
           onToggleQuotedFloor={onToggleQuotedFloor}
           query={commentQuery}
@@ -888,6 +951,7 @@ export function TopicScreen({
     onCommentQueryChange,
     onInteract,
     onLinuxDoBookmark,
+    onNodeSeekCollection,
     onReplyComposerOpenChange,
     onReplyContentChange,
     onReplyFilterChange,
@@ -1080,6 +1144,8 @@ function ReplyCard({
   loadedQuotedReplies,
   loadingQuotedFloors,
   inlineSizedImageUrls,
+  onTogglePollSelection,
+  pollSelections,
   query,
   reply,
   replyFloor,
@@ -1091,6 +1157,7 @@ function ReplyCard({
   onInteract,
   onOpenUser,
   onReplyToFloor,
+  onVotePoll,
   onToggleQuotedFloor
 }: {
   actionBusy: boolean;
@@ -1101,6 +1168,8 @@ function ReplyCard({
   isNew?: boolean;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
+  onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
+  pollSelections: Record<string, string[]>;
   query: string;
   reply: Reply;
   replyFloor: number;
@@ -1109,9 +1178,10 @@ function ReplyCard({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topicAuthor?: string;
-  onInteract: (type: 'upvote' | 'like', commentId?: number) => void;
+  onInteract: (type: InteractionType, commentId?: number) => void;
   onOpenUser: (user: UserProfile) => void;
   onReplyToFloor: (reply: Reply) => void;
+  onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
@@ -1258,6 +1328,18 @@ function ReplyCard({
             html={highlightedHtml}
           />
         </View>
+        <PollBlockList
+          actionBusy={actionBusy}
+          canWritePollSource={Boolean(canWrite && source === 'linuxdo')}
+          keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+          onTogglePollSelection={onTogglePollSelection}
+          onVotePoll={onVotePoll}
+          pollSelections={pollSelections}
+          polls={reply.polls || []}
+          source={source}
+          styles={styles}
+          theme={theme}
+        />
         {reply.signatureHtml ? (
           <View style={styles.replySignature}>
             <MemoizedHtmlContent
@@ -1286,11 +1368,10 @@ function ReplyCard({
         ) : null}
         {canWrite && source === 'nodeseek' ? (
           <View style={styles.replyActionRow}>
-            <IconButton tiny icon={ThumbsUp} label={`点赞 ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-            <IconButton tiny icon={Drumstick} label={`加鸡腿 ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-            {nodeSeekReplyPassiveStatItems.map((stat) => (
-              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
-            ))}
+            <IconButton tiny icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+            <IconButton tiny icon={ThumbsUp} label={`${reply.upvoted ? '取消赞' : '点赞'} ${reply.upvoteCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
+            <IconButton tiny icon={Drumstick} label={`${reply.liked ? '取消鸡腿' : '加鸡腿'} ${reply.likeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+            <IconButton tiny icon={ThumbsDown} label={`${reply.disliked ? '取消反对' : '反对'} ${reply.dislikeCount ?? ''}`} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
           </View>
         ) : null}
         {canWrite && source === 'yaohuo' ? (
@@ -1319,7 +1400,10 @@ const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
     || previous.onInteract !== next.onInteract
     || previous.onOpenUser !== next.onOpenUser
     || previous.onReplyToFloor !== next.onReplyToFloor
+    || previous.onTogglePollSelection !== next.onTogglePollSelection
     || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
+    || previous.onVotePoll !== next.onVotePoll
+    || previous.pollSelections !== next.pollSelections
     || previous.query !== next.query
     || previous.reply !== next.reply
     || previous.replyFloor !== next.replyFloor

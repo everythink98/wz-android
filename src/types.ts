@@ -73,6 +73,7 @@ export interface Reply {
   actionCode?: string;
   reactionSummary?: ReactionSummary[];
   boostCount?: number;
+  polls?: TopicPoll[];
 }
 
 export interface Category {
@@ -93,6 +94,7 @@ export interface TopicPoll {
   id?: string;
   name?: string;
   postId?: string;
+  type?: string;
   title?: string;
   multiple?: boolean;
   voted?: boolean;

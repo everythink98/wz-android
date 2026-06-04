@@ -369,6 +369,12 @@ describe('Android App experience guards', () => {
     expect(appSource).not.toContain('}, [recentSearches, writeRecentSearches]);');
   });
 
+  it('keeps recent search delete controls easy to tap on Android', () => {
+    const recentSearchDeleteBlock = searchScreenSource.match(/accessibilityLabel=\{`删除最近搜索 \$\{item\}`\}[\s\S]*?style=\{styles\.removableChipClose\}/)?.[0] || '';
+
+    expect(recentSearchDeleteBlock).toContain('hitSlop={14}');
+  });
+
   it('loads the feed after reader data is ready and only when feed parameters change', () => {
     const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!readerDataLoaded\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void loadFeedRef\.current\(\{[\s\S]*?\n\s*}, \[categoryFilter, feedSource, readerDataLoaded\]\);/)?.[0] || '';
 
@@ -1039,24 +1045,31 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps successful topic actions local instead of reopening the whole topic', () => {
-    const interactBlock = appSource.match(/const interact = useCallback\(async \(type: 'upvote' \| 'like', commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const interactBlock = appSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const bookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const nodeSeekCollectionBlock = appSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const voteBlock = appSource.match(/const votePoll = useCallback\(async \(poll: TopicPoll, optionIds: string\[\]\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(appSource).toContain('applyInteractionToTopic');
     expect(appSource).toContain('applyInteractionToReplies');
     expect(appSource).toContain('applyBookmarkToTopic');
+    expect(appSource).toContain('applyNodeSeekCollectionToTopic');
     expect(appSource).toContain('applyPollVoteToTopic');
     expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toMatch(/buildNodeSeekCollectionRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(interactBlock).toContain('const requestTopicKey = detail ? topicKey(detail) : null;');
+    expect(interactBlock).toContain('const active = Boolean(target?.[activeField]);');
+    expect(interactBlock).toContain('mode: \'toggle\' as const');
     expect(interactBlock).toContain('currentTopicKeyRef.current !== requestTopicKey');
     expect(bookmarkBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(bookmarkBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
+    expect(nodeSeekCollectionBlock).toContain('const requestTopicKey = topicKey(detail);');
+    expect(nodeSeekCollectionBlock).toContain('applyNodeSeekCollectionToTopic(current, { collected: !collected })');
     expect(voteBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(voteBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(voteBlock).toContain('voteIds: optionIds');
@@ -1088,7 +1101,7 @@ describe('Android App experience guards', () => {
     expect(refreshWholeTopicBlock).toContain('void openTopic(detail, true);');
     expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?replyTarget[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(submitReplyBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(submitReplyBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(submitReplyBlock.match(/await refreshTopicReplies\(\{ silent: true, afterSubmit: true \}\);/g) || []).toHaveLength(3);
@@ -1171,7 +1184,7 @@ describe('Android App experience guards', () => {
 
     expect(block).toContain('if (replyComposerOpen) {');
     expect(block).toContain('setReplyComposerOpen(false);');
-    expect(block).toContain('setYaohuoReplyTarget(null);');
+    expect(block).toContain('setReplyTarget(null);');
   });
 
   it('resets library filters when switching between favorites and history', () => {

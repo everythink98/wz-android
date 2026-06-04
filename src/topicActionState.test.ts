@@ -5,6 +5,7 @@ import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
   applyInteractionToTopic,
+  applyNodeSeekCollectionToTopic,
   applyPollVoteToTopic,
   linuxDoBookmarkIdFromActionResult
 } from './topicActionState';
@@ -66,6 +67,39 @@ describe('topic action state patches', () => {
 
     expect(next[0]).toMatchObject({ liked: true, likeCount: 3 });
     expect(repeated[0]).toMatchObject({ liked: true, likeCount: 3 });
+  });
+
+  it('toggles NodeSeek dislike state and count locally', () => {
+    const disliked = applyInteractionToReplies([{
+      ...reply,
+      disliked: false,
+      dislikeCount: 1
+    }], {
+      commentId: 202,
+      type: 'dislike',
+      mode: 'toggle'
+    });
+    const undisliked = applyInteractionToReplies(disliked, {
+      commentId: 202,
+      type: 'dislike',
+      mode: 'toggle'
+    });
+
+    expect(disliked[0]).toMatchObject({ disliked: true, dislikeCount: 2 });
+    expect(undisliked[0]).toMatchObject({ disliked: false, dislikeCount: 1 });
+  });
+
+  it('patches NodeSeek original collection state locally', () => {
+    const collected = applyNodeSeekCollectionToTopic({
+      ...topic,
+      source: 'nodeseek',
+      collected: false,
+      collectionCount: 4
+    }, { collected: true });
+    const removed = applyNodeSeekCollectionToTopic(collected, { collected: false });
+
+    expect(collected).toMatchObject({ collected: true, collectionCount: 5 });
+    expect(removed).toMatchObject({ collected: false, collectionCount: 4 });
   });
 
   it('patches linux.do original bookmark state from the action result', () => {

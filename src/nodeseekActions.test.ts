@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildNodeSeekAttendanceRequest,
+  buildNodeSeekCollectionRequest,
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
@@ -38,6 +39,22 @@ describe('NodeSeek action request builders', () => {
     })).toThrow('请输入回复内容');
   });
 
+  it('prefixes NodeSeek floor replies with the original floor reference', () => {
+    const request = buildNodeSeekReplyRequest({
+      postId: '723704',
+      content: '  谢谢分享  ',
+      csrfToken: 'fixed-csrf-token',
+      replyTarget: {
+        floor: 15,
+        author: 'bob'
+      }
+    });
+
+    expect(JSON.parse(request.body || '{}')).toMatchObject({
+      content: '@bob [#15](https://www.nodeseek.com/post-723704-15)\n\n谢谢分享'
+    });
+  });
+
   it('builds upvote and like interaction requests for a comment', () => {
     expect(buildNodeSeekInteractionRequest({
       type: 'upvote',
@@ -58,6 +75,41 @@ describe('NodeSeek action request builders', () => {
       type: 'like',
       commentId: 812345
     }).path).toBe('/api/statistics/like');
+  });
+
+  it('builds dislike and remove interaction requests for a comment', () => {
+    expect(buildNodeSeekInteractionRequest({
+      type: 'dislike',
+      commentId: '812345',
+      active: true
+    })).toEqual({
+      path: '/api/statistics/dislike',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        commentId: 812345,
+        action: 'remove'
+      })
+    });
+  });
+
+  it('builds NodeSeek original collection toggle requests', () => {
+    expect(buildNodeSeekCollectionRequest({
+      postId: '723704',
+      collected: true
+    })).toEqual({
+      path: '/api/statistics/collection',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        postId: 723704,
+        action: 'remove'
+      })
+    });
   });
 
   it('builds an attendance request with the random option encoded in the URL', () => {

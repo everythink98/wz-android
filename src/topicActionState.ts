@@ -1,6 +1,6 @@
 import type { Reply, TopicDetail } from './types';
 
-type InteractionType = 'upvote' | 'like';
+export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'toggle';
 
 export type InteractionPatch = {
@@ -25,8 +25,12 @@ function applyInteractionFields<T extends TopicDetail | Reply>(item: T, patch: I
   if (item.commentId !== patch.commentId) {
     return item;
   }
-  const activeField = patch.type === 'upvote' ? 'upvoted' : 'liked';
-  const countField = patch.type === 'upvote' ? 'upvoteCount' : 'likeCount';
+  const fieldMap = {
+    upvote: ['upvoted', 'upvoteCount'],
+    like: ['liked', 'likeCount'],
+    dislike: ['disliked', 'dislikeCount']
+  } as const;
+  const [activeField, countField] = fieldMap[patch.type];
   const active = Boolean(item[activeField]);
   const nextActive = patch.mode === 'toggle' ? !active : true;
   const delta = nextActive === active ? 0 : nextActive ? 1 : -1;
@@ -59,40 +63,79 @@ export function applyBookmarkToTopic<T extends TopicDetail | null>(
   } as T;
 }
 
+export function applyNodeSeekCollectionToTopic<T extends TopicDetail | null>(
+  topic: T,
+  patch: { collected: boolean }
+): T {
+  if (!topic) {
+    return topic;
+  }
+  const active = Boolean(topic.collected);
+  const delta = patch.collected === active ? 0 : patch.collected ? 1 : -1;
+  return {
+    ...topic,
+    collected: patch.collected,
+    collectionCount: nextCount(topic.collectionCount, delta)
+  } as T;
+}
+
+function applyPollVoteToPolls(
+  polls: TopicDetail['polls'],
+  patch: { pollId?: string; pollName?: string; pollPostId?: string; optionIds: string[] }
+) {
+  if (!polls?.length) {
+    return polls;
+  }
+  const selectedIds = new Set(patch.optionIds.map(String));
+  return polls.map((poll) => {
+    if (patch.pollPostId && poll.postId !== patch.pollPostId) {
+      return poll;
+    }
+    const matchesPoll = patch.pollId
+      ? poll.id === patch.pollId
+      : patch.pollName
+        ? poll.name === patch.pollName
+        : polls.length === 1;
+    if (!matchesPoll) {
+      return poll;
+    }
+    return {
+      ...poll,
+      voted: true,
+      options: poll.options.map((option) => {
+        const selected = selectedIds.has(option.id);
+        const wasSelected = option.selected === true;
+        return {
+          ...option,
+          selected,
+          count: selected && !wasSelected ? nextCount(option.count, 1) : option.count
+        };
+      })
+    };
+  });
+}
+
 export function applyPollVoteToTopic<T extends TopicDetail | null>(
   topic: T,
-  patch: { pollId?: string; pollName?: string; optionIds: string[] }
+  patch: { pollId?: string; pollName?: string; pollPostId?: string; optionIds: string[] }
 ): T {
   if (!topic?.polls?.length) {
     return topic;
   }
-  const selectedIds = new Set(patch.optionIds.map(String));
   return {
     ...topic,
-    polls: topic.polls.map((poll) => {
-      const matchesPoll = patch.pollId
-        ? poll.id === patch.pollId
-        : patch.pollName
-          ? poll.name === patch.pollName
-          : topic.polls!.length === 1;
-      if (!matchesPoll) {
-        return poll;
-      }
-      return {
-        ...poll,
-        voted: true,
-        options: poll.options.map((option) => {
-          const selected = selectedIds.has(option.id);
-          const wasSelected = option.selected === true;
-          return {
-            ...option,
-            selected,
-            count: selected && !wasSelected ? nextCount(option.count, 1) : option.count
-          };
-        })
-      };
-    })
+    polls: applyPollVoteToPolls(topic.polls, patch)
   } as T;
+}
+
+export function applyPollVoteToReplies(
+  replies: Reply[],
+  patch: { pollId?: string; pollName?: string; pollPostId?: string; optionIds: string[] }
+) {
+  return replies.map((reply) => {
+    const polls = applyPollVoteToPolls(reply.polls, patch);
+    return polls === reply.polls ? reply : { ...reply, polls };
+  });
 }
 
 export function linuxDoBookmarkIdFromActionResult(value: unknown): number | undefined {

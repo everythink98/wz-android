@@ -601,6 +601,64 @@ describe('Android local sources', () => {
     }]);
   });
 
+  it('maps linux.do Discourse polls from reply posts', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 43,
+      title: 'linux.do reply poll topic',
+      slug: 'linux-reply-poll-topic',
+      created_at: '2026-06-03T00:00:00.000Z',
+      posts_count: 2,
+      post_stream: {
+        stream: [1001, 1002],
+        posts: [
+          {
+            id: 1001,
+            username: 'alice',
+            cooked: '<p>正文</p>',
+            created_at: '2026-06-03T00:00:00.000Z',
+            post_number: 1
+          },
+          {
+            id: 1002,
+            username: 'bob',
+            cooked: '<p>回复投票</p>',
+            created_at: '2026-06-03T00:01:00.000Z',
+            post_number: 2,
+            polls: [{
+              id: 89,
+              name: 'reply-poll',
+              title: '回复里的评分',
+              type: 'number',
+              status: 'open',
+              options: [
+                { id: '1', html: '1 分', votes: 2 },
+                { id: '2', html: '2 分', votes: 3 }
+              ]
+            }]
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '43', fetcher });
+
+    expect(topic.replies[0].polls).toEqual([{
+      id: '89',
+      name: 'reply-poll',
+      postId: '1002',
+      title: '回复里的评分',
+      type: 'number',
+      closed: false,
+      multiple: false,
+      readonly: true,
+      voted: false,
+      options: [
+        { id: '1', label: '1 分', count: 2, selected: false },
+        { id: '2', label: '2 分', count: 3, selected: false }
+      ]
+    }]);
+  });
+
   it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
     const fetcher = vi.fn(async () => json({
       topic_list: {
