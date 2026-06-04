@@ -246,17 +246,16 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopWidth: StyleSheet.hairlineWidth
     },
     feedFloatingActions: {
-      minHeight: 58,
+      position: 'absolute',
+      right: 16,
+      bottom: 92,
       flexDirection: 'row',
       justifyContent: 'flex-end',
       alignItems: 'center',
       gap: 8,
-      paddingHorizontal: 16,
-      paddingTop: 6,
-      paddingBottom: 8,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface
+      backgroundColor: 'transparent',
+      zIndex: 4,
+      elevation: 2
     },
     feedFixedHeader: {
       gap: 6,

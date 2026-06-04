@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabView } from 'react-native-tab-view';
-import { ChevronUp, RefreshCw } from 'lucide-react-native';
+import { ChevronUp } from 'lucide-react-native';
 import type { Category, FeedSource, Topic } from '../types';
 import { topicKey, type ReaderData } from '../readerData';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from '../feedCategoryRail';
@@ -151,12 +151,6 @@ export function FeedScreen({
     scrollFeedToTop(feedSource, false);
   }, [categoryFilter, feedSource, readingFilter, scrollFeedToTop]);
 
-  const onRefreshPress = useCallback(() => {
-    autoLoadPausedAfterFailureRef.current = false;
-    scrollFeedToTop();
-    onRefresh();
-  }, [onRefresh, scrollFeedToTop]);
-
   useEffect(() => {
     if (scrollToTopSignal > 0) {
       scrollFeedToTop();
@@ -291,7 +285,6 @@ export function FeedScreen({
       />
       {showFloatingActions ? (
         <View style={styles.feedFloatingActions}>
-          <FloatingIconButton icon={RefreshCw} label="刷新" styles={styles} theme={theme} loading={refreshing} disabled={refreshing} onPress={onRefreshPress} />
           <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={() => scrollFeedToTop()} />
         </View>
       ) : null}

@@ -238,19 +238,22 @@ describe('Android reader theme helpers', () => {
     expect(styles.button.backgroundColor).toBe(theme.surface);
     expect(styles.input.backgroundColor).toBe(theme.surface);
     expect(styles.nav.backgroundColor).toBe(theme.surface);
-    expect(styles.floatingIconButton.backgroundColor).toBe(theme.surface);
   });
 
-  it('keeps feed floating actions in the layout so they do not cover row metadata', () => {
+  it('keeps the feed back-to-top action above the bottom navigation without a bar', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
     expect(styles.feedFloatingActions).toMatchObject({
+      position: 'absolute',
+      right: 16,
+      bottom: 92,
       flexDirection: 'row',
       justifyContent: 'flex-end',
-      backgroundColor: theme.surface
+      backgroundColor: 'transparent'
     });
-    expect(styles.feedFloatingActions).not.toHaveProperty('position');
+    expect(styles.feedFloatingActions).not.toHaveProperty('minHeight');
+    expect(styles.feedFloatingActions).not.toHaveProperty('borderTopWidth');
   });
 
   it('uses only explicit light and dark themes', () => {

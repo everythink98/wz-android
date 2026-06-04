@@ -820,6 +820,14 @@ describe('Android App experience guards', () => {
     expect(appSource).not.toContain('状态检查完成');
   });
 
+  it('keeps the scrolled feed helper as a higher back-to-top action only', () => {
+    expect(feedScreenSource).toContain('FloatingIconButton');
+    expect(feedScreenSource).toContain('shouldShowFeedFloatingActions');
+    expect(feedScreenSource).toContain('label="回到顶部"');
+    expect(feedScreenSource).not.toContain('label="刷新"');
+    expect(feedScreenSource).not.toContain('RefreshCw');
+  });
+
   it('labels the saved-topics area as favorites in the bottom navigation and screen title', () => {
     expect(navBarSource).toContain("{ value: 'library', label: '收藏', icon: Star }");
     expect(libraryScreenSource).toContain('<Text style={styles.sectionTitle}>收藏</Text>');
