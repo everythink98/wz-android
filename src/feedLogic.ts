@@ -1,6 +1,6 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
 import type { Category, FeedResponse, FeedSource, Reply, Topic } from './types';
-import { dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUtils';
+import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUtils';
 
 export { dateTime } from './appUtils';
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
@@ -85,6 +85,37 @@ export function sortTopicsByActivity(items: Topic[]) {
   return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
 }
 
+function shouldUseIncomingAccessRequirement(current: Topic['accessRequirement'], incoming: Topic['accessRequirement']) {
+  if (!incoming) {
+    return false;
+  }
+  if (!current) {
+    return true;
+  }
+  const currentSpecificity = accessRequirementSpecificity(current);
+  const incomingSpecificity = accessRequirementSpecificity(incoming);
+  if (incomingSpecificity > currentSpecificity) {
+    return true;
+  }
+  if (incomingSpecificity < currentSpecificity) {
+    return false;
+  }
+  if (current.type === 'level' && incoming.type === 'level') {
+    const currentLevel = accessRequirementLevelValue(current);
+    const incomingLevel = accessRequirementLevelValue(incoming);
+    if (currentLevel !== incomingLevel) {
+      if (!currentLevel) {
+        return Boolean(incomingLevel);
+      }
+      if (!incomingLevel) {
+        return false;
+      }
+      return incomingLevel > currentLevel;
+    }
+  }
+  return current.label !== incoming.label || current.detail !== incoming.detail;
+}
+
 export function mergeTopics(current: Topic[], incoming: Topic[]) {
   const seen = new Set(current.map((topic) => topicKey(topic)));
   const seenExternalUrls = new Map<string, Topic>();
@@ -120,7 +151,7 @@ export function mergeTopics(current: Topic[], incoming: Topic[]) {
       next.push(topic);
     } else if (topic.accessRequirement) {
       const index = next.findIndex((item) => topicKey(item) === key);
-      if (index >= 0 && !next[index].accessRequirement) {
+      if (index >= 0 && shouldUseIncomingAccessRequirement(next[index].accessRequirement, topic.accessRequirement)) {
         next[index] = {
           ...next[index],
           accessRequirement: topic.accessRequirement

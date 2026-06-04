@@ -33,6 +33,12 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('暂无权限');
     expect(topicScreenSource).toContain('forumAccessRequirementText(topic.accessRequirement)');
     expect(topicScreenSource).toContain('if (text.length > 240)');
+    expect(topicScreenSource).toContain('requires?[^.]{0,40}(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
+    expect(topicScreenSource).toContain('minimum (?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
+    expect(topicScreenSource).toContain('must be (?:at least )?(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
+    expect(appSource).toContain('requires?[^.]{0,40}(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
+    expect(appSource).toContain('minimum (?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
+    expect(appSource).toContain('must be (?:at least )?(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
     expect(themeSource).toContain('topicAccessNoticeTitle');
   });
 

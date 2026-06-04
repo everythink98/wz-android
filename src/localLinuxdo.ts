@@ -19,6 +19,7 @@ import {
   loadLinuxDoAccess
 } from './linuxdoCookieBridge';
 import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
+import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
 
 const BASE_URL = 'https://linux.do';
 const LIST_PAGE_SIZE = 30;
@@ -135,6 +136,34 @@ function originalPoster(topic: Record<string, unknown>, users: Map<string, Recor
   return isRecord(poster) ? users.get(String(poster.user_id)) : undefined;
 }
 
+function preferredLinuxDoAccessRequirement(topicRequirement?: Topic['accessRequirement'], categoryRequirement?: Topic['accessRequirement']) {
+  if (!topicRequirement) {
+    return categoryRequirement;
+  }
+  if (!categoryRequirement) {
+    return topicRequirement;
+  }
+  const topicSpecificity = accessRequirementSpecificity(topicRequirement);
+  const categorySpecificity = accessRequirementSpecificity(categoryRequirement);
+  if (categorySpecificity > topicSpecificity) {
+    return categoryRequirement;
+  }
+  if (categorySpecificity < topicSpecificity) {
+    return topicRequirement;
+  }
+  if (topicRequirement.type === 'level' && categoryRequirement.type === 'level') {
+    const topicLevel = accessRequirementLevelValue(topicRequirement);
+    const categoryLevel = accessRequirementLevelValue(categoryRequirement);
+    if (!topicLevel && categoryLevel) {
+      return categoryRequirement;
+    }
+    if (topicLevel && categoryLevel && categoryLevel > topicLevel) {
+      return categoryRequirement;
+    }
+  }
+  return topicRequirement;
+}
+
 function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string, authorData?: Record<string, unknown>): Topic | null {
   if (!isRecord(raw)) {
     return null;
@@ -146,7 +175,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   const createdAt = toIsoString(raw.created_at) || new Date().toISOString();
   const lastReplyAt = toIsoString(raw.bumped_at || raw.last_posted_at || raw.created_at) || createdAt;
   const category = raw.category_id ? categoryMap.get(String(raw.category_id)) : undefined;
-  const accessRequirement = accessRequirementFromObject(raw) || category?.accessRequirement;
+  const accessRequirement = preferredLinuxDoAccessRequirement(accessRequirementFromObject(raw), category?.accessRequirement);
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
   const authorName = author || String(createdBy.username || raw.last_poster_username || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
@@ -493,7 +522,7 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
   }
   if (!response.ok) {
     const message = linuxDoErrorText(data, `HTTP ${response.status}`);
-    const accessRequirement = accessRequirementFromObject(data) || accessRequirementFromText(message);
+    const accessRequirement = preferredLinuxDoAccessRequirement(accessRequirementFromObject(data), accessRequirementFromText(message));
     const error = new Error(message);
     Object.assign(error, {
       status: response.status,

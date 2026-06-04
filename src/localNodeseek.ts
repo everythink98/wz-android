@@ -465,14 +465,16 @@ function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>) {
   return Math.max(parsePositiveInteger(raw.comments ?? raw.commentCount ?? raw.comment_count) - 1, 0);
 }
 
-function nodeSeekKnownCategoryAccessRequirement(categoryId?: string, categoryName?: string): Topic['accessRequirement'] | undefined {
-  if (String(categoryId || '').trim().toLowerCase() === 'inside' || String(categoryName || '').trim() === '内版') {
-    return { type: 'level', label: '需等级', detail: 'Lv2' };
-  }
-  return undefined;
+function nodeSeekAccessRequirementFromListRow(row: HTMLElement, title: string) {
+  const direct = row.querySelectorAll('*')
+    .map((node) => elementText(node).replace(title, ' ').trim())
+    .filter((text) => text && text !== '内版')
+    .map((text) => accessRequirementFromText(text))
+    .find(Boolean);
+  return direct || accessRequirementFromText(elementText(row).replace(title, ' '));
 }
 
-function normalizeTopic(raw: Record<string, unknown>, categoryAccess = new Map<string, Topic['accessRequirement']>()): Topic | null {
+function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const id = String(raw.postId || raw.id || '').trim();
   const title = String(raw.titleText || raw.title || '').trim();
   if (!id || !title) {
@@ -485,10 +487,7 @@ function normalizeTopic(raw: Record<string, unknown>, categoryAccess = new Map<s
   const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt;
   const categoryId = typeof category.key === 'string' ? category.key : undefined;
   const categoryName = typeof category.name === 'string' ? category.name : typeof raw.categoryWord === 'string' ? raw.categoryWord : undefined;
-  const accessRequirement = accessRequirementFromObject(raw)
-    || (categoryId ? categoryAccess.get(categoryId) : undefined)
-    || (categoryName ? categoryAccess.get(categoryName) : undefined)
-    || nodeSeekKnownCategoryAccessRequirement(categoryId, categoryName);
+  const accessRequirement = accessRequirementFromObject(raw);
   return {
     source: 'nodeseek',
     id,
@@ -526,30 +525,12 @@ function sortNodeSeekUserTopics(topics: Topic[]) {
     .map((item) => item.topic);
 }
 
-function nodeSeekCategoryAccessMap(data: Record<string, unknown>) {
-  const accessByCategory = new Map<string, Topic['accessRequirement']>();
-  for (const category of arrayField(data.allCategory).filter(isRecord)) {
-    const accessRequirement = accessRequirementFromObject(category);
-    if (!accessRequirement) {
-      continue;
-    }
-    for (const key of [category.key, category.id, category.cn_text, category.name, category.text]) {
-      const value = String(key || '').trim();
-      if (value) {
-        accessByCategory.set(value, accessRequirement);
-      }
-    }
-  }
-  return accessByCategory;
-}
-
 function embeddedTopics(data: Record<string, unknown>) {
-  const categoryAccess = nodeSeekCategoryAccessMap(data);
   return [
     ...arrayField(data.rotateTopics),
     ...arrayField(data.topicList),
     ...arrayField(data.posts)
-  ].filter(isRecord).map((topic) => normalizeTopic(topic, categoryAccess)).filter(Boolean) as Topic[];
+  ].filter(isRecord).map((topic) => normalizeTopic(topic)).filter(Boolean) as Topic[];
 }
 
 function parseHtmlTopics(html: string) {
@@ -570,8 +551,7 @@ function parseHtmlTopics(html: string) {
     const categoryName = elementText(categoryLink) || undefined;
     const lastReplyTime = row.querySelector('.info-last-comment-time time');
     const lastReplyAt = toIsoString(lastReplyTime?.getAttribute('datetime') || lastReplyTime?.getAttribute('title'));
-    const accessRequirement = accessRequirementFromText(elementText(row).replace(title, ' '))
-      || nodeSeekKnownCategoryAccessRequirement(categoryId, categoryName);
+    const accessRequirement = nodeSeekAccessRequirementFromListRow(row, title);
     renderedItems.push({
       source: 'nodeseek',
       id,

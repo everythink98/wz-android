@@ -31,6 +31,16 @@ describe('Android app utils', () => {
       detail: 'trust level 2'
     })).toBe('需 Lv2');
     expect(forumAccessRequirementText({
+      type: 'level',
+      label: '需等级',
+      detail: '回复 4 查看 102 查看本帖需要等级达到 6 级后查看'
+    })).toBe('需 Lv6');
+    expect(forumAccessRequirementText({
+      type: 'level',
+      label: '需等级',
+      detail: 'Minimum level of 5 required'
+    })).toBe('需 Lv5');
+    expect(forumAccessRequirementText({
       type: 'permission',
       label: '需权限',
       detail: '权限不足'

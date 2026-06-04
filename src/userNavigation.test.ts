@@ -104,6 +104,154 @@ describe('Android user navigation helpers', () => {
     expect(merged?.accessRequirement).toEqual(listTopic.accessRequirement);
   });
 
+  it('does not copy a stale fallback access requirement onto a readable detail', () => {
+    const listTopic: Topic = {
+      source: 'nodeseek',
+      id: '7202',
+      title: '新版块“内版”，以及试行版规',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-7202-1',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      accessRequirement: undefined,
+      contentHtml: '<p>为什么会有这个版块，以及这里的试行版规。</p>',
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toBeUndefined();
+  });
+
+  it('does not copy a stale fallback access requirement when readable detail mentions login text', () => {
+    const listTopic: Topic = {
+      source: 'nodeseek',
+      id: '7203',
+      title: '登录教程',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-7203-1',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      accessRequirement: undefined,
+      contentHtml: '<p>这篇公开内容说明需要登录后才能同步某个外部服务。</p>',
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toBeUndefined();
+  });
+
+  it('uses a more specific list level when a restricted detail only has a generic permission notice', () => {
+    const listTopic: Topic = {
+      source: 'nodeseek',
+      id: '760814',
+      title: '需要更高等级的帖子',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-760814-1',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv5'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      title: '受限帖子',
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: '权限不足'
+      },
+      contentHtml: '<p>权限不足</p>',
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toEqual(listTopic.accessRequirement);
+  });
+
+  it('uses a list level when a restricted detail only has a generic level marker', () => {
+    const listTopic: Topic = {
+      source: 'nodeseek',
+      id: '760816',
+      title: '需要更高等级的帖子',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-760816-1',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv5'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      title: '受限帖子',
+      accessRequirement: {
+        type: 'level',
+        label: '需等级'
+      },
+      contentHtml: '<p>权限不足</p>',
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toEqual(listTopic.accessRequirement);
+  });
+
+  it('keeps the detail level when an older fallback topic has a different level', () => {
+    const listTopic: Topic = {
+      source: 'nodeseek',
+      id: '760815',
+      title: '旧收藏里的帖子',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-760815-1',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv5'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: '查看本帖需要Lv2'
+      },
+      contentHtml: '<p>查看本帖需要Lv2</p>',
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toEqual(detailTopic.accessRequirement);
+  });
+
   it('keeps a linux.do list title when a restricted detail uses a placeholder title', () => {
     const listTopic: Topic = {
       source: 'linuxdo',

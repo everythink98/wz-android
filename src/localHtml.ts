@@ -1,4 +1,5 @@
 import { parse, type HTMLElement } from 'node-html-parser';
+import { accessRequirementLevelValue } from './appUtils';
 import type { AccessRequirement } from './types';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -156,6 +157,11 @@ function accessRequirementFromLevel(value: unknown) {
   return level > 0 ? { type: 'level' as const, label: '需等级', detail: `Lv${level}` } : undefined;
 }
 
+function accessRequirementDetail(text: string, match: RegExpMatchArray) {
+  const start = Math.max(0, (match.index ?? 0) - 12);
+  return textContentFromHtml(text.slice(start, start + 112)).slice(0, 80);
+}
+
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
   return [...items].sort((left, right) => (
     Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
@@ -170,14 +176,17 @@ export function sortTopicsByCreatedAt<T extends { createdAt: string }>(items: T[
 
 export function accessRequirementFromText(value: unknown) {
   const text = textContentFromHtml(value);
-  if (/请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读|可见)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)/i.test(text)) {
-    return { type: 'login' as const, label: '需登录', detail: textContentFromHtml(text).slice(0, 80) };
+  const levelMatch = text.match(/需要[^。；\n]{0,40}(?:等级|trust level|lv\s*\d+)|需要[^。；\n]{0,40}\d+\s*级[^。；\n]{0,24}(?:查看|阅读|才能|才可|以上|可见)|(?:等级|trust level|lv\s*\d+)[^。；\n]{0,40}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)/i);
+  if (levelMatch) {
+    return { type: 'level' as const, label: '需等级', detail: accessRequirementDetail(text, levelMatch) };
   }
-  if (/需要[^。；\n]{0,20}(?:等级|trust level|lv\s*\d+)|(?:等级|trust level|lv\s*\d+)[^。；\n]{0,20}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,30}trust level|minimum trust level|must be (?:at least )?trust level/i.test(text)) {
-    return { type: 'level' as const, label: '需等级', detail: textContentFromHtml(text).slice(0, 80) };
+  const loginMatch = text.match(/请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读|可见)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)/i);
+  if (loginMatch) {
+    return { type: 'login' as const, label: '需登录', detail: accessRequirementDetail(text, loginMatch) };
   }
-  if (/权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i.test(text)) {
-    return { type: 'permission' as const, label: '需权限', detail: textContentFromHtml(text).slice(0, 80) };
+  const permissionMatch = text.match(/权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i);
+  if (permissionMatch) {
+    return { type: 'permission' as const, label: '需权限', detail: accessRequirementDetail(text, permissionMatch) };
   }
   return undefined;
 }
@@ -205,28 +214,77 @@ function normalizeAccessRequirement(value: unknown): AccessRequirement | undefin
   }
   const type = value.type;
   const label = value.label;
-  return (type === 'login' || type === 'level' || type === 'permission') && typeof label === 'string'
-    ? { type, label, detail: typeof value.detail === 'string' ? value.detail : undefined }
-    : undefined;
+  if ((type !== 'login' && type !== 'level' && type !== 'permission') || typeof label !== 'string') {
+    return undefined;
+  }
+  const detail = typeof value.detail === 'string' ? value.detail : undefined;
+  const detected = detail ? accessRequirementFromText(detail) : undefined;
+  return detected?.type === 'level' ? detected : { type, label, detail };
+}
+
+function accessRequirementRank(value?: AccessRequirement) {
+  if (!value) {
+    return 0;
+  }
+  if (value.type === 'level') {
+    return 3;
+  }
+  if (value.type === 'permission') {
+    return 2;
+  }
+  return 1;
+}
+
+function preferredAccessRequirement(current: AccessRequirement | undefined, candidate: AccessRequirement | undefined) {
+  if (!candidate) {
+    return current;
+  }
+  if (!current) {
+    return candidate;
+  }
+  const currentRank = accessRequirementRank(current);
+  const candidateRank = accessRequirementRank(candidate);
+  if (candidateRank > currentRank) {
+    return candidate;
+  }
+  if (candidateRank < currentRank) {
+    return current;
+  }
+  if (current.type === 'level' && candidate.type === 'level') {
+    const currentLevel = accessRequirementLevelValue(current);
+    const candidateLevel = accessRequirementLevelValue(candidate);
+    if (candidateLevel !== currentLevel) {
+      if (!currentLevel) {
+        return candidateLevel ? candidate : current;
+      }
+      if (!candidateLevel) {
+        return current;
+      }
+      return candidateLevel > currentLevel ? candidate : current;
+    }
+  }
+  if (candidate.type === 'level' && candidate.detail && candidate.detail !== current.detail) {
+    return candidate;
+  }
+  return current;
 }
 
 export function accessRequirementFromObject(value: unknown) {
   if (!isRecord(value)) {
     return undefined;
   }
-  const direct = normalizeAccessRequirement(value.accessRequirement)
-    || normalizeAccessRequirement(value.access_requirement);
-  if (direct) {
-    return direct;
-  }
+  let detected = preferredAccessRequirement(
+    normalizeAccessRequirement(value.accessRequirement),
+    normalizeAccessRequirement(value.access_requirement)
+  );
   for (const key of ['loginRequired', 'login_required', 'requiresLogin', 'requires_login']) {
     if (value[key] === true) {
-      return { type: 'login' as const, label: '需登录' };
+      detected = preferredAccessRequirement(detected, { type: 'login' as const, label: '需登录' });
     }
   }
   for (const key of ['read_restricted', 'restricted', 'private']) {
     if (value[key] === true) {
-      return { type: 'permission' as const, label: '需权限' };
+      detected = preferredAccessRequirement(detected, { type: 'permission' as const, label: '需权限' });
     }
   }
   for (const key of [
@@ -247,7 +305,7 @@ export function accessRequirementFromObject(value: unknown) {
     if (typeof value[key] === 'string') {
       const accessRequirement = accessRequirementFromToken(value[key]) || accessRequirementFromText(value[key]);
       if (accessRequirement) {
-        return accessRequirement;
+        detected = preferredAccessRequirement(detected, accessRequirement);
       }
     }
   }
@@ -258,6 +316,14 @@ export function accessRequirementFromObject(value: unknown) {
     'minimum_trust_level',
     'minTrustLevel',
     'min_trust_level',
+    'requiredLevel',
+    'required_level',
+    'minimumLevel',
+    'minimum_level',
+    'minLevel',
+    'min_level',
+    'levelRequired',
+    'level_required',
     'readLevel',
     'read_level',
     'requiredReadLevel',
@@ -274,16 +340,16 @@ export function accessRequirementFromObject(value: unknown) {
     'access_level'
   ]) {
     if (typeof value[key] === 'number' && value[key] > 0) {
-      return accessRequirementFromLevel(value[key]);
+      detected = preferredAccessRequirement(detected, accessRequirementFromLevel(value[key]));
     }
     if (typeof value[key] === 'string') {
       const accessRequirement = accessRequirementFromLevel(value[key]);
       if (accessRequirement) {
-        return accessRequirement;
+        detected = preferredAccessRequirement(detected, accessRequirement);
       }
     }
   }
-  return undefined;
+  return detected;
 }
 
 export function elementText(element: HTMLElement | null | undefined) {

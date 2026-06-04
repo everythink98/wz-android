@@ -145,11 +145,19 @@ function sanitizeTopicUrl(value: string) {
   }
 }
 
-function accessRequirementSummary(value?: AccessRequirement) {
+function accessRequirementSummary(value?: AccessRequirement, topic?: Topic) {
   if (!value || !['login', 'level', 'permission'].includes(value.type) || !value.label) {
     return undefined;
   }
   const detail = typeof value.detail === 'string' ? value.detail : undefined;
+  const isOldNodeSeekInsideInference = topic?.source === 'nodeseek'
+    && (String(topic.categoryId || '').trim().toLowerCase() === 'inside' || String(topic.category || '').trim() === '内版')
+    && value.type === 'level'
+    && /^lv\s*2$/i.test(String(detail || '').trim())
+    && Boolean(String(topic.excerpt || '').trim());
+  if (isOldNodeSeekInsideInference) {
+    return undefined;
+  }
   const detected = detail ? accessRequirementFromText(detail) : undefined;
   if (detected?.type === 'level') {
     return detected;
@@ -162,7 +170,7 @@ function accessRequirementSummary(value?: AccessRequirement) {
 }
 
 function topicSummary(topic: Topic): Topic {
-  const accessRequirement = accessRequirementSummary(topic.accessRequirement);
+  const accessRequirement = accessRequirementSummary(topic.accessRequirement, topic);
   return {
     source: topic.source,
     id: String(topic.id),

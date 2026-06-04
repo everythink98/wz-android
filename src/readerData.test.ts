@@ -157,6 +157,66 @@ describe('Android reader data helpers', () => {
     });
   });
 
+  it('drops old inferred NodeSeek inside-category access markers from readable favorite summaries', () => {
+    const readableInsideTopic: Topic = {
+      ...topic,
+      id: '7202',
+      title: '新版块“内版”，以及试行版规',
+      categoryId: 'inside',
+      category: '内版',
+      excerpt: '为什么会有这个版块，以及这里的试行版规。',
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(readableInsideTopic)]: {
+          topic: readableInsideTopic,
+          savedAt: '2026-06-04T06:59:04.776Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(readableInsideTopic)].topic.accessRequirement).toBeUndefined();
+  });
+
+  it('keeps explicit NodeSeek inside Lv2 markers when no readable excerpt is known', () => {
+    const restrictedTopic: Topic = {
+      ...topic,
+      id: '760813',
+      title: '求新闻类app分流域名合集',
+      categoryId: 'inside',
+      category: '内版',
+      excerpt: '',
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(restrictedTopic)]: {
+          topic: restrictedTopic,
+          savedAt: '2026-06-04T06:59:04.776Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(restrictedTopic)].topic.accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv2'
+    });
+  });
+
   it('normalizes old favorite permission details that mention a required NodeSeek level', () => {
     const restrictedTopic: Topic = {
       ...topic,

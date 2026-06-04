@@ -81,6 +81,55 @@ describe('Android feed logic helpers', () => {
     });
   });
 
+  it('updates stale level access requirements when a duplicate topic has a newer real level', () => {
+    const merged = mergeTopics([{
+      ...topic,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    }], [{
+      ...topic,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv5'
+      }
+    }]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv5'
+    });
+  });
+
+  it('keeps an explicit level when a duplicate topic only has a generic level marker', () => {
+    const merged = mergeTopics([{
+      ...topic,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv5'
+      }
+    }], [{
+      ...topic,
+      accessRequirement: {
+        type: 'level',
+        label: '需等级'
+      }
+    }]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv5'
+    });
+  });
+
   it('merges duplicate external links across sources while keeping forum topic links separate', () => {
     const externalA: Topic = { ...topic, source: 'v2ex', id: 'a', url: 'https://example.com/shared' };
     const externalB: Topic = { ...topic, source: 'nodeseek', id: 'b', url: 'https://example.com/shared' };

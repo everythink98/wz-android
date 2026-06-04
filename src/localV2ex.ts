@@ -344,7 +344,7 @@ function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
 function v2exHtmlAccessRequirement(html: string) {
   const root = parseHtml(html);
   const text = elementText(root.querySelector('#Main')) || elementText(root.querySelector('body'));
-  const matched = text.match(/This topic is private\.?|This topic is restricted\.?|You are not permitted to view this topic\.?|you do not have permission[^.。；\n]*|you don't have permission[^.。；\n]*|sign in to view this topic|log in to view this topic|请先\s*登录[^。；\n]*(?:查看|访问|阅读)|登录后(?:可|才|才能)?(?:查看|访问|阅读|可见)|权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见/i)?.[0];
+  const matched = text.match(/This topic is private\.?|This topic is restricted\.?|You are not permitted to view this topic\.?|you do not have permission[^.。；\n]*|you don't have permission[^.。；\n]*|sign in to view this topic|log in to view this topic|请先\s*登录[^。；\n]*(?:查看|访问|阅读)|登录后(?:可|才|才能)?(?:查看|访问|阅读|可见)|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见/i)?.[0];
   return matched ? accessRequirementFromText(matched) : undefined;
 }
 
