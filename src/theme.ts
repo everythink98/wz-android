@@ -198,6 +198,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
       paddingBottom: Platform.OS === 'android' ? 96 : 94
     },
+    moreContentInner: {
+      gap: 10,
+      padding: 16,
+      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
+      paddingBottom: Platform.OS === 'android' ? 124 : 118
+    },
     topicContentInner: {
       alignItems: 'center',
       paddingTop: 18
@@ -625,6 +631,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       backgroundColor: 'transparent',
       borderColor: 'transparent'
     },
+    buttonDanger: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.24)
+    },
     buttonActive: {
       backgroundColor: theme.mist,
       borderColor: 'transparent'
@@ -651,6 +661,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     buttonTextActive: {
       color: theme.primary
+    },
+    buttonTextDanger: {
+      color: theme.danger
     },
     empty: {
       color: theme.muted,
@@ -759,6 +772,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 8
     },
     removableChip: {
+      maxWidth: 240,
       minHeight: 38,
       justifyContent: 'center',
       backgroundColor: theme.surface,
@@ -770,6 +784,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     removableChipPadded: {
       paddingRight: 24
+    },
+    removableChipText: {
+      maxWidth: 198
     },
     removableChipShell: {
       position: 'relative',
@@ -1341,6 +1358,28 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 13,
       lineHeight: 19
+    },
+    topicAccessNotice: {
+      gap: 8,
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
+      borderColor: alphaColor(theme.danger, 0.28),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 12
+    },
+    topicAccessNoticeTitle: {
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 16,
+      fontWeight: '700',
+      lineHeight: 22
+    },
+    topicAccessNoticeDetail: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      lineHeight: 20
     },
     levelSummary: {
       gap: 7,

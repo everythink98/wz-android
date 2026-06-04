@@ -465,7 +465,14 @@ function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>) {
   return Math.max(parsePositiveInteger(raw.comments ?? raw.commentCount ?? raw.comment_count) - 1, 0);
 }
 
-function normalizeTopic(raw: Record<string, unknown>): Topic | null {
+function nodeSeekKnownCategoryAccessRequirement(categoryId?: string, categoryName?: string): Topic['accessRequirement'] | undefined {
+  if (String(categoryId || '').trim().toLowerCase() === 'inside' || String(categoryName || '').trim() === '内版') {
+    return { type: 'level', label: '需等级', detail: 'Lv2' };
+  }
+  return undefined;
+}
+
+function normalizeTopic(raw: Record<string, unknown>, categoryAccess = new Map<string, Topic['accessRequirement']>()): Topic | null {
   const id = String(raw.postId || raw.id || '').trim();
   const title = String(raw.titleText || raw.title || '').trim();
   if (!id || !title) {
@@ -476,7 +483,12 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const authorId = String(op.userId || op.user_id || op.id || raw.authorId || raw.author_id || '').trim();
   const createdAt = nodeSeekCreatedAt(raw) || new Date().toISOString();
   const lastReplyAt = toIsoString(raw.updatedDate || raw.lastReplyAt) || createdAt;
-  const accessRequirement = accessRequirementFromObject(raw);
+  const categoryId = typeof category.key === 'string' ? category.key : undefined;
+  const categoryName = typeof category.name === 'string' ? category.name : typeof raw.categoryWord === 'string' ? raw.categoryWord : undefined;
+  const accessRequirement = accessRequirementFromObject(raw)
+    || (categoryId ? categoryAccess.get(categoryId) : undefined)
+    || (categoryName ? categoryAccess.get(categoryName) : undefined)
+    || nodeSeekKnownCategoryAccessRequirement(categoryId, categoryName);
   return {
     source: 'nodeseek',
     id,
@@ -485,8 +497,8 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
     authorAvatar: absoluteUrl(op.avatar, BASE_URL),
     authorId: authorId || undefined,
     authorUrl: authorId ? spaceUrl(authorId) : undefined,
-    categoryId: typeof category.key === 'string' ? category.key : undefined,
-    category: typeof category.name === 'string' ? category.name : typeof raw.categoryWord === 'string' ? raw.categoryWord : undefined,
+    categoryId,
+    category: categoryName,
     url: safeNodeSeekTopicUrl(id, raw.titleLink || raw.url),
     createdAt,
     lastReplyAt,
@@ -514,12 +526,30 @@ function sortNodeSeekUserTopics(topics: Topic[]) {
     .map((item) => item.topic);
 }
 
+function nodeSeekCategoryAccessMap(data: Record<string, unknown>) {
+  const accessByCategory = new Map<string, Topic['accessRequirement']>();
+  for (const category of arrayField(data.allCategory).filter(isRecord)) {
+    const accessRequirement = accessRequirementFromObject(category);
+    if (!accessRequirement) {
+      continue;
+    }
+    for (const key of [category.key, category.id, category.cn_text, category.name, category.text]) {
+      const value = String(key || '').trim();
+      if (value) {
+        accessByCategory.set(value, accessRequirement);
+      }
+    }
+  }
+  return accessByCategory;
+}
+
 function embeddedTopics(data: Record<string, unknown>) {
+  const categoryAccess = nodeSeekCategoryAccessMap(data);
   return [
     ...arrayField(data.rotateTopics),
     ...arrayField(data.topicList),
     ...arrayField(data.posts)
-  ].filter(isRecord).map(normalizeTopic).filter(Boolean) as Topic[];
+  ].filter(isRecord).map((topic) => normalizeTopic(topic, categoryAccess)).filter(Boolean) as Topic[];
 }
 
 function parseHtmlTopics(html: string) {
@@ -536,9 +566,12 @@ function parseHtmlTopics(html: string) {
     const authorLink = row.querySelector('.info-author a[href*="/space/"]');
     const categoryLink = row.querySelector('a[href*="/categories/"]');
     const categoryHref = categoryLink?.getAttribute('href') || '';
+    const categoryId = categoryHref.match(/\/categories\/([^/?#]+)/)?.[1];
+    const categoryName = elementText(categoryLink) || undefined;
     const lastReplyTime = row.querySelector('.info-last-comment-time time');
     const lastReplyAt = toIsoString(lastReplyTime?.getAttribute('datetime') || lastReplyTime?.getAttribute('title'));
-    const accessRequirement = accessRequirementFromText(elementText(row).replace(title, ' '));
+    const accessRequirement = accessRequirementFromText(elementText(row).replace(title, ' '))
+      || nodeSeekKnownCategoryAccessRequirement(categoryId, categoryName);
     renderedItems.push({
       source: 'nodeseek',
       id,
@@ -547,8 +580,8 @@ function parseHtmlTopics(html: string) {
       authorAvatar: absoluteUrl(row.querySelector('img')?.getAttribute('src'), BASE_URL),
       authorId: authorLink?.getAttribute('href')?.match(/\/space\/(\d+)/)?.[1],
       authorUrl: authorLink?.getAttribute('href') ? absoluteUrl(authorLink.getAttribute('href'), BASE_URL) : undefined,
-      categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
-      category: elementText(categoryLink) || undefined,
+      categoryId,
+      category: categoryName,
       url: safeNodeSeekTopicUrl(id, href),
       createdAt: lastReplyAt || new Date().toISOString(),
       lastReplyAt: lastReplyAt || new Date().toISOString(),

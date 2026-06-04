@@ -271,6 +271,10 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
       }
       seen.add(id);
       const resolvedClassId = classId || fallbackClassId;
+      const parent = link.parentNode as HTMLElement | null;
+      const row = parent && typeof parent.querySelectorAll === 'function' ? parent : list;
+      const text = elementText(row);
+      const accessRequirement = accessRequirementFromText(text.replace(title, ' '));
       items.push({
         source: 'yaohuo',
         id,
@@ -282,7 +286,8 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
         createdAt: fallbackCreatedAt,
         lastReplyAt: fallbackCreatedAt,
         replyCount: 0,
-        excerpt: title
+        excerpt: title,
+        ...(accessRequirement ? { accessRequirement } : {})
       });
       if (items.length >= limit) {
         return items;
@@ -673,7 +678,8 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     || contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
   const polls = parseVotePolls(html, String(id || ''));
-  const accessRequirement = yaohuoTopicAccessRequirementFromContent(contentHtml);
+  const accessRequirement = yaohuoTopicAccessRequirementFromContent(contentHtml)
+    || yaohuoTopicAccessRequirementFromContent(html);
   return {
     source: 'yaohuo',
     id: String(id || ''),

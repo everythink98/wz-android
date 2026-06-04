@@ -56,7 +56,18 @@ describe('Android reader theme helpers', () => {
 
     expect(styles.nav.paddingBottom).toBe(8);
     expect(styles.contentInner.paddingBottom).toBe(96);
+    expect(styles.moreContentInner.paddingBottom).toBeGreaterThan(styles.contentInner.paddingBottom);
     expect(styles.feedFloatingActions.bottom).toBe(78);
+  });
+
+  it('keeps destructive and long-chip styles visually explicit', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.buttonDanger.backgroundColor).toBe(alphaColor(theme.danger, 0.06));
+    expect(styles.buttonTextDanger.color).toBe(theme.danger);
+    expect(styles.removableChip.maxWidth).toBe(240);
+    expect(styles.removableChipText.maxWidth).toBe(198);
   });
 
   it('keeps scrolled content from drawing under the Android status bar', () => {

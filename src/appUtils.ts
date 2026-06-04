@@ -1,6 +1,6 @@
 import { type MutableRefObject } from 'react';
 import { REQUEST_CANCELED_MESSAGE } from './request';
-import type { FeedSource, Source, Topic } from './types';
+import type { AccessRequirement, FeedSource, Source, Topic } from './types';
 
 export function sourceLabel(source: Source | FeedSource) {
   if (source === 'all') {
@@ -16,6 +16,21 @@ export function sourceLabel(source: Source | FeedSource) {
     return '妖火';
   }
   return 'V2EX';
+}
+
+export function forumAccessRequirementText(requirement?: AccessRequirement) {
+  if (!requirement) {
+    return '';
+  }
+  if (requirement.type === 'level') {
+    const text = `${requirement.label || ''} ${requirement.detail || ''}`;
+    const level = text.match(/(?:lv|level|等级|trust level)\s*(\d+)/i)?.[1]
+      || text.match(/\b(\d+)\b/)?.[1];
+    if (level) {
+      return `需 Lv${level}`;
+    }
+  }
+  return requirement.label;
 }
 
 export function linuxDoExternalSearchItems(query: string) {

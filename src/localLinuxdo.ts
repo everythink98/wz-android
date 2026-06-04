@@ -2,6 +2,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import type { CategoriesResponse, FeedResponse, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   accessRequirementFromObject,
+  accessRequirementFromText,
   absoluteUrl,
   decodeHtml,
   isRecord,
@@ -177,6 +178,28 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     ...(slowModeSeconds ? { slowModeSeconds } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
+}
+
+function linuxDoErrorText(data: unknown, fallback = '') {
+  if (!isRecord(data)) {
+    return fallback;
+  }
+  if (typeof data.error === 'string') {
+    return data.error;
+  }
+  if (typeof data.message === 'string') {
+    return data.message;
+  }
+  if (Array.isArray(data.errors)) {
+    return data.errors.map((item) => String(item || '').trim()).filter(Boolean).join(' ');
+  }
+  return fallback;
+}
+
+function linuxDoAccessRequirementFromError(error: unknown): Topic['accessRequirement'] | undefined {
+  return error && typeof error === 'object'
+    ? (error as { accessRequirement?: Topic['accessRequirement'] }).accessRequirement
+    : undefined;
 }
 
 function avatarUrl(value: unknown) {
@@ -455,16 +478,27 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
       data = JSON.parse(text);
     } catch {
       if (!response.ok) {
-        const error = new Error(`HTTP ${response.status}`);
-        Object.assign(error, { status: response.status });
+        const bodyMessage = textContentFromHtml(text);
+        const accessRequirement = accessRequirementFromText(bodyMessage);
+        const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
+        const error = new Error(message);
+        Object.assign(error, {
+          status: response.status,
+          ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
+        });
         throw error;
       }
       throw new Error('linux.do 返回内容格式不正确');
     }
   }
   if (!response.ok) {
-    const error = new Error(isRecord(data) && typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
-    Object.assign(error, { status: response.status });
+    const message = linuxDoErrorText(data, `HTTP ${response.status}`);
+    const accessRequirement = accessRequirementFromObject(data) || accessRequirementFromText(message);
+    const error = new Error(message);
+    Object.assign(error, {
+      status: response.status,
+      ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
+    });
     throw error;
   }
   return data as T;
@@ -573,7 +607,31 @@ async function topicData(id: string, options: LinuxDoOptions) {
 }
 
 export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
-  const data = await topicData(id, options);
+  let data: Record<string, unknown>;
+  try {
+    data = await topicData(id, options);
+  } catch (error) {
+    const accessRequirement = linuxDoAccessRequirementFromError(error);
+    if (!accessRequirement) {
+      throw error;
+    }
+    const contentHtml = accessRequirement.detail || (error instanceof Error ? error.message : accessRequirement.label);
+    return {
+      source: 'linuxdo',
+      id,
+      title: '受限帖子',
+      author: '',
+      url: `${BASE_URL}/t/${id}`,
+      createdAt: new Date().toISOString(),
+      lastReplyAt: new Date().toISOString(),
+      replyCount: 0,
+      contentHtml,
+      replies: [],
+      replyHasMore: false,
+      replyNextPage: null,
+      accessRequirement
+    };
+  }
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
   const categoryMap = await categoryMapForTopics(data, [data], categoryMapFromData(data), options);

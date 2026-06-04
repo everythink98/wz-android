@@ -63,6 +63,24 @@ describe('Android feed logic helpers', () => {
     expect(dateTime('bad-date')).toBe(0);
   });
 
+  it('fills missing access requirements when merging duplicate topics', () => {
+    const merged = mergeTopics([topic], [{
+      ...topic,
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: 'This topic is private.'
+      }
+    }]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].accessRequirement).toEqual({
+      type: 'permission',
+      label: '需权限',
+      detail: 'This topic is private.'
+    });
+  });
+
   it('merges duplicate external links across sources while keeping forum topic links separate', () => {
     const externalA: Topic = { ...topic, source: 'v2ex', id: 'a', url: 'https://example.com/shared' };
     const externalB: Topic = { ...topic, source: 'nodeseek', id: 'b', url: 'https://example.com/shared' };

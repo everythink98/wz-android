@@ -14,6 +14,7 @@ import {
   toggleFavorite,
   toggleFollowedUser,
   topicKey,
+  updateFavoriteTopic,
   updateProgress,
   userKey
 } from './readerData';
@@ -101,6 +102,87 @@ describe('Android reader data helpers', () => {
     expect(isFavorite(data, topic)).toBe(false);
     expect(data.deletedRecords.favorites[topicKey(topic)]).toEqual(expect.any(String));
     expect(data).not.toHaveProperty('later');
+  });
+
+  it('keeps access requirements when storing favorite topic summaries', () => {
+    const restrictedTopic: Topic = {
+      ...topic,
+      id: '760813',
+      title: '求新闻类app分流域名合集',
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    };
+
+    const data = toggleFavorite(createEmptyReaderData(), restrictedTopic);
+
+    expect(data.favorites[topicKey(restrictedTopic)].topic.accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv2'
+    });
+  });
+
+  it('updates existing favorite topic summaries with access requirements without changing saved time', () => {
+    const savedAt = '2026-06-04T06:59:04.776Z';
+    const restrictedTopic: Topic = {
+      ...topic,
+      id: '760813',
+      title: '求新闻类app分流域名合集',
+      accessRequirement: {
+        type: 'level',
+        label: '需等级',
+        detail: 'Lv2'
+      }
+    };
+    const current = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(restrictedTopic)]: {
+          topic: { ...restrictedTopic, accessRequirement: undefined },
+          savedAt
+        }
+      }
+    });
+
+    const data = updateFavoriteTopic(current, restrictedTopic);
+
+    expect(data.favorites[topicKey(restrictedTopic)].savedAt).toBe(savedAt);
+    expect(data.favorites[topicKey(restrictedTopic)].topic.accessRequirement).toEqual({
+      type: 'level',
+      label: '需等级',
+      detail: 'Lv2'
+    });
+  });
+
+  it('normalizes old favorite permission details that mention a required NodeSeek level', () => {
+    const restrictedTopic: Topic = {
+      ...topic,
+      id: '760813',
+      title: '求新闻类app分流域名合集',
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: '查看本帖需要Lv2，您的权限不足😑，请赚取🍗升级您的用户等级'
+      }
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(restrictedTopic)]: {
+          topic: restrictedTopic,
+          savedAt: '2026-06-04T06:59:04.776Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(restrictedTopic)].topic.accessRequirement).toMatchObject({
+      type: 'level',
+      label: '需等级'
+    });
   });
 
   it('tracks reading progress in the current progress map', () => {

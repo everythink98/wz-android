@@ -26,10 +26,10 @@ import { SvgXml } from 'react-native-svg';
 import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { ReaderData } from '../readerData';
 import { isFavorite } from '../readerData';
-import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
+import type { AccessRequirement, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
-import { formatDateTime, sourceLabel } from '../appUtils';
+import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, markInlineSizedImageHtml } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
@@ -42,6 +42,7 @@ import type { InteractionType } from '../topicActionState';
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
   | TopicListContentItem
+  | { type: 'accessNotice'; key: string; label: string; detail: string }
   | { type: 'topicActions'; key: string }
   | { type: 'replyControls'; key: string }
   | { type: 'replyComposer'; key: string; replyFloor?: number }
@@ -387,6 +388,29 @@ function readableTopicError(message: string) {
   return message;
 }
 
+function plainHtmlText(value: string) {
+  return value.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isAccessNoticeHtml(html: string, accessRequirement?: AccessRequirement) {
+  if (!accessRequirement) {
+    return false;
+  }
+  const text = plainHtmlText(html);
+  if (text.length > 240) {
+    return false;
+  }
+  return !text || /查看本帖需要|权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|登录后(?:才能|可见)|需要[^。；\n]{0,24}(?:等级|Lv|level)|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i.test(text);
+}
+
 function authorInitial(name: string | undefined) {
   return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
 }
@@ -611,15 +635,25 @@ export function TopicScreen({
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
   const topicContentHtml = topic?.contentHtml || '';
+  const topicAccessRequirementText = topic?.accessRequirement ? forumAccessRequirementText(topic.accessRequirement) : '';
+  const topicAccessRequirementDetail = topic?.accessRequirement?.detail || '当前账号暂无权限查看这个帖子';
+  const topicShowsAccessNotice = Boolean(topic && isAccessNoticeHtml(topicContentHtml, topic.accessRequirement));
   const topicContentItems = useMemo<TopicListItem[]>(() => (
     topic
-      ? splitTopicContentHtml(topicContentHtml).map((html, index) => ({
-        type: 'content',
-        key: `topic-content-${index}-${stableTextHash(html)}`,
-        html
-      }))
+      ? topicShowsAccessNotice
+        ? [{
+          type: 'accessNotice',
+          key: 'topic-access-notice',
+          label: topicAccessRequirementText,
+          detail: topicAccessRequirementDetail
+        }]
+        : splitTopicContentHtml(topicContentHtml).map((html, index) => ({
+          type: 'content',
+          key: `topic-content-${index}-${stableTextHash(html)}`,
+          html
+        }))
       : []
-  ), [topic, topicContentHtml]);
+  ), [topic, topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicShowsAccessNotice]);
   const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
     type: 'reply',
     key: getReplyKey(reply),
@@ -628,10 +662,10 @@ export function TopicScreen({
   })), [replies]);
   const topicListItems = useMemo<TopicListItem[]>(() => {
     const items = [...topicContentItems];
-    if (topic) {
+    if (topic && !topicShowsAccessNotice) {
       items.push({ type: 'topicActions', key: 'topic-actions' });
     }
-    if (canShowReplies) {
+    if (canShowReplies && !topicShowsAccessNotice) {
       items.push({ type: 'replyControls', key: 'reply-controls' });
       const targetReplyVisible = replyTarget ? replyItems.some((entry) => entry.type === 'reply' && entry.replyFloor === replyTarget.floor) : false;
       if (canWrite && replyComposerOpen && !replyTarget) {
@@ -653,7 +687,7 @@ export function TopicScreen({
       }
     }
     return items;
-  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems]);
+  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicShowsAccessNotice]);
   const jumpToFloor = useCallback((floor: number) => {
     const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
     if (index >= 0) {
@@ -744,6 +778,18 @@ export function TopicScreen({
     return { ...htmlRenderers, aside: QuoteAsideRenderer, table: TableRenderer };
   }, [htmlRenderers, styles, theme.primary, theme.primarySoft]);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
+    if (listItem.type === 'accessNotice') {
+      return (
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <View style={styles.topicAccessNotice}>
+            {listItem.label ? <Text style={styles.topicAccessBadge}>{listItem.label}</Text> : null}
+            <Text style={styles.topicAccessNoticeTitle}>暂无权限</Text>
+            <Text style={styles.topicAccessNoticeDetail}>{listItem.detail}</Text>
+          </View>
+        </View>
+      );
+    }
+
     if (listItem.type === 'content') {
       return (
         <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -982,6 +1028,7 @@ export function TopicScreen({
   }
 
   const topicHeaderStatusBadges = topicStatusBadges(item);
+  const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
@@ -1005,7 +1052,7 @@ export function TopicScreen({
               <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
             </View>
           </Pressable>
-          {item.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{item.accessRequirement.label}</Text> : null}
+          {itemAccessRequirementText ? <Text style={styles.topicAccessBadge}>{itemAccessRequirementText}</Text> : null}
           {topicHeaderStatusBadges.length ? (
             <View style={styles.topicStatusRow}>
               {topicHeaderStatusBadges.map((badge) => (

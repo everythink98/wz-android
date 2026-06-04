@@ -292,7 +292,7 @@ export function AppButton({
   compact?: boolean;
   disabled?: boolean;
   label: string;
-  variant?: 'default' | 'ghost' | 'primary';
+  variant?: 'default' | 'danger' | 'ghost' | 'primary';
   styles: ReturnType<typeof createStyles>;
   onPress: () => void;
 }) {
@@ -302,11 +302,11 @@ export function AppButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, variant === 'primary' && styles.buttonPrimary, disabled && styles.buttonDisabled]}
+      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, variant === 'primary' && styles.buttonPrimary, variant === 'danger' && styles.buttonDanger, disabled && styles.buttonDisabled]}
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
-      <Text style={[styles.buttonText, compact && styles.buttonTextCompact, variant === 'primary' && styles.buttonTextPrimary]}>{label}</Text>
+      <Text style={[styles.buttonText, compact && styles.buttonTextCompact, variant === 'primary' && styles.buttonTextPrimary, variant === 'danger' && styles.buttonTextDanger]}>{label}</Text>
     </Pressable>
   );
 }

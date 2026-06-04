@@ -100,6 +100,7 @@ import {
   toggleFollowedUser,
   isUserFollowed,
   topicKey,
+  updateFavoriteTopic,
   updateProgress,
   type FollowedUserRecord,
   type ReaderData,
@@ -380,6 +381,7 @@ function cleanupLinuxDoBrowserFetchRequest(request: PendingLinuxDoBrowserFetchRe
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
+const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const PROGRESS_SAVE_DEBOUNCE_MS = 650;
 const PROGRESS_SAVE_MAX_PENDING_MS = 2000;
@@ -445,8 +447,11 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
     const challengeText = [document.title || "", document.documentElement?.innerHTML || ""].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
+  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || "").trim();
+  const restrictedNoticePattern = /权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|需要等级|登录后才能|请登录|permission denied|forbidden|private topic|not authorized|you do not have permission|you don't have permission/i;
+  const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
-    || /^\\s*[{[]/.test((document.body?.innerText || document.documentElement?.innerText || "").trim());
+    || /^\\s*[{[]/.test(pageText());
   const hasPendingVotePanel = () => {
     const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
       const style = window.getComputedStyle(element);
@@ -476,7 +481,7 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
-    if ((!isChallengePage() && hasReadableContent() && !hasPendingVotePanel()) || Date.now() >= deadline) {
+    if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {
       postResult();
       return;
     }
@@ -2825,7 +2830,8 @@ export default function App() {
           fetcher: forumFetchWithWebViewFallback,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          signal: controller.signal
+          signal: controller.signal,
+          timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : undefined
         });
       if (requestId !== topicRequestIdRef.current) {
         return;
@@ -2838,7 +2844,7 @@ export default function App() {
       setReplyHasMore(Boolean(displayDetail.replyHasMore && displayDetail.replyNextPage));
       setReplyNextPage(displayDetail.replyNextPage ?? null);
       setReplyNextOffset(displayDetail.replyNextOffset ?? null);
-      commitReaderData((current) => recordHistory(current, displayDetail));
+      commitReaderData((current) => updateFavoriteTopic(recordHistory(current, displayDetail), displayDetail));
       const progress = readerDataRef.current.progress[topicKey(displayDetail)];
       if (progress?.scrollY) {
         const restoreTopicKey = topicKey(displayDetail);
@@ -4787,7 +4793,7 @@ export default function App() {
   ), [categories, clearHistory, followedUserRecords, libraryRecords, libraryTab, openTopic, openUser, readerData, removeFollowedUser, removeLibraryTopic, styles, tabScrollToTopSignals.library, theme, topicListStateInput]);
 
   const renderMoreTab = useCallback(() => (
-    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
       <MemoizedMoreScreen
         checking={checking}
         hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}

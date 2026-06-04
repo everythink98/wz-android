@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   finishAbortableRequest,
+  forumAccessRequirementText,
   isCanceledRequest,
   isLinuxDoCloudflareError,
   isYaohuoLoginExpiredError,
@@ -21,6 +22,19 @@ describe('Android app utils', () => {
     expect(sourceLabel('yaohuo')).toBe('妖火');
     expect(sourceLabel('v2ex')).toBe('V2EX');
     expect(isCanceledRequest(new Error(REQUEST_CANCELED_MESSAGE))).toBe(true);
+  });
+
+  it('formats level access requirements with explicit Lv labels for lists', () => {
+    expect(forumAccessRequirementText({
+      type: 'level',
+      label: '需等级',
+      detail: 'trust level 2'
+    })).toBe('需 Lv2');
+    expect(forumAccessRequirementText({
+      type: 'permission',
+      label: '需权限',
+      detail: '权限不足'
+    })).toBe('需权限');
   });
 
   it('starts and finishes abortable requests by controller identity', () => {

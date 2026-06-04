@@ -161,7 +161,7 @@ export function UserScreen({
           ) : null}
           {busy ? <LoadingState text="正在读取用户主页..." styles={styles} theme={theme} /> : null}
           <View style={styles.actions}>
-            {followTarget ? <AppButton label={followed ? '取消关注' : '关注'} styles={styles} onPress={() => onToggleFollow(followTarget)} /> : null}
+            {followTarget ? <AppButton label={followed ? '取消关注' : '关注'} variant={followed ? 'danger' : undefined} styles={styles} onPress={() => onToggleFollow(followTarget)} /> : null}
             {user?.url ? <AppButton label="原站主页" variant="ghost" styles={styles} onPress={() => onOpenOriginal(user.url)} /> : null}
           </View>
           {profile && !topics.length && !busy ? <EmptyText text="这个用户暂时没有可显示的帖子或活动" styles={styles} /> : null}

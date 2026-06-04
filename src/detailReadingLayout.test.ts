@@ -28,6 +28,21 @@ describe('Android topic detail reading layout', () => {
     expect(appSource).not.toContain('<View style={styles.actions}>\n          {canWrite ?');
   });
 
+  it('shows restricted topic details as an access notice instead of ordinary HTML body text', () => {
+    expect(topicScreenSource).toContain('topicAccessNotice');
+    expect(topicScreenSource).toContain('暂无权限');
+    expect(topicScreenSource).toContain('forumAccessRequirementText(topic.accessRequirement)');
+    expect(topicScreenSource).toContain('if (text.length > 240)');
+    expect(themeSource).toContain('topicAccessNoticeTitle');
+  });
+
+  it('hides original-site actions and reply controls on restricted topic details', () => {
+    const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+
+    expect(topicListItemsBlock).toContain('if (topic && !topicShowsAccessNotice)');
+    expect(topicListItemsBlock).toContain('if (canShowReplies && !topicShowsAccessNotice)');
+  });
+
   it('defines roomier topic detail spacing tokens', () => {
     expect(topicScreenSource).toContain('topicMetaStack');
     expect(topicScreenSource).toContain('topicPrimaryActions');

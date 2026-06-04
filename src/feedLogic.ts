@@ -118,6 +118,14 @@ export function mergeTopics(current: Topic[], incoming: Topic[]) {
         seenExternalUrls.set(urlKey, topic);
       }
       next.push(topic);
+    } else if (topic.accessRequirement) {
+      const index = next.findIndex((item) => topicKey(item) === key);
+      if (index >= 0 && !next[index].accessRequirement) {
+        next[index] = {
+          ...next[index],
+          accessRequirement: topic.accessRequirement
+        };
+      }
     }
   }
   return next;

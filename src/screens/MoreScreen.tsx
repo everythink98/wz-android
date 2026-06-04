@@ -503,7 +503,7 @@ function NodeSeekLoginPanel({
         actions={(
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
-            <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLogin} />
+            <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => webViewRef.current?.reload()} />
           </View>
         )}
@@ -581,7 +581,7 @@ function YaohuoLoginPanel({
         actions={(
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
-            <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearYaohuoLogin} />
+            <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearYaohuoLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => yaohuoWebViewRef.current?.reload()} />
           </View>
         )}
@@ -686,7 +686,7 @@ export function LinuxDoVerifyModal({
       actions={(
         <View style={styles.actions}>
           <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
-          <AppButton label="清除登录" variant="ghost" styles={styles} onPress={onClearLinuxDoCookie} />
+          <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLinuxDoCookie} />
           <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
         </View>
       )}

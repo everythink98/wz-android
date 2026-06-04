@@ -15,6 +15,7 @@ import {
   sortTopicsByCreatedAt,
   sortTopicsByTime,
   textExcerpt,
+  textContentFromHtml,
   toIsoString
 } from './localHtml';
 
@@ -338,6 +339,13 @@ function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
     repliesByCommentId: replyMeta.repliesByCommentId,
     repliesByFloor: replyMeta.repliesByFloor
   };
+}
+
+function v2exHtmlAccessRequirement(html: string) {
+  const root = parseHtml(html);
+  const text = elementText(root.querySelector('#Main')) || elementText(root.querySelector('body'));
+  const matched = text.match(/This topic is private\.?|This topic is restricted\.?|You are not permitted to view this topic\.?|you do not have permission[^.。；\n]*|you don't have permission[^.。；\n]*|sign in to view this topic|log in to view this topic|请先\s*登录[^。；\n]*(?:查看|访问|阅读)|登录后(?:可|才|才能)?(?:查看|访问|阅读|可见)|权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见/i)?.[0];
+  return matched ? accessRequirementFromText(matched) : undefined;
 }
 
 function appendV2exSupplementHtml(contentHtml: string, supplementHtml: string) {
@@ -680,6 +688,8 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
   }
   const rawTopic = Array.isArray(topicData) && isRecord(topicData[0]) ? topicData[0] : {};
   const htmlDetail = detailHtml ? parseV2exHtmlDetail(detailHtml) : null;
+  const apiContentHtml = sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL);
+  const htmlAccessRequirement = detailHtml && !textContentFromHtml(apiContentHtml) ? v2exHtmlAccessRequirement(detailHtml) : undefined;
   const apiReplies = 'data' in replyResult && Array.isArray(replyResult.data)
     ? mergeV2exReplyMeta(replyResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
     : [];
@@ -693,12 +703,13 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
     replyCount: replies.length || topic.replyCount,
     contentHtml: appendV2exSupplementHtml(
-      sanitizeContentHtml(rawTopic.content_rendered || rawTopic.content || '', BASE_URL),
+      apiContentHtml,
       htmlDetail?.supplementHtml || ''
     ),
     replies,
     replyHasMore: false,
-    replyNextPage: null
+    replyNextPage: null,
+    ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
   };
 }
 

@@ -14,17 +14,39 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
   if (!topic) {
     return topic;
   }
-  if (topic.source !== 'nodeseek' || topic.authorId || !fallback || fallback.source !== 'nodeseek' || fallback.id !== topic.id) {
+  if (!fallback || fallback.source !== topic.source || fallback.id !== topic.id) {
     return topic;
   }
-  const authorId = nodeSeekAuthorId(fallback.authorId, fallback.authorUrl);
-  if (!authorId) {
-    return topic;
+  const accessRequirementFields = !topic.accessRequirement && fallback.accessRequirement
+    ? { accessRequirement: fallback.accessRequirement }
+    : {};
+  const hasRestrictedPlaceholder = Boolean(topic.accessRequirement && topic.title === '受限帖子');
+  const fallbackTopicFields = hasRestrictedPlaceholder ? {
+    title: fallback.title || topic.title,
+    author: fallback.author || topic.author,
+    categoryId: fallback.categoryId || topic.categoryId,
+    category: fallback.category || topic.category
+  } : {};
+  if (topic.source !== 'nodeseek') {
+    const hasFallbackFields = Object.keys(fallbackTopicFields).length > 0;
+    return Object.keys(accessRequirementFields).length || hasFallbackFields
+      ? { ...topic, ...accessRequirementFields, ...fallbackTopicFields }
+      : topic;
+  }
+  const fallbackAuthorId = nodeSeekAuthorId(fallback.authorId, fallback.authorUrl);
+  if (topic.authorId && !hasRestrictedPlaceholder) {
+    return Object.keys(accessRequirementFields).length ? { ...topic, ...accessRequirementFields } : topic;
+  }
+  const authorId = topic.authorId || fallbackAuthorId;
+  if (!authorId && !hasRestrictedPlaceholder) {
+    return Object.keys(accessRequirementFields).length ? { ...topic, ...accessRequirementFields } : topic;
   }
   return {
     ...topic,
-    author: topic.author || fallback.author,
-    authorId,
+    ...accessRequirementFields,
+    ...fallbackTopicFields,
+    author: hasRestrictedPlaceholder ? fallback.author || topic.author : topic.author || fallback.author,
+    authorId: authorId || topic.authorId,
     authorAvatar: topic.authorAvatar || fallback.authorAvatar,
     authorUrl: topic.authorUrl || fallback.authorUrl
   };

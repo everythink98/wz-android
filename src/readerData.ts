@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import type { Category, Source, Topic, UserProfile } from './types';
+import { accessRequirementFromText } from './localHtml';
+import type { AccessRequirement, Category, Source, Topic, UserProfile } from './types';
 
 export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 1000;
@@ -144,7 +145,24 @@ function sanitizeTopicUrl(value: string) {
   }
 }
 
+function accessRequirementSummary(value?: AccessRequirement) {
+  if (!value || !['login', 'level', 'permission'].includes(value.type) || !value.label) {
+    return undefined;
+  }
+  const detail = typeof value.detail === 'string' ? value.detail : undefined;
+  const detected = detail ? accessRequirementFromText(detail) : undefined;
+  if (detected?.type === 'level') {
+    return detected;
+  }
+  return {
+    type: value.type,
+    label: value.label,
+    detail
+  };
+}
+
 function topicSummary(topic: Topic): Topic {
+  const accessRequirement = accessRequirementSummary(topic.accessRequirement);
   return {
     source: topic.source,
     id: String(topic.id),
@@ -160,7 +178,8 @@ function topicSummary(topic: Topic): Topic {
     lastReplyAt: topic.lastReplyAt,
     replyCount: Number(topic.replyCount || 0),
     viewCount: topic.viewCount,
-    excerpt: topic.excerpt
+    excerpt: topic.excerpt,
+    ...(accessRequirement ? { accessRequirement } : {})
   };
 }
 
@@ -554,6 +573,25 @@ export function toggleFavorite(data: ReaderData, topic: Topic) {
     deletedRecords = clearDeleted(deletedRecords, 'favorites', key);
   }
   return { ...data, favorites: next, deletedRecords };
+}
+
+export function updateFavoriteTopic(data: ReaderData, topic: Topic) {
+  const summary = topicSummary(topic);
+  const key = topicKey(summary);
+  const existing = data.favorites[key];
+  if (!existing) {
+    return data;
+  }
+  return {
+    ...data,
+    favorites: {
+      ...data.favorites,
+      [key]: {
+        ...existing,
+        topic: summary
+      }
+    }
+  };
 }
 
 export function updateProgress(data: ReaderData, topic: Topic, progress: { percent: number; scrollY: number }) {

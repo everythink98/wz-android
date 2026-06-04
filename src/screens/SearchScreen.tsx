@@ -283,7 +283,7 @@ export function SearchScreen({
             {recentSearches.map((item) => (
               <View key={item} style={styles.removableChipShell}>
                 <Pressable accessibilityRole="button" style={[styles.removableChip, styles.removableChipPadded]} onPress={() => onQueryChange(item)}>
-                  <Text style={styles.pillText}>{item}</Text>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.pillText, styles.removableChipText]}>{item}</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"

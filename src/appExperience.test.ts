@@ -375,6 +375,14 @@ describe('Android App experience guards', () => {
     expect(recentSearchDeleteBlock).toContain('hitSlop={14}');
   });
 
+  it('keeps long recent searches from stretching the chip row', () => {
+    const recentSearchChipBlock = searchScreenSource.match(/<Pressable accessibilityRole="button" style=\{\[styles\.removableChip, styles\.removableChipPadded\]\}[\s\S]*?<\/Pressable>/)?.[0] || '';
+
+    expect(recentSearchChipBlock).toContain('numberOfLines={1}');
+    expect(recentSearchChipBlock).toContain('ellipsizeMode="tail"');
+    expect(recentSearchChipBlock).toContain('styles.removableChipText');
+  });
+
   it('loads the feed after reader data is ready and only when feed parameters change', () => {
     const block = appSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!readerDataLoaded\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void loadFeedRef\.current\(\{[\s\S]*?\n\s*}, \[categoryFilter, feedSource, readerDataLoaded\]\);/)?.[0] || '';
 
@@ -642,6 +650,15 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('onPress={confirmClearHistory}');
   });
 
+  it('marks library destructive actions as danger buttons', () => {
+    expect(appControlsSource).toContain("variant?: 'default' | 'danger' | 'ghost' | 'primary'");
+    expect(libraryScreenSource).toContain('label="删除" variant="danger"');
+    expect(libraryScreenSource).toContain('label="取消关注" variant="danger"');
+    expect(libraryScreenSource).toContain('label="清空历史" variant="danger"');
+    expect(moreScreenSource.match(/label="清除登录" variant="danger"/g)?.length).toBe(3);
+    expect(userScreenSource).toContain("variant={followed ? 'danger' : undefined}");
+  });
+
   it('refreshes memoized topic cards when displayed topic fields change', () => {
     const comparator = topicCardSource.match(/export const MemoizedTopicCard = memo\(TopicCard, \([\s\S]*?\)\);/)?.[0] || '';
 
@@ -819,9 +836,9 @@ describe('Android App experience guards', () => {
   });
 
   it('marks topics with extra access requirements in Android lists and details', () => {
-    expect(topicCardSource).toContain('topic.accessRequirement?.label');
+    expect(topicCardSource).toContain('forumAccessRequirementText(topic.accessRequirement)');
     expect(androidUiSource).toContain('styles.topicAccessBadge');
-    expect(topicScreenSource).toContain('item.accessRequirement?.label');
+    expect(topicScreenSource).toContain('forumAccessRequirementText(item.accessRequirement)');
   });
 
   it('shows a bottom message when the feed cannot load more', () => {
@@ -983,7 +1000,18 @@ describe('Android App experience guards', () => {
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
     expect(appSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
     expect(appSource).toContain('document.body?.innerText');
-    expect(appSource).toContain('if ((!isChallengePage() && hasReadableContent() && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+    expect(appSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+  });
+
+  it('returns hidden NodeSeek WebView HTML when a restricted notice is rendered without post content', () => {
+    expect(appSource).toContain('const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText())');
+    expect(appSource).toContain('hasRestrictedNotice()');
+    expect(appSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+  });
+
+  it('lets NodeSeek detail WebView fallback finish before the outer request timeout', () => {
+    expect(appSource).toContain('const NODESEEK_DETAIL_TIMEOUT_MS = 30000;');
+    expect(appSource).toContain("timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : undefined");
   });
 
   it('keeps the hidden NodeSeek browser fetch WebView out of the visible layout', () => {
@@ -1035,11 +1063,11 @@ describe('Android App experience guards', () => {
     expect(block).not.toContain("setScreen('topic');");
   });
 
-  it('does not show reply controls when topic detail failed to load', () => {
+  it('does not show reply controls when topic detail failed to load or is restricted', () => {
     const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
     expect(topicScreenSource).toContain('const canShowReplies = Boolean(topic && !topicLoading);');
-    expect(topicListItemsBlock).toContain('if (canShowReplies) {');
+    expect(topicListItemsBlock).toContain('if (canShowReplies && !topicShowsAccessNotice) {');
     expect(topicListItemsBlock).not.toContain('if (!topicLoading) {');
     expect(topicScreenSource).toContain('const canWriteNodeSeek = Boolean(topic && topic.source === \'nodeseek\' && canUseNodeSeekActions);');
   });

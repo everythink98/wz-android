@@ -2,7 +2,7 @@ import { memo, useCallback, useMemo } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import type { Topic } from '../types';
 import { topicKey } from '../readerData';
-import { formatRelativeTime, sourceLabel, topicListDisplayTime } from '../appUtils';
+import { formatRelativeTime, forumAccessRequirementText, sourceLabel, topicListDisplayTime } from '../appUtils';
 import { highlightTextParts } from '../androidFeatureHelpers';
 import { androidRipple, createStyles, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../theme';
 import { topicListItemStatesEqual, type TopicListItemState } from '../topicListItemState';
@@ -75,6 +75,7 @@ export function TopicCard({
   ].filter(Boolean).join(' · ');
   const visibleTopicTags = (topic.tags || []).slice(0, TOPIC_CARD_TAG_LIMIT);
   const hiddenTopicTagCount = Math.max((topic.tags?.length || 0) - visibleTopicTags.length, 0);
+  const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
   return (
     <View style={styles.topicRowShell}>
       <View style={styles.topicCard}>
@@ -87,7 +88,7 @@ export function TopicCard({
             <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topicListDisplayTime(topic))}</Text>
           </View>
           <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
-          {topic.accessRequirement?.label ? <Text style={styles.topicAccessBadge}>{topic.accessRequirement.label}</Text> : null}
+          {accessRequirementText ? <Text style={styles.topicAccessBadge}>{accessRequirementText}</Text> : null}
           {visibleTopicTags.length ? (
             <View style={styles.topicTagRow}>
               {visibleTopicTags.map((tag, index) => (
@@ -127,7 +128,9 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.topic.viewCount === next.topic.viewCount
   && previous.topic.createdAt === next.topic.createdAt
   && previous.topic.lastReplyAt === next.topic.lastReplyAt
+  && previous.topic.accessRequirement?.type === next.topic.accessRequirement?.type
   && previous.topic.accessRequirement?.label === next.topic.accessRequirement?.label
+  && previous.topic.accessRequirement?.detail === next.topic.accessRequirement?.detail
   && stringArrayValuesEqual(previous.topic.duplicateSources, next.topic.duplicateSources)
   && stringArrayValuesEqual(previous.topic.tags, next.topic.tags)
   && previous.styles === next.styles

@@ -151,6 +151,11 @@ export function parsePositiveInteger(value: unknown) {
   return match ? Number(match[0]) : 0;
 }
 
+function accessRequirementFromLevel(value: unknown) {
+  const level = parsePositiveInteger(value);
+  return level > 0 ? { type: 'level' as const, label: '需等级', detail: `Lv${level}` } : undefined;
+}
+
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
   return [...items].sort((left, right) => (
     Date.parse(right.lastReplyAt || right.createdAt || '') - Date.parse(left.lastReplyAt || left.createdAt || '')
@@ -165,13 +170,13 @@ export function sortTopicsByCreatedAt<T extends { createdAt: string }>(items: T[
 
 export function accessRequirementFromText(value: unknown) {
   const text = textContentFromHtml(value);
-  if (/请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)/i.test(text)) {
+  if (/请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读|可见)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)/i.test(text)) {
     return { type: 'login' as const, label: '需登录', detail: textContentFromHtml(text).slice(0, 80) };
   }
-  if (/需要[^。；\n]{0,20}(?:等级|trust level)|(?:等级|trust level)[^。；\n]{0,20}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,30}trust level|minimum trust level|must be (?:at least )?trust level/i.test(text)) {
+  if (/需要[^。；\n]{0,20}(?:等级|trust level|lv\s*\d+)|(?:等级|trust level|lv\s*\d+)[^。；\n]{0,20}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,30}trust level|minimum trust level|must be (?:at least )?trust level/i.test(text)) {
     return { type: 'level' as const, label: '需等级', detail: textContentFromHtml(text).slice(0, 80) };
   }
-  if (/权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|permission denied|forbidden|private topic|not authorized|you do not have permission|you don't have permission/i.test(text)) {
+  if (/权限不足|没有权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i.test(text)) {
     return { type: 'permission' as const, label: '需权限', detail: textContentFromHtml(text).slice(0, 80) };
   }
   return undefined;
@@ -246,9 +251,36 @@ export function accessRequirementFromObject(value: unknown) {
       }
     }
   }
-  for (const key of ['requiredTrustLevel', 'required_trust_level', 'minimumTrustLevel', 'minimum_trust_level', 'minTrustLevel', 'min_trust_level']) {
+  for (const key of [
+    'requiredTrustLevel',
+    'required_trust_level',
+    'minimumTrustLevel',
+    'minimum_trust_level',
+    'minTrustLevel',
+    'min_trust_level',
+    'readLevel',
+    'read_level',
+    'requiredReadLevel',
+    'required_read_level',
+    'minimumReadLevel',
+    'minimum_read_level',
+    'minReadLevel',
+    'min_read_level',
+    'viewLevel',
+    'view_level',
+    'requiredViewLevel',
+    'required_view_level',
+    'accessLevel',
+    'access_level'
+  ]) {
     if (typeof value[key] === 'number' && value[key] > 0) {
-      return { type: 'level' as const, label: '需等级', detail: `trust level ${value[key]}` };
+      return accessRequirementFromLevel(value[key]);
+    }
+    if (typeof value[key] === 'string') {
+      const accessRequirement = accessRequirementFromLevel(value[key]);
+      if (accessRequirement) {
+        return accessRequirement;
+      }
     }
   }
   return undefined;

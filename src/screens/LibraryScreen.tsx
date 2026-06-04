@@ -121,7 +121,7 @@ export function LibraryScreen({
         </View>
         {libraryTab === 'history' ? (
           <View style={styles.libraryActionRow}>
-            <AppButton compact label="删除" variant="ghost" styles={styles} onPress={() => onRemove(record.topic)} />
+            <AppButton compact label="删除" variant="danger" styles={styles} onPress={() => onRemove(record.topic)} />
           </View>
         ) : null}
       </View>
@@ -139,7 +139,7 @@ export function LibraryScreen({
         </View>
       </Pressable>
       <View style={styles.actions}>
-        <AppButton compact label="取消关注" variant="ghost" styles={styles} onPress={() => onRemoveUser(item.user)} />
+        <AppButton compact label="取消关注" variant="danger" styles={styles} onPress={() => onRemoveUser(item.user)} />
       </View>
     </View>
   ), [onOpenUser, onRemoveUser, styles]);
@@ -181,7 +181,7 @@ export function LibraryScreen({
         />
       ) : null}
       <View style={styles.actions}>
-        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="ghost" styles={styles} onPress={confirmClearHistory} /> : null}
+        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="danger" styles={styles} onPress={confirmClearHistory} /> : null}
       </View>
     </View>
   );
