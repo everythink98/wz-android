@@ -369,6 +369,9 @@ describe('Android local sources', () => {
       ]
     }]);
     expect(topic.contentHtml).not.toContain('pure-form');
+    expect(topic.contentHtml).not.toContain('vote-panel');
+    expect(topic.contentHtml).not.toContain('embed-vote');
+    expect(topic.contentHtml.trim()).toBe('');
   });
 
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {

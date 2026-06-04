@@ -1034,6 +1034,14 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('!hasPendingVotePanel()');
   });
 
+  it('stops the hidden NodeSeek browser page after returning fallback HTML', () => {
+    const script = appSource.match(/const NODESEEK_BROWSER_FETCH_SCRIPT = `([\s\S]*?)`;/)?.[1] || '';
+    const completeBlock = appSource.match(/const completeNodeSeekBrowserFetch = useCallback\(\(data: \{[\s\S]*?\n  \}, \[/)?.[0] || '';
+
+    expect(script).toContain('window.stop();');
+    expect(completeBlock).toContain('nodeSeekBrowserWebViewRef.current?.stopLoading();');
+  });
+
   it('stops the linux.do verification spinner when the WebView cannot load', () => {
     expect(moreScreenSource).toContain('linuxDoWebViewError');
     expect(moreScreenSource).toContain('onSetLinuxDoWebViewError');

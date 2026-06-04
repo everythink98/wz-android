@@ -246,10 +246,17 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopWidth: StyleSheet.hairlineWidth
     },
     feedFloatingActions: {
-      position: 'absolute',
-      right: 16,
-      bottom: Platform.OS === 'android' ? 78 : 78,
-      gap: 8
+      minHeight: 58,
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingTop: 6,
+      paddingBottom: 8,
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface
     },
     feedFixedHeader: {
       gap: 6,
@@ -1055,6 +1062,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopWidth: StyleSheet.hairlineWidth,
       paddingTop: 14,
       paddingBottom: 2
+    },
+    pollBlockFirstInArticle: {
+      borderTopWidth: 0,
+      paddingTop: 0
     },
     pollHeader: {
       alignItems: 'flex-start',

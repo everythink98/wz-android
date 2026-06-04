@@ -328,6 +328,29 @@ function nodeSeekPollOptionFromInput(form: HTMLElement, input: HTMLElement): Top
   };
 }
 
+function nodeSeekElementHasContent(element: HTMLElement) {
+  if (elementText(element).trim()) {
+    return true;
+  }
+  return Boolean(element.querySelector('img, video, audio, table, pre, code, svg, canvas, input, textarea, select'));
+}
+
+function removeEmptyRenderedNodeSeekPollShells(root: HTMLElement) {
+  root.querySelectorAll('.form-mask').forEach((element) => element.remove());
+  ['.embed-vote', '.vote-panel'].forEach((selector) => {
+    root.querySelectorAll(selector).forEach((element) => {
+      if (!nodeSeekElementHasContent(element)) {
+        element.remove();
+      }
+    });
+  });
+  root.querySelectorAll('p').forEach((element) => {
+    if (!nodeSeekElementHasContent(element)) {
+      element.remove();
+    }
+  });
+}
+
 function parseRenderedNodeSeekPollForms(html: string) {
   const root = parseHtml(`<body>${html}</body>`);
   const forms = root.querySelectorAll('form').filter((form) => {
@@ -371,6 +394,7 @@ function parseRenderedNodeSeekPollForms(html: string) {
     };
   }).filter((poll): poll is TopicPoll => Boolean(poll));
   forms.forEach((form) => form.remove());
+  removeEmptyRenderedNodeSeekPollShells(root);
   const cleaned = root.querySelector('body')?.innerHTML || '';
   return {
     html: cleaned.trim(),

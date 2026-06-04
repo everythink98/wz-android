@@ -99,15 +99,20 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('renders unified poll blocks from topic polls instead of source-specific vote options', () => {
+    const topicPollStart = topicScreenSource.indexOf("if (listItem.type === 'topicPolls') {");
     const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
     const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicPollRenderer = topicPollStart >= 0 && topicActionStart > topicPollStart
+      ? topicScreenSource.slice(topicPollStart, topicActionStart)
+      : '';
     const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
       ? topicScreenSource.slice(topicActionStart, replyComposerStart)
       : '';
 
-    expect(topicScreenSource).toContain('topic.polls');
+    expect(topicScreenSource).toContain('const topicPolls = topic?.polls || [];');
     expect(topicScreenSource).toContain('onVotePoll');
-    expect(topicActionRenderer).toContain('<PollBlockList');
+    expect(topicPollRenderer).toContain('<PollBlockList');
+    expect(topicActionRenderer).not.toContain('<PollBlockList');
     expect(topicScreenSource).toContain('styles.pollBlock');
     expect(topicScreenSource).toContain('styles.pollFooter');
     expect(topicScreenSource).toContain('styles.pollMetaPill');
@@ -119,19 +124,43 @@ describe('Android topic detail reading layout', () => {
     expect(topicActionRenderer).not.toContain('voteOptions');
   });
 
-  it('keeps poll result rows readable and stable on narrow detail screens', () => {
+  it('treats main post polls as detail content instead of post actions', () => {
+    const topicListItemsBlock = topicScreenSource.match(/const topicListItems = useMemo<TopicListItem\[\]>\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const topicPollStart = topicScreenSource.indexOf("if (listItem.type === 'topicPolls') {");
     const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
     const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
+    const topicPollRenderer = topicPollStart >= 0 && topicActionStart > topicPollStart
+      ? topicScreenSource.slice(topicPollStart, topicActionStart)
+      : '';
     const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
       ? topicScreenSource.slice(topicActionStart, replyComposerStart)
       : '';
+    const pollItemIndex = topicListItemsBlock.indexOf("items.push({ type: 'topicPolls'");
+    const actionItemIndex = topicListItemsBlock.indexOf("items.push({ type: 'topicActions'");
 
-    expect(topicActionRenderer).toContain('<PollBlockList');
+    expect(topicScreenSource).toContain("{ type: 'topicPolls'; key: string }");
+    expect(pollItemIndex).toBeGreaterThan(-1);
+    expect(actionItemIndex).toBeGreaterThan(pollItemIndex);
+    expect(topicPollRenderer).toContain('styles.articleBody');
+    expect(topicPollRenderer).toContain('<PollBlockList');
+    expect(topicPollRenderer).toContain('embeddedInArticle');
+    expect(topicActionRenderer).not.toContain('<PollBlockList');
+  });
+
+  it('keeps poll result rows readable and stable on narrow detail screens', () => {
+    const topicPollStart = topicScreenSource.indexOf("if (listItem.type === 'topicPolls') {");
+    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
+    const topicPollRenderer = topicPollStart >= 0 && topicActionStart > topicPollStart
+      ? topicScreenSource.slice(topicPollStart, topicActionStart)
+      : '';
+
+    expect(topicPollRenderer).toContain('<PollBlockList');
     expect(topicScreenSource).toContain('styles.pollOptionTextBlock');
-    expect(topicActionRenderer).not.toContain('styles.pollOptionRowDisabled');
+    expect(topicPollRenderer).not.toContain('styles.pollOptionRowDisabled');
     expect(themeSource).toContain('pollOptionList');
     expect(themeSource).toContain('pollOptionDivider');
     expect(themeSource).toContain('pollOptionTextBlock');
+    expect(themeSource).toContain('pollBlockFirstInArticle');
     expect(themeSource).toMatch(/pollOptionRow: \{[\s\S]*?minHeight: 48[\s\S]*?\n    \},/);
     expect(themeSource.match(/pollOptionRow: \{[\s\S]*?\n    \},/)?.[0] || '').not.toContain('borderRadius');
     expect(themeSource).toContain('pollHeader: {\n      alignItems: \'flex-start\',\n      gap: 8');
@@ -147,7 +176,7 @@ describe('Android topic detail reading layout', () => {
 
     expect(topicScreenSource).toContain('pollChoiceRangeLabel');
     expect(topicScreenSource).toContain('pollSelectionRangeStatus');
-    expect(topicActionRenderer).toContain('<PollBlockList');
+    expect(topicScreenSource).toContain('<PollBlockList');
     expect(topicScreenSource).toContain('selectionRangeStatus');
     expect(topicScreenSource).toContain('Boolean(selectionRangeStatus)');
   });
@@ -380,7 +409,6 @@ describe('Android topic detail reading layout', () => {
 
     expect(topicScreenSource).toContain('NodeSeekStatPill');
     expect(topicScreenSource).toContain('nodeSeekTopicReactionStats');
-    expect(topicScreenSource).toContain('nodeSeekTopicPassiveStats');
     expect(topicScreenSource).toContain('collectionCount');
     expect(topicScreenSource).toContain('原站收藏');
     expect(topicScreenSource).toContain('topicStatRail');

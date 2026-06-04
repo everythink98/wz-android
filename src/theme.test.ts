@@ -57,7 +57,6 @@ describe('Android reader theme helpers', () => {
     expect(styles.nav.paddingBottom).toBe(8);
     expect(styles.contentInner.paddingBottom).toBe(96);
     expect(styles.moreContentInner.paddingBottom).toBeGreaterThan(styles.contentInner.paddingBottom);
-    expect(styles.feedFloatingActions.bottom).toBe(78);
   });
 
   it('keeps destructive and long-chip styles visually explicit', () => {
@@ -240,6 +239,18 @@ describe('Android reader theme helpers', () => {
     expect(styles.input.backgroundColor).toBe(theme.surface);
     expect(styles.nav.backgroundColor).toBe(theme.surface);
     expect(styles.floatingIconButton.backgroundColor).toBe(theme.surface);
+  });
+
+  it('keeps feed floating actions in the layout so they do not cover row metadata', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.feedFloatingActions).toMatchObject({
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      backgroundColor: theme.surface
+    });
+    expect(styles.feedFloatingActions).not.toHaveProperty('position');
   });
 
   it('uses only explicit light and dark themes', () => {

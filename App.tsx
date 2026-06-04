@@ -478,6 +478,9 @@ const NODESEEK_BROWSER_FETCH_SCRIPT = `
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
     }));
+    try {
+      window.stop();
+    } catch {}
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
@@ -1618,6 +1621,7 @@ export default function App() {
       return;
     }
     cleanupNodeSeekBrowserFetchRequest(current);
+    nodeSeekBrowserWebViewRef.current?.stopLoading();
     nodeSeekBrowserFetchCurrentRef.current = null;
     setNodeSeekBrowserFetchRequest(null);
     const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);

@@ -43,6 +43,7 @@ type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
   | TopicListContentItem
   | { type: 'accessNotice'; key: string; label: string; detail: string }
+  | { type: 'topicPolls'; key: string }
   | { type: 'topicActions'; key: string }
   | { type: 'replyControls'; key: string }
   | { type: 'replyComposer'; key: string; replyFloor?: number }
@@ -122,13 +123,6 @@ function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCount' | '
 function nodeSeekTopicReactionStats(item: Pick<TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount' | 'collectionCount'>) {
   return [
     ...nodeSeekReactionStats(item),
-    visibleNodeSeekStat('原站收藏', item.collectionCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
-}
-
-function nodeSeekTopicPassiveStats(item: Pick<TopicDetail, 'dislikeCount' | 'collectionCount'>) {
-  return [
-    visibleNodeSeekStat('反对', item.dislikeCount),
     visibleNodeSeekStat('原站收藏', item.collectionCount)
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
 }
@@ -213,6 +207,7 @@ function pollSelectionRangeStatus(poll: TopicPoll, selectedCount: number) {
 function PollBlockList({
   actionBusy,
   canWritePollSource,
+  embeddedInArticle,
   keyPrefix,
   onTogglePollSelection,
   onVotePoll,
@@ -224,6 +219,7 @@ function PollBlockList({
 }: {
   actionBusy: boolean;
   canWritePollSource: boolean;
+  embeddedInArticle?: boolean;
   keyPrefix: string;
   onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
@@ -279,7 +275,7 @@ function PollBlockList({
                   : selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
         return (
-          <View key={pollKey} style={styles.pollBlock}>
+          <View key={pollKey} style={[styles.pollBlock, embeddedInArticle && index === 0 && styles.pollBlockFirstInArticle]}>
             <View style={styles.pollHeader}>
               <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
             </View>
@@ -635,6 +631,7 @@ export function TopicScreen({
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
   const topicContentHtml = topic?.contentHtml || '';
+  const topicPolls = topic?.polls || [];
   const topicAccessRequirementText = topic?.accessRequirement ? forumAccessRequirementText(topic.accessRequirement) : '';
   const topicAccessRequirementDetail = topic?.accessRequirement?.detail || '当前账号暂无权限查看这个帖子';
   const topicShowsAccessNotice = Boolean(topic && isAccessNoticeHtml(topicContentHtml, topic.accessRequirement));
@@ -660,9 +657,27 @@ export function TopicScreen({
     reply,
     replyFloor: reply.floor ?? 0
   })), [replies]);
+  const canWriteTopicPollSource = Boolean(
+    topic
+    && (
+      (topic.source === 'nodeseek' && canWriteNodeSeek)
+      || (topic.source === 'linuxdo' && canWriteLinuxDo)
+      || (topic.source === 'yaohuo' && canWriteYaohuo)
+    )
+  );
+  const topicHasPostActions = Boolean(topic && !topicShowsAccessNotice && (
+    (topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0))
+    || (topic.source === 'linuxdo' && (canWriteLinuxDo || linuxDoReactionStats(topic).length > 0))
+    || (topic.source === 'yaohuo' && canWriteYaohuo)
+  ));
   const topicListItems = useMemo<TopicListItem[]>(() => {
     const items = [...topicContentItems];
     if (topic && !topicShowsAccessNotice) {
+      if (topicPolls.length) {
+        items.push({ type: 'topicPolls', key: 'topic-polls' });
+      }
+    }
+    if (topicHasPostActions) {
       items.push({ type: 'topicActions', key: 'topic-actions' });
     }
     if (canShowReplies && !topicShowsAccessNotice) {
@@ -687,7 +702,7 @@ export function TopicScreen({
       }
     }
     return items;
-  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicShowsAccessNotice]);
+  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
   const jumpToFloor = useCallback((floor: number) => {
     const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
     if (index >= 0) {
@@ -860,19 +875,31 @@ export function TopicScreen({
       );
     }
 
+    if (listItem.type === 'topicPolls') {
+      return (
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <View style={styles.articleBody}>
+            <PollBlockList
+              actionBusy={actionBusy}
+              canWritePollSource={canWriteTopicPollSource}
+              embeddedInArticle
+              keyPrefix="topic"
+              onTogglePollSelection={togglePollSelection}
+              onVotePoll={onVotePoll}
+              pollSelections={pollSelections}
+              polls={topicPolls}
+              source={topic?.source}
+              styles={styles}
+              theme={theme}
+            />
+          </View>
+        </View>
+      );
+    }
+
     if (listItem.type === 'topicActions') {
       const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
-      const topicPassiveStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicPassiveStats(topic) : [];
       const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic) : [];
-      const topicPolls = topic ? topic.polls || [] : [];
-      const canWritePollSource = Boolean(
-        topic
-        && (
-          (topic.source === 'nodeseek' && canWriteNodeSeek)
-          || (topic.source === 'linuxdo' && canWriteLinuxDo)
-          || (topic.source === 'yaohuo' && canWriteYaohuo)
-        )
-      );
       return (
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
           {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
@@ -908,18 +935,6 @@ export function TopicScreen({
               <IconButton tiny icon={BookMarked} label={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
             </View>
           ) : null}
-          <PollBlockList
-            actionBusy={actionBusy}
-            canWritePollSource={canWritePollSource}
-            keyPrefix="topic"
-            onTogglePollSelection={togglePollSelection}
-            onVotePoll={onVotePoll}
-            pollSelections={pollSelections}
-            polls={topicPolls}
-            source={topic?.source}
-            styles={styles}
-            theme={theme}
-          />
         </View>
       );
     }
