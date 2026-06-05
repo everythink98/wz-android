@@ -189,7 +189,7 @@ describe('Android topic detail reading layout', () => {
       : '';
 
     expect(topicActionRenderer).toContain('styles.topicPostActionArea');
-    expect(topicActionRenderer).toContain('label="原站收藏"');
+    expect(topicActionRenderer).toContain('accessibilityLabel="原站收藏"');
     expect(topicActionRenderer).not.toContain('label="原站"');
     expect(topicActionRenderer).not.toContain('ExternalLink');
     expect(topicActionRenderer).not.toContain('topicSecondaryActions');
@@ -200,8 +200,9 @@ describe('Android topic detail reading layout', () => {
     const yaohuoReplyAction = topicScreenSource.match(/\{canWrite && source === 'yaohuo' \? \([\s\S]*?\n        \) : null\}/)?.[0] || '';
 
     expect(topicScreenSource).toContain('Drumstick');
-    expect(topicScreenSource).toContain("label={`${topic?.liked ? '取消鸡腿' : '加鸡腿'} ${topic?.likeCount ?? ''}`}");
-    expect(topicScreenSource).toContain("label={`${reply.liked ? '取消鸡腿' : '加鸡腿'} ${reply.likeCount ?? ''}`}");
+    expect(topicScreenSource).toContain("accessibilityLabel={topic?.liked ? '取消鸡腿' : '加鸡腿'}");
+    expect(topicScreenSource).toContain("accessibilityLabel={reply.liked ? '取消鸡腿' : '加鸡腿'}");
+    expect(topicScreenSource).toContain('label="鸡腿"');
     expect(topicScreenSource).toContain('icon={Drumstick}');
     expect(topicScreenSource).not.toContain("createLucideIcon('ChickenLeg'");
     expect(topicScreenSource).not.toContain('icon={Heart}');
@@ -225,25 +226,33 @@ describe('Android topic detail reading layout', () => {
       ? topicScreenSource.slice(replyCardStart, replyCardEnd)
       : '';
 
-    expect(topicActionRenderer).toContain("label={`${topic?.upvoted ? '取消赞' : '点赞'} ${topic?.upvoteCount ?? ''}`}");
-    expect(topicActionRenderer).toContain("label={`${topic?.disliked ? '取消反对' : '反对'} ${topic?.dislikeCount ?? ''}`}");
-    expect(topicActionRenderer).toContain("label={topic?.collected ? '取消原站收藏' : '原站收藏'}");
+    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.upvoted ? '取消赞' : '点赞'}");
+    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.disliked ? '取消反对' : '反对'}");
+    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'}");
+    expect(topicActionRenderer).toContain("pending={isOptimisticActionPending(topic?.id, 'collection')}");
     expect(topicActionRenderer).toContain("onInteract('dislike', topic?.commentId)");
     expect(topicActionRenderer).toContain('onNodeSeekCollection');
-    expect(replyCard).toContain("label={`${reply.upvoted ? '取消赞' : '点赞'} ${reply.upvoteCount ?? ''}`}");
-    expect(replyCard).toContain("label={`${reply.disliked ? '取消反对' : '反对'} ${reply.dislikeCount ?? ''}`}");
+    expect(replyCard).toContain("accessibilityLabel={reply.upvoted ? '取消赞' : '点赞'}");
+    expect(replyCard).toContain("accessibilityLabel={reply.disliked ? '取消反对' : '反对'}");
     expect(replyCard).toContain("onInteract('dislike', reply.commentId)");
-    expect(replyCard).toContain('<IconButton tiny icon={MessageCircle} label="回复"');
+    expect(replyCard).toContain('<DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复"');
   });
 
   it('keeps detail action buttons visually aligned and stable', () => {
-    expect(topicScreenSource).toContain('<IconButton tiny icon={ThumbsUp}');
-    expect(topicScreenSource).toContain('<IconButton tiny icon={Drumstick}');
-    expect(topicScreenSource).not.toContain('<IconButton tiny ghost icon={ThumbsUp}');
-    expect(themeSource).toMatch(/buttonTiny:\s*\{[\s\S]*alignSelf:\s*'flex-start'[\s\S]*borderRadius:\s*999[\s\S]*minHeight:\s*40/);
-    expect(themeSource).toMatch(/buttonTextTiny:\s*\{[\s\S]*includeFontPadding:\s*false[\s\S]*lineHeight:\s*16/);
-    expect(themeSource).toMatch(/topicPrimaryActions:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*justifyContent:\s*'flex-start'/);
-    expect(themeSource).toMatch(/replyActionRow:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*minHeight:\s*40/);
+    expect(topicScreenSource).toContain('function DetailActionButton');
+    expect(topicScreenSource).toContain('<DetailActionButton active={Boolean(topic?.upvoted)}');
+    expect(topicScreenSource).toContain('<DetailActionButton alignStart active={Boolean(reply.liked)}');
+    expect(topicScreenSource).not.toContain('<IconButton tiny icon={ThumbsUp}');
+    expect(topicScreenSource).toContain('styles.detailActionIconSlot');
+    expect(topicScreenSource).toContain('alignStart && styles.replyDetailActionButton');
+    expect(themeSource).toMatch(/detailActionButton:\s*\{[\s\S]*minHeight:\s*48[\s\S]*width:\s*74[\s\S]*borderRadius:\s*8/);
+    expect(themeSource).toMatch(/replyDetailActionButton:\s*\{[\s\S]*justifyContent:\s*'flex-start'[\s\S]*paddingHorizontal:\s*0/);
+    expect(themeSource).toMatch(/detailActionIconSlot:\s*\{[\s\S]*height:\s*22[\s\S]*width:\s*22/);
+    expect(themeSource).toMatch(/detailActionTextBlock:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*flexShrink:\s*1/);
+    expect(themeSource).toMatch(/detailActionLabel:\s*\{[\s\S]*includeFontPadding:\s*false[\s\S]*lineHeight:\s*16/);
+    expect(themeSource).toMatch(/topicPrimaryActions:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*minHeight:\s*48/);
+    expect(themeSource).toMatch(/replyActionRow:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*minHeight:\s*48/);
+    expect(themeSource).not.toContain('marginLeft: -38');
   });
 
   it('separates reply floor, author, body, and actions for readable mobile replies', () => {
@@ -415,7 +424,8 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('replyStatRail');
     expect(themeSource).toContain('nodeSeekStatPill');
     expect(themeSource).toContain('nodeSeekStatValue');
-    expect(topicActionRenderer).toContain("label={topic?.collected ? '取消原站收藏' : '原站收藏'}");
+    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'}");
+    expect(topicActionRenderer).toContain('count={topic?.collectionCount}');
     expect(topicActionRenderer).not.toContain('topicPassiveStats.map');
     expect(themeSource).toMatch(/nodeSeekStatPill:\s*\{[\s\S]*minHeight:\s*40[\s\S]*paddingVertical:\s*0/);
     expect(themeSource).toMatch(/topicStatRail:\s*\{[\s\S]*minHeight:\s*40/);

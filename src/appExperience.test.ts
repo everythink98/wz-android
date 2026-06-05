@@ -1113,35 +1113,43 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('applyBookmarkToTopic');
     expect(appSource).toContain('applyNodeSeekCollectionToTopic');
     expect(appSource).toContain('applyPollVoteToTopic');
-    expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(appSource).toMatch(/buildNodeSeekCollectionRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(appSource).toContain('beginOptimisticAction');
+    expect(appSource).toContain('completeOptimisticAction');
+    expect(appSource).toContain('runOptimisticActionQueue');
+    expect(appSource).toContain('try {\n        succeeded = await sendDesired(desiredActive);');
+    expect(appSource).toContain('applyDisplayed(completed.state.confirmed);');
+    expect(appSource).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {\n      return;\n    }\n    const transition = beginOptimisticAction');
+    expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?desiredActive/);
+    expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?desiredActive/);
+    expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?desiredActive/);
+    expect(appSource).toMatch(/buildNodeSeekCollectionRequest[\s\S]*?desiredActive/);
     expect(appSource).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
     expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(interactBlock).toContain('const requestTopicKey = detail ? topicKey(detail) : null;');
-    expect(interactBlock).toContain('const active = Boolean(target?.[activeField]);');
-    expect(interactBlock).toContain('mode: \'toggle\' as const');
+    expect(interactBlock).toContain('const requestTopicKey = topicKey(detail);');
+    expect(interactBlock).toContain('startOptimisticTopicAction({');
+    expect(interactBlock).toContain("mode: desiredActive ? 'add' as const : 'remove' as const");
     expect(interactBlock).toContain('isCurrent: () => currentTopicKeyRef.current === requestTopicKey');
     expect(bookmarkBlock).toContain('const requestTopicKey = topicKey(detail);');
-    expect(bookmarkBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
+    expect(bookmarkBlock).toContain('startOptimisticTopicAction({');
+    expect(bookmarkBlock).toContain('optimisticTopicActionsRef.current[actionKey]?.desired === true');
+    expect(bookmarkBlock).toContain('bookmarkId = undefined;');
     expect(nodeSeekCollectionBlock).toContain('const requestTopicKey = topicKey(detail);');
-    expect(nodeSeekCollectionBlock).toContain('applyNodeSeekCollectionToTopic(current, { collected: !collected })');
+    expect(nodeSeekCollectionBlock).toContain('startOptimisticTopicAction({');
     expect(voteBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(voteBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
     expect(voteBlock).toContain('voteIds: optionIds');
     expect(voteBlock).not.toContain('voteId: optionIds[0]');
   });
 
-  it('updates visible reaction counts before waiting for the write request', () => {
+  it('updates visible reaction counts through optimistic desired states', () => {
     const interactBlock = appSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const linuxDoBlock = interactBlock.match(/if \(detail\?\.source === 'linuxdo'\) \{([\s\S]*?)\n    if \(detail\?\.source !== 'nodeseek'\)/)?.[1] || '';
-    const nodeSeekBlock = interactBlock.match(/const activeFields: Record<InteractionType[\s\S]*?await runNodeSeekRequest\(/)?.[0] || '';
-    const linuxDoPatchIndex = linuxDoBlock.indexOf("const patch = { commentId, type: 'like' as const, mode: 'toggle' as const };");
-    const linuxDoRequestIndex = linuxDoBlock.indexOf('await runLinuxDoRequest(');
-    const nodeSeekPatchIndex = nodeSeekBlock.indexOf("const patch = { commentId, type, mode: 'toggle' as const };");
-    const nodeSeekRequestIndex = nodeSeekBlock.indexOf('await runNodeSeekRequest(');
+    const nodeSeekBlock = interactBlock;
+    const linuxDoPatchIndex = linuxDoBlock.indexOf("mode: desiredActive ? 'add' as const : 'remove' as const");
+    const linuxDoRequestIndex = linuxDoBlock.indexOf('buildLinuxDoLikeRequest');
+    const nodeSeekPatchIndex = nodeSeekBlock.indexOf("mode: desiredActive ? 'add' as const : 'remove' as const");
+    const nodeSeekRequestIndex = nodeSeekBlock.indexOf('buildNodeSeekInteractionRequest');
 
     expect(linuxDoPatchIndex).toBeGreaterThan(-1);
     expect(linuxDoRequestIndex).toBeGreaterThan(-1);
@@ -1154,10 +1162,10 @@ describe('Android App experience guards', () => {
   it('updates original-site collection buttons before waiting for the write request', () => {
     const nodeSeekCollectionBlock = appSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const linuxDoBookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const nodeSeekPatchIndex = nodeSeekCollectionBlock.indexOf('setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: !collected }));');
-    const nodeSeekRequestIndex = nodeSeekCollectionBlock.indexOf('await runNodeSeekRequest(');
-    const linuxDoPatchIndex = linuxDoBookmarkBlock.indexOf('setTopicDetail((current) => applyBookmarkToTopic(current, {');
-    const linuxDoRequestIndex = linuxDoBookmarkBlock.indexOf('const result = await runLinuxDoRequest(');
+    const nodeSeekPatchIndex = nodeSeekCollectionBlock.indexOf('applyDisplayed: (desiredActive) =>');
+    const nodeSeekRequestIndex = nodeSeekCollectionBlock.indexOf('buildNodeSeekCollectionRequest');
+    const linuxDoPatchIndex = linuxDoBookmarkBlock.indexOf('applyDisplayed: (desiredActive) =>');
+    const linuxDoRequestIndex = linuxDoBookmarkBlock.indexOf('buildLinuxDoBookmarkRequest');
 
     expect(nodeSeekPatchIndex).toBeGreaterThan(-1);
     expect(nodeSeekRequestIndex).toBeGreaterThan(-1);

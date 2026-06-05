@@ -633,6 +633,59 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingHorizontal: 10,
       paddingVertical: 0
     },
+    detailActionButton: {
+      minHeight: 48,
+      width: 74,
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: 5,
+      backgroundColor: 'transparent',
+      borderRadius: 8,
+      paddingHorizontal: 4,
+      paddingVertical: 4
+    },
+    detailActionButtonActive: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.13 : 0.07)
+    },
+    replyDetailActionButton: {
+      justifyContent: 'flex-start',
+      paddingHorizontal: 0
+    },
+    detailActionIconSlot: {
+      alignItems: 'center',
+      height: 22,
+      justifyContent: 'center',
+      width: 22
+    },
+    detailActionTextBlock: {
+      alignItems: 'center',
+      flexShrink: 1,
+      flexDirection: 'row',
+      gap: 3,
+      minWidth: 0
+    },
+    detailActionLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      flexShrink: 1,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    detailActionCount: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      flexShrink: 1,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    detailActionLabelActive: {
+      color: theme.primary
+    },
     buttonGhost: {
       backgroundColor: 'transparent',
       borderColor: 'transparent'
@@ -1041,6 +1094,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexWrap: 'wrap',
       gap: 8,
       justifyContent: 'flex-start',
+      minHeight: 48,
       paddingTop: 2
     },
     topicPostActionArea: {
@@ -1757,7 +1811,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexWrap: 'wrap',
       gap: 8,
       justifyContent: 'flex-start',
-      minHeight: 40,
+      minHeight: 48,
       paddingTop: 2
     },
     floorIndex: {

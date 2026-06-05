@@ -7,7 +7,10 @@ import {
   applyInteractionToTopic,
   applyNodeSeekCollectionToTopic,
   applyPollVoteToTopic,
-  linuxDoBookmarkIdFromActionResult
+  beginOptimisticAction,
+  completeOptimisticAction,
+  linuxDoBookmarkIdFromActionResult,
+  topicActionStateKey
 } from './topicActionState';
 
 const topic: TopicDetail = {
@@ -37,16 +40,16 @@ const reply: Reply = {
 };
 
 describe('topic action state patches', () => {
-  it('toggles a linux.do topic like locally without replacing the whole topic', () => {
+  it('adds and removes a linux.do topic like locally without replacing the whole topic', () => {
     const liked = applyInteractionToTopic(topic, {
       commentId: 101,
       type: 'like',
-      mode: 'toggle'
+      mode: 'add'
     });
     const unliked = applyInteractionToTopic(liked, {
       commentId: 101,
       type: 'like',
-      mode: 'toggle'
+      mode: 'remove'
     });
 
     expect(liked).toMatchObject({ liked: true, likeCount: 3 });
@@ -69,7 +72,7 @@ describe('topic action state patches', () => {
     expect(repeated[0]).toMatchObject({ liked: true, likeCount: 3 });
   });
 
-  it('toggles NodeSeek dislike state and count locally', () => {
+  it('adds and removes NodeSeek dislike state and count locally', () => {
     const disliked = applyInteractionToReplies([{
       ...reply,
       disliked: false,
@@ -77,16 +80,78 @@ describe('topic action state patches', () => {
     }], {
       commentId: 202,
       type: 'dislike',
-      mode: 'toggle'
+      mode: 'add'
     });
     const undisliked = applyInteractionToReplies(disliked, {
       commentId: 202,
       type: 'dislike',
-      mode: 'toggle'
+      mode: 'remove'
     });
 
     expect(disliked[0]).toMatchObject({ disliked: true, dislikeCount: 2 });
     expect(undisliked[0]).toMatchObject({ disliked: false, dislikeCount: 1 });
+  });
+
+  it('removes NodeSeek interactions locally without going below zero', () => {
+    const next = applyInteractionToReplies([{
+      ...reply,
+      liked: true,
+      likeCount: 1
+    }], {
+      commentId: 202,
+      type: 'like',
+      mode: 'remove'
+    });
+    const repeated = applyInteractionToReplies(next, {
+      commentId: 202,
+      type: 'like',
+      mode: 'remove'
+    });
+
+    expect(next[0]).toMatchObject({ liked: false, likeCount: 0 });
+    expect(repeated[0]).toMatchObject({ liked: false, likeCount: 0 });
+  });
+
+  it('queues the latest optimistic action target while a request is pending', () => {
+    const first = beginOptimisticAction(undefined, false);
+    const second = beginOptimisticAction(first.state, false);
+    const afterFirstSuccess = completeOptimisticAction(second.state, true);
+    const afterSecondSuccess = completeOptimisticAction(afterFirstSuccess.state, true);
+
+    expect(first.request).toBe('add');
+    expect(second.request).toBeNull();
+    expect(second.state).toMatchObject({ displayed: false, desired: false, inFlightTarget: true });
+    expect(afterFirstSuccess.request).toBe('remove');
+    expect(afterFirstSuccess.state).toMatchObject({ confirmed: true, displayed: false, inFlightTarget: false });
+    expect(afterSecondSuccess.request).toBeNull();
+    expect(afterSecondSuccess.state).toMatchObject({ confirmed: false, displayed: false, inFlight: false });
+  });
+
+  it('restores the confirmed optimistic action state after failure', () => {
+    const first = beginOptimisticAction(undefined, false);
+    const failed = completeOptimisticAction(first.state, false);
+
+    expect(failed.request).toBeNull();
+    expect(failed.state).toMatchObject({ confirmed: false, displayed: false, desired: false, inFlight: false });
+  });
+
+  it('restores the added state when a queued remove request fails', () => {
+    const add = beginOptimisticAction(undefined, false);
+    const cancel = beginOptimisticAction(add.state, false);
+    const afterAddSuccess = completeOptimisticAction(cancel.state, true);
+    const failedCancel = completeOptimisticAction(afterAddSuccess.state, false);
+
+    expect(afterAddSuccess.request).toBe('remove');
+    expect(failedCancel.request).toBeNull();
+    expect(failedCancel.state).toMatchObject({ confirmed: true, displayed: true, desired: true, inFlight: false });
+  });
+
+  it('builds stable optimistic action keys for topic and reply actions', () => {
+    expect(topicActionStateKey({
+      topicKey: 'nodeseek:123',
+      targetId: 202,
+      action: 'like'
+    })).toBe('nodeseek:123:202:like');
   });
 
   it('patches NodeSeek original collection state locally', () => {
@@ -105,10 +170,13 @@ describe('topic action state patches', () => {
   it('patches linux.do original bookmark state from the action result', () => {
     const bookmarked = applyBookmarkToTopic(topic, { bookmarked: true, bookmarkId: 88 });
     const removed = applyBookmarkToTopic(bookmarked, { bookmarked: false });
+    const readdedWithoutId = applyBookmarkToTopic(bookmarked, { bookmarked: true });
 
     expect(bookmarked).toMatchObject({ bookmarked: true, bookmarkId: 88 });
     expect(removed).toMatchObject({ bookmarked: false });
     expect(removed?.bookmarkId).toBeUndefined();
+    expect(readdedWithoutId).toMatchObject({ bookmarked: true });
+    expect(readdedWithoutId?.bookmarkId).toBeUndefined();
   });
 
   it('reads linux.do bookmark ids from common Discourse response shapes', () => {

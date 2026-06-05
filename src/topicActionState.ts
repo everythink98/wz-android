@@ -1,13 +1,35 @@
 import type { Reply, TopicDetail } from './types';
 
 export type InteractionType = 'upvote' | 'like' | 'dislike';
-type InteractionMode = 'add' | 'toggle';
+type InteractionMode = 'add' | 'remove';
+type ActionOperation = 'add' | 'remove';
+export type TopicActionStateKind = InteractionType | 'collection' | 'bookmark';
 
-export type InteractionPatch = {
+export type OptimisticActionState = {
+  confirmed: boolean;
+  displayed: boolean;
+  desired: boolean;
+  inFlight: boolean;
+  inFlightTarget?: boolean;
+};
+
+type InteractionPatch = {
   commentId: number;
   type: InteractionType;
   mode: InteractionMode;
 };
+
+export function topicActionStateKey({
+  topicKey,
+  targetId,
+  action
+}: {
+  topicKey: string;
+  targetId: string | number;
+  action: TopicActionStateKind;
+}) {
+  return `${topicKey}:${targetId}:${action}`;
+}
 
 function nextCount(value: number | undefined, delta: number) {
   if (typeof value !== 'number') {
@@ -32,7 +54,7 @@ function applyInteractionFields<T extends TopicDetail | Reply>(item: T, patch: I
   } as const;
   const [activeField, countField] = fieldMap[patch.type];
   const active = Boolean(item[activeField]);
-  const nextActive = patch.mode === 'toggle' ? !active : true;
+  const nextActive = patch.mode === 'add';
   const delta = nextActive === active ? 0 : nextActive ? 1 : -1;
   return {
     ...item,
@@ -49,6 +71,77 @@ export function applyInteractionToReplies(replies: Reply[], patch: InteractionPa
   return replies.map((reply) => applyInteractionFields(reply, patch));
 }
 
+export function beginOptimisticAction(
+  current: OptimisticActionState | undefined,
+  confirmedActive: boolean
+): { state: OptimisticActionState; request: ActionOperation | null } {
+  const base = current || {
+    confirmed: confirmedActive,
+    displayed: confirmedActive,
+    desired: confirmedActive,
+    inFlight: false
+  };
+  const desired = !base.displayed;
+  const state = {
+    ...base,
+    displayed: desired,
+    desired
+  };
+  if (base.inFlight) {
+    return { state, request: null };
+  }
+  return {
+    state: {
+      ...state,
+      inFlight: true,
+      inFlightTarget: desired
+    },
+    request: desired ? 'add' : 'remove'
+  };
+}
+
+export function completeOptimisticAction(
+  current: OptimisticActionState,
+  success: boolean
+): { state: OptimisticActionState; request: ActionOperation | null } {
+  if (!current.inFlight || typeof current.inFlightTarget !== 'boolean') {
+    return { state: current, request: null };
+  }
+  if (!success) {
+    return {
+      state: {
+        confirmed: current.confirmed,
+        displayed: current.confirmed,
+        desired: current.confirmed,
+        inFlight: false
+      },
+      request: null
+    };
+  }
+  const confirmed = current.inFlightTarget;
+  if (current.desired !== confirmed) {
+    return {
+      state: {
+        confirmed,
+        displayed: current.desired,
+        desired: current.desired,
+        inFlight: true,
+        inFlightTarget: current.desired
+      },
+      request: current.desired ? 'add' : 'remove'
+    };
+  }
+  return {
+    state: {
+      confirmed,
+      displayed: confirmed,
+      desired: confirmed,
+      inFlight: false
+    },
+    request: null
+  };
+}
+
 export function applyBookmarkToTopic<T extends TopicDetail | null>(
   topic: T,
   patch: { bookmarked: boolean; bookmarkId?: number }
@@ -59,7 +152,7 @@ export function applyBookmarkToTopic<T extends TopicDetail | null>(
   return {
     ...topic,
     bookmarked: patch.bookmarked,
-    bookmarkId: patch.bookmarked ? patch.bookmarkId ?? topic.bookmarkId : undefined
+    bookmarkId: patch.bookmarked ? patch.bookmarkId : undefined
   } as T;
 }
 

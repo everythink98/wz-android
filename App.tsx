@@ -145,7 +145,11 @@ import {
   applyNodeSeekCollectionToTopic,
   applyPollVoteToReplies,
   applyPollVoteToTopic,
+  beginOptimisticAction,
+  completeOptimisticAction,
   linuxDoBookmarkIdFromActionResult,
+  topicActionStateKey,
+  type OptimisticActionState,
   type InteractionType
 } from './src/topicActionState';
 import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, markInlineSizedImageHtml, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
@@ -271,6 +275,14 @@ type UserReturnTopic = {
 type ActionRunOptions = {
   refreshTopic?: boolean;
   isCurrent?: () => boolean;
+};
+type OptimisticTopicActionOptions = {
+  key: string;
+  requestTopicKey: string;
+  currentActive: boolean;
+  applyDisplayed: (desiredActive: boolean) => void;
+  sendDesired: (desiredActive: boolean) => Promise<boolean>;
+  successMessage: (active: boolean) => string;
 };
 type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 type RootStackParamList = {
@@ -669,6 +681,7 @@ export default function App() {
   const [statusBusy, setStatusBusy] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
   const [cookieNames, setCookieNames] = useState<string[]>([]);
   const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
   const [linuxDoCookieNames, setLinuxDoCookieNames] = useState<string[]>([]);
@@ -695,6 +708,7 @@ export default function App() {
 
   const readerDataRef = useRef<ReaderData>(readerData);
   const readerDataStateRef = useRef<ReaderData>(readerData);
+  const optimisticTopicActionsRef = useRef<Record<string, OptimisticActionState>>({});
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [tabScrollToTopSignals, setTabScrollToTopSignals] = useState<Record<keyof MainTabParamList, number>>({
     feed: 0,
@@ -4023,6 +4037,170 @@ export default function App() {
     }
   }, [notify, openTopic, resetLinuxDoLevelState, showLinuxDoLogin, topicDetail]);
 
+  const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
+    const next = { ...optimisticTopicActionsRef.current };
+    if (!state || (!state.inFlight && state.displayed === state.confirmed && state.desired === state.confirmed)) {
+      delete next[key];
+    } else {
+      next[key] = state;
+    }
+    optimisticTopicActionsRef.current = next;
+    setOptimisticTopicActions(next);
+  }, []);
+
+  const runNodeSeekActionForOptimisticUpdate = useCallback(async (
+    requestFactory: () => NodeSeekActionRequest,
+    options: ActionRunOptions = {}
+  ) => {
+    if (!hasNodeSeekLoginCookie) {
+      if (options.isCurrent?.() === false) {
+        return false;
+      }
+      notify('请先在“更多”里登录并检测 NodeSeek Cookie，已恢复原状态。');
+      return false;
+    }
+    try {
+      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+      await runNodeSeekAction({
+        cookieHeader: cookieHeader || '',
+        request: requestFactory(),
+        userAgent: nodeSeekWebViewUserAgentRef.current
+      });
+      if (options.isCurrent?.() === false) {
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (options.isCurrent?.() === false || isCanceledRequest(error)) {
+        return false;
+      }
+      if (isNodeSeekLoginRequiredError(error)) {
+        await clearNodeSeekLoginCookiesOnly();
+        if (options.isCurrent?.() === false) {
+          return false;
+        }
+      }
+      notify(`${errorMessage(error)}，已恢复原状态。`);
+      return false;
+    }
+  }, [clearNodeSeekLoginCookiesOnly, hasNodeSeekLoginCookie, notify]);
+
+  const runLinuxDoActionForOptimisticUpdate = useCallback(async (
+    requestFactory: () => LinuxDoActionRequest,
+    options: ActionRunOptions = {}
+  ) => {
+    try {
+      const access = await loadLinuxDoAccess();
+      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
+        if (options.isCurrent?.() === false) {
+          return false;
+        }
+        setHasLinuxDoLogin(false);
+        showLinuxDoLogin('linux.do 登录后才能操作，已恢复原状态。');
+        return false;
+      }
+      const result = await runLinuxDoAction({
+        cookieHeader: access.cookieHeader,
+        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
+        request: requestFactory()
+      });
+      if (options.isCurrent?.() === false) {
+        return false;
+      }
+      return result ?? true;
+    } catch (error) {
+      if (options.isCurrent?.() === false || isCanceledRequest(error)) {
+        return false;
+      }
+      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
+        const remainingAccess = await clearLinuxDoAccess();
+        if (options.isCurrent?.() === false) {
+          return false;
+        }
+        setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));
+        setHasLinuxDoLogin(false);
+        setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names);
+        resetLinuxDoLevelState();
+        showLinuxDoLogin(`${errorMessage(error)}，已恢复原状态。`);
+        return false;
+      }
+      notify(`${errorMessage(error)}，已恢复原状态。`);
+      return false;
+    }
+  }, [notify, resetLinuxDoLevelState, showLinuxDoLogin]);
+
+  const runOptimisticActionQueue = useCallback(async ({
+    key,
+    requestTopicKey,
+    applyDisplayed,
+    sendDesired,
+    successMessage
+  }: Omit<OptimisticTopicActionOptions, 'currentActive'>) => {
+    while (true) {
+      const state = optimisticTopicActionsRef.current[key];
+      if (!state?.inFlight || typeof state.inFlightTarget !== 'boolean') {
+        return;
+      }
+      const desiredActive = state.inFlightTarget;
+      let succeeded = false;
+      try {
+        succeeded = await sendDesired(desiredActive);
+      } catch (error) {
+        if (currentTopicKeyRef.current === requestTopicKey) {
+          notify(`${errorMessage(error)}，已恢复原状态。`);
+        }
+      }
+      if (currentTopicKeyRef.current !== requestTopicKey) {
+        setOptimisticTopicActionState(key);
+        return;
+      }
+      const latest = optimisticTopicActionsRef.current[key];
+      if (!latest) {
+        return;
+      }
+      const completed = completeOptimisticAction(latest, succeeded);
+      setOptimisticTopicActionState(key, completed.state);
+      if (!succeeded) {
+        applyDisplayed(completed.state.displayed);
+        return;
+      }
+      if (!completed.request) {
+        applyDisplayed(completed.state.confirmed);
+        notify(successMessage(completed.state.confirmed));
+        return;
+      }
+    }
+  }, [notify, setOptimisticTopicActionState]);
+
+  const startOptimisticTopicAction = useCallback(({
+    key,
+    requestTopicKey,
+    currentActive,
+    applyDisplayed,
+    sendDesired,
+    successMessage
+  }: OptimisticTopicActionOptions) => {
+    if (currentTopicKeyRef.current !== requestTopicKey) {
+      return;
+    }
+    const transition = beginOptimisticAction(optimisticTopicActionsRef.current[key], currentActive);
+    setOptimisticTopicActionState(key, transition.state);
+    if (currentTopicKeyRef.current !== requestTopicKey) {
+      setOptimisticTopicActionState(key);
+      return;
+    }
+    applyDisplayed(transition.state.displayed);
+    if (transition.request) {
+      void runOptimisticActionQueue({
+        key,
+        requestTopicKey,
+        applyDisplayed,
+        sendDesired,
+        successMessage
+      });
+    }
+  }, [runOptimisticActionQueue, setOptimisticTopicActionState]);
+
   const submitReply = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail || (detail.source !== 'nodeseek' && detail.source !== 'yaohuo' && detail.source !== 'linuxdo')) {
@@ -4133,7 +4311,10 @@ export default function App() {
       return;
     }
     const detail = topicDetail || selectedTopic;
-    const requestTopicKey = detail ? topicKey(detail) : null;
+    if (!detail) {
+      return;
+    }
+    const requestTopicKey = topicKey(detail);
     if (detail?.source === 'linuxdo') {
       if (type !== 'like') {
         return;
@@ -4142,15 +4323,21 @@ export default function App() {
         topicDetail,
         ...topicReplies
       ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean } | undefined);
-      const liked = Boolean(target?.liked);
-      const patch = { commentId, type: 'like' as const, mode: 'toggle' as const };
-      setTopicDetail((current) => applyInteractionToTopic(current, patch));
-      setTopicReplies((current) => applyInteractionToReplies(current, patch));
-      await runLinuxDoRequest(
-        () => buildLinuxDoLikeRequest({ postId: commentId, liked }),
-        liked ? '已取消点赞' : '点赞已提交',
-        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      );
+      startOptimisticTopicAction({
+        key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' }),
+        requestTopicKey,
+        currentActive: Boolean(target?.liked),
+        applyDisplayed: (desiredActive) => {
+          const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const };
+          setTopicDetail((current) => applyInteractionToTopic(current, patch));
+          setTopicReplies((current) => applyInteractionToReplies(current, patch));
+        },
+        sendDesired: async (desiredActive) => Boolean(await runLinuxDoActionForOptimisticUpdate(
+          () => buildLinuxDoLikeRequest({ postId: commentId, liked: !desiredActive }),
+          { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+        )),
+        successMessage: (active) => active ? '点赞已提交' : '已取消点赞'
+      });
       return;
     }
     if (detail?.source !== 'nodeseek') {
@@ -4166,19 +4353,24 @@ export default function App() {
       ...topicReplies
     ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as (Pick<TopicDetail | Reply, 'upvoted' | 'liked' | 'disliked'> | undefined);
     const activeField = activeFields[type];
-    const active = Boolean(target?.[activeField]);
-    const successMessage = active
-      ? type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
-      : type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交';
-    const patch = { commentId, type, mode: 'toggle' as const };
-    setTopicDetail((current) => applyInteractionToTopic(current, patch));
-    setTopicReplies((current) => applyInteractionToReplies(current, patch));
-    await runNodeSeekRequest(
-      () => buildNodeSeekInteractionRequest({ type, commentId, active }),
-      successMessage,
-      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-    );
-  }, [notify, runLinuxDoRequest, runNodeSeekRequest, selectedTopic, topicDetail, topicReplies]);
+    startOptimisticTopicAction({
+      key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type }),
+      requestTopicKey,
+      currentActive: Boolean(target?.[activeField]),
+      applyDisplayed: (desiredActive) => {
+        const patch = { commentId, type, mode: desiredActive ? 'add' as const : 'remove' as const };
+        setTopicDetail((current) => applyInteractionToTopic(current, patch));
+        setTopicReplies((current) => applyInteractionToReplies(current, patch));
+      },
+      sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
+        () => buildNodeSeekInteractionRequest({ type, commentId, active: !desiredActive }),
+        { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+      ),
+      successMessage: (active) => active
+        ? type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
+        : type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
+    });
+  }, [notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, topicDetail, topicReplies]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -4202,16 +4394,23 @@ export default function App() {
     }
     const requestTopicKey = topicKey(detail);
     const collected = Boolean((detail as TopicDetail).collected);
-    setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: !collected }));
-    await runNodeSeekRequest(
-      () => buildNodeSeekCollectionRequest({
-        postId: detail.id,
-        collected
-      }),
-      collected ? '已取消原站收藏' : '原站收藏已提交',
-      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-    );
-  }, [runNodeSeekRequest, selectedTopic, topicDetail]);
+    startOptimisticTopicAction({
+      key: topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' }),
+      requestTopicKey,
+      currentActive: collected,
+      applyDisplayed: (desiredActive) => {
+        setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: desiredActive }));
+      },
+      sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
+        () => buildNodeSeekCollectionRequest({
+          postId: detail.id,
+          collected: !desiredActive
+        }),
+        { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+      ),
+      successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
+    });
+  }, [runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, topicDetail]);
 
   const bookmarkOnLinuxDoSite = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -4220,32 +4419,51 @@ export default function App() {
     }
     const requestTopicKey = topicKey(detail);
     const bookmarked = Boolean((detail as TopicDetail).bookmarked);
-    setTopicDetail((current) => applyBookmarkToTopic(current, {
-      bookmarked: !bookmarked,
-      bookmarkId: bookmarked ? undefined : (detail as TopicDetail).bookmarkId
-    }));
-    const result = await runLinuxDoRequest(
-      () => buildLinuxDoBookmarkRequest({
-        bookmarkableId: detail.id,
-        bookmarkableType: 'Topic',
-        bookmarked,
-        bookmarkId: (detail as TopicDetail).bookmarkId
-      }),
-      bookmarked ? '已取消原站收藏' : '原站收藏已提交',
-      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-    );
-    if (result) {
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        return;
-      }
-      if (!bookmarked) {
-        const bookmarkId = linuxDoBookmarkIdFromActionResult(result);
-        if (bookmarkId) {
-          setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true, bookmarkId }));
+    let bookmarkId = (detail as TopicDetail).bookmarkId;
+    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'bookmark' });
+    startOptimisticTopicAction({
+      key: actionKey,
+      requestTopicKey,
+      currentActive: bookmarked,
+      applyDisplayed: (desiredActive) => {
+        setTopicDetail((current) => applyBookmarkToTopic(current, {
+          bookmarked: desiredActive,
+          bookmarkId: desiredActive ? bookmarkId : undefined
+        }));
+      },
+      sendDesired: async (desiredActive) => {
+        const result = await runLinuxDoActionForOptimisticUpdate(
+          () => buildLinuxDoBookmarkRequest({
+            bookmarkableId: detail.id,
+            bookmarkableType: 'Topic',
+            bookmarked: !desiredActive,
+            bookmarkId
+          }),
+          { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
+        );
+        if (!result) {
+          return false;
         }
-      }
-    }
-  }, [runLinuxDoRequest, selectedTopic, topicDetail]);
+        if (!desiredActive) {
+          bookmarkId = undefined;
+          if (currentTopicKeyRef.current === requestTopicKey && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
+            setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true }));
+          }
+        }
+        if (desiredActive) {
+          const resultBookmarkId = linuxDoBookmarkIdFromActionResult(result);
+          if (resultBookmarkId) {
+            bookmarkId = resultBookmarkId;
+            if (currentTopicKeyRef.current === requestTopicKey && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
+              setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true, bookmarkId }));
+            }
+          }
+        }
+        return true;
+      },
+      successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
+    });
+  }, [runLinuxDoActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, topicDetail]);
 
   const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
     const detail = topicDetail || selectedTopic;
@@ -4896,6 +5114,7 @@ export default function App() {
       unreadReplyCount={unreadReplyCount}
       onBack={goBackFromTopic}
       onCommentQueryChange={setCommentQuery}
+      optimisticActions={optimisticTopicActions}
       onInteract={interact}
       onLinuxDoBookmark={bookmarkOnLinuxDoSite}
       onNodeSeekCollection={collectOnNodeSeekSite}
@@ -4918,7 +5137,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, optimisticTopicActions, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen
