@@ -62,7 +62,7 @@ describe('Android topic detail reading layout', () => {
 
     expect(topBar).toContain('label="返回"');
     expect(topBar).toContain('{sourceLabel(item.source)}');
-    expect(topBar).toContain('label={isFavorite(readerData, item) ? \'已收藏\' : \'收藏\'}');
+    expect(topBar).toContain("label={topicFavorite ? '已收藏' : '收藏'}");
     expect(topBar).toContain('label="更多操作"');
     expect(topicScreenSource).toContain('topicOverflowMenu');
     expect(topicScreenSource).toContain('原站打开');
@@ -168,12 +168,6 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('uses poll choice limits to keep multi-choice submissions valid', () => {
-    const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
-    const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
-    const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
-      ? topicScreenSource.slice(topicActionStart, replyComposerStart)
-      : '';
-
     expect(topicScreenSource).toContain('pollChoiceRangeLabel');
     expect(topicScreenSource).toContain('pollSelectionRangeStatus');
     expect(topicScreenSource).toContain('<PollBlockList');
@@ -200,8 +194,8 @@ describe('Android topic detail reading layout', () => {
     const yaohuoReplyAction = topicScreenSource.match(/\{canWrite && source === 'yaohuo' \? \([\s\S]*?\n        \) : null\}/)?.[0] || '';
 
     expect(topicScreenSource).toContain('Drumstick');
-    expect(topicScreenSource).toContain("accessibilityLabel={topic?.liked ? '取消鸡腿' : '加鸡腿'}");
-    expect(topicScreenSource).toContain("accessibilityLabel={reply.liked ? '取消鸡腿' : '加鸡腿'}");
+    expect(topicScreenSource).toContain("accessibilityLabel={topic?.liked ? '已加鸡腿' : '加鸡腿'}");
+    expect(topicScreenSource).toContain("accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'}");
     expect(topicScreenSource).toContain('label="鸡腿"');
     expect(topicScreenSource).toContain('icon={Drumstick}');
     expect(topicScreenSource).not.toContain("createLucideIcon('ChickenLeg'");
@@ -214,7 +208,7 @@ describe('Android topic detail reading layout', () => {
     expect(yaohuoReplyAction).not.toContain('加鸡腿');
   });
 
-  it('shows NodeSeek cancel, dislike, collection, and reply actions when logged in', () => {
+  it('shows NodeSeek one-way reactions, collection, and reply actions when logged in', () => {
     const topicActionStart = topicScreenSource.indexOf("if (listItem.type === 'topicActions') {");
     const replyComposerStart = topicScreenSource.indexOf("if (listItem.type === 'replyComposer') {");
     const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
@@ -226,14 +220,14 @@ describe('Android topic detail reading layout', () => {
       ? topicScreenSource.slice(replyCardStart, replyCardEnd)
       : '';
 
-    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.upvoted ? '取消赞' : '点赞'}");
-    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.disliked ? '取消反对' : '反对'}");
+    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.upvoted ? '已点赞' : '点赞'}");
+    expect(topicActionRenderer).toContain("accessibilityLabel={topic?.disliked ? '已反对' : '反对'}");
     expect(topicActionRenderer).toContain("accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'}");
     expect(topicActionRenderer).toContain("pending={isOptimisticActionPending(topic?.id, 'collection')}");
     expect(topicActionRenderer).toContain("onInteract('dislike', topic?.commentId)");
     expect(topicActionRenderer).toContain('onNodeSeekCollection');
-    expect(replyCard).toContain("accessibilityLabel={reply.upvoted ? '取消赞' : '点赞'}");
-    expect(replyCard).toContain("accessibilityLabel={reply.disliked ? '取消反对' : '反对'}");
+    expect(replyCard).toContain("accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'}");
+    expect(replyCard).toContain("accessibilityLabel={reply.disliked ? '已反对' : '反对'}");
     expect(replyCard).toContain("onInteract('dislike', reply.commentId)");
     expect(replyCard).toContain('<DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复"');
   });
@@ -301,7 +295,7 @@ describe('Android topic detail reading layout', () => {
 
   it('labels linux.do special poll types instead of calling them single choice polls', () => {
     const pollBlockStart = topicScreenSource.indexOf('function PollBlockList');
-    const pollBlockEnd = topicScreenSource.indexOf('function nodeSeekReplyPassiveStats', pollBlockStart);
+    const pollBlockEnd = topicScreenSource.indexOf('function NodeSeekStatPill', pollBlockStart);
     const pollBlock = pollBlockStart >= 0 && pollBlockEnd > pollBlockStart
       ? topicScreenSource.slice(pollBlockStart, pollBlockEnd)
       : '';

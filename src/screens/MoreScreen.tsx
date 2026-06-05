@@ -487,6 +487,28 @@ function NodeSeekLoginPanel({
   onSetLoadingLoginPage: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
 }) {
+  const [webViewError, setWebViewError] = useState('');
+  const [webViewKey, setWebViewKey] = useState(0);
+  const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
+
+  useEffect(() => {
+    if (!showLoginPanel) {
+      setWebViewError('');
+      setWebViewNeedsRemount(false);
+    }
+  }, [showLoginPanel]);
+
+  const refreshWebView = () => {
+    setWebViewError('');
+    onSetLoadingLoginPage(true);
+    if (webViewNeedsRemount) {
+      setWebViewNeedsRemount(false);
+      setWebViewKey((current) => current + 1);
+      return;
+    }
+    webViewRef.current?.reload();
+  };
+
   return (
     <>
       <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
@@ -497,6 +519,7 @@ function NodeSeekLoginPanel({
         subtitle={loginState}
         loading={loadingLoginPage}
         loadingText="正在打开 NodeSeek..."
+        error={webViewError}
         styles={styles}
         theme={theme}
         onClose={() => onShowLoginPanelChange(false)}
@@ -504,25 +527,44 @@ function NodeSeekLoginPanel({
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
             <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLogin} />
-            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => webViewRef.current?.reload()} />
+            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
           </View>
         )}
       >
         {showLoginPanel && accountExpanded ? (
             <WebView
+              key={`nodeseek-login-${webViewKey}`}
               ref={webViewRef}
               source={{ uri: NODESEEK_URL }}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               userAgent={nodeSeekWebViewUserAgent}
               injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
-              onLoadEnd={() => {
+              onLoadEnd={(event) => {
                 onSetLoadingLoginPage(false);
+                if ('code' in event.nativeEvent) {
+                  return;
+                }
+                setWebViewError('');
                 webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
                 void onRememberNodeSeekCookies({ silent: true });
               }}
-              onLoadStart={() => onSetLoadingLoginPage(true)}
+              onLoadStart={() => {
+                setWebViewError('');
+                setWebViewNeedsRemount(false);
+                onSetLoadingLoginPage(true);
+              }}
               onMessage={onHandleLoginMessage}
+              onError={(event) => {
+                onSetLoadingLoginPage(false);
+                setWebViewError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+              }}
+              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+              onRenderProcessGone={() => {
+                onSetLoadingLoginPage(false);
+                setWebViewNeedsRemount(true);
+                setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
+              }}
               onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
             />
         ) : null}
@@ -566,6 +608,28 @@ function YaohuoLoginPanel({
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
 }) {
+  const [webViewError, setWebViewError] = useState('');
+  const [webViewKey, setWebViewKey] = useState(0);
+  const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
+
+  useEffect(() => {
+    if (!showYaohuoLoginPanel) {
+      setWebViewError('');
+      setWebViewNeedsRemount(false);
+    }
+  }, [showYaohuoLoginPanel]);
+
+  const refreshWebView = () => {
+    setWebViewError('');
+    onSetLoadingYaohuoLoginPage(true);
+    if (webViewNeedsRemount) {
+      setWebViewNeedsRemount(false);
+      setWebViewKey((current) => current + 1);
+      return;
+    }
+    yaohuoWebViewRef.current?.reload();
+  };
+
   return (
     <>
       <MenuButton icon={LogIn} label="妖火登录" value={yaohuoLoginState} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
@@ -575,6 +639,7 @@ function YaohuoLoginPanel({
         subtitle={yaohuoLoginState}
         loading={loadingYaohuoLoginPage}
         loadingText="正在打开妖火..."
+        error={webViewError}
         styles={styles}
         theme={theme}
         onClose={() => onShowYaohuoLoginPanelChange(false)}
@@ -582,12 +647,13 @@ function YaohuoLoginPanel({
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
             <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearYaohuoLogin} />
-            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => yaohuoWebViewRef.current?.reload()} />
+            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
           </View>
         )}
       >
         {showYaohuoLoginPanel && accountExpanded ? (
             <WebView
+              key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}
               source={{
                 uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL,
@@ -595,8 +661,28 @@ function YaohuoLoginPanel({
               }}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
-              onLoadEnd={() => onSetLoadingYaohuoLoginPage(false)}
-              onLoadStart={() => onSetLoadingYaohuoLoginPage(true)}
+              onLoadEnd={(event) => {
+                onSetLoadingYaohuoLoginPage(false);
+                if ('code' in event.nativeEvent) {
+                  return;
+                }
+                setWebViewError('');
+              }}
+              onLoadStart={() => {
+                setWebViewError('');
+                setWebViewNeedsRemount(false);
+                onSetLoadingYaohuoLoginPage(true);
+              }}
+              onError={(event) => {
+                onSetLoadingYaohuoLoginPage(false);
+                setWebViewError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+              }}
+              renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+              onRenderProcessGone={() => {
+                onSetLoadingYaohuoLoginPage(false);
+                setWebViewNeedsRemount(true);
+                setWebViewError('妖火登录页面已停止，请刷新页面重试。');
+              }}
               onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
             />
         ) : null}

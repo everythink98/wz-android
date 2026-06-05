@@ -77,11 +77,10 @@ describe('NodeSeek action request builders', () => {
     }).path).toBe('/api/statistics/like');
   });
 
-  it('builds dislike and remove interaction requests for a comment', () => {
+  it('builds dislike interaction requests for a comment', () => {
     expect(buildNodeSeekInteractionRequest({
       type: 'dislike',
-      commentId: '812345',
-      active: true
+      commentId: '812345'
     })).toEqual({
       path: '/api/statistics/dislike',
       method: 'POST',
@@ -90,9 +89,29 @@ describe('NodeSeek action request builders', () => {
       },
       body: JSON.stringify({
         commentId: 812345,
-        action: 'remove'
+        action: 'add'
       })
     });
+  });
+
+  it('rejects unsupported NodeSeek reaction removal requests', () => {
+    expect(() => buildNodeSeekInteractionRequest({
+      type: 'dislike',
+      commentId: '812345',
+      active: true
+    })).toThrow('NodeSeek 原站不支持取消反对');
+
+    expect(() => buildNodeSeekInteractionRequest({
+      type: 'like',
+      commentId: '812345',
+      active: true
+    })).toThrow('NodeSeek 原站不支持取消鸡腿');
+
+    expect(() => buildNodeSeekInteractionRequest({
+      type: 'upvote',
+      commentId: '812345',
+      active: true
+    })).toThrow('NodeSeek 原站不支持取消点赞');
   });
 
   it('builds NodeSeek original collection toggle requests', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData, recordHistory, toggleFavorite } from './readerData';
-import { getTopicListItemState, topicListItemStatesEqual } from './topicListItemState';
+import { createTopicListItemStateIndex, getTopicListItemState, getTopicListItemStateFromIndex, topicListItemStatesEqual } from './topicListItemState';
 import type { Topic } from './types';
 
 const topic: Topic = {
@@ -26,8 +26,7 @@ describe('Android topic list item state', () => {
         listDensity: 'loose'
       }
     };
-    const detail = { ...topic, contentHtml: '<p></p>', replies: [] };
-    data = recordHistory(data, detail);
+    data = recordHistory(data, topic);
     data = toggleFavorite(data, topic);
 
     expect(getTopicListItemState(data, topic)).toEqual({
@@ -42,5 +41,27 @@ describe('Android topic list item state', () => {
 
     expect(topicListItemStatesEqual(state, { ...state })).toBe(true);
     expect(topicListItemStatesEqual(state, { ...state, favorite: true })).toBe(false);
+  });
+
+  it('precomputes compact topic row state for list screens', () => {
+    let data = createEmptyReaderData();
+    data = {
+      ...data,
+      settings: {
+        ...data.settings,
+        listDensity: 'compact'
+      }
+    };
+    data = recordHistory(data, topic);
+    data = toggleFavorite(data, topic);
+
+    const index = createTopicListItemStateIndex(data);
+
+    expect(Object.keys(index).sort()).toEqual(['favorites', 'history', 'listDensity']);
+    expect(getTopicListItemStateFromIndex(index, topic)).toEqual({
+      favorite: true,
+      listDensity: 'compact',
+      read: true
+    });
   });
 });

@@ -3,12 +3,12 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile } from '../types';
-import { type FollowedUserRecord, type ReaderData, type TopicRecord, userKey } from '../readerData';
+import { type FollowedUserRecord, type TopicRecord, userKey } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
 import { filterLibraryRecords, groupLibraryRecordsByTime, libraryCategoryFilterItems } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { feedSources } from '../feedCategoryRail';
-import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, PillRail } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
@@ -23,9 +23,8 @@ export function LibraryScreen({
   categories,
   followedUsers,
   records,
-  readerData,
   scrollToTopSignal,
-  topicListStateInput,
+  topicStateIndex,
   styles,
   theme,
   onClearHistory,
@@ -39,9 +38,8 @@ export function LibraryScreen({
   categories: Parameters<typeof libraryCategoryFilterItems>[0];
   followedUsers: FollowedUserRecord[];
   records: TopicRecord[];
-  readerData: ReaderData;
   scrollToTopSignal: number;
-  topicListStateInput: NormalizedTopicListStateInput;
+  topicStateIndex: TopicListItemStateIndex;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onClearHistory: () => void;
@@ -105,7 +103,7 @@ export function LibraryScreen({
         <View style={styles.libraryTopicRow}>
           <View style={styles.flex}>
             <MemoizedTopicCard
-              readerState={getTopicListItemState(readerData, record.topic, topicListStateInput)}
+              readerState={getTopicListItemStateFromIndex(topicStateIndex, record.topic)}
               styles={styles}
               theme={theme}
               topic={record.topic}
@@ -126,7 +124,7 @@ export function LibraryScreen({
         ) : null}
       </View>
     );
-  }, [confirmRemoveFavorite, libraryTab, onOpenTopic, onRemove, readerData, styles, theme, topicListStateInput]);
+  }, [confirmRemoveFavorite, libraryTab, onOpenTopic, onRemove, styles, theme, topicStateIndex]);
   const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
     <View style={styles.libraryItem}>
       <Pressable accessibilityRole="button" style={styles.menuButton} onPress={() => onOpenUser(item.user)}>
@@ -193,6 +191,7 @@ export function LibraryScreen({
       contentContainerStyle={styles.contentInner}
       data={libraryTab === 'users' ? userRecords : listItems}
       keyExtractor={(item) => libraryTab === 'users' ? userKey((item as FollowedUserRecord).user) : (item as LibraryListItem).key}
+      getItemType={(item) => libraryTab === 'users' ? 'user' : (item as LibraryListItem).type}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListEmptyComponent={<EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />}

@@ -4,11 +4,11 @@ import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flas
 import { TabView } from 'react-native-tab-view';
 import { ChevronUp } from 'lucide-react-native';
 import type { Category, FeedSource, Topic } from '../types';
-import { topicKey, type ReaderData } from '../readerData';
+import { topicKey } from '../readerData';
 import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, shouldUseReadingFilter } from '../feedCategoryRail';
 import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
 import type { ReadingFilter } from '../feedLogic';
-import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, FloatingIconButton, LoadingState, PillRail } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
@@ -26,8 +26,7 @@ export function FeedScreen({
   feedSource,
   loadMoreFailureSignal,
   loadingMore,
-  readerData,
-  topicListStateInput,
+  topicStateIndex,
   readingFilter,
   refreshing,
   scrollToTopSignal,
@@ -49,8 +48,7 @@ export function FeedScreen({
   feedSource: FeedSource;
   loadMoreFailureSignal: number;
   loadingMore: boolean;
-  readerData: ReaderData;
-  topicListStateInput: NormalizedTopicListStateInput;
+  topicStateIndex: TopicListItemStateIndex;
   readingFilter: ReadingFilter;
   refreshing: boolean;
   scrollToTopSignal: number;
@@ -174,13 +172,13 @@ export function FeedScreen({
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
     <MemoizedTopicCard
-      readerState={getTopicListItemState(readerData, topic, topicListStateInput)}
+      readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
       styles={styles}
       theme={theme}
       topic={topic}
       onOpenTopic={onOpenTopic}
     />
-  ), [onOpenTopic, readerData, styles, theme, topicListStateInput]);
+  ), [onOpenTopic, styles, theme, topicStateIndex]);
   const renderTopicSeparator = useCallback(() => <View style={styles.topicListSeparator} />, [styles]);
   const categoryItems = useMemo(
     () => feedCategoryItems(categories, feedSource),

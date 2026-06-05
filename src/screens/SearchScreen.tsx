@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-nativ
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react-native';
 import type { FeedSource, Source, Topic } from '../types';
-import { topicKey, type ReaderData } from '../readerData';
+import { topicKey } from '../readerData';
 import type { SearchSort } from '../feedLogic';
 import { linuxDoExternalSearchItems } from '../appUtils';
 import {
@@ -14,7 +14,7 @@ import {
   type SearchGroup,
   type SearchListItem
 } from '../searchListItems';
-import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, TOUCH_HIT_SLOP } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
@@ -26,8 +26,7 @@ export function SearchScreen({
   busy,
   query,
   recentSearches,
-  readerData,
-  topicListStateInput,
+  topicStateIndex,
   results,
   searchGroups,
   scope,
@@ -50,8 +49,7 @@ export function SearchScreen({
   busy: boolean;
   query: string;
   recentSearches: string[];
-  readerData: ReaderData;
-  topicListStateInput: NormalizedTopicListStateInput;
+  topicStateIndex: TopicListItemStateIndex;
   results: Topic[];
   searchGroups: SearchGroup[];
   scope: SearchScope;
@@ -75,13 +73,13 @@ export function SearchScreen({
   const renderTopicCard = useCallback((item: Topic) => (
     <MemoizedTopicCard
       highlightQuery={query}
-      readerState={getTopicListItemState(readerData, item, topicListStateInput)}
+      readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
       styles={styles}
       theme={theme}
       topic={item}
       onOpenTopic={onOpenTopic}
     />
-  ), [onOpenTopic, query, readerData, styles, theme, topicListStateInput]);
+  ), [onOpenTopic, query, styles, theme, topicStateIndex]);
   const [searchCategoryFilter, setSearchCategoryFilter] = useState('all');
   const [expandedSearchGroups, setExpandedSearchGroups] = useState<Record<string, boolean>>({});
   useEffect(() => {
@@ -160,7 +158,7 @@ export function SearchScreen({
       return (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{item.group.error}</Text>
-          <AppButton label={`重试 ${item.group.label}`} variant="ghost" styles={styles} onPress={() => onRetrySearchSource(item.group.source)} />
+          <AppButton label={`重试 ${item.group.label}`} variant="ghost" styles={styles} disabled={busy} onPress={() => onRetrySearchSource(item.group.source)} />
         </View>
       );
     }
@@ -309,6 +307,7 @@ export function SearchScreen({
       contentContainerStyle={styles.contentInner}
       data={listItems}
       keyExtractor={keySearchListItem}
+      getItemType={(item) => item.type}
       keyboardShouldPersistTaps="handled"
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}

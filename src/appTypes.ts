@@ -1,5 +1,6 @@
 import type { ComponentProps } from 'react';
 import type RenderHTML from 'react-native-render-html';
+import type { Reply, Topic, TopicDetail } from './types';
 
 export type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic' | 'user';
 export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
@@ -21,5 +22,18 @@ export interface ReplyTarget {
   authorId?: string;
   commentId?: number;
 }
+
+export type TopicSnapshot = {
+  selectedTopic: Topic | null;
+  topicDetail: TopicDetail | null;
+  topicReplies: Reply[];
+  topicError: string;
+  replyHasMore: boolean;
+  replyNextPage: number | null;
+  replyNextOffset: number | null;
+  unreadReplyCount: number;
+  commentQuery: string;
+  replyFilter: ReplyFilter;
+};
 
 export type YaohuoReplyTarget = ReplyTarget;

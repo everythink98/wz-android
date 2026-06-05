@@ -8,8 +8,7 @@ import type { Topic, UserProfile } from '../types';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { imageSourceFromUrl } from '../htmlImages';
-import { getTopicListItemState, type NormalizedTopicListStateInput } from '../topicListItemState';
-import type { ReaderData } from '../readerData';
+import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
@@ -81,11 +80,10 @@ export function UserScreen({
   error,
   followed,
   profile,
-  readerData,
   requestedUser,
   styles,
   theme,
-  topicListStateInput,
+  topicStateIndex,
   loadingMoreTopics,
   onBack,
   onLoadMoreTopics,
@@ -98,11 +96,10 @@ export function UserScreen({
   error: string;
   followed: boolean;
   profile: UserProfile | null;
-  readerData: ReaderData;
   requestedUser: UserProfile | null;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  topicListStateInput: NormalizedTopicListStateInput;
+  topicStateIndex: TopicListItemStateIndex;
   loadingMoreTopics: boolean;
   onBack: () => void;
   onLoadMoreTopics: () => void;
@@ -170,7 +167,7 @@ export function UserScreen({
     }
     return (
       <MemoizedTopicCard
-        readerState={getTopicListItemState(readerData, item.topic, topicListStateInput)}
+        readerState={getTopicListItemStateFromIndex(topicStateIndex, item.topic)}
         styles={styles}
         theme={theme}
         topic={item.topic}
@@ -178,7 +175,7 @@ export function UserScreen({
         onOpenTopic={onOpenTopic}
       />
     );
-  }, [busy, error, followTarget, followed, onOpenOriginal, onOpenTopic, onToggleFollow, profile, readerData, styles, theme, topicListStateInput, topics.length, user]);
+  }, [busy, error, followTarget, followed, onOpenOriginal, onOpenTopic, onToggleFollow, profile, styles, theme, topicStateIndex, topics.length, user]);
 
   if (!user) {
     return <EmptyText text="未选择用户" styles={styles} />;
@@ -200,11 +197,12 @@ export function UserScreen({
         contentContainerStyle={styles.contentInner}
         data={listItems}
         keyExtractor={(item) => item.key}
+        getItemType={(item) => item.type}
         keyboardShouldPersistTaps="handled"
         {...TOPIC_LIST_PERFORMANCE_PROPS}
         ListFooterComponent={profile?.hasMoreTopics ? (
           <View style={styles.actions}>
-            <AppButton label={loadingMoreTopics ? '正在加载...' : '加载更多帖子'} styles={styles} disabled={loadingMoreTopics} onPress={requestUserTopicLoadMore} />
+            <AppButton label={loadingMoreTopics ? '正在加载...' : '加载更多帖子'} styles={styles} disabled={busy || loadingMoreTopics} onPress={requestUserTopicLoadMore} />
           </View>
         ) : null}
         onEndReached={handleEndReached}

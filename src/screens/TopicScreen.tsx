@@ -25,8 +25,6 @@ import {
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
 import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsDown, ThumbsUp, X, type LucideIcon } from 'lucide-react-native';
-import type { ReaderData } from '../readerData';
-import { isFavorite } from '../readerData';
 import type { AccessRequirement, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
@@ -348,12 +346,6 @@ function PollBlockList({
   );
 }
 
-function nodeSeekReplyPassiveStats(item: Pick<Reply, 'dislikeCount'>) {
-  return [
-    visibleNodeSeekStat('反对', item.dislikeCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
-}
-
 function NodeSeekStatPill({
   label,
   styles,
@@ -536,7 +528,6 @@ export function TopicScreen({
   loadingQuotedFloorsRef,
   commentQuery,
   quoteStateVersion,
-  readerData,
   replyComposerOpen,
   replyContent,
   replyFilter,
@@ -550,6 +541,7 @@ export function TopicScreen({
   topic,
   topicBusy,
   topicError,
+  topicFavorite,
   topicScrollRef,
   unreadReplyCount,
   onBack,
@@ -594,7 +586,6 @@ export function TopicScreen({
   loadingQuotedFloorsRef: RefObject<Record<string, boolean>>;
   commentQuery: string;
   quoteStateVersion: number;
-  readerData: ReaderData;
   replyComposerOpen: boolean;
   replyContent: string;
   replyFilter: ReplyFilter;
@@ -608,6 +599,7 @@ export function TopicScreen({
   topic: TopicDetail | null;
   topicBusy: boolean;
   topicError: string;
+  topicFavorite: boolean;
   topicScrollRef: RefObject<FlatList<TopicListItem> | null>;
   unreadReplyCount: number;
   onBack: () => void;
@@ -976,9 +968,9 @@ export function TopicScreen({
           ) : null}
           {canWriteNodeSeek ? (
             <View style={styles.topicPrimaryActions}>
-              <DetailActionButton active={Boolean(topic?.upvoted)} accessibilityLabel={topic?.upvoted ? '取消赞' : '点赞'} count={topic?.upvoteCount} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
-              <DetailActionButton active={Boolean(topic?.liked)} accessibilityLabel={topic?.liked ? '取消鸡腿' : '加鸡腿'} count={topic?.likeCount} icon={Drumstick} label="鸡腿" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
-              <DetailActionButton active={Boolean(topic?.disliked)} accessibilityLabel={topic?.disliked ? '取消反对' : '反对'} count={topic?.dislikeCount} icon={ThumbsDown} label="反对" pending={isOptimisticActionPending(topic?.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.upvoted)} accessibilityLabel={topic?.upvoted ? '已点赞' : '点赞'} count={topic?.upvoteCount} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.liked)} accessibilityLabel={topic?.liked ? '已加鸡腿' : '加鸡腿'} count={topic?.likeCount} icon={Drumstick} label="鸡腿" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.disliked)} accessibilityLabel={topic?.disliked ? '已反对' : '反对'} count={topic?.dislikeCount} icon={ThumbsDown} label="反对" pending={isOptimisticActionPending(topic?.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', topic?.commentId)} />
               <DetailActionButton active={Boolean(topic?.collected)} accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'} count={topic?.collectionCount} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'collection')} styles={styles} theme={theme} disabled={actionBusy} onPress={onNodeSeekCollection} />
             </View>
           ) : null}
@@ -1182,7 +1174,7 @@ export function TopicScreen({
           <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
           <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
           <View style={styles.topicTopActions}>
-            <IconButton iconOnly ghost icon={Star} label={isFavorite(readerData, item) ? '已收藏' : '收藏'} styles={styles} theme={theme} active={isFavorite(readerData, item)} onPress={() => onToggleFavorite(item)} />
+            <IconButton iconOnly ghost icon={Star} label={topicFavorite ? '已收藏' : '收藏'} styles={styles} theme={theme} active={topicFavorite} onPress={() => onToggleFavorite(item)} />
             <IconButton iconOnly ghost icon={MoreHorizontal} label="更多操作" styles={styles} theme={theme} active={topicMenuOpen} onPress={() => setTopicMenuOpen((value) => !value)} />
           </View>
         </View>
@@ -1321,7 +1313,6 @@ function ReplyCard({
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
-  const nodeSeekReplyPassiveStatItems = source === 'nodeseek' ? nodeSeekReplyPassiveStats(reply) : [];
   const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply) : [];
   const replyTargetUser = source && reply.replyTargetAuthor ? {
     source,
@@ -1500,9 +1491,9 @@ function ReplyCard({
         {canWrite && source === 'nodeseek' ? (
           <View style={styles.replyActionRow}>
             <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '取消赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '取消鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-            <DetailActionButton alignStart active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '取消反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
+            <DetailActionButton alignStart active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
+            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+            <DetailActionButton alignStart active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
           </View>
         ) : null}
         {canWrite && source === 'yaohuo' ? (

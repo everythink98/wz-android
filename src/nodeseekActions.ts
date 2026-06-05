@@ -7,6 +7,15 @@ export interface NodeSeekActionRequest {
 
 type NodeSeekInteractionType = 'upvote' | 'like' | 'dislike';
 
+export function nodeSeekInteractionRemovalMessage(type: NodeSeekInteractionType) {
+  const labels: Record<NodeSeekInteractionType, string> = {
+    upvote: '点赞',
+    like: '鸡腿',
+    dislike: '反对'
+  };
+  return `NodeSeek 原站不支持取消${labels[type]}`;
+}
+
 function cleanPositiveInteger(value: string | number, name: string) {
   const number = typeof value === 'number' ? value : Number(String(value).trim());
   if (!Number.isInteger(number) || number <= 0) {
@@ -73,6 +82,9 @@ export function buildNodeSeekInteractionRequest({
   commentId: string | number;
   active?: boolean;
 }): NodeSeekActionRequest {
+  if (active) {
+    throw new Error(nodeSeekInteractionRemovalMessage(type));
+  }
   const paths: Record<NodeSeekInteractionType, string> = {
     upvote: '/api/statistics/upvote',
     like: '/api/statistics/like',
@@ -86,7 +98,7 @@ export function buildNodeSeekInteractionRequest({
     },
     body: JSON.stringify({
       commentId: cleanPositiveInteger(commentId, '评论 id'),
-      action: active ? 'remove' : 'add'
+      action: 'add'
     })
   };
 }

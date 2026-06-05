@@ -5,6 +5,8 @@ const packageJson = JSON.parse(readProjectFile('android-app', 'package.json')) a
   dependencies?: Record<string, string>;
 };
 const appSource = readProjectFile('android-app', 'App.tsx');
+const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
 const imagePreviewSource = readProjectFile('android-app', 'src', 'components', 'ImagePreviewModal.tsx');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
@@ -71,8 +73,8 @@ describe('Android mature component replacements', () => {
   it('uses TanStack Query only for low-risk category and status read trials', () => {
     expect(appSource).toContain("import { QueryClient } from '@tanstack/react-query';");
     expect(appSource).toContain('const queryClientRef = useRef(new QueryClient');
-    expect(appSource).toContain("queryKey: ['android-categories'");
-    expect(appSource).toContain("queryKey: ['android-status'");
+    expect(feedControllerSource).toContain("queryKey: ['android-categories'");
+    expect(backupStatusControllerSource).toContain("queryKey: ['android-status'");
     expect(appSource).not.toContain("queryKey: ['android-topic'");
     expect(appSource).not.toContain("queryKey: ['android-replies'");
   });

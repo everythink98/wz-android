@@ -29,12 +29,9 @@ import { CommonActions, DarkTheme, DefaultTheme, NavigationContainer, StackActio
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
-import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
@@ -50,6 +47,7 @@ import {
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
+  nodeSeekInteractionRemovalMessage,
   type NodeSeekActionRequest
 } from './src/nodeseekActions';
 import { runNodeSeekAction } from './src/nodeseekActionClient';
@@ -63,52 +61,37 @@ import {
 import { runYaohuoAction } from './src/yaohuoActionClient';
 import {
   DEFAULT_NODESEEK_ANDROID_USER_AGENT,
-  buildCookieHeader,
-  canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
   parseNodeSeekDocumentCookie,
-  removeNodeSeekLoginCookies,
   sanitizeNodeSeekUserAgent,
   summarizeNodeSeekCookies
 } from './src/nodeseekCookies';
 import { readNodeSeekCookiesFromWebView } from './src/nodeseekCookieBridge';
 import {
   buildYaohuoCookieHeader,
-  buildYaohuoSetCookieHeaders,
   canStoreYaohuoCookieHeader,
   mergeYaohuoCookies,
   summarizeYaohuoCookies,
   type YaohuoNativeCookie
 } from './src/yaohuoCookies';
 import {
-  getCategories,
-  getFeed,
-  getReply,
-  getReplies,
-  getTopic,
-  getUserProfile,
-  searchTopics
-} from './src/forumApi';
-import {
   clearRecords,
-  createEmptyReaderData,
-  recordHistory,
   removeFollowedUsers,
   removeRecords,
-  sanitizeReaderData,
   toggleFavorite,
   toggleFollowedUser,
-  isUserFollowed,
   topicKey,
-  updateFavoriteTopic,
-  updateProgress,
-  type FollowedUserRecord,
-  type ReaderData,
   type ReaderSettings,
   type TopicRecord
 } from './src/readerData';
-import { loadReaderData, saveReaderData } from './src/readerDataStore';
-import { exportReaderBackupJson, importReaderBackupJson } from './src/readerBackup';
+import { useReaderDataController } from './src/app/useReaderDataController';
+import { useBackupStatusController } from './src/app/useBackupStatusController';
+import { useFeedController } from './src/app/useFeedController';
+import { useHtmlRenderingController } from './src/app/useHtmlRenderingController';
+import { useSearchController } from './src/app/useSearchController';
+import { useSessionController, type LinuxDoBrowserFetchRequest, type NodeSeekBrowserFetchRequest } from './src/app/useSessionController';
+import { useTopicController } from './src/app/useTopicController';
+import { useUserController } from './src/app/useUserController';
 import {
   buildLinuxDoBookmarkRequest,
   buildLinuxDoLikeRequest,
@@ -116,14 +99,13 @@ import {
   buildLinuxDoReplyRequest,
   type LinuxDoActionRequest
 } from './src/linuxdoActions';
-import { checkLinuxDoLoginAccess, runLinuxDoAction } from './src/linuxdoActionClient';
+import { runLinuxDoAction } from './src/linuxdoActionClient';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   buildLinuxDoCookieHeader,
   canAcceptLinuxDoAccessUpdate,
   canStoreLinuxDoAccess,
   canStoreLinuxDoClearance,
-  canStoreLinuxDoLogin,
   clearLinuxDoAccess,
   clearLinuxDoSavedClearance,
   clearLinuxDoWebViewClearance,
@@ -137,7 +119,7 @@ import {
   sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
 } from './src/linuxdoCookieBridge';
-import type { Category, FeedResponse, FeedSource, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from './src/types';
+import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from './src/types';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
@@ -152,12 +134,11 @@ import {
   type OptimisticActionState,
   type InteractionType
 } from './src/topicActionState';
-import { createImagePreviewList, dataImageFileFromUrl, extractImageUrlsFromHtml, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, markInlineSizedImageHtml, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
-import { clearCookieUrls } from './src/cookieCleanup';
+import { createImagePreviewList, dataImageFileFromUrl, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
+import { filterRepliesWithImages } from './src/topicDerivedData';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
-import { NODESEEK_URL, YAOHUO_URL } from './src/appUrls';
-import { feedSources, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './src/feedCategoryRail';
-import { type NormalizedTopicListStateInput } from './src/topicListItemState';
+import { YAOHUO_URL } from './src/appUrls';
+import { createTopicListItemStateIndex } from './src/topicListItemState';
 import {
   contentWidthValue,
   createStyles,
@@ -165,65 +146,32 @@ import {
   fontFamilyValue,
   lineHeightMultiplier
 } from './src/theme';
-import {
-  applyFeedFilter,
-  mergeCategories,
-  mergeFeedResponses,
-  mergeReplies,
-  mergeTopics,
-  nextFeedPageState,
-  searchLocal,
-  shouldFetchAggregatedBaseFeed,
-  sortTopicsByCreatedAt,
-  type LibraryTab,
-  type ReadingFilter,
-  type SearchSort
-} from './src/feedLogic';
+import type { LibraryTab } from './src/feedLogic';
 import {
   errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
   isLinuxDoCloudflareError,
-  isNodeSeekCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
   parseForumTopicLink,
-  sourceLabel,
   startAbortableRequest
 } from './src/appUtils';
-import {
-  checkYaohuoLoginDirect,
-  getYaohuoFeedDirect,
-  getYaohuoRepliesDirect,
-  getYaohuoTopicDirect,
-  searchYaohuoDirect
-} from './src/yaohuoApi';
-import type { Fetcher } from './src/request';
-import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from './src/linuxdoFetchFallback';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekRequestUrl } from './src/nodeseekFetchFallback';
+import { checkYaohuoLoginDirect } from './src/yaohuoApi';
 import { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from './src/linuxdoLevel';
-import { filterRepliesByQuery, REPLY_PAGE_SIZE, replyRefreshTarget } from './src/androidFeatureHelpers';
+import { filterRepliesByQuery } from './src/androidFeatureHelpers';
 import { safeFileName } from './src/backupFiles';
-import { buildLocalStatusResult } from './src/statusLogic';
 import { TabBarIcon, tabNavItems } from './src/components/NavBar';
 import { triggerPressFeedback } from './src/components/AppControls';
 import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
 import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedLinuxDoVerifyModal, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
-import type { HealthDetail, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen } from './src/appTypes';
+import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from './src/appTypes';
 import { LibraryScreen } from './src/screens/LibraryScreen';
-import { SearchScreen, type SearchScope } from './src/screens/SearchScreen';
+import { SearchScreen } from './src/screens/SearchScreen';
 import { UserScreen } from './src/screens/UserScreen';
-import { nodeSeekUserIdFromValue, topicWithAuthorFallback } from './src/userNavigation';
-import type { SearchGroup } from './src/searchListItems';
 
-type NodeSeekBrowserFetchRequest = {
-  id: number;
-  url: string;
-  cookie?: string;
-  userAgent?: string;
-};
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
@@ -232,12 +180,6 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   abortHandler?: () => void;
   httpErrorStatus?: number;
 };
-type LinuxDoBrowserFetchRequest = {
-  id: number;
-  url: string;
-  cookie?: string;
-  userAgent?: string;
-};
 type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
@@ -245,27 +187,6 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
-};
-type FeedSourceState = {
-  hasMore: boolean;
-  items: Topic[];
-  loadMoreFailureSignal: number;
-  loadingMore: boolean;
-  nextCursor?: string;
-  page: number;
-  refreshing: boolean;
-};
-type TopicSnapshot = {
-  selectedTopic: Topic | null;
-  topicDetail: TopicDetail | null;
-  topicReplies: Reply[];
-  topicError: string;
-  replyHasMore: boolean;
-  replyNextPage: number | null;
-  replyNextOffset: number | null;
-  unreadReplyCount: number;
-  commentQuery: string;
-  replyFilter: ReplyFilter;
 };
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
@@ -305,98 +226,8 @@ function isNodeSeekLoginRequiredError(error: unknown) {
     && (error as { loginRequired?: unknown }).loginRequired
   );
 }
-function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
-  const target = name.toLowerCase();
-  if (!headers) {
-    return undefined;
-  }
-  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
-    return headers.get(name) || undefined;
-  }
-  if (Array.isArray(headers)) {
-    const pair = headers.find(([key]) => key.toLowerCase() === target);
-    return pair ? String(pair[1]) : undefined;
-  }
-  const value = Object.entries(headers).find(([key]) => key.toLowerCase() === target)?.[1];
-  return typeof value === 'string' ? value : undefined;
-}
 
-function nodeSeekBrowserResponse(html: string, challenge: boolean, httpErrorStatus?: number) {
-  const status = challenge ? 403 : httpErrorStatus || 200;
-  const headerValues: Record<string, string> = {
-    'content-type': 'text/html'
-  };
-  if (challenge) {
-    headerValues['cf-mitigated'] = 'challenge';
-  }
-  if (typeof Response !== 'undefined') {
-    return new Response(html, {
-      status,
-      headers: headerValues
-    });
-  }
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: {
-      get: (name: string) => headerValues[name.toLowerCase()] || null
-    },
-    text: () => Promise.resolve(html)
-  } as Response;
-}
-
-function linuxDoBrowserResponse(body: string, challenge: boolean, httpErrorStatus?: number) {
-  const status = challenge ? 403 : httpErrorStatus || 200;
-  const isJson = /^\s*[{[]/.test(body);
-  const headerValues: Record<string, string> = {
-    'content-type': isJson ? 'application/json' : 'text/html'
-  };
-  if (challenge) {
-    headerValues['cf-mitigated'] = 'challenge';
-  }
-  if (typeof Response !== 'undefined') {
-    return new Response(body, {
-      status,
-      headers: headerValues
-    });
-  }
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: {
-      get: (name: string) => headerValues[name.toLowerCase()] || null
-    },
-    text: () => Promise.resolve(body)
-  } as Response;
-}
-
-function cleanupNodeSeekBrowserFetchRequest(request: PendingNodeSeekBrowserFetchRequest) {
-  if (request.timeout) {
-    clearTimeout(request.timeout);
-    request.timeout = undefined;
-  }
-  if (request.abortSignal && request.abortHandler) {
-    request.abortSignal.removeEventListener('abort', request.abortHandler);
-  }
-}
-
-function cleanupLinuxDoBrowserFetchRequest(request: PendingLinuxDoBrowserFetchRequest) {
-  if (request.timeout) {
-    clearTimeout(request.timeout);
-    request.timeout = undefined;
-  }
-  if (request.abortSignal && request.abortHandler) {
-    request.abortSignal.removeEventListener('abort', request.abortHandler);
-  }
-}
-
-const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
-const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
-const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
-const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
-const PROGRESS_SAVE_DEBOUNCE_MS = 650;
-const PROGRESS_SAVE_MAX_PENDING_MS = 2000;
 const NAVIGATION_DEFERRED_TASK_FALLBACK_MS = 420;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
@@ -406,50 +237,10 @@ const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 const YAOHUO_DEFAULT_CLASS_ID = '177';
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
-const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
-const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
-
-function yaohuoCookieMapFromHeader(cookieHeader: string) {
-  const cookies: Record<string, YaohuoNativeCookie> = {};
-  for (const setCookieHeader of buildYaohuoSetCookieHeaders(cookieHeader)) {
-    const cookiePart = setCookieHeader.split(';', 1)[0] || '';
-    const separatorIndex = cookiePart.indexOf('=');
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const name = cookiePart.slice(0, separatorIndex).trim();
-    const value = cookiePart.slice(separatorIndex + 1).trim();
-    if (name && value) {
-      cookies[name] = { name, value, domain: 'yaohuo.me' };
-    }
-  }
-  return cookies;
-}
-
-function createFeedSourceState(): FeedSourceState {
-  return {
-    hasMore: false,
-    items: [],
-    loadMoreFailureSignal: 0,
-    page: 1,
-    refreshing: false,
-    loadingMore: false
-  };
-}
-
-function createFeedStates(): Record<FeedSource, FeedSourceState> {
-  return {
-    all: createFeedSourceState(),
-    v2ex: createFeedSourceState(),
-    linuxdo: createFeedSourceState(),
-    nodeseek: createFeedSourceState(),
-    yaohuo: createFeedSourceState()
-  };
-}
 
 const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
@@ -558,18 +349,6 @@ function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
 }
 
-function searchHistoryFromRaw(raw: string | null) {
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).slice(0, 20) : [];
-  } catch {
-    return [];
-  }
-}
-
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
 }
@@ -592,35 +371,16 @@ export default function App() {
   const nodeSeekLoginPanelRequestRef = useRef(0);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
-  const saveQueueRef = useRef(Promise.resolve());
-  const feedRequestIdRef = useRef(0);
-  const feedSourceRequestIdRef = useRef<Partial<Record<FeedSource, number>>>({});
-  const feedLoadingRef = useRef(false);
-  const feedAbortRef = useRef<AbortController | null>(null);
-  const categoriesRequestIdRef = useRef(0);
-  const categoriesAbortRef = useRef<AbortController | null>(null);
-  const searchRequestIdRef = useRef(0);
-  const searchAbortRef = useRef<AbortController | null>(null);
   const topicRequestIdRef = useRef(0);
   const topicAbortRef = useRef<AbortController | null>(null);
-  const userRequestIdRef = useRef(0);
-  const userAbortRef = useRef<AbortController | null>(null);
-  const userLoadingMoreCursorRef = useRef<string | null>(null);
-  const backupRequestIdRef = useRef(0);
-  const backupAbortRef = useRef<AbortController | null>(null);
-  const statusRequestIdRef = useRef(0);
-  const statusAbortRef = useRef<AbortController | null>(null);
   const checkingRequestIdRef = useRef(0);
   const actionRequestIdRef = useRef(0);
   const actionAbortRef = useRef<AbortController | null>(null);
-  const progressSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const progressMaxSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const topicScrollRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigationTransitionTaskRef = useRef<(() => void) | null>(null);
   const navigationTransitionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigationInteractionTaskRef = useRef<DeferredNavigationTask | null>(null);
   const navigationInteractionTaskIdRef = useRef(0);
-  const pendingProgressRef = useRef<{ topic: Topic; percent: number; scrollY: number } | null>(null);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
@@ -663,6 +423,16 @@ export default function App() {
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
+  const notify = useCallback((message: string) => {
+    if (!message) {
+      return;
+    }
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(message, ToastAndroid.SHORT);
+    } else {
+      console.log(message);
+    }
+  }, []);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
   const [loadingLinuxDoPage, setLoadingLinuxDoPage] = useState(true);
@@ -675,11 +445,7 @@ export default function App() {
   const [linuxDoLevelError, setLinuxDoLevelError] = useState('');
   const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [feedBusy, setFeedBusy] = useState(false);
-  const [searchBusy, setSearchBusy] = useState(false);
   const [topicBusy, setTopicBusy] = useState(false);
-  const [statusBusy, setStatusBusy] = useState(false);
-  const [backupBusy, setBackupBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
   const [cookieNames, setCookieNames] = useState<string[]>([]);
@@ -695,9 +461,17 @@ export default function App() {
   const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(null);
   const [linuxDoBrowserFetchRequest, setLinuxDoBrowserFetchRequest] = useState<LinuxDoBrowserFetchRequest | null>(null);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
-  const [backupJson, setBackupJson] = useState('');
-  const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
-  const [readerDataLoaded, setReaderDataLoaded] = useState(false);
+  const {
+    clearReaderDataTimers,
+    commitReaderData,
+    flushPendingProgress,
+    queueProgressSave,
+    readerData,
+    readerDataLoaded,
+    readerDataRef,
+    replaceReaderData,
+    waitForReaderDataSave
+  } = useReaderDataController({ notify, screenRef });
 
   const resetLinuxDoLevelState = useCallback(() => {
     linuxDoLevelRequestIdRef.current += 1;
@@ -706,39 +480,17 @@ export default function App() {
     setLinuxDoLevelBusy(false);
   }, []);
 
-  const readerDataRef = useRef<ReaderData>(readerData);
-  const readerDataStateRef = useRef<ReaderData>(readerData);
   const optimisticTopicActionsRef = useRef<Record<string, OptimisticActionState>>({});
-  const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [tabScrollToTopSignals, setTabScrollToTopSignals] = useState<Record<keyof MainTabParamList, number>>({
     feed: 0,
     search: 0,
     library: 0,
     more: 0
   });
-  const [feedStates, setFeedStates] = useState<Record<FeedSource, FeedSourceState>>(() => createFeedStates());
-  const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
-  const [categoryFilter, setCategoryFilter] = useState('');
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [searchQuery, setSearchQuery] = useState('');
-  const searchQueryRef = useRef(searchQuery);
-  const [searchSource, setSearchSource] = useState<FeedSource>('all');
-  const [searchScope, setSearchScope] = useState<SearchScope>('remote');
-  const runSearchRef = useRef<((sourceOverride?: Source) => Promise<void>) | null>(null);
-  const [searchSort, setSearchSort] = useState<SearchSort>('relevance');
-  const [searchItems, setSearchItems] = useState<Topic[]>([]);
-  const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
   const [topicError, setTopicError] = useState('');
-  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [userBusy, setUserBusy] = useState(false);
-  const [userLoadingMore, setUserLoadingMore] = useState(false);
-  const [userError, setUserError] = useState('');
   const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
   const topicRepliesRef = useRef<Reply[]>(topicReplies);
   const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
@@ -764,21 +516,11 @@ export default function App() {
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
   const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
-  const [healthSummary, setHealthSummary] = useState('');
-  const [healthDetails, setHealthDetails] = useState<HealthDetail[]>([]);
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   screenRef.current = screen;
-  if (readerDataStateRef.current !== readerData) {
-    readerDataStateRef.current = readerData;
-    readerDataRef.current = readerData;
-  }
-  const searchGroupsRef = useRef<SearchGroup[]>(searchGroups);
-  searchGroupsRef.current = searchGroups;
   topicRepliesRef.current = topicReplies;
   showLoginPanelRef.current = showLoginPanel;
   showLinuxDoPanelRef.current = showLinuxDoPanel;
-  const currentTopic = topicDetail || selectedTopic;
-  currentTopicKeyRef.current = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   useEffect(() => {
     setTopicDetail((current) => {
       if (!current || current.replies === topicReplies) {
@@ -868,52 +610,6 @@ export default function App() {
     setLoadingQuotedFloors({});
     setQuoteStateVersion((current) => current + 1);
   }, [abortQuotedReplyRequests]);
-
-  useEffect(() => {
-    let active = true;
-    AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
-      .then((raw) => {
-        if (active) {
-          setRecentSearches(searchHistoryFromRaw(raw));
-          setRecentSearchesLoaded(true);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setRecentSearchesLoaded(true);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  useEffect(() => {
-    if (!recentSearchesLoaded) {
-      return;
-    }
-    void AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(recentSearches)).catch(() => undefined);
-  }, [recentSearches, recentSearchesLoaded]);
-
-  const addRecentSearch = useCallback((query: string) => {
-    const clean = query.trim();
-    if (!clean) {
-      return;
-    }
-    setRecentSearches((current) => {
-      const next = [
-        clean,
-        ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
-      ].slice(0, 20);
-      return next;
-    });
-  }, []);
-
-  const removeRecentSearch = useCallback((query: string) => {
-    setRecentSearches((current) => {
-      const next = current.filter((item) => item !== query);
-      return next;
-    });
-  }, []);
 
   const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings]);
   const navigationTheme = useMemo(() => {
@@ -1080,79 +776,91 @@ export default function App() {
   ], []);
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
 
-  const loginState = useMemo(() => {
-    if (webLoginUserId) {
-      return `网页已确认登录：用户 ${webLoginUserId}`;
-    }
-    if (!hasNodeSeekCookie && cookieNames.length === 0) {
-      return '未检测到 NodeSeek 验证信息';
-    }
-    if (hasNodeSeekLoginCookie) {
-      return cookieNames.length === 0 ? '已保存 NodeSeek 登录 Cookie' : `已检测登录 Cookie：${cookieNames.join(', ')}`;
-    }
-    if (cookieNames.length === 0) {
-      return '已保存 NodeSeek 验证信息';
-    }
-    return `已检测验证 Cookie：${cookieNames.join(', ')}`;
-  }, [cookieNames, hasNodeSeekCookie, hasNodeSeekLoginCookie, webLoginUserId]);
-
-  const yaohuoLoginState = useMemo(() => {
-    if (hasYaohuoCookie) {
-      return yaohuoCookieNames.length ? `已登录：${yaohuoCookieNames.join(', ')}` : '已登录';
-    }
-    if (yaohuoCookieNames.length) {
-      return `未登录，已检测 ${yaohuoCookieNames.length} 个 Cookie：${yaohuoCookieNames.join(', ')}`;
-    }
-    return '未登录';
-  }, [hasYaohuoCookie, yaohuoCookieNames]);
-
-  const activeFeedState = feedStates[feedSource];
-  const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
-  const shownFeedItems = useMemo(
-    () => applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
-    [activeFeedState.items, feedSource, readerData, readingFilter]
-  );
+  const {
+    clearNodeSeekLoginCookiesOnly,
+    clearNodeSeekLoginState,
+    clearYaohuoLoginState,
+    completeLinuxDoBrowserFetch,
+    completeNodeSeekBrowserFetch,
+    failLinuxDoBrowserFetchById,
+    failNodeSeekBrowserFetchById,
+    forumFetchWithWebViewFallback,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    loginState,
+    restoreSavedYaohuoCookiesToWebView,
+    saveNodeSeekCookieHeader,
+    yaohuoLoginState
+  } = useSessionController({
+    cookieNames,
+    hasNodeSeekCookie,
+    hasNodeSeekLoginCookie,
+    hasYaohuoCookie,
+    linuxDoBrowserFetchCurrentRef,
+    linuxDoBrowserFetchIdRef,
+    linuxDoBrowserFetchQueueRef,
+    linuxDoBrowserWebViewRef,
+    linuxDoClearanceBeforeVerifyRef,
+    linuxDoWebViewCookieHeaderRef,
+    linuxDoWebViewUserAgentRef,
+    nodeSeekBrowserFetchCurrentRef,
+    nodeSeekBrowserFetchIdRef,
+    nodeSeekBrowserFetchQueueRef,
+    nodeSeekBrowserWebViewRef,
+    nodeSeekWebViewCookieHeaderRef,
+    nodeSeekWebViewUserAgentRef,
+    notify,
+    rejectLinuxDoBrowserFetchRef,
+    rejectNodeSeekBrowserFetchRef,
+    setCookieNames,
+    setHasLinuxDoClearance,
+    setHasLinuxDoLogin,
+    setHasNodeSeekCookie,
+    setHasNodeSeekLoginCookie,
+    setHasYaohuoCookie,
+    setLinuxDoBrowserFetchRequest,
+    setLinuxDoCookieNames,
+    setLinuxDoWebViewCookieHeader,
+    setLinuxDoWebViewUserAgent,
+    setNodeSeekBrowserFetchRequest,
+    setNodeSeekWebViewUserAgent,
+    setWebLoginUserId,
+    setYaohuoCookieNames,
+    setYaohuoLoginCookieHeader,
+    webLoginDetectedRef,
+    webLoginUserId,
+    yaohuoCookieNames
+  });
   const libraryRecords = useMemo(
     () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
     [libraryTab, readerData.favorites, readerData.history]
   );
-  const followedUserRecords = useMemo<FollowedUserRecord[]>(
-    () => Object.values(readerData.followedUsers).sort((left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)),
-    [readerData.followedUsers]
-  );
-  const currentUserFollowed = Boolean((userProfile || selectedUser) && isUserFollowed(readerData, (userProfile || selectedUser) as UserProfile));
-  const visibleSearchItems = useMemo(() => searchItems, [searchItems]);
   const [inlineSizedImageUrls, setInlineSizedImageUrls] = useState<Record<string, true>>({});
   const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
   inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
   useEffect(() => {
     setInlineSizedImageUrls({});
   }, [selectedTopic?.id, selectedTopic?.source]);
+  const { topicImageDeriver } = useHtmlRenderingController(`${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`);
   const filteredReplies = useMemo(() => {
     let base = topicReplies;
     if (replyFilter === 'author') {
       base = topicDetail ? topicReplies.filter((reply) => reply.author === topicDetail.author) : topicReplies;
     } else if (replyFilter === 'images') {
-      const inlineSizedUrls = Object.keys(inlineSizedImageUrls);
-      base = topicReplies.filter((reply) => {
-        const html = inlineSizedUrls.reduce((current, url) => markInlineSizedImageHtml(current, url), reply.contentHtml);
-        return extractImageUrlsFromHtml(html).length > 0;
-      });
+      base = filterRepliesWithImages(topicReplies, inlineSizedImageUrls, topicImageDeriver);
     } else if (replyFilter === 'newest') {
       base = [...topicReplies].reverse();
     }
     return filterRepliesByQuery(base, commentQuery);
-  }, [commentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicReplies]);
+  }, [commentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
   const topicHtmlParts = useMemo(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map((reply) => reply.contentHtml || ''),
     ...Object.values(loadedQuotedReplies).map((reply) => reply.contentHtml || '')
   ].filter(Boolean), [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]);
   const topicHtmlPreviewParts = useMemo(() => (
-    Object.keys(inlineSizedImageUrls).reduce((parts, url) => (
-      parts.map((html) => markInlineSizedImageHtml(html, url))
-    ), topicHtmlParts)
-  ), [inlineSizedImageUrls, topicHtmlParts]);
+    topicHtmlParts.map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
+  ), [inlineSizedImageUrls, topicHtmlParts, topicImageDeriver]);
   const topicHtmlPartsRef = useRef<string[]>(topicHtmlParts);
   topicHtmlPartsRef.current = topicHtmlPreviewParts;
   const markImageInlineSized = useCallback((url: string) => {
@@ -1194,12 +902,6 @@ export default function App() {
       index: Math.max(0, Math.min(index, current.urls.length - 1))
     } : current);
   }, []);
-  const notify = useCallback((message: string) => {
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(message, ToastAndroid.SHORT);
-    }
-  }, []);
-
   const savePreviewImage = useCallback(async () => {
     if (!imagePreview?.urls.length) {
       return;
@@ -1332,83 +1034,20 @@ export default function App() {
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
     return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
-  }, [htmlBaseStyle.lineHeight, markImageInlineSized, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText]);
+  }, [htmlBaseStyle.lineHeight, markImageInlineSized, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText, theme.line]);
   useEffect(() => () => {
-    feedAbortRef.current?.abort();
-    categoriesAbortRef.current?.abort();
-    searchAbortRef.current?.abort();
     topicAbortRef.current?.abort();
-    userAbortRef.current?.abort();
     repliesAbortRef.current?.abort();
-    backupAbortRef.current?.abort();
-    statusAbortRef.current?.abort();
     actionAbortRef.current?.abort();
     clearTopicScrollRestoreTimer();
-    if (progressSaveTimerRef.current) {
-      clearTimeout(progressSaveTimerRef.current);
-    }
-    if (progressMaxSaveTimerRef.current) {
-      clearTimeout(progressMaxSaveTimerRef.current);
-    }
+    clearReaderDataTimers();
     cancelDeferredNavigationTask();
-  }, [cancelDeferredNavigationTask, clearTopicScrollRestoreTimer]);
-
-  const persistReaderData = useCallback((next: ReaderData) => {
-    readerDataRef.current = next;
-    saveQueueRef.current = saveQueueRef.current
-      .catch(() => undefined)
-      .then(() => saveReaderData(next))
-      .then((saved) => {
-        setReaderData((latest) => {
-          if (latest !== next) {
-            return latest;
-          }
-          readerDataRef.current = saved;
-          return saved;
-        });
-      })
-      .catch((error) => notify(errorMessage(error)));
-    return saveQueueRef.current;
-  }, [notify]);
-
-  const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
-    const next = sanitizeReaderData(updater(readerDataRef.current));
-    setReaderData(next);
-    void persistReaderData(next);
-  }, [persistReaderData]);
-
-  const replaceReaderData = useCallback((nextValue: ReaderData) => {
-    const next = sanitizeReaderData(nextValue);
-    setReaderData(next);
-    return persistReaderData(next);
-  }, [persistReaderData]);
-
-  const flushPendingProgress = useCallback(() => {
-    if (progressSaveTimerRef.current) {
-      clearTimeout(progressSaveTimerRef.current);
-      progressSaveTimerRef.current = null;
-    }
-    if (progressMaxSaveTimerRef.current) {
-      clearTimeout(progressMaxSaveTimerRef.current);
-      progressMaxSaveTimerRef.current = null;
-    }
-    const pending = pendingProgressRef.current;
-    pendingProgressRef.current = null;
-    if (!pending) {
-      return;
-    }
-    const next = updateProgress(readerDataRef.current, pending.topic, {
-      percent: pending.percent,
-      scrollY: pending.scrollY
-    });
-    readerDataRef.current = next;
-    if (screenRef.current !== 'topic') {
-      setReaderData(next);
-    }
-    void persistReaderData(next);
-  }, [persistReaderData]);
-  const topicListStateInput = useMemo<NormalizedTopicListStateInput>(() => ({}), []);
-
+  }, [cancelDeferredNavigationTask, clearReaderDataTimers, clearTopicScrollRestoreTimer]);
+  const topicStateIndex = useMemo(() => createTopicListItemStateIndex(readerData), [
+    readerData.favorites,
+    readerData.history,
+    readerData.settings.listDensity
+  ]);
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
       if (next !== 'active') {
@@ -1430,385 +1069,6 @@ export default function App() {
     });
     return () => subscription.remove();
   }, [flushPendingProgress]);
-
-  useEffect(() => {
-    void (async () => {
-      const [savedReaderData, savedCookie, savedNodeSeekUserAgent, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
-        loadReaderData(),
-        SecureStore.getItemAsync(COOKIE_STORAGE_KEY),
-        SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
-        SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
-        loadLinuxDoAccess()
-      ]);
-      setReaderData(savedReaderData);
-      if (savedNodeSeekUserAgent) {
-        const userAgent = sanitizeNodeSeekUserAgent(savedNodeSeekUserAgent);
-        if (userAgent) {
-          nodeSeekWebViewUserAgentRef.current = userAgent;
-          setNodeSeekWebViewUserAgent(userAgent);
-        }
-      }
-      if (savedCookie) {
-        const summary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie));
-        setHasNodeSeekCookie(true);
-        setHasNodeSeekLoginCookie(summary.loggedIn);
-        setCookieNames(summary.names);
-        notify(summary.loggedIn ? '已找到本机保存的 NodeSeek 登录 Cookie。' : '已找到本机保存的 NodeSeek 验证信息。');
-      }
-      if (savedYaohuoCookie) {
-        const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(savedYaohuoCookie));
-        setHasYaohuoCookie(yaohuoSummary.loggedIn);
-        setYaohuoCookieNames(yaohuoSummary.names);
-        setYaohuoLoginCookieHeader(savedYaohuoCookie);
-        notify('已找到本机保存的妖火 Cookie。');
-      }
-      const linuxDoSummary = linuxDoAccessSummary(linuxDoAccess);
-      const linuxDoCookies = parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '');
-      linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(linuxDoCookies) || null;
-      setHasLinuxDoClearance(linuxDoSummary.hasClearance);
-      setHasLinuxDoLogin(linuxDoSummary.loggedIn);
-      setLinuxDoCookieNames(summarizeLinuxDoCookies(linuxDoCookies).names);
-      if (linuxDoAccess?.userAgent) {
-        const userAgent = sanitizeLinuxDoUserAgent(linuxDoAccess.userAgent);
-        if (userAgent) {
-          linuxDoWebViewUserAgentRef.current = userAgent;
-          setLinuxDoWebViewUserAgent(userAgent);
-        }
-      }
-    })()
-      .catch((error) => notify(errorMessage(error)))
-      .finally(() => setReaderDataLoaded(true));
-  }, [notify]);
-
-  const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source) => {
-    if (source !== 'all' && source !== 'yaohuo') {
-      return undefined;
-    }
-    const cookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookie || ''));
-    setHasYaohuoCookie(summary.loggedIn);
-    return cookie || undefined;
-  }, []);
-
-  const saveNodeSeekCookieHeader = useCallback(async (
-    cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    { verifiedByPage = false, isCurrent = () => true }: { verifiedByPage?: boolean; isCurrent?: () => boolean } = {}
-  ) => {
-    const summary = summarizeNodeSeekCookies(cookies);
-    const cookieHeader = buildCookieHeader(cookies);
-    if (!isCurrent()) {
-      return '';
-    }
-    if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
-      await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
-      await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-      if (!isCurrent()) {
-        return '';
-      }
-      setCookieNames(summary.names);
-      setHasNodeSeekLoginCookie(summary.loggedIn);
-      setHasNodeSeekCookie(true);
-      return cookieHeader;
-    }
-    if (!isCurrent()) {
-      return '';
-    }
-    setCookieNames(summary.names);
-    setHasNodeSeekLoginCookie(summary.loggedIn);
-    return '';
-  }, []);
-
-  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source) => {
-    if (source !== 'all' && source !== 'nodeseek') {
-      return undefined;
-    }
-    const cookies = await readNodeSeekCookiesFromWebView();
-    const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || ''), cookies));
-    if (webViewCookieHeader) {
-      return webViewCookieHeader;
-    }
-    if (savedCookie) {
-      const savedCookies = parseNodeSeekDocumentCookie(savedCookie);
-      const summary = summarizeNodeSeekCookies(savedCookies);
-      setCookieNames(summary.names);
-      setHasNodeSeekCookie(true);
-      setHasNodeSeekLoginCookie(summary.loggedIn);
-      return savedCookie;
-    }
-    setHasNodeSeekCookie(false);
-    setHasNodeSeekLoginCookie(false);
-    return undefined;
-  }, [saveNodeSeekCookieHeader]);
-
-  const startNextNodeSeekBrowserFetch = useCallback(() => {
-    if (nodeSeekBrowserFetchCurrentRef.current) {
-      return;
-    }
-    let next: PendingNodeSeekBrowserFetchRequest | null = null;
-    while (nodeSeekBrowserFetchQueueRef.current.length) {
-      const candidate = nodeSeekBrowserFetchQueueRef.current.shift() || null;
-      if (!candidate) {
-        continue;
-      }
-      if (candidate.abortSignal?.aborted) {
-        cleanupNodeSeekBrowserFetchRequest(candidate);
-        candidate.reject(new Error('请求已取消'));
-        continue;
-      }
-      next = candidate;
-      break;
-    }
-    if (next) {
-      next.timeout = setTimeout(() => {
-        rejectNodeSeekBrowserFetchRef.current?.(next, 'NodeSeek 页面读取超时');
-      }, NODESEEK_BROWSER_FETCH_TIMEOUT_MS);
-    }
-    nodeSeekBrowserFetchCurrentRef.current = next;
-    setNodeSeekBrowserFetchRequest(next ? {
-      id: next.id,
-      url: next.url,
-      cookie: next.cookie,
-      userAgent: next.userAgent
-    } : null);
-  }, []);
-
-  const rejectNodeSeekBrowserFetch = useCallback((request: PendingNodeSeekBrowserFetchRequest, message: string) => {
-    const queuedIndex = nodeSeekBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
-    if (queuedIndex >= 0) {
-      nodeSeekBrowserFetchQueueRef.current.splice(queuedIndex, 1);
-    }
-    if (nodeSeekBrowserFetchCurrentRef.current?.id === request.id) {
-      nodeSeekBrowserWebViewRef.current?.stopLoading();
-      nodeSeekBrowserFetchCurrentRef.current = null;
-      setNodeSeekBrowserFetchRequest(null);
-    }
-    cleanupNodeSeekBrowserFetchRequest(request);
-    request.reject(new Error(message));
-    startNextNodeSeekBrowserFetch();
-  }, [startNextNodeSeekBrowserFetch]);
-  rejectNodeSeekBrowserFetchRef.current = rejectNodeSeekBrowserFetch;
-
-  const nodeSeekFetchWithWebView: Fetcher = useCallback((input, init) => {
-    const url = String(input);
-    if (!isNodeSeekRequestUrl(url)) {
-      return fetch(input, init);
-    }
-    return new Promise<Response>((resolve, reject) => {
-      let request: PendingNodeSeekBrowserFetchRequest;
-      const id = ++nodeSeekBrowserFetchIdRef.current;
-      const cookie = requestHeaderValue(init?.headers, 'cookie');
-      const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
-      request = {
-        id,
-        url,
-        cookie,
-        userAgent,
-        resolve,
-        reject,
-        abortSignal: init?.signal || undefined
-      };
-      request.abortHandler = () => {
-        rejectNodeSeekBrowserFetch(request, '请求已取消');
-      };
-      if (request.abortSignal) {
-        if (request.abortSignal.aborted) {
-          rejectNodeSeekBrowserFetch(request, '请求已取消');
-          return;
-        }
-        request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
-      }
-      nodeSeekBrowserFetchQueueRef.current.push(request);
-      startNextNodeSeekBrowserFetch();
-    });
-  }, [rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
-
-  const completeNodeSeekBrowserFetch = useCallback((data: {
-    id?: number;
-    html?: string;
-    cookie?: string;
-    userAgent?: string;
-    challenge?: boolean;
-  }) => {
-    const current = nodeSeekBrowserFetchCurrentRef.current;
-    if (!current || data.id !== current.id) {
-      return;
-    }
-    cleanupNodeSeekBrowserFetchRequest(current);
-    nodeSeekBrowserWebViewRef.current?.stopLoading();
-    nodeSeekBrowserFetchCurrentRef.current = null;
-    setNodeSeekBrowserFetchRequest(null);
-    const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
-    if (userAgent) {
-      nodeSeekWebViewUserAgentRef.current = userAgent;
-      setNodeSeekWebViewUserAgent(userAgent);
-    }
-    if (typeof data.cookie === 'string') {
-      nodeSeekWebViewCookieHeaderRef.current = data.cookie;
-      void CookieManager.flush().then(async () => {
-        const nativeCookies = await readNodeSeekCookiesFromWebView();
-        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')));
-      }).catch(() => undefined);
-    }
-    current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
-    startNextNodeSeekBrowserFetch();
-  }, [saveNodeSeekCookieHeader, startNextNodeSeekBrowserFetch]);
-
-  const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string) => {
-    const current = nodeSeekBrowserFetchCurrentRef.current;
-    if (current?.id === requestId) {
-      rejectNodeSeekBrowserFetch(current, message);
-    }
-  }, [rejectNodeSeekBrowserFetch]);
-
-  const startNextLinuxDoBrowserFetch = useCallback(() => {
-    if (linuxDoBrowserFetchCurrentRef.current) {
-      return;
-    }
-    let next: PendingLinuxDoBrowserFetchRequest | null = null;
-    while (linuxDoBrowserFetchQueueRef.current.length) {
-      const candidate = linuxDoBrowserFetchQueueRef.current.shift() || null;
-      if (!candidate) {
-        continue;
-      }
-      if (candidate.abortSignal?.aborted) {
-        cleanupLinuxDoBrowserFetchRequest(candidate);
-        candidate.reject(new Error('请求已取消'));
-        continue;
-      }
-      next = candidate;
-      break;
-    }
-    if (next) {
-      next.timeout = setTimeout(() => {
-        rejectLinuxDoBrowserFetchRef.current?.(next, 'linux.do 页面读取超时');
-      }, LINUXDO_BROWSER_FETCH_TIMEOUT_MS);
-    }
-    linuxDoBrowserFetchCurrentRef.current = next;
-    setLinuxDoBrowserFetchRequest(next ? {
-      id: next.id,
-      url: next.url,
-      cookie: next.cookie,
-      userAgent: next.userAgent
-    } : null);
-  }, []);
-
-  const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string) => {
-    const queuedIndex = linuxDoBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
-    if (queuedIndex >= 0) {
-      linuxDoBrowserFetchQueueRef.current.splice(queuedIndex, 1);
-    }
-    if (linuxDoBrowserFetchCurrentRef.current?.id === request.id) {
-      linuxDoBrowserWebViewRef.current?.stopLoading();
-      linuxDoBrowserFetchCurrentRef.current = null;
-      setLinuxDoBrowserFetchRequest(null);
-    }
-    cleanupLinuxDoBrowserFetchRequest(request);
-    request.reject(new Error(message));
-    startNextLinuxDoBrowserFetch();
-  }, [startNextLinuxDoBrowserFetch]);
-  rejectLinuxDoBrowserFetchRef.current = rejectLinuxDoBrowserFetch;
-
-  const linuxDoFetchWithWebView: Fetcher = useCallback((input, init) => {
-    const url = String(input);
-    if (!isLinuxDoRequestUrl(url)) {
-      return fetch(input, init);
-    }
-    return new Promise<Response>((resolve, reject) => {
-      let request: PendingLinuxDoBrowserFetchRequest;
-      const id = ++linuxDoBrowserFetchIdRef.current;
-      const cookie = requestHeaderValue(init?.headers, 'cookie');
-      const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
-      request = {
-        id,
-        url,
-        cookie,
-        userAgent,
-        resolve,
-        reject,
-        abortSignal: init?.signal || undefined
-      };
-      request.abortHandler = () => {
-        rejectLinuxDoBrowserFetch(request, '请求已取消');
-      };
-      if (request.abortSignal) {
-        if (request.abortSignal.aborted) {
-          rejectLinuxDoBrowserFetch(request, '请求已取消');
-          return;
-        }
-        request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
-      }
-      linuxDoBrowserFetchQueueRef.current.push(request);
-      startNextLinuxDoBrowserFetch();
-    });
-  }, [rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
-
-  const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({
-    defaultFetcher: fetch,
-    webViewFetcher: nodeSeekFetchWithWebView
-  }), [nodeSeekFetchWithWebView]);
-
-  const forumFetchWithWebViewFallback = useMemo(() => createLinuxDoWebViewFallbackFetcher({
-    defaultFetcher: nodeSeekFetchWithWebViewFallback,
-    webViewFetcher: linuxDoFetchWithWebView
-  }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]);
-
-  const completeLinuxDoBrowserFetch = useCallback((data: {
-    id?: number;
-    body?: string;
-    cookie?: string;
-    userAgent?: string;
-    challenge?: boolean;
-  }) => {
-    const current = linuxDoBrowserFetchCurrentRef.current;
-    if (!current || data.id !== current.id) {
-      return;
-    }
-    cleanupLinuxDoBrowserFetchRequest(current);
-    linuxDoBrowserFetchCurrentRef.current = null;
-    setLinuxDoBrowserFetchRequest(null);
-    const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
-    if (userAgent) {
-      linuxDoWebViewUserAgentRef.current = userAgent;
-      setLinuxDoWebViewUserAgent(userAgent);
-    }
-    if (typeof data.cookie === 'string') {
-      linuxDoWebViewCookieHeaderRef.current = data.cookie;
-      setLinuxDoWebViewCookieHeader(data.cookie);
-      void CookieManager.flush().catch(() => undefined);
-    }
-    current.resolve(linuxDoBrowserResponse(data.body || '', Boolean(data.challenge), current.httpErrorStatus));
-    startNextLinuxDoBrowserFetch();
-  }, [startNextLinuxDoBrowserFetch]);
-
-  const failLinuxDoBrowserFetchById = useCallback((requestId: number, message: string) => {
-    const current = linuxDoBrowserFetchCurrentRef.current;
-    if (current?.id === requestId) {
-      rejectLinuxDoBrowserFetch(current, message);
-    }
-  }, [rejectLinuxDoBrowserFetch]);
-
-  const restoreSavedYaohuoCookiesToWebView = useCallback(async () => {
-    const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    if (!cookieHeader) {
-      setYaohuoLoginCookieHeader('');
-      setYaohuoCookieNames([]);
-      return;
-    }
-    setYaohuoLoginCookieHeader(cookieHeader);
-    const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader));
-    setHasYaohuoCookie(summary.loggedIn);
-    setYaohuoCookieNames(summary.names);
-    const headers = buildYaohuoSetCookieHeaders(cookieHeader);
-    for (const url of YAOHUO_COOKIE_URLS) {
-      for (const header of headers) {
-        await CookieManager.setFromResponse(url, header);
-      }
-    }
-    if (headers.length) {
-      await CookieManager.flush();
-    }
-  }, []);
 
   const closeYaohuoLoginPanel = useCallback(() => {
     yaohuoLoginPanelRequestRef.current += 1;
@@ -2083,620 +1343,94 @@ export default function App() {
     return true;
   }, [notify, refreshLinuxDoClearanceState, rememberLinuxDoClearanceBeforeVerify, showLinuxDoVerification]);
 
-  const clearStoredYaohuoLoginState = useCallback(async () => {
-    await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    setHasYaohuoCookie(false);
-    setYaohuoLoginCookieHeader('');
-    setYaohuoCookieNames([]);
-  }, []);
+  const {
+    activeFeedState,
+    categories,
+    categoryFilter,
+    changeFeedSource,
+    feedAllowsRemotePagination,
+    feedBusy,
+    feedSource,
+    loadFeed,
+    readingFilter,
+    refreshFeed,
+    setCategoryFilter,
+    setReadingFilter,
+    shownFeedItems
+  } = useFeedController({
+    clearYaohuoLoginState,
+    fetcher: forumFetchWithWebViewFallback,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    queryClient: queryClientRef.current,
+    readerData,
+    readerDataLoaded,
+    showNodeSeekVerification,
+    showYaohuoLogin
+  });
 
-  const clearStoredNodeSeekLoginState = useCallback(async () => {
-    await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
-    await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
-    webLoginDetectedRef.current = false;
-    nodeSeekWebViewCookieHeaderRef.current = '';
-    setHasNodeSeekCookie(false);
-    setHasNodeSeekLoginCookie(false);
-    setCookieNames([]);
-    setWebLoginUserId(null);
-    nodeSeekWebViewUserAgentRef.current = DEFAULT_NODESEEK_ANDROID_USER_AGENT;
-    setNodeSeekWebViewUserAgent(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  }, []);
+  const {
+    loadMoreSearchSource,
+    recentSearches,
+    removeRecentSearch,
+    retrySearchSource,
+    runSearch,
+    searchBusy,
+    searchGroups,
+    searchQuery,
+    searchScope,
+    searchSort,
+    searchSource,
+    setSearchQuery,
+    setSearchScope,
+    setSearchSort,
+    setSearchSource,
+    visibleSearchItems
+  } = useSearchController({
+    clearYaohuoLoginState,
+    fetcher: forumFetchWithWebViewFallback,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    readerData,
+    showNodeSeekVerification,
+    showYaohuoLogin
+  });
 
-  const clearYaohuoLoginState = useCallback(async () => {
-    await clearStoredYaohuoLoginState();
-    await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);
-  }, [clearStoredYaohuoLoginState]);
-
-  const clearNodeSeekLoginState = useCallback(async () => {
-    await clearStoredNodeSeekLoginState();
-    await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
-  }, [clearStoredNodeSeekLoginState]);
-
-  const clearNodeSeekLoginCookiesOnly = useCallback(async () => {
-    const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
-    const verificationHeader = buildCookieHeader(verificationCookies);
-    webLoginDetectedRef.current = false;
-    setWebLoginUserId(null);
-    setHasNodeSeekLoginCookie(false);
-    if (canStoreNodeSeekCookieHeader(verificationCookies) && verificationHeader) {
-      await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, verificationHeader);
-      nodeSeekWebViewCookieHeaderRef.current = verificationHeader;
-      await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
-      setHasNodeSeekCookie(true);
-      setCookieNames(summarizeNodeSeekCookies(verificationCookies).names);
-      return;
-    }
-    await clearNodeSeekLoginState();
-  }, [clearNodeSeekLoginState]);
-
-  const loadCategories = useCallback(async (source: FeedSource = 'all') => {
-    const requestId = ++categoriesRequestIdRef.current;
-    const controller = startAbortableRequest(categoriesAbortRef);
-    try {
-      const data = await queryClientRef.current.fetchQuery({
-        queryKey: ['android-categories', source, requestId],
-        queryFn: async () => {
-          const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
-          const data = await getCategories({
-            source,
-            nocache: true,
-            fetcher: forumFetchWithWebViewFallback,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-            signal: controller.signal
-          });
-          return data;
-        }
-      });
-      if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {
-        return;
-      }
-      if (source !== 'all' && !data.items.length) {
-        return;
-      }
-      setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
-      const errors = Object.entries(data.errors || {});
-      if (errors.length) {
-        if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
-          showNodeSeekVerification(data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证');
-          return;
-        }
-        notify(errors.map(([source, message]) => `${sourceLabel(source as Source)}：${message}`).join('；'));
-      }
-    } catch (error) {
-      if (requestId === categoriesRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      finishAbortableRequest(categoriesAbortRef, controller);
-    }
-  }, [forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, notify, showNodeSeekVerification]);
-
-  const markFeedLoadMoreFailed = useCallback((source: FeedSource) => {
-    setFeedStates((current) => ({
-      ...current,
-      [source]: {
-        ...current[source],
-        loadMoreFailureSignal: current[source].loadMoreFailureSignal + 1
-      }
-    }));
-  }, []);
-
-  const loadFeed = useCallback(async ({
-    page = 1,
-    cursor,
-    reset = false,
-    source = feedSource,
-    category = categoryFilter,
-    nocache = false,
-    clearItems = reset && !nocache,
-    successMessage
-  }: {
-    page?: number;
-    cursor?: string;
-    reset?: boolean;
-    source?: FeedSource;
-    category?: string;
-    nocache?: boolean;
-    clearItems?: boolean;
-    successMessage?: string;
-  } = {}) => {
-    if (feedLoadingRef.current && !reset) {
-      return;
-    }
-    const requestSource = source;
-    feedLoadingRef.current = true;
-    const controller = startAbortableRequest(feedAbortRef);
-    const requestId = ++feedRequestIdRef.current;
-    feedSourceRequestIdRef.current[requestSource] = requestId;
-    const isLoadMore = !reset && page > 1;
-    if (!isLoadMore && reset && clearItems) {
-      setFeedStates((current) => ({
-        ...current,
-        [requestSource]: {
-          ...current[requestSource],
-          items: [],
-          page: 1,
-          nextCursor: undefined,
-          hasMore: false
-        }
-      }));
-    }
-    if (isLoadMore) {
-      setFeedStates((current) => ({
-        ...current,
-        [requestSource]: {
-          ...current[requestSource],
-          loadingMore: true
-        }
-      }));
-    } else if (nocache) {
-      setFeedStates((current) => ({
-        ...current,
-        [requestSource]: {
-          ...current[requestSource],
-          refreshing: true
-        }
-      }));
-    }
-    setFeedBusy(true);
-    try {
-      let hasAppliedFeedResponse = false;
-      let appliedFeedResponse: FeedResponse | null = null;
-      const applyFeedResponse = (data: FeedResponse) => {
-        if (requestId !== feedRequestIdRef.current || controller.signal.aborted) {
-          return;
-        }
-        appliedFeedResponse = appliedFeedResponse ? mergeFeedResponses(appliedFeedResponse, data) : data;
-        const shouldResetItems = reset && !hasAppliedFeedResponse;
-        hasAppliedFeedResponse = true;
-        setFeedStates((current) => {
-          const previous = current[requestSource];
-          const nextPageState = nextFeedPageState(previous, appliedFeedResponse as FeedResponse, {
-            requestedPage: page,
-            reset: shouldResetItems
-          });
-          return {
-            ...current,
-            [requestSource]: {
-              ...previous,
-              ...nextPageState
-            }
-          };
-        });
-      };
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(source),
-        loadNodeSeekCookieForSource(source)
-      ]);
-      if (requestId !== feedRequestIdRef.current) {
-        return;
-      }
-      if (source === 'yaohuo' && !yaohuoCookie) {
-        const message = '请先登录妖火。';
-        if (isLoadMore) {
-          markFeedLoadMoreFailed(requestSource);
-        }
-        showYaohuoLogin(isLoadMore ? `加载下一页失败：${message}` : message);
-        return;
-      }
-      let finalErrors: Partial<Record<FeedSource, string>> = {};
-      if (source === 'all' && yaohuoCookie) {
-        const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({ page, cursor, hasYaohuoCookie: true });
-        const basePromise = shouldFetchBaseFeed
-          ? getFeed({
-            source,
-            page,
-            cursor,
-            limit: 30,
-            category: category || undefined,
-            nocache,
-            fetcher: forumFetchWithWebViewFallback,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-            signal: controller.signal
-          })
-          : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-        const yaohuoPromise = getYaohuoFeedDirect({
-          yaohuoCookie,
-          page,
-          limit: 30,
-          signal: controller.signal
-        });
-        void basePromise.then(applyFeedResponse).catch(() => undefined);
-        void yaohuoPromise.then(applyFeedResponse).catch(() => undefined);
-        const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
-        if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
-          throw baseResult.reason;
-        }
-        if (yaohuoResult.status === 'rejected' && isCanceledRequest(yaohuoResult.reason)) {
-          throw yaohuoResult.reason;
-        }
-        if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
-          throw baseResult.reason;
-        }
-        finalErrors = {
-          ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: errorMessage(baseResult.reason) }),
-          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: errorMessage(yaohuoResult.reason) })
-        };
-      } else if (source === 'yaohuo') {
-        const data = await getYaohuoFeedDirect({
-          yaohuoCookie,
-          page,
-          limit: 30,
-          category: category || undefined,
-          signal: controller.signal
-        });
-        if (requestId !== feedRequestIdRef.current) {
-          return;
-        }
-        applyFeedResponse(data);
-        finalErrors = data.errors || {};
-      } else {
-        const data = await getFeed({
-          source,
-          page,
-          cursor,
-          limit: 30,
-          category: category || undefined,
-          nocache,
-          fetcher: forumFetchWithWebViewFallback,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          signal: controller.signal
-        });
-        if (requestId !== feedRequestIdRef.current) {
-          return;
-        }
-        applyFeedResponse(data);
-        finalErrors = data.errors || {};
-      }
-      if (requestId !== feedRequestIdRef.current) {
-        return;
-      }
-      const errors = Object.entries(finalErrors);
-      if (errors.length) {
-        if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
-          const message = finalErrors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证';
-          if (isLoadMore) {
-            markFeedLoadMoreFailed(requestSource);
-          }
-          showNodeSeekVerification(isLoadMore ? `加载下一页失败：${message}` : message);
-          return;
-        }
-        const message = errors.map(([sourceName, error]) => `${sourceLabel(sourceName as Source)}：${error}`).join('；');
-        if (isLoadMore) {
-          markFeedLoadMoreFailed(requestSource);
-          notify(`加载下一页失败：${message}`);
-        } else {
-          notify(message);
-        }
-      } else if (successMessage) {
-        notify(successMessage);
-      }
-    } catch (error) {
-      if (requestId === feedRequestIdRef.current) {
-        const message = errorMessage(error);
-        const notice = isLoadMore ? `加载下一页失败：${message}` : message;
-        if (isLoadMore && !isCanceledRequest(error)) {
-          markFeedLoadMoreFailed(requestSource);
-        }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(notice);
-          }
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(notice);
-          return;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(notice);
-        }
-      }
-    } finally {
-      const isLatestForFeedSource = feedSourceRequestIdRef.current[requestSource] === requestId;
-      if (isLatestForFeedSource) {
-        setFeedStates((current) => ({
-          ...current,
-          [requestSource]: {
-            ...current[requestSource],
-            refreshing: false,
-            loadingMore: false
-          }
-        }));
-      }
-      if (requestId === feedRequestIdRef.current) {
-        setFeedBusy(false);
-        feedLoadingRef.current = false;
-      }
-      finishAbortableRequest(feedAbortRef, controller);
-    }
-  }, [categoryFilter, clearYaohuoLoginState, feedSource, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, markFeedLoadMoreFailed, notify, showNodeSeekVerification, showYaohuoLogin]);
-
-  const loadFeedRef = useRef(loadFeed);
-  useEffect(() => {
-    loadFeedRef.current = loadFeed;
-  }, [loadFeed]);
-
-  useEffect(() => {
-    if (!readerDataLoaded) {
-      return;
-    }
-    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
-  }, [categoryFilter, feedSource, readerDataLoaded]);
-
-  useEffect(() => {
-    void loadCategories();
-  }, [loadCategories]);
-
-  useEffect(() => {
-    if (shouldLoadCategoriesForSource(categories, feedSource)) {
-      void loadCategories(feedSource);
-    }
-  }, [categories, feedSource, loadCategories]);
-
-  const refreshFeed = useCallback(() => {
-    if (feedLoadingRef.current) {
-      notify('列表正在更新');
-      return;
-    }
-    notify('正在更新列表');
-    void loadFeed({ reset: true, page: 1, nocache: true, successMessage: '列表已更新' });
-    void loadCategories();
-  }, [loadCategories, loadFeed, notify]);
-
-  useEffect(() => {
-    searchRequestIdRef.current += 1;
-    searchAbortRef.current?.abort();
-    setSearchItems([]);
-    setSearchGroups([]);
-    setSearchBusy(false);
-  }, [searchQuery, searchScope, searchSource]);
-
-  const runRemoteSearchSource = useCallback(async (source: Source, query: string, page: number, signal: AbortSignal, sort: SearchSort = 'relevance'): Promise<SearchGroup> => {
-    try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(source),
-        loadNodeSeekCookieForSource(source)
-      ]);
-      if (source === 'yaohuo' && !yaohuoCookie) {
-        return { source, label: sourceLabel(source), items: [], error: '未登录', hasMore: false, nextPage: null };
-      }
-      const data = source === 'yaohuo'
-        ? await searchYaohuoDirect({ query, page, limit: 30, yaohuoCookie, signal })
-        : await searchTopics({
-          query,
-          source,
-          page,
-          limit: 30,
-          fetcher: forumFetchWithWebViewFallback,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          sort: source === 'v2ex' ? sort : 'relevance',
-          signal
-        });
-      return {
-        source,
-        label: sourceLabel(source),
-        items: data.items,
-        error: data.errors?.[source],
-        hasMore: Boolean(data.hasMore && data.nextPage),
-        nextPage: data.nextPage ?? null
-      };
-    } catch (error) {
-      if (isCanceledRequest(error)) {
-        throw error;
-      }
-      if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
-        return { source, label: sourceLabel(source), items: [], error: isYaohuoLoginExpiredError(error) ? '登录已失效' : errorMessage(error), hasMore: false, nextPage: null };
-      }
-      return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
-    }
-  }, [forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource]);
-
-  const runSearch = useCallback(async (sourceOverride?: Source) => {
-    const query = searchQuery.trim();
-    if (!query) {
-      notify('请输入搜索词');
-      return;
-    }
-    const controller = startAbortableRequest(searchAbortRef);
-    const requestId = ++searchRequestIdRef.current;
-    const activeSources = sourceOverride
-      ? [sourceOverride]
-      : searchSource === 'all'
-        ? feedSources
-        : [searchSource as Source];
-    const activeSort = searchSource === 'all'
-      ? 'time'
-      : searchSource === 'v2ex' && searchSort === 'time'
-        ? searchSort
-        : 'relevance';
-    if (sourceOverride) {
-      const nextGroups = searchGroupsRef.current.map((group) => (
-        group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }
-      ));
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
-    } else {
-      setSearchItems([]);
-      const nextGroups = searchScope === 'remote'
-        ? activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }))
-        : [];
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
-    }
-    setSearchBusy(true);
-    try {
-      addRecentSearch(query);
-      if (searchScope === 'local') {
-        if (requestId !== searchRequestIdRef.current) {
-          return;
-        }
-        setSearchItems(searchLocal(readerData, query, searchSource));
-        notify('本地搜索完成');
-      } else {
-        await Promise.all(activeSources.map(async (source) => {
-          const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort);
-          if (requestId !== searchRequestIdRef.current) {
-            return;
-          }
-          const nextGroups = searchGroupsRef.current.map((currentGroup) => (
-            currentGroup.source === source ? { ...group, loading: false } : currentGroup
-          ));
-          searchGroupsRef.current = nextGroups;
-          setSearchGroups(nextGroups);
-          const nextItems = searchSource === 'all'
-            ? sortTopicsByCreatedAt(nextGroups.reduce<Topic[]>((items, currentGroup) => mergeTopics(items, currentGroup.items), []))
-            : nextGroups.reduce<Topic[]>((items, currentGroup) => mergeTopics(items, currentGroup.items), []);
-          setSearchItems(nextItems);
-        }));
-        if (requestId !== searchRequestIdRef.current) {
-          return;
-        }
-        const nextGroups = searchGroupsRef.current.map((group) => (
-          activeSources.includes(group.source) ? { ...group, loading: false } : group
-        ));
-        searchGroupsRef.current = nextGroups;
-        setSearchGroups(nextGroups);
-        const mergedItems = searchSource === 'all'
-          ? sortTopicsByCreatedAt(nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []))
-          : nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
-        setSearchItems(mergedItems);
-        const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
-        if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
-          showNodeSeekVerification(nodeSeekError);
-          return;
-        }
-        const errors = nextGroups.filter((group) => group.error);
-        notify(errors.length
-          ? errors.map((group) => `${group.label}：${group.error}`).join('；')
-          : `搜索完成：${mergedItems.length} 条结果`);
-      }
-    } catch (error) {
-      if (requestId === searchRequestIdRef.current) {
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(errorMessage(error));
-          }
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
-          return;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
-        }
-      }
-    } finally {
-      if (requestId === searchRequestIdRef.current) {
-        setSearchBusy(false);
-      }
-      finishAbortableRequest(searchAbortRef, controller);
-    }
-  }, [addRecentSearch, clearYaohuoLoginState, notify, readerData, runRemoteSearchSource, searchQuery, searchScope, searchSort, searchSource, showNodeSeekVerification, showYaohuoLogin]);
-
-  const loadMoreSearchSource = useCallback(async (source: Source, page: number) => {
-    const query = searchQuery.trim();
-    if (!query || searchScope !== 'remote') {
-      return;
-    }
-    const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
-    if (!currentGroup || currentGroup.loading || currentGroup.loadingMore || !currentGroup.hasMore) {
-      return;
-    }
-    const markedGroups = searchGroupsRef.current.map((group) => (
-      group.source === source ? { ...group, loadingMore: true, error: undefined } : { ...group, loadingMore: false }
-    ));
-    searchGroupsRef.current = markedGroups;
-    setSearchGroups(markedGroups);
-    const controller = startAbortableRequest(searchAbortRef);
-    const requestId = ++searchRequestIdRef.current;
-    setSearchBusy(true);
-    try {
-      const activeSort = searchSource === 'all'
-        ? 'time'
-        : searchSource === 'v2ex' && searchSort === 'time'
-          ? searchSort
-          : 'relevance';
-      const data = await runRemoteSearchSource(source, query, page, controller.signal, activeSort);
-      if (requestId !== searchRequestIdRef.current) {
-        return;
-      }
-      const nextGroups = searchGroupsRef.current.map((group) => {
-        if (group.source !== source) {
-          return group;
-        }
-        const mergedItems = mergeTopics(group.items, data.items);
-        return {
-          ...data,
-          items: mergedItems,
-          loading: false,
-          loadingMore: false,
-          hasMore: Boolean(data.hasMore && data.nextPage && mergedItems.length > group.items.length)
-        };
-      });
-      searchGroupsRef.current = nextGroups;
-      setSearchGroups(nextGroups);
-      const mergedSearchItems = searchSource === 'all'
-        ? sortTopicsByCreatedAt(nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []))
-        : nextGroups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
-      setSearchItems(mergedSearchItems);
-      const updated = nextGroups.find((group) => group.source === source);
-      if (updated?.error && source === 'nodeseek' && /Cloudflare|验证/.test(updated.error)) {
-        showNodeSeekVerification(updated.error);
-        return;
-      }
-      notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
-    } catch (error) {
-      if (requestId === searchRequestIdRef.current && !isCanceledRequest(error)) {
-        const nextGroups = searchGroupsRef.current.map((group) => (
-          group.source === source ? { ...group, loadingMore: false, error: errorMessage(error) } : group
-        ));
-        searchGroupsRef.current = nextGroups;
-        setSearchGroups(nextGroups);
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (requestId === searchRequestIdRef.current) {
-        setSearchBusy(false);
-      }
-      finishAbortableRequest(searchAbortRef, controller);
-    }
-  }, [notify, runRemoteSearchSource, searchQuery, searchScope, searchSort, searchSource, showNodeSeekVerification]);
-
-  useEffect(() => {
-    searchQueryRef.current = searchQuery;
-    runSearchRef.current = runSearch;
-  }, [runSearch, searchQuery]);
-
-  useEffect(() => {
-    if (searchSource !== 'v2ex' || searchScope !== 'remote') {
-      setSearchSort('relevance');
-    }
-  }, [searchScope, searchSource]);
-
-  useEffect(() => {
-    if (!searchQueryRef.current.trim()) {
-      return;
-    }
-    void runSearchRef.current?.();
-  }, [searchSource, searchScope, searchSort]);
-
-  const retrySearchSource = useCallback((source: Source) => {
-    void runSearch(source);
-  }, [runSearch]);
+  const {
+    backupBusy,
+    backupJson,
+    checkLocalStatus,
+    exportBackup,
+    exportBackupFile,
+    healthDetails,
+    healthSummary,
+    importBackup,
+    importBackupFile,
+    setBackupJson,
+    statusBusy
+  } = useBackupStatusController({
+    clearYaohuoLoginState,
+    fetcher: forumFetchWithWebViewFallback,
+    linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
+    loadNodeSeekCookieForSource,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    queryClient: queryClientRef.current,
+    readerDataRef,
+    replaceReaderData,
+    resetLinuxDoLevelState,
+    setHasLinuxDoClearance,
+    setHasLinuxDoLogin,
+    setHasYaohuoCookie,
+    setLinuxDoCookieNames,
+    setYaohuoCookieNames,
+    setYaohuoLoginCookieHeader,
+    waitForReaderDataSave
+  });
 
   const changeScreen = useCallback((nextScreen: Screen) => {
     const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';
@@ -2737,12 +1471,6 @@ export default function App() {
     if (nextScreen !== 'user' && nextScreen !== 'topic') {
       userReturnTopicRef.current = null;
     }
-    if (nextScreen !== 'user') {
-      userRequestIdRef.current += 1;
-      userAbortRef.current?.abort();
-      setUserBusy(false);
-      setUserLoadingMore(false);
-    }
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, screen]);
 
@@ -2778,139 +1506,122 @@ export default function App() {
     currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
   }, [clearTopicScrollRestoreTimer]);
 
-  const openTopic = useCallback(async (topic: Topic, nocache = false) => {
-    clearTopicScrollRestoreTimer();
-    const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
-    reopenExistingTopicScreenRef.current = false;
-    if (!reopenExistingTopicScreen) {
-      linuxDoDismissedVerificationTopicKeyRef.current = null;
+  const prepareUserNavigation = useCallback(() => {
+    if (screen !== 'user') {
+      userReturnScreenRef.current = screen;
     }
-    const currentTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
-    const opensDifferentTopic = topicKey(topic) !== currentTopicKey;
-    if (screen !== 'topic' && !reopenExistingTopicScreen) {
-      topicReturnScreenRef.current = screen;
-      topicBackStackRef.current = [];
-    } else if (opensDifferentTopic) {
-      topicBackStackRef.current.push(topicSnapshot());
-      if (navigationRef.isReady()) {
-        navigationRef.dispatch(StackActions.push('Topic'));
-      }
+    if (screen === 'topic') {
+      userReturnTopicRef.current = {
+        returnScreen: topicReturnScreenRef.current,
+        snapshot: topicSnapshot(),
+        backStack: [...topicBackStackRef.current]
+      };
+    } else if (screen !== 'user') {
+      userReturnTopicRef.current = null;
     }
-    if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
-      pendingLinuxDoTopicRef.current = null;
-      linuxDoPendingTopicVerifiedRef.current = false;
+    changeScreen('user');
+  }, [changeScreen, screen, topicSnapshot]);
+
+  const pushTopicScreen = useCallback(() => {
+    if (navigationRef.isReady()) {
+      navigationRef.dispatch(StackActions.push('Topic'));
     }
-    if (linuxDoVerifiedRetryTopicKeyRef.current && linuxDoVerifiedRetryTopicKeyRef.current !== topicKey(topic)) {
-      linuxDoVerifiedRetryTopicKeyRef.current = null;
-    }
-    const requestId = ++topicRequestIdRef.current;
-    repliesRequestIdRef.current += 1;
-    repliesAbortRef.current?.abort();
-    loadingMoreRepliesRef.current = false;
-    currentTopicKeyRef.current = topicKey(topic);
-    setSelectedTopic(topic);
-    setTopicDetail(null);
-    setTopicError('');
-    setTopicReplies([]);
-    setCommentQuery('');
-    setUnreadReplyCount(0);
-    setReplyHasMore(false);
-    setReplyNextPage(null);
-    setReplyNextOffset(null);
-    setLoadingMoreReplies(false);
-    setReplyContent('');
-    setReplyComposerOpen(false);
-    setReplyTarget(null);
-    setReplyFilter('all');
-    resetQuoteState();
-    if (!reopenExistingTopicScreen) {
-      changeScreen('topic');
-    }
-    setTopicBusy(true);
-    const controller = startAbortableRequest(topicAbortRef);
-    try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(topic.source),
-        loadNodeSeekCookieForSource(topic.source)
-      ]);
-      if (requestId !== topicRequestIdRef.current) {
-        return;
-      }
-      if (topic.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        return;
-      }
-      const detail = topic.source === 'yaohuo'
-        ? await getYaohuoTopicDirect({ topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
-        : await getTopic({
-          source: topic.source,
-          id: topic.id,
-          fetcher: forumFetchWithWebViewFallback,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          signal: controller.signal,
-          timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : undefined
-        });
-      if (requestId !== topicRequestIdRef.current) {
-        return;
-      }
-      const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
-      const previousReplyCount = readerDataRef.current.history[topicKey(displayDetail)]?.topic.replyCount;
-      setUnreadReplyCount(typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0);
-      setTopicDetail(displayDetail);
-      setTopicReplies(displayDetail.replies || []);
-      setReplyHasMore(Boolean(displayDetail.replyHasMore && displayDetail.replyNextPage));
-      setReplyNextPage(displayDetail.replyNextPage ?? null);
-      setReplyNextOffset(displayDetail.replyNextOffset ?? null);
-      commitReaderData((current) => updateFavoriteTopic(recordHistory(current, displayDetail), displayDetail));
-      const progress = readerDataRef.current.progress[topicKey(displayDetail)];
-      if (progress?.scrollY) {
-        const restoreTopicKey = topicKey(displayDetail);
-        topicScrollRestoreTimerRef.current = setTimeout(() => {
-          topicScrollRestoreTimerRef.current = null;
-          if (currentTopicKeyRef.current !== restoreTopicKey) {
-            return;
-          }
-          topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false });
-          notify(`已恢复到上次阅读位置 ${progress.percent}%`);
-        }, 180);
-      }
-      if (nocache) {
-        notify('主题已更新');
-      }
-      linuxDoVerifiedRetryTopicKeyRef.current = null;
-    } catch (error) {
-      if (requestId === topicRequestIdRef.current) {
-        const message = errorMessage(error);
-        setTopicError(message);
-        if (isLinuxDoCloudflareError(error)) {
-          await handleLinuxDoCloudflareForTopic(topic, message);
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
-          return;
-        }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(errorMessage(error));
-          }
-          return;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(message);
-        }
-      }
-    } finally {
-      if (requestId === topicRequestIdRef.current) {
-        setTopicBusy(false);
-      }
-      finishAbortableRequest(topicAbortRef, controller);
-    }
-  }, [changeScreen, clearTopicScrollRestoreTimer, clearYaohuoLoginState, commitReaderData, forumFetchWithWebViewFallback, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, resetQuoteState, screen, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
+  }, []);
+
+  const {
+    currentUserFollowed,
+    followedUserRecords,
+    loadMoreUserTopics,
+    openUser,
+    selectedUser,
+    userBusy,
+    userError,
+    userLoadingMore,
+    userProfile
+  } = useUserController({
+    fetcher: forumFetchWithWebViewFallback,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    onOpenUserScreen: prepareUserNavigation,
+    readerData,
+    screen,
+    showLinuxDoVerification,
+    showNodeSeekVerification,
+    showYaohuoLogin
+  });
+
+  const {
+    loadMoreReplies,
+    openTopic,
+    refreshTopic,
+    refreshTopicReplies,
+    refreshWholeTopic,
+    toggleQuotedFloor,
+    topicFavorite
+  } = useTopicController({
+    changeScreen,
+    clearTopicScrollRestoreTimer,
+    clearYaohuoLoginState,
+    commitReaderData,
+    currentTopicKeyRef,
+    expandedQuotesRef,
+    fetcher: forumFetchWithWebViewFallback,
+    handleLinuxDoCloudflareForTopic,
+    linuxDoDismissedVerificationTopicKeyRef,
+    linuxDoPendingTopicVerifiedRef,
+    linuxDoVerifiedRetryTopicKeyRef,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    loadedQuotedRepliesRef,
+    loadingMoreRepliesRef,
+    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
+    notify,
+    pendingLinuxDoTopicRef,
+    pushTopicScreen,
+    quotedReplyAbortRefs,
+    readerData,
+    readerDataRef,
+    reopenExistingTopicScreenRef,
+    repliesAbortRef,
+    repliesRequestIdRef,
+    replyNextOffset,
+    replyNextPage,
+    resetQuoteState,
+    screen,
+    selectedTopic,
+    setCommentQuery,
+    setLoadedQuotedReplies: updateLoadedQuotedReplies,
+    setLoadingMoreReplies,
+    setLoadingQuotedFloors: updateLoadingQuotedFloors,
+    setReplyComposerOpen,
+    setReplyContent,
+    setReplyFilter,
+    setReplyHasMore,
+    setReplyNextOffset,
+    setReplyNextPage,
+    setReplyTarget,
+    setSelectedTopic,
+    setTopicBusy,
+    setTopicDetail,
+    setTopicError,
+    setTopicReplies,
+    setUnreadReplyCount,
+    showNodeSeekVerification,
+    showYaohuoLogin,
+    topicAbortRef,
+    topicBackStackRef,
+    topicDetail,
+    topicReplies,
+    topicRepliesRef,
+    topicRequestIdRef,
+    topicReturnScreenRef,
+    topicScrollRef,
+    topicScrollRestoreTimerRef,
+    topicSnapshot,
+    updateExpandedQuotes
+  });
   openTopicRef.current = openTopic;
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
@@ -2934,199 +1645,6 @@ export default function App() {
       enableExperimentalPercentWidth: true
     }
   }), [openExternalUrl, openImagePreview, openTopic, selectedTopic?.url, topicDetail?.url]);
-
-  const refreshTopicReplies = useCallback(async ({ silent = false, afterSubmit = false }: { silent?: boolean; afterSubmit?: boolean } = {}) => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail) {
-      return false;
-    }
-    if (detail.source === 'v2ex') {
-      await openTopic(detail, true);
-      return true;
-    }
-    const requestTopicKey = topicKey(detail);
-    const requestId = ++repliesRequestIdRef.current;
-    loadingMoreRepliesRef.current = true;
-    repliesAbortRef.current?.abort();
-    let controller: AbortController | null = null;
-    setLoadingMoreReplies(true);
-    try {
-      const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
-      if (detail.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        return false;
-      }
-      controller = startAbortableRequest(repliesAbortRef);
-      const expectedReplyCount = Math.max(detail.replyCount || 0, topicReplies.length) + 1;
-      const { page: targetPage, offset: targetOffset } = replyRefreshTarget({
-        source: detail.source,
-        afterSubmit,
-        expectedReplyCount,
-        replyNextPage
-      });
-      const data = detail.source === 'yaohuo'
-        ? await getYaohuoRepliesDirect({
-          id: detail.id,
-          categoryId: detail.categoryId,
-          page: targetPage,
-          limit: REPLY_PAGE_SIZE,
-          yaohuoCookie,
-          signal: controller.signal
-        })
-        : await getReplies({
-          source: detail.source,
-          id: detail.id,
-          page: targetPage,
-          limit: REPLY_PAGE_SIZE,
-          offset: targetOffset,
-          fetcher: forumFetchWithWebViewFallback,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          signal: controller.signal
-        });
-      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
-        return false;
-      }
-      setTopicReplies((current) => afterSubmit ? mergeReplies(current, data.items) : mergeReplies(data.items, current));
-      if (!afterSubmit) {
-        setReplyHasMore(Boolean(data.hasMore && data.nextPage));
-        setReplyNextPage(data.nextPage ?? null);
-        setReplyNextOffset(data.nextOffset ?? null);
-      }
-      if (!silent) {
-        notify(`评论已更新${data.items.length ? `，读取 ${data.items.length} 条` : ''}`);
-      }
-      return true;
-    } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(errorMessage(error));
-          }
-          return false;
-        }
-        if (isLinuxDoCloudflareError(error)) {
-          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
-          return false;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
-          return false;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
-        }
-      }
-      return false;
-    } finally {
-      if (requestId === repliesRequestIdRef.current) {
-        loadingMoreRepliesRef.current = false;
-        setLoadingMoreReplies(false);
-      }
-      if (controller) {
-        finishAbortableRequest(repliesAbortRef, controller);
-      }
-    }
-  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, openTopic, replyNextPage, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicDetail, topicReplies.length]);
-
-  const loadMoreReplies = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || !replyNextPage || loadingMoreRepliesRef.current) {
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-    const requestId = ++repliesRequestIdRef.current;
-    loadingMoreRepliesRef.current = true;
-    let controller: AbortController | null = null;
-    setLoadingMoreReplies(true);
-    try {
-      const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
-      if (detail.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        return;
-      }
-      controller = startAbortableRequest(repliesAbortRef);
-      const data = detail.source === 'yaohuo'
-        ? await getYaohuoRepliesDirect({
-          id: detail.id,
-          categoryId: detail.categoryId,
-          page: replyNextPage,
-          limit: 30,
-          yaohuoCookie,
-          signal: controller.signal
-        })
-        : await getReplies({
-          source: detail.source,
-          id: detail.id,
-          page: replyNextPage,
-          limit: 30,
-          offset: replyNextOffset,
-          fetcher: forumFetchWithWebViewFallback,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-          signal: controller.signal
-        });
-      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
-        return;
-      }
-      const currentReplies = topicRepliesRef.current;
-      const previousReplyCount = currentReplies.length;
-      const mergedReplies = mergeReplies(currentReplies, data.items);
-      const addedReplies = mergedReplies.length > previousReplyCount;
-      setTopicReplies(mergedReplies);
-      setReplyHasMore(Boolean(data.hasMore && data.nextPage && mergedReplies.length > previousReplyCount));
-      setReplyNextPage(addedReplies ? data.nextPage ?? null : null);
-      setReplyNextOffset(addedReplies ? data.nextOffset ?? null : null);
-      notify(`已加载 ${data.items.length} 条回复`);
-    } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(errorMessage(error));
-          }
-          return;
-        }
-        if (isLinuxDoCloudflareError(error)) {
-          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
-          return;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
-        }
-      }
-    } finally {
-      if (requestId === repliesRequestIdRef.current) {
-        loadingMoreRepliesRef.current = false;
-        setLoadingMoreReplies(false);
-      }
-      if (controller) {
-        finishAbortableRequest(repliesAbortRef, controller);
-      }
-    }
-  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, handleLinuxDoCloudflareForTopic, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, replyNextOffset, replyNextPage, selectedTopic, showNodeSeekVerification, showYaohuoLogin, topicDetail]);
-
-  const refreshTopic = useCallback(() => {
-    void refreshTopicReplies();
-  }, [refreshTopicReplies]);
-
-  const refreshWholeTopic = useCallback(() => {
-    const detail = topicDetail || selectedTopic;
-    if (detail) {
-      void openTopic(detail, true);
-    }
-  }, [openTopic, selectedTopic, topicDetail]);
 
   const shareTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
@@ -3186,174 +1704,6 @@ export default function App() {
     changeScreen(topicReturnScreenRef.current);
   }, [abortQuotedReplyRequests, cancelDeferredNavigationTask, changeScreen, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
-  const openUser = useCallback(async (user: UserProfile, nocache = false) => {
-    if (!user.id && !user.username) {
-      notify('用户信息不完整');
-      return;
-    }
-    if (screen !== 'user') {
-      userReturnScreenRef.current = screen;
-    }
-    if (screen === 'topic') {
-      userReturnTopicRef.current = {
-        returnScreen: topicReturnScreenRef.current,
-        snapshot: topicSnapshot(),
-        backStack: [...topicBackStackRef.current]
-      };
-    } else if (screen !== 'user') {
-      userReturnTopicRef.current = null;
-    }
-    const requestUser = {
-      ...user,
-      id: user.source === 'nodeseek' ? nodeSeekUserIdFromValue(user.id) || nodeSeekUserIdFromValue(user.url) || user.id || user.username : user.id || user.username,
-      username: user.username || user.displayName || user.id,
-      url: user.url || '',
-      topics: user.topics || []
-    };
-    const requestId = ++userRequestIdRef.current;
-    setSelectedUser(requestUser);
-    setUserProfile(null);
-    setUserError('');
-    setUserBusy(true);
-    setUserLoadingMore(false);
-    userLoadingMoreCursorRef.current = null;
-    changeScreen('user');
-    const controller = startAbortableRequest(userAbortRef);
-    try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(requestUser.source),
-        loadNodeSeekCookieForSource(requestUser.source)
-      ]);
-      if (requestId !== userRequestIdRef.current) {
-        return;
-      }
-      if (requestUser.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        setUserError('请先登录妖火后再查看用户主页');
-        return;
-      }
-      const profile = await getUserProfile({
-        source: requestUser.source,
-        id: requestUser.id,
-        username: requestUser.username,
-        fetcher: forumFetchWithWebViewFallback,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-        yaohuoCookie,
-        signal: controller.signal
-      });
-      if (requestId !== userRequestIdRef.current) {
-        return;
-      }
-      setUserProfile(profile);
-      if (nocache) {
-        notify('用户主页已更新');
-      }
-    } catch (error) {
-      if (requestId === userRequestIdRef.current) {
-        const message = errorMessage(error);
-        setUserError(message);
-        if (isLinuxDoCloudflareError(error)) {
-          showLinuxDoVerification(message);
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
-          return;
-        }
-        if (isYaohuoLoginRequiredError(error)) {
-          showYaohuoLogin(message);
-          return;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(message);
-        }
-      }
-    } finally {
-      if (requestId === userRequestIdRef.current) {
-        setUserBusy(false);
-        setUserLoadingMore(false);
-      }
-      finishAbortableRequest(userAbortRef, controller);
-    }
-  }, [changeScreen, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, screen, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, topicSnapshot]);
-
-  const loadMoreUserTopics = useCallback(async () => {
-    const current = userProfile;
-    if (!current?.hasMoreTopics || !current.nextTopicsCursor || userBusy || userLoadingMore || userLoadingMoreCursorRef.current === current.nextTopicsCursor) {
-      return;
-    }
-    const requestId = ++userRequestIdRef.current;
-    const controller = startAbortableRequest(userAbortRef);
-    userLoadingMoreCursorRef.current = current.nextTopicsCursor;
-    setUserLoadingMore(true);
-    setUserError('');
-    try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(current.source),
-        loadNodeSeekCookieForSource(current.source)
-      ]);
-      if (requestId !== userRequestIdRef.current) {
-        return;
-      }
-      if (current.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        setUserError('请先登录妖火后再查看用户主页');
-        return;
-      }
-      const nextProfile = await getUserProfile({
-        source: current.source,
-        id: current.id,
-        username: current.username,
-        fetcher: forumFetchWithWebViewFallback,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-        yaohuoCookie,
-        cursor: current.nextTopicsCursor,
-        signal: controller.signal
-      });
-      if (requestId !== userRequestIdRef.current) {
-        return;
-      }
-      setUserProfile((previous) => {
-        if (!previous || previous.source !== current.source || previous.id !== current.id) {
-          return previous;
-        }
-        const mergedTopics = mergeTopics(previous.topics, nextProfile.topics);
-        return {
-          ...previous,
-          topics: mergedTopics,
-          hasMoreTopics: Boolean(nextProfile.hasMoreTopics && nextProfile.nextTopicsCursor && mergedTopics.length > previous.topics.length),
-          nextTopicsCursor: mergedTopics.length > previous.topics.length ? nextProfile.nextTopicsCursor : null
-        };
-      });
-      notify('用户帖子已加载更多');
-    } catch (error) {
-      if (requestId === userRequestIdRef.current && !isCanceledRequest(error)) {
-        const message = errorMessage(error);
-        setUserError(message);
-        if (isLinuxDoCloudflareError(error)) {
-          showLinuxDoVerification(message);
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
-          return;
-        }
-        if (isYaohuoLoginRequiredError(error) || isYaohuoLoginExpiredError(error)) {
-          showYaohuoLogin();
-        }
-        notify(message);
-      }
-    } finally {
-      if (requestId === userRequestIdRef.current) {
-        setUserLoadingMore(false);
-        userLoadingMoreCursorRef.current = null;
-      }
-      finishAbortableRequest(userAbortRef, controller);
-    }
-  }, [forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, notify, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin, userBusy, userLoadingMore, userProfile]);
-
   const goBackFromUser = useCallback(() => {
     cancelDeferredNavigationTask();
     const returnTopic = userReturnScreenRef.current === 'topic' ? userReturnTopicRef.current : null;
@@ -3406,82 +1756,8 @@ export default function App() {
     const scrollY = Math.max(0, contentOffset.y);
     const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
     const percent = Math.min(100, Math.max(0, Math.round((scrollY / scrollable) * 100)));
-    pendingProgressRef.current = { topic: detail, percent, scrollY };
-    if (progressSaveTimerRef.current) {
-      clearTimeout(progressSaveTimerRef.current);
-    }
-    if (!progressMaxSaveTimerRef.current) {
-      progressMaxSaveTimerRef.current = setTimeout(() => {
-        flushPendingProgress();
-      }, PROGRESS_SAVE_MAX_PENDING_MS);
-    }
-    progressSaveTimerRef.current = setTimeout(() => {
-      flushPendingProgress();
-    }, PROGRESS_SAVE_DEBOUNCE_MS);
-  }, [flushPendingProgress, selectedTopic, topicDetail]);
-
-  const toggleQuotedFloor = useCallback(async ({
-    replyFloor,
-    quotedFloor,
-    quotedReply
-  }: {
-    replyFloor: number;
-    quotedFloor: number;
-    quotedReply?: Reply;
-  }) => {
-    const key = `${replyFloor}:${quotedFloor}`;
-    if (expandedQuotesRef.current[key]) {
-      updateExpandedQuotes((current) => ({ ...current, [key]: false }));
-      return;
-    }
-
-    if (quotedReply || loadedQuotedRepliesRef.current[quotedFloor]) {
-      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
-      return;
-    }
-
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'linuxdo') {
-      notify('引用楼层未加载');
-      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-
-    updateLoadingQuotedFloors((current) => ({ ...current, [key]: true }));
-    quotedReplyAbortRefs.current[key]?.abort();
-    const controller = new AbortController();
-    quotedReplyAbortRefs.current[key] = controller;
-    try {
-      const loaded = await getReply({
-        source: detail.source,
-        id: detail.id,
-        floor: quotedFloor,
-        signal: controller.signal
-      });
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        return;
-      }
-      if (loaded.floor) {
-        updateLoadedQuotedReplies((current) => ({ ...current, [loaded.floor as number]: loaded }));
-      }
-      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
-      notify(`引用已展开 #${quotedFloor}`);
-    } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey) {
-        if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
-        }
-      }
-    } finally {
-      if (quotedReplyAbortRefs.current[key] === controller) {
-        delete quotedReplyAbortRefs.current[key];
-      }
-      if (currentTopicKeyRef.current === requestTopicKey) {
-        updateLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
-      }
-    }
-  }, [notify, selectedTopic, topicDetail, updateExpandedQuotes, updateLoadedQuotedReplies, updateLoadingQuotedFloors]);
+    queueProgressSave(detail, { percent, scrollY });
+  }, [queueProgressSave, selectedTopic, topicDetail]);
 
   const handleNodeSeekBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -4353,6 +2629,10 @@ export default function App() {
       ...topicReplies
     ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as (Pick<TopicDetail | Reply, 'upvoted' | 'liked' | 'disliked'> | undefined);
     const activeField = activeFields[type];
+    if (target?.[activeField]) {
+      notify(nodeSeekInteractionRemovalMessage(type));
+      return;
+    }
     startOptimisticTopicAction({
       key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type }),
       requestTopicKey,
@@ -4526,268 +2806,6 @@ export default function App() {
     }
   }, [notify, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
-  const importBackup = useCallback(async () => {
-    const requestId = ++backupRequestIdRef.current;
-    const controller = startAbortableRequest(backupAbortRef);
-    setBackupBusy(true);
-    try {
-      await saveQueueRef.current.catch(() => undefined);
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
-        return;
-      }
-      if (!backupJson.trim()) {
-        notify('请先粘贴备份 JSON');
-        return;
-      }
-      const merged = importReaderBackupJson(readerDataRef.current, backupJson);
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
-        return;
-      }
-      await replaceReaderData(merged);
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
-        return;
-      }
-      notify('备份已恢复，本机资料已合并');
-    } catch (error) {
-      if (requestId === backupRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (finishAbortableRequest(backupAbortRef, controller)) {
-        setBackupBusy(false);
-      }
-    }
-  }, [backupJson, notify, replaceReaderData]);
-
-  const exportBackup = useCallback(async () => {
-    const requestId = ++backupRequestIdRef.current;
-    const controller = startAbortableRequest(backupAbortRef);
-    setBackupBusy(true);
-    try {
-      await saveQueueRef.current.catch(() => undefined);
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
-        return;
-      }
-      setBackupJson(exportReaderBackupJson(readerDataRef.current));
-      notify('备份 JSON 已生成');
-    } catch (error) {
-      if (requestId === backupRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (finishAbortableRequest(backupAbortRef, controller)) {
-        setBackupBusy(false);
-      }
-    }
-  }, [notify]);
-
-  const shareTextFile = useCallback(async (fileName: string, content: string, mimeType: string) => {
-    const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-    if (!baseDirectory) {
-      await Clipboard.setStringAsync(content);
-      notify('内容已复制');
-      return;
-    }
-    const uri = `${baseDirectory}${fileName}`;
-    const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
-    try {
-      await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType });
-      } else {
-        await Clipboard.setStringAsync(content);
-        notify('内容已复制');
-      }
-    } finally {
-      if (shouldDeleteFile) {
-        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
-      }
-    }
-  }, [notify]);
-
-  const exportBackupFile = useCallback(async () => {
-    if (backupBusy) {
-      return;
-    }
-    const requestId = ++backupRequestIdRef.current;
-    setBackupBusy(true);
-    try {
-      await saveQueueRef.current.catch(() => undefined);
-      if (requestId !== backupRequestIdRef.current) {
-        return;
-      }
-      const content = exportReaderBackupJson(readerDataRef.current);
-      setBackupJson(content);
-      await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
-      if (requestId !== backupRequestIdRef.current) {
-        return;
-      }
-      notify('备份文件已生成');
-    } catch (error) {
-      if (requestId === backupRequestIdRef.current) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (requestId === backupRequestIdRef.current) {
-        setBackupBusy(false);
-      }
-    }
-  }, [backupBusy, notify, shareTextFile]);
-
-  const importBackupFile = useCallback(async () => {
-    if (backupBusy) {
-      return;
-    }
-    const requestId = ++backupRequestIdRef.current;
-    setBackupBusy(true);
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: true,
-        type: ['application/json', 'text/json', '*/*']
-      });
-      if (requestId !== backupRequestIdRef.current) {
-        return;
-      }
-      if (result.canceled || !result.assets?.[0]?.uri) {
-        return;
-      }
-      const pickedUri = result.assets[0].uri;
-      try {
-        const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
-        if (requestId !== backupRequestIdRef.current) {
-          return;
-        }
-        setBackupJson(content);
-        const merged = importReaderBackupJson(readerDataRef.current, content);
-        if (requestId !== backupRequestIdRef.current) {
-          return;
-        }
-        await replaceReaderData(merged);
-        if (requestId !== backupRequestIdRef.current) {
-          return;
-        }
-        notify('备份已恢复，本机资料已合并');
-      } finally {
-        if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
-          await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
-        }
-      }
-    } catch (error) {
-      if (requestId === backupRequestIdRef.current) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (requestId === backupRequestIdRef.current) {
-        setBackupBusy(false);
-      }
-    }
-  }, [backupBusy, notify, replaceReaderData]);
-
-  const checkLocalStatus = useCallback(async () => {
-    const requestId = ++statusRequestIdRef.current;
-    const controller = startAbortableRequest(statusAbortRef);
-    setStatusBusy(true);
-    try {
-      const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
-      let linuxDoAccess = await loadLinuxDoAccess();
-      let access = linuxDoAccessSummary(linuxDoAccess);
-      const linuxDoLoginPromise = linuxDoAccess?.cookieHeader && access.loggedIn
-        ? checkLinuxDoLoginAccess({
-          cookieHeader: linuxDoAccess.cookieHeader,
-          userAgent: linuxDoAccess.userAgent || linuxDoWebViewUserAgentRef.current,
-          signal: controller.signal
-        })
-        : Promise.resolve(undefined);
-      const yaohuoStatusPromise = yaohuoCookie
-        ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
-        : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
-      const checks = await queryClientRef.current.fetchQuery({
-        queryKey: ['android-status', requestId],
-        queryFn: async () => Promise.allSettled([
-          getFeed({
-            source: 'nodeseek',
-            limit: 1,
-            nocache: true,
-            fetcher: forumFetchWithWebViewFallback,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekWebViewUserAgentRef.current,
-            signal: controller.signal
-          }),
-          getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
-          getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal }),
-          yaohuoStatusPromise,
-          linuxDoLoginPromise
-        ] as const)
-      });
-      if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
-        return;
-      }
-      const yaohuoCheck = checks[3];
-      const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
-      const yaohuoMessage = yaohuoCheck.status === 'fulfilled'
-        ? (yaohuoOk ? '登录可用' : yaohuoCheck.value.message || '未登录')
-        : errorMessage(yaohuoCheck.reason);
-      const linuxDoLogin = checks[4].status === 'fulfilled' ? checks[4].value : undefined;
-      if (linuxDoLogin?.loginRequired) {
-        linuxDoAccess = await clearLinuxDoAccess();
-        if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
-          return;
-        }
-        access = linuxDoAccessSummary(linuxDoAccess);
-        resetLinuxDoLevelState();
-      }
-      const result = buildLocalStatusResult({
-        sourceChecks: {
-          nodeseek: {
-            ok: checks[0].status === 'fulfilled',
-            message: checks[0].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[0].reason)
-          },
-          v2ex: {
-            ok: checks[1].status === 'fulfilled',
-            message: checks[1].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[1].reason)
-          },
-          linuxdo: {
-            ok: checks[2].status === 'fulfilled',
-            message: checks[2].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[2].reason)
-          },
-          yaohuo: {
-            ok: yaohuoOk,
-            message: yaohuoMessage
-          }
-        },
-        linuxDoAccess: access,
-        linuxDoLogin
-      });
-      const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
-      if (yaohuoExpired) {
-        await clearYaohuoLoginState();
-        if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
-          return;
-        }
-      }
-      setHasYaohuoCookie(result.hasYaohuoLogin);
-      setYaohuoCookieNames(yaohuoExpired ? [] : summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || '')).names);
-      if (!yaohuoCookie || result.hasYaohuoLogin) {
-        setYaohuoLoginCookieHeader(yaohuoCookie || '');
-      }
-      setHasLinuxDoClearance(result.hasLinuxDoClearance);
-      setHasLinuxDoLogin(result.hasLinuxDoLogin);
-      setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names);
-      setHealthDetails(result.details);
-      setHealthSummary(result.summary);
-      notify('状态已更新');
-    } catch (error) {
-      if (requestId === statusRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (finishAbortableRequest(statusAbortRef, controller)) {
-        setStatusBusy(false);
-      }
-    }
-  }, [clearYaohuoLoginState, forumFetchWithWebViewFallback, loadNodeSeekCookieForSource, notify, resetLinuxDoLevelState]);
-
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (imagePreview) {
@@ -4857,10 +2875,6 @@ export default function App() {
     }));
   }, [commitReaderData]);
 
-  const changeFeedSource = useCallback((source: FeedSource) => {
-    setFeedSource(source);
-    setCategoryFilter('');
-  }, []);
   const syncNavigationToScreen = useCallback((nextScreen: Screen) => {
     if (!navigationRef.isReady()) {
       return;
@@ -4936,8 +2950,7 @@ export default function App() {
       feedSource={feedSource}
       loadMoreFailureSignal={activeFeedState.loadMoreFailureSignal}
       loadingMore={activeFeedState.loadingMore}
-      readerData={readerData}
-      topicListStateInput={topicListStateInput}
+      topicStateIndex={topicStateIndex}
       readingFilter={readingFilter}
       refreshing={activeFeedState.refreshing}
       scrollToTopSignal={tabScrollToTopSignals.feed}
@@ -4955,14 +2968,13 @@ export default function App() {
       onReadingFilterChange={setReadingFilter}
       onRefresh={refreshFeed}
     />
-  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readerData, readingFilter, refreshFeed, shownFeedItems, styles, tabScrollToTopSignals.feed, theme, topicListStateInput]);
+  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readingFilter, refreshFeed, shownFeedItems, styles, tabScrollToTopSignals.feed, theme, topicStateIndex]);
 
   const renderSearchTab = useCallback(() => (
     <SearchScreen
       busy={searchBusy}
       query={searchQuery}
-      readerData={readerData}
-      topicListStateInput={topicListStateInput}
+      topicStateIndex={topicStateIndex}
       recentSearches={recentSearches}
       results={visibleSearchItems}
       searchGroups={searchGroups}
@@ -4983,7 +2995,7 @@ export default function App() {
       onSortChange={setSearchSort}
       onRetrySearchSource={retrySearchSource}
     />
-  ), [loadMoreSearchSource, openExternalUrl, openTopic, readerData, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchScope, searchSort, searchSource, styles, tabScrollToTopSignals.search, theme, topicListStateInput, visibleSearchItems]);
+  ), [loadMoreSearchSource, openExternalUrl, openTopic, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchQuery, searchScope, searchSort, searchSource, styles, tabScrollToTopSignals.search, theme, topicStateIndex, visibleSearchItems]);
 
   const renderLibraryTab = useCallback(() => (
     <LibraryScreen
@@ -4991,9 +3003,8 @@ export default function App() {
       followedUsers={followedUserRecords}
       libraryTab={libraryTab}
       records={libraryRecords}
-      readerData={readerData}
       scrollToTopSignal={tabScrollToTopSignals.library}
-      topicListStateInput={topicListStateInput}
+      topicStateIndex={topicStateIndex}
       styles={styles}
       theme={theme}
       onClearHistory={clearHistory}
@@ -5003,7 +3014,7 @@ export default function App() {
       onRemoveUser={removeFollowedUser}
       onTabChange={setLibraryTab}
     />
-  ), [categories, clearHistory, followedUserRecords, libraryRecords, libraryTab, openTopic, openUser, readerData, removeFollowedUser, removeLibraryTopic, styles, tabScrollToTopSignals.library, theme, topicListStateInput]);
+  ), [categories, clearHistory, followedUserRecords, libraryRecords, libraryTab, openTopic, openUser, removeFollowedUser, removeLibraryTopic, styles, tabScrollToTopSignals.library, theme, topicStateIndex]);
 
   const renderMoreTab = useCallback(() => (
     <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
@@ -5096,7 +3107,7 @@ export default function App() {
       loadingQuotedFloorsRef={loadingQuotedFloorsRef}
       commentQuery={commentQuery}
       quoteStateVersion={quoteStateVersion}
-      readerData={readerData}
+      topicFavorite={topicFavorite}
       replyComposerOpen={replyComposerOpen}
       replyContent={replyContent}
       replyFilter={replyFilter}
@@ -5137,7 +3148,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, optimisticTopicActions, quoteStateVersion, readerData, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, optimisticTopicActions, quoteStateVersion, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicFavorite, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen
@@ -5145,11 +3156,10 @@ export default function App() {
       error={userError}
       followed={currentUserFollowed}
       profile={userProfile}
-      readerData={readerData}
       requestedUser={selectedUser}
       styles={styles}
       theme={theme}
-      topicListStateInput={topicListStateInput}
+      topicStateIndex={topicStateIndex}
       loadingMoreTopics={userLoadingMore}
       onBack={goBackFromUser}
       onLoadMoreTopics={loadMoreUserTopics}
@@ -5163,7 +3173,7 @@ export default function App() {
       }}
       onToggleFollow={toggleUserFollow}
     />
-  ), [currentUserFollowed, goBackFromUser, loadMoreUserTopics, openExternalUrl, openTopic, openUser, readerData, selectedUser, styles, theme, toggleUserFollow, topicListStateInput, userBusy, userError, userLoadingMore, userProfile]);
+  ), [currentUserFollowed, goBackFromUser, loadMoreUserTopics, openExternalUrl, openTopic, openUser, selectedUser, styles, theme, toggleUserFollow, topicStateIndex, userBusy, userError, userLoadingMore, userProfile]);
 
   const renderMainTabs = useCallback(() => (
     <Tab.Navigator

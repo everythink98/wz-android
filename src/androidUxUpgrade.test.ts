@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('android-app', 'App.tsx');
+const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
+const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
@@ -48,18 +50,19 @@ describe('Android App UX upgrade guards', () => {
     expect(appSource).toContain("animation: 'slide_from_right'");
     expect(appSource).toContain('contentStyle: { backgroundColor: theme.background }');
     expect(appSource).toContain('topicBackStackRef');
-    expect(appSource).toContain('const currentTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);');
-    expect(appSource).toContain('const opensDifferentTopic = topicKey(topic) !== currentTopicKey;');
-    expect(appSource).toContain("} else if (opensDifferentTopic) {");
-    expect(appSource).toContain('topicBackStackRef.current.push(topicSnapshot());');
+    expect(topicControllerSource).toContain('const activeTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);');
+    expect(topicControllerSource).toContain('const opensDifferentTopic = topicKey(topic) !== activeTopicKey;');
+    expect(topicControllerSource).toContain("} else if (opensDifferentTopic) {");
+    expect(topicControllerSource).toContain('topicBackStackRef.current.push(topicSnapshot());');
     expect(appSource).toContain('restoreTopicSnapshot(previousTopic);');
     expect(appSource).toContain('navigationRef.goBack();');
   });
 
   it('keeps topic history stable after visiting user pages or refreshing the same topic', () => {
     const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const openTopicBlock = appSource.match(/const openTopic = useCallback\(async \(topic: Topic, nocache = false\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const openUserBlock = appSource.match(/const openUser = useCallback\(async \(user: UserProfile, nocache = false\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const openTopicBlock = topicControllerSource.match(/const openTopic = useCallback[\s\S]*?\n\n  const refreshTopicReplies/)?.[0] || '';
+    const openUserBlock = userControllerSource.match(/const openUser = useCallback[\s\S]*?\n\n  const loadMoreUserTopics/)?.[0] || '';
+    const prepareUserNavigationBlock = appSource.match(/const prepareUserNavigation = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const goBackFromUserBlock = appSource.match(/const goBackFromUser = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
@@ -75,9 +78,10 @@ describe('Android App UX upgrade guards', () => {
     expect(openTopicBlock).toContain('const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;');
     expect(openTopicBlock).toContain("if (screen !== 'topic' && !reopenExistingTopicScreen) {");
     expect(openTopicBlock).toMatch(/if \(!reopenExistingTopicScreen\) \{\s*changeScreen\('topic'\);/);
-    expect(openUserBlock).toContain("if (screen === 'topic') {");
-    expect(openUserBlock).toContain('userReturnTopicRef.current = {');
-    expect(openUserBlock).toContain('returnScreen: topicReturnScreenRef.current');
+    expect(openUserBlock).toContain('onOpenUserScreen();');
+    expect(prepareUserNavigationBlock).toContain("if (screen === 'topic') {");
+    expect(prepareUserNavigationBlock).toContain('userReturnTopicRef.current = {');
+    expect(prepareUserNavigationBlock).toContain('returnScreen: topicReturnScreenRef.current');
     expect(goBackFromTopicBlock).toContain('const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();');
     expect(goBackFromTopicBlock).toContain('if (canGoBack) {');
     expect(goBackFromUserBlock).toContain('const returnTopic = userReturnScreenRef.current ===');
@@ -119,8 +123,8 @@ describe('Android App UX upgrade guards', () => {
 
   it('applies the one-time linux.do verified retry guard to reply refresh paths', () => {
     const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const refreshRepliesBlock = appSource.match(/const refreshTopicReplies = useCallback\(async[\s\S]*?\n  \}, \[clearYaohuoLoginState/)?.[0] || '';
-    const loadMoreRepliesBlock = appSource.match(/const loadMoreReplies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[clearYaohuoLoginState/)?.[0] || '';
+    const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
+    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
 
     expect(cloudflareHandlerBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
     expect(cloudflareHandlerBlock).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
