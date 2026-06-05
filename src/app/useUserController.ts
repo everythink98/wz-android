@@ -22,6 +22,7 @@ import type { FeedSource, Source, UserProfile } from '../types';
 import type { Screen } from '../appTypes';
 
 export function useUserController({
+  clearYaohuoLoginState,
   fetcher,
   loadNodeSeekCookieForSource,
   loadYaohuoCookieForSource,
@@ -34,6 +35,7 @@ export function useUserController({
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
+  clearYaohuoLoginState: () => Promise<void>;
   fetcher: Fetcher;
   loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
@@ -141,7 +143,12 @@ export function useUserController({
           return;
         }
         if (isYaohuoLoginRequiredError(error)) {
-          showYaohuoLogin(message);
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState();
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(message);
+          }
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -156,6 +163,7 @@ export function useUserController({
       finishAbortableRequest(userAbortRef, controller);
     }
   }, [
+    clearYaohuoLoginState,
     fetcher,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
@@ -229,8 +237,14 @@ export function useUserController({
           showNodeSeekVerification(message);
           return;
         }
-        if (isYaohuoLoginRequiredError(error) || isYaohuoLoginExpiredError(error)) {
-          showYaohuoLogin();
+        if (isYaohuoLoginRequiredError(error)) {
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState();
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(message);
+          }
+          return;
         }
         notify(message);
       }
@@ -242,6 +256,7 @@ export function useUserController({
       finishAbortableRequest(userAbortRef, controller);
     }
   }, [
+    clearYaohuoLoginState,
     fetcher,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,

@@ -285,6 +285,11 @@ export function useFeedController({
         if (yaohuoResult.status === 'rejected' && isCanceledRequest(yaohuoResult.reason)) {
           throw yaohuoResult.reason;
         }
+        if (yaohuoResult.status === 'rejected' && isYaohuoLoginRequiredError(yaohuoResult.reason)) {
+          if (isYaohuoLoginExpiredError(yaohuoResult.reason)) {
+            await clearYaohuoLoginState();
+          }
+        }
         if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
           throw baseResult.reason;
         }

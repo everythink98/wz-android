@@ -1539,6 +1539,7 @@ export default function App() {
     userLoadingMore,
     userProfile
   } = useUserController({
+    clearYaohuoLoginState,
     fetcher: forumFetchWithWebViewFallback,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,

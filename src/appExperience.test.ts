@@ -798,6 +798,36 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('showYaohuoLogin(errorMessage(error))');
   });
 
+  it('clears expired yaohuo login state from aggregated feed errors', () => {
+    const loadFeedBlock = feedControllerSource.match(/const loadFeed = useCallback[\s\S]*?\n\n  const loadFeedRef/)?.[0] || '';
+    const aggregatedFeedBlock = loadFeedBlock.match(/if \(source === 'all' && yaohuoCookie\) \{[\s\S]*?\n      \} else if \(source === 'yaohuo'\)/)?.[0] || '';
+
+    expect(aggregatedFeedBlock).toContain("yaohuoResult.status === 'rejected' && isYaohuoLoginRequiredError(yaohuoResult.reason)");
+    expect(aggregatedFeedBlock).toContain('await clearYaohuoLoginState();');
+  });
+
+  it('clears expired yaohuo login state from remote search group errors', () => {
+    const remoteSearchBlock = searchControllerSource.match(/const runRemoteSearchSource = useCallback[\s\S]*?\n\n  const runSearch/)?.[0] || '';
+    const dependencyBlock = searchControllerSource.match(/const runRemoteSearchSource = useCallback[\s\S]*?\}, \[([\s\S]*?)\]\);/)?.[1] || '';
+
+    expect(remoteSearchBlock).toContain('await clearYaohuoLoginState();');
+    expect(remoteSearchBlock).toContain("return { source, label: sourceLabel(source), items: [], error: '登录已失效'");
+    expect(dependencyBlock).toContain('clearYaohuoLoginState');
+  });
+
+  it('clears expired yaohuo login state from user profile requests', () => {
+    const openUserBlock = userControllerSource.match(/const openUser = useCallback[\s\S]*?\n\n  const loadMoreUserTopics/)?.[0] || '';
+    const loadMoreUserBlock = userControllerSource.match(/const loadMoreUserTopics = useCallback[\s\S]*?\n\n  return \{/)?.[0] || '';
+    const userControllerArgs = appSource.match(/useUserController\(\{([\s\S]*?)\n  \}\);/)?.[1] || '';
+
+    expect(userControllerSource).toContain('clearYaohuoLoginState: () => Promise<void>;');
+    expect(userControllerArgs).toContain('clearYaohuoLoginState');
+    expect(openUserBlock).toContain('await clearYaohuoLoginState();');
+    expect(openUserBlock).toContain("showYaohuoLogin('妖火登录已失效，请重新登录。');");
+    expect(loadMoreUserBlock).toContain('await clearYaohuoLoginState();');
+    expect(loadMoreUserBlock).toContain("showYaohuoLogin('妖火登录已失效，请重新登录。');");
+  });
+
   it('rehydrates saved yaohuo cookies into WebView before opening the login page', () => {
     expect(appSource).toContain('restoreSavedYaohuoCookiesToWebView');
     expect(sessionControllerSource).toContain('buildYaohuoSetCookieHeaders(cookieHeader)');

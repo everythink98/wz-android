@@ -181,11 +181,15 @@ export function useSearchController({
         throw error;
       }
       if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
-        return { source, label: sourceLabel(source), items: [], error: isYaohuoLoginExpiredError(error) ? '登录已失效' : errorMessage(error), hasMore: false, nextPage: null };
+        if (isYaohuoLoginExpiredError(error)) {
+          await clearYaohuoLoginState();
+          return { source, label: sourceLabel(source), items: [], error: '登录已失效', hasMore: false, nextPage: null };
+        }
+        return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
       }
       return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
     }
-  }, [fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef]);
+  }, [clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef]);
 
   const runSearch = useCallback(async (sourceOverride?: Source) => {
     const query = searchQuery.trim();
