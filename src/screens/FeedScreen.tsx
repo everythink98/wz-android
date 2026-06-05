@@ -63,13 +63,14 @@ export function FeedScreen({
   onReadingFilterChange: (filter: ReadingFilter) => void;
   onRefresh: () => void;
 }) {
-  const listRefs = useRef<Partial<Record<FeedSource, FlashListRef<Topic> | null>>>({});
+  const listRef = useRef<FlashListRef<Topic> | null>(null);
   const requestedFeedPageRef = useRef<number | null>(null);
   const lastAutoLoadMoreOffsetRef = useRef<number | null>(null);
   const autoLoadPausedAfterFailureRef = useRef(false);
-  const pendingScrollTopRef = useRef<Partial<Record<FeedSource, boolean>>>({});
+  const pendingScrollTopRef = useRef(false);
   const [showFloatingActions, setShowFloatingActions] = useState(false);
-  const activeIndex = Math.max(0, feedSourceItems.findIndex((item) => item.value === feedSource));
+  const activeFeedSourceIndex = Math.max(0, feedSourceItems.findIndex((item) => item.value === feedSource));
+  const [pagerIndex, setPagerIndex] = useState(activeFeedSourceIndex);
   const secondaryRailResetKey = feedSource;
 
   const requestFeedLoadMore = useCallback((source: 'button' | 'scroll' = 'button', offsetY = 0) => {
@@ -126,29 +127,28 @@ export function FeedScreen({
     }
   }, [loadMoreFailureSignal]);
 
-  const scrollFeedToTop = useCallback((source: FeedSource = feedSource, animated = true) => {
-    const listRef = listRefs.current[source];
-    if (listRef) {
-      listRef.scrollToOffset({ offset: 0, animated });
-      pendingScrollTopRef.current[source] = false;
+  const scrollFeedToTop = useCallback((animated = true) => {
+    if (listRef.current) {
+      listRef.current.scrollToOffset({ offset: 0, animated });
+      pendingScrollTopRef.current = false;
     } else {
-      pendingScrollTopRef.current[source] = true;
+      pendingScrollTopRef.current = true;
     }
     setShowFloatingActions(false);
-  }, [feedSource]);
+  }, []);
 
   const completePendingFeedScrollReset = useCallback(() => {
-    if (pendingScrollTopRef.current[feedSource]) {
-      scrollFeedToTop(feedSource, false);
+    if (pendingScrollTopRef.current) {
+      scrollFeedToTop(false);
     }
-  }, [feedSource, scrollFeedToTop]);
+  }, [scrollFeedToTop]);
 
   useEffect(() => {
     requestedFeedPageRef.current = null;
     lastAutoLoadMoreOffsetRef.current = null;
     autoLoadPausedAfterFailureRef.current = false;
-    pendingScrollTopRef.current[feedSource] = true;
-    scrollFeedToTop(feedSource, false);
+    pendingScrollTopRef.current = true;
+    scrollFeedToTop(false);
   }, [categoryFilter, feedSource, readingFilter, scrollFeedToTop]);
 
   useEffect(() => {
@@ -157,15 +157,20 @@ export function FeedScreen({
     }
   }, [scrollFeedToTop, scrollToTopSignal]);
 
-  const handleFeedPageChange = useCallback((index: number) => {
+  useEffect(() => {
+    setPagerIndex((current) => current === activeFeedSourceIndex ? current : activeFeedSourceIndex);
+  }, [activeFeedSourceIndex]);
+
+  const changeFeedSourceAtIndex = useCallback((index: number) => {
     const next = feedSourceItems[index];
-    if (!next || next.value === feedSource) {
+    if (!next) {
       return;
     }
-    pendingScrollTopRef.current[next.value] = true;
-    scrollFeedToTop(next.value, false);
-    onFeedSourceChange(next.value);
-  }, [feedSource, onFeedSourceChange, scrollFeedToTop]);
+    setPagerIndex(index);
+    if (next.value !== feedSource) {
+      onFeedSourceChange(next.value);
+    }
+  }, [feedSource, onFeedSourceChange]);
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
     <MemoizedTopicCard
@@ -184,64 +189,68 @@ export function FeedScreen({
   const feedEmptyText = readingFilter !== 'all' || Boolean(categoryFilter) || feedSource !== 'all'
     ? '当前筛选没有匹配主题'
     : '暂无主题';
-
-  const renderFeedList = useCallback(({ route }: { route: { key: string } }) => {
-    const routeSource = route.key as FeedSource;
-    const active = routeSource === feedSource;
+  const renderFeedScene = useCallback(({ route }: { route: { key: string } }) => {
+    const routeIndex = feedSourceItems.findIndex((item) => item.value === route.key);
+    const active = routeIndex === pagerIndex;
+    if (!active) {
+      return (
+        <View style={styles.content}>
+          <EmptyText text="正在切换来源..." styles={styles} />
+        </View>
+      );
+    }
     return (
       <FlashList
-        ref={(ref) => {
-          listRefs.current[routeSource] = ref;
-        }}
+        ref={listRef}
         style={styles.content}
         contentContainerStyle={styles.feedListContentInner}
         data={feedItems}
         keyExtractor={topicKey}
         keyboardShouldPersistTaps="handled"
-        refreshControl={active ? (
+        refreshControl={(
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
             colors={[theme.primary]}
             tintColor={theme.primary}
           />
-        ) : undefined}
-        onScroll={active ? handleScroll : undefined}
-        onScrollBeginDrag={active ? handleScrollBeginDrag : undefined}
+        )}
+        onScroll={handleScroll}
+        onScrollBeginDrag={handleScrollBeginDrag}
         scrollEventThrottle={64}
-        onContentSizeChange={active ? completePendingFeedScrollReset : undefined}
+        onContentSizeChange={completePendingFeedScrollReset}
         {...FEED_LIST_PERFORMANCE_PROPS}
-        ListEmptyComponent={active && busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={active ? feedEmptyText : ''} styles={styles} />}
-        ListFooterComponent={active && feedHasMore ? (
+        ListEmptyComponent={busy ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : <EmptyText text={feedEmptyText} styles={styles} />}
+        ListFooterComponent={feedHasMore ? (
           <AppButton
             label={loadingMore ? '正在加载...' : `加载第 ${feedPage + 1} 页`}
             styles={styles}
             disabled={busy || loadingMore}
             onPress={() => requestFeedLoadMore('button')}
           />
-        ) : active && feedItems.length > 0 && !busy ? (
+        ) : feedItems.length > 0 && !busy ? (
           <Text style={styles.endOfListText}>已经到底了</Text>
         ) : null}
-        ItemSeparatorComponent={active ? renderTopicSeparator : undefined}
+        ItemSeparatorComponent={renderTopicSeparator}
         renderItem={renderTopicItem}
       />
     );
   }, [
     busy,
+    completePendingFeedScrollReset,
     feedEmptyText,
     feedHasMore,
     feedItems,
     feedPage,
-    feedSource,
     handleScroll,
     handleScrollBeginDrag,
     loadingMore,
     onRefresh,
+    pagerIndex,
     refreshing,
     renderTopicItem,
     renderTopicSeparator,
     requestFeedLoadMore,
-    completePendingFeedScrollReset,
     styles,
     theme
   ]);
@@ -254,7 +263,7 @@ export function FeedScreen({
           items={feedSourceItems}
           value={feedSource}
           styles={styles}
-          onChange={(value) => onFeedSourceChange(value as FeedSource)}
+          onChange={(value) => changeFeedSourceAtIndex(feedSourceItems.findIndex((item) => item.value === value))}
         />
         {shouldUseReadingFilter(feedSource) ? (
           <PillRail
@@ -278,10 +287,10 @@ export function FeedScreen({
       </View>
       <TabView
         style={styles.feedPager}
-        navigationState={{ index: activeIndex, routes: feedSourceItems.map((item) => ({ key: item.value, title: item.label })) }}
-        renderScene={renderFeedList}
+        navigationState={{ index: pagerIndex, routes: feedSourceItems.map((item) => ({ key: item.value, title: item.label })) }}
+        renderScene={renderFeedScene}
         renderTabBar={() => null}
-        onIndexChange={handleFeedPageChange}
+        onIndexChange={changeFeedSourceAtIndex}
       />
       {showFloatingActions ? (
         <View style={styles.feedFloatingActions}>

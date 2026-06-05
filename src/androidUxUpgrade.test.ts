@@ -131,16 +131,19 @@ describe('Android App UX upgrade guards', () => {
     }
   });
 
-  it('uses native pager tabs for the feed and keeps both tab rows outside the scrolling list', () => {
+  it('keeps feed source tabs on the component-library pager above one stable feed list', () => {
     expect(feedScreenSource).toContain("from 'react-native-tab-view'");
     expect(feedScreenSource).toContain('TabView');
+    expect(feedScreenSource).toContain('renderScene={renderFeedScene}');
     expect(feedScreenSource).toContain('renderTabBar={() => null}');
+    expect(feedScreenSource).toContain('onIndexChange={changeFeedSourceAtIndex}');
     expect(feedScreenSource).toContain('styles.feedFixedHeader');
     expect(feedScreenSource).toContain('styles.feedPager');
-    expect(feedScreenSource).toContain('listRefs');
+    expect(feedScreenSource).toContain('listRef');
     expect(feedScreenSource).toContain('scrollFeedToTop');
-    expect(feedScreenSource).toContain('onRefreshPress');
+    expect(feedScreenSource).toContain('refreshControl={');
     expect(feedScreenSource).not.toContain('ListHeaderComponent={header}');
+    expect(feedScreenSource).not.toContain('PanGestureHandler');
     expect(feedScreenSource).not.toContain('PanResponder');
   });
 

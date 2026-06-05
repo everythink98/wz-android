@@ -109,10 +109,14 @@ describe('Android App experience guards', () => {
     expect(userScreenSource).toContain("hideReplyCount={item.topic.source === 'nodeseek'}");
   });
 
-  it('switches Android feed sources through a page-level horizontal gesture', () => {
+  it('switches Android feed sources with TabView gestures and one visible feed list', () => {
+    expect(feedScreenSource).toContain('<FlashList');
+    expect((feedScreenSource.match(/<FlashList\s/g) || []).length).toBe(1);
     expect(feedScreenSource).toContain("from 'react-native-tab-view'");
-    expect(feedScreenSource).toContain('renderTabBar={() => null}');
-    expect(feedScreenSource).toContain('onIndexChange={handleFeedPageChange}');
+    expect(feedScreenSource).toContain('TabView');
+    expect(feedScreenSource).toContain('renderScene={renderFeedScene}');
+    expect(feedScreenSource).toContain('onIndexChange={changeFeedSourceAtIndex}');
+    expect(feedScreenSource).not.toContain('PanGestureHandler');
     expect(feedScreenSource).not.toContain('PanResponder');
     expect(feedScreenSource).not.toContain('feedSourceSwipeDirection');
     expect(feedScreenSource).not.toContain('shouldCaptureFeedSourceSwipe');
@@ -137,12 +141,12 @@ describe('Android App experience guards', () => {
     expect(feedScreenSource).toContain('loadMoreFailureSignal');
     expect(feedScreenSource).toContain('autoLoadPausedAfterFailureRef');
     expect(feedScreenSource).toContain('pausedAfterFailure: autoLoadPausedAfterFailureRef.current');
-    expect(feedScreenSource).toContain('onScrollBeginDrag={active ? handleScrollBeginDrag : undefined}');
+    expect(feedScreenSource).toContain('onScrollBeginDrag={handleScrollBeginDrag}');
   });
 
   it('draws consistent separators between Android feed rows at the list level', () => {
     expect(feedScreenSource).toContain('const renderTopicSeparator');
-    expect(feedScreenSource).toContain('ItemSeparatorComponent={active ? renderTopicSeparator : undefined}');
+    expect(feedScreenSource).toContain('ItemSeparatorComponent={renderTopicSeparator}');
     expect(feedScreenSource).toContain('style={styles.topicListSeparator}');
   });
 
@@ -156,7 +160,7 @@ describe('Android App experience guards', () => {
 
   it('supports native pull-to-refresh on the Android feed list', () => {
     expect(feedScreenSource).toContain('RefreshControl');
-    expect(feedScreenSource).toContain('refreshControl={active ? (');
+    expect(feedScreenSource).toContain('refreshControl={(');
     expect(feedScreenSource).toContain('refreshing={refreshing}');
     expect(feedScreenSource).toContain('onRefresh={onRefresh}');
   });
@@ -684,13 +688,18 @@ describe('Android App experience guards', () => {
   it('resets feed scroll position when the source, category, or reading filter changes', () => {
     const block = feedScreenSource;
 
-    expect(block).toContain('pendingScrollTopRef.current[feedSource] = true;');
-    expect(block).toContain('scrollFeedToTop(feedSource, false);');
+    expect(block).toContain('pendingScrollTopRef.current = true;');
+    expect(block).toContain('scrollFeedToTop(false);');
     expect(block).toContain('completePendingFeedScrollReset');
     expect(block).not.toContain('AsyncStorage.getItem(scrollStorageKey)');
   });
 
-  it('keeps source tab scenes populated during pager transitions', () => {
+  it('keeps source switching on the active feed list instead of cached pager routes', () => {
+    expect(appSource).not.toContain('const feedItemsBySource = useMemo');
+    expect(feedScreenSource).not.toContain('feedItemsBySource');
+    expect(feedScreenSource).not.toContain('routeFeedItems');
+    expect(feedScreenSource).not.toContain('routeSource');
+    expect(feedScreenSource).not.toContain('renderFeedList');
     expect(feedScreenSource).toContain('data={feedItems}');
     expect(feedScreenSource).not.toContain('data={active ? feedItems : []}');
   });
