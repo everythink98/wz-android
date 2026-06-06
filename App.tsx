@@ -1484,8 +1484,11 @@ export default function App() {
     replyNextOffset,
     unreadReplyCount,
     commentQuery,
-    replyFilter
-  }), [commentQuery, replyFilter, replyHasMore, replyNextOffset, replyNextPage, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
+    replyFilter,
+    replyContent,
+    replyComposerOpen,
+    replyTarget
+  }), [commentQuery, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
 
   const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
     clearTopicScrollRestoreTimer();
@@ -1499,6 +1502,9 @@ export default function App() {
     setUnreadReplyCount(snapshot.unreadReplyCount);
     setCommentQuery(snapshot.commentQuery);
     setReplyFilter(snapshot.replyFilter);
+    setReplyContent(snapshot.replyContent);
+    setReplyComposerOpen(snapshot.replyComposerOpen);
+    setReplyTarget(snapshot.replyTarget);
     setTopicBusy(false);
     setLoadingMoreReplies(false);
     loadingMoreRepliesRef.current = false;
@@ -1687,12 +1693,9 @@ export default function App() {
       repliesRequestIdRef.current += 1;
       topicAbortRef.current?.abort();
       repliesAbortRef.current?.abort();
-      const restorePreviousTopic = () => restoreTopicSnapshot(previousTopic);
+      restoreTopicSnapshot(previousTopic);
       if (canGoBack) {
         navigationRef.goBack();
-        runAfterNavigationInteractions(restorePreviousTopic);
-      } else {
-        restorePreviousTopic();
       }
       return;
     }

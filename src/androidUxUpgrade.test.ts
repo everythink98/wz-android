@@ -95,7 +95,32 @@ describe('Android App UX upgrade guards', () => {
     expect(restoreTopicSnapshotBlock).toContain('restoredTopic ? topicKey(restoredTopic) : null');
   });
 
-  it('defers heavy topic restore work until native return animations finish', () => {
+  it('restores the previous topic replies before popping nested topic routes', () => {
+    const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const previousTopicBranch = goBackFromTopicBlock.match(/if \(previousTopic\) \{[\s\S]*?\n      return;\n    \}/)?.[0] || '';
+
+    expect(previousTopicBranch).toContain('restoreTopicSnapshot(previousTopic);\n      if (canGoBack) {');
+    expect(previousTopicBranch.indexOf('restoreTopicSnapshot(previousTopic);')).toBeLessThan(previousTopicBranch.indexOf('navigationRef.goBack();'));
+    expect(previousTopicBranch).not.toContain('runAfterNavigationInteractions(restorePreviousTopic);');
+  });
+
+  it('keeps reply draft state in topic snapshots when returning from nested topics', () => {
+    const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
+    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
+    const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appTypesSource).toContain('replyContent: string;');
+    expect(appTypesSource).toContain('replyComposerOpen: boolean;');
+    expect(appTypesSource).toContain('replyTarget: ReplyTarget | null;');
+    expect(topicSnapshotBlock).toContain('replyContent,');
+    expect(topicSnapshotBlock).toContain('replyComposerOpen,');
+    expect(topicSnapshotBlock).toContain('replyTarget');
+    expect(restoreTopicSnapshotBlock).toContain('setReplyContent(snapshot.replyContent);');
+    expect(restoreTopicSnapshotBlock).toContain('setReplyComposerOpen(snapshot.replyComposerOpen);');
+    expect(restoreTopicSnapshotBlock).toContain('setReplyTarget(snapshot.replyTarget);');
+  });
+
+  it('defers leaving topic screens until native return animations finish', () => {
     const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const goBackFromUserBlock = appSource.match(/const goBackFromUser = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
@@ -104,7 +129,6 @@ describe('Android App UX upgrade guards', () => {
     expect(appSource).toContain('flushDeferredNavigationTask');
     expect(appSource).toContain('transitionEnd');
     expect(appSource).toContain('freezeOnBlur: true');
-    expect(goBackFromTopicBlock).toContain('runAfterNavigationInteractions(restorePreviousTopic);');
     expect(goBackFromTopicBlock).toContain('runAfterNavigationInteractions(() => changeScreen(topicReturnScreenRef.current));');
     expect(goBackFromUserBlock).toContain('runAfterNavigationInteractions(restoreReturnTopic);');
   });

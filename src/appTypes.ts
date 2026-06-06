@@ -34,6 +34,9 @@ export type TopicSnapshot = {
   unreadReplyCount: number;
   commentQuery: string;
   replyFilter: ReplyFilter;
+  replyContent: string;
+  replyComposerOpen: boolean;
+  replyTarget: ReplyTarget | null;
 };
 
 export type YaohuoReplyTarget = ReplyTarget;
