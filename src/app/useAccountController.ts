@@ -34,7 +34,7 @@ import { checkYaohuoLoginDirect } from '../yaohuoApi';
 import { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../linuxdoLevel';
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
-import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../screens/MoreScreen';
+import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
 
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
@@ -61,7 +61,6 @@ export function useAccountController({
   setLinuxDoLevelProfile,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
-  setYaohuoLoginCookieHeader,
   showLinuxDoPanelRef,
   showLinuxDoVerification,
   showLoginPanelRef,
@@ -94,7 +93,6 @@ export function useAccountController({
   setLinuxDoLevelProfile: Dispatch<SetStateAction<LinuxDoLevelProfile | null>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
-  setYaohuoLoginCookieHeader: Dispatch<SetStateAction<string>>;
   showLinuxDoPanelRef: Ref<boolean>;
   showLinuxDoVerification: (message?: string) => void;
   showLoginPanelRef: Ref<boolean>;
@@ -252,7 +250,6 @@ export function useAccountController({
         cookieSummary: summary.names,
         at: new Date().toISOString()
       });
-      setYaohuoLoginCookieHeader(cookieHeader);
       notify('已检测到妖火登录 Cookie，已保存在本机。');
     } catch (error) {
       if (requestId !== checkingRequestIdRef.current) {
@@ -276,7 +273,7 @@ export function useAccountController({
         setChecking(false);
       }
     }
-  }, [checkingRequestIdRef, clearYaohuoLoginState, notify, setChecking, setYaohuoLoginCookieHeader, updateYaohuoSession]);
+  }, [checkingRequestIdRef, clearYaohuoLoginState, notify, setChecking, updateYaohuoSession]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();

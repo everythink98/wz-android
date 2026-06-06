@@ -18,8 +18,20 @@ import {
   toIsoString
 } from './localHtml';
 import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
+import {
+  NODESEEK_BASE_URL,
+  nextNodeSeekListPage,
+  nextNodeSeekPostPage,
+  isNodeSeekHost,
+  nodeSeekAccessRequirementFromListRow,
+  nodeSeekSpaceUrl,
+  nodeSeekTopicPagePath,
+  nodeSeekTopicUrl,
+  safeNodeSeekTopicUrl,
+  withNodeSeekReplyPagination
+} from './localNodeseekHelpers';
 
-const BASE_URL = 'https://www.nodeseek.com';
+const BASE_URL = NODESEEK_BASE_URL;
 const MAX_NODESEEK_SEARCH_PAGES = 5;
 export const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
@@ -34,89 +46,6 @@ interface NodeSeekOptions {
 
 function markdownToHtml(markdown: unknown) {
   return sanitizeContentHtml(md.render(String(markdown || '')), BASE_URL);
-}
-
-function topicUrl(id: string) {
-  return `${BASE_URL}/post-${id}-1`;
-}
-
-function spaceUrl(id: string) {
-  return `${BASE_URL}/space/${encodeURIComponent(id)}`;
-}
-
-function topicPagePath(id: string, page: number) {
-  return `/post-${encodeURIComponent(id)}-${page}`;
-}
-
-function nodeSeekPostPageFromHref(href: string | undefined, id: string) {
-  if (!href) {
-    return null;
-  }
-  try {
-    const pathname = new URL(href, BASE_URL).pathname;
-    const prefix = `/post-${encodeURIComponent(id)}-`;
-    if (!pathname.startsWith(prefix)) {
-      return null;
-    }
-    return parsePositiveInteger(pathname.slice(prefix.length));
-  } catch {
-    return null;
-  }
-}
-
-function nextNodeSeekPostPage(html: string, id: string, currentPage = 1) {
-  let nextPage: number | null = null;
-  for (const link of parseHtml(html).querySelectorAll('a')) {
-    const page = nodeSeekPostPageFromHref(link.getAttribute('href'), id);
-    if (page && page > currentPage && (!nextPage || page < nextPage)) {
-      nextPage = page;
-    }
-  }
-  return nextPage;
-}
-
-function nextNodeSeekListPage(html: string, currentPage = 1) {
-  let nextPage: number | null = null;
-  for (const link of parseHtml(html).querySelectorAll('a[href]')) {
-    try {
-      const pathname = new URL(link.getAttribute('href') || '', BASE_URL).pathname;
-      const page = parsePositiveInteger(pathname.match(/(?:^|\/)page-(\d+)$/)?.[1]);
-      if (page && page > currentPage && (!nextPage || page < nextPage)) {
-        nextPage = page;
-      }
-    } catch {
-      // Ignore unrelated links.
-    }
-  }
-  return nextPage;
-}
-
-function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id: string, currentPage = 1) {
-  const nextPage = nextNodeSeekPostPage(html, id, currentPage);
-  if (!topic.replyHasMore && nextPage) {
-    return {
-      ...topic,
-      replyHasMore: true,
-      replyNextPage: nextPage,
-      replyNextOffset: topic.replies.length
-    };
-  }
-  return topic;
-}
-
-function isNodeSeekHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
-}
-
-function safeNodeSeekTopicUrl(id: string, rawUrl?: unknown) {
-  const fallback = topicUrl(id);
-  const next = absoluteUrl(rawUrl, BASE_URL) || fallback;
-  try {
-    return isNodeSeekHost(new URL(next).hostname) ? next : fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function parseViewCount(value: unknown) {
@@ -489,15 +418,6 @@ function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>) {
   return Math.max(parsePositiveInteger(raw.comments ?? raw.commentCount ?? raw.comment_count) - 1, 0);
 }
 
-function nodeSeekAccessRequirementFromListRow(row: HTMLElement, title: string) {
-  const direct = row.querySelectorAll('*')
-    .map((node) => elementText(node).replace(title, ' ').trim())
-    .filter((text) => text && text !== '内版')
-    .map((text) => accessRequirementFromText(text))
-    .find(Boolean);
-  return direct || accessRequirementFromText(elementText(row).replace(title, ' '));
-}
-
 function normalizeTopic(raw: Record<string, unknown>): Topic | null {
   const id = String(raw.postId || raw.id || '').trim();
   const title = String(raw.titleText || raw.title || '').trim();
@@ -519,7 +439,7 @@ function normalizeTopic(raw: Record<string, unknown>): Topic | null {
     author: String(op.name || raw.author || ''),
     authorAvatar: absoluteUrl(op.avatar, BASE_URL),
     authorId: authorId || undefined,
-    authorUrl: authorId ? spaceUrl(authorId) : undefined,
+    authorUrl: authorId ? nodeSeekSpaceUrl(authorId) : undefined,
     categoryId,
     category: categoryName,
     url: safeNodeSeekTopicUrl(id, raw.titleLink || raw.url),
@@ -837,7 +757,7 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
   return source.slice(start).filter(isRecord).map((comment, index) => {
     const poster = isRecord(comment.poster) ? comment.poster : {};
     const authorId = nodeSeekEmbeddedUserId(poster);
-    const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? spaceUrl(authorId) : undefined);
+    const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
     const signatureHtml = String(comment.signature || '').trim()
       ? markdownToHtml(comment.signature)
       : undefined;
@@ -893,7 +813,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const lastReplyAt = toIsoString(lastCommentDate || data.updatedDate) || createdAt;
   const accessRequirement = accessRequirementFromObject(data);
   const authorId = nodeSeekEmbeddedUserId(op) || nodeSeekEmbeddedUserId(poster);
-  const authorUrl = absoluteUrl(op.profile || poster.profile, BASE_URL) || (authorId ? spaceUrl(authorId) : undefined);
+  const authorUrl = absoluteUrl(op.profile || poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
   return {
     source: 'nodeseek',
     id,
@@ -1138,7 +1058,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
     categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
     category: elementText(categoryLink) || undefined,
-    url: topicUrl(id),
+    url: nodeSeekTopicUrl(id),
     createdAt,
     lastReplyAt,
     replyCount: allReplies.length,
@@ -1162,7 +1082,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
-  return fetchNodeSeekText(topicPagePath(id, page), options);
+  return fetchNodeSeekText(nodeSeekTopicPagePath(id, page), options);
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
@@ -1183,7 +1103,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   if (postData) {
     const comments = arrayField(postData.comments);
     const first = isRecord(comments[0]) ? comments[0] : {};
-    const topic = normalizePostData(postData, id, topicUrl(id), options.replyLimit || 30);
+    const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
     const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], options));
     return withNodeSeekReplyPagination(polls ? { ...topic, polls } : topic, html, id, 1);
   }
@@ -1283,7 +1203,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
       author: username,
       authorAvatar: avatar,
       authorId: userId,
-      authorUrl: spaceUrl(userId),
+      authorUrl: nodeSeekSpaceUrl(userId),
       url: safeNodeSeekTopicUrl(topicId, `/post-${topicId}-1`),
       createdAt,
       lastReplyAt: createdAt,
@@ -1299,7 +1219,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     username,
     displayName: username,
     avatar,
-    url: spaceUrl(userId),
+    url: nodeSeekSpaceUrl(userId),
     bio,
     joinedAt: joinedAt || undefined,
     topicCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,

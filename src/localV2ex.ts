@@ -18,9 +18,15 @@ import {
   textContentFromHtml,
   toIsoString
 } from './localHtml';
+import {
+  SOV2EX_URL,
+  V2EX_BASE_URL as BASE_URL,
+  safeV2exNodePath as safeNodePath,
+  safeV2exTopicUrl as safeTopicUrl,
+  v2exMemberUrl as memberUrl,
+  v2exNodeIdFromHref as nodeIdFromHref
+} from './localV2exHelpers';
 
-const BASE_URL = 'https://www.v2ex.com';
-const SOV2EX_URL = 'https://www.sov2ex.com';
 const HTML_LIST_PAGE_SIZE = 20;
 const latestCache: { savedAt: number; data: unknown[] } = { savedAt: 0, data: [] };
 const atomParser = new XMLParser({
@@ -53,25 +59,6 @@ type V2exHtmlDetail = {
   repliesByCommentId: Map<number, V2exHtmlReplyMeta>;
   repliesByFloor: Map<number, V2exHtmlReplyMeta>;
 };
-
-function isV2exHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  return host === 'v2ex.com' || host.endsWith('.v2ex.com');
-}
-
-function safeTopicUrl(id: string, raw?: unknown) {
-  const fallback = `${BASE_URL}/t/${id}`;
-  const url = absoluteUrl(raw, BASE_URL) || fallback;
-  try {
-    return isV2exHost(new URL(url).hostname) ? url : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function memberUrl(username: string) {
-  return `${BASE_URL}/member/${encodeURIComponent(username)}`;
-}
 
 function escapeHtml(value: unknown) {
   return String(value || '')
@@ -130,11 +117,6 @@ function normalizeApiTopic(raw: unknown): Topic | null {
     excerpt: textExcerpt(raw.content || raw.content_rendered || ''),
     ...(accessRequirement ? { accessRequirement } : {})
   };
-}
-
-function nodeIdFromHref(href?: string) {
-  const match = String(href || '').match(/\/go\/([^/?#]+)/);
-  return match ? decodeURIComponent(match[1]) : undefined;
 }
 
 function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallbackCategory?: string): Topic | null {
@@ -417,13 +399,6 @@ async function loadLatest(options: V2exOptions & { nocache?: boolean } = {}) {
   latestCache.savedAt = Date.now();
   latestCache.data = Array.isArray(data) ? data : [];
   return latestCache.data;
-}
-
-function safeNodePath(category?: string) {
-  if (!category) {
-    return '/recent';
-  }
-  return /^[a-zA-Z0-9_-]+$/.test(category) ? `/go/${category}` : null;
 }
 
 async function fetchHtmlWindow(options: V2exOptions & {

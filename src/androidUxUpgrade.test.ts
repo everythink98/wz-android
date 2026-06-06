@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('android-app', 'App.tsx');
+const appNavigatorSource = readProjectFile('android-app', 'src', 'app', 'AppNavigator.tsx');
 const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
 const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
@@ -9,6 +10,7 @@ const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useT
 const topicNavigationControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicNavigationController.ts');
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const verificationControllerSource = readProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
+const linuxDoVerifyModalSource = readProjectFile('android-app', 'src', 'app', 'LinuxDoVerifyModal.tsx');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
@@ -42,20 +44,22 @@ describe('Android App UX upgrade guards', () => {
 
   it('hosts the app in React Navigation with bottom tabs and a standard stack for detail screens', () => {
     expect(appSource).toContain("import 'react-native-gesture-handler';");
-    expect(appSource).toContain('NavigationContainer');
-    expect(appSource).toContain('createNativeStackNavigator');
-    expect(appSource).toContain('createBottomTabNavigator');
-    expect(appSource).toContain('Stack.Navigator');
-    expect(appSource).toContain('Tab.Navigator');
+    expect(appSource).toContain('<AppNavigator');
+    expect(appNavigatorSource).toContain('NavigationContainer');
+    expect(appNavigatorSource).toContain('createNativeStackNavigator');
+    expect(appNavigatorSource).toContain('createBottomTabNavigator');
+    expect(appNavigatorSource).toContain('Stack.Navigator');
+    expect(appNavigatorSource).toContain('Tab.Navigator');
     expect(appSource).toContain("StackActions.push('Topic')");
     expect(appSource).toContain("StackActions.push('User')");
   });
 
   it('uses native stack background, slide transitions, and topic history for detail returns', () => {
     expect(appSource).toContain('const navigationTheme = useMemo');
-    expect(appSource).toContain('<NavigationContainer ref={navigationRef} theme={navigationTheme}');
-    expect(appSource).toContain("animation: 'slide_from_right'");
-    expect(appSource).toContain('contentStyle: { backgroundColor: theme.background }');
+    expect(appSource).toContain('navigationTheme={navigationTheme}');
+    expect(appNavigatorSource).toContain('<NavigationContainer ref={navigationRef} theme={navigationTheme}');
+    expect(appNavigatorSource).toContain("animation: 'slide_from_right'");
+    expect(appNavigatorSource).toContain('contentStyle: { backgroundColor: theme.background }');
     expect(appSource).toContain('topicBackStackRef');
     expect(topicControllerSource).toContain('const nextTopicKey = topicKey(topic);');
     expect(topicControllerSource).toContain('const activeTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);');
@@ -170,8 +174,10 @@ describe('Android App UX upgrade guards', () => {
     expect(appSource).toContain('InteractionManager');
     expect(appSource).toContain('runAfterNavigationInteractions');
     expect(appSource).toContain('flushDeferredNavigationTask');
-    expect(appSource).toContain('transitionEnd');
-    expect(appSource).toContain('freezeOnBlur: true');
+    expect(appSource).toContain('onTopicClosing={flushDeferredNavigationTask}');
+    expect(appSource).toContain('onUserClosing={flushDeferredNavigationTask}');
+    expect(appNavigatorSource).toContain('transitionEnd');
+    expect(appNavigatorSource).toContain('freezeOnBlur: true');
     expect(goBackFromTopicBlock).toContain('runAfterNavigationInteractions(() => changeScreen(topicReturnScreenRef.current));');
     expect(goBackFromUserBlock).toContain('runAfterNavigationInteractions(restoreReturnTopic);');
   });
@@ -249,7 +255,7 @@ describe('Android App UX upgrade guards', () => {
     expect(moreScreenSource).toContain('title="状态检查"');
     expect(morePanelsSource).toContain('showLoginPanel && accountExpanded');
     expect(morePanelsSource).toContain('showYaohuoLoginPanel && accountExpanded');
-    expect(morePanelsSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
+    expect(linuxDoVerifyModalSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
   });
 
   it('recovers when a floor directory jump targets an unmeasured reply row', () => {

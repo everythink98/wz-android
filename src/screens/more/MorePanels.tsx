@@ -1,46 +1,19 @@
-import { memo, type ReactNode, type RefObject, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, Text, TextInput, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { memo, type RefObject, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { CheckCircle, LogIn, RefreshCw } from 'lucide-react-native';
 import type { ReaderSettings } from '../../readerData';
 import type { LinuxDoLevelProfile } from '../../linuxdoLevel';
 import type { HealthDetail, LoginNavigationRequest } from '../../appTypes';
-import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from '../../appUrls';
+import { NODESEEK_URL, YAOHUO_URL } from '../../appUrls';
 import type { SiteSessionViewModel } from '../../siteSessionState';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, IconButton, MenuButton, SettingRail } from '../../components/AppControls';
+import { LoginWebViewModal } from '../../components/LoginWebViewModal';
+import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../../loginWebViewScripts';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
-const LINUXDO_VERIFY_URL = LINUXDO_URL + '/latest';
-const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
-
-export const NODESEEK_LOGIN_PROBE_SCRIPT = `
-(() => {
-  const body = document.body ? document.body.innerText : "";
-  const match = body.match(/UID\s*[:：]\s*(\d+)/i);
-  window.ReactNativeWebView.postMessage(JSON.stringify({
-    type: "nodeseek-login",
-    loggedIn: !/登录|注册|Sign in/i.test(body) || Boolean(match),
-    userId: match ? Number(match[1]) : null,
-    userAgent: navigator.userAgent || "",
-    cookie: document.cookie || ""
-  }));
-})();
-true;
-`;
-
-export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
-(() => {
-  window.ReactNativeWebView.postMessage(JSON.stringify({
-    type: "linuxdo-webview",
-    userAgent: navigator.userAgent || "",
-    cookie: document.cookie || ""
-  }));
-})();
-true;
-`;
 
 export function BackupRestorePanel({
   backupJson,
@@ -86,63 +59,6 @@ export function BackupRestorePanel({
 }
 
 export const MemoizedBackupRestorePanel = memo(BackupRestorePanel);
-
-function LoginWebViewModal({
-  actions,
-  children,
-  error,
-  loading,
-  loadingText,
-  styles,
-  theme,
-  title,
-  subtitle,
-  visible,
-  onClose
-}: {
-  actions?: ReactNode;
-  children: ReactNode;
-  error?: string;
-  loading: boolean;
-  loadingText: string;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  title: string;
-  subtitle: string;
-  visible: boolean;
-  onClose: () => void;
-}) {
-  const insets = useSafeAreaInsets();
-
-  return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.loginWebViewModal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
-        <View style={styles.loginWebViewHeader}>
-          <View style={styles.loginWebViewTitleBlock}>
-            <Text style={styles.loginWebViewTitle}>{title}</Text>
-            <Text style={styles.loginWebViewSubtitle}>{subtitle}</Text>
-          </View>
-          <AppButton label="关闭" variant="ghost" styles={styles} onPress={onClose} />
-        </View>
-        {actions ? <View style={styles.loginWebViewToolbar}>{actions}</View> : null}
-        {error ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : null}
-        <View style={styles.loginWebViewBody}>
-          {loading ? (
-            <View pointerEvents="none" style={styles.loading}>
-              <ActivityIndicator color={theme.primary} />
-              <Text style={styles.loadingText}>{loadingText}</Text>
-            </View>
-          ) : null}
-          {children}
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 export function NodeSeekLoginPanel({
   accountExpanded,
@@ -279,7 +195,6 @@ export function YaohuoLoginPanel({
   showYaohuoLoginPanel,
   styles,
   theme,
-  yaohuoLoginCookieHeader,
   yaohuoLoginState,
   yaohuoWebViewRef,
   onCheckYaohuoLogin,
@@ -295,7 +210,6 @@ export function YaohuoLoginPanel({
   showYaohuoLoginPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  yaohuoLoginCookieHeader: string;
   yaohuoLoginState: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   onCheckYaohuoLogin: () => void;
@@ -351,10 +265,7 @@ export function YaohuoLoginPanel({
             <WebView
               key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}
-              source={{
-                uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL,
-                headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined
-              }}
+              source={{ uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               onLoadEnd={(event) => {
@@ -389,134 +300,6 @@ export function YaohuoLoginPanel({
 
 export const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);
 
-export function LinuxDoVerifyModal({
-  checking,
-  linuxDoSession,
-  linuxDoWebViewError,
-  linuxDoWebViewKey,
-  linuxDoWebViewRef,
-  linuxDoWebViewUserAgent,
-  mountLinuxDoWebView,
-  loadingLinuxDoPage,
-  showLinuxDoPanel,
-  styles,
-  theme,
-  onCheckLinuxDoCookie,
-  onClearLinuxDoCookie,
-  handleLinuxDoNavigation,
-  onHandleLinuxDoMessage,
-  onResetLinuxDoWebView,
-  onSetLinuxDoWebViewError,
-  onSetLoadingLinuxDoPage,
-  onShowLinuxDoPanelChange
-}: {
-  checking: boolean;
-  linuxDoSession: SiteSessionViewModel;
-  linuxDoWebViewError: string;
-  linuxDoWebViewKey: number;
-  linuxDoWebViewRef: RefObject<WebView | null>;
-  linuxDoWebViewUserAgent: string;
-  mountLinuxDoWebView: boolean;
-  loadingLinuxDoPage: boolean;
-  showLinuxDoPanel: boolean;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onCheckLinuxDoCookie: () => void;
-  onClearLinuxDoCookie: () => void;
-  handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
-  onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
-  onResetLinuxDoWebView: () => void;
-  onSetLinuxDoWebViewError: (value: string, webViewKey?: number) => void;
-  onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
-  onShowLinuxDoPanelChange: (value: boolean) => void;
-}) {
-  const linuxDoWebViewReadyRef = useRef(false);
-  const markLinuxDoPageReady = () => {
-    linuxDoWebViewReadyRef.current = true;
-    onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-  };
-
-  useEffect(() => {
-    linuxDoWebViewReadyRef.current = false;
-  }, [linuxDoWebViewKey, showLinuxDoPanel]);
-
-  useEffect(() => {
-    if (!showLinuxDoPanel || !loadingLinuxDoPage) {
-      return undefined;
-    }
-    const timeout = setTimeout(() => {
-      onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。', linuxDoWebViewKey);
-    }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [linuxDoWebViewKey, loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
-  return (
-    <LoginWebViewModal
-      visible={showLinuxDoPanel}
-      title="linux.do 登录 / 验证"
-      subtitle={linuxDoSession.summaryLabel === '匿名可用' ? '匿名可用，登录后内容更完整' : linuxDoSession.summaryLabel}
-      loading={loadingLinuxDoPage}
-      loadingText="正在打开 linux.do..."
-      error={linuxDoWebViewError}
-      styles={styles}
-      theme={theme}
-      onClose={() => onShowLinuxDoPanelChange(false)}
-      actions={(
-        <View style={styles.actions}>
-          <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
-          <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLinuxDoCookie} />
-          <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
-        </View>
-      )}
-    >
-      {showLinuxDoPanel && mountLinuxDoWebView ? (
-        <WebView
-          key={linuxDoWebViewKey}
-          ref={linuxDoWebViewRef}
-          source={{ uri: LINUXDO_VERIFY_URL }}
-          androidLayerType="software"
-          javaScriptEnabled
-          domStorageEnabled
-          cacheEnabled
-          sharedCookiesEnabled
-          thirdPartyCookiesEnabled
-          userAgent={linuxDoWebViewUserAgent}
-          injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
-          onLoadProgress={(event) => {
-            if (event.nativeEvent.progress >= 0.8) {
-              markLinuxDoPageReady();
-            }
-          }}
-          onLoadEnd={(event) => {
-            markLinuxDoPageReady();
-            if (!('code' in event.nativeEvent)) {
-              onSetLinuxDoWebViewError('', linuxDoWebViewKey);
-            }
-            linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
-          }}
-          onLoadStart={() => {
-            onSetLinuxDoWebViewError('', linuxDoWebViewKey);
-            if (!linuxDoWebViewReadyRef.current) {
-              onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
-            }
-          }}
-          onMessage={(event) => onHandleLinuxDoMessage(event, linuxDoWebViewKey)}
-          onError={(event) => {
-            onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-            onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey);
-          }}
-          renderError={() => <View style={styles.webViewErrorPlaceholder} />}
-          onRenderProcessGone={() => {
-            onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-            onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey);
-          }}
-          onShouldStartLoadWithRequest={handleLinuxDoNavigation}
-        />
-      ) : null}
-    </LoginWebViewModal>
-  );
-}
-
 export function LinuxDoVerifyPanel({
   linuxDoSession,
   showLinuxDoPanel,
@@ -524,25 +307,10 @@ export function LinuxDoVerifyPanel({
   theme,
   onShowLinuxDoPanelChange
 }: {
-  accountExpanded: boolean;
-  checking: boolean;
   linuxDoSession: SiteSessionViewModel;
-  linuxDoWebViewError: string;
-  linuxDoWebViewKey: number;
-  linuxDoWebViewRef: RefObject<WebView | null>;
-  linuxDoWebViewUserAgent: string;
-  mountLinuxDoWebView: boolean;
-  loadingLinuxDoPage: boolean;
   showLinuxDoPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  onCheckLinuxDoCookie: () => void;
-  onClearLinuxDoCookie: () => void;
-  handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
-  onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
-  onResetLinuxDoWebView: () => void;
-  onSetLinuxDoWebViewError: (value: string, webViewKey?: number) => void;
-  onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
   return (
@@ -550,7 +318,6 @@ export function LinuxDoVerifyPanel({
   );
 }
 
-export const MemoizedLinuxDoVerifyModal = memo(LinuxDoVerifyModal);
 export const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);
 
 const LINUXDO_LEVEL_TABS = [

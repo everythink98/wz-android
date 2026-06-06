@@ -21,7 +21,7 @@ import {
 import { topicKey } from '../readerData';
 import type { Topic, TopicDetail } from '../types';
 import { errorMessage } from '../appUtils';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../screens/MoreScreen';
+import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
 import type { Screen } from '../appTypes';
 import type { SiteSessionEvent } from '../siteSessionState';
 

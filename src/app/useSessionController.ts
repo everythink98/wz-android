@@ -214,7 +214,6 @@ export function useSessionController({
   setNodeSeekBrowserFetchRequest,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
-  setYaohuoLoginCookieHeader,
   webLoginDetectedRef,
   webLoginUserId
 }: {
@@ -240,7 +239,6 @@ export function useSessionController({
   setNodeSeekBrowserFetchRequest: Dispatch<SetStateAction<NodeSeekBrowserFetchRequest | null>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
-  setYaohuoLoginCookieHeader: Dispatch<SetStateAction<string>>;
   webLoginDetectedRef: MutableRef<boolean>;
   webLoginUserId: number | null;
 }) {
@@ -317,7 +315,6 @@ export function useSessionController({
       if (savedYaohuoCookie) {
         const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(savedYaohuoCookie));
         updateYaohuoSession(siteEventWithCookieFacts('yaohuo', yaohuoSummary.names, false, yaohuoSummary.loggedIn));
-        setYaohuoLoginCookieHeader(savedYaohuoCookie);
         notify('已找到本机保存的妖火 Cookie。');
       }
       const linuxDoSummary = linuxDoAccessSummary(linuxDoAccess);
@@ -340,7 +337,6 @@ export function useSessionController({
     notify,
     setLinuxDoWebViewUserAgent,
     setNodeSeekWebViewUserAgent,
-    setYaohuoLoginCookieHeader,
     updateLinuxDoSession,
     updateNodeSeekSession,
     updateYaohuoSession
@@ -710,11 +706,9 @@ export function useSessionController({
   const restoreSavedYaohuoCookiesToWebView = useCallback(async () => {
     const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
     if (!cookieHeader) {
-      setYaohuoLoginCookieHeader('');
       updateYaohuoSession({ type: 'cleared' });
       return;
     }
-    setYaohuoLoginCookieHeader(cookieHeader);
     const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader));
     updateYaohuoSession(siteEventWithCookieFacts('yaohuo', summary.names, false, summary.loggedIn));
     const headers = buildYaohuoSetCookieHeaders(cookieHeader);
@@ -726,13 +720,12 @@ export function useSessionController({
     if (headers.length) {
       await CookieManager.flush();
     }
-  }, [setYaohuoLoginCookieHeader, updateYaohuoSession]);
+  }, [updateYaohuoSession]);
 
   const clearStoredYaohuoLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    setYaohuoLoginCookieHeader('');
     updateYaohuoSession({ type: 'cleared' });
-  }, [setYaohuoLoginCookieHeader, updateYaohuoSession]);
+  }, [updateYaohuoSession]);
 
   const clearStoredNodeSeekLoginState = useCallback(async () => {
     await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);

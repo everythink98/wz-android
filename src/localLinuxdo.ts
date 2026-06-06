@@ -19,17 +19,20 @@ import {
   loadLinuxDoAccess
 } from './linuxdoCookieBridge';
 import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
-import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
+import {
+  LINUXDO_BASE_URL as BASE_URL,
+  LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
+  isLinuxDoUncategorizedCategory as isUncategorizedCategory,
+  linuxDoAvatarUrl as avatarUrl,
+  linuxDoLatestParams as latestParams,
+  linuxDoUserUrl as userUrl,
+  normalizeLinuxDoTopicId as normalizeTopicId,
+  preferredLinuxDoAccessRequirement
+} from './localLinuxdoHelpers';
 
-const BASE_URL = 'https://linux.do';
 const LIST_PAGE_SIZE = 30;
 const TOPIC_STREAM_CACHE_LIMIT = 100;
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
-const UNCATEGORIZED_CATEGORY_NAME = '未分类';
-const NEWEST_TOPIC_PARAMS = {
-  order: 'created',
-  ascending: 'false'
-};
 
 interface LinuxDoOptions {
   fetcher?: Fetcher;
@@ -44,11 +47,6 @@ export class LinuxDoCloudflareError extends Error {
   constructor() {
     super('linux.do 需要完成 Cloudflare 验证');
   }
-}
-
-function normalizeTopicId(value: unknown) {
-  const text = String(value || '').trim();
-  return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
 }
 
 function usersById(users: unknown) {
@@ -91,19 +89,6 @@ function categoryMapFromData(data: unknown) {
   return map;
 }
 
-function userUrl(username: string) {
-  return `${BASE_URL}/u/${encodeURIComponent(username)}`;
-}
-
-function isUncategorizedCategory(category: unknown) {
-  if (!isRecord(category)) {
-    return false;
-  }
-  const name = String(category.name || '').trim();
-  const slug = String(category.slug || '').trim().toLowerCase();
-  return name === UNCATEGORIZED_CATEGORY_NAME || slug === 'uncategorized';
-}
-
 function topicsNeedCategoryMap(topics: unknown[], categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>) {
   return topics.some((topic) => isRecord(topic) && topic.category_id && !categoryMap.has(String(topic.category_id)));
 }
@@ -134,34 +119,6 @@ function originalPoster(topic: Record<string, unknown>, users: Map<string, Recor
   const poster = posters.find((item) => isRecord(item) && /original poster/i.test(String(item.description || '')))
     || posters.find(isRecord);
   return isRecord(poster) ? users.get(String(poster.user_id)) : undefined;
-}
-
-function preferredLinuxDoAccessRequirement(topicRequirement?: Topic['accessRequirement'], categoryRequirement?: Topic['accessRequirement']) {
-  if (!topicRequirement) {
-    return categoryRequirement;
-  }
-  if (!categoryRequirement) {
-    return topicRequirement;
-  }
-  const topicSpecificity = accessRequirementSpecificity(topicRequirement);
-  const categorySpecificity = accessRequirementSpecificity(categoryRequirement);
-  if (categorySpecificity > topicSpecificity) {
-    return categoryRequirement;
-  }
-  if (categorySpecificity < topicSpecificity) {
-    return topicRequirement;
-  }
-  if (topicRequirement.type === 'level' && categoryRequirement.type === 'level') {
-    const topicLevel = accessRequirementLevelValue(topicRequirement);
-    const categoryLevel = accessRequirementLevelValue(categoryRequirement);
-    if (!topicLevel && categoryLevel) {
-      return categoryRequirement;
-    }
-    if (topicLevel && categoryLevel && categoryLevel > topicLevel) {
-      return categoryRequirement;
-    }
-  }
-  return topicRequirement;
 }
 
 function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string, authorData?: Record<string, unknown>): Topic | null {
@@ -229,11 +186,6 @@ function linuxDoAccessRequirementFromError(error: unknown): Topic['accessRequire
   return error && typeof error === 'object'
     ? (error as { accessRequirement?: Topic['accessRequirement'] }).accessRequirement
     : undefined;
-}
-
-function avatarUrl(value: unknown) {
-  const text = String(value || '');
-  return text ? absoluteUrl(text.replace('{size}', '96'), BASE_URL) : undefined;
 }
 
 function quotedAuthorFromTitle(value: string) {
@@ -531,14 +483,6 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
     throw error;
   }
   return data as T;
-}
-
-function latestParams(page: number, category?: string) {
-  return {
-    ...NEWEST_TOPIC_PARAMS,
-    ...(page > 1 ? { page: page - 1 } : {}),
-    ...(category ? { category: /^\d+$/.test(category) ? Number(category) : category } : {})
-  };
 }
 
 function topicStreamState(data: unknown) {

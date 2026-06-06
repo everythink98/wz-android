@@ -63,7 +63,6 @@ export function useBackupStatusController({
   replaceReaderData,
   resetLinuxDoLevelState,
   dispatchSiteSessionEvent,
-  setYaohuoLoginCookieHeader,
   waitForReaderDataSave
 }: {
   clearYaohuoLoginState: () => Promise<void>;
@@ -77,7 +76,6 @@ export function useBackupStatusController({
   readerDataRef: { current: ReaderData };
   replaceReaderData: (nextValue: ReaderData) => Promise<void>;
   resetLinuxDoLevelState: () => void;
-  setYaohuoLoginCookieHeader: (value: string) => void;
   waitForReaderDataSave: () => Promise<void>;
 }) {
   const backupRequestIdRef = useRef(0);
@@ -373,9 +371,6 @@ export function useBackupStatusController({
           loggedIn: result.hasYaohuoLogin,
           at: new Date().toISOString()
         });
-      if (!yaohuoCookie || result.hasYaohuoLogin) {
-        setYaohuoLoginCookieHeader(yaohuoCookie || '');
-      }
       dispatchSiteSessionEvent({
         site: 'linuxdo',
         type: 'cookie-loaded',
@@ -406,8 +401,7 @@ export function useBackupStatusController({
     nodeSeekUserAgentRef,
     notify,
     queryClient,
-    resetLinuxDoLevelState,
-    setYaohuoLoginCookieHeader
+    resetLinuxDoLevelState
   ]);
 
   const abortBackupStatusRequests = useCallback(() => {

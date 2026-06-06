@@ -42,11 +42,17 @@ import {
 } from '../topicActionState';
 import type { Reply, Topic, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
-import { clearLinuxDoAccess, linuxDoAccessSummary, loadLinuxDoAccess, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
+import { linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest, type RequestOwner } from '../requestOwnership';
 import { errorMessage, finishAbortableRequest, isCanceledRequest, startAbortableRequest } from '../appUtils';
 import { isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
 import type { ReplyTarget } from '../appTypes';
+import {
+  beginOptimisticTopicAction,
+  clearExpiredLinuxDoLogin,
+  isNodeSeekLoginRequiredError,
+  runOptimisticActionQueue as runOptimisticActionQueueHelper
+} from './topicActionHelpers';
 
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const YAOHUO_DEFAULT_CLASS_ID = '177';
@@ -66,15 +72,6 @@ type OptimisticTopicActionOptions = {
   sendDesired: (desiredActive: boolean) => Promise<boolean>;
   successMessage: (active: boolean) => string;
 };
-
-function isNodeSeekLoginRequiredError(error: unknown) {
-  return Boolean(
-    error
-    && typeof error === 'object'
-    && (error as { source?: unknown }).source === 'nodeseek'
-    && (error as { loginRequired?: unknown }).loginRequired
-  );
-}
 
 export function useTopicActionsController({
   actionAbortRef,
@@ -305,16 +302,10 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        const remainingAccess = await clearLinuxDoAccess();
+        await clearExpiredLinuxDoLogin({ error, resetLinuxDoLevelState, updateLinuxDoSession });
         if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
-        const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
-        const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
-        updateLinuxDoSession(remainingAccess?.cookieHeader
-          ? { type: 'verification-succeeded', cookieSummary: remainingSummary.names, loggedIn: false, at: new Date().toISOString() }
-          : { type: 'login-expired', message: errorMessage(error) });
-        resetLinuxDoLevelState();
         showLinuxDoLogin(errorMessage(error));
         return false;
       }
@@ -413,16 +404,10 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        const remainingAccess = await clearLinuxDoAccess();
+        await clearExpiredLinuxDoLogin({ error, resetLinuxDoLevelState, updateLinuxDoSession });
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
-        const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
-        const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
-        updateLinuxDoSession(remainingAccess?.cookieHeader
-          ? { type: 'verification-succeeded', cookieSummary: remainingSummary.names, loggedIn: false, at: new Date().toISOString() }
-          : { type: 'login-expired', message: errorMessage(error) });
-        resetLinuxDoLevelState();
         showLinuxDoLogin(`${errorMessage(error)}，已恢复原状态。`);
         return false;
       }
@@ -438,40 +423,17 @@ export function useTopicActionsController({
     sendDesired,
     successMessage
   }: Omit<OptimisticTopicActionOptions, 'currentActive' | 'requestTopicKey'>) => {
-    while (true) {
-      const state = optimisticTopicActionsRef.current[key];
-      if (!state?.inFlight || typeof state.inFlightTarget !== 'boolean') {
-        return;
-      }
-      const desiredActive = state.inFlightTarget;
-      let succeeded = false;
-      try {
-        succeeded = await sendDesired(desiredActive);
-      } catch (error) {
-        if (isCurrentTopicActionRequest(requestOwner)) {
-          notify(`${errorMessage(error)}，已恢复原状态。`);
-        }
-      }
-      if (!isCurrentTopicActionRequest(requestOwner)) {
-        setOptimisticTopicActionState(key);
-        return;
-      }
-      const latest = optimisticTopicActionsRef.current[key];
-      if (!latest) {
-        return;
-      }
-      const completed = completeOptimisticAction(latest, succeeded);
-      setOptimisticTopicActionState(key, completed.state);
-      if (!succeeded) {
-        applyDisplayed(completed.state.displayed);
-        return;
-      }
-      if (!completed.request) {
-        applyDisplayed(completed.state.confirmed);
-        notify(successMessage(completed.state.confirmed));
-        return;
-      }
-    }
+    await runOptimisticActionQueueHelper({
+      key,
+      requestOwner,
+      applyDisplayed,
+      sendDesired,
+      successMessage,
+      isCurrentRequest: isCurrentTopicActionRequest,
+      notify,
+      optimisticActions: optimisticTopicActionsRef,
+      setOptimisticActionState: setOptimisticTopicActionState
+    });
   }, [isCurrentTopicActionRequest, notify, optimisticTopicActionsRef, setOptimisticTopicActionState]);
 
   const startOptimisticTopicAction = useCallback(({
@@ -483,25 +445,24 @@ export function useTopicActionsController({
     sendDesired,
     successMessage
   }: OptimisticTopicActionOptions) => {
-    if (!isCurrentTopicActionRequest(requestOwner)) {
-      return;
-    }
-    const transition = beginOptimisticAction(optimisticTopicActionsRef.current[key], currentActive);
-    setOptimisticTopicActionState(key, transition.state);
-    if (!isCurrentTopicActionRequest(requestOwner)) {
-      setOptimisticTopicActionState(key);
-      return;
-    }
-    applyDisplayed(transition.state.displayed);
-    if (transition.request) {
-      void runOptimisticActionQueue({
-        key,
-        requestOwner,
-        applyDisplayed,
-        sendDesired,
-        successMessage
-      });
-    }
+    beginOptimisticTopicAction({
+      key,
+      currentActive,
+      requestOwner,
+      applyDisplayed,
+      isCurrentRequest: isCurrentTopicActionRequest,
+      optimisticActions: optimisticTopicActionsRef,
+      setOptimisticActionState: setOptimisticTopicActionState,
+      startQueue: () => {
+        void runOptimisticActionQueue({
+          key,
+          requestOwner,
+          applyDisplayed,
+          sendDesired,
+          successMessage
+        });
+      }
+    });
   }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runOptimisticActionQueue, setOptimisticTopicActionState]);
 
   const submitReply = useCallback(async () => {

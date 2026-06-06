@@ -1,5 +1,6 @@
 import { Platform, StyleSheet, StatusBar as NativeStatusBar, type TextStyle } from 'react-native';
 import { type ReaderSettings } from './readerData';
+import { createNavigationStyles, createPanelStyles, createTopicStyles } from './themeParts';
 
 export interface ReaderTheme {
   dark: boolean;
@@ -163,147 +164,6 @@ export function createTheme(settings: ReaderSettings): ReaderTheme {
   };
 }
 
-function createNavigationStyles(theme: ReaderTheme, appFontFamily: string | undefined) {
-  return {
-    nav: {
-      flexDirection: 'row' as const,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      elevation: 0,
-      paddingBottom: Platform.OS === 'android' ? 8 : 10,
-      paddingHorizontal: 10,
-      paddingTop: 4,
-      height: Platform.OS === 'android' ? 64 : 70
-    },
-    navItem: {
-      flex: 1,
-      alignItems: 'center' as const,
-      justifyContent: 'center' as const,
-      gap: 2,
-      minHeight: 48,
-      borderRadius: 6
-    },
-    navItemActive: {
-      backgroundColor: 'transparent'
-    },
-    navItemIndicator: {
-      width: 18,
-      height: 2,
-      borderRadius: 999,
-      backgroundColor: 'transparent'
-    },
-    navItemIndicatorActive: {
-      backgroundColor: theme.primary
-    },
-    navText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 10,
-      fontWeight: '600' as const,
-      letterSpacing: 0
-    },
-    navTextActive: {
-      color: theme.primary
-    }
-  };
-}
-
-function createTopicStyles(theme: ReaderTheme, appFontFamily: string | undefined, fontScale: number) {
-  return {
-    topicAccessNotice: {
-      gap: 8,
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
-      borderColor: alphaColor(theme.danger, 0.28),
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 12
-    },
-    topicAccessNoticeTitle: {
-      color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 16,
-      fontWeight: '700' as const,
-      lineHeight: 22
-    },
-    topicAccessNoticeDetail: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 20
-    },
-    inlineForumImageText: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(16 * fontScale),
-      lineHeight: Math.round(20 * fontScale)
-    },
-    inlineForumImage: {
-      width: Math.round(104 * fontScale),
-      height: Math.round(82 * fontScale),
-      marginHorizontal: 2,
-      resizeMode: 'contain' as const
-    },
-    replyNewBadge: {
-      alignSelf: 'flex-start' as const,
-      overflow: 'hidden' as const,
-      color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      fontWeight: '600' as const,
-      lineHeight: 16,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.20 : 0.12),
-      borderColor: alphaColor(theme.primary, 0.32),
-      borderRadius: 999,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
-      paddingVertical: 3
-    }
-  };
-}
-
-function createPanelStyles(theme: ReaderTheme, appFontFamily: string | undefined) {
-  return {
-    groupList: {
-      gap: 7,
-      backgroundColor: 'transparent',
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderRadius: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 12
-    },
-    statusDetailRow: {
-      gap: 3,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 8
-    },
-    statusOk: {
-      color: theme.success
-    },
-    statusBad: {
-      color: theme.danger
-    },
-    buttonPrimary: {
-      backgroundColor: theme.primary,
-      borderColor: theme.primary
-    },
-    buttonTextPrimary: {
-      color: theme.onPrimary,
-      fontWeight: '700' as const,
-      letterSpacing: 0
-    },
-    panelTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 15,
-      fontWeight: '600' as const
-    }
-  };
-}
-
 export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
   const fontScale = settings.fontScale;
   const titleFontScale = Math.min(fontScale, 1.12);
@@ -313,7 +173,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const topicRowBackground = theme.background;
   const navigationStyles = createNavigationStyles(theme, appFontFamily);
-  const topicStyles = createTopicStyles(theme, appFontFamily, fontScale);
+  const topicStyles = createTopicStyles(theme, appFontFamily, fontScale, alphaColor);
   const panelStyles = createPanelStyles(theme, appFontFamily);
   const baseStyles = StyleSheet.create({
     screen: {
@@ -384,12 +244,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '500'
-    },
-    panelTitle: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 15,
-      fontWeight: '600'
     },
     feedList: {
       borderTopColor: theme.line,
@@ -897,15 +751,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 10
-    },
-    groupList: {
-      gap: 7,
-      backgroundColor: 'transparent',
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderRadius: 0,
-      paddingHorizontal: 0,
-      paddingVertical: 12
     },
     menuButton: {
       alignItems: 'center',
@@ -1576,28 +1421,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 13,
       lineHeight: 19
     },
-    topicAccessNotice: {
-      gap: 8,
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
-      borderColor: alphaColor(theme.danger, 0.28),
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 12
-    },
-    topicAccessNoticeTitle: {
-      color: theme.danger,
-      fontFamily: appFontFamily,
-      fontSize: 16,
-      fontWeight: '700',
-      lineHeight: 22
-    },
-    topicAccessNoticeDetail: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: 13,
-      lineHeight: 20
-    },
     levelSummary: {
       gap: 7,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.09 : 0.035),
@@ -2109,59 +1932,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 12,
       lineHeight: 18
     },
-    inlineForumImageText: {
-      color: theme.ink,
-      fontFamily: appFontFamily,
-      fontSize: Math.round(16 * fontScale),
-      lineHeight: Math.round(20 * fontScale)
-    },
-    inlineForumImage: {
-      width: Math.round(104 * fontScale),
-      height: Math.round(82 * fontScale),
-      marginHorizontal: 2,
-      resizeMode: 'contain'
-    },
-    nav: {
-      flexDirection: 'row',
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface,
-      elevation: 0,
-      paddingBottom: Platform.OS === 'android' ? 8 : 10,
-      paddingHorizontal: 10,
-      paddingTop: 4,
-      height: Platform.OS === 'android' ? 64 : 70
-    },
-    navItem: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 2,
-      minHeight: 48,
-      borderRadius: 6
-    },
-    navItemActive: {
-      backgroundColor: 'transparent'
-    },
-    navItemIndicator: {
-      width: 18,
-      height: 2,
-      borderRadius: 999,
-      backgroundColor: 'transparent'
-    },
-    navItemIndicatorActive: {
-      backgroundColor: theme.primary
-    },
-    navText: {
-      color: theme.muted,
-      fontFamily: appFontFamily,
-      fontSize: 10,
-      fontWeight: '600',
-      letterSpacing: 0
-    },
-    navTextActive: {
-      color: theme.primary
-    },
     imagePreviewOverlay: {
       flex: 1,
       alignItems: 'center',
@@ -2291,42 +2061,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     imagePreviewThumbnailImage: {
       width: '100%',
       height: '100%'
-    },
-    statusDetailRow: {
-      gap: 3,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 8
-    },
-    statusOk: {
-      color: theme.success
-    },
-    buttonPrimary: {
-      backgroundColor: theme.primary,
-      borderColor: theme.primary
-    },
-    buttonTextPrimary: {
-      color: theme.onPrimary,
-      fontWeight: '700',
-      letterSpacing: 0
-    },
-    replyNewBadge: {
-      alignSelf: 'flex-start',
-      overflow: 'hidden',
-      color: theme.primary,
-      fontFamily: appFontFamily,
-      fontSize: 11,
-      fontWeight: '600',
-      lineHeight: 16,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.20 : 0.12),
-      borderColor: alphaColor(theme.primary, 0.32),
-      borderRadius: 999,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
-      paddingVertical: 3
-    },
-    statusBad: {
-      color: theme.danger
     }
   });
   return Object.assign(

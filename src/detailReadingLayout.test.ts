@@ -1,5 +1,21 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
+import { createStyles, createTheme } from './theme';
+import type { ReaderSettings } from './readerData';
+
+vi.mock('react-native', () => ({
+  Platform: {
+    OS: 'android',
+    select: (options: Record<string, unknown>) => options.android ?? options.default
+  },
+  StatusBar: {
+    currentHeight: 24
+  },
+  StyleSheet: {
+    hairlineWidth: 1,
+    create: (styles: unknown) => styles
+  }
+}));
 
 const appSource = readProjectFile('android-app', 'App.tsx');
 const hiddenBrowserFetchControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
@@ -13,6 +29,14 @@ const topicMenuSource = readProjectFile('android-app', 'src', 'screens', 'topic'
 const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
 const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
 const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
+const defaultSettings: ReaderSettings = {
+  theme: 'light',
+  fontScale: 1,
+  lineHeight: 'standard',
+  contentWidth: 'standard',
+  fontFamily: 'sans',
+  listDensity: 'standard'
+};
 const topicUiSource = [
   topicScreenSource,
   topicPollsSource,
@@ -54,7 +78,11 @@ describe('Android topic detail reading layout', () => {
     expect(hiddenBrowserFetchControllerSource).toContain('requires?[^.]{0,40}(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
     expect(hiddenBrowserFetchControllerSource).toContain('minimum (?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
     expect(hiddenBrowserFetchControllerSource).toContain('must be (?:at least )?(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
-    expect(themeSource).toContain('topicAccessNoticeTitle');
+
+    const theme = createTheme(defaultSettings);
+    const styles = createStyles(theme, defaultSettings, 800);
+    expect(styles.topicAccessNoticeTitle.color).toBe(theme.danger);
+    expect(styles.topicAccessNoticeDetail.color).toBe(theme.ink);
   });
 
   it('hides original-site actions and reply controls on restricted topic details', () => {

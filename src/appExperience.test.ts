@@ -3,6 +3,9 @@ import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('android-app', 'app.json');
 const appSource = readProjectFile('android-app', 'App.tsx');
+const globalModalHostSource = readProjectFile('android-app', 'src', 'app', 'GlobalModalHost.tsx');
+const linuxDoVerifyModalSource = readProjectFile('android-app', 'src', 'app', 'LinuxDoVerifyModal.tsx');
+const hiddenBrowserHostSource = readProjectFile('android-app', 'src', 'app', 'HiddenBrowserHost.tsx');
 const hiddenBrowserFetchControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
 const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
 const imagePreviewControllerSource = readProjectFile('android-app', 'src', 'app', 'useImagePreviewController.ts');
@@ -13,12 +16,14 @@ const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'use
 const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
 const verificationControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
 const accountControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
+const topicActionHelpersSource = readOptionalProjectFile('android-app', 'src', 'app', 'topicActionHelpers.ts');
 const topicActionsControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
 const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
 const imagePreviewModalSource = readProjectFile('android-app', 'src', 'components', 'ImagePreviewModal.tsx');
+const loginWebViewModalSource = readProjectFile('android-app', 'src', 'components', 'LoginWebViewModal.tsx');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
 const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
@@ -45,6 +50,7 @@ const androidUiSource = [
 ].join('\n');
 const gitIgnoreSource = readProjectFile('.gitignore');
 const localLinuxDoSource = readProjectFile('android-app', 'src', 'localLinuxdo.ts');
+const loginWebViewScriptsSource = readProjectFile('android-app', 'src', 'loginWebViewScripts.ts');
 const linuxDoBridgeSource = readProjectFile('android-app', 'src', 'linuxdoCookieBridge.ts');
 const nodeSeekBridgeSource = readProjectFile('android-app', 'src', 'nodeseekCookieBridge.ts');
 const forumApiSource = readProjectFile('android-app', 'src', 'forumApi.ts');
@@ -717,7 +723,7 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('label="删除" variant="danger"');
     expect(libraryScreenSource).toContain('label="取消关注" variant="danger"');
     expect(libraryScreenSource).toContain('label="清空历史" variant="danger"');
-    expect(moreUiSource.match(/label="清除登录" variant="danger"/g)?.length).toBe(3);
+    expect([moreUiSource, linuxDoVerifyModalSource].join('\n').match(/label="清除登录" variant="danger"/g)?.length).toBe(3);
     expect(userScreenSource).toContain("variant={followed ? 'danger' : undefined}");
   });
 
@@ -865,11 +871,14 @@ describe('Android App experience guards', () => {
 
   it('rehydrates saved yaohuo cookies into WebView before opening the login page', () => {
     expect(appSource).toContain('restoreSavedYaohuoCookiesToWebView');
+    expect(appSource).toContain('void restoreSavedYaohuoCookiesToWebView()');
+    expect(appSource).toContain('setShowYaohuoLoginPanel(true);');
     expect(sessionControllerSource).toContain('buildYaohuoSetCookieHeaders(cookieHeader)');
     expect(sessionControllerSource).toContain('await CookieManager.setFromResponse(url, header)');
-    expect(sessionControllerSource).toContain('setYaohuoLoginCookieHeader(cookieHeader)');
+    expect(sessionControllerSource).not.toContain('setYaohuoLoginCookieHeader');
     expect(appSource).toContain('onShowYaohuoLoginPanelChange={changeYaohuoLoginPanel}');
-    expect(moreUiSource).toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
+    expect(moreUiSource).not.toContain('yaohuoLoginCookieHeader');
+    expect(moreUiSource).not.toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
   });
 
   it('does not mark saved yaohuo session cookies as logged in while loading sources', () => {
@@ -1009,8 +1018,8 @@ describe('Android App experience guards', () => {
     expect(accountControllerSource).toContain('sanitizeNodeSeekUserAgent(data.userAgent)');
     expect(accountControllerSource).toContain('parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader)');
     expect(moreUiSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
-    expect(moreUiSource).toContain('type: "nodeseek-login"');
-    expect(moreUiSource).not.toContain('nodeseek-login-probe');
+    expect(loginWebViewScriptsSource).toContain('type: "nodeseek-login"');
+    expect(loginWebViewScriptsSource).not.toContain('nodeseek-login-probe');
   });
 
   it('preserves saved NodeSeek login cookies when WebView only reports verification cookies', () => {
@@ -1127,19 +1136,20 @@ describe('Android App experience guards', () => {
     expect(sessionControllerSource).toContain('defaultFetcher: nodeSeekFetchWithWebViewFallback');
     expect(hiddenBrowserFetchControllerSource).toContain("type: 'nodeseek-browser-fetch'");
     expect(appSource).toContain('fetcher: forumFetchWithWebViewFallback');
-    expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
+    expect(appSource).toContain('<HiddenBrowserHost');
+    expect(hiddenBrowserHostSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
   });
 
   it('does not leave hidden NodeSeek browser fetch requests pending after WebView failures', () => {
     expect(sessionControllerSource).toContain('const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string) => {');
-    expect(appSource).toContain('onHttpError={(event) => {');
-    expect(appSource).toContain('if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {');
-    expect(appSource).toContain('if (event.nativeEvent.statusCode === 403) {');
-    expect(appSource).toContain('nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = event.nativeEvent.statusCode;');
-    expect(appSource).toContain('NodeSeek 页面返回错误');
-    expect(appSource).toContain('onRenderProcessGone={() => {');
-    expect(appSource).toContain('NodeSeek 页面读取进程已停止');
-    expect(appSource).toContain('renderError={() => <View style={styles.hiddenBrowserWebView} />}');
+    expect(hiddenBrowserHostSource).toContain('onHttpError={(event) => {');
+    expect(hiddenBrowserHostSource).toContain('if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {');
+    expect(hiddenBrowserHostSource).toContain('if (event.nativeEvent.statusCode === 403) {');
+    expect(appSource).toContain('nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;');
+    expect(hiddenBrowserHostSource).toContain('NodeSeek 页面返回错误');
+    expect(hiddenBrowserHostSource).toContain('onRenderProcessGone={() => {');
+    expect(hiddenBrowserHostSource).toContain('NodeSeek 页面读取进程已停止');
+    expect(hiddenBrowserHostSource).toContain('renderError={() => <View style={styles.hiddenBrowserWebView} />}');
   });
 
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
@@ -1165,11 +1175,12 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps the hidden NodeSeek browser fetch WebView out of the visible layout', () => {
-    expect(appSource).toContain('<View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>');
-    expect(appSource).toContain('containerStyle={styles.hiddenBrowserWebView}');
-    expect(appSource).toContain('style={styles.hiddenBrowserWebView}');
-    expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
-    expect(appSource).not.toContain('androidLayerType="software"');
+    expect(appSource).toContain('<HiddenBrowserHost');
+    expect(hiddenBrowserHostSource).toContain('<View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>');
+    expect(hiddenBrowserHostSource).toContain('containerStyle={styles.hiddenBrowserWebView}');
+    expect(hiddenBrowserHostSource).toContain('style={styles.hiddenBrowserWebView}');
+    expect(hiddenBrowserHostSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
+    expect(hiddenBrowserHostSource).not.toContain('androidLayerType="software"');
   });
 
   it('does not mistake regular NodeSeek posts mentioning Cloudflare for verification pages', () => {
@@ -1193,11 +1204,11 @@ describe('Android App experience guards', () => {
   });
 
   it('stops the linux.do verification spinner when the WebView cannot load', () => {
-    expect(moreUiSource).toContain('linuxDoWebViewError');
-    expect(moreUiSource).toContain('onSetLinuxDoWebViewError');
-    expect(moreUiSource).toContain('onError={(event) =>');
-    expect(moreUiSource).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
-    expect(moreUiSource).toContain('linux.do 页面加载失败');
+    expect(linuxDoVerifyModalSource).toContain('linuxDoWebViewError');
+    expect(linuxDoVerifyModalSource).toContain('onSetLinuxDoWebViewError');
+    expect(linuxDoVerifyModalSource).toContain('onError={(event) =>');
+    expect(linuxDoVerifyModalSource).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
+    expect(linuxDoVerifyModalSource).toContain('linux.do 页面加载失败');
   });
 
   it('resets topic loading state when leaving the topic screen', () => {
@@ -1241,12 +1252,13 @@ describe('Android App experience guards', () => {
     expect(topicActionsControllerSource).toContain('applyBookmarkToTopic');
     expect(topicActionsControllerSource).toContain('applyNodeSeekCollectionToTopic');
     expect(topicActionsControllerSource).toContain('applyPollVoteToTopic');
-    expect(topicActionsControllerSource).toContain('beginOptimisticAction');
-    expect(topicActionsControllerSource).toContain('completeOptimisticAction');
-    expect(topicActionsControllerSource).toContain('runOptimisticActionQueue');
-    expect(topicActionsControllerSource).toContain('try {\n        succeeded = await sendDesired(desiredActive);');
-    expect(topicActionsControllerSource).toContain('applyDisplayed(completed.state.confirmed);');
-    expect(topicActionsControllerSource).toContain('if (!isCurrentTopicActionRequest(requestOwner)) {\n      return;\n    }\n    const transition = beginOptimisticAction');
+    expect(topicActionsControllerSource).toContain('beginOptimisticTopicAction');
+    expect(topicActionsControllerSource).toContain('runOptimisticActionQueueHelper');
+    expect(topicActionHelpersSource).toContain('beginOptimisticAction');
+    expect(topicActionHelpersSource).toContain('completeOptimisticAction');
+    expect(topicActionHelpersSource).toContain('try {\n      succeeded = await sendDesired(desiredActive);');
+    expect(topicActionHelpersSource).toContain('applyDisplayed(completed.state.confirmed);');
+    expect(topicActionHelpersSource).toContain('if (!isCurrentRequest(requestOwner)) {\n    return;\n  }\n  const transition = beginOptimisticAction');
     expect(topicActionsControllerSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?desiredActive/);
     expect(topicActionsControllerSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?desiredActive/);
     expect(topicActionsControllerSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?desiredActive/);
@@ -1581,13 +1593,13 @@ describe('Android App experience guards', () => {
   });
 
   it('does not let the linux.do verification page stay loading forever', () => {
-    expect(morePanelsSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
-    expect(morePanelsSource).toContain('linux.do 页面打开超时');
-    expect(morePanelsSource).toContain('clearTimeout(timeout)');
+    expect(linuxDoVerifyModalSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
+    expect(linuxDoVerifyModalSource).toContain('linux.do 页面打开超时');
+    expect(linuxDoVerifyModalSource).toContain('clearTimeout(timeout)');
   });
 
   it('ignores stale linux.do verification WebView events after closing or refreshing the panel', () => {
-    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = linuxDoVerifyModalSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const linuxDoMessageBlock = verificationControllerSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoWebViewSessionRef = useRef(0);');
@@ -1600,7 +1612,7 @@ describe('Android App experience guards', () => {
   });
 
   it('unmounts the linux.do verification WebView before hiding the modal', () => {
-    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = linuxDoVerifyModalSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const closeLinuxDoBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);');
@@ -1631,14 +1643,14 @@ describe('Android App experience guards', () => {
 
   it('renders linux.do verification as a global modal instead of inside the More tab', () => {
     const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyPanel\([\s\S]*?\nexport const MemoizedLinuxDoVerifyPanel/)?.[0] || '';
-    const linuxDoModalBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
-    const appReturnBlock = appSource.match(/return \(\s*<GestureHandlerRootView[\s\S]*?<NavigationContainer/)?.[0] || '';
+    const linuxDoModalBlock = linuxDoVerifyModalSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('MenuButton');
     expect(linuxDoPanelBlock).not.toContain('LoginWebViewModal');
     expect(linuxDoModalBlock).toContain('LoginWebViewModal');
     expect(linuxDoModalBlock).toContain('showLinuxDoPanel && mountLinuxDoWebView');
-    expect(appReturnBlock).toContain('<MemoizedLinuxDoVerifyModal');
+    expect(appSource).toContain('<GlobalModalHost');
+    expect(globalModalHostSource).toContain('<MemoizedLinuxDoVerifyModal');
   });
 
   it('keeps linux.do verified retry failures from remounting the verification WebView', () => {
@@ -1680,7 +1692,7 @@ describe('Android App experience guards', () => {
   });
 
   it('does not reopen the linux.do verification loading state after the page is visible', () => {
-    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = linuxDoVerifyModalSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('linuxDoWebViewReadyRef');
     expect(linuxDoPanelBlock).toContain('markLinuxDoPageReady');
@@ -1691,24 +1703,25 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps login modal controls usable while a WebView loading badge is visible', () => {
-    expect(morePanelsSource).toContain('<View pointerEvents="none" style={styles.loading}>');
+    expect(loginWebViewModalSource).toContain('<View pointerEvents="none" style={styles.loading}>');
   });
 
   it('opens external login and verification pages as full-screen WebView modals', () => {
     expect(morePanelsSource).toContain('LoginWebViewModal');
+    expect(linuxDoVerifyModalSource).toContain('LoginWebViewModal');
     expect(morePanelsSource).toContain('visible={showLoginPanel}');
     expect(morePanelsSource).toContain('visible={showYaohuoLoginPanel}');
-    expect(morePanelsSource).toContain('visible={showLinuxDoPanel}');
-    expect(morePanelsSource).toContain('styles.loginWebViewModal');
-    expect(morePanelsSource).toContain('styles.loginWebViewBody');
+    expect(linuxDoVerifyModalSource).toContain('visible={showLinuxDoPanel}');
+    expect(loginWebViewModalSource).toContain('styles.loginWebViewModal');
+    expect(loginWebViewModalSource).toContain('styles.loginWebViewBody');
   });
 
   it('keeps full-screen login modal controls below the Android status bar', () => {
-    expect(morePanelsSource).toContain("import { useSafeAreaInsets } from 'react-native-safe-area-context';");
-    expect(morePanelsSource).toContain('const insets = useSafeAreaInsets();');
-    expect(morePanelsSource).toContain('paddingTop: insets.top');
-    expect(morePanelsSource).toContain('paddingBottom: insets.bottom');
-    expect(morePanelsSource).not.toContain('<SafeAreaView');
+    expect(loginWebViewModalSource).toContain("import { useSafeAreaInsets } from 'react-native-safe-area-context';");
+    expect(loginWebViewModalSource).toContain('const insets = useSafeAreaInsets();');
+    expect(loginWebViewModalSource).toContain('paddingTop: insets.top');
+    expect(loginWebViewModalSource).toContain('paddingBottom: insets.bottom');
+    expect(loginWebViewModalSource).not.toContain('<SafeAreaView');
   });
 
   it('clears stale linux.do verification errors after the WebView responds again', () => {
@@ -1718,7 +1731,7 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale linux.do verification errors after a successful page load', () => {
-    const block = morePanelsSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
+    const block = linuxDoVerifyModalSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
 
     expect(block).toContain('markLinuxDoPageReady();');
     expect(block).toContain("if (!('code' in event.nativeEvent)) {");
@@ -1726,12 +1739,12 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps linux.do verification WebView failures contained', () => {
-    expect(moreUiSource).toContain('linuxDoWebViewKey');
-    expect(moreUiSource).toContain('onResetLinuxDoWebView');
-    expect(morePanelsSource).toContain('key={linuxDoWebViewKey}');
-    expect(morePanelsSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
-    expect(morePanelsSource).toContain('onRenderProcessGone={() =>');
-    expect(morePanelsSource).toContain('linux.do 验证页面已停止');
+    expect(linuxDoVerifyModalSource).toContain('linuxDoWebViewKey');
+    expect(linuxDoVerifyModalSource).toContain('onResetLinuxDoWebView');
+    expect(linuxDoVerifyModalSource).toContain('key={linuxDoWebViewKey}');
+    expect(linuxDoVerifyModalSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
+    expect(linuxDoVerifyModalSource).toContain('onRenderProcessGone={() =>');
+    expect(linuxDoVerifyModalSource).toContain('linux.do 验证页面已停止');
   });
 
   it('keeps visible login WebView renderer failures recoverable', () => {
@@ -1772,7 +1785,7 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps the linux.do verification WebView off the emulator GPU path', () => {
-    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = linuxDoVerifyModalSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('androidLayerType="software"');
   });
@@ -1781,16 +1794,17 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('closeLinuxDoPanel');
     expect(verificationControllerSource).toContain('linuxDoWebViewRef.current?.stopLoading()');
     expect(appSource).toContain('onShowLinuxDoPanelChange={changeLinuxDoPanel}');
-    expect(moreUiSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
+    expect(moreScreenSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
   });
 
   it('clears stale linux.do login cookies after expired write actions while preserving verification', () => {
     const runLinuxDoBlock = topicActionsControllerSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(runLinuxDoBlock).toContain('const remainingAccess = await clearLinuxDoAccess();');
-    expect(runLinuxDoBlock).toContain('updateLinuxDoSession(remainingAccess?.cookieHeader');
-    expect(runLinuxDoBlock).toContain("type: 'verification-succeeded'");
-    expect(runLinuxDoBlock).toContain("type: 'login-expired'");
+    expect(runLinuxDoBlock).toContain('await clearExpiredLinuxDoLogin({ error, resetLinuxDoLevelState, updateLinuxDoSession });');
+    expect(topicActionHelpersSource).toContain('const remainingAccess = await clearLinuxDoAccess();');
+    expect(topicActionHelpersSource).toContain('updateLinuxDoSession(remainingAccess?.cookieHeader');
+    expect(topicActionHelpersSource).toContain("type: 'verification-succeeded'");
+    expect(topicActionHelpersSource).toContain("type: 'login-expired'");
   });
 
   it('resets linux.do verified state when status detection finds no cookie', () => {
@@ -1862,18 +1876,18 @@ describe('Android App experience guards', () => {
   });
 
   it('reuses the linux.do verification WebView user agent for local requests', () => {
-    expect(morePanelsSource).toContain('navigator.userAgent');
+    expect(loginWebViewScriptsSource).toContain('navigator.userAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgentRef');
     expect(verificationControllerSource).toContain('sanitizeLinuxDoUserAgent(data.userAgent)');
-    expect(morePanelsSource).toContain('userAgent={linuxDoWebViewUserAgent}');
+    expect(linuxDoVerifyModalSource).toContain('userAgent={linuxDoWebViewUserAgent}');
     expect(verificationControllerSource).toContain('saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined)');
     expect(localLinuxDoSource).toContain("DEFAULT_LINUXDO_ANDROID_USER_AGENT");
     expect(localLinuxDoSource).toContain("'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT");
   });
 
   it('can detect linux.do clearance from the visible WebView document cookies', () => {
-    expect(morePanelsSource).toContain('cookie: document.cookie || ""');
+    expect(loginWebViewScriptsSource).toContain('cookie: document.cookie || ""');
     expect(appSource).toContain('linuxDoWebViewCookieHeader');
     expect(appSource).toContain('linuxDoWebViewCookieHeaderRef');
     expect(verificationControllerSource).toContain('parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)');
