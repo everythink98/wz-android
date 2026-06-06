@@ -37,6 +37,9 @@ export type TopicSnapshot = {
   replyContent: string;
   replyComposerOpen: boolean;
   replyTarget: ReplyTarget | null;
+  expandedQuotes: Record<string, boolean>;
+  loadedQuotedReplies: Record<number, Reply>;
+  loadingQuotedFloors: Record<string, boolean>;
 };
 
 export type YaohuoReplyTarget = ReplyTarget;

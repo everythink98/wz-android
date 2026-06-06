@@ -174,6 +174,9 @@ export function useTopicController({
       topicBackStackRef.current.push(topicSnapshot());
       pushTopicScreen();
     }
+    if (screen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
+      return;
+    }
     if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
       pendingLinuxDoTopicRef.current = null;
       linuxDoPendingTopicVerifiedRef.current = false;
@@ -623,6 +626,7 @@ export function useTopicController({
         source: detail.source,
         id: detail.id,
         floor: quotedFloor,
+        fetcher,
         signal: controller.signal
       });
       if (currentTopicKeyRef.current !== requestTopicKey) {
@@ -635,6 +639,10 @@ export function useTopicController({
       notify(`引用已展开 #${quotedFloor}`);
     } catch (error) {
       if (currentTopicKeyRef.current === requestTopicKey) {
+        if (isLinuxDoCloudflareError(error)) {
+          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
+          return;
+        }
         if (!isCanceledRequest(error)) {
           notify(errorMessage(error));
         }
@@ -650,6 +658,8 @@ export function useTopicController({
   }, [
     currentTopicKeyRef,
     expandedQuotesRef,
+    fetcher,
+    handleLinuxDoCloudflareForTopic,
     loadedQuotedRepliesRef,
     notify,
     quotedReplyAbortRefs,

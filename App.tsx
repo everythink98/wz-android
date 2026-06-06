@@ -1487,8 +1487,11 @@ export default function App() {
     replyFilter,
     replyContent,
     replyComposerOpen,
-    replyTarget
-  }), [commentQuery, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
+    replyTarget,
+    expandedQuotes: expandedQuotesRef.current,
+    loadedQuotedReplies: loadedQuotedRepliesRef.current,
+    loadingQuotedFloors: {}
+  }), [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
 
   const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
     clearTopicScrollRestoreTimer();
@@ -1505,6 +1508,13 @@ export default function App() {
     setReplyContent(snapshot.replyContent);
     setReplyComposerOpen(snapshot.replyComposerOpen);
     setReplyTarget(snapshot.replyTarget);
+    expandedQuotesRef.current = snapshot.expandedQuotes;
+    loadedQuotedRepliesRef.current = snapshot.loadedQuotedReplies;
+    loadingQuotedFloorsRef.current = {};
+    setExpandedQuotes(snapshot.expandedQuotes);
+    setLoadedQuotedReplies(snapshot.loadedQuotedReplies);
+    setLoadingQuotedFloors({});
+    setQuoteStateVersion((current) => current + 1);
     setTopicBusy(false);
     setLoadingMoreReplies(false);
     loadingMoreRepliesRef.current = false;

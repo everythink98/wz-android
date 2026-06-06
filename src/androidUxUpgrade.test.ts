@@ -6,6 +6,7 @@ const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useT
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
+const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
 const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
@@ -95,6 +96,15 @@ describe('Android App UX upgrade guards', () => {
     expect(restoreTopicSnapshotBlock).toContain('restoredTopic ? topicKey(restoredTopic) : null');
   });
 
+  it('preserves the current topic state when a topic links to itself', () => {
+    const openTopicBlock = topicControllerSource.match(/const openTopic = useCallback[\s\S]*?\n\n  const refreshTopicReplies/)?.[0] || '';
+    const sameTopicGuardIndex = openTopicBlock.indexOf("if (screen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {");
+
+    expect(sameTopicGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(openTopicBlock).toContain('return;');
+    expect(sameTopicGuardIndex).toBeLessThan(openTopicBlock.indexOf('const requestId = ++topicRequestIdRef.current;'));
+  });
+
   it('restores the previous topic replies before popping nested topic routes', () => {
     const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const previousTopicBranch = goBackFromTopicBlock.match(/if \(previousTopic\) \{[\s\S]*?\n      return;\n    \}/)?.[0] || '';
@@ -118,6 +128,23 @@ describe('Android App UX upgrade guards', () => {
     expect(restoreTopicSnapshotBlock).toContain('setReplyContent(snapshot.replyContent);');
     expect(restoreTopicSnapshotBlock).toContain('setReplyComposerOpen(snapshot.replyComposerOpen);');
     expect(restoreTopicSnapshotBlock).toContain('setReplyTarget(snapshot.replyTarget);');
+  });
+
+  it('keeps linux.do quote expansion state in topic snapshots when returning from nested topics', () => {
+    const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
+    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
+    const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(appTypesSource).toContain('expandedQuotes: Record<string, boolean>;');
+    expect(appTypesSource).toContain('loadedQuotedReplies: Record<number, Reply>;');
+    expect(appTypesSource).toContain('loadingQuotedFloors: Record<string, boolean>;');
+    expect(topicSnapshotBlock).toContain('expandedQuotes: expandedQuotesRef.current,');
+    expect(topicSnapshotBlock).toContain('loadedQuotedReplies: loadedQuotedRepliesRef.current,');
+    expect(topicSnapshotBlock).toContain('loadingQuotedFloors: {}');
+    expect(restoreTopicSnapshotBlock).toContain('expandedQuotesRef.current = snapshot.expandedQuotes;');
+    expect(restoreTopicSnapshotBlock).toContain('loadedQuotedRepliesRef.current = snapshot.loadedQuotedReplies;');
+    expect(restoreTopicSnapshotBlock).toContain('loadingQuotedFloorsRef.current = {};');
+    expect(restoreTopicSnapshotBlock).toContain('setQuoteStateVersion((current) => current + 1);');
   });
 
   it('defers leaving topic screens until native return animations finish', () => {
@@ -149,6 +176,7 @@ describe('Android App UX upgrade guards', () => {
     const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
     const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
+    const toggleQuotedFloorBlock = topicControllerSource.match(/const toggleQuotedFloor = useCallback[\s\S]*?\n\n  return/)?.[0] || '';
 
     expect(cloudflareHandlerBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
     expect(cloudflareHandlerBlock).toContain('linuxDoPendingTopicVerifiedRef.current = false;');
@@ -157,6 +185,9 @@ describe('Android App UX upgrade guards', () => {
       expect(block).toContain('await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));');
       expect(block).not.toContain('showLinuxDoVerification(errorMessage(error));');
     }
+    expect(toggleQuotedFloorBlock).toContain('fetcher,');
+    expect(toggleQuotedFloorBlock).toContain('await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));');
+    expect(toggleQuotedFloorBlock).toContain('fetcher,');
   });
 
   it('keeps feed source tabs on the component-library pager above one stable feed list', () => {
@@ -203,5 +234,19 @@ describe('Android App UX upgrade guards', () => {
     expect(moreScreenSource).toContain('showLoginPanel && accountExpanded');
     expect(moreScreenSource).toContain('showYaohuoLoginPanel && accountExpanded');
     expect(moreScreenSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
+  });
+
+  it('recovers when a floor directory jump targets an unmeasured reply row', () => {
+    expect(topicScreenSource).toContain('handleTopicScrollToIndexFailed');
+    expect(topicScreenSource).toContain('onScrollToIndexFailed={handleTopicScrollToIndexFailed}');
+    expect(topicScreenSource).toContain('topicScrollRef.current?.scrollToOffset({ offset, animated: true });');
+    expect(topicScreenSource).toContain('topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });');
+  });
+
+  it('cancels stale floor directory retry jumps when the topic list changes', () => {
+    expect(topicScreenSource).toContain('const topicScrollRetryIdRef = useRef(0);');
+    expect(topicScreenSource).toContain('const retryId = ++topicScrollRetryIdRef.current;');
+    expect(topicScreenSource).toContain('if (topicScrollRetryIdRef.current !== retryId) {');
+    expect(topicScreenSource).toContain('topicScrollRetryIdRef.current += 1;');
   });
 });

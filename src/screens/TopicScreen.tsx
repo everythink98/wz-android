@@ -674,6 +674,7 @@ export function TopicScreen({
   }, [detailTopicStateKey, optimisticActions]);
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const autoLoadRepliesArmedRef = useRef(false);
+  const topicScrollRetryIdRef = useRef(0);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -790,12 +791,24 @@ export function TopicScreen({
     return items;
   }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
   const jumpToFloor = useCallback((floor: number) => {
+    topicScrollRetryIdRef.current += 1;
     const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
     if (index >= 0) {
       topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
       setFloorOpen(false);
     }
   }, [topicListItems, topicScrollRef]);
+  const handleTopicScrollToIndexFailed = useCallback(({ index, averageItemLength }: { index: number; averageItemLength: number }) => {
+    const retryId = ++topicScrollRetryIdRef.current;
+    const offset = Math.max(0, averageItemLength * index);
+    topicScrollRef.current?.scrollToOffset({ offset, animated: true });
+    setTimeout(() => {
+      if (topicScrollRetryIdRef.current !== retryId) {
+        return;
+      }
+      topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
+    }, 80);
+  }, [topicScrollRef]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -814,6 +827,12 @@ export function TopicScreen({
     setTopicMenuOpen(false);
     autoLoadRepliesArmedRef.current = false;
   }, [item?.id, item?.source]);
+  useEffect(() => {
+    topicScrollRetryIdRef.current += 1;
+  }, [item?.id, item?.source]);
+  useEffect(() => {
+    topicScrollRetryIdRef.current += 1;
+  }, [topicListItems]);
   const runTopicMenuAction = useCallback((action: () => void) => {
     triggerPressFeedback();
     setTopicMenuOpen(false);
@@ -1260,6 +1279,7 @@ export function TopicScreen({
           onEndReached={handleReplyEndReached}
           onScrollBeginDrag={armReplyAutoLoad}
           onMomentumScrollBegin={armReplyAutoLoad}
+          onScrollToIndexFailed={handleTopicScrollToIndexFailed}
           extraData={quoteStateVersion}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
