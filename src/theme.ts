@@ -1832,6 +1832,45 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     quoteStack: {
       gap: 12
     },
+    detailsPanel: {
+      overflow: 'hidden',
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 4,
+      borderWidth: StyleSheet.hairlineWidth,
+      marginVertical: 5
+    },
+    detailsPanelHeader: {
+      minHeight: 44,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 8
+    },
+    detailsPanelIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 22,
+      height: 22
+    },
+    detailsPanelSummary: {
+      flex: 1,
+      minWidth: 0
+    },
+    detailsPanelSummaryText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(16 * fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(23 * fontScale)
+    },
+    detailsPanelBody: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 10
+    },
     quoteBox: {
       gap: 6,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.05),

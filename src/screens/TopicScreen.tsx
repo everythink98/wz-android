@@ -20,11 +20,12 @@ import {
   RenderHTMLSource,
   TChildrenRenderer,
   TRenderEngineProvider,
+  defaultHTMLElementModels,
   useTNodeChildrenProps,
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsDown, ThumbsUp, X, type LucideIcon } from 'lucide-react-native';
+import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsDown, ThumbsUp, X, type LucideIcon } from 'lucide-react-native';
 import type { AccessRequirement, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../appTypes';
 import { highlightHtml } from '../androidFeatureHelpers';
@@ -52,6 +53,12 @@ export type TopicListItem =
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'iframe', 'noscript'];
 const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 const HTML_CUSTOM_ELEMENT_MODELS = {
+  details: defaultHTMLElementModels.details.extend({
+    contentModel: HTMLContentModel.mixed
+  }),
+  summary: defaultHTMLElementModels.summary.extend({
+    contentModel: HTMLContentModel.mixed
+  }),
   [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: INLINE_FORUM_IMAGE_TAG,
     contentModel: HTMLContentModel.textual,
@@ -60,7 +67,29 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
 };
 
 function htmlTagName(tnode: unknown) {
-  return ((tnode as { tagName?: string }).tagName || '').toLowerCase();
+  const tagName = ((tnode as { tagName?: string }).tagName || '').toLowerCase();
+  return tagName || domNodeTagName((tnode as { domNode?: unknown }).domNode);
+}
+
+function domNodeTagName(node: unknown) {
+  const record = node as { name?: unknown; tagName?: unknown };
+  return String(record?.name || record?.tagName || '').toLowerCase();
+}
+
+function domNodeTextContent(node: unknown): string {
+  if (!node || typeof node !== 'object') {
+    return '';
+  }
+  const record = node as { children?: unknown; data?: unknown };
+  const ownText = typeof record.data === 'string' ? record.data : '';
+  const childText = Array.isArray(record.children) ? record.children.map(domNodeTextContent).join('') : '';
+  return `${ownText}${childText}`;
+}
+
+function detailsSummaryTextFromDom(tnode: unknown) {
+  const domNode = (tnode as { domNode?: { children?: unknown[] } }).domNode;
+  const summaryNode = Array.isArray(domNode?.children) ? domNode.children.find((child) => domNodeTagName(child) === 'summary') : undefined;
+  return domNodeTextContent(summaryNode).replace(/\s+/g, ' ').trim();
 }
 
 function hasHtmlClass(tnode: unknown, className: string) {
@@ -834,6 +863,46 @@ export function TopicScreen({
         </View>
       );
     };
+    const DetailsRenderer: CustomBlockRenderer = (props) => {
+      const [expanded, setExpanded] = useState(props.tnode.attributes?.open !== undefined);
+      const tchildrenProps = useTNodeChildrenProps(props);
+      const summaryNode = props.tnode.children.find((child) => htmlTagName(child) === 'summary');
+      const summaryChildren = ((summaryNode as { children?: typeof props.tnode.children } | undefined)?.children || []);
+      const detailSummaryText = detailsSummaryTextFromDom(props.tnode);
+      const detailBodyChildren = props.tnode.children.filter((child) => child !== summaryNode);
+      const StateIcon = expanded ? ChevronDown : ChevronRight;
+
+      return (
+        <View style={styles.detailsPanel}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            android_ripple={androidRipple(theme.primarySoft)}
+            style={styles.detailsPanelHeader}
+            onPress={() => setExpanded((value) => !value)}
+          >
+            <View style={styles.detailsPanelIcon}>
+              <StateIcon size={18} color={theme.ink} strokeWidth={2.1} />
+            </View>
+            <View style={styles.detailsPanelSummary}>
+              {summaryChildren.length ? (
+                <TChildrenRenderer {...tchildrenProps} tchildren={summaryChildren} />
+              ) : detailSummaryText ? (
+                <Text style={styles.detailsPanelSummaryText}>{detailSummaryText}</Text>
+              ) : (
+                <Text style={styles.detailsPanelSummaryText}>详情</Text>
+              )}
+            </View>
+          </Pressable>
+          {expanded && detailBodyChildren.length ? (
+            <View style={styles.detailsPanelBody}>
+              <TChildrenRenderer {...tchildrenProps} tchildren={detailBodyChildren} />
+            </View>
+          ) : null}
+        </View>
+      );
+    };
+    const SummaryRenderer: CustomBlockRenderer = () => null;
     const TableRenderer: CustomBlockRenderer = (props) => {
       const { TDefaultRenderer, ...defaultRendererProps } = props;
       if (htmlTagName(props.tnode) !== 'table') {
@@ -847,8 +916,8 @@ export function TopicScreen({
         </ScrollView>
       );
     };
-    return { ...htmlRenderers, aside: QuoteAsideRenderer, table: TableRenderer };
-  }, [htmlRenderers, styles, theme.primary, theme.primarySoft]);
+    return { ...htmlRenderers, aside: QuoteAsideRenderer, details: DetailsRenderer, summary: SummaryRenderer, table: TableRenderer };
+  }, [htmlRenderers, styles, theme.ink, theme.primary, theme.primarySoft]);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'accessNotice') {
       return (

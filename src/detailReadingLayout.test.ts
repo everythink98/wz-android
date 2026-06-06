@@ -580,6 +580,43 @@ describe('Android topic detail reading layout', () => {
     expect(customModelBlock).toContain('isOpaque: true');
   });
 
+  it('renders forum details and summary blocks instead of dropping their contents', () => {
+    const customModelBlock = topicScreenSource.match(/const HTML_CUSTOM_ELEMENT_MODELS = \{[\s\S]*?\n\};/)?.[0] || '';
+
+    expect(customModelBlock).toContain('defaultHTMLElementModels.details.extend');
+    expect(customModelBlock).toContain('defaultHTMLElementModels.summary.extend');
+    expect(customModelBlock).toMatch(/details:[\s\S]*contentModel:\s*HTMLContentModel\.mixed/);
+    expect(customModelBlock).toMatch(/summary:[\s\S]*contentModel:\s*HTMLContentModel\.mixed/);
+  });
+
+  it('renders forum details as collapsible step panels', () => {
+    const topicHtmlRenderersBlock = topicScreenSource.match(/const topicHtmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(topicHtmlRenderersBlock).toContain('const DetailsRenderer');
+    expect(topicHtmlRenderersBlock).toContain("htmlTagName(child) === 'summary'");
+    expect(topicHtmlRenderersBlock).toContain('detailsSummaryTextFromDom(props.tnode)');
+    expect(topicHtmlRenderersBlock).toContain('detailSummaryText ?');
+    expect(topicHtmlRenderersBlock).toContain('props.tnode.attributes?.open !== undefined');
+    expect(topicHtmlRenderersBlock).toContain('accessibilityState={{ expanded }}');
+    expect(topicHtmlRenderersBlock).toContain('expanded && detailBodyChildren.length');
+    expect(topicHtmlRenderersBlock).toContain('details: DetailsRenderer');
+    expect(topicScreenSource).toContain('ChevronRight');
+    expect(themeSource).toContain('detailsPanel');
+    expect(themeSource).toContain('detailsPanelSummaryText');
+    expect(themeSource).toContain('detailsPanelBody');
+  });
+
+  it('does not repeat details summary text inside the expanded panel body', () => {
+    const htmlTagNameBlock = topicScreenSource.match(/function htmlTagName\(tnode: unknown\) \{[\s\S]*?\n\}/)?.[0] || '';
+    const topicHtmlRenderersBlock = topicScreenSource.match(/const topicHtmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(htmlTagNameBlock).toContain("domNodeTagName((tnode as { domNode?: unknown }).domNode)");
+    expect(topicHtmlRenderersBlock).toContain("props.tnode.children.find((child) => htmlTagName(child) === 'summary')");
+    expect(topicHtmlRenderersBlock).toContain('props.tnode.children.filter((child) => child !== summaryNode)');
+    expect(topicHtmlRenderersBlock).toContain('const SummaryRenderer: CustomBlockRenderer = () => null;');
+    expect(topicHtmlRenderersBlock).toContain('summary: SummaryRenderer');
+  });
+
   it('keeps native controls large enough for touch use', () => {
     expect(themeSource).toMatch(/pill:\s*\{[\s\S]*minHeight:\s*40/);
     expect(themeSource).toMatch(/tab:\s*\{[\s\S]*minHeight:\s*40/);

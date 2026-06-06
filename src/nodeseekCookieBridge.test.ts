@@ -32,6 +32,18 @@ describe('NodeSeek WebView cookie bridge', () => {
     expect(readCookieManagerStore).toHaveBeenCalled();
   });
 
+  it('prefers refreshed CookieManager clearance over stale native cookies with login state', async () => {
+    const readCookieManagerStore = vi.fn(async () => nodeSeekCookiesFromHeader('cf_clearance=fresh-clearance'));
+    const cookies = await readNodeSeekCookiesFromStores({
+      readAndroidStore: async () => nodeSeekCookiesFromHeader('cf_clearance=old-clearance; session=abc'),
+      readCookieManagerStore,
+      timeoutMs: 1
+    });
+
+    expect(buildCookieHeader(cookies)).toBe('cf_clearance=fresh-clearance; session=abc');
+    expect(readCookieManagerStore).toHaveBeenCalled();
+  });
+
   it('falls back to CookieManager when Android store has no NodeSeek cookies', async () => {
     const cookies = await readNodeSeekCookiesFromStores({
       readAndroidStore: async () => ({}),

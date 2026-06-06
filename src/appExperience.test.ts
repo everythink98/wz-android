@@ -1090,7 +1090,12 @@ describe('Android App experience guards', () => {
 
   it('lets NodeSeek detail WebView fallback finish before the outer request timeout', () => {
     expect(topicControllerSource).toContain('const NODESEEK_DETAIL_TIMEOUT_MS = 30000;');
-    expect(topicControllerSource).toContain("timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : undefined");
+    expect(topicControllerSource).toContain("topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS");
+  });
+
+  it('lets linux.do detail WebView fallback finish before the outer request timeout', () => {
+    expect(topicControllerSource).toContain('const LINUXDO_DETAIL_TIMEOUT_MS = 30000;');
+    expect(topicControllerSource).toContain("timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined");
   });
 
   it('keeps the hidden NodeSeek browser fetch WebView out of the visible layout', () => {
@@ -1115,7 +1120,7 @@ describe('Android App experience guards', () => {
 
   it('stops the hidden NodeSeek browser page after returning fallback HTML', () => {
     const script = appSource.match(/const NODESEEK_BROWSER_FETCH_SCRIPT = `([\s\S]*?)`;/)?.[1] || '';
-    const completeBlock = sessionControllerSource.match(/const completeNodeSeekBrowserFetch = useCallback\(\(data: \{[\s\S]*?\n  \}, \[/)?.[0] || '';
+    const completeBlock = sessionControllerSource.match(/const completeNodeSeekBrowserFetch = useCallback\(async \(data: \{[\s\S]*?\n  \}, \[/)?.[0] || '';
 
     expect(script).toContain('window.stop();');
     expect(completeBlock).toContain('nodeSeekBrowserWebViewRef.current?.stopLoading();');
@@ -1830,6 +1835,50 @@ describe('Android App experience guards', () => {
     expect(scriptBlock).toContain('isInteractiveChallengePage');
     expect(scriptBlock).toContain('if (isInteractiveChallengePage() || (!isChallengePage() && jsonText()) || Date.now() >= deadline)');
     expect(scriptBlock).toContain('const challenge = isChallengePage() || isInteractiveChallengePage();');
+  });
+
+  it('persists linux.do cookies after a successful hidden WebView fallback read', () => {
+    const completeBlock = sessionControllerSource.match(/const completeLinuxDoBrowserFetch = useCallback\(async \(data: \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(completeBlock).toContain('if (!data.challenge && typeof data.cookie === \'string\')');
+    expect(completeBlock).toContain('readLinuxDoCookiesFromWebView()');
+    expect(completeBlock).toContain('mergeLinuxDoCookies(');
+    expect(completeBlock).toContain('saveLinuxDoAccess(cookieHeader');
+  });
+
+  it('saves linux.do hidden WebView cookies before resolving the fallback response', () => {
+    const completeBlock = sessionControllerSource.match(/const completeLinuxDoBrowserFetch = useCallback\([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const saveIndex = completeBlock.indexOf('await saveLinuxDoAccess(cookieHeader');
+    const resolveIndex = completeBlock.indexOf('current.resolve(linuxDoBrowserResponse');
+
+    expect(completeBlock).toContain('const completeLinuxDoBrowserFetch = useCallback(async');
+    expect(saveIndex).toBeGreaterThan(-1);
+    expect(resolveIndex).toBeGreaterThan(saveIndex);
+  });
+
+  it('stops the hidden linux.do WebView after a fallback read finishes', () => {
+    const completeBlock = sessionControllerSource.match(/const completeLinuxDoBrowserFetch = useCallback\([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(completeBlock).toContain('linuxDoBrowserWebViewRef.current?.stopLoading();');
+  });
+
+  it('still resolves linux.do hidden fallback responses when no storable cookie is found', () => {
+    const completeBlock = sessionControllerSource.match(/const completeLinuxDoBrowserFetch = useCallback\([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const unusableCookieBlock = completeBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader\) \{([\s\S]*?)\n        \}/)?.[1] || '';
+
+    expect(completeBlock).toContain('if (canStoreLinuxDoAccess(cookies) && cookieHeader) {');
+    expect(unusableCookieBlock).not.toContain('return;');
+    expect(completeBlock).toContain('current.resolve(linuxDoBrowserResponse');
+  });
+
+  it('saves NodeSeek hidden WebView cookies before resolving the fallback response', () => {
+    const completeBlock = sessionControllerSource.match(/const completeNodeSeekBrowserFetch = useCallback\([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const saveIndex = completeBlock.indexOf('await saveNodeSeekCookieHeader(');
+    const resolveIndex = completeBlock.indexOf('current.resolve(nodeSeekBrowserResponse');
+
+    expect(completeBlock).toContain('const completeNodeSeekBrowserFetch = useCallback(async');
+    expect(saveIndex).toBeGreaterThan(-1);
+    expect(resolveIndex).toBeGreaterThan(saveIndex);
   });
 
   it('clears stale linux.do WebView clearance before topic-triggered verification', () => {

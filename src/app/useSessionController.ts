@@ -18,11 +18,16 @@ import {
   type YaohuoNativeCookie
 } from '../yaohuoCookies';
 import {
+  buildLinuxDoCookieHeader,
+  canStoreLinuxDoAccess,
   linuxDoAccessSummary,
   linuxDoClearanceValue,
   loadLinuxDoAccess,
+  mergeLinuxDoCookies,
   parseLinuxDoDocumentCookie,
+  readLinuxDoCookiesFromWebView,
   sanitizeLinuxDoUserAgent,
+  saveLinuxDoAccess,
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
 import { clearCookieUrls } from '../cookieCleanup';
@@ -488,7 +493,7 @@ export function useSessionController({
     });
   }, [nodeSeekBrowserFetchIdRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
 
-  const completeNodeSeekBrowserFetch = useCallback((data: {
+  const completeNodeSeekBrowserFetch = useCallback(async (data: {
     id?: number;
     html?: string;
     cookie?: string;
@@ -510,10 +515,13 @@ export function useSessionController({
     }
     if (typeof data.cookie === 'string') {
       nodeSeekWebViewCookieHeaderRef.current = data.cookie;
-      void CookieManager.flush().then(async () => {
+      try {
+        await CookieManager.flush();
         const nativeCookies = await readNodeSeekCookiesFromWebView();
         await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')));
-      }).catch(() => undefined);
+      } catch {
+        // Keep the fetched page usable even if persisting refreshed cookies fails.
+      }
     }
     current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
     startNextNodeSeekBrowserFetch();
@@ -627,7 +635,7 @@ export function useSessionController({
     webViewFetcher: linuxDoFetchWithWebView
   }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]);
 
-  const completeLinuxDoBrowserFetch = useCallback((data: {
+  const completeLinuxDoBrowserFetch = useCallback(async (data: {
     id?: number;
     body?: string;
     cookie?: string;
@@ -639,6 +647,7 @@ export function useSessionController({
       return;
     }
     cleanupLinuxDoBrowserFetchRequest(current);
+    linuxDoBrowserWebViewRef.current?.stopLoading();
     linuxDoBrowserFetchCurrentRef.current = null;
     setLinuxDoBrowserFetchRequest(null);
     const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
@@ -649,15 +658,48 @@ export function useSessionController({
     if (typeof data.cookie === 'string') {
       linuxDoWebViewCookieHeaderRef.current = data.cookie;
       setLinuxDoWebViewCookieHeader(data.cookie);
-      void CookieManager.flush().catch(() => undefined);
+    }
+    if (!data.challenge && typeof data.cookie === 'string') {
+      try {
+        await CookieManager.flush();
+        const [savedAccess, nativeCookies] = await Promise.all([
+          loadLinuxDoAccess(),
+          readLinuxDoCookiesFromWebView()
+        ]);
+        const cookies = mergeLinuxDoCookies(
+          parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''),
+          nativeCookies,
+          parseLinuxDoDocumentCookie(data.cookie || '')
+        );
+        const cookieHeader = buildLinuxDoCookieHeader(cookies);
+        if (canStoreLinuxDoAccess(cookies) && cookieHeader) {
+          await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || userAgent || undefined);
+          const summary = summarizeLinuxDoCookies(cookies);
+          setHasLinuxDoClearance(summary.hasClearance);
+          setHasLinuxDoLogin(summary.loggedIn);
+          setLinuxDoCookieNames(summary.names);
+        }
+      } catch {
+        // Keep the fetched page usable even if persisting refreshed cookies fails.
+      }
+    } else if (typeof data.cookie === 'string') {
+      try {
+        await CookieManager.flush();
+      } catch {
+        // Ignore flush failures on challenge pages.
+      }
     }
     current.resolve(linuxDoBrowserResponse(data.body || '', Boolean(data.challenge), current.httpErrorStatus));
     startNextLinuxDoBrowserFetch();
   }, [
     linuxDoBrowserFetchCurrentRef,
+    linuxDoBrowserWebViewRef,
     linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewUserAgentRef,
+    setHasLinuxDoClearance,
+    setHasLinuxDoLogin,
     setLinuxDoBrowserFetchRequest,
+    setLinuxDoCookieNames,
     setLinuxDoWebViewCookieHeader,
     setLinuxDoWebViewUserAgent,
     startNextLinuxDoBrowserFetch

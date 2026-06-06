@@ -2,7 +2,6 @@ import CookieManager from '@react-native-cookies/cookies';
 import { NativeModules } from 'react-native';
 import {
   buildCookieHeader,
-  hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
   parseNodeSeekDocumentCookie,
   type NativeCookie
@@ -74,9 +73,6 @@ export async function readNodeSeekCookiesFromStores({
   timeoutMs?: number;
 } = {}) {
   const androidStoreCookies = await withNodeSeekCookieReadTimeout(readAndroidStore(), {}, timeoutMs);
-  if (hasNodeSeekLoginCookie(androidStoreCookies)) {
-    return androidStoreCookies;
-  }
   const cookieManagerCookies = await withNodeSeekCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs);
   return mergeNodeSeekCookies(androidStoreCookies, cookieManagerCookies);
 }

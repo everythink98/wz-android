@@ -191,9 +191,6 @@ export async function readLinuxDoCookiesFromStores({
   timeoutMs?: number;
 } = {}) {
   const androidStoreCookies = await withLinuxDoCookieReadTimeout(readAndroidStore(), {}, timeoutMs);
-  if (canStoreLinuxDoClearance(androidStoreCookies) && canStoreLinuxDoLogin(androidStoreCookies)) {
-    return androidStoreCookies;
-  }
   const cookieManagerCookies = await withLinuxDoCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs);
   return mergeLinuxDoCookies(androidStoreCookies, cookieManagerCookies);
 }

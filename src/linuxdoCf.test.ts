@@ -147,6 +147,19 @@ describe('linux.do Cloudflare helpers', () => {
     expect(readCookieManagerStore).toHaveBeenCalled();
   });
 
+  it('prefers refreshed CookieManager clearance over stale native WebView cookies', async () => {
+    const readCookieManagerStore = vi.fn(async () => linuxDoClearanceCookieFromValue('fresh-clearance'));
+
+    const cookies = await readLinuxDoCookiesFromStores({
+      readAndroidStore: async () => parseLinuxDoDocumentCookie('cf_clearance=old-clearance; _t=login; _forum_session=session'),
+      readCookieManagerStore,
+      timeoutMs: 1
+    });
+
+    expect(buildLinuxDoCookieHeader(cookies)).toBe('cf_clearance=fresh-clearance; _t=login; _forum_session=session');
+    expect(readCookieManagerStore).toHaveBeenCalled();
+  });
+
   it('can clear only the saved linux.do access state', async () => {
     vi.mocked(SecureStore.deleteItemAsync).mockClear();
 

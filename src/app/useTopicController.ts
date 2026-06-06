@@ -25,6 +25,7 @@ import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
 import type { ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
+const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
 
 type MutableRef<T> = { current: T };
 
@@ -226,7 +227,7 @@ export function useTopicController({
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           signal: controller.signal,
-          timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : undefined
+          timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
         });
       if (requestId !== topicRequestIdRef.current) {
         return;
