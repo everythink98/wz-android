@@ -22,6 +22,7 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { getYaohuoFeedDirect } from '../yaohuoApi';
+import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { Category, FeedResponse, FeedSource, Source, Topic } from '../types';
 
@@ -82,6 +83,7 @@ export function useFeedController({
   showYaohuoLogin: (message?: string) => void;
 }) {
   const feedRequestIdRef = useRef(0);
+  const feedRequestOwnerRef = useRef(createRequestOwner('feed'));
   const feedSourceRequestIdRef = useRef<Partial<Record<FeedSource, number>>>({});
   const feedLoadingRef = useRef(false);
   const feedAbortRef = useRef<AbortController | null>(null);
@@ -184,6 +186,8 @@ export function useFeedController({
     feedLoadingRef.current = true;
     const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
+    const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestSource}:${category || ''}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
+    const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
     feedSourceRequestIdRef.current[requestSource] = requestId;
     const isLoadMore = !reset && page > 1;
     if (!isLoadMore && reset && clearItems) {
@@ -219,7 +223,7 @@ export function useFeedController({
     try {
       let appliedFeedResponse: FeedResponse | null = null;
       const applyFeedResponse = (data: FeedResponse) => {
-        if (requestId !== feedRequestIdRef.current || controller.signal.aborted) {
+        if (!isCurrentFeedRequest() || controller.signal.aborted) {
           return;
         }
         appliedFeedResponse = appliedFeedResponse ? mergeFeedResponses(appliedFeedResponse, data) : data;
@@ -242,7 +246,7 @@ export function useFeedController({
         loadYaohuoCookieForSource(source),
         loadNodeSeekCookieForSource(source)
       ]);
-      if (requestId !== feedRequestIdRef.current) {
+      if (!isCurrentFeedRequest()) {
         return;
       }
       if (source === 'yaohuo' && !yaohuoCookie) {
@@ -305,7 +309,7 @@ export function useFeedController({
           category: category || undefined,
           signal: controller.signal
         });
-        if (requestId !== feedRequestIdRef.current) {
+        if (!isCurrentFeedRequest()) {
           return;
         }
         applyFeedResponse(data);
@@ -323,13 +327,13 @@ export function useFeedController({
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           signal: controller.signal
         });
-        if (requestId !== feedRequestIdRef.current) {
+        if (!isCurrentFeedRequest()) {
           return;
         }
         applyFeedResponse(data);
         finalErrors = data.errors || {};
       }
-      if (requestId !== feedRequestIdRef.current) {
+      if (!isCurrentFeedRequest()) {
         return;
       }
       const errors = Object.entries(finalErrors);
@@ -353,7 +357,7 @@ export function useFeedController({
         notify(successMessage);
       }
     } catch (error) {
-      if (requestId === feedRequestIdRef.current) {
+      if (isCurrentFeedRequest()) {
         const message = errorMessage(error);
         const notice = isLoadMore ? `加载下一页失败：${message}` : message;
         if (isLoadMore && !isCanceledRequest(error)) {
@@ -388,7 +392,7 @@ export function useFeedController({
           }
         }));
       }
-      if (requestId === feedRequestIdRef.current) {
+      if (isCurrentFeedRequest()) {
         setFeedBusy(false);
         feedLoadingRef.current = false;
       }

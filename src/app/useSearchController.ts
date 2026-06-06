@@ -20,6 +20,7 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { searchYaohuoDirect } from '../yaohuoApi';
+import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
@@ -74,6 +75,7 @@ export function useSearchController({
   showYaohuoLogin: (message?: string) => void;
 }) {
   const searchRequestIdRef = useRef(0);
+  const searchRequestOwnerRef = useRef(createRequestOwner('search'));
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchGroupsRef = useRef<SearchGroup[]>([]);
   const searchQueryRef = useRef('');
@@ -146,7 +148,14 @@ export function useSearchController({
     setSearchBusy(false);
   }, [searchQuery, searchScope, searchSource]);
 
-  const runRemoteSearchSource = useCallback(async (source: Source, query: string, page: number, signal: AbortSignal, sort: SearchSort = 'relevance'): Promise<SearchGroup> => {
+  const runRemoteSearchSource = useCallback(async (
+    source: Source,
+    query: string,
+    page: number,
+    signal: AbortSignal,
+    sort: SearchSort = 'relevance',
+    options?: { isCurrent?: () => boolean }
+  ): Promise<SearchGroup> => {
     try {
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
         loadYaohuoCookieForSource(source),
@@ -182,7 +191,9 @@ export function useSearchController({
       }
       if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
         if (isYaohuoLoginExpiredError(error)) {
-          await clearYaohuoLoginState();
+          if (options?.isCurrent?.() !== false) {
+            await clearYaohuoLoginState();
+          }
           return { source, label: sourceLabel(source), items: [], error: '登录已失效', hasMore: false, nextPage: null };
         }
         return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
@@ -199,6 +210,8 @@ export function useSearchController({
     }
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || searchSource}:${searchScope}:${query}:${searchSort}`);
+    const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     const activeSources = sourceOverride
       ? [sourceOverride]
       : searchSource === 'all'
@@ -223,15 +236,15 @@ export function useSearchController({
     try {
       addRecentSearch(query);
       if (searchScope === 'local') {
-        if (requestId !== searchRequestIdRef.current) {
+        if (!isCurrentSearchRequest()) {
           return;
         }
         setSearchItems(searchLocal(readerData, query, searchSource));
         notify('本地搜索完成');
       } else {
         await Promise.all(activeSources.map(async (source) => {
-          const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort);
-          if (requestId !== searchRequestIdRef.current) {
+          const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, { isCurrent: () => isCurrentSearchRequest() });
+          if (!isCurrentSearchRequest()) {
             return;
           }
           const nextGroups = searchGroupsRef.current.map((currentGroup) => (
@@ -241,7 +254,7 @@ export function useSearchController({
           setSearchGroups(nextGroups);
           setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));
         }));
-        if (requestId !== searchRequestIdRef.current) {
+        if (!isCurrentSearchRequest()) {
           return;
         }
         const nextGroups = searchGroupsRef.current.map((group) => (
@@ -262,7 +275,7 @@ export function useSearchController({
           : `搜索完成：${mergedItems.length} 条结果`);
       }
     } catch (error) {
-      if (requestId === searchRequestIdRef.current) {
+      if (isCurrentSearchRequest()) {
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
             await clearYaohuoLoginState();
@@ -281,7 +294,7 @@ export function useSearchController({
         }
       }
     } finally {
-      if (requestId === searchRequestIdRef.current) {
+      if (isCurrentSearchRequest()) {
         setSearchBusy(false);
       }
       finishAbortableRequest(searchAbortRef, controller);
@@ -316,10 +329,12 @@ export function useSearchController({
     setSearchGroups(markedGroups);
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search-more:${source}:${query}:${page}:${searchSort}`);
+    const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     setSearchBusy(true);
     try {
-      const data = await runRemoteSearchSource(source, query, page, controller.signal, remoteSearchSort(searchSource, searchSort));
-      if (requestId !== searchRequestIdRef.current) {
+      const data = await runRemoteSearchSource(source, query, page, controller.signal, remoteSearchSort(searchSource, searchSort), { isCurrent: () => isCurrentSearchRequest() });
+      if (!isCurrentSearchRequest()) {
         return;
       }
       const nextGroups = searchGroupsRef.current.map((group) => {
@@ -345,7 +360,7 @@ export function useSearchController({
       }
       notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
     } catch (error) {
-      if (requestId === searchRequestIdRef.current && !isCanceledRequest(error)) {
+      if (isCurrentSearchRequest() && !isCanceledRequest(error)) {
         const nextGroups = searchGroupsRef.current.map((group) => (
           group.source === source ? { ...group, loadingMore: false, error: errorMessage(error) } : group
         ));
@@ -354,7 +369,7 @@ export function useSearchController({
         notify(errorMessage(error));
       }
     } finally {
-      if (requestId === searchRequestIdRef.current) {
+      if (isCurrentSearchRequest()) {
         setSearchBusy(false);
       }
       finishAbortableRequest(searchAbortRef, controller);

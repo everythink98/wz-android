@@ -7,6 +7,7 @@ import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../linuxdoLevel';
 import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
 import { LINUXDO_URL, NODESEEK_URL, YAOHUO_URL } from '../appUrls';
+import type { SiteSessionViewModel, SiteSessionViewModels } from '../siteSessionState';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, IconButton, InfoRow, MenuButton, SettingRail } from '../components/AppControls';
 
@@ -43,10 +44,6 @@ true;
 
 function MoreScreen({
   checking,
-  hasNodeSeekLoginCookie,
-  hasYaohuoCookie,
-  hasLinuxDoClearance,
-  hasLinuxDoLogin,
   healthDetails,
   healthSummary,
   loginState,
@@ -75,7 +72,7 @@ function MoreScreen({
   yaohuoLoginCookieHeader,
   yaohuoLoginState,
   yaohuoWebViewRef,
-  linuxDoCookieNames,
+  sessionViewModels,
   linuxDoWebViewRef,
   onCheckHealth,
   onCheckIn,
@@ -109,10 +106,6 @@ function MoreScreen({
   onUpdateSettings
 }: {
   checking: boolean;
-  hasNodeSeekLoginCookie: boolean;
-  hasYaohuoCookie: boolean;
-  hasLinuxDoClearance: boolean;
-  hasLinuxDoLogin: boolean;
   healthDetails: HealthDetail[];
   healthSummary: string;
   loginState: string;
@@ -141,7 +134,7 @@ function MoreScreen({
   yaohuoLoginCookieHeader: string;
   yaohuoLoginState: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
-  linuxDoCookieNames: string[];
+  sessionViewModels: SiteSessionViewModels;
   linuxDoWebViewRef: RefObject<WebView | null>;
   onCheckHealth: () => void;
   onCheckIn: () => void;
@@ -178,17 +171,20 @@ function MoreScreen({
   const [accountExpanded, setAccountExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const [statusExpanded, setStatusExpanded] = useState(false);
+  const nodeSeekSession = sessionViewModels.nodeseek;
+  const linuxDoSession = sessionViewModels.linuxdo;
+  const yaohuoSession = sessionViewModels.yaohuo;
   useEffect(() => {
     if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {
       setAccountExpanded(true);
     }
   }, [showLinuxDoPanel, showLoginPanel, showYaohuoLoginPanel]);
   useEffect(() => {
-    if (levelExpanded && hasLinuxDoLogin && !linuxDoLevelProfile && !linuxDoLevelBusy && !linuxDoLevelError) {
+    if (levelExpanded && linuxDoSession.canWrite && !linuxDoLevelProfile && !linuxDoLevelBusy && !linuxDoLevelError) {
       onRefreshLinuxDoLevel();
     }
-  }, [hasLinuxDoLogin, levelExpanded, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, onRefreshLinuxDoLevel]);
-  const levelMeta = !hasLinuxDoLogin
+  }, [levelExpanded, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoSession.canWrite, onRefreshLinuxDoLevel]);
+  const levelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
     : linuxDoLevelBusy
       ? '读取中'
@@ -204,7 +200,7 @@ function MoreScreen({
       <ExpandablePanel
         quiet
         title="账号与验证"
-        meta={`NodeSeek ${hasNodeSeekLoginCookie ? '已登录' : '未登录'} · 妖火 ${hasYaohuoCookie ? '已登录' : '未登录'} · linux.do ${hasLinuxDoLogin ? '已登录' : hasLinuxDoClearance ? '已验证' : '匿名可用'}`}
+        meta={`NodeSeek ${nodeSeekSession.statusLabel} · 妖火 ${yaohuoSession.statusLabel} · linux.do ${linuxDoSession.summaryLabel}`}
         icon={LogIn}
         expanded={accountExpanded}
         styles={styles}
@@ -213,7 +209,7 @@ function MoreScreen({
       >
         <MemoizedNodeSeekLoginPanel
           checking={checking}
-          hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
+          nodeSeekSession={nodeSeekSession}
           accountExpanded={accountExpanded}
           loginState={loginState}
           loadingLoginPage={loadingLoginPage}
@@ -233,7 +229,7 @@ function MoreScreen({
         />
         <MemoizedYaohuoLoginPanel
           checking={checking}
-          hasYaohuoCookie={hasYaohuoCookie}
+          yaohuoSession={yaohuoSession}
           accountExpanded={accountExpanded}
           loadingYaohuoLoginPage={loadingYaohuoLoginPage}
           showYaohuoLoginPanel={showYaohuoLoginPanel}
@@ -250,10 +246,8 @@ function MoreScreen({
         />
         <MemoizedLinuxDoVerifyPanel
           checking={checking}
-          hasLinuxDoClearance={hasLinuxDoClearance}
-          hasLinuxDoLogin={hasLinuxDoLogin}
+          linuxDoSession={linuxDoSession}
           accountExpanded={accountExpanded}
-          linuxDoCookieNames={linuxDoCookieNames}
           linuxDoWebViewError={linuxDoWebViewError}
           linuxDoWebViewKey={linuxDoWebViewKey}
           linuxDoWebViewRef={linuxDoWebViewRef}
@@ -277,7 +271,7 @@ function MoreScreen({
           <LinuxDoLevelPanel
             busy={linuxDoLevelBusy}
             error={linuxDoLevelError}
-            hasLinuxDoLogin={hasLinuxDoLogin}
+            linuxDoSession={linuxDoSession}
             profile={linuxDoLevelProfile}
             styles={styles}
             theme={theme}
@@ -451,7 +445,7 @@ function LoginWebViewModal({
 function NodeSeekLoginPanel({
   accountExpanded,
   checking,
-  hasNodeSeekLoginCookie,
+  nodeSeekSession,
   loginState,
   loadingLoginPage,
   nodeSeekWebViewUserAgent,
@@ -470,7 +464,7 @@ function NodeSeekLoginPanel({
 }: {
   accountExpanded: boolean;
   checking: boolean;
-  hasNodeSeekLoginCookie: boolean;
+  nodeSeekSession: SiteSessionViewModel;
   loginState: string;
   loadingLoginPage: boolean;
   nodeSeekWebViewUserAgent: string;
@@ -512,7 +506,7 @@ function NodeSeekLoginPanel({
   return (
     <>
       <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
-      {hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
+      {nodeSeekSession.canWrite ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
       <LoginWebViewModal
         visible={showLoginPanel}
         title="NodeSeek 登录 / 验证"
@@ -578,7 +572,7 @@ const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);
 function YaohuoLoginPanel({
   accountExpanded,
   checking,
-  hasYaohuoCookie,
+  yaohuoSession,
   loadingYaohuoLoginPage,
   showYaohuoLoginPanel,
   styles,
@@ -594,7 +588,7 @@ function YaohuoLoginPanel({
 }: {
   accountExpanded: boolean;
   checking: boolean;
-  hasYaohuoCookie: boolean;
+  yaohuoSession: SiteSessionViewModel;
   loadingYaohuoLoginPage: boolean;
   showYaohuoLoginPanel: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -656,7 +650,7 @@ function YaohuoLoginPanel({
               key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}
               source={{
-                uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL,
+                uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL,
                 headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined
               }}
               sharedCookiesEnabled
@@ -695,9 +689,7 @@ const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);
 
 export function LinuxDoVerifyModal({
   checking,
-  hasLinuxDoClearance,
-  hasLinuxDoLogin,
-  linuxDoCookieNames,
+  linuxDoSession,
   linuxDoWebViewError,
   linuxDoWebViewKey,
   linuxDoWebViewRef,
@@ -717,9 +709,7 @@ export function LinuxDoVerifyModal({
   onShowLinuxDoPanelChange
 }: {
   checking: boolean;
-  hasLinuxDoClearance: boolean;
-  hasLinuxDoLogin: boolean;
-  linuxDoCookieNames: string[];
+  linuxDoSession: SiteSessionViewModel;
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
   linuxDoWebViewRef: RefObject<WebView | null>;
@@ -762,7 +752,7 @@ export function LinuxDoVerifyModal({
     <LoginWebViewModal
       visible={showLinuxDoPanel}
       title="linux.do 登录 / 验证"
-      subtitle={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || '访问信息'}` : '匿名可用，登录后内容更完整'}
+      subtitle={linuxDoSession.summaryLabel === '匿名可用' ? '匿名可用，登录后内容更完整' : linuxDoSession.summaryLabel}
       loading={loadingLinuxDoPage}
       loadingText="正在打开 linux.do..."
       error={linuxDoWebViewError}
@@ -826,9 +816,7 @@ export function LinuxDoVerifyModal({
 }
 
 function LinuxDoVerifyPanel({
-  hasLinuxDoClearance,
-  hasLinuxDoLogin,
-  linuxDoCookieNames,
+  linuxDoSession,
   showLinuxDoPanel,
   styles,
   theme,
@@ -836,9 +824,7 @@ function LinuxDoVerifyPanel({
 }: {
   accountExpanded: boolean;
   checking: boolean;
-  hasLinuxDoClearance: boolean;
-  hasLinuxDoLogin: boolean;
-  linuxDoCookieNames: string[];
+  linuxDoSession: SiteSessionViewModel;
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
   linuxDoWebViewRef: RefObject<WebView | null>;
@@ -858,7 +844,7 @@ function LinuxDoVerifyPanel({
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
   return (
-    <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={hasLinuxDoLogin ? `已登录 ${linuxDoCookieNames.join('、') || '_t'}` : hasLinuxDoClearance ? `已验证 ${linuxDoCookieNames.join('、') || 'cf_clearance'}` : '匿名可用'} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
+    <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={linuxDoSession.summaryLabel} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
   );
 }
 
@@ -890,7 +876,7 @@ function formatActivitySeconds(seconds: number) {
 function LinuxDoLevelPanel({
   busy,
   error,
-  hasLinuxDoLogin,
+  linuxDoSession,
   profile,
   styles,
   theme,
@@ -899,7 +885,7 @@ function LinuxDoLevelPanel({
 }: {
   busy: boolean;
   error: string;
-  hasLinuxDoLogin: boolean;
+  linuxDoSession: SiteSessionViewModel;
   profile: LinuxDoLevelProfile | null;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -907,7 +893,7 @@ function LinuxDoLevelPanel({
   onRefresh: () => void;
 }) {
   const [tab, setTab] = useState('progress');
-  if (!hasLinuxDoLogin) {
+  if (!linuxDoSession.canWrite) {
     return (
       <View style={styles.stack}>
         <Text style={styles.meta}>需要先保存 linux.do 登录 Cookie，等级数据只从手机本机读取。</Text>

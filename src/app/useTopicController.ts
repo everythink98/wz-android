@@ -1,4 +1,4 @@
-import { useCallback, useMemo, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useMemo, useRef, type Dispatch, type SetStateAction } from 'react';
 import { getReply, getReplies, getTopic } from '../forumApi';
 import {
   recordHistory,
@@ -19,6 +19,8 @@ import {
 } from '../appUtils';
 import { getYaohuoRepliesDirect, getYaohuoTopicDirect } from '../yaohuoApi';
 import { REPLY_PAGE_SIZE, replyRefreshTarget } from '../androidFeatureHelpers';
+import { pushTopicSession, topicSessionFromSnapshot } from '../topicSessionState';
+import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import { topicWithAuthorFallback } from '../userNavigation';
 import type { Fetcher } from '../request';
 import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
@@ -47,6 +49,7 @@ export function useTopicController({
   loadingMoreRepliesRef,
   nodeSeekUserAgentRef,
   notify,
+  onTopicContextChange,
   pendingLinuxDoTopicRef,
   pushTopicScreen,
   quotedReplyAbortRefs,
@@ -108,6 +111,7 @@ export function useTopicController({
   loadingMoreRepliesRef: MutableRef<boolean>;
   nodeSeekUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
+  onTopicContextChange: (topicKey: string | null) => void;
   pendingLinuxDoTopicRef: MutableRef<Topic | null>;
   pushTopicScreen: () => void;
   quotedReplyAbortRefs: MutableRef<Record<string, AbortController>>;
@@ -152,6 +156,8 @@ export function useTopicController({
   repliesAbortRef: MutableRef<AbortController | null>;
   repliesRequestIdRef: MutableRef<number>;
 }) {
+  const topicRequestOwnerRef = useRef(createRequestOwner('topic'));
+  const repliesRequestOwnerRef = useRef(createRequestOwner('topic-replies'));
   const currentTopic = topicDetail || selectedTopic;
   const currentTopicKey = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   const topicFavorite = useMemo(() => (
@@ -165,13 +171,37 @@ export function useTopicController({
     if (!reopenExistingTopicScreen) {
       linuxDoDismissedVerificationTopicKeyRef.current = null;
     }
+    const nextTopicKey = topicKey(topic);
     const activeTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
-    const opensDifferentTopic = topicKey(topic) !== activeTopicKey;
+    const opensDifferentTopic = nextTopicKey !== activeTopicKey;
     if (screen !== 'topic' && !reopenExistingTopicScreen) {
       topicReturnScreenRef.current = screen;
       topicBackStackRef.current = [];
     } else if (opensDifferentTopic) {
-      topicBackStackRef.current.push(topicSnapshot());
+      topicBackStackRef.current = pushTopicSession(
+        topicBackStackRef.current.map(topicSessionFromSnapshot),
+        topicSessionFromSnapshot(topicSnapshot()),
+        topic
+      ).map((session) => ({
+        key: session.key,
+        selectedTopic: session.selectedTopic,
+        topicDetail: session.topicDetail,
+        topicReplies: session.topicReplies,
+        topicError: session.topicError,
+        replyHasMore: session.replyHasMore,
+        replyNextPage: session.replyNextPage,
+        replyNextOffset: session.replyNextOffset,
+        unreadReplyCount: session.unreadReplyCount,
+        commentQuery: session.commentQuery,
+        replyFilter: session.replyFilter,
+        replyContent: session.replyContent,
+        replyComposerOpen: session.replyComposerOpen,
+        replyTarget: session.replyTarget,
+        expandedQuotes: session.expandedQuotes,
+        loadedQuotedReplies: session.loadedQuotedReplies,
+        loadingQuotedFloors: session.loadingQuotedFloors,
+        scrollY: session.scrollY
+      }));
       pushTopicScreen();
     }
     if (screen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
@@ -185,10 +215,13 @@ export function useTopicController({
       linuxDoVerifiedRetryTopicKeyRef.current = null;
     }
     const requestId = ++topicRequestIdRef.current;
+    const requestOwner = startOwnedRequest(topicRequestOwnerRef, `topic:${nextTopicKey}:${nocache ? 'nocache' : 'cache'}`);
+    const isCurrentTopicRequest = () => isCurrentOwnedRequest(requestOwner, topicRequestOwnerRef) && requestId === topicRequestIdRef.current;
     repliesRequestIdRef.current += 1;
     repliesAbortRef.current?.abort();
     loadingMoreRepliesRef.current = false;
-    currentTopicKeyRef.current = topicKey(topic);
+    onTopicContextChange(nextTopicKey);
+    currentTopicKeyRef.current = nextTopicKey;
     setSelectedTopic(topic);
     setTopicDetail(null);
     setTopicError('');
@@ -214,7 +247,7 @@ export function useTopicController({
         loadYaohuoCookieForSource(topic.source),
         loadNodeSeekCookieForSource(topic.source)
       ]);
-      if (requestId !== topicRequestIdRef.current) {
+      if (!isCurrentTopicRequest()) {
         return;
       }
       if (topic.source === 'yaohuo' && !yaohuoCookie) {
@@ -232,7 +265,7 @@ export function useTopicController({
           signal: controller.signal,
           timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
         });
-      if (requestId !== topicRequestIdRef.current) {
+      if (!isCurrentTopicRequest()) {
         return;
       }
       const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
@@ -261,7 +294,7 @@ export function useTopicController({
       }
       linuxDoVerifiedRetryTopicKeyRef.current = null;
     } catch (error) {
-      if (requestId === topicRequestIdRef.current) {
+      if (isCurrentTopicRequest()) {
         const message = errorMessage(error);
         setTopicError(message);
         if (isLinuxDoCloudflareError(error)) {
@@ -286,7 +319,7 @@ export function useTopicController({
         }
       }
     } finally {
-      if (requestId === topicRequestIdRef.current) {
+      if (isCurrentTopicRequest()) {
         setTopicBusy(false);
       }
       finishAbortableRequest(topicAbortRef, controller);
@@ -307,6 +340,7 @@ export function useTopicController({
     loadingMoreRepliesRef,
     nodeSeekUserAgentRef,
     notify,
+    onTopicContextChange,
     pendingLinuxDoTopicRef,
     pushTopicScreen,
     readerDataRef,
@@ -353,6 +387,8 @@ export function useTopicController({
     }
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
+    const requestOwner = startOwnedRequest(repliesRequestOwnerRef, `topic-replies:${requestTopicKey}:refresh:${afterSubmit ? 'after-submit' : 'manual'}`);
+    const isCurrentRepliesRequest = () => isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current;
     loadingMoreRepliesRef.current = true;
     repliesAbortRef.current?.abort();
     let controller: AbortController | null = null;
@@ -360,7 +396,7 @@ export function useTopicController({
     try {
       const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
       const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
-      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
+      if (!isCurrentRepliesRequest()) {
         return false;
       }
       if (detail.source === 'yaohuo' && !yaohuoCookie) {
@@ -395,7 +431,7 @@ export function useTopicController({
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           signal: controller.signal
         });
-      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
+      if (!isCurrentRepliesRequest()) {
         return false;
       }
       setTopicReplies((current) => afterSubmit ? mergeReplies(current, data.items) : mergeReplies(data.items, current));
@@ -409,7 +445,7 @@ export function useTopicController({
       }
       return true;
     } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
+      if (isCurrentRepliesRequest()) {
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
             await clearYaohuoLoginState();
@@ -433,7 +469,7 @@ export function useTopicController({
       }
       return false;
     } finally {
-      if (requestId === repliesRequestIdRef.current) {
+      if (isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && requestId === repliesRequestIdRef.current) {
         loadingMoreRepliesRef.current = false;
         setLoadingMoreReplies(false);
       }
@@ -474,13 +510,15 @@ export function useTopicController({
     }
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
+    const requestOwner = startOwnedRequest(repliesRequestOwnerRef, `topic-replies:${requestTopicKey}:more:${replyNextPage}:${replyNextOffset || ''}`);
+    const isCurrentRepliesRequest = () => isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current;
     loadingMoreRepliesRef.current = true;
     let controller: AbortController | null = null;
     setLoadingMoreReplies(true);
     try {
       const yaohuoCookie = await loadYaohuoCookieForSource(detail.source);
       const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
-      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
+      if (!isCurrentRepliesRequest()) {
         return;
       }
       if (detail.source === 'yaohuo' && !yaohuoCookie) {
@@ -508,7 +546,7 @@ export function useTopicController({
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           signal: controller.signal
         });
-      if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {
+      if (!isCurrentRepliesRequest()) {
         return;
       }
       const currentReplies = topicRepliesRef.current;
@@ -521,7 +559,7 @@ export function useTopicController({
       setReplyNextOffset(addedReplies ? data.nextOffset ?? null : null);
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current) {
+      if (isCurrentRepliesRequest()) {
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
             await clearYaohuoLoginState();
@@ -544,7 +582,7 @@ export function useTopicController({
         }
       }
     } finally {
-      if (requestId === repliesRequestIdRef.current) {
+      if (isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && requestId === repliesRequestIdRef.current) {
         loadingMoreRepliesRef.current = false;
         setLoadingMoreReplies(false);
       }

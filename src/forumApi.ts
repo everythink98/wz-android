@@ -123,7 +123,7 @@ function filterSearchItems(response: SearchResponse, query: string, limit: numbe
   };
 }
 
-function pickSource<T>(source: Source, handlers: Partial<Record<Source, () => Promise<T>>>) {
+function pickSource<T>(source: Source, handlers: Partial<Record<Source, () => Promise<T>>>): Promise<T> {
   const handler = handlers[source];
   if (!handler) {
     throw new Error('来源不支持');
@@ -303,10 +303,10 @@ export function getReplies({
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
   const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
-  return pickSource(source, {
+  return pickSource<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),
-    v2ex: async () => ({ items: [], hasMore: false, nextPage: null })
+    v2ex: async (): Promise<RepliesResponse> => ({ items: [], hasMore: false, nextPage: null })
   });
 }
 

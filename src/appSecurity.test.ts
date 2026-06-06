@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('android-app', 'App.tsx');
+const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
 const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
 
@@ -16,8 +17,8 @@ describe('Android App security review guards', () => {
   it('clears only the selected login WebView cookies', () => {
     const clearNodeSeekStateBlock = sessionControllerSource.match(/const clearNodeSeekLoginState = useCallback[\s\S]*?\n\n  const clearNodeSeekLoginCookiesOnly/)?.[0] || '';
     const clearYaohuoStateBlock = sessionControllerSource.match(/const clearYaohuoLoginState = useCallback[\s\S]*?\n\n  const clearNodeSeekLoginState/)?.[0] || '';
-    const clearNodeSeekLoginBlock = appSource.match(/const clearLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearNodeSeekLoginState, notify\]\);/)?.[1] || '';
-    const clearYaohuoLoginBlock = appSource.match(/const clearYaohuoLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState, notify\]\);/)?.[1] || '';
+    const clearNodeSeekLoginBlock = accountControllerSource.match(/const clearLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearNodeSeekLoginState, notify\]\);/)?.[1] || '';
+    const clearYaohuoLoginBlock = accountControllerSource.match(/const clearYaohuoLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState, notify, yaohuoWebViewRef\]\);/)?.[1] || '';
 
     expect(appSource).not.toContain('CookieManager.clearAll');
     expect(clearNodeSeekStateBlock).toContain('await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);');

@@ -3,6 +3,7 @@ import { readProjectFile } from './sourceTestUtils';
 
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
 const appSource = readProjectFile('android-app', 'App.tsx');
+const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
 
 describe('linux.do level UI guards', () => {
   it('adds linux.do level inside account verification with progress and activity tabs', () => {
@@ -12,7 +13,7 @@ describe('linux.do level UI guards', () => {
     expect(moreScreenSource).toContain("label: '等级进度'");
     expect(moreScreenSource).toContain("label: '活跃数据'");
     expect(moreScreenSource).toContain('LinuxDoLevelPanel');
-    expect(appSource).toContain('getLinuxDoLevelProfile');
+    expect(accountControllerSource).toContain('getLinuxDoLevelProfile');
   });
 
   it('does not add a linux.do check-in button', () => {
@@ -24,6 +25,6 @@ describe('linux.do level UI guards', () => {
     expect(appSource).toContain('const resetLinuxDoLevelState = useCallback');
     expect(appSource).toContain('linuxDoLevelRequestIdRef.current += 1');
     expect(appSource).toContain('setLinuxDoLevelProfile(null)');
-    expect(appSource).toContain('resetLinuxDoLevelState();');
+    expect(accountControllerSource).toContain('resetLinuxDoLevelState();');
   });
 });

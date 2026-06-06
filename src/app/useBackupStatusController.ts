@@ -26,6 +26,8 @@ import {
 import { checkLinuxDoLoginAccess } from '../linuxdoActionClient';
 import { buildLocalStatusResult } from '../statusLogic';
 import { safeFileName } from '../backupFiles';
+import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
+import type { ScopedSiteSessionEvent } from '../siteSessionState';
 import type { Fetcher } from '../request';
 import type { FeedSource, Source } from '../types';
 import type { HealthDetail } from '../appTypes';
@@ -60,15 +62,12 @@ export function useBackupStatusController({
   readerDataRef,
   replaceReaderData,
   resetLinuxDoLevelState,
-  setHasLinuxDoClearance,
-  setHasLinuxDoLogin,
-  setHasYaohuoCookie,
-  setLinuxDoCookieNames,
-  setYaohuoCookieNames,
+  dispatchSiteSessionEvent,
   setYaohuoLoginCookieHeader,
   waitForReaderDataSave
 }: {
   clearYaohuoLoginState: () => Promise<void>;
+  dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   fetcher: Fetcher;
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
@@ -78,18 +77,15 @@ export function useBackupStatusController({
   readerDataRef: { current: ReaderData };
   replaceReaderData: (nextValue: ReaderData) => Promise<void>;
   resetLinuxDoLevelState: () => void;
-  setHasLinuxDoClearance: (value: boolean) => void;
-  setHasLinuxDoLogin: (value: boolean) => void;
-  setHasYaohuoCookie: (value: boolean) => void;
-  setLinuxDoCookieNames: (value: string[]) => void;
-  setYaohuoCookieNames: (value: string[]) => void;
   setYaohuoLoginCookieHeader: (value: string) => void;
   waitForReaderDataSave: () => Promise<void>;
 }) {
   const backupRequestIdRef = useRef(0);
+  const backupRequestOwnerRef = useRef(createRequestOwner('backup'));
   const backupAbortRef = useRef<AbortController | null>(null);
   const backupBusyRef = useRef(false);
   const statusRequestIdRef = useRef(0);
+  const statusRequestOwnerRef = useRef(createRequestOwner('status'));
   const statusAbortRef = useRef<AbortController | null>(null);
   const statusBusyRef = useRef(false);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -104,11 +100,13 @@ export function useBackupStatusController({
     }
     backupBusyRef.current = true;
     const requestId = ++backupRequestIdRef.current;
+    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:import-text');
+    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
     const controller = startAbortableRequest(backupAbortRef);
     setBackupBusy(true);
     try {
       await waitForReaderDataSave();
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+      if (!isCurrentBackupRequest() || controller.signal.aborted) {
         return;
       }
       if (!backupJson.trim()) {
@@ -116,16 +114,16 @@ export function useBackupStatusController({
         return;
       }
       const merged = importReaderBackupJson(readerDataRef.current, backupJson);
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+      if (!isCurrentBackupRequest() || controller.signal.aborted) {
         return;
       }
       await replaceReaderData(merged);
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+      if (!isCurrentBackupRequest() || controller.signal.aborted) {
         return;
       }
       notify('备份已恢复，本机资料已合并');
     } catch (error) {
-      if (requestId === backupRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
+      if (isCurrentBackupRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -142,17 +140,19 @@ export function useBackupStatusController({
     }
     backupBusyRef.current = true;
     const requestId = ++backupRequestIdRef.current;
+    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:export-text');
+    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
     const controller = startAbortableRequest(backupAbortRef);
     setBackupBusy(true);
     try {
       await waitForReaderDataSave();
-      if (requestId !== backupRequestIdRef.current || controller.signal.aborted) {
+      if (!isCurrentBackupRequest() || controller.signal.aborted) {
         return;
       }
       setBackupJson(exportReaderBackupJson(readerDataRef.current));
       notify('备份 JSON 已生成');
     } catch (error) {
-      if (requestId === backupRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
+      if (isCurrentBackupRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -193,25 +193,27 @@ export function useBackupStatusController({
     }
     backupBusyRef.current = true;
     const requestId = ++backupRequestIdRef.current;
+    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:export-file');
+    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
     setBackupBusy(true);
     try {
       await waitForReaderDataSave();
-      if (requestId !== backupRequestIdRef.current) {
+      if (!isCurrentBackupRequest()) {
         return;
       }
       const content = exportReaderBackupJson(readerDataRef.current);
       setBackupJson(content);
       await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
-      if (requestId !== backupRequestIdRef.current) {
+      if (!isCurrentBackupRequest()) {
         return;
       }
       notify('备份文件已生成');
     } catch (error) {
-      if (requestId === backupRequestIdRef.current) {
+      if (isCurrentBackupRequest()) {
         notify(errorMessage(error));
       }
     } finally {
-      if (requestId === backupRequestIdRef.current) {
+      if (isCurrentBackupRequest()) {
         backupBusyRef.current = false;
         setBackupBusy(false);
       }
@@ -224,13 +226,15 @@ export function useBackupStatusController({
     }
     backupBusyRef.current = true;
     const requestId = ++backupRequestIdRef.current;
+    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:import-file');
+    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
     setBackupBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         type: ['application/json', 'text/json', '*/*']
       });
-      if (requestId !== backupRequestIdRef.current) {
+      if (!isCurrentBackupRequest()) {
         return;
       }
       if (result.canceled || !result.assets?.[0]?.uri) {
@@ -239,16 +243,16 @@ export function useBackupStatusController({
       const pickedUri = result.assets[0].uri;
       try {
         const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
-        if (requestId !== backupRequestIdRef.current) {
+        if (!isCurrentBackupRequest()) {
           return;
         }
         setBackupJson(content);
         const merged = importReaderBackupJson(readerDataRef.current, content);
-        if (requestId !== backupRequestIdRef.current) {
+        if (!isCurrentBackupRequest()) {
           return;
         }
         await replaceReaderData(merged);
-        if (requestId !== backupRequestIdRef.current) {
+        if (!isCurrentBackupRequest()) {
           return;
         }
         notify('备份已恢复，本机资料已合并');
@@ -258,11 +262,11 @@ export function useBackupStatusController({
         }
       }
     } catch (error) {
-      if (requestId === backupRequestIdRef.current) {
+      if (isCurrentBackupRequest()) {
         notify(errorMessage(error));
       }
     } finally {
-      if (requestId === backupRequestIdRef.current) {
+      if (isCurrentBackupRequest()) {
         backupBusyRef.current = false;
         setBackupBusy(false);
       }
@@ -275,6 +279,8 @@ export function useBackupStatusController({
     }
     statusBusyRef.current = true;
     const requestId = ++statusRequestIdRef.current;
+    const requestOwner = startOwnedRequest(statusRequestOwnerRef, 'status:local');
+    const isCurrentStatusRequest = () => isCurrentOwnedRequest(requestOwner, statusRequestOwnerRef) && requestId === statusRequestIdRef.current;
     const controller = startAbortableRequest(statusAbortRef);
     setStatusBusy(true);
     try {
@@ -310,7 +316,7 @@ export function useBackupStatusController({
           linuxDoLoginPromise
         ] as const)
       });
-      if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
+      if (!isCurrentStatusRequest() || controller.signal.aborted) {
         return;
       }
       const yaohuoCheck = checks[3];
@@ -321,7 +327,7 @@ export function useBackupStatusController({
       const linuxDoLogin = checks[4].status === 'fulfilled' ? checks[4].value : undefined;
       if (linuxDoLogin?.loginRequired) {
         linuxDoAccess = await clearLinuxDoAccess();
-        if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
+        if (!isCurrentStatusRequest() || controller.signal.aborted) {
           return;
         }
         access = linuxDoAccessSummary(linuxDoAccess);
@@ -352,23 +358,37 @@ export function useBackupStatusController({
       const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
       if (yaohuoExpired) {
         await clearYaohuoLoginState();
-        if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {
+        if (!isCurrentStatusRequest() || controller.signal.aborted) {
           return;
         }
       }
-      setHasYaohuoCookie(result.hasYaohuoLogin);
-      setYaohuoCookieNames(yaohuoExpired ? [] : summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || '')).names);
+      const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || ''));
+      dispatchSiteSessionEvent(yaohuoExpired
+        ? { site: 'yaohuo', type: 'login-expired', message: '妖火登录已失效' }
+        : {
+          site: 'yaohuo',
+          type: 'cookie-loaded',
+          cookieSummary: yaohuoSummary.names,
+          hasVerification: false,
+          loggedIn: result.hasYaohuoLogin,
+          at: new Date().toISOString()
+        });
       if (!yaohuoCookie || result.hasYaohuoLogin) {
         setYaohuoLoginCookieHeader(yaohuoCookie || '');
       }
-      setHasLinuxDoClearance(result.hasLinuxDoClearance);
-      setHasLinuxDoLogin(result.hasLinuxDoLogin);
-      setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names);
+      dispatchSiteSessionEvent({
+        site: 'linuxdo',
+        type: 'cookie-loaded',
+        cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names,
+        hasVerification: result.hasLinuxDoClearance,
+        loggedIn: result.hasLinuxDoLogin,
+        at: new Date().toISOString()
+      });
       setHealthDetails(result.details);
       setHealthSummary(result.summary);
       notify('状态已更新');
     } catch (error) {
-      if (requestId === statusRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
+      if (isCurrentStatusRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -379,6 +399,7 @@ export function useBackupStatusController({
     }
   }, [
     clearYaohuoLoginState,
+    dispatchSiteSessionEvent,
     fetcher,
     linuxDoUserAgentRef,
     loadNodeSeekCookieForSource,
@@ -386,11 +407,6 @@ export function useBackupStatusController({
     notify,
     queryClient,
     resetLinuxDoLevelState,
-    setHasLinuxDoClearance,
-    setHasLinuxDoLogin,
-    setHasYaohuoCookie,
-    setLinuxDoCookieNames,
-    setYaohuoCookieNames,
     setYaohuoLoginCookieHeader
   ]);
 

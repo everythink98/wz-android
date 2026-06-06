@@ -32,8 +32,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
-import * as SecureStore from 'expo-secure-store';
-import CookieManager from '@react-native-cookies/cookies';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
   useIMGElementProps,
@@ -41,39 +39,7 @@ import {
   type CustomBlockRenderer,
   type CustomMixedRenderer
 } from 'react-native-render-html';
-import {
-  buildNodeSeekAttendanceRequest,
-  buildNodeSeekCollectionRequest,
-  buildNodeSeekInteractionRequest,
-  buildNodeSeekReplyRequest,
-  buildNodeSeekVoteRequest,
-  nodeSeekInteractionRemovalMessage,
-  type NodeSeekActionRequest
-} from './src/nodeseekActions';
-import { runNodeSeekAction } from './src/nodeseekActionClient';
-import {
-  buildYaohuoFavoriteRequest,
-  buildYaohuoReplyRequest,
-  buildYaohuoVoteRequest,
-  extractYaohuoSid,
-  type YaohuoActionRequest
-} from './src/yaohuoActions';
-import { runYaohuoAction } from './src/yaohuoActionClient';
-import {
-  DEFAULT_NODESEEK_ANDROID_USER_AGENT,
-  mergeNodeSeekCookies,
-  parseNodeSeekDocumentCookie,
-  sanitizeNodeSeekUserAgent,
-  summarizeNodeSeekCookies
-} from './src/nodeseekCookies';
-import { readNodeSeekCookiesFromWebView } from './src/nodeseekCookieBridge';
-import {
-  buildYaohuoCookieHeader,
-  canStoreYaohuoCookieHeader,
-  mergeYaohuoCookies,
-  summarizeYaohuoCookies,
-  type YaohuoNativeCookie
-} from './src/yaohuoCookies';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './src/nodeseekCookies';
 import {
   clearRecords,
   removeFollowedUsers,
@@ -92,52 +58,16 @@ import { useSearchController } from './src/app/useSearchController';
 import { useSessionController, type LinuxDoBrowserFetchRequest, type NodeSeekBrowserFetchRequest } from './src/app/useSessionController';
 import { useTopicController } from './src/app/useTopicController';
 import { useUserController } from './src/app/useUserController';
-import {
-  buildLinuxDoBookmarkRequest,
-  buildLinuxDoLikeRequest,
-  buildLinuxDoPollVoteRequest,
-  buildLinuxDoReplyRequest,
-  type LinuxDoActionRequest
-} from './src/linuxdoActions';
-import { runLinuxDoAction } from './src/linuxdoActionClient';
-import {
-  DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-  buildLinuxDoCookieHeader,
-  canAcceptLinuxDoAccessUpdate,
-  canStoreLinuxDoAccess,
-  canStoreLinuxDoClearance,
-  clearLinuxDoAccess,
-  clearLinuxDoSavedClearance,
-  clearLinuxDoWebViewClearance,
-  linuxDoAccessSummary,
-  linuxDoClearanceValue,
-  loadLinuxDoAccess,
-  mergeLinuxDoCookies,
-  parseLinuxDoDocumentCookie,
-  readLinuxDoCookiesFromWebView,
-  saveLinuxDoAccess,
-  sanitizeLinuxDoUserAgent,
-  summarizeLinuxDoCookies
-} from './src/linuxdoCookieBridge';
-import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from './src/types';
-import {
-  applyBookmarkToTopic,
-  applyInteractionToReplies,
-  applyInteractionToTopic,
-  applyNodeSeekCollectionToTopic,
-  applyPollVoteToReplies,
-  applyPollVoteToTopic,
-  beginOptimisticAction,
-  completeOptimisticAction,
-  linuxDoBookmarkIdFromActionResult,
-  topicActionStateKey,
-  type OptimisticActionState,
-  type InteractionType
-} from './src/topicActionState';
+import { useVerificationController } from './src/app/useVerificationController';
+import { useAccountController } from './src/app/useAccountController';
+import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTopicActionsController } from './src/app/useTopicActionsController';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from './src/linuxdoCookieBridge';
+import type { Reply, Topic, TopicDetail, UserProfile } from './src/types';
+import type { OptimisticActionState } from './src/topicActionState';
 import { createImagePreviewList, dataImageFileFromUrl, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
 import { filterRepliesWithImages } from './src/topicDerivedData';
+import { createEmptyTopicSession, pushTopicSession, snapshotFromTopicSession, topicSessionFromSnapshot } from './src/topicSessionState';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
-import { YAOHUO_URL } from './src/appUrls';
 import { createTopicListItemStateIndex } from './src/topicListItemState';
 import {
   contentWidthValue,
@@ -149,23 +79,16 @@ import {
 import type { LibraryTab } from './src/feedLogic';
 import {
   errorMessage,
-  finishAbortableRequest,
-  isCanceledRequest,
-  isLinuxDoCloudflareError,
-  isYaohuoLoginExpiredError,
-  isYaohuoLoginRequiredError,
-  parseForumTopicLink,
-  startAbortableRequest
+  parseForumTopicLink
 } from './src/appUtils';
-import { checkYaohuoLoginDirect } from './src/yaohuoApi';
-import { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from './src/linuxdoLevel';
+import type { LinuxDoLevelProfile } from './src/linuxdoLevel';
 import { filterRepliesByQuery } from './src/androidFeatureHelpers';
 import { safeFileName } from './src/backupFiles';
 import { TabBarIcon, tabNavItems } from './src/components/NavBar';
 import { triggerPressFeedback } from './src/components/AppControls';
 import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
-import { NODESEEK_LOGIN_PROBE_SCRIPT, LINUXDO_WEBVIEW_PROBE_SCRIPT, MemoizedLinuxDoVerifyModal, MemoizedMoreScreen } from './src/screens/MoreScreen';
+import { MemoizedLinuxDoVerifyModal, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
 import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from './src/appTypes';
 import { LibraryScreen } from './src/screens/LibraryScreen';
@@ -193,18 +116,6 @@ type UserReturnTopic = {
   snapshot: TopicSnapshot;
   backStack: TopicSnapshot[];
 };
-type ActionRunOptions = {
-  refreshTopic?: boolean;
-  isCurrent?: () => boolean;
-};
-type OptimisticTopicActionOptions = {
-  key: string;
-  requestTopicKey: string;
-  currentActive: boolean;
-  applyDisplayed: (desiredActive: boolean) => void;
-  sendDesired: (desiredActive: boolean) => Promise<boolean>;
-  successMessage: (active: boolean) => string;
-};
 type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
@@ -218,26 +129,10 @@ type MainTabParamList = {
   more: undefined;
 };
 
-function isNodeSeekLoginRequiredError(error: unknown) {
-  return Boolean(
-    error
-    && typeof error === 'object'
-    && (error as { source?: unknown }).source === 'nodeseek'
-    && (error as { loginRequired?: unknown }).loginRequired
-  );
-}
-
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NAVIGATION_DEFERRED_TASK_FALLBACK_MS = 420;
-const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
-const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
-const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
-const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
-const YAOHUO_DEFAULT_CLASS_ID = '177';
-const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
-const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
@@ -375,6 +270,7 @@ export default function App() {
   const topicAbortRef = useRef<AbortController | null>(null);
   const checkingRequestIdRef = useRef(0);
   const actionRequestIdRef = useRef(0);
+  const topicActionRequestOwnerRef = useRef(createTopicActionRequestOwner());
   const actionAbortRef = useRef<AbortController | null>(null);
   const topicScrollRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigationTransitionTaskRef = useRef<(() => void) | null>(null);
@@ -448,19 +344,14 @@ export default function App() {
   const [topicBusy, setTopicBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
-  const [cookieNames, setCookieNames] = useState<string[]>([]);
-  const [yaohuoCookieNames, setYaohuoCookieNames] = useState<string[]>([]);
-  const [linuxDoCookieNames, setLinuxDoCookieNames] = useState<string[]>([]);
-  const [hasNodeSeekCookie, setHasNodeSeekCookie] = useState(false);
-  const [hasNodeSeekLoginCookie, setHasNodeSeekLoginCookie] = useState(false);
-  const [hasYaohuoCookie, setHasYaohuoCookie] = useState(false);
   const [yaohuoLoginCookieHeader, setYaohuoLoginCookieHeader] = useState('');
-  const [hasLinuxDoClearance, setHasLinuxDoClearance] = useState(false);
-  const [hasLinuxDoLogin, setHasLinuxDoLogin] = useState(false);
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(null);
   const [linuxDoBrowserFetchRequest, setLinuxDoBrowserFetchRequest] = useState<LinuxDoBrowserFetchRequest | null>(null);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
+  const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
+    invalidateTopicActionRequestOwner(topicActionRequestOwnerRef, nextTopicKey);
+  }, []);
   const {
     clearReaderDataTimers,
     commitReaderData,
@@ -493,6 +384,7 @@ export default function App() {
   const [topicError, setTopicError] = useState('');
   const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
   const topicRepliesRef = useRef<Reply[]>(topicReplies);
+  const topicScrollYRef = useRef(0);
   const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
   const [replyNextOffset, setReplyNextOffset] = useState<number | null>(null);
   const [replyHasMore, setReplyHasMore] = useState(false);
@@ -784,18 +676,20 @@ export default function App() {
     completeNodeSeekBrowserFetch,
     failLinuxDoBrowserFetchById,
     failNodeSeekBrowserFetchById,
+    dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     loginState,
     restoreSavedYaohuoCookiesToWebView,
     saveNodeSeekCookieHeader,
+    siteSessionStates,
+    siteSessionViewModels,
+    updateLinuxDoSession,
+    updateNodeSeekSession,
+    updateYaohuoSession,
     yaohuoLoginState
   } = useSessionController({
-    cookieNames,
-    hasNodeSeekCookie,
-    hasNodeSeekLoginCookie,
-    hasYaohuoCookie,
     linuxDoBrowserFetchCurrentRef,
     linuxDoBrowserFetchIdRef,
     linuxDoBrowserFetchQueueRef,
@@ -812,24 +706,15 @@ export default function App() {
     notify,
     rejectLinuxDoBrowserFetchRef,
     rejectNodeSeekBrowserFetchRef,
-    setCookieNames,
-    setHasLinuxDoClearance,
-    setHasLinuxDoLogin,
-    setHasNodeSeekCookie,
-    setHasNodeSeekLoginCookie,
-    setHasYaohuoCookie,
     setLinuxDoBrowserFetchRequest,
-    setLinuxDoCookieNames,
     setLinuxDoWebViewCookieHeader,
     setLinuxDoWebViewUserAgent,
     setNodeSeekBrowserFetchRequest,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
-    setYaohuoCookieNames,
     setYaohuoLoginCookieHeader,
     webLoginDetectedRef,
-    webLoginUserId,
-    yaohuoCookieNames
+    webLoginUserId
   });
   const libraryRecords = useMemo(
     () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
@@ -1048,28 +933,6 @@ export default function App() {
     readerData.history,
     readerData.settings.listDensity
   ]);
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (next) => {
-      if (next !== 'active') {
-        flushPendingProgress();
-        if (showLinuxDoPanelRef.current) {
-          checkingRequestIdRef.current += 1;
-          linuxDoWebViewSessionRef.current += 1;
-          setLinuxDoWebViewKey(linuxDoWebViewSessionRef.current);
-          if (linuxDoWebViewMountTimerRef.current) {
-            clearTimeout(linuxDoWebViewMountTimerRef.current);
-            linuxDoWebViewMountTimerRef.current = null;
-          }
-          linuxDoWebViewRef.current?.stopLoading();
-          setMountLinuxDoWebView(false);
-          setLoadingLinuxDoPage(false);
-          setChecking(false);
-        }
-      }
-    });
-    return () => subscription.remove();
-  }, [flushPendingProgress]);
-
   const closeYaohuoLoginPanel = useCallback(() => {
     yaohuoLoginPanelRequestRef.current += 1;
     yaohuoWebViewRef.current?.stopLoading();
@@ -1109,185 +972,113 @@ export default function App() {
     notify(message);
   }, [changeYaohuoLoginPanel, notify]);
 
-  const showNodeSeekVerification = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证') => {
-    setScreen('more');
-    changeNodeSeekLoginPanel(true);
-    closeYaohuoLoginPanel();
-    setShowLinuxDoPanel(false);
-    setShowSettingsPanel(false);
-    setHasNodeSeekCookie(false);
-    setHasNodeSeekLoginCookie(false);
-    notify(message);
-  }, [changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
+  const {
+    changeLinuxDoPanel,
+    checkLinuxDoCookie,
+    closeLinuxDoPanel,
+    handleLinuxDoCloudflareForTopic,
+    handleLinuxDoMessage,
+    resetLinuxDoWebView,
+    setLinuxDoWebViewErrorForSession,
+    setLoadingLinuxDoPageForSession,
+    showLinuxDoVerification,
+    showNodeSeekVerification,
+    stopLinuxDoVerificationForInactiveApp,
+    verifyLinuxDoFromTopic
+  } = useVerificationController({
+    cancelLinuxDoPendingReopenTask,
+    changeNodeSeekLoginPanel,
+    checkingRequestIdRef,
+    closeYaohuoLoginPanel,
+    linuxDoClearanceBeforeVerifyRef,
+    linuxDoDismissedVerificationTopicKeyRef,
+    linuxDoPanelClosingSessionRef,
+    linuxDoPanelCloseSettleTimerRef,
+    linuxDoPendingReopenTaskRef,
+    linuxDoPendingReopenTopicAfterCloseRef,
+    linuxDoPendingTopicVerifiedRef,
+    linuxDoRequireFreshClearanceRef,
+    linuxDoVerifiedRetryTopicKeyRef,
+    linuxDoWebViewCookieHeader,
+    linuxDoWebViewCookieHeaderRef,
+    linuxDoWebViewMountTimerRef,
+    linuxDoWebViewRef,
+    linuxDoWebViewSessionRef,
+    linuxDoWebViewUserAgent,
+    linuxDoWebViewUserAgentRef,
+    notify,
+    openTopicRef,
+    pendingLinuxDoTopicRef,
+    reopenExistingTopicScreenRef,
+    resetLinuxDoLevelState,
+    selectedTopic,
+    setChecking,
+    setLinuxDoWebViewCookieHeader,
+    setLinuxDoWebViewError,
+    setLinuxDoWebViewKey,
+    setLinuxDoWebViewUserAgent,
+    setLoadingLinuxDoPage,
+    setMountLinuxDoWebView,
+    setScreen,
+    setShowLinuxDoPanel,
+    setShowSettingsPanel,
+    showLinuxDoPanel,
+    showLinuxDoPanelRef,
+    topicDetail,
+    updateLinuxDoSession,
+    updateNodeSeekSession
+  });
 
-  const refreshLinuxDoClearanceState = useCallback(async () => {
-    const access = await clearLinuxDoSavedClearance();
-    await clearLinuxDoWebViewClearance();
-    linuxDoWebViewCookieHeaderRef.current = '';
-    setLinuxDoWebViewCookieHeader('');
-    const summary = linuxDoAccessSummary(access);
-    setHasLinuxDoClearance(summary.hasClearance);
-    setHasLinuxDoLogin(summary.loggedIn);
-    setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names);
-    resetLinuxDoLevelState();
-  }, [resetLinuxDoLevelState]);
-
-  const rememberLinuxDoClearanceBeforeVerify = useCallback(async () => {
-    const [savedAccess, webViewCookies] = await Promise.all([
-      loadLinuxDoAccess(),
-      readLinuxDoCookiesFromWebView().catch(() => ({}))
-    ]);
-    const visibleCookies = parseLinuxDoDocumentCookie(linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader);
-    const cookies = mergeLinuxDoCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''), webViewCookies, visibleCookies);
-    linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(cookies) || null;
-  }, [linuxDoWebViewCookieHeader]);
-
-  const nextLinuxDoWebViewSession = useCallback(() => {
-    const nextSession = linuxDoWebViewSessionRef.current + 1;
-    linuxDoWebViewSessionRef.current = nextSession;
-    setLinuxDoWebViewKey(nextSession);
-    return nextSession;
-  }, []);
-
-  const setLoadingLinuxDoPageForSession = useCallback((value: boolean, webViewKey?: number) => {
-    if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
-      return;
-    }
-    setLoadingLinuxDoPage(value);
-  }, []);
-
-  const setLinuxDoWebViewErrorForSession = useCallback((value: string, webViewKey?: number) => {
-    if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
-      return;
-    }
-    setLinuxDoWebViewError(value);
-  }, []);
-
-  const resetLinuxDoWebView = useCallback(() => {
-    if (linuxDoPanelClosingSessionRef.current !== null) {
-      return;
-    }
-    const nextSession = nextLinuxDoWebViewSession();
-    checkingRequestIdRef.current += 1;
-    if (linuxDoWebViewMountTimerRef.current) {
-      clearTimeout(linuxDoWebViewMountTimerRef.current);
-      linuxDoWebViewMountTimerRef.current = null;
-    }
-    linuxDoWebViewRef.current?.stopLoading();
-    setMountLinuxDoWebView(false);
-    linuxDoWebViewCookieHeaderRef.current = '';
-    setLinuxDoWebViewCookieHeader('');
-    setChecking(false);
-    setLoadingLinuxDoPageForSession(true, nextSession);
-    setLinuxDoWebViewErrorForSession('', nextSession);
-    linuxDoWebViewMountTimerRef.current = setTimeout(() => {
-      linuxDoWebViewMountTimerRef.current = null;
-      if (linuxDoWebViewSessionRef.current !== nextSession || !showLinuxDoPanelRef.current) {
-        return;
-      }
-      setMountLinuxDoWebView(true);
-    }, 80);
-  }, [nextLinuxDoWebViewSession, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession]);
-
-  const closeLinuxDoPanel = useCallback(() => {
-    if (linuxDoPanelClosingSessionRef.current !== null) {
-      linuxDoWebViewRef.current?.stopLoading();
-      setMountLinuxDoWebView(false);
-      setLoadingLinuxDoPage(false);
-      setLinuxDoWebViewError('');
-      setShowLinuxDoPanel(false);
-      return;
-    }
-    const nextSession = nextLinuxDoWebViewSession();
-    const pendingTopic = pendingLinuxDoTopicRef.current;
-    const shouldOpenPendingTopic = Boolean(pendingTopic && linuxDoPendingTopicVerifiedRef.current);
-    linuxDoPanelClosingSessionRef.current = nextSession;
-    linuxDoPendingReopenTopicAfterCloseRef.current = null;
-    cancelLinuxDoPendingReopenTask();
-    if (pendingTopic && !shouldOpenPendingTopic) {
-      linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);
-    }
-    if (pendingTopic && shouldOpenPendingTopic) {
-      linuxDoDismissedVerificationTopicKeyRef.current = null;
-      linuxDoPendingReopenTopicAfterCloseRef.current = pendingTopic;
-    }
-    linuxDoRequireFreshClearanceRef.current = false;
-    checkingRequestIdRef.current += 1;
-    if (linuxDoWebViewMountTimerRef.current) {
-      clearTimeout(linuxDoWebViewMountTimerRef.current);
-      linuxDoWebViewMountTimerRef.current = null;
-    }
-    linuxDoWebViewRef.current?.stopLoading();
-    setMountLinuxDoWebView(false);
-    linuxDoWebViewCookieHeaderRef.current = '';
-    setLinuxDoWebViewCookieHeader('');
-    pendingLinuxDoTopicRef.current = null;
-    linuxDoPendingTopicVerifiedRef.current = false;
-    setChecking(false);
-    setLoadingLinuxDoPageForSession(false, nextSession);
-    setLinuxDoWebViewErrorForSession('', nextSession);
-    if (!showLinuxDoPanelRef.current) {
-      setShowLinuxDoPanel(false);
-      linuxDoPanelClosingSessionRef.current = null;
-      linuxDoPendingReopenTopicAfterCloseRef.current = null;
-      return;
-    }
-    setShowLinuxDoPanel(false);
-  }, [cancelLinuxDoPendingReopenTask, nextLinuxDoWebViewSession, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession]);
+  const {
+    checkLogin,
+    checkYaohuoCookie,
+    clearLinuxDoCookie,
+    clearLogin,
+    clearYaohuoLogin,
+    handleLoginMessage,
+    rememberVisibleNodeSeekCookies,
+    refreshLinuxDoLevel
+  } = useAccountController({
+    checkingRequestIdRef,
+    clearNodeSeekLoginState,
+    clearYaohuoLoginState,
+    forumFetchWithWebViewFallback,
+    linuxDoLevelRequestIdRef,
+    linuxDoWebViewUserAgentRef,
+    nodeSeekLoginPanelRequestRef,
+    nodeSeekWebViewCookieHeaderRef,
+    nodeSeekWebViewUserAgentRef,
+    notify,
+    resetLinuxDoLevelState,
+    resetLinuxDoWebView,
+    saveNodeSeekCookieHeader,
+    setChecking,
+    setLinuxDoLevelBusy,
+    setLinuxDoLevelError,
+    setLinuxDoLevelProfile,
+    setNodeSeekWebViewUserAgent,
+    setWebLoginUserId,
+    setYaohuoLoginCookieHeader,
+    showLinuxDoPanelRef,
+    showLinuxDoVerification,
+    showLoginPanelRef,
+    updateLinuxDoSession,
+    updateNodeSeekSession,
+    updateYaohuoSession,
+    webLoginDetectedRef,
+    webViewRef,
+    yaohuoWebViewRef
+  });
 
   useEffect(() => {
-    if (showLinuxDoPanel || linuxDoPanelClosingSessionRef.current === null) {
-      return;
-    }
-
-    if (linuxDoPanelCloseSettleTimerRef.current) {
-      clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
-    }
-    linuxDoPanelCloseSettleTimerRef.current = setTimeout(() => {
-      linuxDoPanelCloseSettleTimerRef.current = null;
-      if (showLinuxDoPanelRef.current || linuxDoPanelClosingSessionRef.current === null) {
-        return;
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next !== 'active') {
+        flushPendingProgress();
+        stopLinuxDoVerificationForInactiveApp();
       }
-      linuxDoPanelClosingSessionRef.current = null;
-      const pendingTopic = linuxDoPendingReopenTopicAfterCloseRef.current;
-      linuxDoPendingReopenTopicAfterCloseRef.current = null;
-      if (!pendingTopic) {
-        return;
-      }
-      linuxDoVerifiedRetryTopicKeyRef.current = topicKey(pendingTopic);
-      cancelLinuxDoPendingReopenTask();
-      const task = InteractionManager.runAfterInteractions(() => {
-        linuxDoPendingReopenTaskRef.current = null;
-        reopenExistingTopicScreenRef.current = true;
-        setScreen('topic');
-        void openTopicRef.current?.(pendingTopic, true);
-      });
-      linuxDoPendingReopenTaskRef.current = task;
-    }, LINUXDO_PANEL_CLOSE_SETTLE_MS);
-
-    return () => {
-      if (linuxDoPanelCloseSettleTimerRef.current) {
-        clearTimeout(linuxDoPanelCloseSettleTimerRef.current);
-        linuxDoPanelCloseSettleTimerRef.current = null;
-      }
-    };
-  }, [cancelLinuxDoPendingReopenTask, showLinuxDoPanel]);
-
-  const changeLinuxDoPanel = useCallback((visible: boolean) => {
-    if (visible) {
-      if (linuxDoPanelClosingSessionRef.current !== null) {
-        return;
-      }
-      if (!pendingLinuxDoTopicRef.current) {
-        linuxDoRequireFreshClearanceRef.current = false;
-        void rememberLinuxDoClearanceBeforeVerify();
-      }
-      setShowLinuxDoPanel(true);
-      resetLinuxDoWebView();
-      return;
-    }
-    closeLinuxDoPanel();
-  }, [closeLinuxDoPanel, rememberLinuxDoClearanceBeforeVerify, resetLinuxDoWebView]);
+    });
+    return () => subscription.remove();
+  }, [flushPendingProgress, stopLinuxDoVerificationForInactiveApp]);
 
   const closeMorePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false);
@@ -1295,53 +1086,6 @@ export default function App() {
     closeLinuxDoPanel();
     setShowSettingsPanel(false);
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel]);
-
-  const showLinuxDoVerification = useCallback((message = 'linux.do 需要完成 Cloudflare 验证') => {
-    if (linuxDoPanelClosingSessionRef.current !== null) {
-      pendingLinuxDoTopicRef.current = null;
-      linuxDoPendingTopicVerifiedRef.current = false;
-      setMountLinuxDoWebView(false);
-      setLoadingLinuxDoPage(false);
-      notify(message);
-      return;
-    }
-    linuxDoPendingTopicVerifiedRef.current = false;
-    changeNodeSeekLoginPanel(false);
-    closeYaohuoLoginPanel();
-    setShowSettingsPanel(false);
-    changeLinuxDoPanel(true);
-    notify(message);
-  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
-
-  const handleLinuxDoCloudflareForTopic = useCallback(async (topic: Topic, message: string) => {
-    const requestTopicKey = topicKey(topic);
-    if (linuxDoDismissedVerificationTopicKeyRef.current === requestTopicKey) {
-      pendingLinuxDoTopicRef.current = null;
-      linuxDoPendingTopicVerifiedRef.current = false;
-      linuxDoPendingReopenTopicAfterCloseRef.current = null;
-      setMountLinuxDoWebView(false);
-      setLoadingLinuxDoPage(false);
-      notify(message);
-      return true;
-    }
-    if (linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey) {
-      linuxDoVerifiedRetryTopicKeyRef.current = null;
-      pendingLinuxDoTopicRef.current = null;
-      linuxDoPendingTopicVerifiedRef.current = false;
-      linuxDoPendingReopenTopicAfterCloseRef.current = null;
-      setMountLinuxDoWebView(false);
-      setLoadingLinuxDoPage(false);
-      notify(message);
-      return true;
-    }
-    linuxDoRequireFreshClearanceRef.current = true;
-    await rememberLinuxDoClearanceBeforeVerify();
-    await refreshLinuxDoClearanceState();
-    pendingLinuxDoTopicRef.current = topic;
-    setLinuxDoCookieNames([]);
-    showLinuxDoVerification(message);
-    return true;
-  }, [notify, refreshLinuxDoClearanceState, rememberLinuxDoClearanceBeforeVerify, showLinuxDoVerification]);
 
   const {
     activeFeedState,
@@ -1414,6 +1158,7 @@ export default function App() {
     statusBusy
   } = useBackupStatusController({
     clearYaohuoLoginState,
+    dispatchSiteSessionEvent,
     fetcher: forumFetchWithWebViewFallback,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     loadNodeSeekCookieForSource,
@@ -1423,11 +1168,6 @@ export default function App() {
     readerDataRef,
     replaceReaderData,
     resetLinuxDoLevelState,
-    setHasLinuxDoClearance,
-    setHasLinuxDoLogin,
-    setHasYaohuoCookie,
-    setLinuxDoCookieNames,
-    setYaohuoCookieNames,
     setYaohuoLoginCookieHeader,
     waitForReaderDataSave
   });
@@ -1463,6 +1203,7 @@ export default function App() {
       repliesAbortRef.current?.abort();
       abortQuotedReplyRequests();
       pendingLinuxDoTopicRef.current = null;
+      invalidateTopicActionRequests(null);
       currentTopicKeyRef.current = null;
       loadingMoreRepliesRef.current = false;
       setLoadingMoreReplies(false);
@@ -1472,55 +1213,72 @@ export default function App() {
       userReturnTopicRef.current = null;
     }
     setScreen(nextScreen);
-  }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, screen]);
+  }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, invalidateTopicActionRequests, screen]);
 
-  const topicSnapshot = useCallback((): TopicSnapshot => ({
-    selectedTopic,
-    topicDetail,
-    topicReplies,
-    topicError,
-    replyHasMore,
-    replyNextPage,
-    replyNextOffset,
-    unreadReplyCount,
-    commentQuery,
-    replyFilter,
-    replyContent,
-    replyComposerOpen,
-    replyTarget,
-    expandedQuotes: expandedQuotesRef.current,
-    loadedQuotedReplies: loadedQuotedRepliesRef.current,
-    loadingQuotedFloors: {}
-  }), [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
+  const topicSnapshot = useCallback((): TopicSnapshot => {
+    const currentTopic = topicDetail || selectedTopic;
+    const session = currentTopic ? {
+      ...createEmptyTopicSession(currentTopic),
+      selectedTopic,
+      topicDetail,
+      topicReplies,
+      topicError,
+      replyHasMore,
+      replyNextPage,
+      replyNextOffset,
+      unreadReplyCount,
+      commentQuery,
+      replyFilter,
+      replyContent,
+      replyComposerOpen,
+      replyTarget,
+      expandedQuotes: expandedQuotesRef.current,
+      loadedQuotedReplies: loadedQuotedRepliesRef.current,
+      loadingQuotedFloors: {},
+      scrollY: topicScrollYRef.current
+    } : createEmptyTopicSession({
+      source: 'nodeseek',
+      id: '',
+      title: '',
+      author: '',
+      url: '',
+      createdAt: '',
+      replyCount: 0
+    });
+    return snapshotFromTopicSession(session);
+  }, [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
 
   const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
+    const session = topicSessionFromSnapshot(snapshot);
     clearTopicScrollRestoreTimer();
-    setSelectedTopic(snapshot.selectedTopic);
-    setTopicDetail(snapshot.topicDetail);
-    setTopicReplies(snapshot.topicReplies);
-    setTopicError(snapshot.topicError);
-    setReplyHasMore(snapshot.replyHasMore);
-    setReplyNextPage(snapshot.replyNextPage);
-    setReplyNextOffset(snapshot.replyNextOffset);
-    setUnreadReplyCount(snapshot.unreadReplyCount);
-    setCommentQuery(snapshot.commentQuery);
-    setReplyFilter(snapshot.replyFilter);
-    setReplyContent(snapshot.replyContent);
-    setReplyComposerOpen(snapshot.replyComposerOpen);
-    setReplyTarget(snapshot.replyTarget);
-    expandedQuotesRef.current = snapshot.expandedQuotes;
-    loadedQuotedRepliesRef.current = snapshot.loadedQuotedReplies;
+    setSelectedTopic(session.selectedTopic);
+    setTopicDetail(session.topicDetail);
+    setTopicReplies(session.topicReplies);
+    setTopicError(session.topicError);
+    setReplyHasMore(session.replyHasMore);
+    setReplyNextPage(session.replyNextPage);
+    setReplyNextOffset(session.replyNextOffset);
+    setUnreadReplyCount(session.unreadReplyCount);
+    setCommentQuery(session.commentQuery);
+    setReplyFilter(session.replyFilter);
+    setReplyContent(session.replyContent);
+    setReplyComposerOpen(session.replyComposerOpen);
+    setReplyTarget(session.replyTarget);
+    expandedQuotesRef.current = session.expandedQuotes;
+    loadedQuotedRepliesRef.current = session.loadedQuotedReplies;
     loadingQuotedFloorsRef.current = {};
-    setExpandedQuotes(snapshot.expandedQuotes);
-    setLoadedQuotedReplies(snapshot.loadedQuotedReplies);
+    topicScrollYRef.current = session.scrollY;
+    setExpandedQuotes(session.expandedQuotes);
+    setLoadedQuotedReplies(session.loadedQuotedReplies);
     setLoadingQuotedFloors({});
     setQuoteStateVersion((current) => current + 1);
     setTopicBusy(false);
     setLoadingMoreReplies(false);
     loadingMoreRepliesRef.current = false;
-    const restoredTopic = snapshot.topicDetail || snapshot.selectedTopic;
+    const restoredTopic = session.topicDetail || session.selectedTopic;
+    invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);
     currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
-  }, [clearTopicScrollRestoreTimer]);
+  }, [clearTopicScrollRestoreTimer, invalidateTopicActionRequests]);
 
   const prepareUserNavigation = useCallback(() => {
     if (screen !== 'user') {
@@ -1627,6 +1385,7 @@ export default function App() {
     setUnreadReplyCount,
     showNodeSeekVerification,
     showYaohuoLogin,
+    onTopicContextChange: invalidateTopicActionRequests,
     topicAbortRef,
     topicBackStackRef,
     topicDetail,
@@ -1639,7 +1398,59 @@ export default function App() {
     topicSnapshot,
     updateExpandedQuotes
   });
+  const showLinuxDoLogin = useCallback((message = 'linux.do 登录后才能操作，匿名仍可阅读。') => {
+    setScreen('more');
+    changeNodeSeekLoginPanel(false);
+    closeYaohuoLoginPanel();
+    setShowSettingsPanel(false);
+    notify(message);
+    changeLinuxDoPanel(true);
+  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
+
   openTopicRef.current = openTopic;
+
+  const {
+    bookmarkOnLinuxDoSite,
+    canUseLinuxDoActions,
+    canUseNodeSeekActions,
+    canUseYaohuoActions,
+    checkIn,
+    collectOnNodeSeekSite,
+    favoriteOnYaohuoSite,
+    interact,
+    submitReply,
+    votePoll
+  } = useTopicActionsController({
+    actionAbortRef,
+    actionRequestIdRef,
+    clearNodeSeekLoginCookiesOnly,
+    clearYaohuoLoginState,
+    linuxDoWebViewUserAgentRef,
+    loadYaohuoCookieForSource,
+    nodeSeekWebViewUserAgentRef,
+    notify,
+    openTopic,
+    optimisticTopicActionsRef,
+    refreshTopicReplies,
+    replyContent,
+    replyTarget,
+    resetLinuxDoLevelState,
+    selectedTopic,
+    setActionBusy,
+    setOptimisticTopicActions,
+    setReplyComposerOpen,
+    setReplyContent,
+    setReplyTarget,
+    setTopicDetail,
+    setTopicReplies,
+    showLinuxDoLogin,
+    showYaohuoLogin,
+    siteSessionStates,
+    topicActionRequestOwnerRef,
+    topicDetail,
+    topicReplies,
+    updateLinuxDoSession
+  });
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
     a: {
@@ -1679,19 +1490,6 @@ export default function App() {
       notify('链接已复制');
     }
   }, [notify, selectedTopic, topicDetail]);
-
-  const verifyLinuxDoFromTopic = useCallback(async () => {
-    linuxDoVerifiedRetryTopicKeyRef.current = null;
-    linuxDoDismissedVerificationTopicKeyRef.current = null;
-    linuxDoRequireFreshClearanceRef.current = true;
-    await rememberLinuxDoClearanceBeforeVerify();
-    await refreshLinuxDoClearanceState();
-    const detail = topicDetail || selectedTopic;
-    if (detail?.source === 'linuxdo') {
-      pendingLinuxDoTopicRef.current = detail;
-    }
-    showLinuxDoVerification();
-  }, [refreshLinuxDoClearanceState, rememberLinuxDoClearanceBeforeVerify, selectedTopic, showLinuxDoVerification, topicDetail]);
 
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
@@ -1768,6 +1566,7 @@ export default function App() {
     }
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
     const scrollY = Math.max(0, contentOffset.y);
+    topicScrollYRef.current = scrollY;
     const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
     const percent = Math.min(100, Math.max(0, Math.round((scrollY / scrollable) * 100)));
     queueProgressSave(detail, { percent, scrollY });
@@ -1809,459 +1608,6 @@ export default function App() {
     }
   }, [completeLinuxDoBrowserFetch]);
 
-  const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        loggedIn?: boolean;
-        userId?: number | null;
-        userAgent?: string;
-        cookie?: string;
-      };
-      if (data.type === 'nodeseek-login' && typeof data.userAgent === 'string') {
-        const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
-        if (userAgent) {
-          nodeSeekWebViewUserAgentRef.current = userAgent;
-          setNodeSeekWebViewUserAgent(userAgent);
-        }
-      }
-      if (data.type === 'nodeseek-login' && typeof data.cookie === 'string') {
-        nodeSeekWebViewCookieHeaderRef.current = data.cookie;
-      }
-      if (data.type === 'nodeseek-login' && data.loggedIn && Number.isInteger(data.userId)) {
-        webLoginDetectedRef.current = true;
-        setWebLoginUserId(data.userId || null);
-      } else if (data.type === 'nodeseek-login' && data.loggedIn === false) {
-        webLoginDetectedRef.current = false;
-        setHasNodeSeekLoginCookie(false);
-        setWebLoginUserId(null);
-      }
-    } catch {
-      // Ignore unrelated messages from the page.
-    }
-  }, []);
-
-  const handleLinuxDoMessage = useCallback((event: WebViewMessageEvent, webViewKey?: number) => {
-    if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
-      return;
-    }
-    if (!showLinuxDoPanelRef.current) {
-      return;
-    }
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        userAgent?: string;
-        cookie?: string;
-      };
-      if (data.type === 'linuxdo-webview') {
-        setLinuxDoWebViewErrorForSession('', webViewKey);
-      }
-      if (data.type === 'linuxdo-webview' && typeof data.userAgent === 'string') {
-        const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
-        if (userAgent) {
-          linuxDoWebViewUserAgentRef.current = userAgent;
-          setLinuxDoWebViewUserAgent(userAgent);
-        }
-      }
-      if (data.type === 'linuxdo-webview' && typeof data.cookie === 'string') {
-        linuxDoWebViewCookieHeaderRef.current = data.cookie;
-        setLinuxDoWebViewCookieHeader(data.cookie);
-      }
-    } catch {
-      // Ignore unrelated messages from the page.
-    }
-  }, [setLinuxDoWebViewErrorForSession]);
-
-  const probeLoginPage = useCallback(async () => {
-    webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }, []);
-
-  const readCurrentNodeSeekCookies = useCallback(async () => {
-    await probeLoginPage();
-    await CookieManager.flush();
-    const nativeCookies = await readNodeSeekCookiesFromWebView();
-    const nodeSeekDocumentCookieHeader = nodeSeekWebViewCookieHeaderRef.current;
-    return mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader));
-  }, [probeLoginPage]);
-
-  const rememberCurrentNodeSeekCookies = useCallback(async ({ silent = false, isCurrent = () => true }: { silent?: boolean; isCurrent?: () => boolean } = {}) => {
-    const cookies = await readCurrentNodeSeekCookies();
-    if (!isCurrent()) {
-      return false;
-    }
-    const summary = summarizeNodeSeekCookies(cookies);
-    const cookieHeader = await saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current, isCurrent });
-    if (cookieHeader) {
-      if (!isCurrent()) {
-        return false;
-      }
-      if (!silent) {
-        notify(summary.loggedIn ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');
-      }
-      return true;
-    }
-    if (!isCurrent()) {
-      return false;
-    }
-    if (!silent) {
-      notify('没有检测到明确的 NodeSeek Cookie。请完成验证或登录后再试。');
-    }
-    return false;
-  }, [notify, readCurrentNodeSeekCookies, saveNodeSeekCookieHeader]);
-
-  const probeLinuxDoPage = useCallback(async () => {
-    linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }, []);
-
-  const checkLogin = useCallback(async () => {
-    const requestId = ++checkingRequestIdRef.current;
-    setChecking(true);
-    try {
-      await rememberCurrentNodeSeekCookies({ isCurrent: () => requestId === checkingRequestIdRef.current && showLoginPanelRef.current });
-    } catch (error) {
-      if (requestId === checkingRequestIdRef.current) {
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (requestId === checkingRequestIdRef.current) {
-        setChecking(false);
-      }
-    }
-  }, [notify, rememberCurrentNodeSeekCookies]);
-
-  const rememberVisibleNodeSeekCookies = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
-    const requestId = nodeSeekLoginPanelRequestRef.current;
-    return rememberCurrentNodeSeekCookies({
-      silent,
-      isCurrent: () => showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId
-    });
-  }, [rememberCurrentNodeSeekCookies]);
-
-  const checkYaohuoCookie = useCallback(async () => {
-    const requestId = ++checkingRequestIdRef.current;
-    setChecking(true);
-    try {
-      await CookieManager.flush();
-      const cookieMaps = await Promise.all(YAOHUO_COOKIE_URLS.map(async (url) => CookieManager.get(url)));
-      if (requestId !== checkingRequestIdRef.current) {
-        return;
-      }
-      const typedCookies = mergeYaohuoCookies(...cookieMaps as Array<Record<string, YaohuoNativeCookie>>);
-      const summary = summarizeYaohuoCookies(typedCookies);
-      const cookieHeader = buildYaohuoCookieHeader(typedCookies);
-      setYaohuoCookieNames(summary.names);
-      if (!summary.loggedIn || !canStoreYaohuoCookieHeader(typedCookies) || !cookieHeader) {
-        setHasYaohuoCookie(false);
-        notify('没有检测到明确的妖火登录 Cookie。请确认已经登录后再试。');
-        return;
-      }
-      const yaohuoLoginCheck = await checkYaohuoLoginDirect({ yaohuoCookie: cookieHeader });
-      if (requestId !== checkingRequestIdRef.current) {
-        return;
-      }
-      if (yaohuoLoginCheck.loginRequired || !yaohuoLoginCheck.ok) {
-        setHasYaohuoCookie(false);
-        if (yaohuoLoginCheck.reason === 'expired') {
-          await clearYaohuoLoginState();
-          if (requestId !== checkingRequestIdRef.current) {
-            return;
-          }
-        }
-        notify(yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。');
-        return;
-      }
-      await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);
-      if (requestId !== checkingRequestIdRef.current) {
-        return;
-      }
-      setHasYaohuoCookie(true);
-      setYaohuoLoginCookieHeader(cookieHeader);
-      notify('已检测到妖火登录 Cookie，已保存在本机。');
-    } catch (error) {
-      if (requestId !== checkingRequestIdRef.current) {
-        return;
-      }
-      if (isYaohuoLoginRequiredError(error)) {
-        if (isYaohuoLoginExpiredError(error)) {
-          await clearYaohuoLoginState();
-          if (requestId !== checkingRequestIdRef.current) {
-            return;
-          }
-          notify('妖火登录已失效，请重新登录。');
-        } else {
-          notify(errorMessage(error));
-        }
-        return;
-      }
-      notify(errorMessage(error));
-    } finally {
-      if (requestId === checkingRequestIdRef.current) {
-        setChecking(false);
-      }
-    }
-  }, [clearYaohuoLoginState, notify]);
-
-  const readCurrentLinuxDoCookies = useCallback(async () => {
-    await probeLinuxDoPage();
-    const [savedAccess, nativeCookies] = await Promise.all([
-      loadLinuxDoAccess(),
-      readLinuxDoCookiesFromWebView()
-    ]);
-    const linuxDoDocumentCookieHeader = linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader;
-    return mergeLinuxDoCookies(
-      parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''),
-      nativeCookies,
-      parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)
-    );
-  }, [linuxDoWebViewCookieHeader, probeLinuxDoPage]);
-
-  const waitForLinuxDoClearance = useCallback(async () => {
-    const deadline = Date.now() + LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS;
-    let cookies = await readCurrentLinuxDoCookies();
-    while (Date.now() < deadline) {
-      if (canStoreLinuxDoClearance(cookies)) {
-        return cookies;
-      }
-      await new Promise((resolve) => setTimeout(resolve, LINUXDO_CLEARANCE_DETECT_INTERVAL_MS));
-      cookies = await readCurrentLinuxDoCookies();
-    }
-    return cookies;
-  }, [readCurrentLinuxDoCookies]);
-
-  const checkLinuxDoCookie = useCallback(async () => {
-    const requestId = ++checkingRequestIdRef.current;
-    const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;
-    const isCurrentLinuxDoCheck = () => {
-      if (requestId !== checkingRequestIdRef.current) {
-        return false;
-      }
-      if (linuxDoWebViewSession !== linuxDoWebViewSessionRef.current) {
-        return false;
-      }
-      if (!showLinuxDoPanelRef.current) {
-        return false;
-      }
-      return true;
-    };
-    setChecking(true);
-    setLinuxDoWebViewError('');
-    try {
-      const cookies = await waitForLinuxDoClearance();
-      if (!isCurrentLinuxDoCheck()) {
-        return;
-      }
-      const summary = summarizeLinuxDoCookies(cookies);
-      const cookieHeader = buildLinuxDoCookieHeader(cookies);
-      setLinuxDoCookieNames(summary.names);
-      if (!canStoreLinuxDoAccess(cookies) || !cookieHeader || !canAcceptLinuxDoAccessUpdate(cookies, linuxDoClearanceBeforeVerifyRef.current, linuxDoRequireFreshClearanceRef.current)) {
-        setHasLinuxDoClearance(false);
-        setHasLinuxDoLogin(summary.loggedIn);
-        resetLinuxDoLevelState();
-        linuxDoPendingTopicVerifiedRef.current = false;
-        notify('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
-        return;
-      }
-      await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
-      if (!isCurrentLinuxDoCheck()) {
-        return;
-      }
-      resetLinuxDoLevelState();
-      setHasLinuxDoClearance(true);
-      setHasLinuxDoLogin(summary.loggedIn);
-      setLinuxDoWebViewError('');
-      notify(summary.loggedIn ? 'linux.do 登录信息已保存在本机。' : 'linux.do 验证信息已保存在本机。');
-      linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(cookies);
-      linuxDoRequireFreshClearanceRef.current = false;
-      linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);
-      if (linuxDoPendingTopicVerifiedRef.current) {
-        closeLinuxDoPanel();
-      }
-    } catch (error) {
-      if (isCurrentLinuxDoCheck()) {
-        linuxDoPendingTopicVerifiedRef.current = false;
-        notify(errorMessage(error));
-      }
-    } finally {
-      if (isCurrentLinuxDoCheck()) {
-        setChecking(false);
-      }
-    }
-  }, [closeLinuxDoPanel, linuxDoWebViewUserAgent, notify, resetLinuxDoLevelState, waitForLinuxDoClearance]);
-
-  const clearLogin = useCallback(async () => {
-    await clearNodeSeekLoginState();
-    notify('已清除本机保存的 NodeSeek Cookie。');
-  }, [clearNodeSeekLoginState, notify]);
-
-  const clearYaohuoLogin = useCallback(async () => {
-    await clearYaohuoLoginState();
-    yaohuoWebViewRef.current?.reload();
-    notify('已清除本机保存的妖火 Cookie。');
-  }, [clearYaohuoLoginState, notify]);
-
-  const clearLinuxDoCookie = useCallback(async () => {
-    const access = await clearLinuxDoAccess();
-    const summary = linuxDoAccessSummary(access);
-    setHasLinuxDoClearance(summary.hasClearance);
-    setHasLinuxDoLogin(summary.loggedIn);
-    setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names);
-    resetLinuxDoLevelState();
-    resetLinuxDoWebView();
-    notify(summary.hasClearance ? '已清除 linux.do 登录信息，保留访问验证。' : '已清除本机保存的 linux.do 登录信息。');
-  }, [notify, resetLinuxDoLevelState, resetLinuxDoWebView]);
-
-  const refreshLinuxDoLevel = useCallback(async () => {
-    const requestId = ++linuxDoLevelRequestIdRef.current;
-    setLinuxDoLevelBusy(true);
-    setLinuxDoLevelError('');
-    try {
-      const access = await loadLinuxDoAccess();
-      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-        setLinuxDoLevelProfile(null);
-        setLinuxDoLevelError('请先完成 linux.do 登录 / 验证。');
-        return;
-      }
-      const profile = await getLinuxDoLevelProfile({
-        cookieHeader: access.cookieHeader,
-        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        fetcher: forumFetchWithWebViewFallback
-      });
-      if (requestId !== linuxDoLevelRequestIdRef.current) {
-        return;
-      }
-      setLinuxDoLevelProfile(profile);
-      notify('linux.do 等级已更新。');
-    } catch (error) {
-      if (requestId !== linuxDoLevelRequestIdRef.current) {
-        return;
-      }
-      if (isLinuxDoCloudflareError(error)) {
-        setLinuxDoLevelProfile(null);
-        setLinuxDoLevelError('linux.do 等级读取需要完成 Cloudflare 验证');
-        showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
-        return;
-      }
-      setLinuxDoLevelError(errorMessage(error));
-    } finally {
-      if (requestId === linuxDoLevelRequestIdRef.current) {
-        setLinuxDoLevelBusy(false);
-      }
-    }
-  }, [forumFetchWithWebViewFallback, notify, showLinuxDoVerification]);
-
-  const runNodeSeekRequest = useCallback(async (
-    requestFactory: () => NodeSeekActionRequest,
-    success: string,
-    options: ActionRunOptions = {}
-  ) => {
-    if (!hasNodeSeekLoginCookie) {
-      notify('请先在“更多”里登录并检测 NodeSeek Cookie。');
-      return false;
-    }
-    const requestId = ++actionRequestIdRef.current;
-    const controller = startAbortableRequest(actionAbortRef);
-    setActionBusy(true);
-    try {
-      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-      await runNodeSeekAction({
-        cookieHeader: cookieHeader || '',
-        request: requestFactory(),
-        signal: controller.signal,
-        userAgent: nodeSeekWebViewUserAgentRef.current
-      });
-      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
-        return false;
-      }
-      notify(success);
-      if (options.refreshTopic === true && topicDetail?.source === 'nodeseek') {
-        await openTopic(topicDetail, true);
-      }
-      return true;
-    } catch (error) {
-      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false || isCanceledRequest(error)) {
-        return false;
-      }
-      if (isNodeSeekLoginRequiredError(error)) {
-        await clearNodeSeekLoginCookiesOnly();
-        if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
-          return false;
-        }
-      }
-      notify(errorMessage(error));
-      return false;
-    } finally {
-      if (finishAbortableRequest(actionAbortRef, controller)) {
-        setActionBusy(false);
-      }
-    }
-  }, [clearNodeSeekLoginCookiesOnly, hasNodeSeekLoginCookie, notify, openTopic, topicDetail]);
-
-  const runYaohuoRequest = useCallback(async (
-    requestFactory: (cookieHeader: string) => YaohuoActionRequest,
-    success: string,
-    options: ActionRunOptions = {}
-  ) => {
-    const cookieHeader = await loadYaohuoCookieForSource('yaohuo');
-    if (!cookieHeader) {
-      if (options.isCurrent?.() === false) {
-        return false;
-      }
-      showYaohuoLogin();
-      return false;
-    }
-    const requestId = ++actionRequestIdRef.current;
-    const controller = startAbortableRequest(actionAbortRef);
-    setActionBusy(true);
-    try {
-      const result = await runYaohuoAction({
-        cookieHeader,
-        request: requestFactory(cookieHeader),
-        signal: controller.signal
-      });
-      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
-        return false;
-      }
-      const resultConfirmed = result.message !== '操作结果无法确认，请刷新原帖核对';
-      notify(result.message === '操作已提交' ? success : result.message);
-      if (options.refreshTopic === true && topicDetail?.source === 'yaohuo') {
-        await openTopic(topicDetail, true);
-      }
-      return resultConfirmed ? result : false;
-    } catch (error) {
-      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false || isCanceledRequest(error)) {
-        return false;
-      }
-      if (isYaohuoLoginRequiredError(error)) {
-        if (isYaohuoLoginExpiredError(error)) {
-          await clearYaohuoLoginState();
-          if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
-            return false;
-          }
-        }
-        showYaohuoLogin(errorMessage(error));
-        return false;
-      }
-      notify(errorMessage(error));
-      return false;
-    } finally {
-      if (finishAbortableRequest(actionAbortRef, controller)) {
-        setActionBusy(false);
-      }
-    }
-  }, [clearYaohuoLoginState, loadYaohuoCookieForSource, notify, openTopic, showYaohuoLogin, topicDetail]);
-
-  const showLinuxDoLogin = useCallback((message = 'linux.do 登录后才能操作，匿名仍可阅读。') => {
-    setScreen('more');
-    changeNodeSeekLoginPanel(false);
-    closeYaohuoLoginPanel();
-    setShowSettingsPanel(false);
-    notify(message);
-    changeLinuxDoPanel(true);
-  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
-
   const openReadingSettingsFromTopic = useCallback(() => {
     changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
@@ -2269,303 +1615,6 @@ export default function App() {
     setShowSettingsPanel(true);
     changeScreen('more');
   }, [changeNodeSeekLoginPanel, changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel]);
-
-  const runLinuxDoRequest = useCallback(async (
-    requestFactory: () => LinuxDoActionRequest,
-    success: string,
-    options: ActionRunOptions = {}
-  ) => {
-    const access = await loadLinuxDoAccess();
-    if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-      if (options.isCurrent?.() === false) {
-        return false;
-      }
-      setHasLinuxDoLogin(false);
-      showLinuxDoLogin();
-      return false;
-    }
-    const requestId = ++actionRequestIdRef.current;
-    const controller = startAbortableRequest(actionAbortRef);
-    setActionBusy(true);
-    try {
-      const result = await runLinuxDoAction({
-        cookieHeader: access.cookieHeader,
-        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        request: requestFactory(),
-        signal: controller.signal
-      });
-      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
-        return false;
-      }
-      notify(success);
-      if (options.refreshTopic === true && topicDetail?.source === 'linuxdo') {
-        await openTopic(topicDetail, true);
-      }
-      return result ?? true;
-    } catch (error) {
-      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false || isCanceledRequest(error)) {
-        return false;
-      }
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        const remainingAccess = await clearLinuxDoAccess();
-        if (requestId !== actionRequestIdRef.current || controller.signal.aborted || options.isCurrent?.() === false) {
-          return false;
-        }
-        setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));
-        setHasLinuxDoLogin(false);
-        setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names);
-        resetLinuxDoLevelState();
-        showLinuxDoLogin(errorMessage(error));
-        return false;
-      }
-      notify(errorMessage(error));
-      return false;
-    } finally {
-      if (finishAbortableRequest(actionAbortRef, controller)) {
-        setActionBusy(false);
-      }
-    }
-  }, [notify, openTopic, resetLinuxDoLevelState, showLinuxDoLogin, topicDetail]);
-
-  const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
-    const next = { ...optimisticTopicActionsRef.current };
-    if (!state || (!state.inFlight && state.displayed === state.confirmed && state.desired === state.confirmed)) {
-      delete next[key];
-    } else {
-      next[key] = state;
-    }
-    optimisticTopicActionsRef.current = next;
-    setOptimisticTopicActions(next);
-  }, []);
-
-  const runNodeSeekActionForOptimisticUpdate = useCallback(async (
-    requestFactory: () => NodeSeekActionRequest,
-    options: ActionRunOptions = {}
-  ) => {
-    if (!hasNodeSeekLoginCookie) {
-      if (options.isCurrent?.() === false) {
-        return false;
-      }
-      notify('请先在“更多”里登录并检测 NodeSeek Cookie，已恢复原状态。');
-      return false;
-    }
-    try {
-      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-      await runNodeSeekAction({
-        cookieHeader: cookieHeader || '',
-        request: requestFactory(),
-        userAgent: nodeSeekWebViewUserAgentRef.current
-      });
-      if (options.isCurrent?.() === false) {
-        return false;
-      }
-      return true;
-    } catch (error) {
-      if (options.isCurrent?.() === false || isCanceledRequest(error)) {
-        return false;
-      }
-      if (isNodeSeekLoginRequiredError(error)) {
-        await clearNodeSeekLoginCookiesOnly();
-        if (options.isCurrent?.() === false) {
-          return false;
-        }
-      }
-      notify(`${errorMessage(error)}，已恢复原状态。`);
-      return false;
-    }
-  }, [clearNodeSeekLoginCookiesOnly, hasNodeSeekLoginCookie, notify]);
-
-  const runLinuxDoActionForOptimisticUpdate = useCallback(async (
-    requestFactory: () => LinuxDoActionRequest,
-    options: ActionRunOptions = {}
-  ) => {
-    try {
-      const access = await loadLinuxDoAccess();
-      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-        if (options.isCurrent?.() === false) {
-          return false;
-        }
-        setHasLinuxDoLogin(false);
-        showLinuxDoLogin('linux.do 登录后才能操作，已恢复原状态。');
-        return false;
-      }
-      const result = await runLinuxDoAction({
-        cookieHeader: access.cookieHeader,
-        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        request: requestFactory()
-      });
-      if (options.isCurrent?.() === false) {
-        return false;
-      }
-      return result ?? true;
-    } catch (error) {
-      if (options.isCurrent?.() === false || isCanceledRequest(error)) {
-        return false;
-      }
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        const remainingAccess = await clearLinuxDoAccess();
-        if (options.isCurrent?.() === false) {
-          return false;
-        }
-        setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));
-        setHasLinuxDoLogin(false);
-        setLinuxDoCookieNames(summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names);
-        resetLinuxDoLevelState();
-        showLinuxDoLogin(`${errorMessage(error)}，已恢复原状态。`);
-        return false;
-      }
-      notify(`${errorMessage(error)}，已恢复原状态。`);
-      return false;
-    }
-  }, [notify, resetLinuxDoLevelState, showLinuxDoLogin]);
-
-  const runOptimisticActionQueue = useCallback(async ({
-    key,
-    requestTopicKey,
-    applyDisplayed,
-    sendDesired,
-    successMessage
-  }: Omit<OptimisticTopicActionOptions, 'currentActive'>) => {
-    while (true) {
-      const state = optimisticTopicActionsRef.current[key];
-      if (!state?.inFlight || typeof state.inFlightTarget !== 'boolean') {
-        return;
-      }
-      const desiredActive = state.inFlightTarget;
-      let succeeded = false;
-      try {
-        succeeded = await sendDesired(desiredActive);
-      } catch (error) {
-        if (currentTopicKeyRef.current === requestTopicKey) {
-          notify(`${errorMessage(error)}，已恢复原状态。`);
-        }
-      }
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        setOptimisticTopicActionState(key);
-        return;
-      }
-      const latest = optimisticTopicActionsRef.current[key];
-      if (!latest) {
-        return;
-      }
-      const completed = completeOptimisticAction(latest, succeeded);
-      setOptimisticTopicActionState(key, completed.state);
-      if (!succeeded) {
-        applyDisplayed(completed.state.displayed);
-        return;
-      }
-      if (!completed.request) {
-        applyDisplayed(completed.state.confirmed);
-        notify(successMessage(completed.state.confirmed));
-        return;
-      }
-    }
-  }, [notify, setOptimisticTopicActionState]);
-
-  const startOptimisticTopicAction = useCallback(({
-    key,
-    requestTopicKey,
-    currentActive,
-    applyDisplayed,
-    sendDesired,
-    successMessage
-  }: OptimisticTopicActionOptions) => {
-    if (currentTopicKeyRef.current !== requestTopicKey) {
-      return;
-    }
-    const transition = beginOptimisticAction(optimisticTopicActionsRef.current[key], currentActive);
-    setOptimisticTopicActionState(key, transition.state);
-    if (currentTopicKeyRef.current !== requestTopicKey) {
-      setOptimisticTopicActionState(key);
-      return;
-    }
-    applyDisplayed(transition.state.displayed);
-    if (transition.request) {
-      void runOptimisticActionQueue({
-        key,
-        requestTopicKey,
-        applyDisplayed,
-        sendDesired,
-        successMessage
-      });
-    }
-  }, [runOptimisticActionQueue, setOptimisticTopicActionState]);
-
-  const submitReply = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || (detail.source !== 'nodeseek' && detail.source !== 'yaohuo' && detail.source !== 'linuxdo')) {
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-    if (!replyContent.trim()) {
-      notify('请输入回复内容');
-      return;
-    }
-    if (detail.source === 'yaohuo') {
-      if (replyTarget && !replyTarget.authorId) {
-        notify('当前楼层缺少用户 id，刷新主题后再试。');
-        return;
-      }
-      const submitted = await runYaohuoRequest(
-        (cookieHeader) => buildYaohuoReplyRequest({
-          topicId: detail.id,
-          classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-          content: replyContent,
-          sid: extractYaohuoSid(cookieHeader),
-          replyFloor: replyTarget?.floor,
-          toUserId: replyTarget?.authorId
-        }),
-        '回复已提交',
-        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      );
-      if (submitted) {
-        if (currentTopicKeyRef.current !== requestTopicKey) {
-          return;
-        }
-        setReplyContent('');
-        setReplyComposerOpen(false);
-        setReplyTarget(null);
-        await refreshTopicReplies({ silent: true, afterSubmit: true });
-      }
-      return;
-    }
-    if (detail.source === 'linuxdo') {
-      const submitted = await runLinuxDoRequest(
-        () => buildLinuxDoReplyRequest({
-          topicId: detail.id,
-          content: replyContent,
-          replyToPostNumber: replyTarget?.floor
-        }),
-        '回复已提交',
-        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      );
-      if (submitted) {
-        if (currentTopicKeyRef.current !== requestTopicKey) {
-          return;
-        }
-        setReplyContent('');
-        setReplyComposerOpen(false);
-        setReplyTarget(null);
-        await refreshTopicReplies({ silent: true, afterSubmit: true });
-      }
-      return;
-    }
-    const submitted = await runNodeSeekRequest(
-      () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
-      '回复已提交',
-      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-    );
-    if (submitted) {
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        return;
-      }
-      setReplyContent('');
-      setReplyComposerOpen(false);
-      setReplyTarget(null);
-      await refreshTopicReplies({ silent: true, afterSubmit: true });
-    }
-  }, [notify, refreshTopicReplies, replyContent, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
-
   const toggleReplyComposer = useCallback((open: boolean) => {
     setReplyComposerOpen(open);
     if (!open) {
@@ -2586,239 +1635,6 @@ export default function App() {
     });
     setReplyComposerOpen(true);
   }, [notify]);
-
-  const checkIn = useCallback(async () => {
-    await runNodeSeekRequest(
-      () => buildNodeSeekAttendanceRequest({ random: false }),
-      '签到请求已提交',
-      { refreshTopic: false }
-    );
-  }, [runNodeSeekRequest]);
-
-  const interact = useCallback(async (type: InteractionType, commentId?: number) => {
-    if (!commentId) {
-      notify('当前内容缺少评论 id，刷新主题后再试。');
-      return;
-    }
-    const detail = topicDetail || selectedTopic;
-    if (!detail) {
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-    if (detail?.source === 'linuxdo') {
-      if (type !== 'like') {
-        return;
-      }
-      const target = [
-        topicDetail,
-        ...topicReplies
-      ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean } | undefined);
-      startOptimisticTopicAction({
-        key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' }),
-        requestTopicKey,
-        currentActive: Boolean(target?.liked),
-        applyDisplayed: (desiredActive) => {
-          const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const };
-          setTopicDetail((current) => applyInteractionToTopic(current, patch));
-          setTopicReplies((current) => applyInteractionToReplies(current, patch));
-        },
-        sendDesired: async (desiredActive) => Boolean(await runLinuxDoActionForOptimisticUpdate(
-          () => buildLinuxDoLikeRequest({ postId: commentId, liked: !desiredActive }),
-          { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-        )),
-        successMessage: (active) => active ? '点赞已提交' : '已取消点赞'
-      });
-      return;
-    }
-    if (detail?.source !== 'nodeseek') {
-      return;
-    }
-    const activeFields: Record<InteractionType, 'upvoted' | 'liked' | 'disliked'> = {
-      upvote: 'upvoted',
-      like: 'liked',
-      dislike: 'disliked'
-    };
-    const target = [
-      topicDetail,
-      ...topicReplies
-    ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as (Pick<TopicDetail | Reply, 'upvoted' | 'liked' | 'disliked'> | undefined);
-    const activeField = activeFields[type];
-    if (target?.[activeField]) {
-      notify(nodeSeekInteractionRemovalMessage(type));
-      return;
-    }
-    startOptimisticTopicAction({
-      key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type }),
-      requestTopicKey,
-      currentActive: Boolean(target?.[activeField]),
-      applyDisplayed: (desiredActive) => {
-        const patch = { commentId, type, mode: desiredActive ? 'add' as const : 'remove' as const };
-        setTopicDetail((current) => applyInteractionToTopic(current, patch));
-        setTopicReplies((current) => applyInteractionToReplies(current, patch));
-      },
-      sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
-        () => buildNodeSeekInteractionRequest({ type, commentId, active: !desiredActive }),
-        { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      ),
-      successMessage: (active) => active
-        ? type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
-        : type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
-    });
-  }, [notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, topicDetail, topicReplies]);
-
-  const favoriteOnYaohuoSite = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'yaohuo') {
-      return;
-    }
-    await runYaohuoRequest(
-      () => buildYaohuoFavoriteRequest({
-        topicId: detail.id,
-        classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
-      }),
-      '原站收藏已提交',
-      { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === topicKey(detail) }
-    );
-  }, [runYaohuoRequest, selectedTopic, topicDetail]);
-
-  const collectOnNodeSeekSite = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'nodeseek') {
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-    const collected = Boolean((detail as TopicDetail).collected);
-    startOptimisticTopicAction({
-      key: topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' }),
-      requestTopicKey,
-      currentActive: collected,
-      applyDisplayed: (desiredActive) => {
-        setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: desiredActive }));
-      },
-      sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
-        () => buildNodeSeekCollectionRequest({
-          postId: detail.id,
-          collected: !desiredActive
-        }),
-        { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      ),
-      successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
-    });
-  }, [runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, topicDetail]);
-
-  const bookmarkOnLinuxDoSite = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'linuxdo') {
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-    const bookmarked = Boolean((detail as TopicDetail).bookmarked);
-    let bookmarkId = (detail as TopicDetail).bookmarkId;
-    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'bookmark' });
-    startOptimisticTopicAction({
-      key: actionKey,
-      requestTopicKey,
-      currentActive: bookmarked,
-      applyDisplayed: (desiredActive) => {
-        setTopicDetail((current) => applyBookmarkToTopic(current, {
-          bookmarked: desiredActive,
-          bookmarkId: desiredActive ? bookmarkId : undefined
-        }));
-      },
-      sendDesired: async (desiredActive) => {
-        const result = await runLinuxDoActionForOptimisticUpdate(
-          () => buildLinuxDoBookmarkRequest({
-            bookmarkableId: detail.id,
-            bookmarkableType: 'Topic',
-            bookmarked: !desiredActive,
-            bookmarkId
-          }),
-          { isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-        );
-        if (!result) {
-          return false;
-        }
-        if (!desiredActive) {
-          bookmarkId = undefined;
-          if (currentTopicKeyRef.current === requestTopicKey && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
-            setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true }));
-          }
-        }
-        if (desiredActive) {
-          const resultBookmarkId = linuxDoBookmarkIdFromActionResult(result);
-          if (resultBookmarkId) {
-            bookmarkId = resultBookmarkId;
-            if (currentTopicKeyRef.current === requestTopicKey && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
-              setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true, bookmarkId }));
-            }
-          }
-        }
-        return true;
-      },
-      successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
-    });
-  }, [runLinuxDoActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, topicDetail]);
-
-  const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || !['nodeseek', 'linuxdo', 'yaohuo'].includes(detail.source)) {
-      return;
-    }
-    if (!optionIds.length) {
-      notify('请选择投票选项');
-      return;
-    }
-    const requestTopicKey = topicKey(detail);
-    let submitted: unknown = false;
-    if (detail.source === 'nodeseek') {
-      submitted = await runNodeSeekRequest(
-        () => buildNodeSeekVoteRequest({ optionIds }),
-        '投票已提交',
-        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      );
-    } else if (detail.source === 'linuxdo') {
-      if (!poll.postId || !poll.name) {
-        notify('当前投票信息不完整，刷新主题后再试。');
-        return;
-      }
-      submitted = await runLinuxDoRequest(
-        () => buildLinuxDoPollVoteRequest({
-          postId: poll.postId || '',
-          pollName: poll.name || '',
-          optionIds
-        }),
-        '投票已提交',
-        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      );
-    } else {
-      submitted = await runYaohuoRequest(
-        () => buildYaohuoVoteRequest({
-          topicId: detail.id,
-          classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-          voteIds: optionIds
-        }),
-        '投票已提交',
-        { refreshTopic: false, isCurrent: () => currentTopicKeyRef.current === requestTopicKey }
-      );
-    }
-    if (submitted) {
-      if (currentTopicKeyRef.current !== requestTopicKey) {
-        return;
-      }
-      setTopicDetail((current) => applyPollVoteToTopic(current, {
-        pollId: poll.id,
-        pollName: poll.name,
-        pollPostId: poll.postId,
-        optionIds
-      }));
-      setTopicReplies((current) => applyPollVoteToReplies(current, {
-        pollId: poll.id,
-        pollName: poll.name,
-        pollPostId: poll.postId,
-        optionIds
-      }));
-    }
-  }, [notify, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -3034,10 +1850,6 @@ export default function App() {
     <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
       <MemoizedMoreScreen
         checking={checking}
-        hasNodeSeekLoginCookie={hasNodeSeekLoginCookie}
-        hasYaohuoCookie={hasYaohuoCookie}
-        hasLinuxDoClearance={hasLinuxDoClearance}
-        hasLinuxDoLogin={hasLinuxDoLogin}
         healthDetails={healthDetails}
         healthSummary={healthSummary}
         loginState={loginState}
@@ -3066,7 +1878,7 @@ export default function App() {
         yaohuoLoginCookieHeader={yaohuoLoginCookieHeader}
         yaohuoLoginState={yaohuoLoginState}
         yaohuoWebViewRef={yaohuoWebViewRef}
-        linuxDoCookieNames={linuxDoCookieNames}
+        sessionViewModels={siteSessionViewModels}
         linuxDoWebViewRef={linuxDoWebViewRef}
         onCheckHealth={checkLocalStatus}
         onCheckIn={checkIn}
@@ -3100,14 +1912,14 @@ export default function App() {
         onUpdateSettings={updateSettings}
       />
     </ScrollView>
-  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, hasLinuxDoClearance, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoCookieNames, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, mountLinuxDoWebView, nodeSeekWebViewUserAgent, readerData.settings, refreshLinuxDoLevel, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
+  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLinuxDoCookie, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLinuxDoCookie, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLinuxDoMessage, handleLinuxDoNavigation, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoWebViewError, linuxDoWebViewKey, linuxDoWebViewUserAgent, loadingLinuxDoPage, loadingLoginPage, loadingYaohuoLoginPage, loginState, mountLinuxDoWebView, nodeSeekWebViewUserAgent, readerData.settings, refreshLinuxDoLevel, rememberVisibleNodeSeekCookies, resetLinuxDoWebView, setLinuxDoWebViewErrorForSession, setLoadingLinuxDoPageForSession, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, siteSessionViewModels, statusBusy, styles, theme, updateSettings, yaohuoLoginCookieHeader, yaohuoLoginState]);
 
   const renderTopicScreen = useCallback(() => (
     <TopicScreen
       actionBusy={actionBusy}
-      canUseLinuxDoActions={hasLinuxDoLogin}
-      canUseNodeSeekActions={hasNodeSeekLoginCookie}
-      canUseYaohuoActions={hasYaohuoCookie}
+      canUseLinuxDoActions={canUseLinuxDoActions}
+      canUseNodeSeekActions={canUseNodeSeekActions}
+      canUseYaohuoActions={canUseYaohuoActions}
       contentWidth={contentWidth}
       htmlBaseStyle={htmlBaseStyle}
       htmlIgnoredStyles={htmlIgnoredStyles}
@@ -3162,7 +1974,7 @@ export default function App() {
       onToggleFavorite={toggleTopicFavorite}
       onOpenUser={openUser}
     />
-  ), [actionBusy, bookmarkOnLinuxDoSite, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, hasLinuxDoLogin, hasNodeSeekLoginCookie, hasYaohuoCookie, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, optimisticTopicActions, quoteStateVersion, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicFavorite, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
+  ), [actionBusy, bookmarkOnLinuxDoSite, canUseLinuxDoActions, canUseNodeSeekActions, canUseYaohuoActions, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, optimisticTopicActions, quoteStateVersion, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicFavorite, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
 
   const renderUserScreen = useCallback(() => (
     <UserScreen
@@ -3325,9 +2137,7 @@ export default function App() {
         ) : null}
         <MemoizedLinuxDoVerifyModal
           checking={checking}
-          hasLinuxDoClearance={hasLinuxDoClearance}
-          hasLinuxDoLogin={hasLinuxDoLogin}
-          linuxDoCookieNames={linuxDoCookieNames}
+          linuxDoSession={siteSessionViewModels.linuxdo}
           linuxDoWebViewError={linuxDoWebViewError}
           linuxDoWebViewKey={linuxDoWebViewKey}
           linuxDoWebViewRef={linuxDoWebViewRef}

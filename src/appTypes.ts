@@ -24,6 +24,7 @@ export interface ReplyTarget {
 }
 
 export type TopicSnapshot = {
+  key?: string;
   selectedTopic: Topic | null;
   topicDetail: TopicDetail | null;
   topicReplies: Reply[];
@@ -40,6 +41,7 @@ export type TopicSnapshot = {
   expandedQuotes: Record<string, boolean>;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
+  scrollY?: number;
 };
 
 export type YaohuoReplyTarget = ReplyTarget;

@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('android-app', 'App.tsx');
+const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
+const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
 const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
+const verificationControllerSource = readProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
@@ -51,10 +55,12 @@ describe('Android App UX upgrade guards', () => {
     expect(appSource).toContain("animation: 'slide_from_right'");
     expect(appSource).toContain('contentStyle: { backgroundColor: theme.background }');
     expect(appSource).toContain('topicBackStackRef');
+    expect(topicControllerSource).toContain('const nextTopicKey = topicKey(topic);');
     expect(topicControllerSource).toContain('const activeTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);');
-    expect(topicControllerSource).toContain('const opensDifferentTopic = topicKey(topic) !== activeTopicKey;');
+    expect(topicControllerSource).toContain('const opensDifferentTopic = nextTopicKey !== activeTopicKey;');
     expect(topicControllerSource).toContain("} else if (opensDifferentTopic) {");
-    expect(topicControllerSource).toContain('topicBackStackRef.current.push(topicSnapshot());');
+    expect(topicControllerSource).toContain('pushTopicSession(');
+    expect(topicControllerSource).toContain('topicSessionFromSnapshot(topicSnapshot())');
     expect(appSource).toContain('restoreTopicSnapshot(previousTopic);');
     expect(appSource).toContain('navigationRef.goBack();');
   });
@@ -116,33 +122,41 @@ describe('Android App UX upgrade guards', () => {
 
   it('keeps reply draft state in topic snapshots when returning from nested topics', () => {
     const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
-    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
+    const topicSessionSource = readProjectFile('android-app', 'src', 'topicSessionState.ts');
+    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appTypesSource).toContain('replyContent: string;');
     expect(appTypesSource).toContain('replyComposerOpen: boolean;');
     expect(appTypesSource).toContain('replyTarget: ReplyTarget | null;');
+    expect(topicSessionSource).toContain('replyContent: session.replyContent');
+    expect(topicSessionSource).toContain('replyComposerOpen: session.replyComposerOpen');
+    expect(topicSessionSource).toContain('replyTarget: session.replyTarget');
     expect(topicSnapshotBlock).toContain('replyContent,');
     expect(topicSnapshotBlock).toContain('replyComposerOpen,');
     expect(topicSnapshotBlock).toContain('replyTarget');
-    expect(restoreTopicSnapshotBlock).toContain('setReplyContent(snapshot.replyContent);');
-    expect(restoreTopicSnapshotBlock).toContain('setReplyComposerOpen(snapshot.replyComposerOpen);');
-    expect(restoreTopicSnapshotBlock).toContain('setReplyTarget(snapshot.replyTarget);');
+    expect(restoreTopicSnapshotBlock).toContain('setReplyContent(session.replyContent);');
+    expect(restoreTopicSnapshotBlock).toContain('setReplyComposerOpen(session.replyComposerOpen);');
+    expect(restoreTopicSnapshotBlock).toContain('setReplyTarget(session.replyTarget);');
   });
 
   it('keeps linux.do quote expansion state in topic snapshots when returning from nested topics', () => {
     const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
-    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
+    const topicSessionSource = readProjectFile('android-app', 'src', 'topicSessionState.ts');
+    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appTypesSource).toContain('expandedQuotes: Record<string, boolean>;');
     expect(appTypesSource).toContain('loadedQuotedReplies: Record<number, Reply>;');
     expect(appTypesSource).toContain('loadingQuotedFloors: Record<string, boolean>;');
+    expect(topicSessionSource).toContain('expandedQuotes: session.expandedQuotes');
+    expect(topicSessionSource).toContain('loadedQuotedReplies: session.loadedQuotedReplies');
+    expect(topicSessionSource).toContain('loadingQuotedFloors: session.loadingQuotedFloors');
     expect(topicSnapshotBlock).toContain('expandedQuotes: expandedQuotesRef.current,');
     expect(topicSnapshotBlock).toContain('loadedQuotedReplies: loadedQuotedRepliesRef.current,');
     expect(topicSnapshotBlock).toContain('loadingQuotedFloors: {}');
-    expect(restoreTopicSnapshotBlock).toContain('expandedQuotesRef.current = snapshot.expandedQuotes;');
-    expect(restoreTopicSnapshotBlock).toContain('loadedQuotedRepliesRef.current = snapshot.loadedQuotedReplies;');
+    expect(restoreTopicSnapshotBlock).toContain('expandedQuotesRef.current = session.expandedQuotes;');
+    expect(restoreTopicSnapshotBlock).toContain('loadedQuotedRepliesRef.current = session.loadedQuotedReplies;');
     expect(restoreTopicSnapshotBlock).toContain('loadingQuotedFloorsRef.current = {};');
     expect(restoreTopicSnapshotBlock).toContain('setQuoteStateVersion((current) => current + 1);');
   });
@@ -161,7 +175,7 @@ describe('Android App UX upgrade guards', () => {
   });
 
   it('keeps linux.do verification checks from auto-returning to the old topic', () => {
-    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(checkLinuxDoCookieBlock).toContain('linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);');
     expect(checkLinuxDoCookieBlock).not.toContain('const returnScreen = topicReturnScreenRef.current;');
@@ -173,7 +187,7 @@ describe('Android App UX upgrade guards', () => {
   });
 
   it('applies the one-time linux.do verified retry guard to reply refresh paths', () => {
-    const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const cloudflareHandlerBlock = verificationControllerSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
     const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
     const toggleQuotedFloorBlock = topicControllerSource.match(/const toggleQuotedFloor = useCallback[\s\S]*?\n\n  return/)?.[0] || '';
@@ -248,5 +262,27 @@ describe('Android App UX upgrade guards', () => {
     expect(topicScreenSource).toContain('const retryId = ++topicScrollRetryIdRef.current;');
     expect(topicScreenSource).toContain('if (topicScrollRetryIdRef.current !== retryId) {');
     expect(topicScreenSource).toContain('topicScrollRetryIdRef.current += 1;');
+  });
+
+  it('uses one request ownership model for stale Android controller results', () => {
+    for (const source of [
+      backupStatusControllerSource,
+      feedControllerSource,
+      searchControllerSource,
+      topicControllerSource,
+      userControllerSource
+    ]) {
+      expect(source).toContain('isCurrentOwnedRequest');
+      expect(source).toContain('startOwnedRequest');
+    }
+    expect(backupStatusControllerSource).toContain('const isCurrentBackupRequest =');
+    expect(backupStatusControllerSource).toContain('const isCurrentStatusRequest =');
+    expect(feedControllerSource).toContain('const isCurrentFeedRequest =');
+    expect(searchControllerSource).toContain('const isCurrentSearchRequest =');
+    expect(searchControllerSource).toContain('isCurrent: () => isCurrentSearchRequest()');
+    expect(searchControllerSource).toContain('options?.isCurrent?.() !== false');
+    expect(topicControllerSource).toContain('const isCurrentTopicRequest =');
+    expect(topicControllerSource).toContain('const isCurrentRepliesRequest =');
+    expect(userControllerSource).toContain('const isCurrentUserRequest =');
   });
 });

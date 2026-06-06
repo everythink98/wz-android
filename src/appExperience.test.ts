@@ -8,6 +8,9 @@ const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFe
 const readerDataControllerSource = readProjectFile('android-app', 'src', 'app', 'useReaderDataController.ts');
 const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
 const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
+const verificationControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
+const accountControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
+const topicActionsControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
@@ -235,7 +238,7 @@ describe('Android App experience guards', () => {
   it('ignores stale Android status check results after a newer check starts', () => {
     const statusBlock = backupStatusControllerSource.match(/const checkLocalStatus = useCallback[\s\S]*?\n\n  const abortBackupStatusRequests/)?.[0] || '';
     const checksIndex = statusBlock.indexOf('const checks = await queryClient.fetchQuery');
-    const staleGuardIndex = statusBlock.indexOf('if (requestId !== statusRequestIdRef.current || controller.signal.aborted) {');
+    const staleGuardIndex = statusBlock.indexOf('if (!isCurrentStatusRequest() || controller.signal.aborted) {');
     const resultIndex = statusBlock.indexOf('const result = buildLocalStatusResult');
     const catchBlock = statusBlock.match(/} catch \(error\) \{([\s\S]*?)\n    } finally \{/)?.[1] || '';
 
@@ -244,9 +247,11 @@ describe('Android App experience guards', () => {
     expect(statusBlock).toContain('if (statusBusyRef.current) {');
     expect(statusBlock).toContain('statusBusyRef.current = true;');
     expect(statusBlock).toContain('const requestId = ++statusRequestIdRef.current;');
+    expect(statusBlock).toContain('const requestOwner = startOwnedRequest(statusRequestOwnerRef, \'status:local\');');
+    expect(statusBlock).toContain('const isCurrentStatusRequest = () => isCurrentOwnedRequest(requestOwner, statusRequestOwnerRef) && requestId === statusRequestIdRef.current;');
     expect(staleGuardIndex).toBeGreaterThan(checksIndex);
     expect(staleGuardIndex).toBeLessThan(resultIndex);
-    expect(catchBlock).toContain('requestId === statusRequestIdRef.current');
+    expect(catchBlock).toContain('isCurrentStatusRequest()');
     expect(catchBlock).toContain('!controller.signal.aborted');
     expect(statusBlock).toContain('statusBusyRef.current = false;');
   });
@@ -264,7 +269,9 @@ describe('Android App experience guards', () => {
       expect(block).toContain('if (backupBusyRef.current) {');
       expect(block).toContain('backupBusyRef.current = true;');
       expect(block).toContain('const requestId = ++backupRequestIdRef.current;');
-      expect(block).toContain('requestId !== backupRequestIdRef.current');
+      expect(block).toContain('const requestOwner = startOwnedRequest(backupRequestOwnerRef');
+      expect(block).toContain('const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;');
+      expect(block).toContain('!isCurrentBackupRequest()');
     }
     for (const block of [importBlock, exportBlock, exportFileBlock, importFileBlock]) {
       expect(block).toContain('setBackupBusy(true);');
@@ -274,11 +281,11 @@ describe('Android App experience guards', () => {
   });
 
   it('ignores stale Android login checks after a newer login check starts', () => {
-    const checkLoginBlock = appSource.match(/const checkLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[notify/)?.[1] || '';
-    const checkYaohuoBlock = appSource.match(/const checkYaohuoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState/)?.[1] || '';
-    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[closeLinuxDoPanel/)?.[1] || '';
+    const checkLoginBlock = accountControllerSource.match(/const checkLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const checkYaohuoBlock = accountControllerSource.match(/const checkYaohuoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const checkLinuxDoBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
     const saveNodeSeekBlock = sessionControllerSource.match(/const saveNodeSeekCookieHeader = useCallback[\s\S]*?\n\n  const loadNodeSeekCookieForSource/)?.[0] || '';
-    const rememberNodeSeekBlock = appSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const rememberNodeSeekBlock = accountControllerSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const checkingRequestIdRef = useRef(0);');
     for (const block of [checkLoginBlock, checkYaohuoBlock]) {
@@ -300,16 +307,18 @@ describe('Android App experience guards', () => {
   });
 
   it('ignores stale Android write action results after a newer action starts', () => {
-    const runNodeSeekBlock = appSource.match(/const runNodeSeekRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const runYaohuoBlock = appSource.match(/const runYaohuoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const runLinuxDoBlock = appSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const runNodeSeekBlock = topicActionsControllerSource.match(/const runNodeSeekRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const runYaohuoBlock = topicActionsControllerSource.match(/const runYaohuoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const runLinuxDoBlock = topicActionsControllerSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const actionRequestIdRef = useRef(0);');
+    expect(topicActionsControllerSource).toContain("createRequestOwner('topic-action')");
     for (const block of [runNodeSeekBlock, runYaohuoBlock, runLinuxDoBlock]) {
       expect(block).toContain('const requestId = ++actionRequestIdRef.current;');
+      expect(block).toContain('const requestOwner = options.owner || startTopicActionRequest(options.key || success);');
       expect(block).toContain('requestId !== actionRequestIdRef.current');
       expect(block).toContain('controller.signal.aborted');
-      expect(block).toContain('options.isCurrent?.() === false');
+      expect(block).toContain('!isCurrentTopicActionRequest(requestOwner)');
       expect(block).toContain('isCanceledRequest(error)');
     }
     expect(runNodeSeekBlock).toContain('userAgent: nodeSeekWebViewUserAgentRef.current');
@@ -579,7 +588,7 @@ describe('Android App experience guards', () => {
     const runSearchBlock = searchControllerSource.match(/const runSearch = useCallback[\s\S]*?\n\n  const loadMoreSearchSource/)?.[0] || '';
 
     expect(runSearchBlock).toContain('activeSources.map(async (source) => {');
-    expect(runSearchBlock).toContain('const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort);');
+    expect(runSearchBlock).toContain('const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, { isCurrent: () => isCurrentSearchRequest() });');
     expect(runSearchBlock).toContain('currentGroup.source === source ? { ...group, loading: false } : currentGroup');
     expect(runSearchBlock).toContain('setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));');
     expect(runSearchBlock).not.toContain('const groups = await Promise.all(activeSources.map((source) => runRemoteSearchSource');
@@ -623,8 +632,8 @@ describe('Android App experience guards', () => {
     expect(topicScreenSource).toContain('commentQuery');
     expect(appSource).not.toContain('copyReplyMarkdown');
     expect(appSource).not.toContain('buildReplyMarkdown');
-    expect(appSource).toContain('加鸡腿请求已提交');
-    expect(appSource).not.toContain('感谢请求已提交');
+    expect(topicActionsControllerSource).toContain('加鸡腿请求已提交');
+    expect(topicActionsControllerSource).not.toContain('感谢请求已提交');
     expect(topicScreenSource).toContain('新增');
   });
 
@@ -794,8 +803,10 @@ describe('Android App experience guards', () => {
   });
 
   it('clears yaohuo cookies only for expired login errors, not access verification', () => {
-    expect(appSource).toContain('isYaohuoLoginExpiredError(error)');
-    expect(appSource).toContain('showYaohuoLogin(errorMessage(error))');
+    expect(accountControllerSource).toContain('isYaohuoLoginExpiredError(error)');
+    expect(accountControllerSource).toContain('await clearYaohuoLoginState();');
+    expect(topicActionsControllerSource).toContain("if ((error as { reason?: unknown }).reason === 'expired') {");
+    expect(topicActionsControllerSource).toContain('showYaohuoLogin(errorMessage(error));');
   });
 
   it('clears expired yaohuo login state from aggregated feed errors', () => {
@@ -841,28 +852,28 @@ describe('Android App experience guards', () => {
     const loadCookieBlock = sessionControllerSource.match(/const loadYaohuoCookieForSource = useCallback[\s\S]*?\n\n  const saveNodeSeekCookieHeader/)?.[0] || '';
 
     expect(loadCookieBlock).toContain("summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookie || ''))");
-    expect(loadCookieBlock).toContain('setHasYaohuoCookie(summary.loggedIn);');
+    expect(loadCookieBlock).toContain("updateYaohuoSession(siteEventWithCookieFacts('yaohuo', summary.names, false, summary.loggedIn));");
     expect(loadCookieBlock).not.toContain('setHasYaohuoCookie(Boolean(cookie));');
   });
 
   it('opens the yaohuo signed-in page instead of the login form when cookies are saved', () => {
     expect(moreScreenSource).toContain("const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';");
-    expect(moreScreenSource).toContain('uri: hasYaohuoCookie ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
+    expect(moreScreenSource).toContain('uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
   });
 
   it('shows yaohuo login detail instead of hiding detected cookies behind a generic state', () => {
     const yaohuoLoginStateBlock = sessionControllerSource.match(/const yaohuoLoginState = useMemo\(\(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(yaohuoLoginStateBlock).toContain("return '未登录';");
-    expect(yaohuoLoginStateBlock).toContain("return yaohuoCookieNames.length ? `已登录：${yaohuoCookieNames.join(', ')}` : '已登录';");
-    expect(yaohuoLoginStateBlock).toContain("return `未登录，已检测 ${yaohuoCookieNames.length} 个 Cookie：${yaohuoCookieNames.join(', ')}`;");
+    expect(yaohuoLoginStateBlock).toContain("return yaohuoSession.cookieSummary.length ? `已登录：${yaohuoSession.cookieSummary.join(', ')}` : '已登录';");
+    expect(yaohuoLoginStateBlock).toContain("return `未登录，已检测 ${yaohuoSession.cookieSummary.length} 个 Cookie：${yaohuoSession.cookieSummary.join(', ')}`;");
     expect(moreScreenSource).toContain('value={yaohuoLoginState}');
     expect(moreScreenSource).toContain('subtitle={yaohuoLoginState}');
-    expect(moreScreenSource).not.toContain("hasYaohuoCookie ? yaohuoLoginState : '未登录'");
+    expect(moreScreenSource).not.toContain("yaohuoSession.canWrite ? yaohuoLoginState : '未登录'");
   });
 
   it('reads and clears yaohuo cookies across http, https, root, and www hosts', () => {
-    const match = appSource.match(/const YAOHUO_COOKIE_URLS = \[([\s\S]*?)\];/);
+    const match = accountControllerSource.match(/const YAOHUO_COOKIE_URLS = \[([\s\S]*?)\];/);
     const cookieUrls = match?.[1] || '';
 
     expect(cookieUrls).toContain('YAOHUO_URL');
@@ -928,12 +939,27 @@ describe('Android App experience guards', () => {
   it('sends linux.do Cloudflare detail errors to the verification panel', () => {
     expect(appSource).toContain('pendingLinuxDoTopicRef');
     expect(appSource).toContain('showLinuxDoVerification');
-    expect(appSource).toContain('isLinuxDoCloudflareError(error)');
+    expect(topicControllerSource).toContain('isLinuxDoCloudflareError(error)');
     expect(topicScreenSource).toContain('label="去验证"');
   });
 
+  it('keeps linux.do and NodeSeek verification flow inside the verification controller', () => {
+    expect(appSource).toContain('useVerificationController');
+    expect(verificationControllerSource).toContain('export function useVerificationController');
+    expect(appSource).not.toContain('const showNodeSeekVerification = useCallback');
+    expect(appSource).not.toContain('const showLinuxDoVerification = useCallback');
+    expect(appSource).not.toContain('const handleLinuxDoMessage = useCallback');
+    expect(appSource).not.toContain('const checkLinuxDoCookie = useCallback');
+    expect(appSource).not.toContain('const handleLinuxDoCloudflareForTopic = useCallback');
+    expect(appSource).not.toContain('const verifyLinuxDoFromTopic = useCallback');
+    expect(verificationControllerSource).toContain('webViewKey !== linuxDoWebViewSessionRef.current');
+    expect(verificationControllerSource).toContain('!showLinuxDoPanelRef.current');
+    expect(verificationControllerSource).toContain('linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);');
+    expect(verificationControllerSource).toContain('canAcceptLinuxDoAccessUpdate(cookies, linuxDoClearanceBeforeVerifyRef.current, linuxDoRequireFreshClearanceRef.current)');
+  });
+
   it('sends linux.do level Cloudflare errors to the verification panel', () => {
-    const refreshLevelBlock = appSource.match(/const refreshLinuxDoLevel = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const refreshLevelBlock = accountControllerSource.match(/const refreshLinuxDoLevel = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(refreshLevelBlock).toContain('isLinuxDoCloudflareError(error)');
     expect(refreshLevelBlock).toContain("showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证')");
@@ -949,15 +975,15 @@ describe('Android App experience guards', () => {
   });
 
   it('saves NodeSeek WebView verification cookies before returning to lists', () => {
-    expect(appSource).toContain('readNodeSeekCookiesFromWebView');
-    expect(appSource).toContain('rememberCurrentNodeSeekCookies');
+    expect(accountControllerSource).toContain('readNodeSeekCookiesFromWebView');
+    expect(accountControllerSource).toContain('rememberCurrentNodeSeekCookies');
     expect(appSource).toContain('rememberVisibleNodeSeekCookies');
     expect(appSource).toContain('onRememberNodeSeekCookies={rememberVisibleNodeSeekCookies}');
-    expect(appSource).toContain('showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId');
+    expect(accountControllerSource).toContain('showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId');
     expect(appSource).toContain('nodeSeekWebViewCookieHeaderRef');
     expect(appSource).toContain('nodeSeekWebViewUserAgentRef');
-    expect(appSource).toContain('sanitizeNodeSeekUserAgent(data.userAgent)');
-    expect(appSource).toContain('parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader)');
+    expect(accountControllerSource).toContain('sanitizeNodeSeekUserAgent(data.userAgent)');
+    expect(accountControllerSource).toContain('parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader)');
     expect(moreScreenSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
     expect(moreScreenSource).toContain('type: "nodeseek-login"');
     expect(moreScreenSource).not.toContain('nodeseek-login-probe');
@@ -1014,18 +1040,34 @@ describe('Android App experience guards', () => {
   });
 
   it('does not treat Cloudflare-only NodeSeek verification as logged-in actions', () => {
-    expect(appSource).toContain('hasNodeSeekLoginCookie');
-    expect(appSource).toContain('canUseNodeSeekActions={hasNodeSeekLoginCookie}');
-    expect(moreScreenSource).toContain('hasNodeSeekLoginCookie ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
+    expect(topicActionsControllerSource).toContain('const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);');
+    expect(appSource).toContain('canUseNodeSeekActions={canUseNodeSeekActions}');
+    expect(moreScreenSource).toContain('nodeSeekSession.canWrite ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
     expect(sessionControllerSource).toContain('removeNodeSeekLoginCookies');
+  });
+
+  it('passes MoreScreen one canonical session view model instead of login booleans', () => {
+    const moreScreenSignature = moreScreenSource.match(/function MoreScreen\(\{[\s\S]*?\}: \{([\s\S]*?)\}\) \{/)?.[1] || '';
+    const renderMoreBlock = appSource.match(/const renderMoreTab = useCallback\(\(\) => \([\s\S]*?\n  \), \[[^\]]*\]\);/)?.[0] || '';
+
+    expect(moreScreenSignature).toContain('sessionViewModels: SiteSessionViewModels;');
+    expect(moreScreenSignature).not.toContain('hasNodeSeekLoginCookie: boolean;');
+    expect(moreScreenSignature).not.toContain('hasYaohuoCookie: boolean;');
+    expect(moreScreenSignature).not.toContain('hasLinuxDoClearance: boolean;');
+    expect(moreScreenSignature).not.toContain('hasLinuxDoLogin: boolean;');
+    expect(renderMoreBlock).toContain('sessionViewModels={siteSessionViewModels}');
+    expect(renderMoreBlock).not.toContain('hasNodeSeekLoginCookie=');
+    expect(renderMoreBlock).not.toContain('hasYaohuoCookie=');
+    expect(renderMoreBlock).not.toContain('hasLinuxDoClearance=');
+    expect(renderMoreBlock).not.toContain('hasLinuxDoLogin=');
   });
 
   it('requires a real NodeSeek login cookie before enabling login-only actions', () => {
     const saveCookieBlock = sessionControllerSource.match(/const saveNodeSeekCookieHeader = useCallback[\s\S]*?\n\n  const loadNodeSeekCookieForSource/)?.[0] || '';
-    const rememberBlock = appSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const loginMessageBlock = appSource.match(/const handleLoginMessage = useCallback\(.*?=> \{([\s\S]*?)\n  \}, \[\]\);/)?.[1] || '';
+    const rememberBlock = accountControllerSource.match(/const rememberCurrentNodeSeekCookies = useCallback\(async[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const loginMessageBlock = accountControllerSource.match(/const handleLoginMessage = useCallback\(.*?=> \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
 
-    expect(saveCookieBlock).toContain('setHasNodeSeekLoginCookie(summary.loggedIn);');
+    expect(saveCookieBlock).toContain("updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, true, summary.loggedIn));");
     expect(saveCookieBlock).not.toContain('setHasNodeSeekLoginCookie(summary.loggedIn || verifiedByPage);');
     expect(rememberBlock).toContain("notify(summary.loggedIn ? '已检测到 NodeSeek 登录 Cookie，已保存在本机。' : '已检测到 NodeSeek 验证信息，已保存在本机。');");
     expect(rememberBlock).not.toContain('summary.loggedIn || webLoginDetectedRef.current');
@@ -1165,33 +1207,34 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps successful topic actions local instead of reopening the whole topic', () => {
-    const interactBlock = appSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const bookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const nodeSeekCollectionBlock = appSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const voteBlock = appSource.match(/const votePoll = useCallback\(async \(poll: TopicPoll, optionIds: string\[\]\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const interactBlock = topicActionsControllerSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const bookmarkBlock = topicActionsControllerSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const nodeSeekCollectionBlock = topicActionsControllerSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const voteBlock = topicActionsControllerSource.match(/const votePoll = useCallback\(async \(poll: TopicPoll, optionIds: string\[\]\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
-    expect(appSource).toContain('applyInteractionToTopic');
-    expect(appSource).toContain('applyInteractionToReplies');
-    expect(appSource).toContain('applyBookmarkToTopic');
-    expect(appSource).toContain('applyNodeSeekCollectionToTopic');
-    expect(appSource).toContain('applyPollVoteToTopic');
-    expect(appSource).toContain('beginOptimisticAction');
-    expect(appSource).toContain('completeOptimisticAction');
-    expect(appSource).toContain('runOptimisticActionQueue');
-    expect(appSource).toContain('try {\n        succeeded = await sendDesired(desiredActive);');
-    expect(appSource).toContain('applyDisplayed(completed.state.confirmed);');
-    expect(appSource).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {\n      return;\n    }\n    const transition = beginOptimisticAction');
-    expect(appSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?desiredActive/);
-    expect(appSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?desiredActive/);
-    expect(appSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?desiredActive/);
-    expect(appSource).toMatch(/buildNodeSeekCollectionRequest[\s\S]*?desiredActive/);
-    expect(appSource).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(appSource).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(appSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(topicActionsControllerSource).toContain('applyInteractionToTopic');
+    expect(topicActionsControllerSource).toContain('applyInteractionToReplies');
+    expect(topicActionsControllerSource).toContain('applyBookmarkToTopic');
+    expect(topicActionsControllerSource).toContain('applyNodeSeekCollectionToTopic');
+    expect(topicActionsControllerSource).toContain('applyPollVoteToTopic');
+    expect(topicActionsControllerSource).toContain('beginOptimisticAction');
+    expect(topicActionsControllerSource).toContain('completeOptimisticAction');
+    expect(topicActionsControllerSource).toContain('runOptimisticActionQueue');
+    expect(topicActionsControllerSource).toContain('try {\n        succeeded = await sendDesired(desiredActive);');
+    expect(topicActionsControllerSource).toContain('applyDisplayed(completed.state.confirmed);');
+    expect(topicActionsControllerSource).toContain('if (!isCurrentTopicActionRequest(requestOwner)) {\n      return;\n    }\n    const transition = beginOptimisticAction');
+    expect(topicActionsControllerSource).toMatch(/buildLinuxDoLikeRequest[\s\S]*?desiredActive/);
+    expect(topicActionsControllerSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?desiredActive/);
+    expect(topicActionsControllerSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?desiredActive/);
+    expect(topicActionsControllerSource).toMatch(/buildNodeSeekCollectionRequest[\s\S]*?desiredActive/);
+    expect(topicActionsControllerSource).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
+    expect(topicActionsControllerSource).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
+    expect(topicActionsControllerSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
     expect(interactBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(interactBlock).toContain('startOptimisticTopicAction({');
     expect(interactBlock).toContain("mode: desiredActive ? 'add' as const : 'remove' as const");
-    expect(interactBlock).toContain('isCurrent: () => currentTopicKeyRef.current === requestTopicKey');
+    expect(interactBlock).toContain('const requestOwner = startTopicActionRequest(requestTopicKey);');
+    expect(interactBlock).toContain('owner: requestOwner');
     expect(bookmarkBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(bookmarkBlock).toContain('startOptimisticTopicAction({');
     expect(bookmarkBlock).toContain('optimisticTopicActionsRef.current[actionKey]?.desired === true');
@@ -1199,13 +1242,26 @@ describe('Android App experience guards', () => {
     expect(nodeSeekCollectionBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(nodeSeekCollectionBlock).toContain('startOptimisticTopicAction({');
     expect(voteBlock).toContain('const requestTopicKey = topicKey(detail);');
-    expect(voteBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
+    expect(voteBlock).toContain('const requestOwner = startTopicActionRequest(requestTopicKey);');
+    expect(voteBlock).toContain('if (!isCurrentTopicActionRequest(requestOwner)) {');
     expect(voteBlock).toContain('voteIds: optionIds');
     expect(voteBlock).not.toContain('voteId: optionIds[0]');
   });
 
+  it('uses request ownership for stale Android write operations', () => {
+    const writeActionBlock = topicActionsControllerSource.match(/const runNodeSeekRequest = useCallback[\s\S]*?\n  const toggleReplyComposer/)?.[0] || topicActionsControllerSource;
+
+    expect(topicActionsControllerSource).toContain("createRequestOwner('topic-action')");
+    expect(topicActionsControllerSource).toContain('startTopicActionRequest');
+    expect(topicActionsControllerSource).toContain('isCurrentTopicActionRequest');
+    expect(writeActionBlock).toContain('const requestOwner = options.owner || startTopicActionRequest(options.key || success);');
+    expect(writeActionBlock).toContain('isCurrentTopicActionRequest(requestOwner)');
+    expect(writeActionBlock).not.toContain('currentTopicKeyRef.current === requestTopicKey');
+    expect(writeActionBlock).not.toContain('currentTopicKeyRef.current !== requestTopicKey');
+  });
+
   it('updates visible reaction counts through optimistic desired states', () => {
-    const interactBlock = appSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const interactBlock = topicActionsControllerSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const linuxDoBlock = interactBlock.match(/if \(detail\?\.source === 'linuxdo'\) \{([\s\S]*?)\n    if \(detail\?\.source !== 'nodeseek'\)/)?.[1] || '';
     const nodeSeekBlock = interactBlock;
     const linuxDoPatchIndex = linuxDoBlock.indexOf("mode: desiredActive ? 'add' as const : 'remove' as const");
@@ -1222,8 +1278,8 @@ describe('Android App experience guards', () => {
   });
 
   it('updates original-site collection buttons before waiting for the write request', () => {
-    const nodeSeekCollectionBlock = appSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const linuxDoBookmarkBlock = appSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const nodeSeekCollectionBlock = topicActionsControllerSource.match(/const collectOnNodeSeekSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const linuxDoBookmarkBlock = topicActionsControllerSource.match(/const bookmarkOnLinuxDoSite = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
     const nodeSeekPatchIndex = nodeSeekCollectionBlock.indexOf('applyDisplayed: (desiredActive) =>');
     const nodeSeekRequestIndex = nodeSeekCollectionBlock.indexOf('buildNodeSeekCollectionRequest');
     const linuxDoPatchIndex = linuxDoBookmarkBlock.indexOf('applyDisplayed: (desiredActive) =>');
@@ -1241,7 +1297,7 @@ describe('Android App experience guards', () => {
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
     const refreshTopicBlock = topicControllerSource.match(/const refreshTopic = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const refreshWholeTopicBlock = topicControllerSource.match(/const refreshWholeTopic = useCallback[\s\S]*?\n\n  const toggleQuotedFloor/)?.[0] || '';
-    const submitReplyBlock = appSource.match(/const submitReply = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
+    const submitReplyBlock = topicActionsControllerSource.match(/const submitReply = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
     expect(refreshRepliesBlock).toContain('getYaohuoRepliesDirect');
     expect(refreshRepliesBlock).toContain('getReplies');
@@ -1260,11 +1316,12 @@ describe('Android App experience guards', () => {
     expect(refreshTopicBlock).toContain('void refreshTopicReplies();');
     expect(refreshTopicBlock).not.toContain('openTopic(');
     expect(refreshWholeTopicBlock).toContain('void openTopic(detail, true);');
-    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
-    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?replyTarget[\s\S]*?\{ refreshTopic: false, isCurrent: \(\) => currentTopicKeyRef\.current === requestTopicKey \}/);
+    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
+    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
+    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?replyTarget[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
     expect(submitReplyBlock).toContain('const requestTopicKey = topicKey(detail);');
-    expect(submitReplyBlock).toContain('if (currentTopicKeyRef.current !== requestTopicKey) {');
+    expect(submitReplyBlock).toContain('const requestOwner = startTopicActionRequest(requestTopicKey);');
+    expect(submitReplyBlock).toContain('if (!isCurrentTopicActionRequest(requestOwner)) {');
     expect(submitReplyBlock.match(/await refreshTopicReplies\(\{ silent: true, afterSubmit: true \}\);/g) || []).toHaveLength(3);
     expect(topicScreenSource).toContain('onRefreshWholeTopic');
     expect(topicScreenSource).toContain('刷新评论');
@@ -1391,14 +1448,14 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale pending linux.do topics when closing the verification panel', () => {
-    const block = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const block = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
 
     expect(block).toContain('pendingLinuxDoTopicRef.current = null;');
   });
 
   it('does not let a stale linux.do topic verification reopen after manual close', () => {
-    const closeBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
-    const cloudflareBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const closeBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const cloudflareBlock = verificationControllerSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
     const openTopicBlock = topicControllerSource.match(/const openTopic = useCallback[\s\S]*?\n\n  const refreshTopicReplies/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoDismissedVerificationTopicKeyRef = useRef<string | null>(null);');
@@ -1412,8 +1469,8 @@ describe('Android App experience guards', () => {
   });
 
   it('returns to the pending linux.do topic only after the verified panel is closed', () => {
-    const closeBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
-    const afterCloseBlock = appSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
+    const closeBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{([\s\S]*?)\n  \}, \[[^\]]*\]\);/)?.[1] || '';
+    const afterCloseBlock = verificationControllerSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('linuxDoPendingTopicVerifiedRef');
     expect(appSource).toContain('linuxDoVerifiedRetryTopicKeyRef');
@@ -1424,7 +1481,7 @@ describe('Android App experience guards', () => {
     expect(closeBlock).toContain('linuxDoPendingReopenTopicAfterCloseRef.current = pendingTopic;');
     expect(closeBlock).not.toContain("setScreen('topic');");
     expect(closeBlock).not.toContain('openTopicRef.current?.(pendingTopic, true);');
-    expect(appSource).toContain('LINUXDO_PANEL_CLOSE_SETTLE_MS');
+    expect(verificationControllerSource).toContain('LINUXDO_PANEL_CLOSE_SETTLE_MS');
     expect(afterCloseBlock).toContain('linuxDoPanelCloseSettleTimerRef');
     expect(afterCloseBlock).toContain('setTimeout(() =>');
     expect(afterCloseBlock).toContain('}, LINUXDO_PANEL_CLOSE_SETTLE_MS);');
@@ -1453,7 +1510,7 @@ describe('Android App experience guards', () => {
   });
 
   it('closes the linux.do verification panel automatically after detecting a pending topic', () => {
-    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(checkLinuxDoBlock).toContain('linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);');
     expect(checkLinuxDoBlock).toContain('if (linuxDoPendingTopicVerifiedRef.current) {');
@@ -1465,7 +1522,7 @@ describe('Android App experience guards', () => {
     const cloudflareBlock = openTopicBlock.match(/if \(isLinuxDoCloudflareError\(error\)\) \{([\s\S]*?)\n        \}/)?.[1] || '';
     const changeScreenBlock = appSource.match(/const changeScreen = useCallback\(\(nextScreen: Screen\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
-    expect(appSource).toContain('const handleLinuxDoCloudflareForTopic = useCallback');
+    expect(verificationControllerSource).toContain('const handleLinuxDoCloudflareForTopic = useCallback');
     expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current && linuxDoVerifiedRetryTopicKeyRef.current !== topicKey(topic)');
     expect(openTopicBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current = null;');
     expect(changeScreenBlock).toContain("if (nextScreen !== 'topic')");
@@ -1507,10 +1564,10 @@ describe('Android App experience guards', () => {
 
   it('ignores stale linux.do verification WebView events after closing or refreshing the panel', () => {
     const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
-    const linuxDoMessageBlock = appSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
+    const linuxDoMessageBlock = verificationControllerSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoWebViewSessionRef = useRef(0);');
-    expect(appSource).toContain('webViewKey !== linuxDoWebViewSessionRef.current');
+    expect(verificationControllerSource).toContain('webViewKey !== linuxDoWebViewSessionRef.current');
     expect(linuxDoMessageBlock).toContain('webViewKey?: number');
     expect(linuxDoMessageBlock).toContain('showLinuxDoPanelRef.current');
     expect(linuxDoPanelBlock).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
@@ -1520,7 +1577,7 @@ describe('Android App experience guards', () => {
 
   it('unmounts the linux.do verification WebView before hiding the modal', () => {
     const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
-    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const closeLinuxDoBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);');
     expect(closeLinuxDoBlock.indexOf('setMountLinuxDoWebView(false);')).toBeGreaterThan(-1);
@@ -1530,10 +1587,10 @@ describe('Android App experience guards', () => {
   });
 
   it('does not let a new linux.do verification request cancel an in-flight close', () => {
-    const changeLinuxDoBlock = appSource.match(/const changeLinuxDoPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const showLinuxDoBlock = appSource.match(/const showLinuxDoVerification = useCallback\(\(message = 'linux\.do 需要完成 Cloudflare 验证'\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const afterCloseBlock = appSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
+    const changeLinuxDoBlock = verificationControllerSource.match(/const changeLinuxDoPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const showLinuxDoBlock = verificationControllerSource.match(/const showLinuxDoVerification = useCallback\(\(message = 'linux\.do 需要完成 Cloudflare 验证'\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const closeLinuxDoBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const afterCloseBlock = verificationControllerSource.match(/useEffect\(\(\) => \{\s*if \(showLinuxDoPanel \|\| linuxDoPanelClosingSessionRef\.current === null\) \{[\s\S]*?\n  \}, \[[^\]]*showLinuxDoPanel[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoPanelClosingSessionRef = useRef<number | null>(null);');
     expect(appSource).toContain('const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);');
@@ -1561,7 +1618,7 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps linux.do verified retry failures from remounting the verification WebView', () => {
-    const retryBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
+    const retryBlock = verificationControllerSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{([\s\S]*?)\n  \}, \[[^\]]+\]\);/)?.[1] || '';
     const verifiedRetryBlock = retryBlock.match(/if \(linuxDoVerifiedRetryTopicKeyRef\.current === requestTopicKey\) \{([\s\S]*?)\n    \}/)?.[1] || '';
 
     expect(retryBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');
@@ -1581,10 +1638,10 @@ describe('Android App experience guards', () => {
   });
 
   it('cancels in-flight linux.do verification checks when the panel closes or reloads', () => {
-    const resetLinuxDoBlock = appSource.match(/const resetLinuxDoWebView = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const checkLinuxDoBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const appStateBlock = appSource.match(/AppState\.addEventListener\('change', \(next\) => \{[\s\S]*?\n    \}\);/)?.[0] || '';
+    const resetLinuxDoBlock = verificationControllerSource.match(/const resetLinuxDoWebView = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const closeLinuxDoBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const checkLinuxDoBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const appStateBlock = verificationControllerSource.match(/const stopLinuxDoVerificationForInactiveApp = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(resetLinuxDoBlock).toContain('checkingRequestIdRef.current += 1;');
     expect(resetLinuxDoBlock).toContain('const nextSession = nextLinuxDoWebViewSession();');
@@ -1631,7 +1688,7 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale linux.do verification errors after the WebView responds again', () => {
-    const linuxDoMessageBlock = appSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
+    const linuxDoMessageBlock = verificationControllerSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(linuxDoMessageBlock).toContain("setLinuxDoWebViewErrorForSession('', webViewKey);");
   });
@@ -1698,32 +1755,33 @@ describe('Android App experience guards', () => {
 
   it('stops the linux.do verification WebView before hiding it', () => {
     expect(appSource).toContain('closeLinuxDoPanel');
-    expect(appSource).toContain('linuxDoWebViewRef.current?.stopLoading()');
+    expect(verificationControllerSource).toContain('linuxDoWebViewRef.current?.stopLoading()');
     expect(appSource).toContain('onShowLinuxDoPanelChange={changeLinuxDoPanel}');
     expect(moreScreenSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
   });
 
   it('clears stale linux.do login cookies after expired write actions while preserving verification', () => {
-    const runLinuxDoBlock = appSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const runLinuxDoBlock = topicActionsControllerSource.match(/const runLinuxDoRequest = useCallback\(async \([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(runLinuxDoBlock).toContain('const remainingAccess = await clearLinuxDoAccess();');
-    expect(runLinuxDoBlock).toContain('setHasLinuxDoClearance(Boolean(remainingAccess?.cookieHeader));');
-    expect(runLinuxDoBlock).toContain("summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '')).names");
+    expect(runLinuxDoBlock).toContain('updateLinuxDoSession(remainingAccess?.cookieHeader');
+    expect(runLinuxDoBlock).toContain("type: 'verification-succeeded'");
+    expect(runLinuxDoBlock).toContain("type: 'login-expired'");
   });
 
   it('resets linux.do verified state when status detection finds no cookie', () => {
-    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader \|\| !canAcceptLinuxDoAccessUpdate\(cookies, linuxDoClearanceBeforeVerifyRef\.current, linuxDoRequireFreshClearanceRef\.current\)\) \{([\s\S]*?)\n      \}/)?.[1] || '';
 
-    expect(noCookieBlock).toContain('setHasLinuxDoClearance(false);');
-    expect(noCookieBlock).toContain('setHasLinuxDoLogin(summary.loggedIn);');
+    expect(noCookieBlock).toContain('updateLinuxDoSession({');
+    expect(noCookieBlock).toContain("type: 'verification-required'");
   });
 
   it('cancels the pending linux.do topic return when verification detection fails', () => {
-    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const noCookieBlock = checkLinuxDoCookieBlock.match(/if \(!canStoreLinuxDoAccess\(cookies\) \|\| !cookieHeader \|\| !canAcceptLinuxDoAccessUpdate\(cookies, linuxDoClearanceBeforeVerifyRef\.current, linuxDoRequireFreshClearanceRef\.current\)\) \{([\s\S]*?)\n      \}/)?.[1] || '';
     const catchBlock = checkLinuxDoCookieBlock.match(/catch \(error\) \{([\s\S]*?)\n    \} finally/)?.[1] || '';
-    const closeLinuxDoBlock = appSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const closeLinuxDoBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(noCookieBlock).not.toContain('pendingLinuxDoTopicRef.current = null;');
     expect(noCookieBlock).not.toContain('linuxDoDismissedVerificationTopicKeyRef.current = topicKey(pendingTopic);');
@@ -1733,7 +1791,7 @@ describe('Android App experience guards', () => {
   });
 
   it('requires a new linux.do cf_clearance before verification succeeds', () => {
-    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoClearanceBeforeVerifyRef = useRef<string | null>(null);');
     expect(appSource).toContain('const linuxDoRequireFreshClearanceRef = useRef(false);');
@@ -1749,10 +1807,10 @@ describe('Android App experience guards', () => {
   });
 
   it('requires fresh linux.do clearance only for forced verification flows', () => {
-    const changeLinuxDoBlock = appSource.match(/const changeLinuxDoPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
-    const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const verifyFromTopicBlock = appSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const changeLinuxDoBlock = verificationControllerSource.match(/const changeLinuxDoPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const cloudflareHandlerBlock = verificationControllerSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const verifyFromTopicBlock = verificationControllerSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(changeLinuxDoBlock).toContain('linuxDoRequireFreshClearanceRef.current = false;');
     expect(cloudflareHandlerBlock).toContain('linuxDoRequireFreshClearanceRef.current = true;');
@@ -1761,20 +1819,20 @@ describe('Android App experience guards', () => {
   });
 
   it('requires linux.do cf_clearance before saving verification state', () => {
-    const checkLinuxDoCookieBlock = appSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const checkLinuxDoCookieBlock = verificationControllerSource.match(/const checkLinuxDoCookie = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(appSource).toContain('canStoreLinuxDoAccess');
+    expect(verificationControllerSource).toContain('canStoreLinuxDoAccess');
     expect(checkLinuxDoCookieBlock).toContain('!canStoreLinuxDoAccess(cookies)');
     expect(checkLinuxDoCookieBlock).toContain('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
     expect(checkLinuxDoCookieBlock).not.toContain('if (!cookieHeader) {');
   });
 
   it('clears saved linux.do access before topic-triggered verification', () => {
-    const cloudflareHandlerBlock = appSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const verifyFromTopicBlock = appSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const cloudflareHandlerBlock = verificationControllerSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const verifyFromTopicBlock = verificationControllerSource.match(/const verifyLinuxDoFromTopic = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(appSource).toContain('clearLinuxDoSavedClearance');
-    expect(appSource).toContain('const refreshLinuxDoClearanceState = useCallback');
+    expect(verificationControllerSource).toContain('clearLinuxDoSavedClearance');
+    expect(verificationControllerSource).toContain('const refreshLinuxDoClearanceState = useCallback');
     expect(cloudflareHandlerBlock).toContain('await refreshLinuxDoClearanceState();');
     expect(verifyFromTopicBlock).toContain('await refreshLinuxDoClearanceState();');
   });
@@ -1783,9 +1841,9 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('navigator.userAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgentRef');
-    expect(appSource).toContain('sanitizeLinuxDoUserAgent(data.userAgent)');
+    expect(verificationControllerSource).toContain('sanitizeLinuxDoUserAgent(data.userAgent)');
     expect(moreScreenSource).toContain('userAgent={linuxDoWebViewUserAgent}');
-    expect(appSource).toContain('saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined)');
+    expect(verificationControllerSource).toContain('saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined)');
     expect(localLinuxDoSource).toContain("DEFAULT_LINUXDO_ANDROID_USER_AGENT");
     expect(localLinuxDoSource).toContain("'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT");
   });
@@ -1794,12 +1852,12 @@ describe('Android App experience guards', () => {
     expect(moreScreenSource).toContain('cookie: document.cookie || ""');
     expect(appSource).toContain('linuxDoWebViewCookieHeader');
     expect(appSource).toContain('linuxDoWebViewCookieHeaderRef');
-    expect(appSource).toContain('parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)');
-    expect(appSource).toContain('await probeLinuxDoPage();');
+    expect(verificationControllerSource).toContain('parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)');
+    expect(verificationControllerSource).toContain('await probeLinuxDoPage();');
   });
 
   it('merges saved linux.do login cookies when detecting refreshed clearance', () => {
-    const readCurrentLinuxDoCookiesBlock = appSource.match(/const readCurrentLinuxDoCookies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const readCurrentLinuxDoCookiesBlock = verificationControllerSource.match(/const readCurrentLinuxDoCookies = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(readCurrentLinuxDoCookiesBlock).toContain('loadLinuxDoAccess()');
     expect(readCurrentLinuxDoCookiesBlock).toContain("parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')");
@@ -1818,13 +1876,13 @@ describe('Android App experience guards', () => {
   });
 
   it('waits briefly for linux.do clearance after Cloudflare verification finishes', () => {
-    const waitBlock = appSource.match(/const waitForLinuxDoClearance = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const waitBlock = verificationControllerSource.match(/const waitForLinuxDoClearance = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(appSource).toContain('LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS');
-    expect(appSource).toContain('LINUXDO_CLEARANCE_DETECT_INTERVAL_MS');
-    expect(appSource).toContain('const waitForLinuxDoClearance');
-    expect(appSource).toContain('while (Date.now() < deadline)');
-    expect(appSource).toContain('await new Promise((resolve) => setTimeout(resolve, LINUXDO_CLEARANCE_DETECT_INTERVAL_MS));');
+    expect(verificationControllerSource).toContain('LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS');
+    expect(verificationControllerSource).toContain('LINUXDO_CLEARANCE_DETECT_INTERVAL_MS');
+    expect(verificationControllerSource).toContain('const waitForLinuxDoClearance');
+    expect(verificationControllerSource).toContain('while (Date.now() < deadline)');
+    expect(verificationControllerSource).toContain('await new Promise((resolve) => setTimeout(resolve, LINUXDO_CLEARANCE_DETECT_INTERVAL_MS));');
     expect(waitBlock).toContain('canStoreLinuxDoClearance(cookies)');
     expect(waitBlock).not.toContain('canStoreLinuxDoLogin(cookies)');
   });
@@ -1882,9 +1940,9 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale linux.do WebView clearance before topic-triggered verification', () => {
-    const clearSavedBlock = appSource.match(/const refreshLinuxDoClearanceState = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
+    const clearSavedBlock = verificationControllerSource.match(/const refreshLinuxDoClearanceState = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(appSource).toContain('clearLinuxDoWebViewClearance');
+    expect(verificationControllerSource).toContain('clearLinuxDoWebViewClearance');
     expect(clearSavedBlock).toContain('await clearLinuxDoSavedClearance();');
     expect(clearSavedBlock).toContain('await clearLinuxDoWebViewClearance();');
   });
@@ -1910,7 +1968,7 @@ describe('Android App experience guards', () => {
   });
 
   it('does not reuse stale linux.do WebView cookies after reset or clear', () => {
-    const resetBlock = appSource.match(/const resetLinuxDoWebView[\s\S]*?\n  }, \[\]\);/)?.[0] || '';
+    const resetBlock = verificationControllerSource.match(/const resetLinuxDoWebView[\s\S]*?\n  }, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(resetBlock).toContain("linuxDoWebViewCookieHeaderRef.current = '';");
     expect(resetBlock).toContain("setLinuxDoWebViewCookieHeader('');");

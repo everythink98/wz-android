@@ -17,6 +17,7 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { nodeSeekUserIdFromValue } from '../userNavigation';
+import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { FeedSource, Source, UserProfile } from '../types';
 import type { Screen } from '../appTypes';
@@ -49,6 +50,7 @@ export function useUserController({
   showYaohuoLogin: (message?: string) => void;
 }) {
   const userRequestIdRef = useRef(0);
+  const userRequestOwnerRef = useRef(createRequestOwner('user'));
   const userAbortRef = useRef<AbortController | null>(null);
   const userLoadingMoreCursorRef = useRef<string | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
@@ -93,6 +95,8 @@ export function useUserController({
       topics: user.topics || []
     };
     const requestId = ++userRequestIdRef.current;
+    const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${requestUser.source}:${requestUser.id || requestUser.username}:${nocache ? 'nocache' : 'cache'}`);
+    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     setSelectedUser(requestUser);
     setUserProfile(null);
     setUserError('');
@@ -105,7 +109,7 @@ export function useUserController({
         loadYaohuoCookieForSource(requestUser.source),
         loadNodeSeekCookieForSource(requestUser.source)
       ]);
-      if (requestId !== userRequestIdRef.current) {
+      if (!isCurrentUserRequest()) {
         return;
       }
       if (requestUser.source === 'yaohuo' && !yaohuoCookie) {
@@ -123,7 +127,7 @@ export function useUserController({
         yaohuoCookie,
         signal: controller.signal
       });
-      if (requestId !== userRequestIdRef.current) {
+      if (!isCurrentUserRequest()) {
         return;
       }
       setUserProfile(profile);
@@ -131,7 +135,7 @@ export function useUserController({
         notify('用户主页已更新');
       }
     } catch (error) {
-      if (requestId === userRequestIdRef.current) {
+      if (isCurrentUserRequest()) {
         const message = errorMessage(error);
         setUserError(message);
         if (isLinuxDoCloudflareError(error)) {
@@ -156,7 +160,7 @@ export function useUserController({
         }
       }
     } finally {
-      if (requestId === userRequestIdRef.current) {
+      if (isCurrentUserRequest()) {
         setUserBusy(false);
         setUserLoadingMore(false);
       }
@@ -181,6 +185,8 @@ export function useUserController({
       return;
     }
     const requestId = ++userRequestIdRef.current;
+    const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more:${current.nextTopicsCursor}`);
+    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     const controller = startAbortableRequest(userAbortRef);
     userLoadingMoreCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMore(true);
@@ -190,7 +196,7 @@ export function useUserController({
         loadYaohuoCookieForSource(current.source),
         loadNodeSeekCookieForSource(current.source)
       ]);
-      if (requestId !== userRequestIdRef.current) {
+      if (!isCurrentUserRequest()) {
         return;
       }
       if (current.source === 'yaohuo' && !yaohuoCookie) {
@@ -209,7 +215,7 @@ export function useUserController({
         cursor: current.nextTopicsCursor,
         signal: controller.signal
       });
-      if (requestId !== userRequestIdRef.current) {
+      if (!isCurrentUserRequest()) {
         return;
       }
       setUserProfile((previous) => {
@@ -226,7 +232,7 @@ export function useUserController({
       });
       notify('用户帖子已加载更多');
     } catch (error) {
-      if (requestId === userRequestIdRef.current && !isCanceledRequest(error)) {
+      if (isCurrentUserRequest() && !isCanceledRequest(error)) {
         const message = errorMessage(error);
         setUserError(message);
         if (isLinuxDoCloudflareError(error)) {
@@ -249,7 +255,7 @@ export function useUserController({
         notify(message);
       }
     } finally {
-      if (requestId === userRequestIdRef.current) {
+      if (isCurrentUserRequest()) {
         setUserLoadingMore(false);
         userLoadingMoreCursorRef.current = null;
       }
