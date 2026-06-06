@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
 const appSource = readProjectFile('android-app', 'App.tsx');
 const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
 
@@ -10,9 +12,9 @@ describe('linux.do level UI guards', () => {
     expect(moreScreenSource).toContain('title="账号与验证"');
     expect(moreScreenSource).toContain('label="linux.do 等级"');
     expect(moreScreenSource).not.toContain('title="linux.do 等级"');
-    expect(moreScreenSource).toContain("label: '等级进度'");
-    expect(moreScreenSource).toContain("label: '活跃数据'");
-    expect(moreScreenSource).toContain('LinuxDoLevelPanel');
+    expect(morePanelsSource).toContain("label: '等级进度'");
+    expect(morePanelsSource).toContain("label: '活跃数据'");
+    expect(moreUiSource).toContain('LinuxDoLevelPanel');
     expect(accountControllerSource).toContain('getLinuxDoLevelProfile');
   });
 

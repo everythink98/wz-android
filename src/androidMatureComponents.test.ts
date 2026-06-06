@@ -12,6 +12,7 @@ const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedS
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
 const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const replyItemSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'ReplyItem.tsx');
 const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
 const readerDataSource = readProjectFile('android-app', 'src', 'readerData.ts');
 
@@ -56,7 +57,7 @@ describe('Android mature component replacements', () => {
   it('keeps ordinary avatars and preview thumbnails on expo-image while preserving React Native Image for full-size detail images', () => {
     expect(imagePreviewSource).toContain("import { Image as ExpoImage } from 'expo-image';");
     expect(imagePreviewSource).toContain('<ExpoImage source={imageSourceFromUrl(url)}');
-    expect(topicScreenSource).toContain("import { Image as ExpoImage } from 'expo-image';");
+    expect(replyItemSource).toContain("import { Image as ExpoImage } from 'expo-image';");
     expect(userScreenSource).toContain("import { Image as ExpoImage } from 'expo-image';");
     expect(appSource).toContain("import {\n  AppState,");
     expect(appSource).toContain('Image,');

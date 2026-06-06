@@ -5,19 +5,15 @@ import {
   AppState,
   BackHandler,
   FlatList,
-  Image,
   InteractionManager,
   KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
-  Pressable,
   SafeAreaView,
   Share,
   ScrollView,
-  StyleSheet,
-  Text,
   ToastAndroid,
   useWindowDimensions,
   View
@@ -30,15 +26,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
-import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import {
-  useIMGElementProps,
-  useIMGElementState,
-  type CustomBlockRenderer,
-  type CustomMixedRenderer
-} from 'react-native-render-html';
+import { WebView } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './src/nodeseekCookies';
 import {
   clearRecords,
@@ -46,7 +34,6 @@ import {
   removeRecords,
   toggleFavorite,
   toggleFollowedUser,
-  topicKey,
   type ReaderSettings,
   type TopicRecord
 } from './src/readerData';
@@ -54,9 +41,12 @@ import { useReaderDataController } from './src/app/useReaderDataController';
 import { useBackupStatusController } from './src/app/useBackupStatusController';
 import { useFeedController } from './src/app/useFeedController';
 import { useHtmlRenderingController } from './src/app/useHtmlRenderingController';
+import { useHiddenBrowserFetchController, LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './src/app/useHiddenBrowserFetchController';
+import { useImagePreviewController } from './src/app/useImagePreviewController';
 import { useSearchController } from './src/app/useSearchController';
 import { useSessionController, type LinuxDoBrowserFetchRequest, type NodeSeekBrowserFetchRequest } from './src/app/useSessionController';
 import { useTopicController } from './src/app/useTopicController';
+import { useTopicNavigationController } from './src/app/useTopicNavigationController';
 import { useUserController } from './src/app/useUserController';
 import { useVerificationController } from './src/app/useVerificationController';
 import { useAccountController } from './src/app/useAccountController';
@@ -64,33 +54,27 @@ import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTo
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from './src/linuxdoCookieBridge';
 import type { Reply, Topic, TopicDetail, UserProfile } from './src/types';
 import type { OptimisticActionState } from './src/topicActionState';
-import { createImagePreviewList, dataImageFileFromUrl, imageRequestHeadersForUrl, imageSourceFromUrl, inlineForumImageAlignmentStyle, inlineForumImageDisplaySize, INLINE_FORUM_IMAGE_TAG, isForumInlineSizedImage, isHttpOrHttpsUrl, isInlineForumImage, isPreviewableImageUrl, normalizeImagePreviewUrl, type ImagePreviewList, withForumImageDimensions } from './src/htmlImages';
+import { isHttpOrHttpsUrl } from './src/htmlImages';
 import { filterRepliesWithImages } from './src/topicDerivedData';
-import { createEmptyTopicSession, pushTopicSession, snapshotFromTopicSession, topicSessionFromSnapshot } from './src/topicSessionState';
+import { pushTopicSession } from './src/topicSessionState';
 import { shouldOpenLoginWebViewUrl } from './src/loginWebViewNavigation';
 import { createTopicListItemStateIndex } from './src/topicListItemState';
 import {
   contentWidthValue,
   createStyles,
-  createTheme,
-  fontFamilyValue,
-  lineHeightMultiplier
+  createTheme
 } from './src/theme';
 import type { LibraryTab } from './src/feedLogic';
-import {
-  errorMessage,
-  parseForumTopicLink
-} from './src/appUtils';
+import { errorMessage } from './src/appUtils';
 import type { LinuxDoLevelProfile } from './src/linuxdoLevel';
 import { filterRepliesByQuery } from './src/androidFeatureHelpers';
-import { safeFileName } from './src/backupFiles';
 import { TabBarIcon, tabNavItems } from './src/components/NavBar';
 import { triggerPressFeedback } from './src/components/AppControls';
 import { ImagePreviewModal } from './src/components/ImagePreviewModal';
 import { FeedScreen } from './src/screens/FeedScreen';
 import { MemoizedLinuxDoVerifyModal, MemoizedMoreScreen } from './src/screens/MoreScreen';
 import { TopicScreen, type TopicListItem } from './src/screens/TopicScreen';
-import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from './src/appTypes';
+import type { LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from './src/appTypes';
 import { LibraryScreen } from './src/screens/LibraryScreen';
 import { SearchScreen } from './src/screens/SearchScreen';
 import { UserScreen } from './src/screens/UserScreen';
@@ -137,115 +121,9 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-const NODESEEK_BROWSER_FETCH_SCRIPT = `
-(() => {
-  const requestId = __NODESEEK_BROWSER_FETCH_ID__;
-  const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;
-  const isChallengePage = () => {
-    const challengeText = [document.title || "", document.documentElement?.innerHTML || ""].join(" ");
-    return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
-  };
-  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || "").trim();
-  const restrictedNoticePattern = /权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|需要等级|requires?[^.]{0,40}(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|minimum (?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|must be (?:at least )?(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|登录后才能|请登录|permission denied|forbidden|private topic|not authorized|you do not have permission|you don't have permission/i;
-  const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
-  const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
-    || /^\\s*[{[]/.test(pageText());
-  const hasPendingVotePanel = () => {
-    const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
-      const style = window.getComputedStyle(element);
-      return style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity || "1") !== 0;
-    });
-    if (visibleMasks) {
-      return true;
-    }
-    return Array.from(document.querySelectorAll('input[name="vote-item"]')).some((input) => {
-      const inputId = input.getAttribute("id") || "";
-      const label = inputId ? document.querySelector('label[for="' + inputId.replace(/"/g, '\\"') + '"]') : null;
-      const labelText = (label?.querySelector(".vote-item-text")?.textContent || label?.textContent || "").trim();
-      return !(input.getAttribute("value") || "").trim() || !labelText;
-    });
-  };
-  const postResult = () => {
-    window.ReactNativeWebView.postMessage(JSON.stringify({
-      type: 'nodeseek-browser-fetch',
-      id: requestId,
-      url: location.href,
-      title: document.title || "",
-      challenge: isChallengePage(),
-      html: document.documentElement ? document.documentElement.outerHTML : "",
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
-    }));
-    try {
-      window.stop();
-    } catch {}
-  };
-  const deadline = Date.now() + 15000;
-  const waitForReadablePage = () => {
-    if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {
-      postResult();
-      return;
-    }
-    setTimeout(waitForReadablePage, 500);
-  };
-  waitForReadablePage();
-})();
-true;
-`;
-
-const LINUXDO_BROWSER_FETCH_SCRIPT = `
-(() => {
-  const requestId = __LINUXDO_BROWSER_FETCH_ID__;
-  const challengePattern = /just a moment|checking your browser|cf-browser-verification|challenge-running|challenge-platform|cf-turnstile|cf_chl_|attention required|enable javascript and cookies|请稍候|正在检查/i;
-  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || "").trim();
-  const pageHtml = () => document.documentElement ? document.documentElement.outerHTML : "";
-  const isChallengePage = () => {
-    const challengeText = [document.title || "", pageText(), pageHtml()].join(" ");
-    return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
-  };
-  const isInteractiveChallengePage = () => {
-    const challengeText = [document.title || "", pageText(), pageHtml()].join(" ");
-    return Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response']"))
-      || /cf-turnstile|attention required|verify you are human|请完成验证|正在进行安全验证/i.test(challengeText);
-  };
-  const jsonText = () => {
-    const text = pageText();
-    return /^\\s*[{[]/.test(text) ? text : "";
-  };
-  const postResult = () => {
-    const json = jsonText();
-    const challenge = isChallengePage() || isInteractiveChallengePage();
-    window.ReactNativeWebView.postMessage(JSON.stringify({
-      type: 'linuxdo-browser-fetch',
-      id: requestId,
-      url: location.href,
-      title: document.title || "",
-      challenge,
-      body: json || pageHtml(),
-      userAgent: navigator.userAgent || "",
-      cookie: document.cookie || ""
-    }));
-  };
-  const deadline = Date.now() + 8000;
-  const waitForReadablePage = () => {
-    if (isInteractiveChallengePage() || (!isChallengePage() && jsonText()) || Date.now() >= deadline) {
-      postResult();
-      return;
-    }
-    setTimeout(waitForReadablePage, 500);
-  };
-  waitForReadablePage();
-})();
-true;
-`;
-
 
 function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
-}
-
-function normalizeImageCacheKey(url: string) {
-  return normalizeImagePreviewUrl(url).trim();
 }
 
 export default function App() {
@@ -301,6 +179,7 @@ export default function App() {
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPendingReopenTaskRef = useRef<DeferredNavigationTask | null>(null);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
+  const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const nodeSeekBrowserFetchIdRef = useRef(0);
@@ -408,7 +287,6 @@ export default function App() {
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
   const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
-  const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   screenRef.current = screen;
   topicRepliesRef.current = topicReplies;
   showLoginPanelRef.current = showLoginPanel;
@@ -521,151 +399,6 @@ export default function App() {
     };
   }, [theme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
-  const htmlBaseStyle = useMemo<HtmlBaseStyle>(() => ({
-    color: theme.ink,
-    fontFamily: fontFamilyValue(readerData.settings.fontFamily),
-    fontSize: Math.round(16 * readerData.settings.fontScale),
-    lineHeight: Math.round(16 * readerData.settings.fontScale * lineHeightMultiplier(readerData.settings.lineHeight))
-  }), [readerData.settings.fontFamily, readerData.settings.fontScale, readerData.settings.lineHeight, theme.ink]);
-  const htmlTagsStyles = useMemo<HtmlTagsStyles>(() => {
-    const htmlParagraph = {
-      color: theme.ink,
-      marginBottom: 10,
-      marginTop: 6
-    };
-    return {
-    body: {
-      color: theme.ink,
-      backgroundColor: 'transparent'
-    },
-    p: htmlParagraph,
-    div: {
-      color: theme.ink
-    },
-    span: {
-      color: theme.ink
-    },
-    h1: {
-      color: theme.ink,
-      fontWeight: '700',
-      lineHeight: Math.round(28 * readerData.settings.fontScale),
-      marginBottom: 8,
-      marginTop: 18
-    },
-    h2: {
-      color: theme.ink,
-      fontWeight: '700',
-      lineHeight: Math.round(26 * readerData.settings.fontScale),
-      marginBottom: 8,
-      marginTop: 18
-    },
-    h3: {
-      color: theme.ink,
-      fontWeight: '600',
-      lineHeight: Math.round(24 * readerData.settings.fontScale),
-      marginBottom: 6,
-      marginTop: 16
-    },
-    h4: {
-      color: theme.ink,
-      fontWeight: '600'
-    },
-    h5: {
-      color: theme.ink,
-      fontWeight: '600'
-    },
-    h6: {
-      color: theme.muted,
-      fontWeight: '600'
-    },
-    a: {
-      color: theme.primary,
-      textDecorationColor: theme.primary,
-      textDecorationLine: 'underline'
-    },
-    img: { borderRadius: 8 },
-    strong: {
-      color: theme.ink
-    },
-    b: {
-      color: theme.ink
-    },
-    em: {
-      color: theme.ink
-    },
-    li: {
-      color: theme.ink,
-      marginBottom: 4
-    },
-    ul: {
-      color: theme.ink,
-      marginBottom: 10,
-      marginTop: 8
-    },
-    ol: {
-      color: theme.ink,
-      marginBottom: 10,
-      marginTop: 8
-    },
-    blockquote: {
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
-      color: theme.muted,
-      marginBottom: 12,
-      marginTop: 12,
-      paddingHorizontal: 13,
-      paddingVertical: 11
-    },
-    pre: {
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 8,
-      marginBottom: 12,
-      marginTop: 12,
-      padding: 12
-    },
-    code: {
-      backgroundColor: 'transparent',
-      color: theme.ink
-    },
-    mark: {
-      backgroundColor: theme.surface2,
-      color: theme.ink
-    },
-    table: {
-      backgroundColor: 'transparent',
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth
-    },
-    th: {
-      color: theme.ink,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
-      paddingVertical: 7
-    },
-    td: {
-      color: theme.ink,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 8,
-      paddingVertical: 7
-    }
-    };
-  }, [readerData.settings.fontScale, theme]);
-  const htmlIgnoredStyles = useMemo<HtmlIgnoredStyles>(() => [
-    'backgroundColor',
-    'borderTopColor',
-    'borderRightColor',
-    'borderBottomColor',
-    'borderLeftColor',
-    'color',
-    'outlineColor',
-    'textDecorationColor'
-  ], []);
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
 
   const {
@@ -720,13 +453,58 @@ export default function App() {
     () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
     [libraryTab, readerData.favorites, readerData.history]
   );
-  const [inlineSizedImageUrls, setInlineSizedImageUrls] = useState<Record<string, true>>({});
-  const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
-  inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
-  useEffect(() => {
-    setInlineSizedImageUrls({});
-  }, [selectedTopic?.id, selectedTopic?.source]);
-  const { topicImageDeriver } = useHtmlRenderingController(`${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`);
+  const openExternalUrl = useCallback((url: string) => {
+    if (!isHttpOrHttpsUrl(url)) {
+      notify('仅支持打开 http/https 链接。');
+      return;
+    }
+    void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
+  }, [notify]);
+  const openImagePreviewFromRenderer = useCallback((url: string) => {
+    openImagePreviewRef.current(url);
+  }, []);
+  const openTopicFromHtml = useCallback((topic: Topic) => {
+    void openTopicRef.current?.(topic);
+  }, []);
+  const {
+    htmlBaseStyle,
+    htmlIgnoredStyles,
+    htmlRenderers,
+    htmlRenderersProps,
+    htmlTagsStyles,
+    inlineSizedImageUrls,
+    topicImageDeriver
+  } = useHtmlRenderingController({
+    onOpenExternalUrl: openExternalUrl,
+    onOpenImagePreview: openImagePreviewFromRenderer,
+    onOpenTopic: openTopicFromHtml,
+    selectedTopic,
+    settings: readerData.settings,
+    styles,
+    theme,
+    topicDetail,
+    topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`
+  });
+  const topicHtmlParts = useMemo(() => [
+    topicDetail?.contentHtml || '',
+    ...topicReplies.map((reply) => reply.contentHtml || ''),
+    ...Object.values(loadedQuotedReplies).map((reply) => reply.contentHtml || '')
+  ].filter(Boolean), [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]);
+  const {
+    closeImagePreview,
+    imagePreview,
+    openImagePreview,
+    savePreviewImage,
+    selectPreviewImage,
+    showNextImage,
+    showPreviousImage
+  } = useImagePreviewController({
+    htmlParts: topicHtmlParts,
+    inlineSizedImageUrls,
+    notify,
+    topicImageDeriver
+  });
+  openImagePreviewRef.current = openImagePreview;
   const filteredReplies = useMemo(() => {
     let base = topicReplies;
     if (replyFilter === 'author') {
@@ -738,102 +516,6 @@ export default function App() {
     }
     return filterRepliesByQuery(base, commentQuery);
   }, [commentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
-  const topicHtmlParts = useMemo(() => [
-    topicDetail?.contentHtml || '',
-    ...topicReplies.map((reply) => reply.contentHtml || ''),
-    ...Object.values(loadedQuotedReplies).map((reply) => reply.contentHtml || '')
-  ].filter(Boolean), [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]);
-  const topicHtmlPreviewParts = useMemo(() => (
-    topicHtmlParts.map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
-  ), [inlineSizedImageUrls, topicHtmlParts, topicImageDeriver]);
-  const topicHtmlPartsRef = useRef<string[]>(topicHtmlParts);
-  topicHtmlPartsRef.current = topicHtmlPreviewParts;
-  const markImageInlineSized = useCallback((url: string) => {
-    const clean = normalizeImageCacheKey(url);
-    if (!clean || inlineSizedImageUrlsRef.current[clean]) {
-      return;
-    }
-    setInlineSizedImageUrls((current) => current[clean] ? current : { ...current, [clean]: true });
-  }, []);
-  const openImagePreview = useCallback((url: string) => {
-    const clean = normalizeImageCacheKey(url);
-    if (clean && inlineSizedImageUrlsRef.current[clean]) {
-      return;
-    }
-    const nextPreview = createImagePreviewList({
-      tappedUrl: url,
-      htmlParts: topicHtmlPartsRef.current
-    });
-    if (nextPreview.urls.length > 0) {
-      setImagePreview(nextPreview);
-    }
-  }, []);
-  const closeImagePreview = useCallback(() => setImagePreview(null), []);
-  const showPreviousImage = useCallback(() => {
-    setImagePreview((current) => current && current.urls.length > 1 ? {
-      ...current,
-      index: (current.index + current.urls.length - 1) % current.urls.length
-    } : current);
-  }, []);
-  const showNextImage = useCallback(() => {
-    setImagePreview((current) => current && current.urls.length > 1 ? {
-      ...current,
-      index: (current.index + 1) % current.urls.length
-    } : current);
-  }, []);
-  const selectPreviewImage = useCallback((index: number) => {
-    setImagePreview((current) => current ? {
-      ...current,
-      index: Math.max(0, Math.min(index, current.urls.length - 1))
-    } : current);
-  }, []);
-  const savePreviewImage = useCallback(async () => {
-    if (!imagePreview?.urls.length) {
-      return;
-    }
-    let downloadedUri = '';
-    let shouldDeleteFile = false;
-    try {
-      const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
-      const permission = await MediaLibrary.requestPermissionsAsync();
-      if (!permission.granted) {
-        notify('没有图片保存权限');
-        return;
-      }
-      const extension = uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
-      const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-      if (!baseDirectory) {
-        notify('无法创建图片文件');
-        return;
-      }
-      shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
-      const dataImage = dataImageFileFromUrl(uri);
-      const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || extension)}`;
-      if (dataImage) {
-        await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
-        downloadedUri = target;
-      } else {
-        const headers = imageRequestHeadersForUrl(uri);
-        const downloaded = await FileSystem.downloadAsync(uri, target, headers ? { headers } : undefined);
-        downloadedUri = downloaded.uri;
-      }
-      await MediaLibrary.saveToLibraryAsync(downloadedUri);
-      notify('图片已保存');
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      if (shouldDeleteFile && downloadedUri) {
-        await FileSystem.deleteAsync(downloadedUri, { idempotent: true }).catch(() => undefined);
-      }
-    }
-  }, [imagePreview, notify]);
-  const openExternalUrl = useCallback((url: string) => {
-    if (!isHttpOrHttpsUrl(url)) {
-      notify('仅支持打开 http/https 链接。');
-      return;
-    }
-    void Linking.openURL(url).catch((error) => notify(errorMessage(error)));
-  }, [notify]);
   const handleLoginNavigation = useCallback((request: LoginNavigationRequest, allowedHosts: string[]) => {
     if (shouldOpenLoginWebViewUrl(request.url, allowedHosts)) {
       return true;
@@ -852,74 +534,6 @@ export default function App() {
   const handleLinuxDoNavigation = useCallback((request: LoginNavigationRequest) => (
     handleLoginNavigation(request, LINUXDO_LOGIN_HOSTS)
   ), [handleLoginNavigation]);
-  const htmlRenderers = useMemo<HtmlRenderers>(() => {
-    const PreviewImageRenderer: CustomBlockRenderer = (props) => {
-      const imageProps = useIMGElementProps(props);
-      const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
-      const imageSource = imageSourceFromUrl(src, imageProps.source);
-      const imageState = useIMGElementState({
-        ...imageProps,
-        source: imageSource,
-        style: [imageProps.style, { resizeMode: 'contain' }]
-      });
-      const sizedAttributes = withForumImageDimensions(props.tnode.attributes, imageState.type === 'success' ? imageState.dimensions : null);
-      const runtimeInlineSized = !isInlineForumImage(props.tnode.attributes) && isForumInlineSizedImage(imageState.type === 'success' ? imageState.dimensions : null);
-      useEffect(() => {
-        if (runtimeInlineSized) {
-          markImageInlineSized(src);
-        }
-      }, [markImageInlineSized, runtimeInlineSized, src]);
-      if (!src) {
-        return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
-      }
-      if (isInlineForumImage(sizedAttributes)) {
-        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(sizedAttributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(sizedAttributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
-      }
-      const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
-      const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
-      const content = imageState.type === 'success' ? (
-        <Image
-          source={imageState.source}
-          style={[{ resizeMode: 'contain' as const }, imageState.dimensions, imageState.imageStyle]}
-          resizeMethod="none"
-          onError={(event) => imageState.onError(event.nativeEvent.error as unknown as Error)}
-        />
-      ) : imageState.type === 'loading' ? (
-        <View style={imageState.dimensions} />
-      ) : (
-        <View style={[{ borderColor: theme.line, borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center' as const, overflow: 'hidden' as const }, imageState.dimensions]}>
-          <Text numberOfLines={2} style={styles.inlineForumImageText}>{imageState.alt || '图片加载失败'}</Text>
-        </View>
-      );
-      return (
-        <Pressable
-          accessibilityLabel={imageState.alt || '查看图片'}
-          accessibilityRole="button"
-          style={sharedContainerStyle}
-          onPress={(event) => {
-            event.stopPropagation?.();
-            openImagePreview(src);
-          }}
-        >
-          {content}
-        </Pressable>
-      );
-    };
-    const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
-      const attributes = ((props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {});
-      const src = attributes.src || '';
-      const label = attributes.alt || attributes.title || '';
-      if (!src) {
-        return <Text style={styles.inlineForumImageText}>{label}</Text>;
-      }
-      const isInlineImage = isInlineForumImage(attributes);
-      if (isInlineImage) {
-        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, readerData.settings.fontScale), inlineForumImageAlignmentStyle(attributes, readerData.settings.fontScale, htmlBaseStyle.lineHeight)]} />;
-      }
-      return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
-    };
-    return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
-  }, [htmlBaseStyle.lineHeight, markImageInlineSized, openImagePreview, readerData.settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText, theme.line]);
   useEffect(() => () => {
     topicAbortRef.current?.abort();
     repliesAbortRef.current?.abort();
@@ -1215,70 +829,48 @@ export default function App() {
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, invalidateTopicActionRequests, screen]);
 
-  const topicSnapshot = useCallback((): TopicSnapshot => {
-    const currentTopic = topicDetail || selectedTopic;
-    const session = currentTopic ? {
-      ...createEmptyTopicSession(currentTopic),
-      selectedTopic,
-      topicDetail,
-      topicReplies,
-      topicError,
-      replyHasMore,
-      replyNextPage,
-      replyNextOffset,
-      unreadReplyCount,
-      commentQuery,
-      replyFilter,
-      replyContent,
-      replyComposerOpen,
-      replyTarget,
-      expandedQuotes: expandedQuotesRef.current,
-      loadedQuotedReplies: loadedQuotedRepliesRef.current,
-      loadingQuotedFloors: {},
-      scrollY: topicScrollYRef.current
-    } : createEmptyTopicSession({
-      source: 'nodeseek',
-      id: '',
-      title: '',
-      author: '',
-      url: '',
-      createdAt: '',
-      replyCount: 0
-    });
-    return snapshotFromTopicSession(session);
-  }, [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, unreadReplyCount]);
-
-  const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
-    const session = topicSessionFromSnapshot(snapshot);
-    clearTopicScrollRestoreTimer();
-    setSelectedTopic(session.selectedTopic);
-    setTopicDetail(session.topicDetail);
-    setTopicReplies(session.topicReplies);
-    setTopicError(session.topicError);
-    setReplyHasMore(session.replyHasMore);
-    setReplyNextPage(session.replyNextPage);
-    setReplyNextOffset(session.replyNextOffset);
-    setUnreadReplyCount(session.unreadReplyCount);
-    setCommentQuery(session.commentQuery);
-    setReplyFilter(session.replyFilter);
-    setReplyContent(session.replyContent);
-    setReplyComposerOpen(session.replyComposerOpen);
-    setReplyTarget(session.replyTarget);
-    expandedQuotesRef.current = session.expandedQuotes;
-    loadedQuotedRepliesRef.current = session.loadedQuotedReplies;
-    loadingQuotedFloorsRef.current = {};
-    topicScrollYRef.current = session.scrollY;
-    setExpandedQuotes(session.expandedQuotes);
-    setLoadedQuotedReplies(session.loadedQuotedReplies);
-    setLoadingQuotedFloors({});
-    setQuoteStateVersion((current) => current + 1);
-    setTopicBusy(false);
-    setLoadingMoreReplies(false);
-    loadingMoreRepliesRef.current = false;
-    const restoredTopic = session.topicDetail || session.selectedTopic;
-    invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);
-    currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
-  }, [clearTopicScrollRestoreTimer, invalidateTopicActionRequests]);
+  const { restoreTopicSnapshot, topicSnapshot } = useTopicNavigationController({
+    clearTopicScrollRestoreTimer,
+    commentQuery,
+    currentTopicKeyRef,
+    expandedQuotesRef,
+    invalidateTopicActionRequests,
+    loadedQuotedRepliesRef,
+    loadingMoreRepliesRef,
+    loadingQuotedFloorsRef,
+    replyComposerOpen,
+    replyContent,
+    replyFilter,
+    replyHasMore,
+    replyNextOffset,
+    replyNextPage,
+    replyTarget,
+    selectedTopic,
+    setCommentQuery,
+    setExpandedQuotes,
+    setLoadedQuotedReplies,
+    setLoadingMoreReplies,
+    setLoadingQuotedFloors,
+    setQuoteStateVersion,
+    setReplyComposerOpen,
+    setReplyContent,
+    setReplyFilter,
+    setReplyHasMore,
+    setReplyNextOffset,
+    setReplyNextPage,
+    setReplyTarget,
+    setSelectedTopic,
+    setTopicBusy,
+    setTopicDetail,
+    setTopicError,
+    setTopicReplies,
+    setUnreadReplyCount,
+    topicDetail,
+    topicError,
+    topicReplies,
+    topicScrollYRef,
+    unreadReplyCount
+  });
 
   const prepareUserNavigation = useCallback(() => {
     if (screen !== 'user') {
@@ -1452,28 +1044,6 @@ export default function App() {
     updateLinuxDoSession
   });
 
-  const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
-    a: {
-      onPress: (event, href) => {
-        if (isPreviewableImageUrl(href)) {
-          event.stopPropagation?.();
-          openImagePreview(href);
-          return;
-        }
-        const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);
-        if (appTopic) {
-          event.stopPropagation?.();
-          openTopic(appTopic);
-          return;
-        }
-        openExternalUrl(href);
-      }
-    },
-    img: {
-      enableExperimentalPercentWidth: true
-    }
-  }), [openExternalUrl, openImagePreview, openTopic, selectedTopic?.url, topicDetail?.url]);
-
   const shareTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail?.url) {
@@ -1572,41 +1142,13 @@ export default function App() {
     queueProgressSave(detail, { percent, scrollY });
   }, [queueProgressSave, selectedTopic, topicDetail]);
 
-  const handleNodeSeekBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        id?: number;
-        html?: string;
-        cookie?: string;
-        userAgent?: string;
-        challenge?: boolean;
-      };
-      if (data.type === 'nodeseek-browser-fetch') {
-        completeNodeSeekBrowserFetch(data);
-      }
-    } catch {
-      // Ignore unrelated messages from the page.
-    }
-  }, [completeNodeSeekBrowserFetch]);
-
-  const handleLinuxDoBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
-    try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        id?: number;
-        body?: string;
-        cookie?: string;
-        userAgent?: string;
-        challenge?: boolean;
-      };
-      if (data.type === 'linuxdo-browser-fetch') {
-        completeLinuxDoBrowserFetch(data);
-      }
-    } catch {
-      // Ignore unrelated messages from the page.
-    }
-  }, [completeLinuxDoBrowserFetch]);
+  const {
+    handleLinuxDoBrowserFetchMessage,
+    handleNodeSeekBrowserFetchMessage
+  } = useHiddenBrowserFetchController({
+    completeLinuxDoBrowserFetch,
+    completeNodeSeekBrowserFetch
+  });
 
   const openReadingSettingsFromTopic = useCallback(() => {
     changeNodeSeekLoginPanel(false);

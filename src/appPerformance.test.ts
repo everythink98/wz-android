@@ -7,11 +7,14 @@ const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFe
 const readerDataControllerSource = readProjectFile('android-app', 'src', 'app', 'useReaderDataController.ts');
 const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
 const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
+const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
 const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
 const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
 const topicContentSplitSource = readProjectFile('android-app', 'src', 'topicContentSplit.ts');
@@ -111,7 +114,7 @@ describe('Android App performance guards', () => {
   });
 
   it('refreshes the HTML image renderer when the theme border color changes', () => {
-    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const htmlRenderersBlock = htmlRenderingControllerSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(htmlRenderersBlock).toContain('borderColor: theme.line');
     expect(htmlRenderersBlock).toMatch(/\[[^\]]*\btheme\.line\b[^\]]*\]/);
@@ -170,19 +173,19 @@ describe('Android App performance guards', () => {
 
   it('memoizes the Android More screen against reader data changes it does not display', () => {
     expect(moreScreenSource).toContain('export const MemoizedMoreScreen = memo(MoreScreen);');
-    expect(moreScreenSource).toContain('const MemoizedBackupRestorePanel = memo(BackupRestorePanel);');
-    expect(moreScreenSource).toContain('const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
-    expect(moreScreenSource).toContain('const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
-    expect(moreScreenSource).toContain('const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);');
-    expect(moreScreenSource).not.toContain('CategorySubscriptionPanel');
-    expect(moreScreenSource).toContain('const MemoizedAppearancePanel = memo(AppearancePanel);');
-    expect(moreScreenSource).toContain('const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
-    expect(moreScreenSource).not.toContain('previous.settings === next.settings');
-    expect(moreScreenSource).not.toContain('previous.subscriptions === next.subscriptions');
-    expect(moreScreenSource).not.toContain('previous.favoriteCount === next.favoriteCount');
-    expect(moreScreenSource).not.toContain('previous.historyCount === next.historyCount');
-    expect(moreScreenSource).not.toContain('previous.readerData');
-    expect(moreScreenSource).not.toContain('previous.readerData.progress');
+    expect(morePanelsSource).toContain('export const MemoizedBackupRestorePanel = memo(BackupRestorePanel);');
+    expect(morePanelsSource).toContain('export const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);');
+    expect(morePanelsSource).toContain('export const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);');
+    expect(morePanelsSource).toContain('export const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);');
+    expect(moreUiSource).not.toContain('CategorySubscriptionPanel');
+    expect(morePanelsSource).toContain('export const MemoizedAppearancePanel = memo(AppearancePanel);');
+    expect(morePanelsSource).toContain('export const MemoizedStatusCheckPanel = memo(StatusCheckPanel);');
+    expect(moreUiSource).not.toContain('previous.settings === next.settings');
+    expect(moreUiSource).not.toContain('previous.subscriptions === next.subscriptions');
+    expect(moreUiSource).not.toContain('previous.favoriteCount === next.favoriteCount');
+    expect(moreUiSource).not.toContain('previous.historyCount === next.historyCount');
+    expect(moreUiSource).not.toContain('previous.readerData');
+    expect(moreUiSource).not.toContain('previous.readerData.progress');
     expect(appSource).not.toContain('<MoreScreen');
     expect(appSource).toContain('<MemoizedMoreScreen');
   });

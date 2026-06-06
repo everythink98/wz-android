@@ -6,6 +6,7 @@ const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app'
 const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
 const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
 const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
+const topicNavigationControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicNavigationController.ts');
 const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
 const verificationControllerSource = readProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
 const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
@@ -14,6 +15,7 @@ const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'Topi
 const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
 const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
 const packageSource = readProjectFile('android-app', 'package.json');
 const babelSource = readProjectFile('android-app', 'babel.config.js');
 const appConfigSource = readProjectFile('android-app', 'app.json');
@@ -72,7 +74,7 @@ describe('Android App UX upgrade guards', () => {
     const prepareUserNavigationBlock = appSource.match(/const prepareUserNavigation = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const goBackFromTopicBlock = appSource.match(/const goBackFromTopic = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const goBackFromUserBlock = appSource.match(/const goBackFromUser = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const restoreTopicSnapshotBlock = topicNavigationControllerSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appSource).toContain('userReturnTopicRef');
     expect(appSource).toContain('returnScreen: Exclude<Screen,');
@@ -123,8 +125,8 @@ describe('Android App UX upgrade guards', () => {
   it('keeps reply draft state in topic snapshots when returning from nested topics', () => {
     const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
     const topicSessionSource = readProjectFile('android-app', 'src', 'topicSessionState.ts');
-    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const topicSnapshotBlock = topicNavigationControllerSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const restoreTopicSnapshotBlock = topicNavigationControllerSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appTypesSource).toContain('replyContent: string;');
     expect(appTypesSource).toContain('replyComposerOpen: boolean;');
@@ -143,8 +145,8 @@ describe('Android App UX upgrade guards', () => {
   it('keeps linux.do quote expansion state in topic snapshots when returning from nested topics', () => {
     const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
     const topicSessionSource = readProjectFile('android-app', 'src', 'topicSessionState.ts');
-    const topicSnapshotBlock = appSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const restoreTopicSnapshotBlock = appSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const topicSnapshotBlock = topicNavigationControllerSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const restoreTopicSnapshotBlock = topicNavigationControllerSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(appTypesSource).toContain('expandedQuotes: Record<string, boolean>;');
     expect(appTypesSource).toContain('loadedQuotedReplies: Record<number, Reply>;');
@@ -245,9 +247,9 @@ describe('Android App UX upgrade guards', () => {
     expect(moreScreenSource).toContain('title="账号与验证"');
     expect(moreScreenSource).toContain('title="外观"');
     expect(moreScreenSource).toContain('title="状态检查"');
-    expect(moreScreenSource).toContain('showLoginPanel && accountExpanded');
-    expect(moreScreenSource).toContain('showYaohuoLoginPanel && accountExpanded');
-    expect(moreScreenSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
+    expect(morePanelsSource).toContain('showLoginPanel && accountExpanded');
+    expect(morePanelsSource).toContain('showYaohuoLoginPanel && accountExpanded');
+    expect(morePanelsSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
   });
 
   it('recovers when a floor directory jump targets an unmeasured reply row', () => {

@@ -2,10 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('android-app', 'App.tsx');
+const hiddenBrowserFetchControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
+const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const topicPollsSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicPolls.tsx');
+const topicActionBarSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicActionBar.tsx');
+const topicContentBlockSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicContentBlock.tsx');
+const replyItemSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'ReplyItem.tsx');
+const topicMenuSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicMenu.tsx');
 const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
 const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
 const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
+const topicUiSource = [
+  topicScreenSource,
+  topicPollsSource,
+  topicActionBarSource,
+  topicContentBlockSource,
+  replyItemSource,
+  topicMenuSource
+].join('\n');
 
 describe('Android topic detail reading layout', () => {
   it('uses render-html whitespace controls for cleaner native HTML output', () => {
@@ -36,9 +51,9 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('requires?[^.]{0,40}(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
     expect(topicScreenSource).toContain('minimum (?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
     expect(topicScreenSource).toContain('must be (?:at least )?(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
-    expect(appSource).toContain('requires?[^.]{0,40}(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
-    expect(appSource).toContain('minimum (?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
-    expect(appSource).toContain('must be (?:at least )?(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
+    expect(hiddenBrowserFetchControllerSource).toContain('requires?[^.]{0,40}(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
+    expect(hiddenBrowserFetchControllerSource).toContain('minimum (?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
+    expect(hiddenBrowserFetchControllerSource).toContain('must be (?:at least )?(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
     expect(themeSource).toContain('topicAccessNoticeTitle');
   });
 
@@ -54,7 +69,7 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('topicPrimaryActions');
     expect(topicScreenSource).toContain('topicTopActions');
     expect(topicScreenSource).toContain('topicPostActionArea');
-    expect(appSource).toContain('htmlParagraph');
+    expect(htmlRenderingControllerSource).toContain('htmlParagraph');
   });
 
   it('keeps the topic top bar focused on navigation and frequent actions', () => {
@@ -64,9 +79,9 @@ describe('Android topic detail reading layout', () => {
     expect(topBar).toContain('{sourceLabel(item.source)}');
     expect(topBar).toContain("label={topicFavorite ? '已收藏' : '收藏'}");
     expect(topBar).toContain('label="更多操作"');
-    expect(topicScreenSource).toContain('topicOverflowMenu');
-    expect(topicScreenSource).toContain('原站打开');
-    expect(topicScreenSource).toContain('onOpenOriginal(item.url)');
+    expect(topicMenuSource).toContain('topicOverflowMenu');
+    expect(topicMenuSource).toContain('原站打开');
+    expect(topicMenuSource).toContain('onOpenOriginal(topicUrl)');
     expect(topBar).not.toContain('label="分享"');
     expect(topBar).not.toContain('label="刷新"');
     expect(topBar).not.toContain('label="原站"');
@@ -78,7 +93,7 @@ describe('Android topic detail reading layout', () => {
   it('does not open NodeSeek user pages when only a display name is available', () => {
     expect(topicScreenSource).toContain("from '../userNavigation'");
     expect(topicScreenSource).toContain('userFromTopic(item)');
-    expect(topicScreenSource).toContain('userFromReply(reply, source)');
+    expect(replyItemSource).toContain('userFromReply(reply, source)');
   });
 
   it('puts post interaction actions after the main post body instead of before it', () => {
@@ -111,16 +126,16 @@ describe('Android topic detail reading layout', () => {
 
     expect(topicScreenSource).toContain('const topicPolls = topic?.polls || [];');
     expect(topicScreenSource).toContain('onVotePoll');
-    expect(topicPollRenderer).toContain('<PollBlockList');
-    expect(topicActionRenderer).not.toContain('<PollBlockList');
-    expect(topicScreenSource).toContain('styles.pollBlock');
-    expect(topicScreenSource).toContain('styles.pollFooter');
-    expect(topicScreenSource).toContain('styles.pollMetaPill');
-    expect(topicScreenSource).toContain('styles.pollStatePill');
-    expect(topicScreenSource).toContain('styles.pollOptionList');
-    expect(topicScreenSource).toContain('styles.pollOptionDivider');
-    expect(topicScreenSource).toContain('styles.pollOptionProgress');
-    expect(topicScreenSource).toContain('styles.pollOptionContent');
+    expect(topicPollRenderer).toContain('<TopicPolls');
+    expect(topicActionRenderer).not.toContain('<TopicPolls');
+    expect(topicPollsSource).toContain('styles.pollBlock');
+    expect(topicPollsSource).toContain('styles.pollFooter');
+    expect(topicPollsSource).toContain('styles.pollMetaPill');
+    expect(topicPollsSource).toContain('styles.pollStatePill');
+    expect(topicPollsSource).toContain('styles.pollOptionList');
+    expect(topicPollsSource).toContain('styles.pollOptionDivider');
+    expect(topicPollsSource).toContain('styles.pollOptionProgress');
+    expect(topicPollsSource).toContain('styles.pollOptionContent');
     expect(topicActionRenderer).not.toContain('voteOptions');
   });
 
@@ -142,9 +157,9 @@ describe('Android topic detail reading layout', () => {
     expect(pollItemIndex).toBeGreaterThan(-1);
     expect(actionItemIndex).toBeGreaterThan(pollItemIndex);
     expect(topicPollRenderer).toContain('styles.articleBody');
-    expect(topicPollRenderer).toContain('<PollBlockList');
+    expect(topicPollRenderer).toContain('<TopicPolls');
     expect(topicPollRenderer).toContain('embeddedInArticle');
-    expect(topicActionRenderer).not.toContain('<PollBlockList');
+    expect(topicActionRenderer).not.toContain('<TopicPolls');
   });
 
   it('keeps poll result rows readable and stable on narrow detail screens', () => {
@@ -154,8 +169,8 @@ describe('Android topic detail reading layout', () => {
       ? topicScreenSource.slice(topicPollStart, topicActionStart)
       : '';
 
-    expect(topicPollRenderer).toContain('<PollBlockList');
-    expect(topicScreenSource).toContain('styles.pollOptionTextBlock');
+    expect(topicPollRenderer).toContain('<TopicPolls');
+    expect(topicPollsSource).toContain('styles.pollOptionTextBlock');
     expect(topicPollRenderer).not.toContain('styles.pollOptionRowDisabled');
     expect(themeSource).toContain('pollOptionList');
     expect(themeSource).toContain('pollOptionDivider');
@@ -168,11 +183,11 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('uses poll choice limits to keep multi-choice submissions valid', () => {
-    expect(topicScreenSource).toContain('pollChoiceRangeLabel');
-    expect(topicScreenSource).toContain('pollSelectionRangeStatus');
-    expect(topicScreenSource).toContain('<PollBlockList');
-    expect(topicScreenSource).toContain('selectionRangeStatus');
-    expect(topicScreenSource).toContain('Boolean(selectionRangeStatus)');
+    expect(topicPollsSource).toContain('pollChoiceRangeLabel');
+    expect(topicPollsSource).toContain('pollSelectionRangeStatus');
+    expect(topicScreenSource).toContain('<TopicPolls');
+    expect(topicPollsSource).toContain('selectionRangeStatus');
+    expect(topicPollsSource).toContain('Boolean(selectionRangeStatus)');
   });
 
   it('does not repeat the original-site button at the bottom of the main post', () => {
@@ -193,15 +208,15 @@ describe('Android topic detail reading layout', () => {
     const yaohuoTopicAction = topicScreenSource.match(/\{canWriteYaohuo \? \([\s\S]*?\n          \) : null\}/)?.[0] || '';
     const yaohuoReplyAction = topicScreenSource.match(/\{canWrite && source === 'yaohuo' \? \([\s\S]*?\n        \) : null\}/)?.[0] || '';
 
-    expect(topicScreenSource).toContain('Drumstick');
+    expect(topicUiSource).toContain('Drumstick');
     expect(topicScreenSource).toContain("accessibilityLabel={topic?.liked ? '已加鸡腿' : '加鸡腿'}");
-    expect(topicScreenSource).toContain("accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'}");
-    expect(topicScreenSource).toContain('label="鸡腿"');
-    expect(topicScreenSource).toContain('icon={Drumstick}');
-    expect(topicScreenSource).not.toContain("createLucideIcon('ChickenLeg'");
-    expect(topicScreenSource).not.toContain('icon={Heart}');
+    expect(replyItemSource).toContain("accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'}");
+    expect(topicUiSource).toContain('label="鸡腿"');
+    expect(topicUiSource).toContain('icon={Drumstick}');
+    expect(topicUiSource).not.toContain("createLucideIcon('ChickenLeg'");
+    expect(topicUiSource).not.toContain('icon={Heart}');
     expect(topicScreenSource).toContain("onInteract('like', topic?.commentId)");
-    expect(topicScreenSource).toContain("onInteract('like', reply.commentId)");
+    expect(replyItemSource).toContain("onInteract('like', reply.commentId)");
     expect(yaohuoTopicAction).not.toContain('感谢');
     expect(yaohuoReplyAction).not.toContain('感谢');
     expect(yaohuoTopicAction).not.toContain('加鸡腿');
@@ -214,10 +229,10 @@ describe('Android topic detail reading layout', () => {
     const topicActionRenderer = topicActionStart >= 0 && replyComposerStart > topicActionStart
       ? topicScreenSource.slice(topicActionStart, replyComposerStart)
       : '';
-    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
-    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCardStart = replyItemSource.indexOf('export function ReplyItem(');
+    const replyCardEnd = replyItemSource.indexOf('export const MemoizedReplyItem', replyCardStart);
     const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
-      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      ? replyItemSource.slice(replyCardStart, replyCardEnd)
       : '';
 
     expect(topicActionRenderer).toContain("accessibilityLabel={topic?.upvoted ? '已点赞' : '点赞'}");
@@ -233,12 +248,13 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('keeps detail action buttons visually aligned and stable', () => {
-    expect(topicScreenSource).toContain('function DetailActionButton');
+    expect(topicActionBarSource).toContain('export function TopicActionBar');
+    expect(topicActionBarSource).toContain('export const DetailActionButton = TopicActionBar;');
     expect(topicScreenSource).toContain('<DetailActionButton active={Boolean(topic?.upvoted)}');
-    expect(topicScreenSource).toContain('<DetailActionButton alignStart active={Boolean(reply.liked)}');
+    expect(replyItemSource).toContain('<DetailActionButton alignStart active={Boolean(reply.liked)}');
     expect(topicScreenSource).not.toContain('<IconButton tiny icon={ThumbsUp}');
-    expect(topicScreenSource).toContain('styles.detailActionIconSlot');
-    expect(topicScreenSource).toContain('alignStart && styles.replyDetailActionButton');
+    expect(topicActionBarSource).toContain('styles.detailActionIconSlot');
+    expect(topicActionBarSource).toContain('alignStart && styles.replyDetailActionButton');
     expect(themeSource).toMatch(/detailActionButton:\s*\{[\s\S]*minHeight:\s*48[\s\S]*width:\s*74[\s\S]*borderRadius:\s*8/);
     expect(themeSource).toMatch(/replyDetailActionButton:\s*\{[\s\S]*justifyContent:\s*'flex-start'[\s\S]*paddingHorizontal:\s*0/);
     expect(themeSource).toMatch(/detailActionIconSlot:\s*\{[\s\S]*height:\s*22[\s\S]*width:\s*22/);
@@ -250,19 +266,19 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('separates reply floor, author, body, and actions for readable mobile replies', () => {
-    expect(topicScreenSource).toContain('replyHead');
-    expect(topicScreenSource).toContain('replyFloorBadge');
-    expect(topicScreenSource).toContain('replyAuthorBlock');
-    expect(topicScreenSource).toContain('replyContentArea');
-    expect(topicScreenSource).toContain('replyBody');
-    expect(topicScreenSource).toContain('replyActionRow');
+    expect(replyItemSource).toContain('replyHead');
+    expect(replyItemSource).toContain('replyFloorBadge');
+    expect(replyItemSource).toContain('replyAuthorBlock');
+    expect(replyItemSource).toContain('replyContentArea');
+    expect(replyItemSource).toContain('replyBody');
+    expect(replyItemSource).toContain('replyActionRow');
   });
 
   it('shows forum reply context without requiring V2EX login actions', () => {
-    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
-    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCardStart = replyItemSource.indexOf('export function ReplyItem(');
+    const replyCardEnd = replyItemSource.indexOf('export const MemoizedReplyItem', replyCardStart);
     const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
-      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      ? replyItemSource.slice(replyCardStart, replyCardEnd)
       : '';
 
     expect(replyCard).toContain('reply.isOp');
@@ -294,30 +310,30 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('labels linux.do special poll types instead of calling them single choice polls', () => {
-    const pollBlockStart = topicScreenSource.indexOf('function PollBlockList');
-    const pollBlockEnd = topicScreenSource.indexOf('function NodeSeekStatPill', pollBlockStart);
+    const pollBlockStart = topicPollsSource.indexOf('export function TopicPolls');
+    const pollBlockEnd = topicPollsSource.length;
     const pollBlock = pollBlockStart >= 0 && pollBlockEnd > pollBlockStart
-      ? topicScreenSource.slice(pollBlockStart, pollBlockEnd)
+      ? topicPollsSource.slice(pollBlockStart, pollBlockEnd)
       : '';
 
-    expect(topicScreenSource).toContain('function pollTypeLabel');
-    expect(topicScreenSource).toContain("ranked_choice: '排序投票'");
-    expect(topicScreenSource).toContain("number: '数字投票'");
+    expect(topicPollsSource).toContain('function pollTypeLabel');
+    expect(topicPollsSource).toContain("ranked_choice: '排序投票'");
+    expect(topicPollsSource).toContain("number: '数字投票'");
     expect(pollBlock).toContain('pollTypeLabel(poll)');
     expect(pollBlock).not.toContain("poll.multiple ? '多选' : '单选'");
   });
 
   it('renders linux.do polls inside replies with the same poll block styling', () => {
-    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
-    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCardStart = replyItemSource.indexOf('export function ReplyItem(');
+    const replyCardEnd = replyItemSource.indexOf('export const MemoizedReplyItem', replyCardStart);
     const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
-      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      ? replyItemSource.slice(replyCardStart, replyCardEnd)
       : '';
 
-    expect(topicScreenSource).toContain('function PollBlockList');
+    expect(topicPollsSource).toContain('export function TopicPolls');
     expect(replyCard).toContain('polls={reply.polls || []}');
     expect(replyCard).toContain('onVotePoll={onVotePoll}');
-    expect(topicScreenSource).toContain('styles.pollBlock');
+    expect(topicPollsSource).toContain('styles.pollBlock');
   });
 
   it('shows linux.do topic tags and special status badges in Android details', () => {
@@ -336,10 +352,10 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('shows linux.do accepted answers and special reply markers in Android replies', () => {
-    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
-    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCardStart = replyItemSource.indexOf('export function ReplyItem(');
+    const replyCardEnd = replyItemSource.indexOf('export const MemoizedReplyItem', replyCardStart);
     const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
-      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      ? replyItemSource.slice(replyCardStart, replyCardEnd)
       : '';
 
     expect(replyCard).toContain('reply.acceptedAnswer');
@@ -365,10 +381,10 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('uses richer Android chip styling for tags and status markers', () => {
-    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
-    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCardStart = replyItemSource.indexOf('export function ReplyItem(');
+    const replyCardEnd = replyItemSource.indexOf('export const MemoizedReplyItem', replyCardStart);
     const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
-      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      ? replyItemSource.slice(replyCardStart, replyCardEnd)
       : '';
 
     expect(themeSource).toContain('TOPIC_TAG_TONES');
@@ -385,8 +401,8 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('topicStatusBadgeColorStyle(badge.tone, theme)');
     expect(topicScreenSource).toContain('topicStatusBadgeTextColorStyle(badge.tone, theme)');
     expect(topicScreenSource).toContain('topicTagColorStyle(tag, theme)');
-    expect(topicScreenSource).toContain('linuxDoReactionLabel');
-    expect(topicScreenSource).toContain("open_mouth: '惊讶'");
+    expect(replyItemSource).toContain('linuxDoReactionLabel');
+    expect(replyItemSource).toContain("open_mouth: '惊讶'");
     expect(replyCard).toContain("replyContextBadgeStyle('success', theme)");
     expect(replyCard).toContain("replyContextBadgeStyle('warning', theme)");
     expect(replyCard).toContain("replyContextBadgeStyle('danger', theme)");
@@ -410,12 +426,12 @@ describe('Android topic detail reading layout', () => {
       ? topicScreenSource.slice(topicActionStart, replyComposerStart)
       : '';
 
-    expect(topicScreenSource).toContain('NodeSeekStatPill');
-    expect(topicScreenSource).toContain('nodeSeekTopicReactionStats');
-    expect(topicScreenSource).toContain('collectionCount');
+    expect(replyItemSource).toContain('NodeSeekStatPill');
+    expect(replyItemSource).toContain('nodeSeekTopicReactionStats');
+    expect(replyItemSource).toContain('collectionCount');
     expect(topicScreenSource).toContain('原站收藏');
     expect(topicScreenSource).toContain('topicStatRail');
-    expect(topicScreenSource).toContain('replyStatRail');
+    expect(replyItemSource).toContain('replyStatRail');
     expect(themeSource).toContain('nodeSeekStatPill');
     expect(themeSource).toContain('nodeSeekStatValue');
     expect(topicActionRenderer).toContain("accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'}");
@@ -445,7 +461,7 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('does not show the copy-quote action in reply cards', () => {
-    const replyCard = topicScreenSource.match(/function ReplyCard\([\s\S]*?\n\}/)?.[0] || '';
+    const replyCard = replyItemSource.match(/export function ReplyItem\([\s\S]*?\n\}/)?.[0] || '';
 
     expect(replyCard).not.toContain('复制楼层引用');
     expect(replyCard).not.toContain('onCopyReplyMarkdown');
@@ -453,10 +469,10 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('shows the quoted author beside the quote expand control', () => {
-    const replyCardStart = topicScreenSource.indexOf('function ReplyCard(');
-    const replyCardEnd = topicScreenSource.indexOf('const MemoizedReplyCard', replyCardStart);
+    const replyCardStart = replyItemSource.indexOf('export function ReplyItem(');
+    const replyCardEnd = replyItemSource.indexOf('export const MemoizedReplyItem', replyCardStart);
     const replyCard = replyCardStart >= 0 && replyCardEnd > replyCardStart
-      ? topicScreenSource.slice(replyCardStart, replyCardEnd)
+      ? replyItemSource.slice(replyCardStart, replyCardEnd)
       : '';
 
     expect(replyCard).toContain('styles.quoteHeader');
@@ -498,12 +514,12 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('shows author avatar slots in topic detail and replies without rewriting detail HTML', () => {
-    expect(topicScreenSource).toContain('function AuthorAvatar');
-    expect(topicScreenSource).toContain('SvgXml');
-    expect(topicScreenSource).toContain('loadRemoteAvatarSvgText');
+    expect(replyItemSource).toContain('function AuthorAvatar');
+    expect(replyItemSource).toContain('SvgXml');
+    expect(replyItemSource).toContain('loadRemoteAvatarSvgText');
     expect(topicScreenSource).toContain('topicAuthorRow');
-    expect(topicScreenSource).toContain('replyAvatarSmall');
-    expect(topicScreenSource).not.toContain('replaceInlineImagesWithAltText');
+    expect(replyItemSource).toContain('replyAvatarSmall');
+    expect(topicUiSource).not.toContain('replaceInlineImagesWithAltText');
   });
 
   it('uses the SVG avatar fallback on user profile pages too', () => {
@@ -519,15 +535,15 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('only sends forum emoji and avatar images through the inline media path', () => {
-    expect(topicScreenSource).toContain('flowInlineImagesInMixedParagraphs');
+    expect(topicContentBlockSource).toContain('flowInlineImagesInMixedParagraphs');
     expect(topicScreenSource).toContain('INLINE_FORUM_IMAGE_TAG');
     expect(topicScreenSource).toContain('HTMLContentModel.textual');
-    expect(appSource).toContain('styles.inlineForumImage');
-    expect(topicScreenSource).not.toContain('replaceInlineImagesWithAltText');
+    expect(htmlRenderingControllerSource).toContain('styles.inlineForumImage');
+    expect(topicUiSource).not.toContain('replaceInlineImagesWithAltText');
   });
 
   it('renders forum emoji images when a source is available', () => {
-    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const htmlRenderersBlock = htmlRenderingControllerSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(htmlRenderersBlock).toContain('if (!src) {');
     expect(htmlRenderersBlock).toContain('source={imageSourceFromUrl(src)}');
@@ -537,7 +553,7 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('keeps accidental non-emoji inline image nodes out of the tiny image path', () => {
-    const htmlRenderersBlock = appSource.match(/const InlineForumImageRenderer: CustomMixedRenderer = \(props\) => \{[\s\S]*?\n    \};/)?.[0] || '';
+    const htmlRenderersBlock = htmlRenderingControllerSource.match(/const InlineForumImageRenderer: CustomMixedRenderer = \(props\) => \{[\s\S]*?\n    \};/)?.[0] || '';
 
     expect(htmlRenderersBlock).toContain('const isInlineImage = isInlineForumImage(attributes);');
     expect(htmlRenderersBlock).toContain('return <Text style={styles.inlineForumImageText}>{label || src}</Text>;');
@@ -545,7 +561,7 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('decodes block topic images from the original asset on Android', () => {
-    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const htmlRenderersBlock = htmlRenderingControllerSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(htmlRenderersBlock).toContain('useIMGElementState');
     expect(htmlRenderersBlock).toContain('source={imageState.source}');
@@ -564,7 +580,7 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('does not nest forum emoji images inside text wrappers', () => {
-    const htmlRenderersBlock = appSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const htmlRenderersBlock = htmlRenderingControllerSource.match(/const htmlRenderers = useMemo<HtmlRenderers>\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
     expect(htmlRenderersBlock).not.toContain(`if (isInlineForumImage(props.tnode.attributes)) {
         return (

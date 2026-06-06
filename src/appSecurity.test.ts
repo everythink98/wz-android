@@ -4,7 +4,7 @@ import { readProjectFile } from './sourceTestUtils';
 const appSource = readProjectFile('android-app', 'App.tsx');
 const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
 const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
 
 describe('Android App security review guards', () => {
   it('routes external links through the http/https protocol guard', () => {
@@ -32,8 +32,8 @@ describe('Android App security review guards', () => {
     expect(appSource).toContain('handleNodeSeekLoginNavigation');
     expect(appSource).toContain('handleYaohuoLoginNavigation');
     expect(appSource).toContain('handleLinuxDoNavigation');
-    expect(moreScreenSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
-    expect(moreScreenSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
-    expect(moreScreenSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
+    expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
+    expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
+    expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
   });
 });

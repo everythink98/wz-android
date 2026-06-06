@@ -3,6 +3,9 @@ import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('android-app', 'app.json');
 const appSource = readProjectFile('android-app', 'App.tsx');
+const hiddenBrowserFetchControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
+const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
+const imagePreviewControllerSource = readProjectFile('android-app', 'src', 'app', 'useImagePreviewController.ts');
 const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
 const readerDataControllerSource = readProjectFile('android-app', 'src', 'app', 'useReaderDataController.ts');
@@ -21,9 +24,13 @@ const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'Sea
 const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
 const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
 const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
 const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
+const topicMenuSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicMenu.tsx');
 const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
 const navBarSource = readProjectFile('android-app', 'src', 'components', 'NavBar.tsx');
+const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
 const androidUiSource = [
   appSource,
   appControlsSource,
@@ -32,7 +39,7 @@ const androidUiSource = [
   feedScreenSource,
   searchScreenSource,
   libraryScreenSource,
-  moreScreenSource,
+  moreUiSource,
   topicScreenSource,
   navBarSource
 ].join('\n');
@@ -78,8 +85,8 @@ describe('Android App experience guards', () => {
   });
 
   it('uses browser-like headers for Android reader images and image preview', () => {
-    expect(appSource).toContain('imageSourceFromUrl(src, imageProps.source)');
-    expect(appSource).toContain('imageRequestHeadersForUrl(uri)');
+    expect(htmlRenderingControllerSource).toContain('imageSourceFromUrl(src, imageProps.source)');
+    expect(imagePreviewControllerSource).toContain('imageRequestHeadersForUrl(uri)');
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(activeUri)');
     expect(imagePreviewModalSource).toContain('imageSourceFromUrl(url)');
   });
@@ -472,12 +479,12 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps four-site topic links inside the Android topic detail flow', () => {
-    const htmlLinkBlock = appSource.match(/const htmlRenderersProps = useMemo<HtmlRenderersProps>\(\(\) => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
+    const htmlLinkBlock = htmlRenderingControllerSource.match(/const htmlRenderersProps = useMemo<HtmlRenderersProps>\(\(\) => \(\{[\s\S]*?\n  \}\), \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(appSource).toContain('parseForumTopicLink');
+    expect(htmlRenderingControllerSource).toContain('parseForumTopicLink');
     expect(htmlLinkBlock).toContain('const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);');
-    expect(htmlLinkBlock).toContain('openTopic(appTopic);');
-    expect(htmlLinkBlock).toContain('openExternalUrl(href);');
+    expect(htmlLinkBlock).toContain('onOpenTopic(appTopic);');
+    expect(htmlLinkBlock).toContain('onOpenExternalUrl(href);');
   });
 
   it('offers category filters for Android search results like the mobile web page', () => {
@@ -645,14 +652,14 @@ describe('Android App experience guards', () => {
   });
 
   it('adds image save, thumbnail selection, and backup file actions', () => {
-    expect(appSource).toContain('savePreviewImage');
+    expect(imagePreviewControllerSource).toContain('savePreviewImage');
     expect(imagePreviewModalSource).toContain('imagePreviewThumbnail');
     expect(appSource).toContain('exportBackupFile');
     expect(appSource).toContain('importBackupFile');
   });
 
   it('removes temporary cache files after saving preview images to the gallery', () => {
-    const block = appSource.match(/const savePreviewImage = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[imagePreview, notify\]\);/)?.[0] || '';
+    const block = imagePreviewControllerSource.match(/const savePreviewImage = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[imagePreview, notify\]\);/)?.[0] || '';
 
     expect(block).toContain('shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;');
     expect(block).toContain('let downloadedUri =');
@@ -688,12 +695,29 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('onPress={confirmClearHistory}');
   });
 
+  it('does not leave an empty actions row under library filters', () => {
+    const headerBlock = libraryScreenSource.match(/const header = \([\s\S]*?\n  \);/)?.[0] || '';
+
+    expect(headerBlock).toContain("libraryTab === 'history' && records.length ? (");
+    expect(headerBlock).toContain('<View style={styles.actions}>');
+    expect(headerBlock).toContain('label="清空历史" variant="danger"');
+    expect(headerBlock).not.toMatch(/<View style=\{styles\.actions\}>\s*\{libraryTab === 'history' && records\.length \?/);
+  });
+
+  it('keeps the first library section title close to the filter tabs', () => {
+    expect(libraryScreenSource).toContain('first: index === 0');
+    expect(libraryScreenSource).toContain('item.first && styles.libraryFirstSectionTitle');
+    expect(libraryScreenSource).toContain('contentContainerStyle={styles.libraryContentInner}');
+    expect(themeSource).toContain('libraryContentInner');
+    expect(themeSource).toContain('libraryFirstSectionTitle');
+  });
+
   it('marks library destructive actions as danger buttons', () => {
     expect(appControlsSource).toContain("variant?: 'default' | 'danger' | 'ghost' | 'primary'");
     expect(libraryScreenSource).toContain('label="删除" variant="danger"');
     expect(libraryScreenSource).toContain('label="取消关注" variant="danger"');
     expect(libraryScreenSource).toContain('label="清空历史" variant="danger"');
-    expect(moreScreenSource.match(/label="清除登录" variant="danger"/g)?.length).toBe(3);
+    expect(moreUiSource.match(/label="清除登录" variant="danger"/g)?.length).toBe(3);
     expect(userScreenSource).toContain("variant={followed ? 'danger' : undefined}");
   });
 
@@ -845,7 +869,7 @@ describe('Android App experience guards', () => {
     expect(sessionControllerSource).toContain('await CookieManager.setFromResponse(url, header)');
     expect(sessionControllerSource).toContain('setYaohuoLoginCookieHeader(cookieHeader)');
     expect(appSource).toContain('onShowYaohuoLoginPanelChange={changeYaohuoLoginPanel}');
-    expect(moreScreenSource).toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
+    expect(moreUiSource).toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
   });
 
   it('does not mark saved yaohuo session cookies as logged in while loading sources', () => {
@@ -857,8 +881,8 @@ describe('Android App experience guards', () => {
   });
 
   it('opens the yaohuo signed-in page instead of the login form when cookies are saved', () => {
-    expect(moreScreenSource).toContain("const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';");
-    expect(moreScreenSource).toContain('uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
+    expect(moreUiSource).toContain("const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';");
+    expect(moreUiSource).toContain('uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');
   });
 
   it('shows yaohuo login detail instead of hiding detected cookies behind a generic state', () => {
@@ -867,9 +891,9 @@ describe('Android App experience guards', () => {
     expect(yaohuoLoginStateBlock).toContain("return '未登录';");
     expect(yaohuoLoginStateBlock).toContain("return yaohuoSession.cookieSummary.length ? `已登录：${yaohuoSession.cookieSummary.join(', ')}` : '已登录';");
     expect(yaohuoLoginStateBlock).toContain("return `未登录，已检测 ${yaohuoSession.cookieSummary.length} 个 Cookie：${yaohuoSession.cookieSummary.join(', ')}`;");
-    expect(moreScreenSource).toContain('value={yaohuoLoginState}');
-    expect(moreScreenSource).toContain('subtitle={yaohuoLoginState}');
-    expect(moreScreenSource).not.toContain("yaohuoSession.canWrite ? yaohuoLoginState : '未登录'");
+    expect(moreUiSource).toContain('value={yaohuoLoginState}');
+    expect(moreUiSource).toContain('subtitle={yaohuoLoginState}');
+    expect(moreUiSource).not.toContain("yaohuoSession.canWrite ? yaohuoLoginState : '未登录'");
   });
 
   it('reads and clears yaohuo cookies across http, https, root, and www hosts', () => {
@@ -970,8 +994,8 @@ describe('Android App experience guards', () => {
     expect(feedControllerSource).toContain('isNodeSeekCloudflareError(error)');
     expect(feedControllerSource).toContain('loadNodeSeekCookieForSource');
     expect(feedControllerSource).toContain('nodeSeekCookie');
-    expect(moreScreenSource).toContain('label="NodeSeek 登录 / 验证"');
-    expect(moreScreenSource).toContain('userAgent={nodeSeekWebViewUserAgent}');
+    expect(moreUiSource).toContain('label="NodeSeek 登录 / 验证"');
+    expect(moreUiSource).toContain('userAgent={nodeSeekWebViewUserAgent}');
   });
 
   it('saves NodeSeek WebView verification cookies before returning to lists', () => {
@@ -984,9 +1008,9 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('nodeSeekWebViewUserAgentRef');
     expect(accountControllerSource).toContain('sanitizeNodeSeekUserAgent(data.userAgent)');
     expect(accountControllerSource).toContain('parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader)');
-    expect(moreScreenSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
-    expect(moreScreenSource).toContain('type: "nodeseek-login"');
-    expect(moreScreenSource).not.toContain('nodeseek-login-probe');
+    expect(moreUiSource).toContain('void onRememberNodeSeekCookies({ silent: true });');
+    expect(moreUiSource).toContain('type: "nodeseek-login"');
+    expect(moreUiSource).not.toContain('nodeseek-login-probe');
   });
 
   it('preserves saved NodeSeek login cookies when WebView only reports verification cookies', () => {
@@ -1042,7 +1066,7 @@ describe('Android App experience guards', () => {
   it('does not treat Cloudflare-only NodeSeek verification as logged-in actions', () => {
     expect(topicActionsControllerSource).toContain('const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);');
     expect(appSource).toContain('canUseNodeSeekActions={canUseNodeSeekActions}');
-    expect(moreScreenSource).toContain('nodeSeekSession.canWrite ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
+    expect(moreUiSource).toContain('nodeSeekSession.canWrite ? <MenuButton icon={CheckCircle} label="NodeSeek 签到"');
     expect(sessionControllerSource).toContain('removeNodeSeekLoginCookies');
   });
 
@@ -1075,8 +1099,8 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps detail reading settings reachable from the topic menu', () => {
-    expect(topicScreenSource).toContain('accessibilityLabel="阅读设置"');
-    expect(topicScreenSource).toContain('onOpenReadingSettings');
+    expect(topicMenuSource).toContain('accessibilityLabel="阅读设置"');
+    expect(topicMenuSource).toContain('onOpenReadingSettings');
     expect(appSource).toContain('openReadingSettingsFromTopic');
     expect(appSource).toContain('onOpenReadingSettings={openReadingSettingsFromTopic}');
   });
@@ -1094,14 +1118,14 @@ describe('Android App experience guards', () => {
   });
 
   it('uses a hidden WebView to read NodeSeek pages when normal fetch is blocked by Cloudflare', () => {
-    expect(appSource).toContain('NODESEEK_BROWSER_FETCH_SCRIPT');
+    expect(hiddenBrowserFetchControllerSource).toContain('NODESEEK_BROWSER_FETCH_SCRIPT');
     expect(sessionControllerSource).toContain('nodeSeekFetchWithWebView');
     expect(sessionControllerSource).toContain('createNodeSeekWebViewFallbackFetcher');
     expect(sessionControllerSource).toContain('const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({');
     expect(sessionControllerSource).toContain('defaultFetcher: fetch');
     expect(sessionControllerSource).toContain('webViewFetcher: nodeSeekFetchWithWebView');
     expect(sessionControllerSource).toContain('defaultFetcher: nodeSeekFetchWithWebViewFallback');
-    expect(appSource).toContain("type: 'nodeseek-browser-fetch'");
+    expect(hiddenBrowserFetchControllerSource).toContain("type: 'nodeseek-browser-fetch'");
     expect(appSource).toContain('fetcher: forumFetchWithWebViewFallback');
     expect(appSource).toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
   });
@@ -1119,15 +1143,15 @@ describe('Android App experience guards', () => {
   });
 
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
-    expect(appSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
-    expect(appSource).toContain('document.body?.innerText');
-    expect(appSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+    expect(hiddenBrowserFetchControllerSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
+    expect(hiddenBrowserFetchControllerSource).toContain('document.body?.innerText');
+    expect(hiddenBrowserFetchControllerSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
   });
 
   it('returns hidden NodeSeek WebView HTML when a restricted notice is rendered without post content', () => {
-    expect(appSource).toContain('const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText())');
-    expect(appSource).toContain('hasRestrictedNotice()');
-    expect(appSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+    expect(hiddenBrowserFetchControllerSource).toContain('const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText())');
+    expect(hiddenBrowserFetchControllerSource).toContain('hasRestrictedNotice()');
+    expect(hiddenBrowserFetchControllerSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
   });
 
   it('lets NodeSeek detail WebView fallback finish before the outer request timeout', () => {
@@ -1149,19 +1173,19 @@ describe('Android App experience guards', () => {
   });
 
   it('does not mistake regular NodeSeek posts mentioning Cloudflare for verification pages', () => {
-    expect(appSource).toContain('const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;');
-    expect(appSource).not.toContain('just a moment|cloudflare|cf-turnstile|challenge-platform');
+    expect(hiddenBrowserFetchControllerSource).toContain('const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;');
+    expect(hiddenBrowserFetchControllerSource).not.toContain('just a moment|cloudflare|cf-turnstile|challenge-platform');
   });
 
   it('waits for NodeSeek embedded vote panels before returning hidden WebView HTML', () => {
-    expect(appSource).toContain('const hasPendingVotePanel = () =>');
-    expect(appSource).toContain('.embed-vote .form-mask');
-    expect(appSource).toContain('input[name="vote-item"]');
-    expect(appSource).toContain('!hasPendingVotePanel()');
+    expect(hiddenBrowserFetchControllerSource).toContain('const hasPendingVotePanel = () =>');
+    expect(hiddenBrowserFetchControllerSource).toContain('.embed-vote .form-mask');
+    expect(hiddenBrowserFetchControllerSource).toContain('input[name="vote-item"]');
+    expect(hiddenBrowserFetchControllerSource).toContain('!hasPendingVotePanel()');
   });
 
   it('stops the hidden NodeSeek browser page after returning fallback HTML', () => {
-    const script = appSource.match(/const NODESEEK_BROWSER_FETCH_SCRIPT = `([\s\S]*?)`;/)?.[1] || '';
+    const script = hiddenBrowserFetchControllerSource.match(/const NODESEEK_BROWSER_FETCH_SCRIPT = `([\s\S]*?)`;/)?.[1] || '';
     const completeBlock = sessionControllerSource.match(/const completeNodeSeekBrowserFetch = useCallback\(async \(data: \{[\s\S]*?\n  \}, \[/)?.[0] || '';
 
     expect(script).toContain('window.stop();');
@@ -1169,11 +1193,11 @@ describe('Android App experience guards', () => {
   });
 
   it('stops the linux.do verification spinner when the WebView cannot load', () => {
-    expect(moreScreenSource).toContain('linuxDoWebViewError');
-    expect(moreScreenSource).toContain('onSetLinuxDoWebViewError');
-    expect(moreScreenSource).toContain('onError={(event) =>');
-    expect(moreScreenSource).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
-    expect(moreScreenSource).toContain('linux.do 页面加载失败');
+    expect(moreUiSource).toContain('linuxDoWebViewError');
+    expect(moreUiSource).toContain('onSetLinuxDoWebViewError');
+    expect(moreUiSource).toContain('onError={(event) =>');
+    expect(moreUiSource).toContain('onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);');
+    expect(moreUiSource).toContain('linux.do 页面加载失败');
   });
 
   it('resets topic loading state when leaving the topic screen', () => {
@@ -1324,8 +1348,8 @@ describe('Android App experience guards', () => {
     expect(submitReplyBlock).toContain('if (!isCurrentTopicActionRequest(requestOwner)) {');
     expect(submitReplyBlock.match(/await refreshTopicReplies\(\{ silent: true, afterSubmit: true \}\);/g) || []).toHaveLength(3);
     expect(topicScreenSource).toContain('onRefreshWholeTopic');
-    expect(topicScreenSource).toContain('刷新评论');
-    expect(topicScreenSource).toContain('刷新全文');
+    expect(topicMenuSource).toContain('刷新评论');
+    expect(topicMenuSource).toContain('刷新全文');
   });
 
   it('closes More screen panels when navigating away from More', () => {
@@ -1343,11 +1367,11 @@ describe('Android App experience guards', () => {
   it('keeps unused collection, history, category, and subscription entries out of More', () => {
     const moreScreenSignature = moreScreenSource.match(/function MoreScreen\(\{[\s\S]*?\}: \{[\s\S]*?\}\) \{/)?.[0] || '';
 
-    expect(moreScreenSource).not.toContain('label="收藏"');
-    expect(moreScreenSource).not.toContain('label="历史"');
-    expect(moreScreenSource).not.toContain('label="分类节点"');
-    expect(moreScreenSource).not.toContain('订阅');
-    expect(moreScreenSource).not.toContain('导出收藏 Markdown');
+    expect(moreUiSource).not.toContain('label="收藏"');
+    expect(moreUiSource).not.toContain('label="历史"');
+    expect(moreUiSource).not.toContain('label="分类节点"');
+    expect(moreUiSource).not.toContain('订阅');
+    expect(moreUiSource).not.toContain('导出收藏 Markdown');
     expect(moreScreenSignature).not.toContain('favoriteCount');
     expect(moreScreenSignature).not.toContain('historyCount');
     expect(moreScreenSignature).not.toContain('showCategoriesPanel');
@@ -1358,9 +1382,9 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps Android appearance settings to light or dark with fixed forest green and Douban white', () => {
-    const settingsPanelStart = moreScreenSource.indexOf('function SettingsPanel(');
+    const settingsPanelStart = morePanelsSource.indexOf('export function SettingsPanel(');
     const settingsPanelBlock = settingsPanelStart >= 0
-      ? moreScreenSource.slice(settingsPanelStart)
+      ? morePanelsSource.slice(settingsPanelStart)
       : '';
 
     expect(moreScreenSource).toContain('meta="字号 · 白天/黑夜 · 阅读调节"');
@@ -1557,13 +1581,13 @@ describe('Android App experience guards', () => {
   });
 
   it('does not let the linux.do verification page stay loading forever', () => {
-    expect(moreScreenSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
-    expect(moreScreenSource).toContain('linux.do 页面打开超时');
-    expect(moreScreenSource).toContain('clearTimeout(timeout)');
+    expect(morePanelsSource).toContain('LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS');
+    expect(morePanelsSource).toContain('linux.do 页面打开超时');
+    expect(morePanelsSource).toContain('clearTimeout(timeout)');
   });
 
   it('ignores stale linux.do verification WebView events after closing or refreshing the panel', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const linuxDoMessageBlock = verificationControllerSource.match(/const handleLinuxDoMessage[\s\S]*?\n  }, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const linuxDoWebViewSessionRef = useRef(0);');
@@ -1576,7 +1600,7 @@ describe('Android App experience guards', () => {
   });
 
   it('unmounts the linux.do verification WebView before hiding the modal', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const closeLinuxDoBlock = verificationControllerSource.match(/const closeLinuxDoPanel = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
 
     expect(appSource).toContain('const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);');
@@ -1606,8 +1630,8 @@ describe('Android App experience guards', () => {
   });
 
   it('renders linux.do verification as a global modal instead of inside the More tab', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/function LinuxDoVerifyPanel\([\s\S]*?\nconst MemoizedLinuxDoVerifyPanel/)?.[0] || '';
-    const linuxDoModalBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyPanel\([\s\S]*?\nexport const MemoizedLinuxDoVerifyPanel/)?.[0] || '';
+    const linuxDoModalBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
     const appReturnBlock = appSource.match(/return \(\s*<GestureHandlerRootView[\s\S]*?<NavigationContainer/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('MenuButton');
@@ -1656,7 +1680,7 @@ describe('Android App experience guards', () => {
   });
 
   it('does not reopen the linux.do verification loading state after the page is visible', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('linuxDoWebViewReadyRef');
     expect(linuxDoPanelBlock).toContain('markLinuxDoPageReady');
@@ -1667,24 +1691,24 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps login modal controls usable while a WebView loading badge is visible', () => {
-    expect(moreScreenSource).toContain('<View pointerEvents="none" style={styles.loading}>');
+    expect(morePanelsSource).toContain('<View pointerEvents="none" style={styles.loading}>');
   });
 
   it('opens external login and verification pages as full-screen WebView modals', () => {
-    expect(moreScreenSource).toContain('LoginWebViewModal');
-    expect(moreScreenSource).toContain('visible={showLoginPanel}');
-    expect(moreScreenSource).toContain('visible={showYaohuoLoginPanel}');
-    expect(moreScreenSource).toContain('visible={showLinuxDoPanel}');
-    expect(moreScreenSource).toContain('styles.loginWebViewModal');
-    expect(moreScreenSource).toContain('styles.loginWebViewBody');
+    expect(morePanelsSource).toContain('LoginWebViewModal');
+    expect(morePanelsSource).toContain('visible={showLoginPanel}');
+    expect(morePanelsSource).toContain('visible={showYaohuoLoginPanel}');
+    expect(morePanelsSource).toContain('visible={showLinuxDoPanel}');
+    expect(morePanelsSource).toContain('styles.loginWebViewModal');
+    expect(morePanelsSource).toContain('styles.loginWebViewBody');
   });
 
   it('keeps full-screen login modal controls below the Android status bar', () => {
-    expect(moreScreenSource).toContain("import { useSafeAreaInsets } from 'react-native-safe-area-context';");
-    expect(moreScreenSource).toContain('const insets = useSafeAreaInsets();');
-    expect(moreScreenSource).toContain('paddingTop: insets.top');
-    expect(moreScreenSource).toContain('paddingBottom: insets.bottom');
-    expect(moreScreenSource).not.toContain('<SafeAreaView');
+    expect(morePanelsSource).toContain("import { useSafeAreaInsets } from 'react-native-safe-area-context';");
+    expect(morePanelsSource).toContain('const insets = useSafeAreaInsets();');
+    expect(morePanelsSource).toContain('paddingTop: insets.top');
+    expect(morePanelsSource).toContain('paddingBottom: insets.bottom');
+    expect(morePanelsSource).not.toContain('<SafeAreaView');
   });
 
   it('clears stale linux.do verification errors after the WebView responds again', () => {
@@ -1694,7 +1718,7 @@ describe('Android App experience guards', () => {
   });
 
   it('clears stale linux.do verification errors after a successful page load', () => {
-    const block = moreScreenSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
+    const block = morePanelsSource.match(/onLoadEnd=\{\(event\) => \{[\s\S]*?linuxDoWebViewRef\.current\?\.injectJavaScript\(LINUXDO_WEBVIEW_PROBE_SCRIPT\);[\s\S]*?\}\}/)?.[0] || '';
 
     expect(block).toContain('markLinuxDoPageReady();');
     expect(block).toContain("if (!('code' in event.nativeEvent)) {");
@@ -1702,17 +1726,17 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps linux.do verification WebView failures contained', () => {
-    expect(moreScreenSource).toContain('linuxDoWebViewKey');
-    expect(moreScreenSource).toContain('onResetLinuxDoWebView');
-    expect(moreScreenSource).toContain('key={linuxDoWebViewKey}');
-    expect(moreScreenSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
-    expect(moreScreenSource).toContain('onRenderProcessGone={() =>');
-    expect(moreScreenSource).toContain('linux.do 验证页面已停止');
+    expect(moreUiSource).toContain('linuxDoWebViewKey');
+    expect(moreUiSource).toContain('onResetLinuxDoWebView');
+    expect(morePanelsSource).toContain('key={linuxDoWebViewKey}');
+    expect(morePanelsSource).toContain('renderError={() => <View style={styles.webViewErrorPlaceholder} />}');
+    expect(morePanelsSource).toContain('onRenderProcessGone={() =>');
+    expect(morePanelsSource).toContain('linux.do 验证页面已停止');
   });
 
   it('keeps visible login WebView renderer failures recoverable', () => {
-    const nodeSeekLoginBlock = moreScreenSource.match(/function NodeSeekLoginPanel\([\s\S]*?\nconst MemoizedNodeSeekLoginPanel/)?.[0] || '';
-    const yaohuoLoginBlock = moreScreenSource.match(/function YaohuoLoginPanel\([\s\S]*?\nconst MemoizedYaohuoLoginPanel/)?.[0] || '';
+    const nodeSeekLoginBlock = morePanelsSource.match(/export function NodeSeekLoginPanel\([\s\S]*?\nexport const MemoizedNodeSeekLoginPanel/)?.[0] || '';
+    const yaohuoLoginBlock = morePanelsSource.match(/export function YaohuoLoginPanel\([\s\S]*?\nexport const MemoizedYaohuoLoginPanel/)?.[0] || '';
 
     expect(nodeSeekLoginBlock).toContain('onRenderProcessGone={() =>');
     expect(nodeSeekLoginBlock).toContain('NodeSeek 登录页面已停止，请刷新页面重试。');
@@ -1725,8 +1749,8 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps visible login WebView refresh on the current page unless remount is needed', () => {
-    const nodeSeekLoginBlock = moreScreenSource.match(/function NodeSeekLoginPanel\([\s\S]*?\nconst MemoizedNodeSeekLoginPanel/)?.[0] || '';
-    const yaohuoLoginBlock = moreScreenSource.match(/function YaohuoLoginPanel\([\s\S]*?\nconst MemoizedYaohuoLoginPanel/)?.[0] || '';
+    const nodeSeekLoginBlock = morePanelsSource.match(/export function NodeSeekLoginPanel\([\s\S]*?\nexport const MemoizedNodeSeekLoginPanel/)?.[0] || '';
+    const yaohuoLoginBlock = morePanelsSource.match(/export function YaohuoLoginPanel\([\s\S]*?\nexport const MemoizedYaohuoLoginPanel/)?.[0] || '';
 
     expect(nodeSeekLoginBlock).toContain('if (webViewNeedsRemount) {');
     expect(nodeSeekLoginBlock).toContain('setWebViewKey((current) => current + 1);');
@@ -1737,8 +1761,8 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps visible login WebView load failures visible after load end', () => {
-    const nodeSeekLoginBlock = moreScreenSource.match(/function NodeSeekLoginPanel\([\s\S]*?\nconst MemoizedNodeSeekLoginPanel/)?.[0] || '';
-    const yaohuoLoginBlock = moreScreenSource.match(/function YaohuoLoginPanel\([\s\S]*?\nconst MemoizedYaohuoLoginPanel/)?.[0] || '';
+    const nodeSeekLoginBlock = morePanelsSource.match(/export function NodeSeekLoginPanel\([\s\S]*?\nexport const MemoizedNodeSeekLoginPanel/)?.[0] || '';
+    const yaohuoLoginBlock = morePanelsSource.match(/export function YaohuoLoginPanel\([\s\S]*?\nexport const MemoizedYaohuoLoginPanel/)?.[0] || '';
 
     expect(nodeSeekLoginBlock).toContain("if ('code' in event.nativeEvent) {");
     expect(nodeSeekLoginBlock).toContain('return;');
@@ -1748,7 +1772,7 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps the linux.do verification WebView off the emulator GPU path', () => {
-    const linuxDoPanelBlock = moreScreenSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
+    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
 
     expect(linuxDoPanelBlock).toContain('androidLayerType="software"');
   });
@@ -1757,7 +1781,7 @@ describe('Android App experience guards', () => {
     expect(appSource).toContain('closeLinuxDoPanel');
     expect(verificationControllerSource).toContain('linuxDoWebViewRef.current?.stopLoading()');
     expect(appSource).toContain('onShowLinuxDoPanelChange={changeLinuxDoPanel}');
-    expect(moreScreenSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
+    expect(moreUiSource).toContain('onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}');
   });
 
   it('clears stale linux.do login cookies after expired write actions while preserving verification', () => {
@@ -1838,18 +1862,18 @@ describe('Android App experience guards', () => {
   });
 
   it('reuses the linux.do verification WebView user agent for local requests', () => {
-    expect(moreScreenSource).toContain('navigator.userAgent');
+    expect(morePanelsSource).toContain('navigator.userAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgent');
     expect(appSource).toContain('linuxDoWebViewUserAgentRef');
     expect(verificationControllerSource).toContain('sanitizeLinuxDoUserAgent(data.userAgent)');
-    expect(moreScreenSource).toContain('userAgent={linuxDoWebViewUserAgent}');
+    expect(morePanelsSource).toContain('userAgent={linuxDoWebViewUserAgent}');
     expect(verificationControllerSource).toContain('saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined)');
     expect(localLinuxDoSource).toContain("DEFAULT_LINUXDO_ANDROID_USER_AGENT");
     expect(localLinuxDoSource).toContain("'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT");
   });
 
   it('can detect linux.do clearance from the visible WebView document cookies', () => {
-    expect(moreScreenSource).toContain('cookie: document.cookie || ""');
+    expect(morePanelsSource).toContain('cookie: document.cookie || ""');
     expect(appSource).toContain('linuxDoWebViewCookieHeader');
     expect(appSource).toContain('linuxDoWebViewCookieHeaderRef');
     expect(verificationControllerSource).toContain('parseLinuxDoDocumentCookie(linuxDoDocumentCookieHeader)');
@@ -1888,7 +1912,7 @@ describe('Android App experience guards', () => {
   });
 
   it('returns quickly from the hidden linux.do WebView when manual verification is visible', () => {
-    const scriptBlock = appSource.match(/const LINUXDO_BROWSER_FETCH_SCRIPT = `[\s\S]*?`;/)?.[0] || '';
+    const scriptBlock = hiddenBrowserFetchControllerSource.match(/const LINUXDO_BROWSER_FETCH_SCRIPT = `[\s\S]*?`;/)?.[0] || '';
 
     expect(scriptBlock).toContain('isInteractiveChallengePage');
     expect(scriptBlock).toContain('if (isInteractiveChallengePage() || (!isChallengePage() && jsonText()) || Date.now() >= deadline)');

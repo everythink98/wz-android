@@ -1,43 +1,42 @@
-import { memo, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   type ListRenderItem,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  Modal,
   Pressable,
   ScrollView,
   Text,
   TextInput,
   View
 } from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
 import {
   HTMLContentModel,
   HTMLElementModel,
   RenderHTMLConfigProvider,
-  RenderHTMLSource,
   TChildrenRenderer,
   TRenderEngineProvider,
   defaultHTMLElementModels,
   useTNodeChildrenProps,
   type CustomBlockRenderer
 } from 'react-native-render-html';
-import { SvgXml } from 'react-native-svg';
-import { BookMarked, CheckCircle, CheckSquare, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Circle, Drumstick, ExternalLink, MessageCircle, MoreHorizontal, RefreshCw, Settings, Share2, Square, Star, ThumbsDown, ThumbsUp, X, type LucideIcon } from 'lucide-react-native';
+import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { AccessRequirement, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../appTypes';
-import { highlightHtml } from '../androidFeatureHelpers';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../appUtils';
-import { loadRemoteAvatarSvgText } from '../avatarImages';
-import { flowInlineImagesInMixedParagraphs, imageSourceFromUrl, INLINE_FORUM_IMAGE_TAG, markInlineSizedImageHtml } from '../htmlImages';
+import { INLINE_FORUM_IMAGE_TAG } from '../htmlImages';
 import { splitTopicContentHtml } from '../topicContentSplit';
-import { androidRipple, createStyles, replyContextBadgeStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme, type StatusBadgeTone } from '../theme';
+import { androidRipple, createStyles, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme, type StatusBadgeTone } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../components/AppControls';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-import { topicWithAuthorFallback, userFromReply, userFromTopic } from '../userNavigation';
+import { topicWithAuthorFallback, userFromTopic } from '../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../topicActionState';
+import { TopicPolls } from './topic/TopicPolls';
+import { DetailActionButton } from './topic/TopicActionBar';
+import { MemoizedTopicContentBlock } from './topic/TopicContentBlock';
+import { AuthorAvatar, MemoizedReplyItem, NodeSeekStatPill, linuxDoReactionStats, nodeSeekTopicReactionStats } from './topic/ReplyItem';
+import { ReplyComposer } from './topic/ReplyComposer';
+import { TopicMenu } from './topic/TopicMenu';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -70,12 +69,10 @@ function htmlTagName(tnode: unknown) {
   const tagName = ((tnode as { tagName?: string }).tagName || '').toLowerCase();
   return tagName || domNodeTagName((tnode as { domNode?: unknown }).domNode);
 }
-
 function domNodeTagName(node: unknown) {
   const record = node as { name?: unknown; tagName?: unknown };
   return String(record?.name || record?.tagName || '').toLowerCase();
 }
-
 function domNodeTextContent(node: unknown): string {
   if (!node || typeof node !== 'object') {
     return '';
@@ -121,39 +118,7 @@ function getReplyKey(reply: Reply) {
   return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
 }
 
-type NodeSeekStat = { label: string; value: number };
 type TopicStatusBadge = { label: string; tone: StatusBadgeTone };
-
-const LINUXDO_REACTION_LABELS: Record<string, string> = {
-  clap: '鼓掌',
-  confused: '困惑',
-  cry: '难过',
-  distorted_face: '难绷',
-  eyes: '关注',
-  heart: '喜欢',
-  laughing: '笑',
-  open_mouth: '惊讶',
-  rocket: '火箭'
-};
-
-function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeekStat | null {
-  return typeof value === 'number' ? { label, value } : null;
-}
-
-function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount'>) {
-  return [
-    visibleNodeSeekStat('点赞', item.upvoteCount),
-    visibleNodeSeekStat('鸡腿', item.likeCount),
-    visibleNodeSeekStat('反对', item.dislikeCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
-}
-
-function nodeSeekTopicReactionStats(item: Pick<TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount' | 'collectionCount'>) {
-  return [
-    ...nodeSeekReactionStats(item),
-    visibleNodeSeekStat('原站收藏', item.collectionCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
-}
 
 function slowModeLabel(seconds: number) {
   return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`;
@@ -182,270 +147,6 @@ function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' 
   return badges;
 }
 
-function linuxDoReactionLabel(id: string) {
-  return LINUXDO_REACTION_LABELS[id] || id.replace(/_/g, ' ');
-}
-
-function linuxDoReactionStats(item: Pick<Reply | TopicDetail, 'boostCount' | 'reactionSummary'>) {
-  return [
-    ...(item.reactionSummary || []).map((reaction) => ({ label: linuxDoReactionLabel(reaction.id), value: reaction.count })),
-    visibleNodeSeekStat('加电', item.boostCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
-}
-
-function topicPollKey(poll: TopicPoll, index: number) {
-  return poll.id || poll.name || `poll-${index}`;
-}
-
-function pollTotalVotes(poll: TopicPoll) {
-  return poll.options.reduce((total, option) => total + (typeof option.count === 'number' ? option.count : 0), 0);
-}
-
-function pollChoiceRangeLabel(poll: TopicPoll) {
-  if (!poll.multiple) {
-    return undefined;
-  }
-  return [
-    typeof poll.min === 'number' ? `至少 ${poll.min} 项` : undefined,
-    typeof poll.max === 'number' ? `最多 ${poll.max} 项` : undefined
-  ].filter(Boolean).join('，') || undefined;
-}
-
-function pollTypeLabel(poll: TopicPoll) {
-  const labels: Record<string, string> = {
-    ranked_choice: '排序投票',
-    number: '数字投票'
-  };
-  return (poll.type ? labels[poll.type] : undefined) || (poll.multiple ? '多选' : '单选');
-}
-
-function pollSelectionRangeStatus(poll: TopicPoll, selectedCount: number) {
-  if (!poll.multiple) {
-    return undefined;
-  }
-  if (typeof poll.min === 'number' && selectedCount > 0 && selectedCount < poll.min) {
-    return `至少选择 ${poll.min} 项`;
-  }
-  if (typeof poll.max === 'number' && selectedCount > poll.max) {
-    return `最多选择 ${poll.max} 项`;
-  }
-  return undefined;
-}
-
-function PollBlockList({
-  actionBusy,
-  canWritePollSource,
-  embeddedInArticle,
-  keyPrefix,
-  onTogglePollSelection,
-  onVotePoll,
-  pollSelections,
-  polls,
-  source,
-  styles,
-  theme
-}: {
-  actionBusy: boolean;
-  canWritePollSource: boolean;
-  embeddedInArticle?: boolean;
-  keyPrefix: string;
-  onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
-  onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
-  pollSelections: Record<string, string[]>;
-  polls: TopicPoll[];
-  source?: Source;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-}) {
-  if (!polls.length) {
-    return null;
-  }
-  const canVotePollSource = source === 'nodeseek' || source === 'linuxdo' || source === 'yaohuo';
-  return (
-    <View style={styles.pollStack}>
-      {polls.map((poll, index) => {
-        const pollKey = `${keyPrefix}-${topicPollKey(poll, index)}`;
-        const hasCounts = poll.options.some((option) => typeof option.count === 'number');
-        const totalVotes = pollTotalVotes(poll);
-        const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
-        const selectedSet = new Set(selectedOptionIds);
-        const linuxDoPollReady = source !== 'linuxdo' || Boolean(poll.postId && poll.name);
-        const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
-        const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !linuxDoPollReady);
-        const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
-        const pollStatus = poll.closed
-          ? '已关闭'
-          : poll.voted
-            ? '已投票'
-            : pollReadonly
-              ? '只读结果'
-              : !canWritePollSource
-                ? '未登录'
-                : !linuxDoPollReady
-                  ? '信息不完整'
-                  : '可投票';
-        const pollMetaItems = [
-          pollTypeLabel(poll),
-          pollChoiceRangeLabel(poll),
-          hasCounts ? `${totalVotes} 票` : undefined,
-          typeof poll.public === 'boolean' ? (poll.public ? '公开' : '不公开') : undefined
-        ].filter((item): item is string => Boolean(item));
-        const submitLabel = poll.closed
-          ? '投票已关闭'
-          : poll.voted
-            ? '已投票'
-            : pollReadonly
-              ? '只读结果'
-              : !canWritePollSource
-                ? '登录后投票'
-                : !linuxDoPollReady
-                  ? '刷新后投票'
-                  : selectionRangeStatus || '提交投票';
-        const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
-        return (
-          <View key={pollKey} style={[styles.pollBlock, embeddedInArticle && index === 0 && styles.pollBlockFirstInArticle]}>
-            <View style={styles.pollHeader}>
-              <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
-            </View>
-            <View style={styles.pollOptionList}>
-              {poll.options.map((option, optionIndex) => {
-                const selected = selectedSet.has(option.id);
-                const OptionIcon = poll.multiple
-                  ? selected ? CheckSquare : Square
-                  : selected ? CheckCircle : Circle;
-                const percentValue = hasCounts && totalVotes > 0 && typeof option.count === 'number'
-                  ? Math.round((option.count / totalVotes) * 100)
-                  : undefined;
-                const countText = typeof option.count === 'number'
-                  ? `${option.count} 票${percentValue !== undefined ? ` · ${percentValue}%` : ''}`
-                  : '';
-                return (
-                  <Pressable
-                    key={option.id}
-                    accessibilityRole={poll.multiple ? 'checkbox' : 'radio'}
-                    accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
-                    android_ripple={androidRipple(theme.primarySoft)}
-                    disabled={pollOptionDisabled}
-                    style={[styles.pollOptionRow, optionIndex > 0 && styles.pollOptionDivider, selected && styles.pollOptionRowSelected]}
-                    onPress={() => {
-                      triggerPressFeedback();
-                      onTogglePollSelection(pollKey, poll, option.id);
-                    }}
-                  >
-                    {percentValue !== undefined ? (
-                      <View pointerEvents="none" style={[styles.pollOptionProgress, { width: `${percentValue}%` }]} />
-                    ) : null}
-                    <View style={styles.pollOptionContent}>
-                      <View style={styles.pollOptionIcon}>
-                        <OptionIcon size={18} color={selected ? theme.primary : theme.muted} strokeWidth={1.8} />
-                      </View>
-                      <View style={styles.pollOptionTextBlock}>
-                        <Text style={styles.pollOptionText}>{option.label}</Text>
-                        {countText ? <Text style={styles.pollOptionCount}>{countText}</Text> : null}
-                      </View>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <View style={styles.pollFooter}>
-              <View style={styles.pollMetaWrap}>
-                {pollMetaItems.map((item) => (
-                  <Text key={item} style={styles.pollMetaPill}>{item}</Text>
-                ))}
-                <Text style={styles.pollStatePill}>{pollStatus}</Text>
-              </View>
-              {canVotePollSource ? (
-                <View style={styles.pollSubmitRow}>
-                  <AppButton
-                    compact
-                    label={submitLabel}
-                    variant={submitDisabled ? 'ghost' : 'primary'}
-                    styles={styles}
-                    disabled={submitDisabled}
-                    onPress={() => onVotePoll(poll, selectedOptionIds)}
-                  />
-                </View>
-              ) : null}
-            </View>
-          </View>
-        );
-      })}
-    </View>
-  );
-}
-
-function NodeSeekStatPill({
-  label,
-  styles,
-  value
-}: {
-  label: string;
-  styles: ReturnType<typeof createStyles>;
-  value: number;
-}) {
-  return (
-    <View style={styles.nodeSeekStatPill}>
-      <Text style={styles.nodeSeekStatLabel}>{label}</Text>
-      <Text style={styles.nodeSeekStatValue}>{value}</Text>
-    </View>
-  );
-}
-
-function DetailActionButton({
-  accessibilityLabel,
-  active = false,
-  count,
-  disabled = false,
-  icon,
-  label,
-  pending = false,
-  alignStart = false,
-  styles,
-  theme,
-  onPress
-}: {
-  accessibilityLabel: string;
-  active?: boolean;
-  count?: number;
-  disabled?: boolean;
-  icon: LucideIcon;
-  label: string;
-  pending?: boolean;
-  alignStart?: boolean;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onPress: () => void;
-}) {
-  const Icon = icon;
-  const color = active ? theme.primary : theme.ink;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ busy: pending, disabled, selected: active }}
-      android_ripple={androidRipple(theme.primarySoft, true)}
-      disabled={disabled}
-      style={[styles.detailActionButton, alignStart && styles.replyDetailActionButton, active && styles.detailActionButtonActive, disabled && styles.buttonDisabled]}
-      onPress={() => {
-        triggerPressFeedback();
-        onPress();
-      }}
-    >
-      <View style={styles.detailActionIconSlot}>
-        {pending ? (
-          <ActivityIndicator size="small" color={theme.primary} />
-        ) : (
-          <Icon size={18} color={color} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
-        )}
-      </View>
-      <View style={styles.detailActionTextBlock}>
-        <Text numberOfLines={1} style={[styles.detailActionLabel, active && styles.detailActionLabelActive]}>{label}</Text>
-        {typeof count === 'number' ? <Text numberOfLines={1} style={[styles.detailActionCount, active && styles.detailActionLabelActive]}>{count}</Text> : null}
-      </View>
-    </Pressable>
-  );
-}
 
 function topicListItemKey(item: TopicListItem) {
   return item.key;
@@ -482,62 +183,6 @@ function isAccessNoticeHtml(html: string, accessRequirement?: AccessRequirement)
     return false;
   }
   return !text || /查看本帖需要|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|登录后(?:才能|可见)|需要[^。；\n]{0,24}(?:等级|Lv|level)|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i.test(text);
-}
-
-function authorInitial(name: string | undefined) {
-  return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
-}
-
-function AuthorAvatar({
-  name,
-  small,
-  styles,
-  uri
-}: {
-  name?: string;
-  small?: boolean;
-  styles: ReturnType<typeof createStyles>;
-  uri?: string;
-}) {
-  const [svgXml, setSvgXml] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSvgXml(null);
-    if (!uri) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    loadRemoteAvatarSvgText(uri).then((xml) => {
-      if (!cancelled) {
-        setSvgXml(xml);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [uri]);
-
-  return (
-    <View style={[styles.replyAvatar, small ? styles.replyAvatarSmall : styles.topicAvatar]}>
-      {svgXml ? (
-        <SvgXml
-          xml={svgXml}
-          width="100%"
-          height="100%"
-        />
-      ) : uri ? (
-        <ExpoImage
-          source={imageSourceFromUrl(uri)}
-          style={[styles.replyAvatarImage, small ? styles.replyAvatarSmall : styles.topicAvatar]}
-          contentFit="cover"
-        />
-      ) : (
-        <Text style={[styles.replyAvatarText, small && styles.replyAvatarSmallText]}>{authorInitial(name)}</Text>
-      )}
-    </View>
-  );
 }
 
 export function TopicScreen({
@@ -954,7 +599,7 @@ export function TopicScreen({
       return (
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
-            <MemoizedHtmlContent
+            <MemoizedTopicContentBlock
               contentWidth={contentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={listItem.html}
@@ -1024,7 +669,7 @@ export function TopicScreen({
       return (
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
-            <PollBlockList
+            <TopicPolls
               actionBusy={actionBusy}
               canWritePollSource={canWriteTopicPollSource}
               embeddedInArticle
@@ -1086,19 +731,17 @@ export function TopicScreen({
 
     if (listItem.type === 'replyComposer') {
       return (
-        <View style={[styles.replyBox, topicColumnStyle]}>
-          <Text style={styles.panelTitle}>{replyTarget ? `回复 #${replyTarget.floor}${replyTarget.author ? ` · ${replyTarget.author}` : ''}` : '回复'}</Text>
-          <TextInput
-            style={[styles.input, styles.replyInput]}
-            value={replyContent}
-            onChangeText={onReplyContentChange}
-            placeholder={replyTarget ? '输入楼层回复内容' : '输入回复内容'}
-            placeholderTextColor={theme.muted}
-            multiline
-          />
-          {replyTarget ? <AppButton label="取消楼层回复" variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
-          <AppButton label="发送回复" variant="primary" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
-        </View>
+        <ReplyComposer
+          actionBusy={actionBusy}
+          replyContent={replyContent}
+          replyTarget={replyTarget}
+          styles={styles}
+          theme={theme}
+          topicColumnStyle={topicColumnStyle}
+          onReplyComposerOpenChange={onReplyComposerOpenChange}
+          onReplyContentChange={onReplyContentChange}
+          onSubmitReply={onSubmitReply}
+        />
       );
     }
 
@@ -1112,7 +755,7 @@ export function TopicScreen({
 
     return (
       <View style={[styles.replyListItem, topicColumnStyle]}>
-        <MemoizedReplyCard
+        <MemoizedReplyItem
           actionBusy={actionBusy}
           canWrite={canWrite}
           contentWidth={Math.max(240, contentWidth - 28)}
@@ -1290,356 +933,20 @@ export function TopicScreen({
           ) : null}
           renderItem={renderReplyItem}
         />
-        <Modal transparent visible={topicMenuOpen} animationType="fade" onRequestClose={() => setTopicMenuOpen(false)}>
-          <View style={styles.topicMenuLayer}>
-            <Pressable accessibilityRole="button" accessibilityLabel="关闭更多操作" style={styles.topicMenuDismissLayer} onPress={() => setTopicMenuOpen(false)} />
-            <View style={styles.topicOverflowMenu}>
-              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onShareTopic)}>
-                <Share2 size={17} color={theme.ink} strokeWidth={1.8} />
-                <Text style={styles.topicMenuItemText}>分享</Text>
-              </Pressable>
-              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onRefreshTopic)}>
-                <RefreshCw size={17} color={theme.ink} strokeWidth={1.8} />
-                <Text style={styles.topicMenuItemText}>刷新评论</Text>
-              </Pressable>
-              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onRefreshWholeTopic)}>
-                <RefreshCw size={17} color={theme.ink} strokeWidth={1.8} />
-                <Text style={styles.topicMenuItemText}>刷新全文</Text>
-              </Pressable>
-              <Pressable accessibilityRole="menuitem" accessibilityLabel="阅读设置" android_ripple={{ color: theme.primarySoft }} style={styles.topicMenuItem} onPress={() => runTopicMenuAction(onOpenReadingSettings)}>
-                <Settings size={17} color={theme.ink} strokeWidth={1.8} />
-                <Text style={styles.topicMenuItemText}>阅读设置</Text>
-              </Pressable>
-              <Pressable accessibilityRole="menuitem" android_ripple={{ color: theme.primarySoft }} style={[styles.topicMenuItem, styles.topicMenuItemLast]} onPress={() => runTopicMenuAction(() => onOpenOriginal(item.url))}>
-                <ExternalLink size={17} color={theme.ink} strokeWidth={1.8} />
-                <Text style={styles.topicMenuItemText}>原站打开</Text>
-              </Pressable>
-            </View>
-          </View>
-        </Modal>
+        <TopicMenu
+          onOpenOriginal={onOpenOriginal}
+          onOpenReadingSettings={onOpenReadingSettings}
+          onRefreshTopic={onRefreshTopic}
+          onRefreshWholeTopic={onRefreshWholeTopic}
+          onRequestClose={() => setTopicMenuOpen(false)}
+          onShareTopic={onShareTopic}
+          runTopicMenuAction={runTopicMenuAction}
+          styles={styles}
+          theme={theme}
+          topicUrl={item.url}
+          visible={topicMenuOpen}
+        />
       </RenderHTMLConfigProvider>
     </TRenderEngineProvider>
   );
 }
-
-function HtmlContent({
-  contentWidth,
-  html,
-  inlineSizedImageUrls
-}: {
-  contentWidth: number;
-  html: string | undefined;
-  inlineSizedImageUrls: Record<string, true>;
-}) {
-  const source = useMemo(() => {
-    const markedHtml = Object.keys(inlineSizedImageUrls).reduce((current, url) => markInlineSizedImageHtml(current, url), html || '<p></p>');
-    return { html: flowInlineImagesInMixedParagraphs(markedHtml) };
-  }, [html, inlineSizedImageUrls]);
-  return (
-    <RenderHTMLSource
-      contentWidth={contentWidth}
-      source={source}
-    />
-  );
-}
-
-const MemoizedHtmlContent = memo(HtmlContent);
-
-function ReplyCard({
-  actionBusy,
-  canWrite,
-  contentWidth,
-  expandedQuotes,
-  isActionPending,
-  isNew,
-  loadedQuotedReplies,
-  loadingQuotedFloors,
-  inlineSizedImageUrls,
-  onTogglePollSelection,
-  pollSelections,
-  query,
-  reply,
-  replyFloor,
-  repliesByFloor,
-  source,
-  styles,
-  theme,
-  topicAuthor,
-  onInteract,
-  onOpenUser,
-  onReplyToFloor,
-  onVotePoll,
-  onToggleQuotedFloor
-}: {
-  actionBusy: boolean;
-  canWrite: boolean;
-  contentWidth: number;
-  expandedQuotes: Record<string, boolean>;
-  isActionPending: (targetId: string | number | undefined, action: TopicActionStateKind) => boolean;
-  inlineSizedImageUrls: Record<string, true>;
-  isNew?: boolean;
-  loadedQuotedReplies: Record<number, Reply>;
-  loadingQuotedFloors: Record<string, boolean>;
-  onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
-  pollSelections: Record<string, string[]>;
-  query: string;
-  reply: Reply;
-  replyFloor: number;
-  repliesByFloor: Map<number, Reply>;
-  source?: Source;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  topicAuthor?: string;
-  onInteract: (type: InteractionType, commentId?: number) => void;
-  onOpenUser: (user: UserProfile) => void;
-  onReplyToFloor: (reply: Reply) => void;
-  onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
-  onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
-}) {
-  const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
-  const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
-  const replyContentWidth = Math.max(220, contentWidth - 42);
-  const replyUser = userFromReply(reply, source);
-  const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
-  const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
-  const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply) : [];
-  const replyTargetUser = source && reply.replyTargetAuthor ? {
-    source,
-    id: reply.replyTargetAuthor,
-    username: reply.replyTargetAuthor,
-    displayName: reply.replyTargetAuthor,
-    url: '',
-    topics: []
-  } : null;
-  return (
-    <View style={styles.replyCard}>
-      <Pressable
-        accessibilityRole="button"
-        disabled={!replyUser}
-        style={styles.replyHead}
-        onPress={() => {
-          if (replyUser) {
-            onOpenUser(replyUser);
-          }
-        }}
-      >
-        <AuthorAvatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
-        <View style={styles.replyAuthorBlock}>
-          <View style={styles.replyAuthorNameRow}>
-            <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
-            {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
-            {reply.hot ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text> : null}
-            {reply.pinned ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text> : null}
-            {reply.acceptedAnswer ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('success', theme)]}>已采纳</Text> : null}
-            {reply.wiki ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text> : null}
-            {reply.hidden ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text> : null}
-            {reply.folded ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text> : null}
-            {reply.needsApproval ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text> : null}
-            {reply.systemAction ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}>系统</Text> : null}
-          </View>
-          <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
-        </View>
-        <View style={styles.replyFloorBadge}>
-          <Text style={styles.replyFloorText}>#{reply.floor ?? '-'}</Text>
-        </View>
-        {isNew ? <Text style={styles.replyNewBadge}>新增</Text> : null}
-      </Pressable>
-      <View style={styles.replyContentArea}>
-        {quotedFloors.length ? (
-          <View style={styles.quoteStack}>
-            {quotedFloors.map((quotedFloor) => {
-              const key = `${replyFloor}:${quotedFloor}`;
-              const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
-              const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];
-              const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup || '未知作者';
-              const quotedUser = quotedReply ? userFromReply(quotedReply, source) : source && quotedAuthorFromMarkup ? {
-                source,
-                id: quotedAuthorFromMarkup,
-                username: quotedAuthorFromMarkup,
-                displayName: quotedAuthorFromMarkup,
-                url: '',
-                topics: []
-              } : null;
-              const expanded = Boolean(expandedQuotes[key]);
-              const loading = Boolean(loadingQuotedFloors[key]);
-              return (
-                <View key={key} style={styles.quoteBox}>
-                  <View style={styles.quoteHeader}>
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={!quotedUser}
-                      style={styles.quoteAuthorSummary}
-                      onPress={() => {
-                        if (quotedUser) {
-                          onOpenUser(quotedUser);
-                        }
-                      }}
-                    >
-                      {quotedReply ? <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
-                      <View style={styles.quoteAuthorTextBlock}>
-                        <Text style={styles.quoteAuthorText} numberOfLines={1}>{quotedAuthorName}</Text>
-                        <Text style={styles.replyMeta}>引用 #{quotedFloor}{quotedReply ? '' : ' · 楼层未加载'}</Text>
-                      </View>
-                    </Pressable>
-                    <AppButton
-                      compact
-                      label={loading ? '读取' : expanded ? '收起' : '展开'}
-                      variant="ghost"
-                      styles={styles}
-                      disabled={loading}
-                      onPress={() => onToggleQuotedFloor({ replyFloor, quotedFloor, quotedReply })}
-                    />
-                  </View>
-                  {expanded && quotedReply ? (
-                    <View style={styles.quoteBody}>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={!userFromReply(quotedReply, source)}
-                        style={styles.quoteAuthorRow}
-                        onPress={() => {
-                          const user = userFromReply(quotedReply, source);
-                          if (user) {
-                            onOpenUser(user);
-                          }
-                        }}
-                      >
-                        <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
-                        <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
-                      </Pressable>
-                      <MemoizedHtmlContent
-                        contentWidth={Math.max(220, replyContentWidth - 24)}
-                        inlineSizedImageUrls={inlineSizedImageUrls}
-                        html={quotedReply.contentHtml}
-                      />
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-        ) : null}
-        {reply.replyTargetAuthor ? (
-          <Pressable
-            accessibilityRole="button"
-            disabled={!replyTargetUser}
-            style={styles.replyTargetPill}
-            onPress={() => {
-              if (replyTargetUser) {
-                onOpenUser(replyTargetUser);
-              }
-            }}
-          >
-            <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
-          </Pressable>
-        ) : null}
-        <View style={styles.replyBody}>
-          <MemoizedHtmlContent
-            contentWidth={replyContentWidth}
-            inlineSizedImageUrls={inlineSizedImageUrls}
-            html={highlightedHtml}
-          />
-        </View>
-        <PollBlockList
-          actionBusy={actionBusy}
-          canWritePollSource={Boolean(canWrite && source === 'linuxdo')}
-          keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
-          onTogglePollSelection={onTogglePollSelection}
-          onVotePoll={onVotePoll}
-          pollSelections={pollSelections}
-          polls={reply.polls || []}
-          source={source}
-          styles={styles}
-          theme={theme}
-        />
-        {reply.signatureHtml ? (
-          <View style={styles.replySignature}>
-            <MemoizedHtmlContent
-              contentWidth={replyContentWidth}
-              inlineSizedImageUrls={inlineSizedImageUrls}
-              html={reply.signatureHtml}
-            />
-          </View>
-        ) : null}
-        {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
-          <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
-        ) : null}
-        {source === 'linuxdo' && (reply.reactionSummary?.length || reply.boostCount) ? (
-          <View style={styles.replyStatRail}>
-            {linuxDoReplyReactionStats.map((stat) => (
-              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
-            ))}
-          </View>
-        ) : null}
-        {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
-          <View style={styles.replyStatRail}>
-            {nodeSeekReplyReactionStats.map((stat) => (
-              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
-            ))}
-          </View>
-        ) : null}
-        {canWrite && source === 'nodeseek' ? (
-          <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-            <DetailActionButton alignStart active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
-          </View>
-        ) : null}
-        {canWrite && source === 'yaohuo' ? (
-          <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-          </View>
-        ) : null}
-        {canWrite && source === 'linuxdo' ? (
-          <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '取消赞' : '点赞'} count={reply.likeCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
-const MemoizedReplyCard = memo(ReplyCard, (previous, next) => {
-  if (
-    previous.actionBusy !== next.actionBusy
-    || previous.canWrite !== next.canWrite
-    || previous.contentWidth !== next.contentWidth
-    || previous.isActionPending !== next.isActionPending
-    || previous.inlineSizedImageUrls !== next.inlineSizedImageUrls
-    || previous.isNew !== next.isNew
-    || previous.onInteract !== next.onInteract
-    || previous.onOpenUser !== next.onOpenUser
-    || previous.onReplyToFloor !== next.onReplyToFloor
-    || previous.onTogglePollSelection !== next.onTogglePollSelection
-    || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
-    || previous.onVotePoll !== next.onVotePoll
-    || previous.pollSelections !== next.pollSelections
-    || previous.query !== next.query
-    || previous.reply !== next.reply
-    || previous.replyFloor !== next.replyFloor
-    || previous.source !== next.source
-    || previous.styles !== next.styles
-    || previous.theme !== next.theme
-    || previous.topicAuthor !== next.topicAuthor
-  ) {
-    return false;
-  }
-
-  const quotedFloors = new Set([...(previous.reply.quotedFloors || []), ...(next.reply.quotedFloors || [])]);
-  for (const quotedFloor of quotedFloors) {
-    const previousKey = `${previous.replyFloor}:${quotedFloor}`;
-    const nextKey = `${next.replyFloor}:${quotedFloor}`;
-    if (
-      Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey])
-      || Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey])
-      || previous.loadedQuotedReplies[quotedFloor] !== next.loadedQuotedReplies[quotedFloor]
-      || previous.repliesByFloor.get(quotedFloor) !== next.repliesByFloor.get(quotedFloor)
-    ) {
-      return false;
-    }
-  }
-
-  return true;
-});

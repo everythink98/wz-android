@@ -5,6 +5,7 @@ const appSource = readProjectFile('android-app', 'App.tsx');
 const accountControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
 const topicActionsControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
+const topicNavigationControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicNavigationController.ts');
 
 describe('Android App final stability guards', () => {
   it('keeps account detection and clearing out of the app shell', () => {
@@ -87,7 +88,7 @@ describe('Android App final stability guards', () => {
     expect(appSource).toContain('const invalidateTopicActionRequests = useCallback');
     expect(appSource).toContain('invalidateTopicActionRequestOwner(topicActionRequestOwnerRef, nextTopicKey)');
     expect(appSource).toContain('invalidateTopicActionRequests(null);');
-    expect(appSource).toContain('invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);');
+    expect(topicNavigationControllerSource).toContain('invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);');
     expect(appSource).toContain('onTopicContextChange: invalidateTopicActionRequests');
     expect(topicControllerSource).toContain('onTopicContextChange: (topicKey: string | null) => void;');
     expect(topicControllerSource).toContain('onTopicContextChange(nextTopicKey);');

@@ -49,7 +49,7 @@ export function LibraryScreen({
   onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;
 }) {
-  type LibraryListItem = { type: 'section'; key: string; label: string } | { type: 'record'; key: string; record: TopicRecord };
+  type LibraryListItem = { type: 'section'; key: string; label: string; first: boolean } | { type: 'record'; key: string; record: TopicRecord };
   const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -63,8 +63,8 @@ export function LibraryScreen({
     source: sourceFilter,
     category: categoryFilter
   }), [categoryFilter, records, sourceFilter]);
-  const listItems = useMemo<LibraryListItem[]>(() => groupLibraryRecordsByTime(filteredRecords).flatMap((section) => [
-    { type: 'section' as const, key: `section:${section.label}`, label: section.label },
+  const listItems = useMemo<LibraryListItem[]>(() => groupLibraryRecordsByTime(filteredRecords).flatMap((section, index) => [
+    { type: 'section' as const, key: `section:${section.label}`, label: section.label, first: index === 0 },
     ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
   ]), [filteredRecords]);
   useEffect(() => {
@@ -95,7 +95,7 @@ export function LibraryScreen({
   }, [onClearHistory]);
   const renderLibraryItem = useCallback<ListRenderItem<LibraryListItem>>(({ item }) => {
     if (item.type === 'section') {
-      return <Text style={styles.librarySectionTitle}>{item.label}</Text>;
+      return <Text style={[styles.librarySectionTitle, item.first && styles.libraryFirstSectionTitle]}>{item.label}</Text>;
     }
     const record = item.record;
     return (
@@ -178,9 +178,11 @@ export function LibraryScreen({
           onChange={setCategoryFilter}
         />
       ) : null}
-      <View style={styles.actions}>
-        {libraryTab === 'history' && records.length ? <AppButton compact label="清空历史" variant="danger" styles={styles} onPress={confirmClearHistory} /> : null}
-      </View>
+      {libraryTab === 'history' && records.length ? (
+        <View style={styles.actions}>
+          <AppButton compact label="清空历史" variant="danger" styles={styles} onPress={confirmClearHistory} />
+        </View>
+      ) : null}
     </View>
   );
 
@@ -188,7 +190,7 @@ export function LibraryScreen({
     <FlashList
       ref={listRef}
       style={styles.content}
-      contentContainerStyle={styles.contentInner}
+      contentContainerStyle={styles.libraryContentInner}
       data={libraryTab === 'users' ? userRecords : listItems}
       keyExtractor={(item) => libraryTab === 'users' ? userKey((item as FollowedUserRecord).user) : (item as LibraryListItem).key}
       getItemType={(item) => libraryTab === 'users' ? 'user' : (item as LibraryListItem).type}
