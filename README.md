@@ -5,7 +5,7 @@
 <h1 align="center">阅坛 Android</h1>
 
 <p align="center">
-  一个无后端、多论坛、本机直连的第三方 Android 客户端。
+  一个面向多论坛阅读和轻量互动的第三方 Android 客户端。
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 
 ## 这是什么
 
-阅坛 Android 是一个面向论坛阅读和轻量互动的 Android App。它不需要后端服务，不需要填写服务器地址或同步码，手机本机直接访问 NodeSeek、linux.do、V2EX 和妖火。
+阅坛 Android 是一个面向论坛阅读和轻量互动的第三方 Android 客户端，支持 NodeSeek、linux.do、V2EX 和妖火。
 
 ## 主要功能
 
@@ -41,7 +41,7 @@
 
 ## 隐私与数据
 
-- App 不接入自建后端，不上传 Cookie 或本机资料。
+- App 不上传 Cookie 或本机资料。
 - NodeSeek、linux.do 和妖火 Cookie 只保存在 Android 本机安全存储中。
 - 本机资料保存在 `AsyncStorage`，通过当前版本 JSON 备份 / 恢复。
 - 备份 JSON 不保存 Cookie、token、password、session、sid、csrf 等敏感字段。
