@@ -2,6 +2,9 @@ node_modules/
 .expo/
 .expo-shared/
 android/
+AGENTS.md
+docs/
+memory/
 .idea/
 tmp-*
 android-index-*.bundle
