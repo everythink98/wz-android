@@ -710,7 +710,7 @@ export function TopicScreen({
           {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
             <View style={styles.topicStatRail}>
               {linuxDoTopicReactionStats.map((stat) => (
-                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+                <NodeSeekStatPill compact key={stat.label} label={stat.label} value={stat.value} styles={styles} />
               ))}
             </View>
           ) : null}
@@ -721,7 +721,7 @@ export function TopicScreen({
           ) : null}
           {canWriteLinuxDo ? (
             <View style={styles.topicPrimaryActions}>
-              <DetailActionButton active={Boolean(topic?.liked)} accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} count={topic?.likeCount} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.liked)} accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
               <DetailActionButton active={Boolean(topic?.bookmarked)} accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
             </View>
           ) : null}

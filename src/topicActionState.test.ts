@@ -56,6 +56,57 @@ describe('topic action state patches', () => {
     expect(unliked).toMatchObject({ liked: false, likeCount: 2 });
   });
 
+  it('updates linux.do visible heart reaction counts when likes change', () => {
+    const liked = applyInteractionToTopic({
+      ...topic,
+      likeCount: 173,
+      reactionSummary: [{ id: 'heart', count: 173 }, { id: '+1', count: 27 }]
+    }, {
+      commentId: 101,
+      type: 'like',
+      mode: 'add',
+      reactionId: 'heart'
+    });
+    const unliked = applyInteractionToReplies([{
+      ...reply,
+      liked: true,
+      likeCount: 1,
+      reactionSummary: [{ id: 'heart', count: 1 }]
+    }], {
+      commentId: 202,
+      type: 'like',
+      mode: 'remove',
+      reactionId: 'heart'
+    });
+
+    expect(liked).toMatchObject({
+      liked: true,
+      likeCount: 174,
+      reactionSummary: [{ id: 'heart', count: 174 }, { id: '+1', count: 27 }]
+    });
+    expect(unliked[0]).toMatchObject({ liked: false, likeCount: 0 });
+    expect(unliked[0]?.reactionSummary).toBeUndefined();
+  });
+
+  it('creates the linux.do visible heart reaction when the first like is added', () => {
+    const liked = applyInteractionToTopic({
+      ...topic,
+      likeCount: 0,
+      reactionSummary: undefined
+    }, {
+      commentId: 101,
+      type: 'like',
+      mode: 'add',
+      reactionId: 'heart'
+    });
+
+    expect(liked).toMatchObject({
+      liked: true,
+      likeCount: 1,
+      reactionSummary: [{ id: 'heart', count: 1 }]
+    });
+  });
+
   it('adds NodeSeek reply interactions locally and does not double count repeated success', () => {
     const next = applyInteractionToReplies([reply], {
       commentId: 202,

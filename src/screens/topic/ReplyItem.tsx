@@ -34,6 +34,10 @@ function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeek
   return typeof value === 'number' ? { label, value } : null;
 }
 
+function visiblePositiveStat(label: string, value: number | undefined): NodeSeekStat | null {
+  return typeof value === 'number' && value > 0 ? { label, value } : null;
+}
+
 export function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount'>) {
   return [
     visibleNodeSeekStat('点赞', item.upvoteCount),
@@ -53,10 +57,13 @@ function linuxDoReactionLabel(id: string) {
   return LINUXDO_REACTION_LABELS[id] || id.replace(/_/g, ' ');
 }
 
-export function linuxDoReactionStats(item: Pick<Reply | TopicDetail, 'boostCount' | 'reactionSummary'>) {
+export function linuxDoReactionStats(item: Pick<Reply | TopicDetail, 'boostCount' | 'reactionSummary' | 'likeCount'>) {
+  const reactions = item.reactionSummary || [];
+  const hasHeartReaction = reactions.some((reaction) => reaction.id === 'heart');
   return [
-    ...(item.reactionSummary || []).map((reaction) => ({ label: linuxDoReactionLabel(reaction.id), value: reaction.count })),
-    visibleNodeSeekStat('加电', item.boostCount)
+    hasHeartReaction ? null : visiblePositiveStat('喜欢', item.likeCount),
+    ...reactions.map((reaction) => ({ label: linuxDoReactionLabel(reaction.id), value: reaction.count })),
+    visiblePositiveStat('加电', item.boostCount)
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
 }
 
@@ -65,18 +72,22 @@ function authorInitial(name: string | undefined) {
 }
 
 export function NodeSeekStatPill({
+  compact = false,
   label,
   styles,
   value
 }: {
+  compact?: boolean;
   label: string;
   styles: ReturnType<typeof createStyles>;
   value: number;
 }) {
   return (
-    <View style={styles.nodeSeekStatPill}>
-      <Text style={styles.nodeSeekStatLabel}>{label}</Text>
-      <Text style={styles.nodeSeekStatValue}>{value}</Text>
+    <View style={[styles.nodeSeekStatPill, compact && styles.nodeSeekStatCompact]}>
+      <Text style={styles.nodeSeekStatText}>
+        <Text style={styles.nodeSeekStatLabel}>{label}</Text>
+        <Text style={styles.nodeSeekStatValue}> {value}</Text>
+      </Text>
     </View>
   );
 }
@@ -351,10 +362,10 @@ export function ReplyItem({
         {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
           <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
         ) : null}
-        {source === 'linuxdo' && (reply.reactionSummary?.length || reply.boostCount) ? (
+        {source === 'linuxdo' && linuxDoReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
             {linuxDoReplyReactionStats.map((stat) => (
-              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+              <NodeSeekStatPill compact key={stat.label} label={stat.label} value={stat.value} styles={styles} />
             ))}
           </View>
         ) : null}
@@ -381,7 +392,7 @@ export function ReplyItem({
         {canWrite && source === 'linuxdo' ? (
           <View style={styles.replyActionRow}>
             <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '取消赞' : '点赞'} count={reply.likeCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
           </View>
         ) : null}
       </View>

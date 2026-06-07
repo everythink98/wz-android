@@ -37,7 +37,13 @@ export function TopicActionBar({
       accessibilityState={{ busy: pending, disabled, selected: active }}
       android_ripple={androidRipple(theme.primarySoft, true)}
       disabled={disabled}
-      style={[styles.detailActionButton, alignStart && styles.replyDetailActionButton, active && styles.detailActionButtonActive, disabled && styles.buttonDisabled]}
+      style={[
+        styles.detailActionButton,
+        alignStart && styles.replyDetailActionButton,
+        active && styles.detailActionButtonActive,
+        alignStart && active && styles.replyDetailActionButtonActive,
+        disabled && styles.buttonDisabled
+      ]}
       onPress={() => {
         triggerPressFeedback();
         onPress();
@@ -47,7 +53,7 @@ export function TopicActionBar({
         {pending ? (
           <ActivityIndicator size="small" color={theme.primary} />
         ) : (
-          <Icon size={18} color={color} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
+          <Icon size={18} color={color} fill={active ? theme.primarySoft : 'none'} strokeWidth={active ? 2.1 : 1.8} />
         )}
       </View>
       <View style={styles.detailActionTextBlock}>

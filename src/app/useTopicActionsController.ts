@@ -574,7 +574,7 @@ export function useTopicActionsController({
         requestOwner,
         currentActive: Boolean(target?.liked),
         applyDisplayed: (desiredActive) => {
-          const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const };
+          const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const, reactionId: 'heart' };
           setTopicDetail((current) => applyInteractionToTopic(current, patch));
           setTopicReplies((current) => applyInteractionToReplies(current, patch));
         },

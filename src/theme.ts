@@ -656,6 +656,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'flex-start',
       paddingHorizontal: 0
     },
+    replyDetailActionButtonActive: {
+      backgroundColor: 'transparent'
+    },
     detailActionIconSlot: {
       alignItems: 'center',
       height: 22,
@@ -688,7 +691,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       lineHeight: 16
     },
     detailActionLabelActive: {
-      color: theme.primary
+      color: theme.primary,
+      fontWeight: '700'
     },
     buttonGhost: {
       backgroundColor: 'transparent',
@@ -1251,8 +1255,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     nodeSeekStatPill: {
       alignItems: 'center',
-      flexDirection: 'row',
-      gap: 4,
       justifyContent: 'center',
       minHeight: 40,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.045),
@@ -1262,19 +1264,38 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingHorizontal: 10,
       paddingVertical: 0
     },
+    nodeSeekStatCompact: {
+      minHeight: 32,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.09 : 0.04),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.22 : 0.11),
+      paddingHorizontal: 9
+    },
+    nodeSeekStatText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 17,
+      textAlignVertical: 'center'
+    },
     nodeSeekStatLabel: {
       color: theme.muted,
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '500',
-      lineHeight: 16
+      includeFontPadding: false,
+      lineHeight: 17,
+      textAlignVertical: 'center'
     },
     nodeSeekStatValue: {
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '700',
-      lineHeight: 16
+      includeFontPadding: false,
+      lineHeight: 17,
+      textAlignVertical: 'center'
     },
     topicTagRow: {
       alignItems: 'center',

@@ -283,14 +283,28 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).not.toContain('<IconButton tiny icon={ThumbsUp}');
     expect(topicActionBarSource).toContain('styles.detailActionIconSlot');
     expect(topicActionBarSource).toContain('alignStart && styles.replyDetailActionButton');
+    expect(topicActionBarSource).toContain('alignStart && active && styles.replyDetailActionButtonActive');
+    expect(topicActionBarSource).toContain("fill={active ? theme.primarySoft : 'none'}");
     expect(themeSource).toMatch(/detailActionButton:\s*\{[\s\S]*minHeight:\s*48[\s\S]*width:\s*74[\s\S]*borderRadius:\s*8/);
     expect(themeSource).toMatch(/replyDetailActionButton:\s*\{[\s\S]*justifyContent:\s*'flex-start'[\s\S]*paddingHorizontal:\s*0/);
+    expect(themeSource).toMatch(/replyDetailActionButtonActive:\s*\{[\s\S]*backgroundColor:\s*'transparent'/);
     expect(themeSource).toMatch(/detailActionIconSlot:\s*\{[\s\S]*height:\s*22[\s\S]*width:\s*22/);
     expect(themeSource).toMatch(/detailActionTextBlock:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*flexShrink:\s*1/);
     expect(themeSource).toMatch(/detailActionLabel:\s*\{[\s\S]*includeFontPadding:\s*false[\s\S]*lineHeight:\s*16/);
     expect(themeSource).toMatch(/topicPrimaryActions:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*minHeight:\s*48/);
     expect(themeSource).toMatch(/replyActionRow:\s*\{[\s\S]*alignItems:\s*'center'[\s\S]*minHeight:\s*48/);
     expect(themeSource).not.toContain('marginLeft: -38');
+  });
+
+  it('keeps linux.do like totals in the reaction rail instead of the action buttons', () => {
+    const linuxDoTopicActions = topicScreenSource.match(/\{canWriteLinuxDo \? \([\s\S]*?\n          \) : null\}/)?.[0] || '';
+    const linuxDoReplyActions = replyItemSource.match(/\{canWrite && source === 'linuxdo' \? \([\s\S]*?\n        \) : null\}/)?.[0] || '';
+
+    expect(replyItemSource).toContain("'boostCount' | 'reactionSummary' | 'likeCount'");
+    expect(linuxDoTopicActions).toContain("accessibilityLabel={topic?.liked ? '取消赞' : '点赞'}");
+    expect(linuxDoTopicActions).not.toContain('count={topic?.likeCount}');
+    expect(linuxDoReplyActions).toContain("accessibilityLabel={reply.liked ? '取消赞' : '点赞'}");
+    expect(linuxDoReplyActions).not.toContain('count={reply.likeCount}');
   });
 
   it('separates reply floor, author, body, and actions for readable mobile replies', () => {
@@ -398,8 +412,8 @@ describe('Android topic detail reading layout', () => {
     expect(replyCard).toContain('待审批');
     expect(replyCard).toContain('reply.systemAction');
     expect(replyCard).toContain('系统');
-    expect(replyCard).toContain('reply.reactionSummary');
-    expect(replyCard).toContain('reply.boostCount');
+    expect(replyCard).toContain('linuxDoReplyReactionStats');
+    expect(replyCard).toContain('styles.replyStatRail');
   });
 
   it('shows linux.do source tags on Android topic cards', () => {
@@ -461,11 +475,15 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('topicStatRail');
     expect(replyItemSource).toContain('replyStatRail');
     expect(themeSource).toContain('nodeSeekStatPill');
+    expect(themeSource).toContain('nodeSeekStatCompact');
+    expect(themeSource).toContain('nodeSeekStatText');
     expect(themeSource).toContain('nodeSeekStatValue');
     expect(topicActionRenderer).toContain("accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'}");
     expect(topicActionRenderer).toContain('count={topic?.collectionCount}');
     expect(topicActionRenderer).not.toContain('topicPassiveStats.map');
     expect(themeSource).toMatch(/nodeSeekStatPill:\s*\{[\s\S]*minHeight:\s*40[\s\S]*paddingVertical:\s*0/);
+    expect(themeSource).toMatch(/nodeSeekStatCompact:\s*\{[\s\S]*minHeight:\s*32[\s\S]*paddingHorizontal:\s*9/);
+    expect(themeSource).toMatch(/nodeSeekStatText:\s*\{[\s\S]*includeFontPadding:\s*false[\s\S]*textAlignVertical:\s*'center'/);
     expect(themeSource).toMatch(/topicStatRail:\s*\{[\s\S]*minHeight:\s*40/);
   });
 

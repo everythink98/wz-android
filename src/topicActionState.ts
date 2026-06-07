@@ -17,6 +17,7 @@ type InteractionPatch = {
   commentId: number;
   type: InteractionType;
   mode: InteractionMode;
+  reactionId?: string;
 };
 
 export function topicActionStateKey({
@@ -36,6 +37,23 @@ function nextCount(value: number | undefined, delta: number) {
     return delta > 0 ? delta : undefined;
   }
   return Math.max(0, value + delta);
+}
+
+function nextReactionSummary<T extends TopicDetail | Reply>(item: T, reactionId: string | undefined, delta: number) {
+  if (!reactionId || delta === 0) {
+    return item.reactionSummary;
+  }
+  const current = item.reactionSummary || [];
+  const index = current.findIndex((reaction) => reaction.id === reactionId);
+  if (index < 0) {
+    return delta > 0 ? [...current, { id: reactionId, count: delta }] : item.reactionSummary;
+  }
+  const next = current.map((reaction, reactionIndex) => (
+    reactionIndex === index
+      ? { ...reaction, count: Math.max(0, reaction.count + delta) }
+      : reaction
+  )).filter((reaction) => reaction.count > 0);
+  return next.length ? next : undefined;
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -59,7 +77,8 @@ function applyInteractionFields<T extends TopicDetail | Reply>(item: T, patch: I
   return {
     ...item,
     [activeField]: nextActive,
-    [countField]: nextCount(item[countField], delta)
+    [countField]: nextCount(item[countField], delta),
+    ...(patch.type === 'like' && patch.reactionId ? { reactionSummary: nextReactionSummary(item, patch.reactionId, delta) } : {})
   };
 }
 
