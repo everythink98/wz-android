@@ -1450,6 +1450,12 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).not.toContain('setSwipeOpenKey');
   });
 
+  it('remounts the library list when switching to history so old scroll offsets are not reused', () => {
+    const listBlock = libraryScreenSource.match(/<FlashList\s[\s\S]*?renderItem=/)?.[0] || '';
+
+    expect(listBlock).toContain('key={libraryTab}');
+  });
+
   it('clears stale library category filters after switching sources', () => {
     expect(libraryScreenSource).toContain("categoryFilter !== 'all' && !categoryItems.some((item) => item.value === categoryFilter)");
     expect(libraryScreenSource).toContain("setCategoryFilter('all');");

@@ -188,6 +188,7 @@ export function LibraryScreen({
 
   return (
     <FlashList
+      key={libraryTab}
       ref={listRef}
       style={styles.content}
       contentContainerStyle={styles.libraryContentInner}
