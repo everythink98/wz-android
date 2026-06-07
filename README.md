@@ -1,8 +1,52 @@
-# 阅坛 Android
+<p align="center">
+  <img src="assets/icon.png" width="96" alt="阅坛 Android icon" />
+</p>
 
-无后端的多论坛第三方 Android 客户端。App 由手机本机直连 NodeSeek、linux.do、V2EX 和妖火，并在手机本机保存登录 Cookie、本机收藏、关注用户、历史、阅读进度和备份资料。
+<h1 align="center">阅坛 Android</h1>
 
-## 开发命令
+<p align="center">
+  一个无后端、多论坛、本机直连的第三方 Android 客户端。
+</p>
+
+<p align="center">
+  <a href="https://github.com/everythink98/wz-android/releases/latest/download/app-arm64-v8a-release.apk">
+    <img alt="下载最新版 APK" src="https://img.shields.io/badge/%E4%B8%8B%E8%BD%BD_APK-%E6%9C%80%E6%96%B0%E7%89%88-2ea44f?style=for-the-badge&logo=android&logoColor=white" />
+  </a>
+  <a href="https://github.com/everythink98/wz-android/releases/latest">
+    <img alt="查看 Releases" src="https://img.shields.io/badge/GitHub_Releases-%E6%9F%A5%E7%9C%8B-0969da?style=for-the-badge&logo=github&logoColor=white" />
+  </a>
+</p>
+
+## 这是什么
+
+阅坛 Android 是一个面向论坛阅读和轻量互动的 Android App。它不需要后端服务，不需要填写服务器地址或同步码，手机本机直接访问 NodeSeek、linux.do、V2EX 和妖火。
+
+## 主要功能
+
+- 多论坛首页、分类、搜索、详情和用户主页。
+- 主题阅读、回复列表、楼层回复和图片预览。
+- NodeSeek 点赞、反对、加鸡腿、原站收藏、签到和投票。
+- linux.do 回复、点赞、原站收藏、投票和等级查看。
+- 妖火登录后阅读、搜索、回复、楼层回复、原站收藏和投票。
+- V2EX 公开阅读、搜索、用户主页和只读互动信息展示。
+- 本机收藏、关注用户、历史、阅读进度和备份 / 恢复。
+
+## 下载
+
+从 GitHub Releases 下载最新版 APK：
+
+**[下载阅坛 Android APK](https://github.com/everythink98/wz-android/releases/latest/download/app-arm64-v8a-release.apk)**
+
+当前发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
+
+## 隐私与数据
+
+- App 不接入自建后端，不上传 Cookie 或本机资料。
+- NodeSeek、linux.do 和妖火 Cookie 只保存在 Android 本机安全存储中。
+- 本机资料保存在 `AsyncStorage`，通过当前版本 JSON 备份 / 恢复。
+- 备份 JSON 不保存 Cookie、token、password、session、sid、csrf 等敏感字段。
+
+## 开发
 
 ```powershell
 npm install
@@ -14,26 +58,4 @@ npm run release:android
 
 `npm run android` 需要 Expo development build，不能用 Expo Go 验证。需要 Android Studio 提供 Android SDK / 模拟器，或准备一台已开启 USB 调试的 Android 手机。
 
-## 使用范围
-
-- NodeSeek：阅读、搜索、用户主页、回复、楼层回复、点赞、反对、加鸡腿、原站收藏、签到和投票。
-- linux.do：阅读、搜索、用户主页、回复、点赞、原站收藏、投票和等级查看。
-- 妖火：登录后阅读、搜索、用户主页、回复、楼层回复、原站收藏和投票。
-- V2EX：公开阅读、搜索、用户主页和只读互动信息展示。
-
-App 不依赖本地 Web+Server 项目，不填写服务器地址或同步码，不做跨站平台、全网索引或跨站身份合并。
-
-## 数据与安全
-
-- NodeSeek、linux.do 和妖火 Cookie 只保存在 Android 本机安全存储中。
-- 本机资料保存在 `AsyncStorage`，通过“备份 / 恢复”导出当前版本 JSON。
-- 备份 JSON 不保存 Cookie、token、password、session、sid、csrf 等敏感字段。
-- `android/` 是 Expo 生成目录，不作为长期配置来源；原生配置通过 `plugins/` 中的 config plugin 持久化。
-
-## Release
-
-```powershell
-npm run release:android
-```
-
-该命令在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`。正式签名只通过本机环境变量或 Gradle 属性提供，不提交 keystore 或明文密码。
+`npm run release:android` 会在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`。正式签名只通过本机环境变量或 Gradle 属性提供，不提交 keystore 或明文密码。
