@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
-const packageJson = JSON.parse(readProjectFile('android-app', 'package.json')) as {
+const packageJson = JSON.parse(readProjectFile('package.json')) as {
   dependencies?: Record<string, string>;
 };
-const appSource = readProjectFile('android-app', 'App.tsx');
-const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
-const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
-const imagePreviewSource = readProjectFile('android-app', 'src', 'components', 'ImagePreviewModal.tsx');
-const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
-const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
-const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
-const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
-const replyItemSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'ReplyItem.tsx');
-const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
-const readerDataSource = readProjectFile('android-app', 'src', 'readerData.ts');
+const appSource = readProjectFile('App.tsx');
+const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
+const imagePreviewSource = readProjectFile('src', 'components', 'ImagePreviewModal.tsx');
+const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
+const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
+const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const replyItemSource = readProjectFile('src', 'screens', 'topic', 'ReplyItem.tsx');
+const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
+const readerDataSource = readProjectFile('src', 'readerData.ts');
 
 describe('Android mature component replacements', () => {
   it('declares mature Android replacement libraries in the Android app package', () => {

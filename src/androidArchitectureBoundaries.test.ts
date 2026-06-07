@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
-const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
+const appSource = readProjectFile('App.tsx');
+const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+const themeSource = readProjectFile('src', 'theme.ts');
 
 describe('Android architecture boundaries', () => {
   it('keeps image preview orchestration outside the app shell', () => {
-    const imagePreviewControllerSource = readProjectFile('android-app', 'src', 'app', 'useImagePreviewController.ts');
+    const imagePreviewControllerSource = readProjectFile('src', 'app', 'useImagePreviewController.ts');
 
     expect(imagePreviewControllerSource).toContain('export function useImagePreviewController');
     expect(appSource).toContain('useImagePreviewController');
@@ -17,7 +17,7 @@ describe('Android architecture boundaries', () => {
   });
 
   it('keeps HTML renderer configuration outside the app shell', () => {
-    const htmlRenderingSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
+    const htmlRenderingSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
 
     expect(htmlRenderingSource).toContain('export function useHtmlRenderingController');
     expect(htmlRenderingSource).toContain('htmlBaseStyle');
@@ -28,7 +28,7 @@ describe('Android architecture boundaries', () => {
   });
 
   it('keeps hidden browser fetch WebView scripts outside the app shell', () => {
-    const hiddenBrowserControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
+    const hiddenBrowserControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
 
     expect(hiddenBrowserControllerSource).toContain('NODESEEK_BROWSER_FETCH_SCRIPT');
     expect(hiddenBrowserControllerSource).toContain('LINUXDO_BROWSER_FETCH_SCRIPT');
@@ -39,7 +39,7 @@ describe('Android architecture boundaries', () => {
   });
 
   it('keeps topic navigation snapshot orchestration outside the app shell', () => {
-    const topicNavigationSource = readProjectFile('android-app', 'src', 'app', 'useTopicNavigationController.ts');
+    const topicNavigationSource = readProjectFile('src', 'app', 'useTopicNavigationController.ts');
 
     expect(topicNavigationSource).toContain('export function useTopicNavigationController');
     expect(topicNavigationSource).toContain('topicSnapshot');
@@ -49,10 +49,10 @@ describe('Android architecture boundaries', () => {
   });
 
   it('splits topic screen detail regions into focused components', () => {
-    const topicPollsSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicPolls.tsx');
-    const topicActionBarSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicActionBar.tsx');
-    const topicContentSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicContentBlock.tsx');
-    const replyItemSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'ReplyItem.tsx');
+    const topicPollsSource = readProjectFile('src', 'screens', 'topic', 'TopicPolls.tsx');
+    const topicActionBarSource = readProjectFile('src', 'screens', 'topic', 'TopicActionBar.tsx');
+    const topicContentSource = readProjectFile('src', 'screens', 'topic', 'TopicContentBlock.tsx');
+    const replyItemSource = readProjectFile('src', 'screens', 'topic', 'ReplyItem.tsx');
 
     expect(topicPollsSource).toContain('export function TopicPolls');
     expect(topicActionBarSource).toContain('export function TopicActionBar');
@@ -64,7 +64,7 @@ describe('Android architecture boundaries', () => {
   });
 
   it('splits more screen panels into focused components', () => {
-    const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+    const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 
     expect(morePanelsSource).toContain('export function BackupRestorePanel');
     expect(morePanelsSource).toContain('export function NodeSeekLoginPanel');

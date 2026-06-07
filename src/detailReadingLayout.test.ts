@@ -17,18 +17,18 @@ vi.mock('react-native', () => ({
   }
 }));
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const hiddenBrowserFetchControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
-const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
-const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
-const topicPollsSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicPolls.tsx');
-const topicActionBarSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicActionBar.tsx');
-const topicContentBlockSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicContentBlock.tsx');
-const replyItemSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'ReplyItem.tsx');
-const topicMenuSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicMenu.tsx');
-const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
-const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
-const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
+const appSource = readProjectFile('App.tsx');
+const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
+const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
+const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicPollsSource = readProjectFile('src', 'screens', 'topic', 'TopicPolls.tsx');
+const topicActionBarSource = readProjectFile('src', 'screens', 'topic', 'TopicActionBar.tsx');
+const topicContentBlockSource = readProjectFile('src', 'screens', 'topic', 'TopicContentBlock.tsx');
+const replyItemSource = readProjectFile('src', 'screens', 'topic', 'ReplyItem.tsx');
+const topicMenuSource = readProjectFile('src', 'screens', 'topic', 'TopicMenu.tsx');
+const topicCardSource = readProjectFile('src', 'components', 'TopicCard.tsx');
+const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
+const themeSource = readProjectFile('src', 'theme.ts');
 const defaultSettings: ReaderSettings = {
   theme: 'light',
   fontScale: 1,

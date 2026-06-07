@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const accountControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
-const topicActionsControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useTopicActionsController.ts');
-const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
-const topicNavigationControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicNavigationController.ts');
+const appSource = readProjectFile('App.tsx');
+const accountControllerSource = readOptionalProjectFile('src', 'app', 'useAccountController.ts');
+const topicActionsControllerSource = readOptionalProjectFile('src', 'app', 'useTopicActionsController.ts');
+const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
+const topicNavigationControllerSource = readProjectFile('src', 'app', 'useTopicNavigationController.ts');
 
 describe('Android App final stability guards', () => {
   it('keeps account detection and clearing out of the app shell', () => {

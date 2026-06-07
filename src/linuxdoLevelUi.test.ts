@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
-const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
-const appSource = readProjectFile('android-app', 'App.tsx');
-const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
+const appSource = readProjectFile('App.tsx');
+const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 
 describe('linux.do level UI guards', () => {
   it('adds linux.do level inside account verification with progress and activity tabs', () => {

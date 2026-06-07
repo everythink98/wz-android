@@ -1,24 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
-const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
-const readerDataControllerSource = readProjectFile('android-app', 'src', 'app', 'useReaderDataController.ts');
-const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
-const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
-const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
-const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
-const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
-const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
-const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
-const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const appSource = readProjectFile('App.tsx');
+const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
+const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataController.ts');
+const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
+const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
+const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
+const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
+const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
+const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
+const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
-const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
-const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
-const topicContentSplitSource = readProjectFile('android-app', 'src', 'topicContentSplit.ts');
-const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
+const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
+const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicContentSplitSource = readProjectFile('src', 'topicContentSplit.ts');
+const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
+const removedLocalServiceOption = ['server', 'Url'].join('');
 
 describe('Android App performance guards', () => {
   it('cancels stale feed, search, topic, and backup/status requests before starting newer ones', () => {
@@ -59,7 +60,7 @@ describe('Android App performance guards', () => {
   it('bypasses stale category caches when refreshing category metadata', () => {
     expect(feedControllerSource).toContain('return getCategories({');
     expect(feedControllerSource).toContain('nocache: true');
-    expect(feedControllerSource).not.toContain("getCategories({ serverUrl");
+    expect(feedControllerSource).not.toContain(`getCategories({ ${removedLocalServiceOption}`);
   });
 
   it('debounces reading progress persistence while scrolling long topics', () => {

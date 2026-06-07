@@ -1,26 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const appNavigatorSource = readProjectFile('android-app', 'src', 'app', 'AppNavigator.tsx');
-const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
-const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
-const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
-const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
-const topicNavigationControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicNavigationController.ts');
-const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
-const verificationControllerSource = readProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
-const linuxDoVerifyModalSource = readProjectFile('android-app', 'src', 'app', 'LinuxDoVerifyModal.tsx');
-const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
-const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
-const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
-const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
-const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
-const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
-const packageSource = readProjectFile('android-app', 'package.json');
-const babelSource = readProjectFile('android-app', 'babel.config.js');
-const appConfigSource = readProjectFile('android-app', 'app.json');
+const appSource = readProjectFile('App.tsx');
+const appNavigatorSource = readProjectFile('src', 'app', 'AppNavigator.tsx');
+const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
+const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
+const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
+const topicNavigationControllerSource = readProjectFile('src', 'app', 'useTopicNavigationController.ts');
+const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
+const verificationControllerSource = readProjectFile('src', 'app', 'useVerificationController.ts');
+const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
+const appControlsSource = readProjectFile('src', 'components', 'AppControls.tsx');
+const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
+const searchListItemsSource = readProjectFile('src', 'searchListItems.ts');
+const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+const packageSource = readProjectFile('package.json');
+const releaseScriptSource = readProjectFile('scripts', 'release-android.mjs');
+const babelSource = readProjectFile('babel.config.js');
+const appConfigSource = readProjectFile('app.json');
 
 describe('Android App UX upgrade guards', () => {
   it('uses the mature navigation, pager, gesture, animation, safe-area, and feedback dependencies', () => {
@@ -39,7 +40,7 @@ describe('Android App UX upgrade guards', () => {
     expect(dependencies).toHaveProperty('expo-haptics');
     expect(babelSource).toContain('react-native-reanimated/plugin');
     expect(JSON.parse(appConfigSource).expo.newArchEnabled).toBe(true);
-    expect(JSON.parse(packageSource).scripts['release:android']).toContain('-PnewArchEnabled=true');
+    expect(releaseScriptSource).toContain("'-PnewArchEnabled=true'");
   });
 
   it('hosts the app in React Navigation with bottom tabs and a standard stack for detail screens', () => {
@@ -127,8 +128,8 @@ describe('Android App UX upgrade guards', () => {
   });
 
   it('keeps reply draft state in topic snapshots when returning from nested topics', () => {
-    const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
-    const topicSessionSource = readProjectFile('android-app', 'src', 'topicSessionState.ts');
+    const appTypesSource = readProjectFile('src', 'appTypes.ts');
+    const topicSessionSource = readProjectFile('src', 'topicSessionState.ts');
     const topicSnapshotBlock = topicNavigationControllerSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const restoreTopicSnapshotBlock = topicNavigationControllerSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 
@@ -147,8 +148,8 @@ describe('Android App UX upgrade guards', () => {
   });
 
   it('keeps linux.do quote expansion state in topic snapshots when returning from nested topics', () => {
-    const appTypesSource = readProjectFile('android-app', 'src', 'appTypes.ts');
-    const topicSessionSource = readProjectFile('android-app', 'src', 'topicSessionState.ts');
+    const appTypesSource = readProjectFile('src', 'appTypes.ts');
+    const topicSessionSource = readProjectFile('src', 'topicSessionState.ts');
     const topicSnapshotBlock = topicNavigationControllerSource.match(/const topicSnapshot = useCallback\(\(\): TopicSnapshot => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const restoreTopicSnapshotBlock = topicNavigationControllerSource.match(/const restoreTopicSnapshot = useCallback\(\(snapshot: TopicSnapshot\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
 

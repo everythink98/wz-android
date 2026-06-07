@@ -1,12 +1,14 @@
 {
-  "name": "wz-android-app",
+  "name": "wz-android",
   "version": "0.1.0",
   "private": true,
   "main": "index.ts",
   "scripts": {
     "start": "expo start --dev-client",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "android": "expo run:android",
-    "release:android": "cd android && gradlew.bat :app:clean :app:assembleRelease -I ../scripts/android-release-apk.gradle -PnewArchEnabled=true -PreactNativeArchitectures=arm64-v8a -Pandroid.enableShrinkResourcesInReleaseBuilds=true -Pandroid.enableMinifyInReleaseBuilds=true -PEX_DEV_CLIENT_NETWORK_INSPECTOR=false",
+    "release:android": "node scripts/release-android.mjs",
     "typecheck": "tsc --noEmit",
     "ios": "expo run:ios"
   },
@@ -51,9 +53,14 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/node": "^22.10.5",
     "@types/react": "~19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "babel-preset-expo": "~54.0.10",
-    "typescript": "~5.9.2"
+    "jsdom": "^25.0.1",
+    "typescript": "~5.9.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.6"
   },
   "overrides": {
     "postcss": "8.5.15"

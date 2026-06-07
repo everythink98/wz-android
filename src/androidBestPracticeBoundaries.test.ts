@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
-const globalModalHostSource = readProjectFile('android-app', 'src', 'app', 'GlobalModalHost.tsx');
-const linuxDoVerifyModalSource = readOptionalProjectFile('android-app', 'src', 'app', 'LinuxDoVerifyModal.tsx');
-const loginWebViewScriptsSource = readOptionalProjectFile('android-app', 'src', 'loginWebViewScripts.ts');
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
-const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
-const verificationControllerSource = readProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
+const appSource = readProjectFile('App.tsx');
+const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
+const globalModalHostSource = readProjectFile('src', 'app', 'GlobalModalHost.tsx');
+const linuxDoVerifyModalSource = readOptionalProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
+const loginWebViewScriptsSource = readOptionalProjectFile('src', 'loginWebViewScripts.ts');
+const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+const verificationControllerSource = readProjectFile('src', 'app', 'useVerificationController.ts');
 
 describe('Android best-practice boundary guards', () => {
   it('keeps root providers in a focused host', () => {
-    const appProvidersSource = readOptionalProjectFile('android-app', 'src', 'app', 'AppProviders.tsx');
+    const appProvidersSource = readOptionalProjectFile('src', 'app', 'AppProviders.tsx');
 
     expect(appProvidersSource).toContain('export function AppProviders');
     expect(appProvidersSource).toContain('GestureHandlerRootView');
@@ -24,7 +24,7 @@ describe('Android best-practice boundary guards', () => {
   });
 
   it('keeps the Android top inset owned by screen headers only once', () => {
-    const appProvidersSource = readOptionalProjectFile('android-app', 'src', 'app', 'AppProviders.tsx');
+    const appProvidersSource = readOptionalProjectFile('src', 'app', 'AppProviders.tsx');
     const statusBarScrimMatches = appSource.match(/styles\.statusBarScrim/g) || [];
 
     expect(appProvidersSource).not.toContain("'top'");
@@ -32,7 +32,7 @@ describe('Android best-practice boundary guards', () => {
   });
 
   it('keeps hidden browser WebView rendering in a focused host', () => {
-    const hiddenBrowserHostSource = readOptionalProjectFile('android-app', 'src', 'app', 'HiddenBrowserHost.tsx');
+    const hiddenBrowserHostSource = readOptionalProjectFile('src', 'app', 'HiddenBrowserHost.tsx');
 
     expect(hiddenBrowserHostSource).toContain('export function HiddenBrowserHost');
     expect(hiddenBrowserHostSource).toContain('nodeseek-browser-fetch');
@@ -73,7 +73,7 @@ describe('Android best-practice boundary guards', () => {
   });
 
   it('keeps navigation composition in a focused host', () => {
-    const appNavigatorSource = readOptionalProjectFile('android-app', 'src', 'app', 'AppNavigator.tsx');
+    const appNavigatorSource = readOptionalProjectFile('src', 'app', 'AppNavigator.tsx');
 
     expect(appNavigatorSource).toContain('export function AppNavigator');
     expect(appNavigatorSource).toContain('export function MainTabsHost');

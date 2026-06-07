@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readProjectFile } from './sourceTestUtils';
 
-const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
-const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
-const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
-const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
+const topicCardSource = readProjectFile('src', 'components', 'TopicCard.tsx');
+const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
+const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
 const listSource = [topicCardSource, feedScreenSource, searchScreenSource, libraryScreenSource].join('\n');
 const removedTrackedMark = `追${''}踪命中`;
 

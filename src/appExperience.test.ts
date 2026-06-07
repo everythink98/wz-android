@@ -1,41 +1,41 @@
 import { describe, expect, it } from 'vitest';
 import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
-const appConfigSource = readProjectFile('android-app', 'app.json');
-const appSource = readProjectFile('android-app', 'App.tsx');
-const globalModalHostSource = readProjectFile('android-app', 'src', 'app', 'GlobalModalHost.tsx');
-const linuxDoVerifyModalSource = readProjectFile('android-app', 'src', 'app', 'LinuxDoVerifyModal.tsx');
-const hiddenBrowserHostSource = readProjectFile('android-app', 'src', 'app', 'HiddenBrowserHost.tsx');
-const hiddenBrowserFetchControllerSource = readProjectFile('android-app', 'src', 'app', 'useHiddenBrowserFetchController.ts');
-const htmlRenderingControllerSource = readProjectFile('android-app', 'src', 'app', 'useHtmlRenderingController.tsx');
-const imagePreviewControllerSource = readProjectFile('android-app', 'src', 'app', 'useImagePreviewController.ts');
-const backupStatusControllerSource = readProjectFile('android-app', 'src', 'app', 'useBackupStatusController.ts');
-const feedControllerSource = readProjectFile('android-app', 'src', 'app', 'useFeedController.ts');
-const readerDataControllerSource = readProjectFile('android-app', 'src', 'app', 'useReaderDataController.ts');
-const searchControllerSource = readProjectFile('android-app', 'src', 'app', 'useSearchController.ts');
-const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
-const verificationControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useVerificationController.ts');
-const accountControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
-const topicActionHelpersSource = readOptionalProjectFile('android-app', 'src', 'app', 'topicActionHelpers.ts');
-const topicActionsControllerSource = readOptionalProjectFile('android-app', 'src', 'app', 'useTopicActionsController.ts');
-const topicControllerSource = readProjectFile('android-app', 'src', 'app', 'useTopicController.ts');
-const userControllerSource = readProjectFile('android-app', 'src', 'app', 'useUserController.ts');
-const appControlsSource = readProjectFile('android-app', 'src', 'components', 'AppControls.tsx');
-const topicCardSource = readProjectFile('android-app', 'src', 'components', 'TopicCard.tsx');
-const imagePreviewModalSource = readProjectFile('android-app', 'src', 'components', 'ImagePreviewModal.tsx');
-const loginWebViewModalSource = readProjectFile('android-app', 'src', 'components', 'LoginWebViewModal.tsx');
-const feedScreenSource = readProjectFile('android-app', 'src', 'screens', 'FeedScreen.tsx');
-const searchScreenSource = readProjectFile('android-app', 'src', 'screens', 'SearchScreen.tsx');
-const searchListItemsSource = readProjectFile('android-app', 'src', 'searchListItems.ts');
-const libraryScreenSource = readProjectFile('android-app', 'src', 'screens', 'LibraryScreen.tsx');
-const moreScreenSource = readProjectFile('android-app', 'src', 'screens', 'MoreScreen.tsx');
-const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const appConfigSource = readProjectFile('app.json');
+const appSource = readProjectFile('App.tsx');
+const globalModalHostSource = readProjectFile('src', 'app', 'GlobalModalHost.tsx');
+const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
+const hiddenBrowserHostSource = readProjectFile('src', 'app', 'HiddenBrowserHost.tsx');
+const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
+const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
+const imagePreviewControllerSource = readProjectFile('src', 'app', 'useImagePreviewController.ts');
+const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
+const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataController.ts');
+const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
+const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
+const verificationControllerSource = readOptionalProjectFile('src', 'app', 'useVerificationController.ts');
+const accountControllerSource = readOptionalProjectFile('src', 'app', 'useAccountController.ts');
+const topicActionHelpersSource = readOptionalProjectFile('src', 'app', 'topicActionHelpers.ts');
+const topicActionsControllerSource = readOptionalProjectFile('src', 'app', 'useTopicActionsController.ts');
+const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
+const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
+const appControlsSource = readProjectFile('src', 'components', 'AppControls.tsx');
+const topicCardSource = readProjectFile('src', 'components', 'TopicCard.tsx');
+const imagePreviewModalSource = readProjectFile('src', 'components', 'ImagePreviewModal.tsx');
+const loginWebViewModalSource = readProjectFile('src', 'components', 'LoginWebViewModal.tsx');
+const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
+const searchListItemsSource = readProjectFile('src', 'searchListItems.ts');
+const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
+const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
-const topicScreenSource = readProjectFile('android-app', 'src', 'screens', 'TopicScreen.tsx');
-const topicMenuSource = readProjectFile('android-app', 'src', 'screens', 'topic', 'TopicMenu.tsx');
-const userScreenSource = readProjectFile('android-app', 'src', 'screens', 'UserScreen.tsx');
-const navBarSource = readProjectFile('android-app', 'src', 'components', 'NavBar.tsx');
-const themeSource = readProjectFile('android-app', 'src', 'theme.ts');
+const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicMenuSource = readProjectFile('src', 'screens', 'topic', 'TopicMenu.tsx');
+const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
+const navBarSource = readProjectFile('src', 'components', 'NavBar.tsx');
+const themeSource = readProjectFile('src', 'theme.ts');
 const androidUiSource = [
   appSource,
   appControlsSource,
@@ -49,18 +49,19 @@ const androidUiSource = [
   navBarSource
 ].join('\n');
 const gitIgnoreSource = readProjectFile('.gitignore');
-const localLinuxDoSource = readProjectFile('android-app', 'src', 'localLinuxdo.ts');
-const loginWebViewScriptsSource = readProjectFile('android-app', 'src', 'loginWebViewScripts.ts');
-const linuxDoBridgeSource = readProjectFile('android-app', 'src', 'linuxdoCookieBridge.ts');
-const nodeSeekBridgeSource = readProjectFile('android-app', 'src', 'nodeseekCookieBridge.ts');
-const forumApiSource = readProjectFile('android-app', 'src', 'forumApi.ts');
-const feedLogicSource = readProjectFile('android-app', 'src', 'feedLogic.ts');
-const yaohuoApiSource = readProjectFile('android-app', 'src', 'yaohuoApi.ts');
-const linuxDoCookiePluginSource = readOptionalProjectFile('android-app', 'plugins', 'withLinuxDoCookieModule.js');
+const localLinuxDoSource = readProjectFile('src', 'localLinuxdo.ts');
+const loginWebViewScriptsSource = readProjectFile('src', 'loginWebViewScripts.ts');
+const linuxDoBridgeSource = readProjectFile('src', 'linuxdoCookieBridge.ts');
+const nodeSeekBridgeSource = readProjectFile('src', 'nodeseekCookieBridge.ts');
+const forumApiSource = readProjectFile('src', 'forumApi.ts');
+const feedLogicSource = readProjectFile('src', 'feedLogic.ts');
+const yaohuoApiSource = readProjectFile('src', 'yaohuoApi.ts');
+const linuxDoCookiePluginSource = readOptionalProjectFile('plugins', 'withLinuxDoCookieModule.js');
+const removedLocalServiceOption = ['server', 'Url'].join('');
 
 describe('Android App experience guards', () => {
   it('keeps Android temporary dumps and cookie snapshots out of git', () => {
-    expect(gitIgnoreSource).toContain('android-app/tmp-*');
+    expect(gitIgnoreSource).toContain('tmp-*');
   });
 
   it('does not use string-built dynamic imports in Android cookie bridges', () => {
@@ -75,8 +76,10 @@ describe('Android App experience guards', () => {
     const repliesApiBlock = forumApiSource.match(/export function getReplies\([\s\S]*?\): Promise<RepliesResponse>/)?.[0] || '';
     const replyApiBlock = forumApiSource.match(/export function getReply\([\s\S]*?\): Promise<Reply>/)?.[0] || '';
 
-    expect(forumApiSource).not.toMatch(/export (?:async )?function (?:getFeed|getCategories|getTopic|getReplies|getReply|searchTopics)[\s\S]*?serverUrl\?: string/);
-    expect(yaohuoApiSource).not.toMatch(/\bserverUrl\?: string\b/);
+    expect(forumApiSource).not.toMatch(
+      new RegExp(`export (?:async )?function (?:getFeed|getCategories|getTopic|getReplies|getReply|searchTopics)[\\s\\S]*?${removedLocalServiceOption}\\?: string`)
+    );
+    expect(yaohuoApiSource).not.toMatch(new RegExp(`\\b${removedLocalServiceOption}\\?: string\\b`));
     expect(yaohuoApiSource).not.toMatch(/\bserverFetcher\b/);
     expect(topicApiBlock).not.toContain('nocache?: boolean');
     expect(repliesApiBlock).not.toContain('nocache?: boolean');

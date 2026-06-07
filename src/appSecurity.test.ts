@@ -3,11 +3,11 @@ import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
 import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('android-app', 'App.tsx');
-const linuxDoVerifyModalSource = readProjectFile('android-app', 'src', 'app', 'LinuxDoVerifyModal.tsx');
-const accountControllerSource = readProjectFile('android-app', 'src', 'app', 'useAccountController.ts');
-const sessionControllerSource = readProjectFile('android-app', 'src', 'app', 'useSessionController.ts');
-const morePanelsSource = readProjectFile('android-app', 'src', 'screens', 'more', 'MorePanels.tsx');
+const appSource = readProjectFile('App.tsx');
+const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
+const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
+const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
+const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
 describe('Android App security review guards', () => {
