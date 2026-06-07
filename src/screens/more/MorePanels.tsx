@@ -42,7 +42,7 @@ export function BackupRestorePanel({
         style={styles.input}
         value={backupJson}
         onChangeText={onBackupJsonChange}
-        placeholder="粘贴或生成阅读资料 JSON"
+        placeholder="粘贴或生成本机资料 JSON"
         placeholderTextColor={theme.muted}
         autoCapitalize="none"
         autoCorrect={false}
