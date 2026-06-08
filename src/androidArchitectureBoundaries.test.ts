@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const themeSource = readProjectFile('src', 'theme.ts');

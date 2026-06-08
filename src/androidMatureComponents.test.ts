@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
 const packageJson = JSON.parse(readProjectFile('package.json')) as {
   dependencies?: Record<string, string>;
 };
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
 const imagePreviewSource = readProjectFile('src', 'components', 'ImagePreviewModal.tsx');

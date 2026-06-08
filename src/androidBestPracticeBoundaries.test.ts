@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('App.tsx');
+const appEntrySource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
+const appShellSource = readProjectFile('src', 'app', 'AppShell.tsx');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
@@ -30,6 +32,17 @@ const appActionAndAccountRequestSources = {
 };
 
 describe('Android best-practice boundary guards', () => {
+  it('keeps App.tsx as a thin entry file', () => {
+    expect(appEntrySource).toContain("import 'react-native-gesture-handler';");
+    expect(appEntrySource).toContain("import 'expo-dev-client';");
+    expect(appEntrySource).toContain("import { AppRoot } from './src/app/AppRoot';");
+    expect(appEntrySource).toContain('export default AppRoot;');
+    expect(appEntrySource).not.toContain('AppProviders');
+    expect(appEntrySource).not.toContain('AppNavigator');
+    expect(appEntrySource).not.toContain('HiddenBrowserHost');
+    expect(appEntrySource).not.toContain('GlobalModalHost');
+  });
+
   it('keeps root providers in a focused host', () => {
     const appProvidersSource = readOptionalProjectFile('src', 'app', 'AppProviders.tsx');
 
@@ -39,7 +52,7 @@ describe('Android best-practice boundary guards', () => {
     expect(appProvidersSource).toContain('KeyboardAvoidingView');
     expect(appProvidersSource).toContain('SafeAreaView');
     expect(appProvidersSource).toContain("edges={['left', 'right', 'bottom']}");
-    expect(appSource).toContain('<AppProviders');
+    expect(appShellSource).toContain('<AppProviders');
   });
 
   it('keeps the Android top inset owned by screen headers only once', () => {
@@ -56,9 +69,9 @@ describe('Android best-practice boundary guards', () => {
     expect(hiddenBrowserHostSource).toContain('export function HiddenBrowserHost');
     expect(hiddenBrowserHostSource).toContain('nodeseek-browser-fetch');
     expect(hiddenBrowserHostSource).toContain('linuxdo-browser-fetch');
-    expect(appSource).toContain('<HiddenBrowserHost');
-    expect(appSource).not.toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
-    expect(appSource).not.toContain('key={`linuxdo-browser-fetch-${linuxDoBrowserFetchRequest.id}`}');
+    expect(appShellSource).toContain('<HiddenBrowserHost');
+    expect(appShellSource).not.toContain('key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}');
+    expect(appShellSource).not.toContain('key={`linuxdo-browser-fetch-${linuxDoBrowserFetchRequest.id}`}');
   });
 
   it('keeps global verification and preview modals in a focused host', () => {
@@ -67,9 +80,9 @@ describe('Android best-practice boundary guards', () => {
     expect(globalModalHostSource).toContain('ImagePreviewModal');
     expect(linuxDoVerifyModalSource).toContain('export function LinuxDoVerifyModal');
     expect(linuxDoVerifyModalSource).toContain('showLinuxDoPanel && mountLinuxDoWebView');
-    expect(appSource).toContain('<GlobalModalHost');
-    expect(appSource).not.toContain('<MemoizedLinuxDoVerifyModal');
-    expect(appSource).not.toContain('<ImagePreviewModal');
+    expect(appShellSource).toContain('<GlobalModalHost');
+    expect(appShellSource).not.toContain('<MemoizedLinuxDoVerifyModal');
+    expect(appShellSource).not.toContain('<ImagePreviewModal');
   });
 
   it('keeps WebView probes and global verification outside More screen modules', () => {
@@ -98,11 +111,11 @@ describe('Android best-practice boundary guards', () => {
     expect(appNavigatorSource).toContain('export function MainTabsHost');
     expect(appNavigatorSource).toContain('Tab.Navigator');
     expect(appNavigatorSource).toContain('Stack.Navigator');
-    expect(appSource).toContain('<AppNavigator');
-    expect(appSource).not.toContain('<Tab.Navigator');
-    expect(appSource).not.toContain('<Stack.Navigator');
+    expect(appShellSource).toContain('<AppNavigator');
+    expect(appShellSource).not.toContain('<Tab.Navigator');
+    expect(appShellSource).not.toContain('<Stack.Navigator');
     expect(appNavigatorSource).not.toContain('activeScreen');
-    expect(appSource).not.toContain('activeScreen={screen}');
+    expect(appShellSource).not.toContain('activeScreen={screen}');
   });
 
   it('does not pass raw cookie headers through More screen props', () => {

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');

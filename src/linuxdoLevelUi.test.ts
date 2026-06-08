@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 
 describe('linux.do level UI guards', () => {

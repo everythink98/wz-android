@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('App.tsx');
+const appEntrySource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const appNavigatorSource = readProjectFile('src', 'app', 'AppNavigator.tsx');
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
@@ -44,7 +45,10 @@ describe('Android App UX upgrade guards', () => {
   });
 
   it('hosts the app in React Navigation with bottom tabs and a standard stack for detail screens', () => {
-    expect(appSource).toContain("import 'react-native-gesture-handler';");
+    expect(appEntrySource).toContain("import 'react-native-gesture-handler';");
+    expect(appEntrySource).toContain("import 'expo-dev-client';");
+    expect(appEntrySource).toContain("import { AppRoot } from './src/app/AppRoot';");
+    expect(appEntrySource).toContain('export default AppRoot;');
     expect(appSource).toContain('<AppNavigator');
     expect(appNavigatorSource).toContain('NavigationContainer');
     expect(appNavigatorSource).toContain('createNativeStackNavigator');
@@ -57,7 +61,8 @@ describe('Android App UX upgrade guards', () => {
 
   it('uses native stack background, slide transitions, and topic history for detail returns', () => {
     expect(appSource).toContain('const navigationTheme = useMemo');
-    expect(appSource).toContain('navigationTheme={navigationTheme}');
+    expect(appSource).toContain('navigationProps={{');
+    expect(appSource).toContain('navigationTheme,');
     expect(appNavigatorSource).toContain('<NavigationContainer ref={navigationRef} theme={navigationTheme}');
     expect(appNavigatorSource).toContain("animation: 'slide_from_right'");
     expect(appNavigatorSource).toContain('contentStyle: { backgroundColor: theme.background }');
@@ -175,8 +180,9 @@ describe('Android App UX upgrade guards', () => {
     expect(appSource).toContain('InteractionManager');
     expect(appSource).toContain('runAfterNavigationInteractions');
     expect(appSource).toContain('flushDeferredNavigationTask');
-    expect(appSource).toContain('onTopicClosing={flushDeferredNavigationTask}');
-    expect(appSource).toContain('onUserClosing={flushDeferredNavigationTask}');
+    expect(appSource).toContain('navigationProps={{');
+    expect(appSource).toContain('onTopicClosing: flushDeferredNavigationTask');
+    expect(appSource).toContain('onUserClosing: flushDeferredNavigationTask');
     expect(appNavigatorSource).toContain('transitionEnd');
     expect(appNavigatorSource).toContain('freezeOnBlur: true');
     expect(goBackFromTopicBlock).toContain('runAfterNavigationInteractions(() => changeScreen(topicReturnScreenRef.current));');

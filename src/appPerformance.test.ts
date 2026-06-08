@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
 const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataController.ts');
@@ -132,7 +132,7 @@ describe('Android App performance guards', () => {
       'useBackupStatusController',
       'useHtmlRenderingController'
     ]) {
-      expect(appSource).toContain(`./src/app/${moduleName}`);
+      expect(appSource).toContain(`./${moduleName}`);
     }
   });
 

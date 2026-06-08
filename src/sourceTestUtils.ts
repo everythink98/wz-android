@@ -9,3 +9,10 @@ export function readOptionalProjectFile(...segments: string[]) {
   const filePath = join(process.cwd(), ...segments);
   return existsSync(filePath) ? readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n') : '';
 }
+
+export function readAppRuntimeSource() {
+  return [
+    readProjectFile('src', 'app', 'AppRoot.tsx'),
+    readProjectFile('src', 'app', 'AppShell.tsx')
+  ].join('\n');
+}

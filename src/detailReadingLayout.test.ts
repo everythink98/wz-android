@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 import { createStyles, createTheme } from './theme';
 import type { ReaderSettings } from './readerData';
 
@@ -17,7 +17,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
 const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
 const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');

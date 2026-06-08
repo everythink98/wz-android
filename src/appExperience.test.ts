@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('app.json');
-const appSource = readProjectFile('App.tsx');
+const appSource = readAppRuntimeSource();
 const globalModalHostSource = readProjectFile('src', 'app', 'GlobalModalHost.tsx');
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const hiddenBrowserHostSource = readProjectFile('src', 'app', 'HiddenBrowserHost.tsx');
