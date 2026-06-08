@@ -142,7 +142,7 @@ function MoreScreen({
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.groupList}>
-        <InfoRow icon={Activity} label="关于" value="多论坛第三方客户端" styles={styles} theme={theme} />
+        <InfoRow icon={Activity} label="关于" value="多网站第三方客户端" styles={styles} theme={theme} />
       </View>
       <ExpandablePanel
         quiet
