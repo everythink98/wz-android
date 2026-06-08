@@ -15,6 +15,7 @@ const linuxDoVerifyModalSource = readOptionalProjectFile('src', 'app', 'LinuxDoV
 const loginWebViewScriptsSource = readOptionalProjectFile('src', 'loginWebViewScripts.ts');
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+const linuxDoLevelPanelSource = readProjectFile('src', 'screens', 'more', 'LinuxDoLevelPanel.tsx');
 const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
 const topicActionsControllerSource = readProjectFile('src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
@@ -181,5 +182,7 @@ describe('Android best-practice boundary guards', () => {
     expect(appRootSource).not.toContain("from '../linuxdoLevel'");
     expect(moreScreenSource).toContain("from '../sources/sourceGateway'");
     expect(moreScreenSource).not.toContain("from '../linuxdoLevel'");
+    expect(linuxDoLevelPanelSource).toContain("from '../../sources/sourceGateway'");
+    expect(linuxDoLevelPanelSource).not.toContain("from '../../linuxdoLevel'");
   });
 });

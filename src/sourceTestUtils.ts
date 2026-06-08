@@ -31,6 +31,22 @@ export function readThemeRuntimeSource() {
 export function readTopicRuntimeSource() {
   return [
     readProjectFile('src', 'screens', 'TopicScreen.tsx'),
+    readProjectFile('src', 'screens', 'topic', 'topicScreenHelpers.ts'),
     readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')
+  ].join('\n');
+}
+
+export function readMoreRuntimeSource() {
+  return [
+    readProjectFile('src', 'screens', 'MoreScreen.tsx'),
+    readProjectFile('src', 'screens', 'more', 'MorePanels.tsx'),
+    readProjectFile('src', 'screens', 'more', 'LinuxDoLevelPanel.tsx')
+  ].join('\n');
+}
+
+export function readLibraryRuntimeSource() {
+  return [
+    readProjectFile('src', 'screens', 'LibraryScreen.tsx'),
+    readProjectFile('src', 'screens', 'library', 'libraryScreenItems.ts')
   ].join('\n');
 }

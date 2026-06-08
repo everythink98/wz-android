@@ -21,6 +21,7 @@ const appSource = readAppRuntimeSource();
 const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
 const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
 const topicScreenSource = readTopicRuntimeSource();
+const topicScreenHelpersSource = readProjectFile('src', 'screens', 'topic', 'topicScreenHelpers.ts');
 const topicPollsSource = readProjectFile('src', 'screens', 'topic', 'TopicPolls.tsx');
 const topicActionBarSource = readProjectFile('src', 'screens', 'topic', 'TopicActionBar.tsx');
 const topicContentBlockSource = readProjectFile('src', 'screens', 'topic', 'TopicContentBlock.tsx');
@@ -382,6 +383,11 @@ describe('Android topic detail reading layout', () => {
     const header = topicScreenSource.match(/const listHeader = \([\s\S]*?\n  \);/)?.[0] || '';
 
     expect(topicScreenSource).toContain('topicStatusBadges(item)');
+    expect(topicScreenSource).toContain("from './topicScreenHelpers'");
+    expect(topicScreenHelpersSource).toContain('export function topicStatusBadges');
+    expect(topicScreenHelpersSource).toContain('export function readableTopicError');
+    expect(topicScreenHelpersSource).toContain('export function isAccessNoticeHtml');
+    expect(topicScreenHelpersSource).toContain('getReplyKey');
     expect(header).toContain('topicHeaderStatusBadges');
     expect(header).toContain('styles.topicTagRow');
     expect(header).toContain('styles.topicStatusRow');

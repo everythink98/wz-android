@@ -21,12 +21,12 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { AccessRequirement, Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
+import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { splitTopicContentHtml } from '../../topicContentSplit';
-import { androidRipple, createStyles, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme, type StatusBadgeTone } from '../../theme';
+import { androidRipple, createStyles, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
@@ -37,6 +37,7 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { AuthorAvatar, MemoizedReplyItem, NodeSeekStatPill, linuxDoReactionStats, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
+import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -94,95 +95,8 @@ function hasHtmlClass(tnode: unknown, className: string) {
   return classValue.split(/\s+/).includes(className);
 }
 
-function stableTextHash(value: string) {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
-function getReplyKey(reply: Reply) {
-  if (typeof reply.floor === 'number') {
-    return `reply-floor-${reply.floor}`;
-  }
-  if (typeof reply.commentId === 'number') {
-    return `reply-comment-${reply.commentId}`;
-  }
-  const seed = [
-    reply.authorId || '',
-    reply.author || '',
-    reply.createdAt || '',
-    reply.contentHtml || ''
-  ].join('|');
-  return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
-}
-
-type TopicStatusBadge = { label: string; tone: StatusBadgeTone };
-
-function slowModeLabel(seconds: number) {
-  return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒`;
-}
-
-function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>) {
-  const badges: TopicStatusBadge[] = [];
-  if (item.solved) {
-    badges.push({ label: '已解决', tone: 'success' });
-  }
-  if (item.acceptedAnswerFloor) {
-    badges.push({ label: `采纳 #${item.acceptedAnswerFloor}`, tone: 'success' });
-  }
-  if (item.pinned) {
-    badges.push({ label: '置顶', tone: 'accent' });
-  }
-  if (item.closed) {
-    badges.push({ label: '已关闭', tone: 'danger' });
-  }
-  if (item.archived) {
-    badges.push({ label: '已归档', tone: 'neutral' });
-  }
-  if (item.slowModeSeconds) {
-    badges.push({ label: `慢速 ${slowModeLabel(item.slowModeSeconds)}`, tone: 'warning' });
-  }
-  return badges;
-}
-
-
 function topicListItemKey(item: TopicListItem) {
   return item.key;
-}
-
-function readableTopicError(message: string) {
-  if (/upstream unavailable/i.test(message)) {
-    return '来源暂时不可用，请稍后重试';
-  }
-  if (/^HTTP 5\d\d$/i.test(message)) {
-    return `来源暂时不可用（${message}）`;
-  }
-  return message;
-}
-
-function plainHtmlText(value: string) {
-  return value.replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function isAccessNoticeHtml(html: string, accessRequirement?: AccessRequirement) {
-  if (!accessRequirement) {
-    return false;
-  }
-  const text = plainHtmlText(html);
-  if (text.length > 240) {
-    return false;
-  }
-  return !text || /查看本帖需要|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|登录后(?:才能|可见)|需要[^。；\n]{0,24}(?:等级|Lv|level)|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i.test(text);
 }
 
 export function TopicScreen({

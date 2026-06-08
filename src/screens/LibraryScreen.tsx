@@ -3,9 +3,9 @@ import { Alert, Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile } from '../types';
-import { type FollowedUserRecord, type TopicRecord, userKey } from '../readerData';
+import { type FollowedUserRecord, type TopicRecord } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
-import { filterLibraryRecords, groupLibraryRecordsByTime, libraryCategoryFilterItems } from '../androidFeatureHelpers';
+import { filterLibraryRecords, libraryCategoryFilterItems } from '../androidFeatureHelpers';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { feedSources } from '../feedCategoryRail';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
@@ -13,10 +13,15 @@ import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, PillRail } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-
-function libraryRecordKey(record: TopicRecord) {
-  return `${record.topic.source}:${record.topic.id}`;
-}
+import {
+  createLibraryListItems,
+  filterFollowedUsersBySource,
+  libraryCountLabel,
+  libraryDataItemKey,
+  libraryDataItemType,
+  type LibraryDataItem,
+  type LibraryListItem
+} from './library/libraryScreenItems';
 
 export function LibraryScreen({
   libraryTab,
@@ -49,24 +54,16 @@ export function LibraryScreen({
   onRemoveUser: (user: UserProfile) => void;
   onTabChange: (tab: LibraryTab) => void;
 }) {
-  type LibraryListItem = { type: 'section'; key: string; label: string; first: boolean } | { type: 'record'; key: string; record: TopicRecord };
   const listRef = useRef<FlashListRef<FollowedUserRecord | LibraryListItem> | null>(null);
   const [sourceFilter, setSourceFilter] = useState<FeedSource>('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const userRecords = useMemo(() => (
-    sourceFilter === 'all'
-      ? followedUsers
-      : followedUsers.filter((record) => record.user.source === sourceFilter)
-  ), [followedUsers, sourceFilter]);
+  const userRecords = useMemo(() => filterFollowedUsersBySource(followedUsers, sourceFilter), [followedUsers, sourceFilter]);
   const categoryItems = useMemo(() => libraryCategoryFilterItems(categories, sourceFilter), [categories, sourceFilter]);
   const filteredRecords = useMemo(() => filterLibraryRecords(records, {
     source: sourceFilter,
     category: categoryFilter
   }), [categoryFilter, records, sourceFilter]);
-  const listItems = useMemo<LibraryListItem[]>(() => groupLibraryRecordsByTime(filteredRecords).flatMap((section, index) => [
-    { type: 'section' as const, key: `section:${section.label}`, label: section.label, first: index === 0 },
-    ...section.records.map((record) => ({ type: 'record' as const, key: libraryRecordKey(record), record }))
-  ]), [filteredRecords]);
+  const listItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(filteredRecords), [filteredRecords]);
   useEffect(() => {
     setSourceFilter('all');
     setCategoryFilter('all');
@@ -146,7 +143,7 @@ export function LibraryScreen({
     <View style={styles.stack}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>收藏</Text>
-        <Text style={styles.meta}>{libraryTab === 'users' ? `${userRecords.length} / ${followedUsers.length} 人` : filteredRecords.length === records.length ? `${records.length} 条` : `${filteredRecords.length} / ${records.length} 条`}</Text>
+        <Text style={styles.meta}>{libraryCountLabel({ filteredRecords, followedUsers, libraryTab, records, userRecords })}</Text>
       </View>
       <PillRail
         variant="tabs"
@@ -193,8 +190,8 @@ export function LibraryScreen({
       style={styles.content}
       contentContainerStyle={styles.libraryContentInner}
       data={libraryTab === 'users' ? userRecords : listItems}
-      keyExtractor={(item) => libraryTab === 'users' ? userKey((item as FollowedUserRecord).user) : (item as LibraryListItem).key}
-      getItemType={(item) => libraryTab === 'users' ? 'user' : (item as LibraryListItem).type}
+      keyExtractor={(item) => libraryDataItemKey(item as LibraryDataItem, libraryTab)}
+      getItemType={(item) => libraryDataItemType(item as LibraryDataItem, libraryTab)}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListEmptyComponent={<EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />}

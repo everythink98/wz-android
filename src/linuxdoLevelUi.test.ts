@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readMoreRuntimeSource, readProjectFile } from './sourceTestUtils';
 
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
-const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
-const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
+const moreLevelPanelSource = readProjectFile('src', 'screens', 'more', 'LinuxDoLevelPanel.tsx');
+const moreUiSource = readMoreRuntimeSource();
 const appSource = readAppRuntimeSource();
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 
@@ -12,8 +12,8 @@ describe('linux.do level UI guards', () => {
     expect(moreScreenSource).toContain('title="账号与验证"');
     expect(moreScreenSource).toContain('label="linux.do 等级"');
     expect(moreScreenSource).not.toContain('title="linux.do 等级"');
-    expect(morePanelsSource).toContain("label: '等级进度'");
-    expect(morePanelsSource).toContain("label: '活跃数据'");
+    expect(moreLevelPanelSource).toContain("label: '等级进度'");
+    expect(moreLevelPanelSource).toContain("label: '活跃数据'");
     expect(moreUiSource).toContain('LinuxDoLevelPanel');
     expect(accountControllerSource).toContain('getLinuxDoLevelProfile');
   });

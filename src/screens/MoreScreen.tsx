@@ -12,10 +12,10 @@ import {
   MemoizedAppearancePanel,
   MemoizedBackupRestorePanel,
   MemoizedLinuxDoVerifyPanel,
+  MemoizedLinuxDoLevelPanel,
   MemoizedNodeSeekLoginPanel,
   MemoizedStatusCheckPanel,
-  MemoizedYaohuoLoginPanel,
-  LinuxDoLevelPanel
+  MemoizedYaohuoLoginPanel
 } from './more/MorePanels';
 function MoreScreen({
   checking,
@@ -199,7 +199,7 @@ function MoreScreen({
         />
         <MenuButton icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
         {levelExpanded ? (
-          <LinuxDoLevelPanel
+          <MemoizedLinuxDoLevelPanel
             busy={linuxDoLevelBusy}
             error={linuxDoLevelError}
             linuxDoSession={linuxDoSession}

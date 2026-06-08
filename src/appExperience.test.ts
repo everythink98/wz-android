@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
+import { readAppRuntimeSource, readLibraryRuntimeSource, readMoreRuntimeSource, readOptionalProjectFile, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('app.json');
 const appSource = readAppRuntimeSource();
@@ -28,9 +28,11 @@ const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
 const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
 const searchListItemsSource = readProjectFile('src', 'searchListItems.ts');
 const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
+const libraryItemsSource = readProjectFile('src', 'screens', 'library', 'libraryScreenItems.ts');
+const libraryUiSource = readLibraryRuntimeSource();
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
-const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
+const moreUiSource = readMoreRuntimeSource();
 const topicScreenSource = readTopicRuntimeSource();
 const topicMenuSource = readProjectFile('src', 'screens', 'topic', 'TopicMenu.tsx');
 const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
@@ -43,7 +45,7 @@ const androidUiSource = [
   imagePreviewModalSource,
   feedScreenSource,
   searchScreenSource,
-  libraryScreenSource,
+  libraryUiSource,
   moreUiSource,
   topicScreenSource,
   navBarSource
@@ -714,7 +716,7 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps the first library section title close to the filter tabs', () => {
-    expect(libraryScreenSource).toContain('first: index === 0');
+    expect(libraryItemsSource).toContain('first: index === 0');
     expect(libraryScreenSource).toContain('item.first && styles.libraryFirstSectionTitle');
     expect(libraryScreenSource).toContain('contentContainerStyle={styles.libraryContentInner}');
     expect(themeSource).toContain('libraryContentInner');

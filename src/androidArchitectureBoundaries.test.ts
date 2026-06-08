@@ -70,13 +70,26 @@ describe('Android architecture boundaries', () => {
 
   it('splits more screen panels into focused components', () => {
     const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+    const linuxDoLevelPanelSource = readProjectFile('src', 'screens', 'more', 'LinuxDoLevelPanel.tsx');
 
     expect(morePanelsSource).toContain('export function BackupRestorePanel');
     expect(morePanelsSource).toContain('export function NodeSeekLoginPanel');
-    expect(morePanelsSource).toContain('export function LinuxDoLevelPanel');
+    expect(morePanelsSource).toContain("from './LinuxDoLevelPanel'");
+    expect(linuxDoLevelPanelSource).toContain('export function LinuxDoLevelPanel');
     expect(morePanelsSource).toContain('export function SettingsPanel');
     expect(moreScreenSource).not.toContain('function BackupRestorePanel');
     expect(moreScreenSource).not.toContain('function LinuxDoLevelPanel');
+  });
+
+  it('keeps library list models outside the screen render file', () => {
+    const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
+    const libraryItemsSource = readProjectFile('src', 'screens', 'library', 'libraryScreenItems.ts');
+
+    expect(libraryScreenSource).toContain("from './library/libraryScreenItems'");
+    expect(libraryItemsSource).toContain('export function createLibraryListItems');
+    expect(libraryItemsSource).toContain('export function libraryCountLabel');
+    expect(libraryScreenSource).not.toContain('function libraryRecordKey');
+    expect(libraryScreenSource).not.toContain('groupLibraryRecordsByTime');
   });
 
   it('keeps theme public API while moving style groups behind helpers', () => {
