@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('app.json');
 const appSource = readAppRuntimeSource();
@@ -31,11 +31,11 @@ const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
-const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicScreenSource = readTopicRuntimeSource();
 const topicMenuSource = readProjectFile('src', 'screens', 'topic', 'TopicMenu.tsx');
 const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
 const navBarSource = readProjectFile('src', 'components', 'NavBar.tsx');
-const themeSource = readProjectFile('src', 'theme.ts');
+const themeSource = readThemeRuntimeSource();
 const androidUiSource = [
   appSource,
   appControlsSource,

@@ -16,3 +16,19 @@ export function readAppRuntimeSource() {
     readProjectFile('src', 'app', 'AppShell.tsx')
   ].join('\n');
 }
+
+export function readThemeRuntimeSource() {
+  return [
+    readProjectFile('src', 'theme.ts'),
+    readProjectFile('src', 'themeCore.ts'),
+    readProjectFile('src', 'themeStyles.ts'),
+    readProjectFile('src', 'themeParts.ts')
+  ].join('\n');
+}
+
+export function readTopicRuntimeSource() {
+  return [
+    readProjectFile('src', 'screens', 'TopicScreen.tsx'),
+    readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')
+  ].join('\n');
+}

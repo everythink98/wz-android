@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile, readTopicRuntimeSource } from './sourceTestUtils';
 
 const packageJson = JSON.parse(readProjectFile('package.json')) as {
   dependencies?: Record<string, string>;
@@ -11,7 +11,7 @@ const imagePreviewSource = readProjectFile('src', 'components', 'ImagePreviewMod
 const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
 const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
 const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
-const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicScreenSource = readTopicRuntimeSource();
 const replyItemSource = readProjectFile('src', 'screens', 'topic', 'ReplyItem.tsx');
 const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
 const readerDataSource = readProjectFile('src', 'readerData.ts');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appSource = readAppRuntimeSource();
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
@@ -16,7 +16,7 @@ const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const moreUiSource = [moreScreenSource, morePanelsSource].join('\n');
 const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
-const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicScreenSource = readTopicRuntimeSource();
 const topicContentSplitSource = readProjectFile('src', 'topicContentSplit.ts');
 const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
 const removedLocalServiceOption = ['server', 'Url'].join('');

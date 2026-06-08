@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appSource = readAppRuntimeSource();
-const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicScreenSource = readTopicRuntimeSource();
+const topicScreenEntrySource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
-const themeSource = readProjectFile('src', 'theme.ts');
+const themeSource = readThemeRuntimeSource();
+const themeEntrySource = readProjectFile('src', 'theme.ts');
 
 describe('Android architecture boundaries', () => {
   it('keeps image preview orchestration outside the app shell', () => {
@@ -54,6 +56,9 @@ describe('Android architecture boundaries', () => {
     const topicContentSource = readProjectFile('src', 'screens', 'topic', 'TopicContentBlock.tsx');
     const replyItemSource = readProjectFile('src', 'screens', 'topic', 'ReplyItem.tsx');
 
+    expect(topicScreenEntrySource).toContain("export { TopicScreen } from './topic/TopicScreenBody';");
+    expect(topicScreenEntrySource).toContain("export type { TopicListItem } from './topic/TopicScreenBody';");
+    expect(topicScreenEntrySource).not.toContain('<FlatList');
     expect(topicPollsSource).toContain('export function TopicPolls');
     expect(topicActionBarSource).toContain('export function TopicActionBar');
     expect(topicContentSource).toContain('export function TopicContentBlock');
@@ -75,6 +80,10 @@ describe('Android architecture boundaries', () => {
   });
 
   it('keeps theme public API while moving style groups behind helpers', () => {
+    expect(themeEntrySource).toContain("export { createStyles } from './themeStyles';");
+    expect(themeEntrySource).toContain("} from './themeCore';");
+    expect(themeEntrySource).toContain("export type { ReaderTheme, StatusBadgeTone } from './themeCore';");
+    expect(themeEntrySource).not.toContain('StyleSheet.create');
     expect(themeSource).toContain('export function createTheme');
     expect(themeSource).toContain('export function createStyles');
     expect(themeSource).toContain('createNavigationStyles(');

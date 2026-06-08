@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appEntrySource = readProjectFile('App.tsx');
 const appSource = readAppRuntimeSource();
@@ -14,7 +14,7 @@ const verificationControllerSource = readProjectFile('src', 'app', 'useVerificat
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const appControlsSource = readProjectFile('src', 'components', 'AppControls.tsx');
 const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
-const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicScreenSource = readTopicRuntimeSource();
 const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
 const searchListItemsSource = readProjectFile('src', 'searchListItems.ts');
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 import { createStyles, createTheme } from './theme';
 import type { ReaderSettings } from './readerData';
 
@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
 const appSource = readAppRuntimeSource();
 const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
 const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
-const topicScreenSource = readProjectFile('src', 'screens', 'TopicScreen.tsx');
+const topicScreenSource = readTopicRuntimeSource();
 const topicPollsSource = readProjectFile('src', 'screens', 'topic', 'TopicPolls.tsx');
 const topicActionBarSource = readProjectFile('src', 'screens', 'topic', 'TopicActionBar.tsx');
 const topicContentBlockSource = readProjectFile('src', 'screens', 'topic', 'TopicContentBlock.tsx');
@@ -28,7 +28,7 @@ const replyItemSource = readProjectFile('src', 'screens', 'topic', 'ReplyItem.ts
 const topicMenuSource = readProjectFile('src', 'screens', 'topic', 'TopicMenu.tsx');
 const topicCardSource = readProjectFile('src', 'components', 'TopicCard.tsx');
 const userScreenSource = readProjectFile('src', 'screens', 'UserScreen.tsx');
-const themeSource = readProjectFile('src', 'theme.ts');
+const themeSource = readThemeRuntimeSource();
 const defaultSettings: ReaderSettings = {
   theme: 'light',
   fontScale: 1,
@@ -119,7 +119,7 @@ describe('Android topic detail reading layout', () => {
   });
 
   it('does not open NodeSeek user pages when only a display name is available', () => {
-    expect(topicScreenSource).toContain("from '../userNavigation'");
+    expect(topicScreenSource).toContain("from '../../userNavigation'");
     expect(topicScreenSource).toContain('userFromTopic(item)');
     expect(replyItemSource).toContain('userFromReply(reply, source)');
   });
