@@ -9,7 +9,6 @@ import {
   nodeSeekInteractionRemovalMessage,
   type NodeSeekActionRequest
 } from '../nodeseekActions';
-import { runNodeSeekAction } from '../nodeseekActionClient';
 import {
   buildYaohuoFavoriteRequest,
   buildYaohuoReplyRequest,
@@ -17,7 +16,6 @@ import {
   extractYaohuoSid,
   type YaohuoActionRequest
 } from '../yaohuoActions';
-import { runYaohuoAction } from '../yaohuoActionClient';
 import {
   buildLinuxDoBookmarkRequest,
   buildLinuxDoLikeRequest,
@@ -25,7 +23,7 @@ import {
   buildLinuxDoReplyRequest,
   type LinuxDoActionRequest
 } from '../linuxdoActions';
-import { runLinuxDoAction } from '../linuxdoActionClient';
+import { runLinuxDoAction, runNodeSeekAction, runYaohuoAction } from '../sources/sourceGateway';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,

@@ -11,6 +11,7 @@ const loginWebViewScriptsSource = readOptionalProjectFile('src', 'loginWebViewSc
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
+const topicActionsControllerSource = readProjectFile('src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
 const verificationControllerSource = readProjectFile('src', 'app', 'useVerificationController.ts');
@@ -21,6 +22,11 @@ const appReadControllerSources = {
   searchControllerSource,
   topicControllerSource,
   userControllerSource
+};
+const appActionAndAccountRequestSources = {
+  accountControllerSource,
+  backupStatusControllerSource,
+  topicActionsControllerSource
 };
 
 describe('Android best-practice boundary guards', () => {
@@ -126,6 +132,16 @@ describe('Android best-practice boundary guards', () => {
       expect(source).toContain("from '../sources/sourceGateway'");
       expect(source).not.toContain("from '../forumApi'");
       expect(source).not.toContain("from '../yaohuoApi'");
+    });
+  });
+
+  it('keeps app action and account requests behind the source gateway', () => {
+    Object.values(appActionAndAccountRequestSources).forEach((source) => {
+      expect(source).toContain("from '../sources/sourceGateway'");
+      expect(source).not.toContain("from '../nodeseekActionClient'");
+      expect(source).not.toContain("from '../linuxdoActionClient'");
+      expect(source).not.toContain("from '../yaohuoActionClient'");
+      expect(source).not.toContain("from '../linuxdoLevel'");
     });
   });
 });

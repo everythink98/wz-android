@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '../request';
+import type { LinuxDoActionRequest } from '../linuxdoActions';
+import type { NodeSeekActionRequest } from '../nodeseekActions';
 import type {
   CategoriesResponse,
   FeedResponse,
@@ -10,6 +12,7 @@ import type {
   TopicDetail,
   UserProfile
 } from '../types';
+import type { YaohuoActionRequest } from '../yaohuoActions';
 
 const forumApi = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -20,6 +23,16 @@ const forumApi = vi.hoisted(() => ({
   getUserProfile: vi.fn(),
   searchTopics: vi.fn()
 }));
+const linuxDoActionClient = vi.hoisted(() => ({
+  checkLinuxDoLoginAccess: vi.fn(),
+  runLinuxDoAction: vi.fn()
+}));
+const linuxDoLevel = vi.hoisted(() => ({
+  getLinuxDoLevelProfile: vi.fn()
+}));
+const nodeSeekActionClient = vi.hoisted(() => ({
+  runNodeSeekAction: vi.fn()
+}));
 const yaohuoApi = vi.hoisted(() => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
@@ -27,14 +40,23 @@ const yaohuoApi = vi.hoisted(() => ({
   getYaohuoTopicDirect: vi.fn(),
   searchYaohuoDirect: vi.fn()
 }));
+const yaohuoActionClient = vi.hoisted(() => ({
+  runYaohuoAction: vi.fn()
+}));
 
 vi.mock('../forumApi', () => forumApi);
+vi.mock('../linuxdoActionClient', () => linuxDoActionClient);
+vi.mock('../linuxdoLevel', () => linuxDoLevel);
+vi.mock('../nodeseekActionClient', () => nodeSeekActionClient);
 vi.mock('../yaohuoApi', () => yaohuoApi);
+vi.mock('../yaohuoActionClient', () => yaohuoActionClient);
 
 import {
+  checkLinuxDoLoginAccess,
   checkYaohuoLoginDirect,
   getCategories,
   getFeed,
+  getLinuxDoLevelProfile,
   getReply,
   getReplies,
   getTopic,
@@ -42,6 +64,9 @@ import {
   getYaohuoRepliesDirect,
   getYaohuoTopicDirect,
   getUserProfile,
+  runLinuxDoAction,
+  runNodeSeekAction,
+  runYaohuoAction,
   searchYaohuoDirect,
   searchTopics
 } from './sourceGateway';
@@ -75,11 +100,16 @@ describe('sourceGateway', () => {
     forumApi.getTopic.mockReset();
     forumApi.getUserProfile.mockReset();
     forumApi.searchTopics.mockReset();
+    linuxDoActionClient.checkLinuxDoLoginAccess.mockReset();
+    linuxDoActionClient.runLinuxDoAction.mockReset();
+    linuxDoLevel.getLinuxDoLevelProfile.mockReset();
+    nodeSeekActionClient.runNodeSeekAction.mockReset();
     yaohuoApi.checkYaohuoLoginDirect.mockReset();
     yaohuoApi.getYaohuoFeedDirect.mockReset();
     yaohuoApi.getYaohuoRepliesDirect.mockReset();
     yaohuoApi.getYaohuoTopicDirect.mockReset();
     yaohuoApi.searchYaohuoDirect.mockReset();
+    yaohuoActionClient.runYaohuoAction.mockReset();
     fetcherMock.mockReset();
   });
 
@@ -314,5 +344,111 @@ describe('sourceGateway', () => {
     await expect(checkYaohuoLoginDirect(options)).resolves.toBe(response);
 
     expect(yaohuoApi.checkYaohuoLoginDirect).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards runNodeSeekAction to nodeseekActionClient unchanged', async () => {
+    const response = { ok: true };
+    const request = { method: 'POST', path: '/api/action', body: '{}' } as unknown as NodeSeekActionRequest;
+    const options = {
+      cookieHeader: 'cookie',
+      request,
+      fetcher,
+      signal,
+      timeoutMs: 1000,
+      userAgent: 'agent'
+    };
+    nodeSeekActionClient.runNodeSeekAction.mockResolvedValue(response);
+
+    await expect(runNodeSeekAction(options)).resolves.toBe(response);
+
+    expect(nodeSeekActionClient.runNodeSeekAction).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards runLinuxDoAction to linuxdoActionClient unchanged', async () => {
+    const response = { ok: true };
+    const request = { method: 'POST', path: '/posts/1/like', body: '{}' } as unknown as LinuxDoActionRequest;
+    const options = {
+      cookieHeader: 'cookie',
+      request,
+      fetcher,
+      signal,
+      timeoutMs: 1000,
+      userAgent: 'agent'
+    };
+    linuxDoActionClient.runLinuxDoAction.mockResolvedValue(response);
+
+    await expect(runLinuxDoAction(options)).resolves.toBe(response);
+
+    expect(linuxDoActionClient.runLinuxDoAction).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards checkLinuxDoLoginAccess to linuxdoActionClient unchanged', async () => {
+    const response = { ok: true, message: '登录可用' };
+    const options = {
+      cookieHeader: 'cookie',
+      fetcher,
+      signal,
+      timeoutMs: 1000,
+      userAgent: 'agent'
+    };
+    linuxDoActionClient.checkLinuxDoLoginAccess.mockResolvedValue(response);
+
+    await expect(checkLinuxDoLoginAccess(options)).resolves.toBe(response);
+
+    expect(linuxDoActionClient.checkLinuxDoLoginAccess).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards runYaohuoAction to yaohuoActionClient unchanged', async () => {
+    const response = { ok: true, message: '操作已提交' };
+    const request = { method: 'POST', path: '/bbs/action.aspx', body: 'id=1' } as unknown as YaohuoActionRequest;
+    const options = {
+      cookieHeader: 'cookie',
+      request,
+      fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    yaohuoActionClient.runYaohuoAction.mockResolvedValue(response);
+
+    await expect(runYaohuoAction(options)).resolves.toBe(response);
+
+    expect(yaohuoActionClient.runYaohuoAction).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards getLinuxDoLevelProfile to linuxdoLevel unchanged', async () => {
+    const response = {
+      username: 'alice',
+      currentLevel: 1,
+      targetLevel: 2,
+      source: 'summary',
+      estimate: true,
+      note: 'note',
+      requirements: [],
+      activity: {
+        daysVisited: 0,
+        topicsEntered: 0,
+        postsReadCount: 0,
+        timeRead: 0,
+        likesGiven: 0,
+        likesReceived: 0,
+        postCount: 0,
+        topicCount: 0
+      },
+      achievedCount: 0,
+      totalCount: 0,
+      fetchedAt: '2026-01-01T00:00:00.000Z'
+    };
+    const options = {
+      cookieHeader: 'cookie',
+      userAgent: 'agent',
+      fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    linuxDoLevel.getLinuxDoLevelProfile.mockResolvedValue(response);
+
+    await expect(getLinuxDoLevelProfile(options)).resolves.toBe(response);
+
+    expect(linuxDoLevel.getLinuxDoLevelProfile).toHaveBeenCalledWith(options);
   });
 });

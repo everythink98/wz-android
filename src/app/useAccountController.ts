@@ -30,8 +30,7 @@ import {
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError
 } from '../appUtils';
-import { checkYaohuoLoginDirect } from '../sources/sourceGateway';
-import { getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../linuxdoLevel';
+import { checkYaohuoLoginDirect, getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';

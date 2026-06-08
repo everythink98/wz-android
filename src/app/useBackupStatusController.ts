@@ -5,7 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
-import { checkYaohuoLoginDirect, getFeed } from '../sources/sourceGateway';
+import { checkLinuxDoLoginAccess, checkYaohuoLoginDirect, getFeed } from '../sources/sourceGateway';
 import type { ReaderData } from '../readerData';
 import { exportReaderBackupJson, importReaderBackupJson } from '../readerBackup';
 import {
@@ -22,7 +22,6 @@ import {
   parseLinuxDoDocumentCookie,
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
-import { checkLinuxDoLoginAccess } from '../linuxdoActionClient';
 import { buildLocalStatusResult } from '../statusLogic';
 import { safeFileName } from '../backupFiles';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
