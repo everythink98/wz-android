@@ -9,7 +9,6 @@ import {
   type NativeSyntheticEvent,
   Platform,
   Share,
-  ScrollView,
   ToastAndroid,
   useWindowDimensions
 } from 'react-native';
@@ -43,6 +42,8 @@ import { useUserController } from './useUserController';
 import { useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTopicActionsController } from './useTopicActionsController';
+import { useAppScreenRenderers } from './AppScreenRenderers';
+import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoCookieBridge';
 import type { Reply, Topic, TopicDetail, UserProfile } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
@@ -60,13 +61,8 @@ import type { LibraryTab } from '../feedLogic';
 import { errorMessage } from '../appUtils';
 import type { LinuxDoLevelProfile } from '../linuxdoLevel';
 import { filterRepliesByQuery } from '../androidFeatureHelpers';
-import { FeedScreen } from '../screens/FeedScreen';
-import { MemoizedMoreScreen } from '../screens/MoreScreen';
-import { TopicScreen, type TopicListItem } from '../screens/TopicScreen';
+import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
-import { LibraryScreen } from '../screens/LibraryScreen';
-import { SearchScreen } from '../screens/SearchScreen';
-import { UserScreen } from '../screens/UserScreen';
 
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   resolve: (response: Response) => void;
@@ -135,7 +131,6 @@ export function AppRoot() {
   const currentTopicKeyRef = useRef<string | null>(null);
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
   const topicScrollRef = useRef<FlatList<TopicListItem> | null>(null);
-  const moreScrollRef = useRef<ScrollView>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const topicBackStackRef = useRef<TopicSnapshot[]>([]);
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
@@ -224,12 +219,11 @@ export function AppRoot() {
   }, []);
 
   const optimisticTopicActionsRef = useRef<Record<string, OptimisticActionState>>({});
-  const [tabScrollToTopSignals, setTabScrollToTopSignals] = useState<Record<keyof MainTabParamList, number>>({
-    feed: 0,
-    search: 0,
-    library: 0,
-    more: 0
-  });
+  const {
+    moreScrollRef,
+    requestTabScrollToTop,
+    tabScrollToTopSignals
+  } = useMainTabScrollToTop();
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
@@ -1266,233 +1260,215 @@ export function AppRoot() {
     commitReaderData((current) => clearRecords(current, 'history'));
   }, [commitReaderData]);
 
-  const requestTabScrollToTop = useCallback((target: keyof MainTabParamList) => {
-    if (target === 'more') {
-      moreScrollRef.current?.scrollTo({ y: 0, animated: true });
-    }
-    setTabScrollToTopSignals((current) => ({
-      ...current,
-      [target]: current[target] + 1
-    }));
-  }, []);
-
-  const renderFeedTab = useCallback(() => (
-    <FeedScreen
-      busy={feedBusy || actionBusy}
-      categories={categories}
-      categoryFilter={categoryFilter}
-      feedHasMore={activeFeedState.hasMore && feedAllowsRemotePagination}
-      feedItems={shownFeedItems}
-      feedPage={activeFeedState.page}
-      feedSource={feedSource}
-      loadMoreFailureSignal={activeFeedState.loadMoreFailureSignal}
-      loadingMore={activeFeedState.loadingMore}
-      topicStateIndex={topicStateIndex}
-      readingFilter={readingFilter}
-      refreshing={activeFeedState.refreshing}
-      scrollToTopSignal={tabScrollToTopSignals.feed}
-      styles={styles}
-      theme={theme}
-      onCategoryChange={setCategoryFilter}
-      onFeedSourceChange={changeFeedSource}
-      onLoadMore={() => {
+  const {
+    renderFeedTab,
+    renderLibraryTab,
+    renderMoreTab,
+    renderSearchTab,
+    renderTopicScreen,
+    renderUserScreen
+  } = useAppScreenRenderers({
+    feedProps: {
+      busy: feedBusy || actionBusy,
+      categories,
+      categoryFilter,
+      feedHasMore: activeFeedState.hasMore && feedAllowsRemotePagination,
+      feedItems: shownFeedItems,
+      feedPage: activeFeedState.page,
+      feedSource,
+      loadMoreFailureSignal: activeFeedState.loadMoreFailureSignal,
+      loadingMore: activeFeedState.loadingMore,
+      topicStateIndex,
+      readingFilter,
+      refreshing: activeFeedState.refreshing,
+      scrollToTopSignal: tabScrollToTopSignals.feed,
+      styles,
+      theme,
+      onCategoryChange: setCategoryFilter,
+      onFeedSourceChange: changeFeedSource,
+      onLoadMore: () => {
         if (!feedAllowsRemotePagination) {
           return;
         }
         loadFeed({ page: activeFeedState.page + 1, cursor: feedSource === 'all' ? activeFeedState.nextCursor : undefined, nocache: true });
-      }}
-      onOpenTopic={openTopic}
-      onReadingFilterChange={setReadingFilter}
-      onRefresh={refreshFeed}
-    />
-  ), [actionBusy, activeFeedState, categories, categoryFilter, changeFeedSource, feedAllowsRemotePagination, feedBusy, feedSource, loadFeed, openTopic, readingFilter, refreshFeed, shownFeedItems, styles, tabScrollToTopSignals.feed, theme, topicStateIndex]);
-
-  const renderSearchTab = useCallback(() => (
-    <SearchScreen
-      busy={searchBusy}
-      query={searchQuery}
-      topicStateIndex={topicStateIndex}
-      recentSearches={recentSearches}
-      results={visibleSearchItems}
-      searchGroups={searchGroups}
-      scope={searchScope}
-      searchSource={searchSource}
-      sort={searchSort}
-      scrollToTopSignal={tabScrollToTopSignals.search}
-      styles={styles}
-      theme={theme}
-      onLoadMoreSearchSource={loadMoreSearchSource}
-      onOpenExternalUrl={openExternalUrl}
-      onOpenTopic={openTopic}
-      onRemoveRecentSearch={removeRecentSearch}
-      onQueryChange={setSearchQuery}
-      onScopeChange={setSearchScope}
-      onSearch={() => runSearch()}
-      onSearchSourceChange={setSearchSource}
-      onSortChange={setSearchSort}
-      onRetrySearchSource={retrySearchSource}
-    />
-  ), [loadMoreSearchSource, openExternalUrl, openTopic, recentSearches, removeRecentSearch, retrySearchSource, runSearch, searchBusy, searchGroups, searchQuery, searchScope, searchSort, searchSource, styles, tabScrollToTopSignals.search, theme, topicStateIndex, visibleSearchItems]);
-
-  const renderLibraryTab = useCallback(() => (
-    <LibraryScreen
-      categories={categories}
-      followedUsers={followedUserRecords}
-      libraryTab={libraryTab}
-      records={libraryRecords}
-      scrollToTopSignal={tabScrollToTopSignals.library}
-      topicStateIndex={topicStateIndex}
-      styles={styles}
-      theme={theme}
-      onClearHistory={clearHistory}
-      onOpenTopic={openTopic}
-      onOpenUser={openUser}
-      onRemove={removeLibraryTopic}
-      onRemoveUser={removeFollowedUser}
-      onTabChange={setLibraryTab}
-    />
-  ), [categories, clearHistory, followedUserRecords, libraryRecords, libraryTab, openTopic, openUser, removeFollowedUser, removeLibraryTopic, styles, tabScrollToTopSignals.library, theme, topicStateIndex]);
-
-  const renderMoreTab = useCallback(() => (
-    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
-      <MemoizedMoreScreen
-        checking={checking}
-        healthDetails={healthDetails}
-        healthSummary={healthSummary}
-        loginState={loginState}
-        loadingLoginPage={loadingLoginPage}
-        loadingYaohuoLoginPage={loadingYaohuoLoginPage}
-        linuxDoLevelBusy={linuxDoLevelBusy}
-        linuxDoLevelError={linuxDoLevelError}
-        linuxDoLevelProfile={linuxDoLevelProfile}
-        nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
-        settings={readerData.settings}
-        backupJson={backupJson}
-        showLoginPanel={showLoginPanel}
-        showYaohuoLoginPanel={showYaohuoLoginPanel}
-        showLinuxDoPanel={showLinuxDoPanel}
-        showSettingsPanel={showSettingsPanel}
-        statusBusy={statusBusy}
-        styles={styles}
-        backupBusy={backupBusy}
-        theme={theme}
-        webViewRef={webViewRef}
-        yaohuoLoginState={yaohuoLoginState}
-        yaohuoWebViewRef={yaohuoWebViewRef}
-        sessionViewModels={siteSessionViewModels}
-        onCheckHealth={checkLocalStatus}
-        onCheckIn={checkIn}
-        onCheckLogin={checkLogin}
-        onRememberNodeSeekCookies={rememberVisibleNodeSeekCookies}
-        onCheckYaohuoLogin={checkYaohuoCookie}
-        onRefreshLinuxDoLevel={refreshLinuxDoLevel}
-        onClearLogin={clearLogin}
-        onClearYaohuoLogin={clearYaohuoLogin}
-        handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
-        handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
-        onHandleLoginMessage={handleLoginMessage}
-        onImportBackup={importBackup}
-        onExportBackup={exportBackup}
-        onExportBackupFile={exportBackupFile}
-        onImportBackupFile={importBackupFile}
-        onBackupJsonChange={setBackupJson}
-        onSetLoadingLoginPage={setLoadingLoginPage}
-        onSetLoadingYaohuoLoginPage={setLoadingYaohuoLoginPage}
-        onShowLoginPanelChange={changeNodeSeekLoginPanel}
-        onShowYaohuoLoginPanelChange={changeYaohuoLoginPanel}
-        onShowLinuxDoPanelChange={changeLinuxDoPanel}
-        onShowSettingsPanelChange={setShowSettingsPanel}
-        onUpdateSettings={updateSettings}
-      />
-    </ScrollView>
-  ), [backupBusy, backupJson, changeLinuxDoPanel, changeNodeSeekLoginPanel, changeYaohuoLoginPanel, checkIn, checkLocalStatus, checkLogin, checkYaohuoCookie, checking, clearLogin, clearYaohuoLogin, exportBackup, exportBackupFile, handleLoginMessage, handleNodeSeekLoginNavigation, handleYaohuoLoginNavigation, healthDetails, healthSummary, importBackup, importBackupFile, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, loadingLoginPage, loadingYaohuoLoginPage, loginState, nodeSeekWebViewUserAgent, readerData.settings, refreshLinuxDoLevel, rememberVisibleNodeSeekCookies, showLinuxDoPanel, showLoginPanel, showSettingsPanel, showYaohuoLoginPanel, siteSessionViewModels, statusBusy, styles, theme, updateSettings, yaohuoLoginState]);
-
-  const renderTopicScreen = useCallback(() => (
-    <TopicScreen
-      actionBusy={actionBusy}
-      canUseLinuxDoActions={canUseLinuxDoActions}
-      canUseNodeSeekActions={canUseNodeSeekActions}
-      canUseYaohuoActions={canUseYaohuoActions}
-      contentWidth={contentWidth}
-      htmlBaseStyle={htmlBaseStyle}
-      htmlIgnoredStyles={htmlIgnoredStyles}
-      htmlRenderers={htmlRenderers}
-      htmlRenderersProps={htmlRenderersProps}
-      htmlTagsStyles={htmlTagsStyles}
-      inlineSizedImageUrls={inlineSizedImageUrls}
-      expandedQuotesRef={expandedQuotesRef}
-      loadedQuotedRepliesRef={loadedQuotedRepliesRef}
-      loadingMoreReplies={loadingMoreReplies}
-      loadingQuotedFloorsRef={loadingQuotedFloorsRef}
-      commentQuery={commentQuery}
-      quoteStateVersion={quoteStateVersion}
-      topicFavorite={topicFavorite}
-      replyComposerOpen={replyComposerOpen}
-      replyContent={replyContent}
-      replyFilter={replyFilter}
-      replyTarget={replyTarget}
-      replyHasMore={replyHasMore}
-      replies={filteredReplies}
-      selectedTopic={selectedTopic}
-      sourceReplies={topicReplies}
-      styles={styles}
-      theme={theme}
-      topic={topicDetail}
-      topicBusy={topicBusy}
-      topicError={topicError}
-      topicScrollRef={topicScrollRef}
-      unreadReplyCount={unreadReplyCount}
-      onBack={goBackFromTopic}
-      onCommentQueryChange={setCommentQuery}
-      optimisticActions={optimisticTopicActions}
-      onInteract={interact}
-      onLinuxDoBookmark={bookmarkOnLinuxDoSite}
-      onNodeSeekCollection={collectOnNodeSeekSite}
-      onShareTopic={shareTopic}
-      onYaohuoFavorite={favoriteOnYaohuoSite}
-      onVotePoll={votePoll}
-      onLoadMoreReplies={loadMoreReplies}
-      onOpenOriginal={openExternalUrl}
-      onOpenReadingSettings={openReadingSettingsFromTopic}
-      onReplyComposerOpenChange={toggleReplyComposer}
-      onReplyContentChange={setReplyContent}
-      onReplyFilterChange={setReplyFilter}
-      onReplyToFloor={replyToFloor}
-      onRefreshTopic={refreshTopic}
-      onRefreshWholeTopic={refreshWholeTopic}
-      onVerifyLinuxDo={verifyLinuxDoFromTopic}
-      onSubmitReply={submitReply}
-      onTopicScroll={handleTopicScroll}
-      onToggleQuotedFloor={toggleQuotedFloor}
-      onToggleFavorite={toggleTopicFavorite}
-      onOpenUser={openUser}
-    />
-  ), [actionBusy, bookmarkOnLinuxDoSite, canUseLinuxDoActions, canUseNodeSeekActions, canUseYaohuoActions, collectOnNodeSeekSite, commentQuery, contentWidth, expandedQuotesRef, favoriteOnYaohuoSite, filteredReplies, goBackFromTopic, handleTopicScroll, htmlBaseStyle, htmlIgnoredStyles, htmlRenderers, htmlRenderersProps, htmlTagsStyles, inlineSizedImageUrls, interact, loadedQuotedRepliesRef, loadMoreReplies, loadingMoreReplies, loadingQuotedFloorsRef, openExternalUrl, openReadingSettingsFromTopic, openUser, optimisticTopicActions, quoteStateVersion, refreshTopic, refreshWholeTopic, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyToFloor, replyTarget, selectedTopic, shareTopic, submitReply, styles, theme, toggleQuotedFloor, toggleReplyComposer, toggleTopicFavorite, topicBusy, topicDetail, topicError, topicFavorite, topicReplies, unreadReplyCount, verifyLinuxDoFromTopic, votePoll]);
-
-  const renderUserScreen = useCallback(() => (
-    <UserScreen
-      busy={userBusy}
-      error={userError}
-      followed={currentUserFollowed}
-      profile={userProfile}
-      requestedUser={selectedUser}
-      styles={styles}
-      theme={theme}
-      topicStateIndex={topicStateIndex}
-      loadingMoreTopics={userLoadingMore}
-      onBack={goBackFromUser}
-      onLoadMoreTopics={loadMoreUserTopics}
-      onOpenOriginal={openExternalUrl}
-      onOpenTopic={openTopic}
-      onRefresh={() => {
+      },
+      onOpenTopic: openTopic,
+      onReadingFilterChange: setReadingFilter,
+      onRefresh: refreshFeed
+    },
+    searchProps: {
+      busy: searchBusy,
+      query: searchQuery,
+      topicStateIndex,
+      recentSearches,
+      results: visibleSearchItems,
+      searchGroups,
+      scope: searchScope,
+      searchSource,
+      sort: searchSort,
+      scrollToTopSignal: tabScrollToTopSignals.search,
+      styles,
+      theme,
+      onLoadMoreSearchSource: loadMoreSearchSource,
+      onOpenExternalUrl: openExternalUrl,
+      onOpenTopic: openTopic,
+      onRemoveRecentSearch: removeRecentSearch,
+      onQueryChange: setSearchQuery,
+      onScopeChange: setSearchScope,
+      onSearch: () => runSearch(),
+      onSearchSourceChange: setSearchSource,
+      onSortChange: setSearchSort,
+      onRetrySearchSource: retrySearchSource
+    },
+    libraryProps: {
+      categories,
+      followedUsers: followedUserRecords,
+      libraryTab,
+      records: libraryRecords,
+      scrollToTopSignal: tabScrollToTopSignals.library,
+      topicStateIndex,
+      styles,
+      theme,
+      onClearHistory: clearHistory,
+      onOpenTopic: openTopic,
+      onOpenUser: openUser,
+      onRemove: removeLibraryTopic,
+      onRemoveUser: removeFollowedUser,
+      onTabChange: setLibraryTab
+    },
+    moreProps: {
+      checking,
+      healthDetails,
+      healthSummary,
+      loginState,
+      loadingLoginPage,
+      loadingYaohuoLoginPage,
+      linuxDoLevelBusy,
+      linuxDoLevelError,
+      linuxDoLevelProfile,
+      nodeSeekWebViewUserAgent,
+      settings: readerData.settings,
+      backupJson,
+      showLoginPanel,
+      showYaohuoLoginPanel,
+      showLinuxDoPanel,
+      showSettingsPanel,
+      statusBusy,
+      styles,
+      backupBusy,
+      theme,
+      webViewRef,
+      yaohuoLoginState,
+      yaohuoWebViewRef,
+      sessionViewModels: siteSessionViewModels,
+      onCheckHealth: checkLocalStatus,
+      onCheckIn: checkIn,
+      onCheckLogin: checkLogin,
+      onRememberNodeSeekCookies: rememberVisibleNodeSeekCookies,
+      onCheckYaohuoLogin: checkYaohuoCookie,
+      onRefreshLinuxDoLevel: refreshLinuxDoLevel,
+      onClearLogin: clearLogin,
+      onClearYaohuoLogin: clearYaohuoLogin,
+      handleNodeSeekLoginNavigation,
+      handleYaohuoLoginNavigation,
+      onHandleLoginMessage: handleLoginMessage,
+      onImportBackup: importBackup,
+      onExportBackup: exportBackup,
+      onExportBackupFile: exportBackupFile,
+      onImportBackupFile: importBackupFile,
+      onBackupJsonChange: setBackupJson,
+      onSetLoadingLoginPage: setLoadingLoginPage,
+      onSetLoadingYaohuoLoginPage: setLoadingYaohuoLoginPage,
+      onShowLoginPanelChange: changeNodeSeekLoginPanel,
+      onShowYaohuoLoginPanelChange: changeYaohuoLoginPanel,
+      onShowLinuxDoPanelChange: changeLinuxDoPanel,
+      onShowSettingsPanelChange: setShowSettingsPanel,
+      onUpdateSettings: updateSettings
+    },
+    moreScrollRef,
+    styles,
+    topicProps: {
+      actionBusy,
+      canUseLinuxDoActions,
+      canUseNodeSeekActions,
+      canUseYaohuoActions,
+      contentWidth,
+      htmlBaseStyle,
+      htmlIgnoredStyles,
+      htmlRenderers,
+      htmlRenderersProps,
+      htmlTagsStyles,
+      inlineSizedImageUrls,
+      expandedQuotesRef,
+      loadedQuotedRepliesRef,
+      loadingMoreReplies,
+      loadingQuotedFloorsRef,
+      commentQuery,
+      quoteStateVersion,
+      topicFavorite,
+      replyComposerOpen,
+      replyContent,
+      replyFilter,
+      replyTarget,
+      replyHasMore,
+      replies: filteredReplies,
+      selectedTopic,
+      sourceReplies: topicReplies,
+      styles,
+      theme,
+      topic: topicDetail,
+      topicBusy,
+      topicError,
+      topicScrollRef,
+      unreadReplyCount,
+      onBack: goBackFromTopic,
+      onCommentQueryChange: setCommentQuery,
+      optimisticActions: optimisticTopicActions,
+      onInteract: interact,
+      onLinuxDoBookmark: bookmarkOnLinuxDoSite,
+      onNodeSeekCollection: collectOnNodeSeekSite,
+      onShareTopic: shareTopic,
+      onYaohuoFavorite: favoriteOnYaohuoSite,
+      onVotePoll: votePoll,
+      onLoadMoreReplies: loadMoreReplies,
+      onOpenOriginal: openExternalUrl,
+      onOpenReadingSettings: openReadingSettingsFromTopic,
+      onReplyComposerOpenChange: toggleReplyComposer,
+      onReplyContentChange: setReplyContent,
+      onReplyFilterChange: setReplyFilter,
+      onReplyToFloor: replyToFloor,
+      onRefreshTopic: refreshTopic,
+      onRefreshWholeTopic: refreshWholeTopic,
+      onVerifyLinuxDo: verifyLinuxDoFromTopic,
+      onSubmitReply: submitReply,
+      onTopicScroll: handleTopicScroll,
+      onToggleQuotedFloor: toggleQuotedFloor,
+      onToggleFavorite: toggleTopicFavorite,
+      onOpenUser: openUser
+    },
+    userProps: {
+      busy: userBusy,
+      error: userError,
+      followed: currentUserFollowed,
+      profile: userProfile,
+      requestedUser: selectedUser,
+      styles,
+      theme,
+      topicStateIndex,
+      loadingMoreTopics: userLoadingMore,
+      onBack: goBackFromUser,
+      onLoadMoreTopics: loadMoreUserTopics,
+      onOpenOriginal: openExternalUrl,
+      onOpenTopic: openTopic,
+      onRefresh: () => {
         const user = userProfile || selectedUser;
         if (user) {
           void openUser(user, true);
         }
-      }}
-      onToggleFollow={toggleUserFollow}
-    />
-  ), [currentUserFollowed, goBackFromUser, loadMoreUserTopics, openExternalUrl, openTopic, openUser, selectedUser, styles, theme, toggleUserFollow, topicStateIndex, userBusy, userError, userLoadingMore, userProfile]);
+      },
+      onToggleFollow: toggleUserFollow
+    }
+  });
 
   const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
     if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {

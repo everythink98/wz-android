@@ -110,8 +110,9 @@ describe('Android App performance guards', () => {
   it('keeps memoized search tab rendering bound to the current query', () => {
     const renderSearchTabBlock = appSource.match(/const renderSearchTab = useCallback\(\(\) => \([\s\S]*?\n  \), \[[^\]]+\]\);/)?.[0] || '';
 
-    expect(renderSearchTabBlock).toContain('query={searchQuery}');
-    expect(renderSearchTabBlock).toMatch(/\[[^\]]*\bsearchQuery\b[^\]]*\]/);
+    expect(appSource).toContain('query: searchQuery');
+    expect(renderSearchTabBlock).toContain('<SearchScreen {...searchProps} />');
+    expect(renderSearchTabBlock).toMatch(/\[[^\]]*\bsearchProps\b[^\]]*\]/);
   });
 
   it('refreshes the HTML image renderer when the theme border color changes', () => {
@@ -208,10 +209,10 @@ describe('Android App performance guards', () => {
     expect(appSource).not.toContain('setServerUrl');
     expect(appSource).not.toContain('syncing');
     expect(moreScreenSource).not.toContain('syncing');
-    expect(appSource).toContain('statusBusy={statusBusy}');
-    expect(appSource).toContain('backupBusy={backupBusy}');
-    expect(appSource).toContain('backupJson={backupJson}');
-    expect(appSource).toContain('onBackupJsonChange={setBackupJson}');
+    expect(appSource).toContain('statusBusy,');
+    expect(appSource).toContain('backupBusy,');
+    expect(appSource).toContain('backupJson,');
+    expect(appSource).toContain('onBackupJsonChange: setBackupJson');
   });
 
   it('cancels stale quoted floor requests when switching or leaving topics', () => {

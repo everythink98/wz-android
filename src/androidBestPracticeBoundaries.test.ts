@@ -3,7 +3,10 @@ import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile } from '
 
 const appEntrySource = readProjectFile('App.tsx');
 const appSource = readAppRuntimeSource();
+const appRootSource = readProjectFile('src', 'app', 'AppRoot.tsx');
 const appShellSource = readProjectFile('src', 'app', 'AppShell.tsx');
+const appScreenRenderersSource = readOptionalProjectFile('src', 'app', 'AppScreenRenderers.tsx');
+const mainTabScrollToTopSource = readOptionalProjectFile('src', 'app', 'useMainTabScrollToTop.ts');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
 const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
@@ -116,6 +119,21 @@ describe('Android best-practice boundary guards', () => {
     expect(appShellSource).not.toContain('<Stack.Navigator');
     expect(appNavigatorSource).not.toContain('activeScreen');
     expect(appShellSource).not.toContain('activeScreen={screen}');
+  });
+
+  it('keeps screen render composition outside AppRoot', () => {
+    expect(appRootSource).toContain("from './AppScreenRenderers'");
+    expect(appRootSource).toContain("from './useMainTabScrollToTop'");
+    expect(appRootSource).toContain('useAppScreenRenderers({');
+    expect(appRootSource).not.toContain('<FeedScreen');
+    expect(appRootSource).not.toContain('<SearchScreen');
+    expect(appRootSource).not.toContain('<LibraryScreen');
+    expect(appRootSource).not.toContain('<MemoizedMoreScreen');
+    expect(appRootSource).not.toContain('<TopicScreen');
+    expect(appRootSource).not.toContain('<UserScreen');
+    expect(appScreenRenderersSource).toContain('export function useAppScreenRenderers');
+    expect(mainTabScrollToTopSource).toContain('export function useMainTabScrollToTop');
+    expect(mainTabScrollToTopSource).toContain('moreScrollRef.current?.scrollTo');
   });
 
   it('does not pass raw cookie headers through More screen props', () => {

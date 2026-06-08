@@ -13,7 +13,9 @@ export function readOptionalProjectFile(...segments: string[]) {
 export function readAppRuntimeSource() {
   return [
     readProjectFile('src', 'app', 'AppRoot.tsx'),
-    readProjectFile('src', 'app', 'AppShell.tsx')
+    readProjectFile('src', 'app', 'AppShell.tsx'),
+    readProjectFile('src', 'app', 'AppScreenRenderers.tsx'),
+    readProjectFile('src', 'app', 'useMainTabScrollToTop.ts')
   ].join('\n');
 }
 
