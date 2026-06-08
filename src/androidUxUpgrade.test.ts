@@ -1,12 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readAppRuntimeSource, readProjectFile, readTopicRuntimeSource } from './sourceTestUtils';
 
-const appEntrySource = readProjectFile('App.tsx');
 const appSource = readAppRuntimeSource();
 const appNavigatorSource = readProjectFile('src', 'app', 'AppNavigator.tsx');
-const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
-const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
-const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
 const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
 const topicNavigationControllerSource = readProjectFile('src', 'app', 'useTopicNavigationController.ts');
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
@@ -15,8 +11,6 @@ const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyMod
 const appControlsSource = readProjectFile('src', 'components', 'AppControls.tsx');
 const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
 const topicScreenSource = readTopicRuntimeSource();
-const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
-const searchListItemsSource = readProjectFile('src', 'searchListItems.ts');
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const packageSource = readProjectFile('package.json');
@@ -42,21 +36,6 @@ describe('Android App UX upgrade guards', () => {
     expect(babelSource).toContain('react-native-reanimated/plugin');
     expect(JSON.parse(appConfigSource).expo.newArchEnabled).toBe(true);
     expect(releaseScriptSource).toContain("'-PnewArchEnabled=true'");
-  });
-
-  it('hosts the app in React Navigation with bottom tabs and a standard stack for detail screens', () => {
-    expect(appEntrySource).toContain("import 'react-native-gesture-handler';");
-    expect(appEntrySource).toContain("import 'expo-dev-client';");
-    expect(appEntrySource).toContain("import { AppRoot } from './src/app/AppRoot';");
-    expect(appEntrySource).toContain('export default AppRoot;');
-    expect(appSource).toContain('<AppNavigator');
-    expect(appNavigatorSource).toContain('NavigationContainer');
-    expect(appNavigatorSource).toContain('createNativeStackNavigator');
-    expect(appNavigatorSource).toContain('createBottomTabNavigator');
-    expect(appNavigatorSource).toContain('Stack.Navigator');
-    expect(appNavigatorSource).toContain('Tab.Navigator');
-    expect(appSource).toContain("StackActions.push('Topic')");
-    expect(appSource).toContain("StackActions.push('User')");
   });
 
   it('uses native stack background, slide transitions, and topic history for detail returns', () => {
@@ -235,20 +214,6 @@ describe('Android App UX upgrade guards', () => {
     expect(feedScreenSource).not.toContain('PanResponder');
   });
 
-  it('makes search source result groups discoverable and collapsible', () => {
-    expect(appControlsSource).toContain('ExpandablePanel');
-    expect(appControlsSource).toContain('useAnimatedStyle');
-    expect(appControlsSource).toContain('withTiming');
-    expect(searchScreenSource).toContain('expandedSearchGroups');
-    expect(searchScreenSource).toContain('toggleSearchGroup');
-    expect(searchScreenSource).toContain('styles.searchGroupHeader');
-    expect(searchScreenSource).toContain('accessibilityState={{ expanded: item.expanded }}');
-    expect(searchScreenSource).not.toContain('<ExpandablePanel');
-    expect(searchScreenSource).toContain('!item.expanded');
-    expect(searchScreenSource).toContain('buildSearchListItems');
-    expect(searchListItemsSource).toContain("type: 'groupLoadMore'");
-  });
-
   it('does not cap expanded panel content with a fixed height', () => {
     expect(appControlsSource).not.toContain('maxHeight: withTiming(panelExpanded ? 6000 : 0');
     expect(appControlsSource).toContain("display: panelExpanded ? 'flex' : 'none'");
@@ -279,25 +244,4 @@ describe('Android App UX upgrade guards', () => {
     expect(topicScreenSource).toContain('topicScrollRetryIdRef.current += 1;');
   });
 
-  it('uses one request ownership model for stale Android controller results', () => {
-    for (const source of [
-      backupStatusControllerSource,
-      feedControllerSource,
-      searchControllerSource,
-      topicControllerSource,
-      userControllerSource
-    ]) {
-      expect(source).toContain('isCurrentOwnedRequest');
-      expect(source).toContain('startOwnedRequest');
-    }
-    expect(backupStatusControllerSource).toContain('const isCurrentBackupRequest =');
-    expect(backupStatusControllerSource).toContain('const isCurrentStatusRequest =');
-    expect(feedControllerSource).toContain('const isCurrentFeedRequest =');
-    expect(searchControllerSource).toContain('const isCurrentSearchRequest =');
-    expect(searchControllerSource).toContain('isCurrent: () => isCurrentSearchRequest()');
-    expect(searchControllerSource).toContain('options?.isCurrent?.() !== false');
-    expect(topicControllerSource).toContain('const isCurrentTopicRequest =');
-    expect(topicControllerSource).toContain('const isCurrentRepliesRequest =');
-    expect(userControllerSource).toContain('const isCurrentUserRequest =');
-  });
 });

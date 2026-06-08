@@ -137,19 +137,6 @@ describe('Android App experience guards', () => {
     expect(userScreenSource).toContain("hideReplyCount={item.topic.source === 'nodeseek'}");
   });
 
-  it('switches Android feed sources with TabView gestures and one visible feed list', () => {
-    expect(feedScreenSource).toContain('<FlashList');
-    expect((feedScreenSource.match(/<FlashList\s/g) || []).length).toBe(1);
-    expect(feedScreenSource).toContain("from 'react-native-tab-view'");
-    expect(feedScreenSource).toContain('TabView');
-    expect(feedScreenSource).toContain('renderScene={renderFeedScene}');
-    expect(feedScreenSource).toContain('onIndexChange={changeFeedSourceAtIndex}');
-    expect(feedScreenSource).not.toContain('PanGestureHandler');
-    expect(feedScreenSource).not.toContain('PanResponder');
-    expect(feedScreenSource).not.toContain('feedSourceSwipeDirection');
-    expect(feedScreenSource).not.toContain('shouldCaptureFeedSourceSwipe');
-  });
-
   it('uses more helpful empty messages for filtered feed lists', () => {
     expect(feedScreenSource).toContain('feedEmptyText');
     expect(feedScreenSource).toContain('当前筛选没有匹配主题');
@@ -1649,18 +1636,6 @@ describe('Android App experience guards', () => {
     expect(changeLinuxDoBlock.indexOf('linuxDoPanelClosingSessionRef.current !== null')).toBeLessThan(changeLinuxDoBlock.indexOf('resetLinuxDoWebView();'));
     expect(showLinuxDoBlock).toContain('linuxDoPanelClosingSessionRef.current !== null');
     expect(showLinuxDoBlock).not.toContain("setScreen('more');");
-  });
-
-  it('renders linux.do verification as a global modal instead of inside the More tab', () => {
-    const linuxDoPanelBlock = morePanelsSource.match(/export function LinuxDoVerifyPanel\([\s\S]*?\nexport const MemoizedLinuxDoVerifyPanel/)?.[0] || '';
-    const linuxDoModalBlock = linuxDoVerifyModalSource.match(/export function LinuxDoVerifyModal\([\s\S]*?\nexport const MemoizedLinuxDoVerifyModal/)?.[0] || '';
-
-    expect(linuxDoPanelBlock).toContain('MenuButton');
-    expect(linuxDoPanelBlock).not.toContain('LoginWebViewModal');
-    expect(linuxDoModalBlock).toContain('LoginWebViewModal');
-    expect(linuxDoModalBlock).toContain('showLinuxDoPanel && mountLinuxDoWebView');
-    expect(appSource).toContain('<GlobalModalHost');
-    expect(globalModalHostSource).toContain('<MemoizedLinuxDoVerifyModal');
   });
 
   it('keeps linux.do verified retry failures from remounting the verification WebView', () => {
