@@ -16,9 +16,14 @@ const loginWebViewScriptsSource = readOptionalProjectFile('src', 'loginWebViewSc
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
 const linuxDoLevelPanelSource = readProjectFile('src', 'screens', 'more', 'LinuxDoLevelPanel.tsx');
+const readerDataActionsControllerSource = readOptionalProjectFile('src', 'app', 'useReaderDataActionsController.ts');
 const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
+const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
+const sessionControllerHelpersSource = readOptionalProjectFile('src', 'app', 'sessionControllerHelpers.ts');
+const topicActionControllerHelpersSource = readOptionalProjectFile('src', 'app', 'topicActionControllerHelpers.ts');
 const topicActionsControllerSource = readProjectFile('src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
+const topicUiStateControllerSource = readOptionalProjectFile('src', 'app', 'useTopicUiStateController.ts');
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
 const verificationControllerSource = readProjectFile('src', 'app', 'useVerificationController.ts');
 const appReadControllerSources = {
@@ -135,6 +140,68 @@ describe('Android best-practice boundary guards', () => {
     expect(appScreenRenderersSource).toContain('export function useAppScreenRenderers');
     expect(mainTabScrollToTopSource).toContain('export function useMainTabScrollToTop');
     expect(mainTabScrollToTopSource).toContain('moreScrollRef.current?.scrollTo');
+  });
+
+  it('keeps local reader data actions outside AppRoot', () => {
+    expect(readerDataActionsControllerSource).toContain('export function useReaderDataActionsController');
+    expect(appRootSource).toContain("from './useReaderDataActionsController'");
+    expect(appRootSource).not.toContain('const updateSettings = useCallback');
+    expect(appRootSource).not.toContain('const toggleTopicFavorite = useCallback');
+    expect(appRootSource).not.toContain('const toggleUserFollow = useCallback');
+    expect(appRootSource).not.toContain('const removeFollowedUser = useCallback');
+    expect(appRootSource).not.toContain('const removeLibraryTopic = useCallback');
+    expect(appRootSource).not.toContain('const clearHistory = useCallback');
+  });
+
+  it('keeps topic screen UI state details outside AppRoot', () => {
+    expect(topicUiStateControllerSource).toContain('export function useTopicUiStateController');
+    expect(appRootSource).toContain("from './useTopicUiStateController'");
+    expect(appRootSource).not.toContain('const [replyFilter, setReplyFilter] = useState');
+    expect(appRootSource).not.toContain('const [replyContent, setReplyContent] = useState');
+    expect(appRootSource).not.toContain('const [commentQuery, setCommentQuery] = useState');
+    expect(appRootSource).not.toContain('const [replyComposerOpen, setReplyComposerOpen] = useState');
+    expect(appRootSource).not.toContain('const [replyTarget, setReplyTarget] = useState');
+    expect(appRootSource).not.toContain('const [expandedQuotes, setExpandedQuotes] = useState');
+    expect(appRootSource).not.toContain('const [loadedQuotedReplies, setLoadedQuotedReplies] = useState');
+    expect(appRootSource).not.toContain('const [loadingQuotedFloors, setLoadingQuotedFloors] = useState');
+    expect(appRootSource).not.toContain('const updateExpandedQuotes = useCallback');
+    expect(appRootSource).not.toContain('const abortQuotedReplyRequests = useCallback');
+    expect(appRootSource).not.toContain('const resetQuoteState = useCallback');
+    expect(appRootSource).not.toContain('const filteredReplies = useMemo');
+    expect(appRootSource).not.toContain('const toggleReplyComposer = useCallback');
+    expect(appRootSource).not.toContain('const replyToFloor = useCallback');
+  });
+
+  it('keeps pure session helpers outside useSessionController', () => {
+    for (const helper of [
+      'yaohuoCookieMapFromHeader',
+      'requestHeaderValue',
+      'nodeSeekBrowserResponse',
+      'linuxDoBrowserResponse',
+      'cleanupNodeSeekBrowserFetchRequest',
+      'cleanupLinuxDoBrowserFetchRequest'
+    ]) {
+      expect(sessionControllerHelpersSource).toContain(`export function ${helper}`);
+      expect(sessionControllerSource).not.toContain(`function ${helper}`);
+    }
+    expect(sessionControllerSource).toContain("from './sessionControllerHelpers'");
+  });
+
+  it('keeps pure topic action decisions outside useTopicActionsController', () => {
+    for (const helper of [
+      'currentTopicActionTopic',
+      'canSubmitReplyToTopic',
+      'canVotePollOnTopic',
+      'isLinuxDoActionTopic',
+      'isNodeSeekActionTopic',
+      'isYaohuoActionTopic'
+    ]) {
+      expect(topicActionControllerHelpersSource).toContain(`export function ${helper}`);
+      expect(topicActionsControllerSource).not.toContain(`function ${helper}`);
+    }
+    expect(topicActionControllerHelpersSource).toContain('export const YAOHUO_DEFAULT_CLASS_ID');
+    expect(topicActionsControllerSource).toContain("from './topicActionControllerHelpers'");
+    expect(topicActionsControllerSource).not.toContain("const YAOHUO_DEFAULT_CLASS_ID = '177'");
   });
 
   it('does not pass raw cookie headers through More screen props', () => {

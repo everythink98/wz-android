@@ -1303,7 +1303,7 @@ describe('Android App experience guards', () => {
 
   it('updates visible reaction counts through optimistic desired states', () => {
     const interactBlock = topicActionsControllerSource.match(/const interact = useCallback\(async \(type: InteractionType, commentId\?: number\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
-    const linuxDoBlock = interactBlock.match(/if \(detail\?\.source === 'linuxdo'\) \{([\s\S]*?)\n    if \(detail\?\.source !== 'nodeseek'\)/)?.[1] || '';
+    const linuxDoBlock = interactBlock.match(/if \(isLinuxDoActionTopic\(detail\)\) \{([\s\S]*?)\n    if \(!isNodeSeekActionTopic\(detail\)\)/)?.[1] || '';
     const nodeSeekBlock = interactBlock;
     const linuxDoPatchIndex = linuxDoBlock.indexOf("mode: desiredActive ? 'add' as const : 'remove' as const");
     const linuxDoRequestIndex = linuxDoBlock.indexOf('buildLinuxDoLikeRequest');

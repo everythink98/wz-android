@@ -51,9 +51,17 @@ import {
   isNodeSeekLoginRequiredError,
   runOptimisticActionQueue as runOptimisticActionQueueHelper
 } from './topicActionHelpers';
+import {
+  canSubmitReplyToTopic,
+  canVotePollOnTopic,
+  currentTopicActionTopic,
+  isLinuxDoActionTopic,
+  isNodeSeekActionTopic,
+  isYaohuoActionTopic,
+  YAOHUO_DEFAULT_CLASS_ID
+} from './topicActionControllerHelpers';
 
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
-const YAOHUO_DEFAULT_CLASS_ID = '177';
 
 type Ref<T> = MutableRefObject<T>;
 type ActionRunOptions = {
@@ -464,8 +472,8 @@ export function useTopicActionsController({
   }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runOptimisticActionQueue, setOptimisticTopicActionState]);
 
   const submitReply = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || (detail.source !== 'nodeseek' && detail.source !== 'yaohuo' && detail.source !== 'linuxdo')) {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!canSubmitReplyToTopic(detail)) {
       return;
     }
     const requestTopicKey = topicKey(detail);
@@ -474,7 +482,7 @@ export function useTopicActionsController({
       return;
     }
     const requestOwner = startTopicActionRequest(requestTopicKey);
-    if (detail.source === 'yaohuo') {
+    if (isYaohuoActionTopic(detail)) {
       if (replyTarget && !replyTarget.authorId) {
         notify('当前楼层缺少用户 id，刷新主题后再试。');
         return;
@@ -502,7 +510,7 @@ export function useTopicActionsController({
       }
       return;
     }
-    if (detail.source === 'linuxdo') {
+    if (isLinuxDoActionTopic(detail)) {
       const submitted = await runLinuxDoRequest(
         () => buildLinuxDoReplyRequest({
           topicId: detail.id,
@@ -552,13 +560,13 @@ export function useTopicActionsController({
       notify('当前内容缺少评论 id，刷新主题后再试。');
       return;
     }
-    const detail = topicDetail || selectedTopic;
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
     if (!detail) {
       return;
     }
     const requestTopicKey = topicKey(detail);
     const requestOwner = startTopicActionRequest(requestTopicKey);
-    if (detail?.source === 'linuxdo') {
+    if (isLinuxDoActionTopic(detail)) {
       if (type !== 'like') {
         return;
       }
@@ -584,7 +592,7 @@ export function useTopicActionsController({
       });
       return;
     }
-    if (detail?.source !== 'nodeseek') {
+    if (!isNodeSeekActionTopic(detail)) {
       return;
     }
     const activeFields: Record<InteractionType, 'upvoted' | 'liked' | 'disliked'> = {
@@ -622,8 +630,8 @@ export function useTopicActionsController({
   }, [notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, setTopicReplies, startOptimisticTopicAction, startTopicActionRequest, topicDetail, topicReplies]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'yaohuo') {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!isYaohuoActionTopic(detail)) {
       return;
     }
     await runYaohuoRequest(
@@ -637,8 +645,8 @@ export function useTopicActionsController({
   }, [runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const collectOnNodeSeekSite = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'nodeseek') {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!isNodeSeekActionTopic(detail)) {
       return;
     }
     const requestTopicKey = topicKey(detail);
@@ -664,8 +672,8 @@ export function useTopicActionsController({
   }, [runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startTopicActionRequest, topicDetail]);
 
   const bookmarkOnLinuxDoSite = useCallback(async () => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || detail.source !== 'linuxdo') {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!isLinuxDoActionTopic(detail)) {
       return;
     }
     const requestTopicKey = topicKey(detail);
@@ -719,8 +727,8 @@ export function useTopicActionsController({
   }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runLinuxDoActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startTopicActionRequest, topicDetail]);
 
   const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail || !['nodeseek', 'linuxdo', 'yaohuo'].includes(detail.source)) {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!canVotePollOnTopic(detail)) {
       return;
     }
     if (!optionIds.length) {
@@ -730,13 +738,13 @@ export function useTopicActionsController({
     const requestTopicKey = topicKey(detail);
     const requestOwner = startTopicActionRequest(requestTopicKey);
     let submitted: unknown = false;
-    if (detail.source === 'nodeseek') {
+    if (isNodeSeekActionTopic(detail)) {
       submitted = await runNodeSeekRequest(
         () => buildNodeSeekVoteRequest({ optionIds }),
         '投票已提交',
         { refreshTopic: false, owner: requestOwner }
       );
-    } else if (detail.source === 'linuxdo') {
+    } else if (isLinuxDoActionTopic(detail)) {
       if (!poll.postId || !poll.name) {
         notify('当前投票信息不完整，刷新主题后再试。');
         return;

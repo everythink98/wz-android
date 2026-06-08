@@ -17,16 +17,9 @@ import { DarkTheme, DefaultTheme, StackActions } from '@react-navigation/native'
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekCookies';
-import {
-  clearRecords,
-  removeFollowedUsers,
-  removeRecords,
-  toggleFavorite,
-  toggleFollowedUser,
-  type ReaderSettings,
-  type TopicRecord
-} from '../readerData';
+import type { TopicRecord } from '../readerData';
 import { useReaderDataController } from './useReaderDataController';
+import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
@@ -38,6 +31,7 @@ import { useSearchController } from './useSearchController';
 import { useSessionController, type LinuxDoBrowserFetchRequest, type NodeSeekBrowserFetchRequest } from './useSessionController';
 import { useTopicController } from './useTopicController';
 import { useTopicNavigationController } from './useTopicNavigationController';
+import { useTopicUiStateController } from './useTopicUiStateController';
 import { useUserController } from './useUserController';
 import { useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
@@ -46,10 +40,9 @@ import { useAppScreenRenderers } from './AppScreenRenderers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoCookieBridge';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { Reply, Topic, TopicDetail, UserProfile } from '../types';
+import type { Reply, Topic, TopicDetail } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
-import { filterRepliesWithImages } from '../topicDerivedData';
 import { pushTopicSession } from '../topicSessionState';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
@@ -60,9 +53,8 @@ import {
 } from '../theme';
 import type { LibraryTab } from '../feedLogic';
 import { errorMessage } from '../appUtils';
-import { filterRepliesByQuery } from '../androidFeatureHelpers';
 import type { TopicListItem } from '../screens/TopicScreen';
-import type { LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
+import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
 
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   resolve: (response: Response) => void;
@@ -129,7 +121,6 @@ export function AppRoot() {
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
   const currentTopicKeyRef = useRef<string | null>(null);
-  const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
   const topicScrollRef = useRef<FlatList<TopicListItem> | null>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const topicBackStackRef = useRef<TopicSnapshot[]>([]);
@@ -225,29 +216,28 @@ export function AppRoot() {
     tabScrollToTopSignals
   } = useMainTabScrollToTop();
   const [libraryTab, setLibraryTab] = useState<LibraryTab>('favorites');
+  const {
+    clearHistory,
+    removeFollowedUser,
+    removeLibraryTopic,
+    toggleTopicFavorite,
+    toggleUserFollow,
+    updateSettings
+  } = useReaderDataActionsController({
+    commitReaderData,
+    libraryTab,
+    readerDataRef
+  });
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
   const [topicError, setTopicError] = useState('');
   const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
-  const topicRepliesRef = useRef<Reply[]>(topicReplies);
   const topicScrollYRef = useRef(0);
   const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
   const [replyNextOffset, setReplyNextOffset] = useState<number | null>(null);
   const [replyHasMore, setReplyHasMore] = useState(false);
-  const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
-  const [replyContent, setReplyContent] = useState('');
-  const [commentQuery, setCommentQuery] = useState('');
   const [unreadReplyCount, setUnreadReplyCount] = useState(0);
-  const [replyComposerOpen, setReplyComposerOpen] = useState(false);
-  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
-  const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
-  const [loadedQuotedReplies, setLoadedQuotedReplies] = useState<Record<number, Reply>>({});
-  const [loadingQuotedFloors, setLoadingQuotedFloors] = useState<Record<string, boolean>>({});
-  const expandedQuotesRef = useRef(expandedQuotes);
-  const loadedQuotedRepliesRef = useRef(loadedQuotedReplies);
-  const loadingQuotedFloorsRef = useRef(loadingQuotedFloors);
-  const [quoteStateVersion, setQuoteStateVersion] = useState(0);
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const showLoginPanelRef = useRef(showLoginPanel);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
@@ -255,7 +245,6 @@ export function AppRoot() {
   const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   screenRef.current = screen;
-  topicRepliesRef.current = topicReplies;
   showLoginPanelRef.current = showLoginPanel;
   showLinuxDoPanelRef.current = showLinuxDoPanel;
   useEffect(() => {
@@ -269,28 +258,6 @@ export function AppRoot() {
       };
     });
   }, [topicReplies]);
-  const updateExpandedQuotes = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
-    const next = updater(expandedQuotesRef.current);
-    expandedQuotesRef.current = next;
-    setExpandedQuotes(next);
-    setQuoteStateVersion((current) => current + 1);
-  }, []);
-  const updateLoadedQuotedReplies = useCallback((updater: (current: Record<number, Reply>) => Record<number, Reply>) => {
-    const next = updater(loadedQuotedRepliesRef.current);
-    loadedQuotedRepliesRef.current = next;
-    setLoadedQuotedReplies(next);
-    setQuoteStateVersion((current) => current + 1);
-  }, []);
-  const updateLoadingQuotedFloors = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
-    const next = updater(loadingQuotedFloorsRef.current);
-    loadingQuotedFloorsRef.current = next;
-    setLoadingQuotedFloors(next);
-    setQuoteStateVersion((current) => current + 1);
-  }, []);
-  const abortQuotedReplyRequests = useCallback(() => {
-    Object.values(quotedReplyAbortRefs.current).forEach((controller) => controller.abort());
-    quotedReplyAbortRefs.current = {};
-  }, []);
   const clearTopicScrollRestoreTimer = useCallback(() => {
     if (topicScrollRestoreTimerRef.current) {
       clearTimeout(topicScrollRestoreTimerRef.current);
@@ -337,17 +304,6 @@ export function AppRoot() {
     navigationTransitionTaskRef.current = task;
     navigationTransitionFallbackTimerRef.current = setTimeout(flushDeferredNavigationTask, NAVIGATION_DEFERRED_TASK_FALLBACK_MS);
   }, [cancelDeferredNavigationTask, flushDeferredNavigationTask]);
-  const resetQuoteState = useCallback(() => {
-    abortQuotedReplyRequests();
-    expandedQuotesRef.current = {};
-    loadedQuotedRepliesRef.current = {};
-    loadingQuotedFloorsRef.current = {};
-    setExpandedQuotes({});
-    setLoadedQuotedReplies({});
-    setLoadingQuotedFloors({});
-    setQuoteStateVersion((current) => current + 1);
-  }, [abortQuotedReplyRequests]);
-
   const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings]);
   const navigationTheme = useMemo(() => {
     const base = theme.dark ? DarkTheme : DefaultTheme;
@@ -451,6 +407,43 @@ export function AppRoot() {
     topicDetail,
     topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`
   });
+  const {
+    abortQuotedReplyRequests,
+    commentQuery,
+    expandedQuotesRef,
+    filteredReplies,
+    loadedQuotedReplies,
+    loadedQuotedRepliesRef,
+    loadingQuotedFloorsRef,
+    quoteStateVersion,
+    quotedReplyAbortRefs,
+    replyComposerOpen,
+    replyContent,
+    replyFilter,
+    replyTarget,
+    replyToFloor,
+    resetQuoteState,
+    setCommentQuery,
+    setExpandedQuotes,
+    setLoadedQuotedReplies,
+    setLoadingQuotedFloors,
+    setQuoteStateVersion,
+    setReplyComposerOpen,
+    setReplyContent,
+    setReplyFilter,
+    setReplyTarget,
+    toggleReplyComposer,
+    topicRepliesRef,
+    updateExpandedQuotes,
+    updateLoadedQuotedReplies,
+    updateLoadingQuotedFloors
+  } = useTopicUiStateController({
+    inlineSizedImageUrls,
+    notify,
+    topicDetail,
+    topicImageDeriver,
+    topicReplies
+  });
   const topicHtmlParts = useMemo(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map((reply) => reply.contentHtml || ''),
@@ -471,17 +464,6 @@ export function AppRoot() {
     topicImageDeriver
   });
   openImagePreviewRef.current = openImagePreview;
-  const filteredReplies = useMemo(() => {
-    let base = topicReplies;
-    if (replyFilter === 'author') {
-      base = topicDetail ? topicReplies.filter((reply) => reply.author === topicDetail.author) : topicReplies;
-    } else if (replyFilter === 'images') {
-      base = filterRepliesWithImages(topicReplies, inlineSizedImageUrls, topicImageDeriver);
-    } else if (replyFilter === 'newest') {
-      base = [...topicReplies].reverse();
-    }
-    return filterRepliesByQuery(base, commentQuery);
-  }, [commentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
   const handleLoginNavigation = useCallback((request: LoginNavigationRequest, allowedHosts: string[]) => {
     if (shouldOpenLoginWebViewUrl(request.url, allowedHosts)) {
       return true;
@@ -1121,26 +1103,6 @@ export function AppRoot() {
     setShowSettingsPanel(true);
     changeScreen('more');
   }, [changeNodeSeekLoginPanel, changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel]);
-  const toggleReplyComposer = useCallback((open: boolean) => {
-    setReplyComposerOpen(open);
-    if (!open) {
-      setReplyTarget(null);
-    }
-  }, []);
-
-  const replyToFloor = useCallback((reply: Reply) => {
-    if (!reply.floor) {
-      notify('当前楼层信息不完整，刷新主题后再试。');
-      return;
-    }
-    setReplyTarget({
-      floor: reply.floor,
-      author: reply.author,
-      authorId: reply.authorId,
-      commentId: reply.commentId
-    });
-    setReplyComposerOpen(true);
-  }, [notify]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -1201,16 +1163,6 @@ export function AppRoot() {
     showSettingsPanel
   ]);
 
-  const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
-    commitReaderData((current) => ({
-      ...current,
-      settings: {
-        ...current.settings,
-        ...patch
-      }
-    }));
-  }, [commitReaderData]);
-
   const syncNavigationToScreen = useCallback((nextScreen: Screen) => {
     if (!navigationRef.isReady()) {
       return;
@@ -1234,31 +1186,6 @@ export function AppRoot() {
     }
     syncNavigationToScreen(screen);
   }, [screen, syncNavigationToScreen]);
-
-  const toggleTopicFavorite = useCallback((topic: Topic) => {
-    commitReaderData((current) => toggleFavorite(current, topic));
-  }, [commitReaderData]);
-
-  const toggleUserFollow = useCallback((user: UserProfile) => {
-    commitReaderData((current) => toggleFollowedUser(current, user));
-  }, [commitReaderData]);
-
-  const removeFollowedUser = useCallback((user: UserProfile) => {
-    commitReaderData((current) => removeFollowedUsers(current, [user]));
-  }, [commitReaderData]);
-
-  const removeLibraryTopic = useCallback((topic: Topic) => {
-    const section = libraryTab === 'history' ? 'history' : 'favorites';
-    commitReaderData((current) => removeRecords(current, section, [topic]));
-  }, [commitReaderData, libraryTab]);
-
-  const clearHistory = useCallback(() => {
-    const records = readerDataRef.current.history;
-    if (!Object.keys(records).length) {
-      return;
-    }
-    commitReaderData((current) => clearRecords(current, 'history'));
-  }, [commitReaderData]);
 
   const {
     renderFeedTab,

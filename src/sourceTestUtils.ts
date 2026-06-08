@@ -15,7 +15,9 @@ export function readAppRuntimeSource() {
     readProjectFile('src', 'app', 'AppRoot.tsx'),
     readProjectFile('src', 'app', 'AppShell.tsx'),
     readProjectFile('src', 'app', 'AppScreenRenderers.tsx'),
-    readProjectFile('src', 'app', 'useMainTabScrollToTop.ts')
+    readProjectFile('src', 'app', 'useMainTabScrollToTop.ts'),
+    readProjectFile('src', 'app', 'useReaderDataActionsController.ts'),
+    readProjectFile('src', 'app', 'useTopicUiStateController.ts')
   ].join('\n');
 }
 
