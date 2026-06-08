@@ -20,16 +20,29 @@ const forumApi = vi.hoisted(() => ({
   getUserProfile: vi.fn(),
   searchTopics: vi.fn()
 }));
+const yaohuoApi = vi.hoisted(() => ({
+  checkYaohuoLoginDirect: vi.fn(),
+  getYaohuoFeedDirect: vi.fn(),
+  getYaohuoRepliesDirect: vi.fn(),
+  getYaohuoTopicDirect: vi.fn(),
+  searchYaohuoDirect: vi.fn()
+}));
 
 vi.mock('../forumApi', () => forumApi);
+vi.mock('../yaohuoApi', () => yaohuoApi);
 
 import {
+  checkYaohuoLoginDirect,
   getCategories,
   getFeed,
   getReply,
   getReplies,
   getTopic,
+  getYaohuoFeedDirect,
+  getYaohuoRepliesDirect,
+  getYaohuoTopicDirect,
   getUserProfile,
+  searchYaohuoDirect,
   searchTopics
 } from './sourceGateway';
 
@@ -62,6 +75,11 @@ describe('sourceGateway', () => {
     forumApi.getTopic.mockReset();
     forumApi.getUserProfile.mockReset();
     forumApi.searchTopics.mockReset();
+    yaohuoApi.checkYaohuoLoginDirect.mockReset();
+    yaohuoApi.getYaohuoFeedDirect.mockReset();
+    yaohuoApi.getYaohuoRepliesDirect.mockReset();
+    yaohuoApi.getYaohuoTopicDirect.mockReset();
+    yaohuoApi.searchYaohuoDirect.mockReset();
     fetcherMock.mockReset();
   });
 
@@ -207,5 +225,94 @@ describe('sourceGateway', () => {
     await expect(searchTopics(options)).resolves.toBe(response);
 
     expect(forumApi.searchTopics).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards getYaohuoFeedDirect to yaohuoApi unchanged', async () => {
+    const response: FeedResponse = { items: [topic], errors: {}, hasMore: false, nextPage: null };
+    const options = {
+      yaohuoCookie: 'cookie',
+      category: '177',
+      page: 2,
+      limit: 30,
+      yaohuoFetcher: fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    yaohuoApi.getYaohuoFeedDirect.mockResolvedValue(response);
+
+    await expect(getYaohuoFeedDirect(options)).resolves.toBe(response);
+
+    expect(yaohuoApi.getYaohuoFeedDirect).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards searchYaohuoDirect to yaohuoApi unchanged', async () => {
+    const response: SearchResponse = { items: [topic], errors: {}, hasMore: false, nextPage: null };
+    const options = {
+      yaohuoCookie: 'cookie',
+      query: 'typescript',
+      page: 2,
+      limit: 30,
+      category: '177',
+      yaohuoFetcher: fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    yaohuoApi.searchYaohuoDirect.mockResolvedValue(response);
+
+    await expect(searchYaohuoDirect(options)).resolves.toBe(response);
+
+    expect(yaohuoApi.searchYaohuoDirect).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards getYaohuoTopicDirect to yaohuoApi unchanged', async () => {
+    const response: TopicDetail = { ...topic, source: 'yaohuo', contentHtml: '<p>Topic</p>', replies: [reply] };
+    const yaohuoTopic: Topic = { ...topic, source: 'yaohuo', categoryId: '177' };
+    const options = {
+      topic: yaohuoTopic,
+      yaohuoCookie: 'cookie',
+      replyLimit: 30,
+      yaohuoFetcher: fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    yaohuoApi.getYaohuoTopicDirect.mockResolvedValue(response);
+
+    await expect(getYaohuoTopicDirect(options)).resolves.toBe(response);
+
+    expect(yaohuoApi.getYaohuoTopicDirect).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards getYaohuoRepliesDirect to yaohuoApi unchanged', async () => {
+    const response: RepliesResponse = { items: [reply], hasMore: false, nextPage: null };
+    const options = {
+      id: 'topic-1',
+      categoryId: '177',
+      page: 2,
+      limit: 30,
+      yaohuoCookie: 'cookie',
+      yaohuoFetcher: fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    yaohuoApi.getYaohuoRepliesDirect.mockResolvedValue(response);
+
+    await expect(getYaohuoRepliesDirect(options)).resolves.toBe(response);
+
+    expect(yaohuoApi.getYaohuoRepliesDirect).toHaveBeenCalledWith(options);
+  });
+
+  it('forwards checkYaohuoLoginDirect to yaohuoApi unchanged', async () => {
+    const response = { ok: true, loginRequired: false, message: '登录可用' };
+    const options = {
+      yaohuoCookie: 'cookie',
+      yaohuoFetcher: fetcher,
+      signal,
+      timeoutMs: 1000
+    };
+    yaohuoApi.checkYaohuoLoginDirect.mockResolvedValue(response);
+
+    await expect(checkYaohuoLoginDirect(options)).resolves.toBe(response);
+
+    expect(yaohuoApi.checkYaohuoLoginDirect).toHaveBeenCalledWith(options);
   });
 });

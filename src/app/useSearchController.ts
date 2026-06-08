@@ -7,7 +7,7 @@ import {
   sortTopicsByCreatedAt,
   type SearchSort
 } from '../feedLogic';
-import { searchTopics } from '../forumApi';
+import { searchTopics, searchYaohuoDirect } from '../sources/sourceGateway';
 import type { ReaderData } from '../readerData';
 import {
   errorMessage,
@@ -19,7 +19,6 @@ import {
   sourceLabel,
   startAbortableRequest
 } from '../appUtils';
-import { searchYaohuoDirect } from '../yaohuoApi';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { FeedSource, Source, Topic } from '../types';

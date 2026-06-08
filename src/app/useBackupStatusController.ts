@@ -5,7 +5,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
-import { getFeed } from '../forumApi';
+import { checkYaohuoLoginDirect, getFeed } from '../sources/sourceGateway';
 import type { ReaderData } from '../readerData';
 import { exportReaderBackupJson, importReaderBackupJson } from '../readerBackup';
 import {
@@ -14,7 +14,6 @@ import {
   isCanceledRequest,
   startAbortableRequest
 } from '../appUtils';
-import { checkYaohuoLoginDirect } from '../yaohuoApi';
 import { buildYaohuoSetCookieHeaders, summarizeYaohuoCookies, type YaohuoNativeCookie } from '../yaohuoCookies';
 import {
   clearLinuxDoAccess,

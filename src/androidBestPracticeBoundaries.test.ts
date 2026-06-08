@@ -3,12 +3,25 @@ import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
 const appSource = readProjectFile('App.tsx');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
+const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
+const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
 const globalModalHostSource = readProjectFile('src', 'app', 'GlobalModalHost.tsx');
 const linuxDoVerifyModalSource = readOptionalProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const loginWebViewScriptsSource = readOptionalProjectFile('src', 'loginWebViewScripts.ts');
 const moreScreenSource = readProjectFile('src', 'screens', 'MoreScreen.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
+const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
+const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
 const verificationControllerSource = readProjectFile('src', 'app', 'useVerificationController.ts');
+const appReadControllerSources = {
+  accountControllerSource,
+  backupStatusControllerSource,
+  feedControllerSource,
+  searchControllerSource,
+  topicControllerSource,
+  userControllerSource
+};
 
 describe('Android best-practice boundary guards', () => {
   it('keeps root providers in a focused host', () => {
@@ -106,5 +119,13 @@ describe('Android best-practice boundary guards', () => {
     expect(moreScreenSource).not.toContain('mountLinuxDoWebView');
     expect(globalModalHostSource).toContain('linuxDoWebViewRef');
     expect(globalModalHostSource).toContain('mountLinuxDoWebView');
+  });
+
+  it('keeps app read flows behind the source gateway', () => {
+    Object.values(appReadControllerSources).forEach((source) => {
+      expect(source).toContain("from '../sources/sourceGateway'");
+      expect(source).not.toContain("from '../forumApi'");
+      expect(source).not.toContain("from '../yaohuoApi'");
+    });
   });
 });

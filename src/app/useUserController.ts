@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getUserProfile } from '../forumApi';
+import { getUserProfile } from '../sources/sourceGateway';
 import { mergeTopics } from '../feedLogic';
 import {
   isUserFollowed,

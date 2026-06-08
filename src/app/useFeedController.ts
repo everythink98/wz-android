@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
-import { getCategories, getFeed } from '../forumApi';
+import { getCategories, getFeed, getYaohuoFeedDirect } from '../sources/sourceGateway';
 import { shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
   applyFeedFilter,
@@ -21,7 +21,6 @@ import {
   sourceLabel,
   startAbortableRequest
 } from '../appUtils';
-import { getYaohuoFeedDirect } from '../yaohuoApi';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { Category, FeedResponse, FeedSource, Source, Topic } from '../types';

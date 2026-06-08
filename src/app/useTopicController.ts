@@ -1,5 +1,11 @@
 import { useCallback, useMemo, useRef, type Dispatch, type SetStateAction } from 'react';
-import { getReply, getReplies, getTopic } from '../forumApi';
+import {
+  getReply,
+  getReplies,
+  getTopic,
+  getYaohuoRepliesDirect,
+  getYaohuoTopicDirect
+} from '../sources/sourceGateway';
 import {
   recordHistory,
   topicKey,
@@ -17,7 +23,6 @@ import {
   isYaohuoLoginRequiredError,
   startAbortableRequest
 } from '../appUtils';
-import { getYaohuoRepliesDirect, getYaohuoTopicDirect } from '../yaohuoApi';
 import { REPLY_PAGE_SIZE, replyRefreshTarget } from '../androidFeatureHelpers';
 import { pushTopicSession, topicSessionFromSnapshot } from '../topicSessionState';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
