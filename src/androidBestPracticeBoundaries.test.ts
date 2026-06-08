@@ -175,4 +175,11 @@ describe('Android best-practice boundary guards', () => {
       expect(source).not.toContain("from '../linuxdoLevel'");
     });
   });
+
+  it('keeps linux.do level types behind the source gateway in app and screen modules', () => {
+    expect(appRootSource).toContain("from '../sources/sourceGateway'");
+    expect(appRootSource).not.toContain("from '../linuxdoLevel'");
+    expect(moreScreenSource).toContain("from '../sources/sourceGateway'");
+    expect(moreScreenSource).not.toContain("from '../linuxdoLevel'");
+  });
 });

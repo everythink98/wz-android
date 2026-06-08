@@ -45,6 +45,7 @@ import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTo
 import { useAppScreenRenderers } from './AppScreenRenderers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoCookieBridge';
+import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { Reply, Topic, TopicDetail, UserProfile } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
@@ -59,7 +60,6 @@ import {
 } from '../theme';
 import type { LibraryTab } from '../feedLogic';
 import { errorMessage } from '../appUtils';
-import type { LinuxDoLevelProfile } from '../linuxdoLevel';
 import { filterRepliesByQuery } from '../androidFeatureHelpers';
 import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';

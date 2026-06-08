@@ -3,7 +3,7 @@ import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
 import type { ReaderSettings } from '../readerData';
-import type { LinuxDoLevelProfile } from '../linuxdoLevel';
+import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
