@@ -330,7 +330,7 @@ describe('Android App experience guards', () => {
   });
 
   it('clears search loading when search parameters cancel the active request', () => {
-    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchScope, searchSource\]\);/)?.[0] || '';
+    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchSource\]\);/)?.[0] || '';
 
     expect(block).toContain('searchRequestIdRef.current += 1;');
     expect(block).toContain('searchAbortRef.current?.abort();');
@@ -377,8 +377,8 @@ describe('Android App experience guards', () => {
     expect(loadFeedBlock).toContain('refreshing: false');
   });
 
-  it('cancels stale search requests when the query, source, or scope changes', () => {
-    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchScope, searchSource\]\);/)?.[0] || '';
+  it('cancels stale search requests when the query or source changes', () => {
+    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchSource\]\);/)?.[0] || '';
 
     expect(block).toContain('searchRequestIdRef.current += 1;');
     expect(block).toContain('searchAbortRef.current?.abort();');
@@ -387,7 +387,7 @@ describe('Android App experience guards', () => {
   });
 
   it('reruns Android search with the current query when switching search tabs', () => {
-    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQueryRef\.current\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearchRef\.current\?\.\(\);\s*\n\s*}, \[searchSource, searchScope, searchSort\]\);/)?.[0] || '';
+    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQueryRef\.current\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearchRef\.current\?\.\(\);\s*\n\s*}, \[searchSource, searchSort\]\);/)?.[0] || '';
 
     expect(searchControllerSource).toContain('runSearchRef.current = runSearch;');
     expect(block).toContain('void runSearchRef.current?.();');
@@ -489,14 +489,13 @@ describe('Android App experience guards', () => {
     expect(searchScreenSource).toContain('searchCategoryOptions');
     expect(searchListItemsSource).toContain('searchResultCategoryKey(item)');
     expect(searchScreenSource).toContain('setSearchCategoryFilter');
-    expect(searchScreenSource).toContain('filterSearchResultsByCategory');
-    expect(searchScreenSource).toContain('filteredSearchResults');
+    expect(searchScreenSource).toContain('filterSearchGroupsByCategory');
     expect(searchScreenSource).toContain('buildSearchListItems');
     expect(searchScreenSource).toContain('data={listItems}');
   });
 
   it('resets Android search category filters when the search context changes', () => {
-    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSearchCategoryFilter\('all'\);[\s\S]*?\n\s*}, \[query, scope, searchSource, sort\]\);/)?.[0] || '';
+    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSearchCategoryFilter\('all'\);[\s\S]*?\n\s*}, \[query, searchSource, sort\]\);/)?.[0] || '';
 
     expect(block).toContain("setSearchCategoryFilter('all');");
     expect(searchScreenSource).not.toContain('setSwipeOpenKey');
@@ -504,7 +503,7 @@ describe('Android App experience guards', () => {
   });
 
   it('only shows Android search sort filters for sources with real request parameters', () => {
-    expect(searchScreenSource).toContain("const showSearchSort = scope === 'remote' && searchSource === 'v2ex';");
+    expect(searchScreenSource).toContain("const showSearchSort = searchSource === 'v2ex';");
     expect(searchScreenSource).toContain('{showSearchSort ? (');
     expect(searchScreenSource).toContain("label: '相关'");
     expect(searchScreenSource).toContain("label: '按时间'");
@@ -536,10 +535,21 @@ describe('Android App experience guards', () => {
     expect(recentSearchBlock).not.toContain('IconButton tiny ghost icon={X} label="删除最近搜索"');
   });
 
-  it('updates local search result highlighting when the query changes', () => {
+  it('updates search result highlighting when the query changes', () => {
     const block = searchScreenSource.match(/const renderTopicCard = useCallback\(\(item: Topic\) => \([\s\S]*?\n  \), \[([\s\S]*?)\]\);/)?.[1] || '';
 
     expect(block).toContain('query');
+  });
+
+  it('does not expose local search mode on the Android search screen', () => {
+    expect(searchScreenSource).not.toContain("export type SearchScope");
+    expect(searchScreenSource).not.toContain("label: '全网'");
+    expect(searchScreenSource).not.toContain("label: '本地'");
+    expect(searchScreenSource).not.toContain('onScopeChange');
+    expect(searchControllerSource).not.toContain('searchScope');
+    expect(searchControllerSource).not.toContain('setSearchScope');
+    expect(searchControllerSource).not.toContain('searchLocal');
+    expect(appSource).not.toContain('setSearchScope');
   });
 
   it('does not pass press or submit events as search source overrides', () => {
@@ -559,10 +569,10 @@ describe('Android App experience guards', () => {
     expect(footerIndex).toBeGreaterThan(recentListIndex);
   });
 
-  it('does not add a second empty result message below remote search groups', () => {
+  it('does not add a second empty result message below search groups', () => {
     const listEmptyBlock = searchScreenSource.match(/ListEmptyComponent=\{[\s\S]*?\}\s*renderItem=\{renderSearchListItem\}/)?.[0] || '';
 
-    expect(listEmptyBlock).toContain('showRemoteGroups ? null : busy && query.trim()');
+    expect(listEmptyBlock).toContain('showSearchGroups ? null : busy && query.trim()');
   });
 
   it('adds a load-more action to remote search source groups', () => {
@@ -846,6 +856,13 @@ describe('Android App experience guards', () => {
     expect(remoteSearchBlock).toContain('await clearYaohuoLoginState();');
     expect(remoteSearchBlock).toContain("return { source, label: sourceLabel(source), items: [], error: '登录已失效'");
     expect(dependencyBlock).toContain('clearYaohuoLoginState');
+  });
+
+  it('uses the official linux.do search page size for remote search groups', () => {
+    const remoteSearchBlock = searchControllerSource.match(/const runRemoteSearchSource = useCallback[\s\S]*?\n\n  const runSearch/)?.[0] || '';
+
+    expect(remoteSearchBlock).toContain("const searchLimit = source === 'linuxdo' ? 50 : 30;");
+    expect(remoteSearchBlock).toContain('limit: searchLimit');
   });
 
   it('clears expired yaohuo login state from user profile requests', () => {

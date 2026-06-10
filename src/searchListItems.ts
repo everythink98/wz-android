@@ -68,21 +68,14 @@ export function filterSearchGroupsByCategory(groups: SearchGroup[], categoryFilt
 export function buildSearchListItems({
   busy,
   expandedGroups,
-  filteredResults,
   groups,
-  query,
-  remote
+  query
 }: {
   busy: boolean;
   expandedGroups: Record<string, boolean>;
-  filteredResults: Topic[];
   groups: SearchGroup[];
   query: string;
-  remote: boolean;
 }): SearchListItem[] {
-  if (!remote) {
-    return filteredResults.map<SearchListItem>((topic) => ({ type: 'topic', topic }));
-  }
   if (!groups.length) {
     return [{ type: 'empty', text: busy ? '正在搜索...' : '暂无搜索结果' }];
   }

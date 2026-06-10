@@ -270,7 +270,13 @@ function parseCompactListItems(root: ReturnType<typeof parseHtml>, fallbackClass
   return items;
 }
 
-export function parseYaohuoListHtml(html: string, { classId, limit = 30, page = 1, url }: { classId?: string; limit?: number; page?: number; url?: string } = {}): FeedResponse {
+export function parseYaohuoListHtml(html: string, {
+  classId,
+  limit = 30,
+  page = 1,
+  preserveOrder = false,
+  url
+}: { classId?: string; limit?: number; page?: number; preserveOrder?: boolean; url?: string } = {}): FeedResponse {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
   let rows = root.querySelectorAll('.listdata');
@@ -305,7 +311,7 @@ export function parseYaohuoListHtml(html: string, { classId, limit = 30, page = 
   }
   const nextPage = nextPageFromHtml(html, page, items.length, limit);
   return {
-    items: sortTopicsByTime(items),
+    items: preserveOrder ? items : sortTopicsByTime(items),
     errors: {},
     hasMore: Boolean(nextPage),
     nextPage
@@ -724,7 +730,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
 }
 
 export function parseYaohuoSearchHtml(html: string, options: { page?: number; limit?: number; url?: string } = {}): SearchResponse {
-  const result = parseYaohuoListHtml(html, { ...options, classId: '0' });
+  const result = parseYaohuoListHtml(html, { ...options, classId: '0', preserveOrder: true });
   return {
     items: result.items,
     errors: result.errors,

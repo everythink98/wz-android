@@ -2,7 +2,7 @@ import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoRepl
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
 import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuo';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
-import { balanceTopicsBySource, matchesSearchExpression, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchSort } from './feedLogic';
+import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import type {
   CategoriesResponse,
   FeedResponse,
@@ -115,11 +115,21 @@ function topicIdentity(topic: Topic) {
   return `${topic.source}:${topic.id}`;
 }
 
+function filterExcludedSearchItems(items: Topic[], expression: SearchExpression) {
+  if (!expression.exclude.length) {
+    return items;
+  }
+  return items.filter((topic) => {
+    const text = searchExpressionText(topic).toLowerCase();
+    return expression.exclude.every((term) => !text.includes(term.toLowerCase()));
+  });
+}
+
 function filterSearchItems(response: SearchResponse, query: string, limit: number): SearchResponse {
   const expression = parseSearchExpression(query);
   return {
     ...response,
-    items: response.items.filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression)).slice(0, limit)
+    items: filterExcludedSearchItems(response.items, expression).slice(0, limit)
   };
 }
 
@@ -499,9 +509,10 @@ export async function searchTopics({
     ]);
     const expression = parseSearchExpression(query);
     return {
-      items: sortTopicsByCreatedAt(results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : [])
-        .filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression)))
-        .slice(0, limit),
+      items: sortTopicsByCreatedAt(filterExcludedSearchItems(
+        results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []),
+        expression
+      )).slice(0, limit),
       errors: mergeErrors(results, sources),
       hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
       nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null

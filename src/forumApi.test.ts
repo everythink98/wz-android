@@ -695,7 +695,7 @@ describe('Android local forum facade', () => {
       if (input.includes('nodeseek.com')) {
         return new Response(`<script>${manyNodeSeekTopics}</script>`);
       }
-      if (input.includes('linux.do/search.json')) {
+      if (input.includes('linux.do/search?')) {
         return new Response(JSON.stringify({
           topics: [{
             id: 201,
@@ -743,7 +743,7 @@ describe('Android local forum facade', () => {
           }]
         })).toString('base64')}</script>`);
       }
-      if (input.includes('linux.do/search.json')) {
+      if (input.includes('linux.do/search?')) {
         return new Response(JSON.stringify({
           topics: [{
             id: 201,

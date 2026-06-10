@@ -17,7 +17,6 @@ import {
   textExcerpt,
   toIsoString
 } from './localHtml';
-import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
 import {
   NODESEEK_BASE_URL,
   nextNodeSeekListPage,
@@ -705,12 +704,6 @@ function nextSearchPath(html: string, fallbackPage: number) {
   }
 }
 
-function filterNodeSeekSearchTopics(html: string, query: string) {
-  const expression = parseSearchExpression(query);
-  return parseNodeSeekSearchTopics(html)
-    .filter((topic) => matchesSearchExpression(searchExpressionText(topic), expression));
-}
-
 function listPath(page: number, category?: string) {
   const prefix = category ? `/categories/${encodeURIComponent(category)}` : '';
   const path = page > 1 ? `${prefix}/page-${page}` : `${prefix || '/'}`;
@@ -1241,7 +1234,7 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   let nextPage: number | null = null;
   try {
     const html = await fetchNodeSeekText(searchPath(trimmedQuery, page), options);
-    items = filterNodeSeekSearchTopics(html, trimmedQuery);
+    items = parseNodeSeekSearchTopics(html);
     nextPage = page < MAX_NODESEEK_SEARCH_PAGES && nextSearchPath(html, page + 1) ? page + 1 : null;
   } catch (error) {
     if (isNodeSeekCloudflareError(error)) {
@@ -1251,7 +1244,7 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   }
 
   return {
-    items: sortTopicsByTime(items).slice(0, limit),
+    items: items.slice(0, limit),
     errors: {},
     hasMore: Boolean(nextPage),
     nextPage

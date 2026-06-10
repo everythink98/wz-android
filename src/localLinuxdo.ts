@@ -16,9 +16,9 @@ import {
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   isCloudflareChallengeResponse,
+  linuxDoAccessSummary,
   loadLinuxDoAccess
 } from './linuxdoCookieBridge';
-import { matchesSearchExpression, parseSearchExpression, searchExpressionText } from './feedLogic';
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
@@ -31,8 +31,10 @@ import {
 } from './localLinuxdoHelpers';
 
 const LIST_PAGE_SIZE = 30;
+const SEARCH_PAGE_SIZE = 50;
 const TOPIC_STREAM_CACHE_LIMIT = 100;
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
+let csrfTokenCache: string | null = null;
 
 interface LinuxDoOptions {
   fetcher?: Fetcher;
@@ -426,18 +428,28 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   };
 }
 
-async function linuxDoHeaders() {
+async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string) {
   const access = await loadLinuxDoAccess();
+  const accessSummary = linuxDoAccessSummary(access);
   return {
-    Accept: 'application/json,text/plain,*/*',
-    Referer: `${BASE_URL}/latest`,
+    Accept: 'application/json, text/javascript, */*; q=0.01',
+    Referer: referer,
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Discourse-Present': 'true',
     'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+    ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+    'X-Requested-With': 'XMLHttpRequest',
+    ...(accessSummary.loggedIn ? { 'Discourse-Logged-In': 'true' } : {}),
     ...(access?.cookieHeader ? { Cookie: access.cookieHeader } : {})
   };
 }
 
-async function fetchLinuxDoJson<T>(path: string, params: Record<string, string | number | Array<string | number>> | undefined, options: LinuxDoOptions = {}) {
+async function fetchLinuxDoJson<T>(
+  path: string,
+  params: Record<string, string | number | Array<string | number>> | undefined,
+  options: LinuxDoOptions = {},
+  requestOptions: { referer?: string; csrfToken?: string } = {}
+) {
   const url = new URL(path, BASE_URL);
   for (const [key, value] of Object.entries(params || {})) {
     if (Array.isArray(value)) {
@@ -447,7 +459,7 @@ async function fetchLinuxDoJson<T>(path: string, params: Record<string, string |
     }
   }
   const response = await fetchWithTimeout(url.toString(), {
-    headers: await linuxDoHeaders()
+    headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken)
   }, options);
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
@@ -701,66 +713,79 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   return reply;
 }
 
-function topicMatchesSearch(topic: Topic, query: string) {
-  return matchesSearchExpression(searchExpressionText(topic), parseSearchExpression(query));
+async function linuxDoCsrfToken(options: LinuxDoOptions) {
+  if (csrfTokenCache) {
+    return csrfTokenCache;
+  }
+  try {
+    const data = await fetchLinuxDoJson<Record<string, unknown>>('/session/csrf.json', undefined, options);
+    const token = typeof data.csrf === 'string' ? data.csrf.trim() : '';
+    csrfTokenCache = token || null;
+    return csrfTokenCache || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-function linuxDoSearchQuery(query: string) {
-  const clean = query.trim();
-  return /\border:/i.test(clean) ? clean : `${clean} order:latest_topic`.trim();
-}
-
-async function searchLatestLinuxDoTopics(query: string, options: LinuxDoOptions & { limit?: number; page?: number }): Promise<SearchResponse> {
-  const page = options.page || 1;
-  const limit = options.limit || 30;
-  const latest = await getLinuxDoFeed({ ...options, limit: 100, page });
+async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, options: LinuxDoOptions): Promise<{ items: Topic[]; hasMore: boolean }> {
+  const users = usersById(data.users);
+  const postsByTopicId = new Map<string, Record<string, unknown>>();
+  if (Array.isArray(data.posts)) {
+    data.posts.filter(isRecord).forEach((post) => postsByTopicId.set(String(post.topic_id), post));
+  }
+  const topics = Array.isArray(data.topics) ? data.topics : [];
+  const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
+  const items = topics.map((topic) => {
+    const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
+    const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
+    const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
+    return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
+  }).filter(Boolean) as Topic[];
+  const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
   return {
-    items: sortTopicsByCreatedAt(latest.items.filter((topic) => topicMatchesSearch(topic, query))).slice(0, limit),
-    errors: {},
-    hasMore: Boolean(latest.hasMore),
-    nextPage: latest.hasMore ? latest.nextPage ?? page + 1 : null
+    items,
+    hasMore: Boolean(grouped.more_full_page_results)
   };
 }
 
 export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
   const limit = options.limit || 30;
   const page = options.page || 1;
-  try {
-    const data = await fetchLinuxDoJson<Record<string, unknown>>('/search.json', {
-      q: linuxDoSearchQuery(query),
-      type_filter: 'topic',
-      ...(page > 1 ? { page } : {})
-    }, options);
-    const users = usersById(data.users);
-    const postsByTopicId = new Map<string, Record<string, unknown>>();
-    if (Array.isArray(data.posts)) {
-      data.posts.filter(isRecord).forEach((post) => postsByTopicId.set(String(post.topic_id), post));
+  const cleanQuery = query.trim();
+  const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;
+  const csrfToken = await linuxDoCsrfToken(options);
+  const start = Math.max(0, (page - 1) * limit);
+  const firstSearchPage = Math.floor(start / SEARCH_PAGE_SIZE) + 1;
+  const firstOffset = start % SEARCH_PAGE_SIZE;
+  const needed = firstOffset + limit + 1;
+  const collected: Topic[] = [];
+  let searchPage = firstSearchPage;
+  let searchHasMore = false;
+  while (collected.length < needed) {
+    const data = await fetchLinuxDoJson<Record<string, unknown>>('/search', {
+      q: cleanQuery,
+      page: searchPage
+    }, options, { referer: searchReferer, csrfToken });
+    const result = await topicsFromLinuxDoSearchData(data, options);
+    if (!result.items.length) {
+      searchHasMore = false;
+      break;
     }
-    const topics = Array.isArray(data.topics) ? data.topics : [];
-    const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
-    const items = sortTopicsByCreatedAt(topics.map((topic) => {
-      const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
-      const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
-      const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
-      return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
-    }).filter(Boolean) as Topic[]).slice(0, limit);
-    const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
-    const hasMore = Boolean(grouped.more_full_page_results) || topics.length > limit;
-    if (!items.length && query.trim()) {
-      return searchLatestLinuxDoTopics(query, { ...options, limit, page });
+    collected.push(...result.items);
+    searchHasMore = result.hasMore;
+    if (!result.hasMore) {
+      break;
     }
-    return {
-      items,
-      errors: {},
-      hasMore,
-      nextPage: hasMore ? page + 1 : null
-    };
-  } catch (error) {
-    if (error instanceof LinuxDoCloudflareError) {
-      throw error;
-    }
-    return searchLatestLinuxDoTopics(query, { ...options, limit, page });
+    searchPage += 1;
   }
+  const items = collected.slice(firstOffset, firstOffset + limit);
+  const hasMore = collected.length > firstOffset + limit || searchHasMore;
+  return {
+    items,
+    errors: {},
+    hasMore,
+    nextPage: hasMore ? page + 1 : null
+  };
 }
 
 export async function getLinuxDoUserProfile(id: string, username: string, options: LinuxDoOptions = {}): Promise<UserProfile> {

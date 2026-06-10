@@ -9,7 +9,6 @@ import { linuxDoExternalSearchItems } from '../appUtils';
 import {
   buildSearchListItems,
   filterSearchGroupsByCategory,
-  filterSearchResultsByCategory,
   searchCategoryOptions,
   type SearchGroup,
   type SearchListItem
@@ -20,8 +19,6 @@ import { AppButton, EmptyText, IconButton, LoadingState, PillRail, TOUCH_HIT_SLO
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
-export type SearchScope = 'remote' | 'local';
-
 export function SearchScreen({
   busy,
   query,
@@ -29,7 +26,6 @@ export function SearchScreen({
   topicStateIndex,
   results,
   searchGroups,
-  scope,
   searchSource,
   sort,
   scrollToTopSignal,
@@ -41,7 +37,6 @@ export function SearchScreen({
   onRemoveRecentSearch,
   onQueryChange,
   onRetrySearchSource,
-  onScopeChange,
   onSearch,
   onSearchSourceChange,
   onSortChange
@@ -52,7 +47,6 @@ export function SearchScreen({
   topicStateIndex: TopicListItemStateIndex;
   results: Topic[];
   searchGroups: SearchGroup[];
-  scope: SearchScope;
   searchSource: FeedSource;
   sort: SearchSort;
   scrollToTopSignal: number;
@@ -64,7 +58,6 @@ export function SearchScreen({
   onRemoveRecentSearch: (query: string) => void;
   onQueryChange: (value: string) => void;
   onRetrySearchSource: (source: Source) => void;
-  onScopeChange: (scope: SearchScope) => void;
   onSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
   onSortChange: (sort: SearchSort) => void;
@@ -84,7 +77,7 @@ export function SearchScreen({
   const [expandedSearchGroups, setExpandedSearchGroups] = useState<Record<string, boolean>>({});
   useEffect(() => {
     setSearchCategoryFilter('all');
-  }, [query, scope, searchSource, sort]);
+  }, [query, searchSource, sort]);
   useEffect(() => {
     setExpandedSearchGroups((current) => {
       const next = { ...current };
@@ -113,23 +106,20 @@ export function SearchScreen({
       setSearchCategoryFilter('all');
     }
   }, [searchCategoryFilter, searchCategoryItems]);
-  const filteredSearchResults = useMemo(() => filterSearchResultsByCategory(results, searchCategoryFilter), [results, searchCategoryFilter]);
   const visibleSearchGroups = useMemo(() => filterSearchGroupsByCategory(searchGroups, searchCategoryFilter), [searchCategoryFilter, searchGroups]);
   const linuxDoExternalItems = useMemo(() => (
-    scope === 'remote' && (searchSource === 'all' || searchSource === 'linuxdo')
+    searchSource === 'all' || searchSource === 'linuxdo'
       ? linuxDoExternalSearchItems(query)
       : []
-  ), [query, scope, searchSource]);
-  const showRemoteGroups = scope === 'remote' && query.trim().length > 0;
-  const showSearchSort = scope === 'remote' && searchSource === 'v2ex';
+  ), [query, searchSource]);
+  const showSearchGroups = query.trim().length > 0;
+  const showSearchSort = searchSource === 'v2ex';
   const listItems = useMemo(() => buildSearchListItems({
     busy,
     expandedGroups: expandedSearchGroups,
-    filteredResults: filteredSearchResults,
     groups: visibleSearchGroups,
-    query,
-    remote: showRemoteGroups
-  }), [busy, expandedSearchGroups, filteredSearchResults, query, showRemoteGroups, visibleSearchGroups]);
+    query
+  }), [busy, expandedSearchGroups, query, visibleSearchGroups]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
       return renderTopicCard(item.topic);
@@ -221,15 +211,6 @@ export function SearchScreen({
       </View>
       <PillRail
         items={[
-          { value: 'remote', label: '全网' },
-          { value: 'local', label: '本地' }
-        ]}
-        value={scope}
-        styles={styles}
-        onChange={(value) => onScopeChange(value as SearchScope)}
-      />
-      <PillRail
-        items={[
           { value: 'all', label: '全部' },
           { value: 'v2ex', label: 'V2EX' },
           { value: 'linuxdo', label: 'linux.do' },
@@ -312,7 +293,7 @@ export function SearchScreen({
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
       ListFooterComponent={footer}
-      ListEmptyComponent={showRemoteGroups ? null : busy && query.trim()
+      ListEmptyComponent={showSearchGroups ? null : busy && query.trim()
         ? <LoadingState text="正在搜索..." styles={styles} theme={theme} />
         : <EmptyText text={query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'} styles={styles} />}
       renderItem={renderSearchListItem}

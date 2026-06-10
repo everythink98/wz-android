@@ -75,7 +75,22 @@ describe('Android direct yaohuo API', () => {
     expect(result.nextPage).toBe(2);
   });
 
-  it('parses and sorts yaohuo search result times by newest first', () => {
+  it('keeps yaohuo search results returned by the official page without local keyword filtering', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response(`
+      <div class="listdata"><a href="/bbs-321.html">安卓手机免流设置</a>/alice/阅1/05-20 10:00</div>
+      <div class="listdata"><a href="/bbs-322.html">怎么把别的设备消息转过来？</a>/bob/阅1/05-19 10:00</div>
+    `));
+
+    const result = await searchYaohuoDirect({
+      query: '安卓手机免',
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual(['321', '322']);
+  });
+
+  it('keeps yaohuo search results in the official page order while parsing times', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));
     try {
@@ -88,10 +103,10 @@ describe('Android direct yaohuo API', () => {
         limit: 30
       });
 
-      expect(result.items.map((item) => item.id)).toEqual(['1539322', '1539323', '1539321']);
-      expect(result.items[0].createdAt).toBe('2026-05-25T15:50:00.000Z');
-      expect(result.items[1].createdAt).toBe('2026-05-25T07:20:00.000Z');
-      expect(result.items[2].createdAt).toBe('2026-05-23T16:05:00.000Z');
+      expect(result.items.map((item) => item.id)).toEqual(['1539321', '1539322', '1539323']);
+      expect(result.items[0].createdAt).toBe('2026-05-23T16:05:00.000Z');
+      expect(result.items[1].createdAt).toBe('2026-05-25T15:50:00.000Z');
+      expect(result.items[2].createdAt).toBe('2026-05-25T07:20:00.000Z');
     } finally {
       vi.useRealTimers();
     }

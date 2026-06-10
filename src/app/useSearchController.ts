@@ -3,12 +3,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { feedSources } from '../feedCategoryRail';
 import {
   mergeTopics,
-  searchLocal,
   sortTopicsByCreatedAt,
   type SearchSort
 } from '../feedLogic';
 import { searchTopics, searchYaohuoDirect } from '../sources/sourceGateway';
-import type { ReaderData } from '../readerData';
 import {
   errorMessage,
   finishAbortableRequest,
@@ -23,7 +21,6 @@ import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '..
 import type { Fetcher } from '../request';
 import type { FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
-import type { SearchScope } from '../screens/SearchScreen';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 
@@ -60,7 +57,6 @@ export function useSearchController({
   nodeSeekUserAgentRef,
   notify,
   onNodeSeekSearchVerificationRequired,
-  readerData,
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
@@ -71,7 +67,6 @@ export function useSearchController({
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
-  readerData: ReaderData;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
 }) {
@@ -84,7 +79,6 @@ export function useSearchController({
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchSource, setSearchSource] = useState<FeedSource>('all');
-  const [searchScope, setSearchScope] = useState<SearchScope>('remote');
   const [searchSort, setSearchSort] = useState<SearchSort>('relevance');
   const [searchItems, setSearchItems] = useState<Topic[]>([]);
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
@@ -147,7 +141,7 @@ export function useSearchController({
     setSearchGroups([]);
     searchGroupsRef.current = [];
     setSearchBusy(false);
-  }, [searchQuery, searchScope, searchSource]);
+  }, [searchQuery, searchSource]);
 
   const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
     if (onNodeSeekSearchVerificationRequired) {
@@ -173,13 +167,14 @@ export function useSearchController({
       if (source === 'yaohuo' && !yaohuoCookie) {
         return { source, label: sourceLabel(source), items: [], error: '未登录', hasMore: false, nextPage: null };
       }
+      const searchLimit = source === 'linuxdo' ? 50 : 30;
       const data = source === 'yaohuo'
-        ? await searchYaohuoDirect({ query, page, limit: 30, yaohuoCookie, signal })
+        ? await searchYaohuoDirect({ query, page, limit: searchLimit, yaohuoCookie, signal })
         : await searchTopics({
           query,
           source,
           page,
-          limit: 30,
+          limit: searchLimit,
           fetcher,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
@@ -219,7 +214,7 @@ export function useSearchController({
     }
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || searchSource}:${searchScope}:${query}:${searchSort}`);
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || searchSource}:${query}:${searchSort}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     const activeSources = sourceOverride
       ? [sourceOverride]
@@ -235,54 +230,44 @@ export function useSearchController({
       setSearchGroups(nextGroups);
     } else {
       setSearchItems([]);
-      const nextGroups = searchScope === 'remote'
-        ? activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }))
-        : [];
+      const nextGroups = activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }));
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
     }
     setSearchBusy(true);
     try {
       addRecentSearch(query);
-      if (searchScope === 'local') {
+      await Promise.all(activeSources.map(async (source) => {
+        const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, { isCurrent: () => isCurrentSearchRequest() });
         if (!isCurrentSearchRequest()) {
           return;
         }
-        setSearchItems(searchLocal(readerData, query, searchSource));
-        notify('本地搜索完成');
-      } else {
-        await Promise.all(activeSources.map(async (source) => {
-          const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, { isCurrent: () => isCurrentSearchRequest() });
-          if (!isCurrentSearchRequest()) {
-            return;
-          }
-          const nextGroups = searchGroupsRef.current.map((currentGroup) => (
-            currentGroup.source === source ? { ...group, loading: false } : currentGroup
-          ));
-          searchGroupsRef.current = nextGroups;
-          setSearchGroups(nextGroups);
-          setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));
-        }));
-        if (!isCurrentSearchRequest()) {
-          return;
-        }
-        const nextGroups = searchGroupsRef.current.map((group) => (
-          activeSources.includes(group.source) ? { ...group, loading: false } : group
+        const nextGroups = searchGroupsRef.current.map((currentGroup) => (
+          currentGroup.source === source ? { ...group, loading: false } : currentGroup
         ));
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
-        const mergedItems = mergeSearchGroupsToItems(nextGroups, searchSource);
-        setSearchItems(mergedItems);
-        const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
-        if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
-          requireNodeSeekSearchVerification(nodeSeekError, () => { void runSearchRef.current?.('nodeseek'); });
-          return;
-        }
-        const errors = nextGroups.filter((group) => group.error);
-        notify(errors.length
-          ? errors.map((group) => `${group.label}：${group.error}`).join('；')
-          : `搜索完成：${mergedItems.length} 条结果`);
+        setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));
+      }));
+      if (!isCurrentSearchRequest()) {
+        return;
       }
+      const nextGroups = searchGroupsRef.current.map((group) => (
+        activeSources.includes(group.source) ? { ...group, loading: false } : group
+      ));
+      searchGroupsRef.current = nextGroups;
+      setSearchGroups(nextGroups);
+      const mergedItems = mergeSearchGroupsToItems(nextGroups, searchSource);
+      setSearchItems(mergedItems);
+      const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
+      if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
+        requireNodeSeekSearchVerification(nodeSeekError, () => { void runSearchRef.current?.('nodeseek'); });
+        return;
+      }
+      const errors = nextGroups.filter((group) => group.error);
+      notify(errors.length
+        ? errors.map((group) => `${group.label}：${group.error}`).join('；')
+        : `搜索完成：${mergedItems.length} 条结果`);
     } catch (error) {
       if (isCurrentSearchRequest()) {
         if (isYaohuoLoginRequiredError(error)) {
@@ -313,11 +298,9 @@ export function useSearchController({
     addRecentSearch,
     clearYaohuoLoginState,
     notify,
-    readerData,
     requireNodeSeekSearchVerification,
     runRemoteSearchSource,
     searchQuery,
-    searchScope,
     searchSort,
     searchSource,
     showYaohuoLogin
@@ -325,7 +308,7 @@ export function useSearchController({
 
   const loadMoreSearchSource = useCallback(async (source: Source, page: number) => {
     const query = searchQuery.trim();
-    if (!query || searchScope !== 'remote') {
+    if (!query) {
       return;
     }
     const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
@@ -384,7 +367,7 @@ export function useSearchController({
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [notify, requireNodeSeekSearchVerification, runRemoteSearchSource, searchQuery, searchScope, searchSort, searchSource]);
+  }, [notify, requireNodeSeekSearchVerification, runRemoteSearchSource, searchQuery, searchSort, searchSource]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;
@@ -392,17 +375,17 @@ export function useSearchController({
   }, [runSearch, searchQuery]);
 
   useEffect(() => {
-    if (searchSource !== 'v2ex' || searchScope !== 'remote') {
+    if (searchSource !== 'v2ex') {
       setSearchSort('relevance');
     }
-  }, [searchScope, searchSource]);
+  }, [searchSource]);
 
   useEffect(() => {
     if (!searchQueryRef.current.trim()) {
       return;
     }
     void runSearchRef.current?.();
-  }, [searchSource, searchScope, searchSort]);
+  }, [searchSource, searchSort]);
 
   const retrySearchSource = useCallback((source: Source) => {
     void runSearch(source);
@@ -424,11 +407,9 @@ export function useSearchController({
     searchBusy,
     searchGroups,
     searchQuery,
-    searchScope,
     searchSort,
     searchSource,
     setSearchQuery,
-    setSearchScope,
     setSearchSort,
     setSearchSource,
     visibleSearchItems

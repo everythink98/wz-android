@@ -694,11 +694,9 @@ export function AppRoot() {
     searchBusy,
     searchGroups,
     searchQuery,
-    searchScope,
     searchSort,
     searchSource,
     setSearchQuery,
-    setSearchScope,
     setSearchSort,
     setSearchSource,
     visibleSearchItems
@@ -710,7 +708,6 @@ export function AppRoot() {
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
-    readerData,
     showNodeSeekVerification,
     showYaohuoLogin
   });
@@ -1255,7 +1252,6 @@ export function AppRoot() {
       recentSearches,
       results: visibleSearchItems,
       searchGroups,
-      scope: searchScope,
       searchSource,
       sort: searchSort,
       scrollToTopSignal: tabScrollToTopSignals.search,
@@ -1266,7 +1262,6 @@ export function AppRoot() {
       onOpenTopic: openTopic,
       onRemoveRecentSearch: removeRecentSearch,
       onQueryChange: setSearchQuery,
-      onScopeChange: setSearchScope,
       onSearch: () => runSearch(),
       onSearchSourceChange: setSearchSource,
       onSortChange: setSearchSort,

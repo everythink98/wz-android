@@ -1301,6 +1301,30 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('keyword=GPT');
   });
 
+  it('keeps official NodeSeek search results even when they do not contain the full query text', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=%E5%AE%89%E5%8D%93%E6%89%8B%E6%9C%BA%E5%85%8D')) {
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-701-1">安卓手机免 root 教程</a></div>
+              <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+            </li>
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-702-1">怎么把别的手机短信转发过来？</a></div>
+              <div class="post-info"><time datetime="2026-05-22T00:00:00.000Z"></time></div>
+            </li>
+          </ul>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['701', '702']);
+  });
+
   it('keeps empty NodeSeek site search results empty instead of filtering the latest feed', async () => {
     const latestPayload = Buffer.from(JSON.stringify({
       rotateTopics: [{
@@ -1414,52 +1438,43 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.nodeseek.com/search?q=GPT&page=2');
   });
 
-  it('falls back to latest linux.do topics when anonymous search returns an empty 200 response', async () => {
+  it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('linux.do/search.json')) {
-        return json({ topics: [], posts: [] });
+      if (input.includes('linux.do/session/csrf.json')) {
+        return json({ csrf: 'csrf-token' });
       }
-      if (input.includes('linux.do/latest.json')) {
-        return json({
-          topic_list: {
-            topics: [{
-              id: 404,
-              title: 'linux fallback keyword',
-              slug: 'linux-fallback-keyword',
-              created_at: '2026-05-21T00:00:00.000Z',
-              bumped_at: '2026-05-21T00:00:00.000Z',
-              posts_count: 1
-            }]
-          },
-          users: []
-        });
+      if (input.includes('linux.do/search?')) {
+        return json({ topics: [], posts: [] });
       }
       throw new Error(`unexpected ${input}`);
     });
 
     const search = await searchTopics({ source: 'linuxdo', query: 'fallback keyword', fetcher });
 
-    expect(search.items.map((item) => item.id)).toEqual(['404']);
+    expect(search.items).toEqual([]);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
-    expect(calls).toContain('https://linux.do/search.json');
-    expect(calls).toContain('https://linux.do/latest.json');
+    expect(calls).toContain('https://linux.do/search');
+    expect(calls).not.toContain('https://linux.do/latest.json');
   });
 
   it('passes linux.do search pages through and exposes more results', async () => {
-    const fetcher = vi.fn(async (input: string) => {
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       const page = url.searchParams.get('page') || '1';
-      expect(url.searchParams.get('type_filter')).toBe('topic');
+      expect(url.pathname).toBe('/search');
+      expect(url.searchParams.get('q')).toBe('keyword');
+      expect(url.searchParams.get('page')).toBe('1');
+      expect(url.searchParams.has('type_filter')).toBe(false);
       return json({
-        grouped_search_result: { more_full_page_results: page === '1' },
-        topics: [{
-          id: page === '1' ? 501 : 502,
-          title: `linux page ${page} keyword`,
-          slug: `linux-page-${page}`,
+        grouped_search_result: { more_full_page_results: false },
+        topics: [501, 502, 503].map((id) => ({
+          id,
+          title: `linux result ${id} keyword`,
+          slug: `linux-result-${id}`,
           created_at: '2026-05-21T00:00:00.000Z',
           bumped_at: '2026-05-21T00:00:00.000Z',
           posts_count: 1
-        }],
+        })),
         users: []
       });
     });
@@ -1471,15 +1486,57 @@ describe('Android local sources', () => {
     expect(first.hasMore).toBe(true);
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['502']);
-    expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('page=2');
+    const searchCalls = fetcher.mock.calls.map((call) => new URL(String(call[0]))).filter((url) => url.pathname === '/search');
+    expect(searchCalls.map((url) => url.searchParams.get('page'))).toEqual(['1', '1']);
   });
 
-  it('uses Discourse latest-topic search ordering for linux.do searches', async () => {
+  it('keeps official linux.do search results even when they do not contain the full query text', async () => {
     const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('linux.do/search?')) {
+        return json({
+          grouped_search_result: { more_full_page_results: false },
+          topics: [
+            {
+              id: 901,
+              title: '国产安卓手机免root跳过原生esim认证申请giffgaff卡',
+              slug: 'android-esim-giffgaff',
+              created_at: '2026-05-21T00:00:00.000Z',
+              bumped_at: '2026-05-21T00:00:00.000Z',
+              posts_count: 1
+            },
+            {
+              id: 902,
+              title: '怎么把别的手机收的短信转发到我的手机上？',
+              slug: 'sms-forward',
+              created_at: '2026-05-20T00:00:00.000Z',
+              bumped_at: '2026-05-20T00:00:00.000Z',
+              posts_count: 1
+            }
+          ],
+          posts: [
+            { topic_id: 902, blurb: '官方搜索认为这个话题相关。' }
+          ],
+          users: []
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: '安卓手机免', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['901', '902']);
+  });
+
+  it('matches the official linux.do search request from the logged-in page', async () => {
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
-      expect(url.pathname).toBe('/search.json');
-      expect(url.searchParams.get('q')).toBe('keyword order:latest_topic');
-      expect(url.searchParams.get('type_filter')).toBe('topic');
+      if (url.pathname === '/session/csrf.json') {
+        return json({ csrf: 'csrf-token' });
+      }
+      expect(url.pathname).toBe('/search');
+      expect(url.searchParams.get('q')).toBe('keyword');
+      expect(url.searchParams.get('page')).toBe('1');
+      expect(url.searchParams.has('type_filter')).toBe(false);
       return json({
         topics: [{
           id: 605,
@@ -1496,11 +1553,25 @@ describe('Android local sources', () => {
     const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
 
     expect(search.items.map((item) => item.id)).toEqual(['605']);
+    const calls = fetcher.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(calls).toContain('https://linux.do/search');
+    expect(calls).not.toContain('https://linux.do/discourse-ai/embeddings/semantic-search');
+    const searchCall = fetcher.mock.calls.find((call) => new URL(String(call[0])).pathname === '/search');
+    const init = searchCall?.[1];
+    expect(init).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({
+        Accept: 'application/json, text/javascript, */*; q=0.01',
+        'Discourse-Present': 'true',
+        Referer: 'https://linux.do/search?expanded=true&q=keyword',
+        'X-CSRF-Token': 'csrf-token',
+        'X-Requested-With': 'XMLHttpRequest'
+      })
+    }));
   });
 
   it('maps linux.do search result category ids through site categories', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('linux.do/search.json')) {
+      if (input.includes('linux.do/search?')) {
         return json({
           topics: [{
             id: 701,
@@ -1536,9 +1607,9 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/site.json');
   });
 
-  it('orders linux.do search results by creation time newest first', async () => {
+  it('keeps linux.do search results in the official relevance order', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('linux.do/search.json')) {
+      if (input.includes('linux.do/search?')) {
         return json({
           topics: [
             {
@@ -1566,18 +1637,21 @@ describe('Android local sources', () => {
 
     const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
 
-    expect(search.items.map((item) => item.id)).toEqual(['802', '801']);
+    expect(search.items.map((item) => item.id)).toEqual(['801', '802']);
   });
 
   it('sends saved linux.do login cookies when searching', async () => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(JSON.stringify({
       cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       savedAt: '2026-05-26T00:00:00.000Z',
       source: 'webview',
       userAgent: 'LinuxDo WebView UA'
     }));
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
-      if (input.includes('/search.json')) {
+      if (input.includes('/session/csrf.json')) {
+        return json({ csrf: 'csrf-token' });
+      }
+      if (input.includes('/search?')) {
         return json({
           topics: [{
             id: 601,
@@ -1596,15 +1670,20 @@ describe('Android local sources', () => {
     const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher });
 
     expect(search.items.map((item) => item.id)).toEqual(['601']);
-    const [input, init] = fetcher.mock.calls[0];
+    const [input, init] = fetcher.mock.calls.find((call) => new URL(String(call[0])).pathname === '/search') || [];
     const url = new URL(String(input));
-    expect(url.pathname).toBe('/search.json');
-    expect(url.searchParams.get('q')).toBe('keyword order:latest_topic');
-    expect(url.searchParams.get('type_filter')).toBe('topic');
+    expect(url.pathname).toBe('/search');
+    expect(url.searchParams.get('q')).toBe('keyword');
+    expect(url.searchParams.get('page')).toBe('1');
+    expect(url.searchParams.has('type_filter')).toBe(false);
     expect(init).toEqual(expect.objectContaining({
       headers: expect.objectContaining({
         Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
-        'User-Agent': 'LinuxDo WebView UA'
+        'Discourse-Logged-In': 'true',
+        Referer: 'https://linux.do/search?expanded=true&q=keyword',
+        'User-Agent': 'LinuxDo WebView UA',
+        'X-CSRF-Token': 'csrf-token',
+        'X-Requested-With': 'XMLHttpRequest'
       })
     }));
   });

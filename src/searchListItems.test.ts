@@ -29,10 +29,8 @@ describe('Android search list items', () => {
     const items = buildSearchListItems({
       busy: false,
       expandedGroups: { linuxdo: true },
-      filteredResults: [],
       groups,
-      query: 'test',
-      remote: true
+      query: 'test'
     });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'topic', 'topic', 'groupLoadMore']);
@@ -49,10 +47,8 @@ describe('Android search list items', () => {
     const items = buildSearchListItems({
       busy: false,
       expandedGroups: { linuxdo: false },
-      filteredResults: [],
       groups,
-      query: 'test',
-      remote: true
+      query: 'test'
     });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader']);
