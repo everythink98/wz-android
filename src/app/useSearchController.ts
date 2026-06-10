@@ -59,6 +59,7 @@ export function useSearchController({
   loadYaohuoCookieForSource,
   nodeSeekUserAgentRef,
   notify,
+  onNodeSeekSearchVerificationRequired,
   readerData,
   showNodeSeekVerification,
   showYaohuoLogin
@@ -69,6 +70,7 @@ export function useSearchController({
   loadYaohuoCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
+  onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
   readerData: ReaderData;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
@@ -146,6 +148,14 @@ export function useSearchController({
     searchGroupsRef.current = [];
     setSearchBusy(false);
   }, [searchQuery, searchScope, searchSource]);
+
+  const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
+    if (onNodeSeekSearchVerificationRequired) {
+      onNodeSeekSearchVerificationRequired(message, retry);
+      return;
+    }
+    showNodeSeekVerification(message);
+  }, [onNodeSeekSearchVerificationRequired, showNodeSeekVerification]);
 
   const runRemoteSearchSource = useCallback(async (
     source: Source,
@@ -265,7 +275,7 @@ export function useSearchController({
         setSearchItems(mergedItems);
         const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
         if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
-          showNodeSeekVerification(nodeSeekError);
+          requireNodeSeekSearchVerification(nodeSeekError, () => { void runSearchRef.current?.('nodeseek'); });
           return;
         }
         const errors = nextGroups.filter((group) => group.error);
@@ -285,7 +295,8 @@ export function useSearchController({
           return;
         }
         if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
+          const message = errorMessage(error);
+          requireNodeSeekSearchVerification(message, () => { void runSearchRef.current?.('nodeseek'); });
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -303,12 +314,12 @@ export function useSearchController({
     clearYaohuoLoginState,
     notify,
     readerData,
+    requireNodeSeekSearchVerification,
     runRemoteSearchSource,
     searchQuery,
     searchScope,
     searchSort,
     searchSource,
-    showNodeSeekVerification,
     showYaohuoLogin
   ]);
 
@@ -354,7 +365,7 @@ export function useSearchController({
       setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));
       const updated = nextGroups.find((group) => group.source === source);
       if (updated?.error && source === 'nodeseek' && /Cloudflare|验证/.test(updated.error)) {
-        showNodeSeekVerification(updated.error);
+        requireNodeSeekSearchVerification(updated.error, () => { void runSearchRef.current?.('nodeseek'); });
         return;
       }
       notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
@@ -373,7 +384,7 @@ export function useSearchController({
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [notify, runRemoteSearchSource, searchQuery, searchScope, searchSort, searchSource, showNodeSeekVerification]);
+  }, [notify, requireNodeSeekSearchVerification, runRemoteSearchSource, searchQuery, searchScope, searchSort, searchSource]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;

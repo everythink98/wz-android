@@ -140,6 +140,7 @@ export function AppRoot() {
   const linuxDoPendingReopenTaskRef = useRef<DeferredNavigationTask | null>(null);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
+  const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const nodeSeekBrowserFetchIdRef = useRef(0);
@@ -523,6 +524,9 @@ export function AppRoot() {
 
   const changeNodeSeekLoginPanel = useCallback((visible: boolean) => {
     nodeSeekLoginPanelRequestRef.current += 1;
+    if (!visible) {
+      pendingNodeSeekSearchRetryRef.current = null;
+    }
     webViewRef.current?.stopLoading();
     setLoadingLoginPage(visible);
     setShowLoginPanel(visible);
@@ -590,6 +594,11 @@ export function AppRoot() {
     updateLinuxDoSession,
     updateNodeSeekSession
   });
+
+  const handleNodeSeekSearchVerificationRequired = useCallback((message: string, retry: () => void) => {
+    pendingNodeSeekSearchRetryRef.current = retry;
+    showNodeSeekVerification(message);
+  }, [showNodeSeekVerification]);
 
   const {
     checkLogin,
@@ -700,6 +709,7 @@ export function AppRoot() {
     loadYaohuoCookieForSource,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
+    onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
     readerData,
     showNodeSeekVerification,
     showYaohuoLogin
@@ -774,6 +784,21 @@ export function AppRoot() {
     }
     setScreen(nextScreen);
   }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, invalidateTopicActionRequests, screen]);
+
+  const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback(async (options?: { silent?: boolean }) => {
+    const saved = await rememberVisibleNodeSeekCookies(options);
+    if (!saved) {
+      return false;
+    }
+    const retryPendingNodeSeekSearch = pendingNodeSeekSearchRetryRef.current;
+    if (retryPendingNodeSeekSearch) {
+      pendingNodeSeekSearchRetryRef.current = null;
+      changeNodeSeekLoginPanel(false);
+      changeScreen('search');
+      retryPendingNodeSeekSearch();
+    }
+    return true;
+  }, [changeNodeSeekLoginPanel, changeScreen, rememberVisibleNodeSeekCookies]);
 
   const { restoreTopicSnapshot, topicSnapshot } = useTopicNavigationController({
     clearTopicScrollRestoreTimer,
@@ -1291,7 +1316,7 @@ export function AppRoot() {
       onCheckHealth: checkLocalStatus,
       onCheckIn: checkIn,
       onCheckLogin: checkLogin,
-      onRememberNodeSeekCookies: rememberVisibleNodeSeekCookies,
+      onRememberNodeSeekCookies: rememberVisibleNodeSeekCookiesAndRetrySearch,
       onCheckYaohuoLogin: checkYaohuoCookie,
       onRefreshLinuxDoLevel: refreshLinuxDoLevel,
       onClearLogin: clearLogin,

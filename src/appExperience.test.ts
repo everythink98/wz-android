@@ -999,11 +999,30 @@ describe('Android App experience guards', () => {
     expect(moreUiSource).toContain('userAgent={nodeSeekWebViewUserAgent}');
   });
 
+  it('retries the pending NodeSeek search after verification cookies are saved', () => {
+    const runSearchBlock = searchControllerSource.match(/const runSearch = useCallback[\s\S]*?\n\n  const loadMoreSearchSource/)?.[0] || '';
+    const rememberAndRetryBlock = appSource.match(/const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback\(async[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const nodeSeekPanelToggleBlock = appSource.match(/const changeNodeSeekLoginPanel = useCallback\(\(visible: boolean\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/)?.[0] || '';
+    const renderMoreBlock = appSource.match(/moreProps: \{[\s\S]*?\n    \},\n    moreScrollRef/)?.[0] || '';
+
+    expect(appSource).toContain('const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);');
+    expect(searchControllerSource).toContain('onNodeSeekSearchVerificationRequired');
+    expect(runSearchBlock).toContain("requireNodeSeekSearchVerification(nodeSeekError, () => { void runSearchRef.current?.('nodeseek'); });");
+    expect(rememberAndRetryBlock).toContain('const retryPendingNodeSeekSearch = pendingNodeSeekSearchRetryRef.current;');
+    expect(rememberAndRetryBlock).toContain('pendingNodeSeekSearchRetryRef.current = null;');
+    expect(rememberAndRetryBlock).toContain('changeNodeSeekLoginPanel(false);');
+    expect(rememberAndRetryBlock).toContain("changeScreen('search');");
+    expect(rememberAndRetryBlock).toContain('retryPendingNodeSeekSearch();');
+    expect(nodeSeekPanelToggleBlock).toContain('if (!visible) {');
+    expect(nodeSeekPanelToggleBlock).toContain('pendingNodeSeekSearchRetryRef.current = null;');
+    expect(renderMoreBlock).toContain('onRememberNodeSeekCookies: rememberVisibleNodeSeekCookiesAndRetrySearch');
+  });
+
   it('saves NodeSeek WebView verification cookies before returning to lists', () => {
     expect(accountControllerSource).toContain('readNodeSeekCookiesFromWebView');
     expect(accountControllerSource).toContain('rememberCurrentNodeSeekCookies');
     expect(appSource).toContain('rememberVisibleNodeSeekCookies');
-    expect(appSource).toContain('onRememberNodeSeekCookies: rememberVisibleNodeSeekCookies');
+    expect(appSource).toContain('onRememberNodeSeekCookies: rememberVisibleNodeSeekCookiesAndRetrySearch');
     expect(accountControllerSource).toContain('showLoginPanelRef.current && nodeSeekLoginPanelRequestRef.current === requestId');
     expect(appSource).toContain('nodeSeekWebViewCookieHeaderRef');
     expect(appSource).toContain('nodeSeekWebViewUserAgentRef');
@@ -1147,13 +1166,14 @@ describe('Android App experience guards', () => {
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
     expect(hiddenBrowserFetchControllerSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
     expect(hiddenBrowserFetchControllerSource).toContain('document.body?.innerText');
-    expect(hiddenBrowserFetchControllerSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+    expect(hiddenBrowserFetchControllerSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+    expect(hiddenBrowserFetchControllerSource).toContain('const hasSearchPageContent = () => /\\\\/search\\\\/?$/i.test(location.pathname || "")');
   });
 
   it('returns hidden NodeSeek WebView HTML when a restricted notice is rendered without post content', () => {
     expect(hiddenBrowserFetchControllerSource).toContain('const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText())');
     expect(hiddenBrowserFetchControllerSource).toContain('hasRestrictedNotice()');
-    expect(hiddenBrowserFetchControllerSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
+    expect(hiddenBrowserFetchControllerSource).toContain('if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent()) && !hasPendingVotePanel()) || Date.now() >= deadline) {');
   });
 
   it('lets NodeSeek detail WebView fallback finish before the outer request timeout', () => {

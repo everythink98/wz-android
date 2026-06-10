@@ -14,6 +14,9 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
     || /^\\s*[{[]/.test(pageText());
+  const hasSearchPageContent = () => /\\/search\\/?$/i.test(location.pathname || "")
+    && (Boolean(document.querySelector('form[action*="search"], input[name="q"], input[type="search"]'))
+      || /搜索|没有找到|没有结果|暂无|no results|search/i.test(pageText()));
   const hasPendingVotePanel = () => {
     const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
       const style = window.getComputedStyle(element);
@@ -46,7 +49,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
-    if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice()) && !hasPendingVotePanel()) || Date.now() >= deadline) {
+    if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent()) && !hasPendingVotePanel()) || Date.now() >= deadline) {
       postResult();
       return;
     }
