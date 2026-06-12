@@ -90,6 +90,25 @@ describe('Android direct yaohuo API', () => {
     expect(result.items.map((item) => item.id)).toEqual(['321', '322']);
   });
 
+  it('keeps the selected yaohuo board on search results when the result link omits classid', async () => {
+    const yaohuoFetcher = vi.fn(async () => new Response(`
+      <div class="listdata"><a href="/bbs-321.html">妖火茶馆搜索结果</a>/alice/阅1/05-20 10:00</div>
+    `));
+
+    const result = await searchYaohuoDirect({
+      query: '茶馆',
+      category: '177',
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    expect(result.items[0]).toMatchObject({
+      id: '321',
+      categoryId: '177',
+      category: '妖火茶馆'
+    });
+  });
+
   it('keeps yaohuo search results in the official page order while parsing times', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));

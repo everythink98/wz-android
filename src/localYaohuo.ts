@@ -729,8 +729,8 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
   };
 }
 
-export function parseYaohuoSearchHtml(html: string, options: { page?: number; limit?: number; url?: string } = {}): SearchResponse {
-  const result = parseYaohuoListHtml(html, { ...options, classId: '0', preserveOrder: true });
+export function parseYaohuoSearchHtml(html: string, options: { classId?: string; page?: number; limit?: number; url?: string } = {}): SearchResponse {
+  const result = parseYaohuoListHtml(html, { ...options, classId: options.classId || '0', preserveOrder: true });
   return {
     items: result.items,
     errors: result.errors,

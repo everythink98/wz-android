@@ -6,6 +6,11 @@ import {
   sortTopicsByCreatedAt,
   type SearchSort
 } from '../feedLogic';
+import {
+  DEFAULT_SEARCH_FILTERS,
+  type SearchFilterState,
+  type SourceSearchFilter
+} from '../searchFilters';
 import { searchTopics, searchYaohuoDirect } from '../sources/sourceGateway';
 import {
   errorMessage,
@@ -19,7 +24,7 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
-import type { FeedSource, Source, Topic } from '../types';
+import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
@@ -41,15 +46,16 @@ function mergeSearchGroupsToItems(groups: SearchGroup[], searchSource: FeedSourc
   return searchSource === 'all' ? sortTopicsByCreatedAt(merged) : merged;
 }
 
-function remoteSearchSort(searchSource: FeedSource, searchSort: SearchSort) {
+function remoteSearchSort(searchSource: FeedSource, searchFilters: SearchFilterState) {
   return searchSource === 'all'
     ? 'time'
-    : searchSource === 'v2ex' && searchSort === 'time'
-      ? searchSort
+    : searchSource === 'v2ex' && searchFilters.v2ex.sort === 'time'
+      ? searchFilters.v2ex.sort
       : 'relevance';
 }
 
 export function useSearchController({
+  categories,
   clearYaohuoLoginState,
   fetcher,
   loadNodeSeekCookieForSource,
@@ -60,6 +66,7 @@ export function useSearchController({
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
+  categories: Category[];
   clearYaohuoLoginState: () => Promise<void>;
   fetcher: Fetcher;
   loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
@@ -75,11 +82,14 @@ export function useSearchController({
   const searchAbortRef = useRef<AbortController | null>(null);
   const searchGroupsRef = useRef<SearchGroup[]>([]);
   const searchQueryRef = useRef('');
+  const submittedSearchQueryRef = useRef('');
+  const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const runSearchRef = useRef<((sourceOverride?: Source) => Promise<void>) | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [submittedSearchQuery, setSubmittedSearchQuery] = useState('');
   const [searchSource, setSearchSource] = useState<FeedSource>('all');
-  const [searchSort, setSearchSort] = useState<SearchSort>('relevance');
+  const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const [searchItems, setSearchItems] = useState<Topic[]>([]);
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
@@ -134,14 +144,28 @@ export function useSearchController({
     });
   }, []);
 
-  useEffect(() => {
+  const clearSearchResults = useCallback(() => {
     searchRequestIdRef.current += 1;
     searchAbortRef.current?.abort();
     setSearchItems([]);
     setSearchGroups([]);
     searchGroupsRef.current = [];
     setSearchBusy(false);
-  }, [searchQuery, searchSource]);
+  }, []);
+
+  useEffect(() => {
+    const cleanQuery = searchQuery.trim();
+    if (cleanQuery && cleanQuery === submittedSearchQueryRef.current) {
+      return;
+    }
+    clearSearchResults();
+    submittedSearchQueryRef.current = '';
+    setSubmittedSearchQuery('');
+  }, [clearSearchResults, searchQuery]);
+
+  useEffect(() => {
+    clearSearchResults();
+  }, [clearSearchResults, searchSource]);
 
   const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
     if (onNodeSeekSearchVerificationRequired) {
@@ -157,9 +181,11 @@ export function useSearchController({
     page: number,
     signal: AbortSignal,
     sort: SearchSort = 'relevance',
+    filter?: SourceSearchFilter,
     options?: { isCurrent?: () => boolean }
   ): Promise<SearchGroup> => {
     try {
+      const activeFilter = filter?.source === source ? filter : undefined;
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
         loadYaohuoCookieForSource(source),
         loadNodeSeekCookieForSource(source)
@@ -169,16 +195,25 @@ export function useSearchController({
       }
       const searchLimit = source === 'linuxdo' ? 50 : 30;
       const data = source === 'yaohuo'
-        ? await searchYaohuoDirect({ query, page, limit: searchLimit, yaohuoCookie, signal })
+        ? await searchYaohuoDirect({
+          query,
+          page,
+          limit: searchLimit,
+          category: activeFilter?.source === 'yaohuo' ? activeFilter.category : undefined,
+          yaohuoCookie,
+          signal
+        })
         : await searchTopics({
           query,
           source,
           page,
           limit: searchLimit,
+          categories,
           fetcher,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           sort: source === 'v2ex' ? sort : 'relevance',
+          filter: activeFilter,
           signal
         });
       return {
@@ -204,7 +239,7 @@ export function useSearchController({
       }
       return { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null };
     }
-  }, [clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef]);
+  }, [categories, clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef]);
 
   const runSearch = useCallback(async (sourceOverride?: Source) => {
     const query = searchQuery.trim();
@@ -212,16 +247,22 @@ export function useSearchController({
       notify('请输入搜索词');
       return;
     }
+    submittedSearchQueryRef.current = query;
+    setSubmittedSearchQuery(query);
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || searchSource}:${query}:${searchSort}`);
+    const activeFilter = searchSource === 'all'
+      ? undefined
+      : searchFiltersRef.current[(sourceOverride || searchSource) as Source];
+    const requestFilter = searchSource === 'all' ? undefined : activeFilter;
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || searchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     const activeSources = sourceOverride
       ? [sourceOverride]
       : searchSource === 'all'
         ? feedSources
         : [searchSource as Source];
-    const activeSort = remoteSearchSort(searchSource, searchSort);
+    const activeSort = remoteSearchSort(searchSource, searchFiltersRef.current);
     if (sourceOverride) {
       const nextGroups = searchGroupsRef.current.map((group) => (
         group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }
@@ -238,7 +279,7 @@ export function useSearchController({
     try {
       addRecentSearch(query);
       await Promise.all(activeSources.map(async (source) => {
-        const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, { isCurrent: () => isCurrentSearchRequest() });
+        const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, requestFilter, { isCurrent: () => isCurrentSearchRequest() });
         if (!isCurrentSearchRequest()) {
           return;
         }
@@ -301,7 +342,6 @@ export function useSearchController({
     requireNodeSeekSearchVerification,
     runRemoteSearchSource,
     searchQuery,
-    searchSort,
     searchSource,
     showYaohuoLogin
   ]);
@@ -322,11 +362,12 @@ export function useSearchController({
     setSearchGroups(markedGroups);
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search-more:${source}:${query}:${page}:${searchSort}`);
+    const activeFilter = searchSource === 'all' ? undefined : searchFiltersRef.current[source];
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search-more:${source}:${query}:${page}:${JSON.stringify(activeFilter || {})}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     setSearchBusy(true);
     try {
-      const data = await runRemoteSearchSource(source, query, page, controller.signal, remoteSearchSort(searchSource, searchSort), { isCurrent: () => isCurrentSearchRequest() });
+      const data = await runRemoteSearchSource(source, query, page, controller.signal, remoteSearchSort(searchSource, searchFiltersRef.current), activeFilter, { isCurrent: () => isCurrentSearchRequest() });
       if (!isCurrentSearchRequest()) {
         return;
       }
@@ -367,25 +408,33 @@ export function useSearchController({
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [notify, requireNodeSeekSearchVerification, runRemoteSearchSource, searchQuery, searchSort, searchSource]);
+  }, [notify, requireNodeSeekSearchVerification, runRemoteSearchSource, searchQuery, searchSource]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;
     runSearchRef.current = runSearch;
   }, [runSearch, searchQuery]);
 
-  useEffect(() => {
-    if (searchSource !== 'v2ex') {
-      setSearchSort('relevance');
+  const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {
+    const nextFilters = {
+      ...searchFiltersRef.current,
+      [source]: filter
+    };
+    searchFiltersRef.current = nextFilters;
+    setSearchFilters(nextFilters);
+    const cleanQuery = searchQueryRef.current.trim();
+    if (searchSource === source && cleanQuery) {
+      void runSearchRef.current?.();
     }
   }, [searchSource]);
 
   useEffect(() => {
-    if (!searchQueryRef.current.trim()) {
+    const cleanQuery = searchQueryRef.current.trim();
+    if (!cleanQuery || cleanQuery !== submittedSearchQueryRef.current) {
       return;
     }
     void runSearchRef.current?.();
-  }, [searchSource, searchSort]);
+  }, [searchSource]);
 
   const retrySearchSource = useCallback((source: Source) => {
     void runSearch(source);
@@ -399,18 +448,19 @@ export function useSearchController({
 
   return {
     abortSearchRequests,
+    applySearchFilter,
     loadMoreSearchSource,
     recentSearches,
     removeRecentSearch,
     retrySearchSource,
     runSearch,
     searchBusy,
+    searchFilters,
     searchGroups,
     searchQuery,
-    searchSort,
     searchSource,
+    submittedSearchQuery,
     setSearchQuery,
-    setSearchSort,
     setSearchSource,
     visibleSearchItems
   };

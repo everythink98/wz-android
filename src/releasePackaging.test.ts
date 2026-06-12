@@ -17,6 +17,16 @@ describe('Android release packaging', () => {
     expect(gradle).not.toContain('armeabi-v7a');
   });
 
+  it('regenerates Android config before release so app.json version reaches the APK', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);");
+    const assembleIndex = releaseScript.indexOf("':app:assembleRelease'");
+
+    expect(prebuildIndex).toBeGreaterThanOrEqual(0);
+    expect(assembleIndex).toBeGreaterThan(prebuildIndex);
+    expect(releaseScript).not.toContain('if (!fs.existsSync(gradleFile))');
+  });
+
   it('keeps formal signing optional and outside generated Android files', () => {
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 

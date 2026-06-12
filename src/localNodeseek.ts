@@ -3,6 +3,7 @@ import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
+import type { NodeSeekSearchFilter } from './searchFilters';
 import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   absoluteUrl,
@@ -660,8 +661,14 @@ function extractNodeSeekJsonText(text: string) {
   return elementText(root.querySelector('body')).trim() || trimmed;
 }
 
-function searchPath(query: string, page = 1) {
+function searchPath(query: string, page = 1, filter?: NodeSeekSearchFilter) {
   const params = new URLSearchParams({ q: query });
+  if (filter?.category.trim()) {
+    params.set('category', filter.category.trim());
+  }
+  if (filter?.sort) {
+    params.set('sortBy', filter.sort);
+  }
   if (page > 1) {
     params.set('page', String(page));
   }
@@ -1222,7 +1229,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   };
 }
 
-export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
+export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number; page?: number; filter?: NodeSeekSearchFilter } = {}): Promise<SearchResponse> {
   const trimmedQuery = query.trim();
   const limit = options.limit || 30;
   const page = options.page || 1;
@@ -1233,7 +1240,7 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   let items: Topic[] = [];
   let nextPage: number | null = null;
   try {
-    const html = await fetchNodeSeekText(searchPath(trimmedQuery, page), options);
+    const html = await fetchNodeSeekText(searchPath(trimmedQuery, page, options.filter), options);
     items = parseNodeSeekSearchTopics(html);
     nextPage = page < MAX_NODESEEK_SEARCH_PAGES && nextSearchPath(html, page + 1) ? page + 1 : null;
   } catch (error) {

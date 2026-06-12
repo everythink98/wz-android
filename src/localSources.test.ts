@@ -1301,6 +1301,28 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('keyword=GPT');
   });
 
+  it('keeps NodeSeek site search enabled for short AI terms', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=AI')) {
+        return html(`
+          <ul class="post-list">
+            <li class="post-list-item">
+              <div class="post-title"><a href="/post-808-1">AI current search result</a></div>
+              <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+            </li>
+          </ul>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'AI', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['808']);
+    const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
+    expect(calls).toContain('https://www.nodeseek.com/search?q=AI');
+  });
+
   it('keeps official NodeSeek search results even when they do not contain the full query text', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/search?') && input.includes('q=%E5%AE%89%E5%8D%93%E6%89%8B%E6%9C%BA%E5%85%8D')) {
@@ -1774,6 +1796,37 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
+  });
+
+  it('reads every NodeSeek search page through the WebView fallback', async () => {
+    const normalFetcher = vi.fn(async () => html('<main>NodeSeek search for post</main><ul class="post-list"></ul>'));
+    const webViewFetcher = vi.fn(async (input: string) => {
+      const query = new URL(input).searchParams.get('q') || '';
+      const id = query.toLowerCase() === 'ai' ? '809' : '810';
+      return html(`
+        <ul class="post-list">
+          <li class="post-list-item">
+            <div class="post-title"><a href="/post-${id}-1">${query} WebView search result</a></div>
+            <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+          </li>
+        </ul>
+      `);
+    });
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const aiSearch = await searchTopics({ source: 'nodeseek', query: 'ai', fetcher });
+    const codexSearch = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher });
+
+    expect(aiSearch.items.map((item) => item.id)).toEqual(['809']);
+    expect(codexSearch.items.map((item) => item.id)).toEqual(['810']);
+    expect(normalFetcher).not.toHaveBeenCalled();
+    expect(webViewFetcher).toHaveBeenCalledTimes(2);
+    const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=ai');
+    expect(webViewCalls[1]?.[0]).toBe('https://www.nodeseek.com/search?q=codex');
   });
 
   it('reads rendered NodeSeek WebView rows without picking footer post links', async () => {
@@ -2571,15 +2624,80 @@ describe('Android local sources', () => {
     expect(timeUrl.searchParams.get('order')).toBe('0');
   });
 
-  it('does not add unsupported sort parameters to NodeSeek searches', async () => {
+  it('passes V2EX site filters through real SOV2EX parameters', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-11T10:00:00+08:00'));
+    const fetcher = vi.fn(async () => json({ hits: [] }));
+    try {
+      await searchTopics({
+        source: 'v2ex',
+        query: 'gpt',
+        filter: {
+          source: 'v2ex',
+          sort: 'time',
+          node: 'qna',
+          username: 'neo',
+          operator: 'and',
+          timeRange: 'week'
+        },
+        fetcher
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const url = new URL((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0] || '');
+    expect(url.searchParams.get('sort')).toBe('created');
+    expect(url.searchParams.get('order')).toBe('0');
+    expect(url.searchParams.get('node')).toBe('qna');
+    expect(url.searchParams.get('username')).toBe('neo');
+    expect(url.searchParams.get('operator')).toBe('and');
+    expect(url.searchParams.get('gte')).toBe(String(Math.floor(new Date('2026-06-04T02:00:00.000Z').getTime() / 1000)));
+  });
+
+  it('passes linux.do site filters through Discourse search syntax', async () => {
+    const fetcher = vi.fn(async () => json({ topics: [], posts: [] }));
+
+    await searchTopics({
+      source: 'linuxdo',
+      query: 'AI',
+      categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
+      filter: {
+        source: 'linuxdo',
+        scope: 'title',
+        category: '4',
+        tags: '人工智能',
+        username: 'alice',
+        timeRange: 'all',
+        order: 'latest'
+      },
+      fetcher
+    });
+
+    const url = new URL((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0] || '');
+    expect(url.searchParams.get('q')).toBe('AI in:title category:dev tags:人工智能 @alice order:latest');
+  });
+
+  it('passes NodeSeek real post/comment sort parameters through site search', async () => {
     const fetcher = vi.fn(async () => html('<ul class="post-list"></ul>'));
 
-    await searchTopics({ source: 'nodeseek', query: 'GPT', sort: 'time', fetcher });
+    await searchTopics({
+      source: 'nodeseek',
+      query: 'GPT',
+      filter: {
+        source: 'nodeseek',
+        category: 'tech',
+        sort: 'postTime'
+      },
+      fetcher
+    });
 
     expect(fetcher.mock.calls.length).toBeGreaterThan(0);
     const calls = fetcher.mock.calls as unknown as Array<[string, unknown?]>;
     const url = new URL(calls[0]?.[0] || '');
     expect(url.searchParams.get('q')).toBe('GPT');
+    expect(url.searchParams.get('category')).toBe('tech');
+    expect(url.searchParams.get('sortBy')).toBe('postTime');
     expect(url.searchParams.has('sort')).toBe(false);
     expect(url.searchParams.has('order')).toBe(false);
   });

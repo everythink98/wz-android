@@ -1,11 +1,9 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
-const gradleFile = path.join(androidDir, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -20,9 +18,7 @@ function run(command, args, options = {}) {
   }
 }
 
-if (!fs.existsSync(gradleFile)) {
-  run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);
-}
+run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);
 
 run(
   process.platform === 'win32' ? 'gradlew.bat' : './gradlew',

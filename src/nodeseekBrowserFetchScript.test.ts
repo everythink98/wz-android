@@ -43,6 +43,22 @@ describe('NodeSeek hidden browser fetch script', () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it('waits for NodeSeek search results instead of returning the bare search form', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=ai', `
+        <main>
+          <form action="/search"><input name="q" value="ai" /></form>
+        </main>
+      `);
+
+      expect(postMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('does not treat Cloudflare challenge search pages as readable results', () => {
     const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=plasma%E6%95%99%E7%A8%8B', `
       <main>

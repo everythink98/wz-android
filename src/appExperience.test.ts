@@ -27,6 +27,7 @@ const loginWebViewModalSource = readProjectFile('src', 'components', 'LoginWebVi
 const feedScreenSource = readProjectFile('src', 'screens', 'FeedScreen.tsx');
 const searchScreenSource = readProjectFile('src', 'screens', 'SearchScreen.tsx');
 const searchListItemsSource = readProjectFile('src', 'searchListItems.ts');
+const searchFiltersSource = readProjectFile('src', 'searchFilters.ts');
 const libraryScreenSource = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
 const libraryItemsSource = readProjectFile('src', 'screens', 'library', 'libraryScreenItems.ts');
 const libraryUiSource = readLibraryRuntimeSource();
@@ -330,10 +331,12 @@ describe('Android App experience guards', () => {
   });
 
   it('clears search loading when search parameters cancel the active request', () => {
-    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchSource\]\);/)?.[0] || '';
+    const block = searchControllerSource.match(/const clearSearchResults = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[\]\);/)?.[0] || '';
 
     expect(block).toContain('searchRequestIdRef.current += 1;');
     expect(block).toContain('searchAbortRef.current?.abort();');
+    expect(block).toContain('setSearchItems([]);');
+    expect(block).toContain('setSearchGroups([]);');
     expect(block).toContain('setSearchBusy(false);');
   });
 
@@ -377,20 +380,34 @@ describe('Android App experience guards', () => {
     expect(loadFeedBlock).toContain('refreshing: false');
   });
 
-  it('cancels stale search requests when the query or source changes', () => {
-    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*searchRequestIdRef\.current \+= 1;[\s\S]*?\n  \}, \[searchQuery, searchSource\]\);/)?.[0] || '';
+  it('cancels stale search requests when the draft query changes to a new term', () => {
+    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*const cleanQuery = searchQuery\.trim\(\);[\s\S]*?\n  \}, \[clearSearchResults, searchQuery\]\);/)?.[0] || '';
 
-    expect(block).toContain('searchRequestIdRef.current += 1;');
-    expect(block).toContain('searchAbortRef.current?.abort();');
-    expect(block).toContain('setSearchItems([]);');
+    expect(block).toContain('if (cleanQuery && cleanQuery === submittedSearchQueryRef.current) {');
+    expect(block).toContain('clearSearchResults();');
+    expect(block).toContain("submittedSearchQueryRef.current = '';");
+    expect(block).toContain("setSubmittedSearchQuery('');");
     expect(block).not.toContain('setBusy(false);');
   });
 
-  it('reruns Android search with the current query when switching search tabs', () => {
-    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*if \(!searchQueryRef\.current\.trim\(\)\) \{\s*\n\s*return;\s*\n\s*}\s*\n\s*void runSearchRef\.current\?\.\(\);\s*\n\s*}, \[searchSource, searchSort\]\);/)?.[0] || '';
+  it('reruns Android search on source changes only for the submitted query', () => {
+    const block = searchControllerSource.match(/useEffect\(\(\) => \{\s*\n\s*const cleanQuery = searchQueryRef\.current\.trim\(\);[\s\S]*?\n  \}, \[searchSource\]\);/)?.[0] || '';
 
+    expect(searchControllerSource).toContain('const [submittedSearchQuery, setSubmittedSearchQuery] = useState');
+    expect(searchControllerSource).toContain('const submittedSearchQueryRef = useRef');
     expect(searchControllerSource).toContain('runSearchRef.current = runSearch;');
+    expect(block).toContain('if (!cleanQuery || cleanQuery !== submittedSearchQueryRef.current) {');
     expect(block).toContain('void runSearchRef.current?.();');
+    expect(searchControllerSource).not.toContain('setSearchSort');
+  });
+
+  it('treats search filter confirmation as an explicit search action', () => {
+    const block = searchControllerSource.match(/const applySearchFilter = useCallback\(\(source: Source, filter: SourceSearchFilter\) => \{[\s\S]*?\n  \}, \[searchSource\]\);/)?.[0] || '';
+
+    expect(block).toContain('const cleanQuery = searchQueryRef.current.trim();');
+    expect(block).toContain('if (searchSource === source && cleanQuery) {');
+    expect(block).toContain('void runSearchRef.current?.();');
+    expect(block).not.toContain('cleanQuery === submittedSearchQueryRef.current');
   });
 
   it('keeps recent search callbacks independent from recent search state changes', () => {
@@ -470,7 +487,8 @@ describe('Android App experience guards', () => {
   });
 
   it('offers linux.do external search shortcuts on the Android search screen', () => {
-    expect(searchScreenSource).toContain('linuxDoExternalSearchItems(query)');
+    expect(searchScreenSource).toContain('linuxDoExternalSearchItems(searchTerm)');
+    expect(searchScreenSource).toContain('hasSubmittedQuery && (searchSource === \'all\' || searchSource === \'linuxdo\')');
     expect(searchScreenSource).toContain('linux.do 老帖');
     expect(searchScreenSource).toContain('linuxDoExternalItems.map');
     expect(searchScreenSource).toContain('onOpenExternalUrl(item.url)');
@@ -485,34 +503,74 @@ describe('Android App experience guards', () => {
     expect(htmlLinkBlock).toContain('onOpenExternalUrl(href);');
   });
 
-  it('offers category filters for Android search results like the mobile web page', () => {
-    expect(searchScreenSource).toContain('searchCategoryOptions');
-    expect(searchListItemsSource).toContain('searchResultCategoryKey(item)');
-    expect(searchScreenSource).toContain('setSearchCategoryFilter');
-    expect(searchScreenSource).toContain('filterSearchGroupsByCategory');
-    expect(searchScreenSource).toContain('buildSearchListItems');
-    expect(searchScreenSource).toContain('data={listItems}');
+  it('replaces Android search result categories with per-site filters', () => {
+    expect(searchScreenSource).toContain('function SearchFilterSheet({');
+    expect(searchScreenSource).toContain('function SearchFilterEntry({');
+    expect(searchScreenSource).toContain("searchSource !== 'all' ? (");
+    expect(searchScreenSource).toContain('onSearchFilterApply');
+    expect(searchScreenSource).toContain('searchFilterSummary(searchSource as Source');
+    expect(searchScreenSource).toContain('horizontal={linuxDoCategoryItems.length > 8}');
+    expect(searchScreenSource).toContain('horizontal={yaohuoCategoryItems.length > 8}');
+    expect(searchScreenSource).not.toContain('searchCategoryOptions');
+    expect(searchScreenSource).not.toContain('setSearchCategoryFilter');
+    expect(searchScreenSource).not.toContain('filterSearchGroupsByCategory');
+    expect(searchScreenSource).not.toContain('分类全部');
   });
 
-  it('resets Android search category filters when the search context changes', () => {
-    const block = searchScreenSource.match(/useEffect\(\(\) => \{\s*\n\s*setSearchCategoryFilter\('all'\);[\s\S]*?\n\s*}, \[query, searchSource, sort\]\);/)?.[0] || '';
+  it('moves V2EX sorting into the site filter sheet instead of a second top rail', () => {
+    const sheetBlock = searchScreenSource.match(/function SearchFilterSheet\([\s\S]*?\n}\n\nfunction SearchFilterEntry/)?.[0] || '';
 
-    expect(block).toContain("setSearchCategoryFilter('all');");
-    expect(searchScreenSource).not.toContain('setSwipeOpenKey');
-    expect(searchScreenSource).not.toContain('setRowSwipeActive');
+    expect(sheetBlock).toContain("source === 'v2ex'");
+    expect(sheetBlock).toContain("label: '相关'");
+    expect(sheetBlock).toContain("label: '按时间'");
+    expect(sheetBlock).toContain("label: '全部关键词'");
+    expect(sheetBlock).toContain("label: '任一关键词'");
+    expect(sheetBlock).toContain('更多筛选');
+    expect(sheetBlock.indexOf('更多筛选')).toBeGreaterThan(sheetBlock.indexOf('label="节点"'));
+    expect(sheetBlock.indexOf('label="作者"')).toBeGreaterThan(sheetBlock.indexOf('更多筛选'));
+    expect(sheetBlock.indexOf('title="关键词关系"')).toBeGreaterThan(sheetBlock.indexOf('更多筛选'));
+    expect(searchScreenSource).not.toContain('const showSearchSort');
+    expect(searchScreenSource).not.toContain('{showSearchSort ? (');
+    expect(searchControllerSource).toContain('function remoteSearchSort(searchSource: FeedSource, searchFilters: SearchFilterState)');
   });
 
-  it('only shows Android search sort filters for sources with real request parameters', () => {
-    expect(searchScreenSource).toContain("const showSearchSort = searchSource === 'v2ex';");
-    expect(searchScreenSource).toContain('{showSearchSort ? (');
-    expect(searchScreenSource).toContain("label: '相关'");
-    expect(searchScreenSource).toContain("label: '按时间'");
-    expect(searchScreenSource).not.toContain("label: '按回复'");
-    expect(searchScreenSource).not.toContain("label: '按浏览'");
-    expect(searchControllerSource).toContain("function remoteSearchSort(searchSource: FeedSource, searchSort: SearchSort)");
-    expect(searchControllerSource).toContain("return searchSource === 'all'");
-    expect(searchControllerSource).toContain("? 'time'");
-    expect(searchControllerSource).toContain('searchSort === \'time\'');
+  it('keeps site filter fields aligned with the real site pages', () => {
+    const sheetBlock = searchScreenSource.match(/function SearchFilterSheet\([\s\S]*?\n}\n\nfunction SearchFilterEntry/)?.[0] || '';
+    const nodeSeekBlock = sheetBlock.match(/\{draftFilter\.source === 'nodeseek' \? \([\s\S]*?\n            \) : null\}/)?.[0] || '';
+    const yaohuoBlock = sheetBlock.match(/\{draftFilter\.source === 'yaohuo' \? \([\s\S]*?\n            \) : null\}/)?.[0] || '';
+    const linuxDoBlock = sheetBlock.match(/\{draftFilter\.source === 'linuxdo' \? \([\s\S]*?\n            \) : null\}/)?.[0] || '';
+
+    expect(nodeSeekBlock).toContain('title="排序"');
+    expect(nodeSeekBlock).toContain('title="分类"');
+    expect(nodeSeekBlock).toContain("label: '新评论'");
+    expect(nodeSeekBlock).toContain("label: '新帖子'");
+    expect(nodeSeekBlock).not.toContain('title="搜索范围"');
+    expect(nodeSeekBlock).not.toContain("label: '全文'");
+    expect(nodeSeekBlock).not.toContain("label: '标题'");
+    expect(sheetBlock).toContain('KeyboardAvoidingView');
+    expect(sheetBlock).toContain("behavior={Platform.OS === 'android' ? 'height' : 'padding'}");
+    expect(yaohuoBlock).toContain('title="版块"');
+    expect(yaohuoBlock).not.toContain('title="时间"');
+    expect(yaohuoBlock).not.toContain('title="排序"');
+    expect(linuxDoBlock).toContain('label="标签"');
+    const nodeSeekFilterType = searchFiltersSource.match(/export type NodeSeekSearchFilter = \{[\s\S]*?\n\};/)?.[0] || '';
+    expect(nodeSeekFilterType).toContain("source: 'nodeseek'");
+    expect(nodeSeekFilterType).toContain('category: string');
+    expect(nodeSeekFilterType).toContain('sort: NodeSeekSearchSort');
+    expect(searchFiltersSource).toContain("tags: ''");
+    expect(searchFiltersSource).toContain("parts.push(`tags:${tags}`);");
+  });
+
+  it('keeps Android search filters per site and applies them through the controller', () => {
+    expect(searchControllerSource).toContain('const [searchFilters, setSearchFilters] = useState<SearchFilterState>');
+    expect(searchControllerSource).toContain('const searchFiltersRef = useRef<SearchFilterState>');
+    expect(searchControllerSource).toContain('const applySearchFilter = useCallback');
+    expect(searchControllerSource).toContain('searchFiltersRef.current = nextFilters;');
+    expect(searchControllerSource).toContain("const requestFilter = searchSource === 'all' ? undefined : activeFilter;");
+    expect(searchControllerSource).toContain("category: activeFilter?.source === 'yaohuo' ? activeFilter.category : undefined");
+    expect(appSource).toContain('categories,');
+    expect(appSource).toContain('searchFilters,');
+    expect(appSource).toContain('onSearchFilterApply: applySearchFilter');
   });
 
   it('uses recent searches and source groups instead of saved-search management', () => {
@@ -527,12 +585,36 @@ describe('Android App experience guards', () => {
   });
 
   it('keeps recent search removal attached to the search chip instead of a separate button', () => {
-    const recentSearchBlock = searchScreenSource.match(/\{recentSearches\.length \? \([\s\S]*?\n      \) : null\}/)?.[0] || '';
+    const recentSearchBlock = searchScreenSource.match(/\{showIdleRecentSearches \? \([\s\S]*?\n      \) : null\}/)?.[0] || '';
 
     expect(recentSearchBlock).toContain('styles.removableChipShell');
     expect(recentSearchBlock).toContain('styles.removableChipClose');
     expect(recentSearchBlock).toContain('accessibilityLabel={`删除最近搜索 ${item}`}');
     expect(recentSearchBlock).not.toContain('IconButton tiny ghost icon={X} label="删除最近搜索"');
+  });
+
+  it('keeps Android search actions inside the input field', () => {
+    const searchInputBlock = searchScreenSource.match(/function SearchInputField\([\s\S]*?\n}\n\nfunction FilterChoiceGroup/)?.[0] || '';
+
+    expect(searchScreenSource).toContain('function SearchInputField({');
+    expect(searchInputBlock).toContain('returnKeyType="search"');
+    expect(searchInputBlock).toContain('onSubmitEditing={onSearch}');
+    expect(searchInputBlock).toContain('style={styles.searchInputIcon}');
+    expect(searchInputBlock).toContain('accessibilityLabel="提交搜索"');
+    expect(searchInputBlock).toContain('onPress={onSearch}');
+    expect(searchInputBlock).toContain('accessibilityLabel="清空搜索关键词"');
+    expect(searchScreenSource).not.toContain('<IconButton icon={X} label="清空"');
+    expect(searchScreenSource).not.toContain('<IconButton icon={Search} label="搜索"');
+    expect(searchScreenSource).not.toContain('clearButtonMode=');
+  });
+
+  it('keeps the Android search screen using the private search input field', () => {
+    const headerBlock = searchScreenSource.match(/const header = \([\s\S]*?\n  \);/)?.[0] || '';
+
+    expect(headerBlock).toContain('<SearchInputField');
+    expect(headerBlock).toContain('query={query}');
+    expect(headerBlock).toContain('onQueryChange={onQueryChange}');
+    expect(headerBlock).toContain('onSearch={onSearch}');
   });
 
   it('updates search result highlighting when the query changes', () => {
@@ -557,22 +639,34 @@ describe('Android App experience guards', () => {
     expect(appSource).not.toContain('onSearch: runSearch');
   });
 
-  it('shows remote search source groups before recent search chips', () => {
-    const groupIndex = searchScreenSource.indexOf('data={listItems}');
-    const recentListIndex = searchScreenSource.indexOf('<Text style={styles.meta}>最近搜索</Text>');
-    const footerIndex = searchScreenSource.indexOf('ListFooterComponent={footer}');
+  it('shows recent searches only before a query is entered', () => {
+    const recentSearchBlock = searchScreenSource.match(/\{showIdleRecentSearches \? \([\s\S]*?\n      \) : null\}/)?.[0] || '';
 
-    expect(groupIndex).toBeGreaterThan(-1);
-    expect(recentListIndex).toBeGreaterThan(-1);
-    expect(footerIndex).toBeGreaterThan(-1);
-    expect(groupIndex).toBeLessThan(footerIndex);
-    expect(footerIndex).toBeGreaterThan(recentListIndex);
+    expect(searchScreenSource).toContain('const hasInputValue = query.length > 0;');
+    expect(searchScreenSource).toContain('const hasSearchTerm = searchTerm.length > 0;');
+    expect(searchScreenSource).toContain('const showIdleRecentSearches = !hasInputValue && recentSearches.length > 0;');
+    expect(recentSearchBlock).toContain('<Text style={styles.meta}>最近搜索</Text>');
+    expect(searchScreenSource).toContain('ListFooterComponent={null}');
   });
 
-  it('does not add a second empty result message below search groups', () => {
+  it('keeps linux.do old-post shortcuts out of the unsubmitted draft state', () => {
+    const linuxDoExternalBlock = searchScreenSource.match(/const linuxDoExternalItems = useMemo[\s\S]*?\n  \), \[[^\]]+\]\);/)?.[0] || '';
+
+    expect(searchScreenSource).toContain('const hasSubmittedQuery = hasSearchTerm && submittedQuery === searchTerm;');
+    expect(linuxDoExternalBlock).toContain('hasSubmittedQuery');
+    expect(linuxDoExternalBlock).toContain('linuxDoExternalSearchItems(searchTerm)');
+    expect(linuxDoExternalBlock).not.toContain('linuxDoExternalSearchItems(query)');
+  });
+
+  it('uses precise Android search empty states', () => {
     const listEmptyBlock = searchScreenSource.match(/ListEmptyComponent=\{[\s\S]*?\}\s*renderItem=\{renderSearchListItem\}/)?.[0] || '';
 
-    expect(listEmptyBlock).toContain('showSearchGroups ? null : busy && query.trim()');
+    expect(listEmptyBlock).toContain('showSearchGroups ? null');
+    expect(listEmptyBlock).toContain("!hasInputValue ? (showIdleRecentSearches ? null : <EmptyText text=\"输入关键词后开始搜索\" styles={styles} />)");
+    expect(listEmptyBlock).toContain("!hasSearchTerm ? <EmptyText text=\"输入关键词后开始搜索\" styles={styles} />");
+    expect(listEmptyBlock).toContain("<EmptyText text=\"按键盘上的搜索键开始\" styles={styles} />");
+    expect(listEmptyBlock).toContain("<EmptyText text=\"暂无搜索结果\" styles={styles} />");
+    expect(listEmptyBlock).not.toContain("query.trim() ? '暂无搜索结果' : '输入关键词后开始搜索'");
   });
 
   it('adds a load-more action to remote search source groups', () => {
@@ -603,7 +697,7 @@ describe('Android App experience guards', () => {
     const runSearchBlock = searchControllerSource.match(/const runSearch = useCallback[\s\S]*?\n\n  const loadMoreSearchSource/)?.[0] || '';
 
     expect(runSearchBlock).toContain('activeSources.map(async (source) => {');
-    expect(runSearchBlock).toContain('const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, { isCurrent: () => isCurrentSearchRequest() });');
+    expect(runSearchBlock).toContain('const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, requestFilter, { isCurrent: () => isCurrentSearchRequest() });');
     expect(runSearchBlock).toContain('currentGroup.source === source ? { ...group, loading: false } : currentGroup');
     expect(runSearchBlock).toContain('setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));');
     expect(runSearchBlock).not.toContain('const groups = await Promise.all(activeSources.map((source) => runRemoteSearchSource');

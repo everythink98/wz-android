@@ -9,6 +9,15 @@ export function isNodeSeekRequestUrl(input: string) {
   }
 }
 
+function isNodeSeekSearchUrl(input: string) {
+  try {
+    const url = new URL(input);
+    return isNodeSeekRequestUrl(input) && url.pathname.replace(/\/+$/, '') === '/search';
+  } catch {
+    return false;
+  }
+}
+
 function isNodeSeekCloudflareResponse(response: Response, bodyText: string) {
   return response.headers.get('cf-mitigated') === 'challenge'
     || /cf-turnstile|challenge-platform/i.test(bodyText)
@@ -41,6 +50,9 @@ export function createNodeSeekWebViewFallbackFetcher({
 }): Fetcher {
   return async (input, init) => {
     const url = String(input);
+    if (isNodeSeekSearchUrl(url)) {
+      return webViewFetcher(url, init);
+    }
     const response = await defaultFetcher(input, init);
     if (!isNodeSeekRequestUrl(url)) {
       return response;

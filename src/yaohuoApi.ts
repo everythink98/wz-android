@@ -157,6 +157,7 @@ export async function searchYaohuoDirect({
   }), cookie, yaohuoFetcher, { signal, timeoutMs });
 
   return parseYaohuoSearchHtml(pageResult.html, {
+    classId: category,
     url: pageResult.url,
     page,
     limit

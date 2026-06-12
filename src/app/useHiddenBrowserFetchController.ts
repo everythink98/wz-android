@@ -9,14 +9,14 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     const challengeText = [document.title || "", document.documentElement?.innerHTML || ""].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
-  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || "").trim();
+  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim();
   const restrictedNoticePattern = /权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|需要等级|requires?[^.]{0,40}(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|minimum (?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|must be (?:at least )?(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|登录后才能|请登录|permission denied|forbidden|private topic|not authorized|you do not have permission|you don't have permission/i;
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
     || /^\\s*[{[]/.test(pageText());
   const hasSearchPageContent = () => /\\/search\\/?$/i.test(location.pathname || "")
-    && (Boolean(document.querySelector('form[action*="search"], input[name="q"], input[type="search"]'))
-      || /搜索|没有找到|没有结果|暂无|no results|search/i.test(pageText()));
+    && (Boolean(document.querySelector(".post-list-item"))
+      || /没有找到|没有结果|暂无|未找到|no results|nothing found/i.test(pageText()));
   const hasPendingVotePanel = () => {
     const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
       const style = window.getComputedStyle(element);

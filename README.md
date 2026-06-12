@@ -37,7 +37,7 @@
 
 **[下载阅坛 Android APK](https://github.com/everythink98/wz-android/releases/latest/download/app-arm64-v8a-release.apk)**
 
-当前版本为 `1.3.1`，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
+当前版本为 `1.3.2`，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
 
 ## 隐私与数据
 

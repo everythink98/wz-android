@@ -391,6 +391,197 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       gap: 7
     },
+    searchInputShell: {
+      minHeight: 46,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingLeft: 12,
+      paddingRight: 6
+    },
+    searchInputIcon: {
+      opacity: 0.76
+    },
+    searchInput: {
+      flex: 1,
+      minWidth: 0,
+      minHeight: 44,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 15,
+      paddingHorizontal: 0,
+      paddingVertical: 0
+    },
+    searchInlineButton: {
+      width: 36,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 18
+    },
+    searchSubmitInlineButton: {
+      backgroundColor: theme.primarySoft
+    },
+    searchFilterEntry: {
+      minHeight: 42,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8,
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 10,
+      paddingVertical: 6
+    },
+    searchFilterEntryIcon: {
+      width: 28,
+      height: 28,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      backgroundColor: theme.primarySoft
+    },
+    searchFilterEntryText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 18
+    },
+    searchFilterEntrySummary: {
+      flex: 1,
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 17
+    },
+    searchFilterModalRoot: {
+      flex: 1,
+      justifyContent: 'flex-end'
+    },
+    searchFilterBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0, 0, 0, 0.32)'
+    },
+    searchFilterSheet: {
+      maxHeight: '82%',
+      gap: 12,
+      backgroundColor: theme.surface,
+      borderTopLeftRadius: 14,
+      borderTopRightRadius: 14,
+      paddingHorizontal: 16,
+      paddingTop: 9,
+      paddingBottom: Platform.OS === 'android' ? 18 : 24
+    },
+    searchFilterHandle: {
+      alignSelf: 'center',
+      width: 36,
+      height: 4,
+      borderRadius: 999,
+      backgroundColor: theme.lineStrong
+    },
+    searchFilterHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 12
+    },
+    searchFilterTitle: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 17,
+      fontWeight: '700',
+      lineHeight: 22
+    },
+    searchFilterBody: {
+      maxHeight: Math.max(320, Math.round(windowHeight * 0.58))
+    },
+    searchFilterBodyInner: {
+      gap: 14,
+      paddingBottom: 4
+    },
+    searchFilterField: {
+      gap: 8
+    },
+    searchFilterLabel: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '700',
+      lineHeight: 18
+    },
+    searchFilterMoreButton: {
+      minHeight: 38,
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 10,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 9,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 12,
+      paddingVertical: 8
+    },
+    searchFilterMoreText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '700',
+      lineHeight: 18
+    },
+    searchFilterOptionWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8
+    },
+    searchFilterOptionRow: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingRight: 4
+    },
+    searchFilterOption: {
+      minHeight: 36,
+      justifyContent: 'center',
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 11,
+      paddingVertical: 3
+    },
+    searchFilterOptionActive: {
+      backgroundColor: theme.mist,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.36 : 0.22)
+    },
+    searchFilterOptionText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 17
+    },
+    searchFilterOptionTextActive: {
+      color: theme.primary,
+      fontWeight: '700'
+    },
+    searchFilterActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 8,
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      paddingTop: 12
+    },
     searchGroupHeader: {
       minHeight: 44,
       alignItems: 'center',

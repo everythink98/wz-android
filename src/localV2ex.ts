@@ -1,5 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from './request';
 import type { SearchSort } from './feedLogic';
+import { searchTimeRangeStartEpoch, type V2exSearchFilter } from './searchFilters';
 import { XMLParser } from 'fast-xml-parser';
 import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
 import {
@@ -738,21 +739,36 @@ function highlightText(highlight: unknown) {
   return '';
 }
 
-export async function searchV2ex(query: string, options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort } = {}): Promise<SearchResponse> {
+export async function searchV2ex(query: string, options: V2exOptions & { limit?: number; page?: number; sort?: SearchSort; filter?: V2exSearchFilter } = {}): Promise<SearchResponse> {
   const limit = options.limit || 30;
   const page = options.page || 1;
   const from = Math.max(0, page - 1) * limit;
+  const activeSort = options.filter?.sort || options.sort;
   const params = new URLSearchParams({
     q: query,
     size: String(limit),
     from: String(from),
     version: '1.0.1'
   });
-  if (options.sort === 'time') {
+  if (activeSort === 'time') {
     params.set('sort', 'created');
     params.set('order', '0');
   } else {
     params.set('sort', 'sumup');
+  }
+  const filter = options.filter;
+  if (filter?.node.trim()) {
+    params.set('node', filter.node.trim());
+  }
+  if (filter?.username.trim()) {
+    params.set('username', filter.username.trim().replace(/^@+/, ''));
+  }
+  if (filter?.operator === 'and') {
+    params.set('operator', 'and');
+  }
+  const gte = filter ? searchTimeRangeStartEpoch(filter.timeRange) : undefined;
+  if (gte !== undefined) {
+    params.set('gte', String(gte));
   }
   const data = await fetchJson<unknown>(`${SOV2EX_URL}/api/search?${params.toString()}`, options);
   const hits = sov2exHits(data);

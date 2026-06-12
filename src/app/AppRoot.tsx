@@ -686,21 +686,23 @@ export function AppRoot() {
   });
 
   const {
+    applySearchFilter,
     loadMoreSearchSource,
     recentSearches,
     removeRecentSearch,
     retrySearchSource,
     runSearch,
     searchBusy,
+    searchFilters,
     searchGroups,
     searchQuery,
-    searchSort,
     searchSource,
+    submittedSearchQuery,
     setSearchQuery,
-    setSearchSort,
     setSearchSource,
     visibleSearchItems
   } = useSearchController({
+    categories,
     clearYaohuoLoginState,
     fetcher: forumFetchWithWebViewFallback,
     loadNodeSeekCookieForSource,
@@ -1247,13 +1249,14 @@ export function AppRoot() {
     },
     searchProps: {
       busy: searchBusy,
+      categories,
       query: searchQuery,
       topicStateIndex,
       recentSearches,
-      results: visibleSearchItems,
+      searchFilters,
       searchGroups,
       searchSource,
-      sort: searchSort,
+      submittedQuery: submittedSearchQuery,
       scrollToTopSignal: tabScrollToTopSignals.search,
       styles,
       theme,
@@ -1263,8 +1266,8 @@ export function AppRoot() {
       onRemoveRecentSearch: removeRecentSearch,
       onQueryChange: setSearchQuery,
       onSearch: () => runSearch(),
+      onSearchFilterApply: applySearchFilter,
       onSearchSourceChange: setSearchSource,
-      onSortChange: setSearchSort,
       onRetrySearchSource: retrySearchSource
     },
     libraryProps: {

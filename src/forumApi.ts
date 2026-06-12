@@ -3,8 +3,10 @@ import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeek
 import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuo';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
+import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
 import type {
   CategoriesResponse,
+  Category,
   FeedResponse,
   FeedSource,
   Reply,
@@ -125,11 +127,12 @@ function filterExcludedSearchItems(items: Topic[], expression: SearchExpression)
   });
 }
 
-function filterSearchItems(response: SearchResponse, query: string, limit: number): SearchResponse {
+function filterSearchItems(response: SearchResponse, query: string, limit: number, filter?: SourceSearchFilter): SearchResponse {
   const expression = parseSearchExpression(query);
+  const scopedItems = filterSearchResponseItems(response.items, filter, query);
   return {
     ...response,
-    items: filterExcludedSearchItems(response.items, expression).slice(0, limit)
+    items: filterExcludedSearchItems(scopedItems, expression).slice(0, limit)
   };
 }
 
@@ -479,10 +482,12 @@ export async function searchTopics({
   query,
   limit = 20,
   page = 1,
+  categories = [],
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
   sort = 'relevance',
+  filter,
   signal,
   timeoutMs
 }: {
@@ -490,10 +495,12 @@ export async function searchTopics({
   query: string;
   limit?: number;
   page?: number;
+  categories?: Category[];
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   sort?: SearchSort;
+  filter?: SourceSearchFilter;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SearchResponse> {
@@ -518,10 +525,23 @@ export async function searchTopics({
       nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
     };
   }
+  const activeFilter = filter?.source === source ? filter : undefined;
   const response = await pickSource(source, {
-    nodeseek: () => searchNodeSeek(adapterQuery, options),
-    linuxdo: () => searchLinuxDo(adapterQuery, options),
-    v2ex: () => searchV2ex(adapterQuery, { ...options, sort })
+    nodeseek: () => searchNodeSeek(adapterQuery, {
+      ...options,
+      filter: activeFilter?.source === 'nodeseek' ? activeFilter : undefined
+    }),
+    linuxdo: () => searchLinuxDo(
+      activeFilter?.source === 'linuxdo'
+        ? buildLinuxDoSearchQuery(adapterQuery, activeFilter, categories)
+        : adapterQuery,
+      options
+    ),
+    v2ex: () => searchV2ex(adapterQuery, {
+      ...options,
+      sort: activeFilter?.source === 'v2ex' ? activeFilter.sort : sort,
+      filter: activeFilter?.source === 'v2ex' ? activeFilter : undefined
+    })
   });
-  return filterSearchItems(response, query, limit);
+  return filterSearchItems(response, query, limit, activeFilter);
 }
