@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import type { Topic } from '../types';
 import { topicKey } from '../readerData';
@@ -45,6 +45,7 @@ function stringArrayValuesEqual(left?: string[], right?: string[]) {
 export function TopicCard({
   highlightQuery = '',
   hideReplyCount = false,
+  renderTrailingAction,
   topic,
   readerState,
   styles,
@@ -53,6 +54,7 @@ export function TopicCard({
 }: {
   highlightQuery?: string;
   hideReplyCount?: boolean;
+  renderTrailingAction?: (topic: Topic) => ReactNode;
   topic: Topic;
   readerState: TopicListItemState;
   styles: ReturnType<typeof createStyles>;
@@ -85,7 +87,10 @@ export function TopicCard({
               <Text style={styles.topicSourceBadge} numberOfLines={1}>{sourceLabel(topic.source)}</Text>
               {topic.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{topic.category}</Text> : null}
             </View>
-            <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topicListDisplayTime(topic))}</Text>
+            <View style={styles.topicCardHeadMeta}>
+              <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topicListDisplayTime(topic))}</Text>
+              {renderTrailingAction ? renderTrailingAction(topic) : null}
+            </View>
           </View>
           <HighlightedText style={styles.cardTitle} highlightStyle={styles.highlightText} numberOfLines={readerState.listDensity === 'loose' ? 3 : 2} text={topic.title || '无标题'} query={highlightQuery} />
           {accessRequirementText ? <Text style={styles.topicAccessBadge}>{accessRequirementText}</Text> : null}
@@ -137,6 +142,7 @@ export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
   && previous.theme === next.theme
   && previous.hideReplyCount === next.hideReplyCount
   && previous.highlightQuery === next.highlightQuery
+  && previous.renderTrailingAction === next.renderTrailingAction
   && previous.onOpenTopic === next.onOpenTopic
   && topicListItemStatesEqual(previous.readerState, next.readerState)
 ));

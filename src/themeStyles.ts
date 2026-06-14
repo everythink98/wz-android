@@ -163,6 +163,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'space-between',
       gap: 10
     },
+    topicCardHeadMeta: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 0,
+      gap: 4
+    },
     topicBadgeRow: {
       flex: 1,
       minWidth: 0,
@@ -989,7 +995,31 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 12
     },
     libraryItem: {
-      gap: 8
+      gap: 8,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      paddingBottom: 10
+    },
+    libraryInlineAction: {
+      alignItems: 'center',
+      flexShrink: 0,
+      justifyContent: 'center',
+      minHeight: 32,
+      paddingHorizontal: 2,
+      paddingVertical: 4
+    },
+    libraryInlineActionText: {
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600'
+    },
+    libraryIconAction: {
+      alignItems: 'center',
+      flexShrink: 0,
+      height: 32,
+      justifyContent: 'center',
+      width: 32
     },
     librarySectionTitle: {
       color: theme.muted,
@@ -1001,23 +1031,25 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingBottom: 2
     },
     libraryFirstSectionTitle: {
-      paddingTop: 2
+      paddingTop: 10
     },
-    libraryMetaBlock: {
-      gap: 3,
-      paddingHorizontal: 16,
-      paddingTop: 0
-    },
-    libraryActionRow: {
+    libraryUserRow: {
       alignItems: 'center',
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       flexDirection: 'row',
-      gap: 8,
-      paddingHorizontal: 16
+      gap: 10,
+      paddingBottom: 10
     },
-    libraryTopicRow: {
-      alignItems: 'flex-start',
-      flexDirection: 'row',
-      gap: 6
+    libraryUserButton: {
+      flex: 1,
+      minWidth: 0
+    },
+    libraryUserAction: {
+      flexShrink: 0
+    },
+    libraryUserListSpacer: {
+      height: 6
     },
     noticeText: {
       color: theme.primary,

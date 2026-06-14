@@ -714,7 +714,15 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('Alert.alert');
     expect(libraryScreenSource).toContain('确定取消收藏吗？');
     expect(libraryScreenSource).toContain('label="取消收藏"');
-    expect(libraryScreenSource).toContain('active');
+    expect(libraryScreenSource).toContain('<LibraryIconAction filled icon={Star} label="取消收藏"');
+    expect(libraryScreenSource).toContain('renderTrailingAction={renderTopicTrailingAction}');
+    expect(libraryScreenSource).toContain('event.stopPropagation?.();');
+    expect(libraryScreenSource).toContain('triggerPressFeedback();');
+    expect(libraryScreenSource).not.toContain('保存于');
+    expect(libraryScreenSource).not.toContain('收藏于');
+    expect(libraryScreenSource).not.toContain('浏览于');
+    expect(libraryScreenSource).not.toContain('IconButton iconOnly ghost active');
+    expect(libraryScreenSource).not.toContain('styles.libraryTopicRow');
     expect(libraryScreenSource).not.toContain('撤销删除');
     expect(libraryScreenSource).not.toContain('批量删除');
     expect(libraryScreenSource).not.toContain('退出批量');
@@ -812,12 +820,16 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).toContain('contentContainerStyle={styles.libraryContentInner}');
     expect(themeSource).toContain('libraryContentInner');
     expect(themeSource).toContain('libraryFirstSectionTitle');
+    expect(themeSource).toContain('borderBottomColor: theme.line');
   });
 
-  it('marks library destructive actions as danger buttons', () => {
+  it('marks library destructive actions clearly', () => {
     expect(appControlsSource).toContain("variant?: 'default' | 'danger' | 'ghost' | 'primary'");
-    expect(libraryScreenSource).toContain('label="删除" variant="danger"');
-    expect(libraryScreenSource).toContain('label="取消关注" variant="danger"');
+    expect(libraryScreenSource).toContain('<LibraryIconAction filled icon={Star} label="取消收藏"');
+    expect(libraryScreenSource).toContain('<LibraryIconAction icon={Trash2} label="删除"');
+    expect(libraryScreenSource).toContain('<LibraryRowAction label="取消关注"');
+    expect(themeSource).toContain('libraryInlineActionText');
+    expect(themeSource).toContain('libraryIconAction');
     expect(libraryScreenSource).toContain('label="清空历史" variant="danger"');
     expect([moreUiSource, linuxDoVerifyModalSource].join('\n').match(/label="清除登录" variant="danger"/g)?.length).toBe(3);
     expect(userScreenSource).toContain("variant={followed ? 'danger' : undefined}");
@@ -833,6 +845,7 @@ describe('Android App experience guards', () => {
     expect(comparator).toContain('previous.topic.accessRequirement?.label === next.topic.accessRequirement?.label');
     expect(comparator).toContain('stringArrayValuesEqual(previous.topic.duplicateSources, next.topic.duplicateSources)');
     expect(comparator).toContain('stringArrayValuesEqual(previous.topic.tags, next.topic.tags)');
+    expect(comparator).toContain('previous.renderTrailingAction === next.renderTrailingAction');
   });
 
   it('updates all-source feed as each aggregated source finishes', () => {
@@ -1239,6 +1252,8 @@ describe('Android App experience guards', () => {
   it('names the followed-user library tab explicitly', () => {
     expect(libraryScreenSource).toContain("{ value: 'users', label: '关注用户' }");
     expect(libraryScreenSource).not.toContain("{ value: 'users', label: '用户' }");
+    expect(libraryScreenSource).toContain("libraryTab === 'users' ? <View style={styles.libraryUserListSpacer} /> : null");
+    expect(themeSource).toContain('libraryUserListSpacer');
   });
 
   it('prevents expired NodeSeek WebView login cookies from being restored', () => {
@@ -1599,6 +1614,7 @@ describe('Android App experience guards', () => {
     expect(libraryScreenSource).not.toContain('toggleBulkMode');
     expect(libraryScreenSource).not.toContain('removeSelected');
     expect(libraryScreenSource).not.toContain('librarySelectRow');
+    expect(themeSource).not.toContain('libraryTopicRow');
   });
 
   it('keeps the current topic key active only while the topic screen is visible', () => {

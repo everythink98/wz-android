@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
-import { Star } from 'lucide-react-native';
+import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
 import type { FeedSource, Topic, UserProfile } from '../types';
 import { type FollowedUserRecord, type TopicRecord } from '../readerData';
 import { type LibraryTab } from '../feedLogic';
@@ -10,7 +10,7 @@ import { formatDateTime, sourceLabel } from '../appUtils';
 import { feedSources } from '../feedCategoryRail';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, EmptyText, IconButton, PillRail } from '../components/AppControls';
+import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import {
@@ -22,6 +22,66 @@ import {
   type LibraryDataItem,
   type LibraryListItem
 } from './library/libraryScreenItems';
+
+function pressLibraryAction(event: GestureResponderEvent, onPress: () => void) {
+  event.stopPropagation?.();
+  triggerPressFeedback();
+  onPress();
+}
+
+function LibraryRowAction({
+  label,
+  styles,
+  onPress
+}: {
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      hitSlop={TOUCH_HIT_SLOP}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={styles.libraryInlineAction}
+      onPress={(event) => pressLibraryAction(event, onPress)}
+    >
+      <Text style={styles.libraryInlineActionText}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function LibraryIconAction({
+  icon,
+  label,
+  tone = 'primary',
+  filled = false,
+  styles,
+  theme,
+  onPress
+}: {
+  icon: LucideIcon;
+  label: string;
+  tone?: 'primary' | 'danger';
+  filled?: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onPress: () => void;
+}) {
+  const Icon = icon;
+  const color = tone === 'danger' ? theme.danger : theme.primary;
+  return (
+    <Pressable
+      hitSlop={TOUCH_HIT_SLOP}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={styles.libraryIconAction}
+      onPress={(event) => pressLibraryAction(event, onPress)}
+    >
+      <Icon size={18} color={color} fill={filled ? color : 'none'} strokeWidth={1.9} />
+    </Pressable>
+  );
+}
 
 export function LibraryScreen({
   libraryTab,
@@ -90,6 +150,15 @@ export function LibraryScreen({
       { text: '清空', style: 'destructive', onPress: onClearHistory }
     ]);
   }, [onClearHistory]);
+  const renderTopicTrailingAction = useCallback((topic: Topic) => {
+    if (libraryTab === 'favorites') {
+      return <LibraryIconAction filled icon={Star} label="取消收藏" styles={styles} theme={theme} onPress={() => confirmRemoveFavorite(topic)} />;
+    }
+    if (libraryTab === 'history') {
+      return <LibraryIconAction icon={Trash2} label="删除" tone="danger" styles={styles} theme={theme} onPress={() => onRemove(topic)} />;
+    }
+    return null;
+  }, [confirmRemoveFavorite, libraryTab, onRemove, styles, theme]);
   const renderLibraryItem = useCallback<ListRenderItem<LibraryListItem>>(({ item }) => {
     if (item.type === 'section') {
       return <Text style={[styles.librarySectionTitle, item.first && styles.libraryFirstSectionTitle]}>{item.label}</Text>;
@@ -97,34 +166,20 @@ export function LibraryScreen({
     const record = item.record;
     return (
       <View style={styles.libraryItem}>
-        <View style={styles.libraryTopicRow}>
-          <View style={styles.flex}>
-            <MemoizedTopicCard
-              readerState={getTopicListItemStateFromIndex(topicStateIndex, record.topic)}
-              styles={styles}
-              theme={theme}
-              topic={record.topic}
-              onOpenTopic={onOpenTopic}
-            />
-          </View>
-          {libraryTab === 'favorites' ? (
-            <IconButton iconOnly ghost active icon={Star} label="取消收藏" styles={styles} theme={theme} onPress={() => confirmRemoveFavorite(record.topic)} />
-          ) : null}
-        </View>
-        <View style={styles.libraryMetaBlock}>
-          <Text style={styles.meta}>保存于 {formatDateTime(record.savedAt) || record.savedAt}{record.visitCount ? ` · ${record.visitCount} 次阅读` : ''}</Text>
-        </View>
-        {libraryTab === 'history' ? (
-          <View style={styles.libraryActionRow}>
-            <AppButton compact label="删除" variant="danger" styles={styles} onPress={() => onRemove(record.topic)} />
-          </View>
-        ) : null}
+        <MemoizedTopicCard
+          readerState={getTopicListItemStateFromIndex(topicStateIndex, record.topic)}
+          styles={styles}
+          theme={theme}
+          renderTrailingAction={renderTopicTrailingAction}
+          topic={record.topic}
+          onOpenTopic={onOpenTopic}
+        />
       </View>
     );
-  }, [confirmRemoveFavorite, libraryTab, onOpenTopic, onRemove, styles, theme, topicStateIndex]);
+  }, [onOpenTopic, renderTopicTrailingAction, styles, theme, topicStateIndex]);
   const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
-    <View style={styles.libraryItem}>
-      <Pressable accessibilityRole="button" style={styles.menuButton} onPress={() => onOpenUser(item.user)}>
+    <View style={styles.libraryUserRow}>
+      <Pressable accessibilityRole="button" style={[styles.menuButton, styles.libraryUserButton]} onPress={() => onOpenUser(item.user)}>
         <View style={styles.menuIcon}>
           <Text style={styles.replyAvatarText}>{(item.user.displayName || item.user.username || '?').slice(0, 1).toUpperCase()}</Text>
         </View>
@@ -133,8 +188,8 @@ export function LibraryScreen({
           <Text style={styles.meta} numberOfLines={2}>{sourceLabel(item.user.source)} · 关注于 {formatDateTime(item.followedAt) || item.followedAt}</Text>
         </View>
       </Pressable>
-      <View style={styles.actions}>
-        <AppButton compact label="取消关注" variant="danger" styles={styles} onPress={() => onRemoveUser(item.user)} />
+      <View style={styles.libraryUserAction}>
+        <LibraryRowAction label="取消关注" styles={styles} onPress={() => onRemoveUser(item.user)} />
       </View>
     </View>
   ), [onOpenUser, onRemoveUser, styles]);
@@ -180,6 +235,7 @@ export function LibraryScreen({
           <AppButton compact label="清空历史" variant="danger" styles={styles} onPress={confirmClearHistory} />
         </View>
       ) : null}
+      {libraryTab === 'users' ? <View style={styles.libraryUserListSpacer} /> : null}
     </View>
   );
 
