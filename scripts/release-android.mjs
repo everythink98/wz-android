@@ -18,6 +18,7 @@ function run(command, args, options = {}) {
   }
 }
 
+run('node', ['scripts/generate-adaptive-icon.mjs']);
 run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);
 
 run(

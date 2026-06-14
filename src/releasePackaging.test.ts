@@ -19,10 +19,13 @@ describe('Android release packaging', () => {
 
   it('regenerates Android config before release so app.json version reaches the APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const adaptiveIconIndex = releaseScript.indexOf("run('node', ['scripts/generate-adaptive-icon.mjs']);");
     const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);");
     const assembleIndex = releaseScript.indexOf("':app:assembleRelease'");
 
+    expect(adaptiveIconIndex).toBeGreaterThanOrEqual(0);
     expect(prebuildIndex).toBeGreaterThanOrEqual(0);
+    expect(prebuildIndex).toBeGreaterThan(adaptiveIconIndex);
     expect(assembleIndex).toBeGreaterThan(prebuildIndex);
     expect(releaseScript).not.toContain('if (!fs.existsSync(gradleFile))');
   });

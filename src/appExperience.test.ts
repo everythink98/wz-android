@@ -1,7 +1,12 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { readAppRuntimeSource, readLibraryRuntimeSource, readMoreRuntimeSource, readOptionalProjectFile, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('app.json');
+const packageJsonSource = readProjectFile('package.json');
+const packageJson = JSON.parse(packageJsonSource);
+const adaptiveIconScriptSource = readOptionalProjectFile('scripts', 'generate-adaptive-icon.mjs');
 const appSource = readAppRuntimeSource();
 const globalModalHostSource = readProjectFile('src', 'app', 'GlobalModalHost.tsx');
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
@@ -1547,6 +1552,28 @@ describe('Android App experience guards', () => {
     expect(settingsPanelBlock).not.toContain('森绿');
     expect(appConfigSource).toContain('"userInterfaceStyle": "light"');
     expect(appConfigSource).toContain('"backgroundColor": "#ffffff"');
+  });
+
+  it('uses a padded foreground for Android adaptive launcher icons', () => {
+    const appConfig = JSON.parse(appConfigSource);
+    const adaptiveIconPath = join(process.cwd(), 'assets', 'adaptive-icon.png');
+
+    expect(appConfig.expo.icon).toBe('./assets/icon.png');
+    expect(appConfig.expo.android.adaptiveIcon.foregroundImage).toBe('./assets/adaptive-icon.png');
+    expect(appConfig.expo.android.adaptiveIcon.foregroundImage).not.toBe(appConfig.expo.icon);
+    expect(packageJson.scripts['generate:adaptive-icon']).toBe('node scripts/generate-adaptive-icon.mjs');
+    expect(packageJson.scripts.preandroid).toBe('npm run generate:adaptive-icon');
+    expect(packageJson.devDependencies.sharp).toBeDefined();
+    expect(adaptiveIconScriptSource).toContain("const SOURCE_ICON = path.join(PROJECT_ROOT, 'assets', 'icon.png');");
+    expect(adaptiveIconScriptSource).toContain("const OUTPUT_ICON = path.join(PROJECT_ROOT, 'assets', 'adaptive-icon.png');");
+    expect(adaptiveIconScriptSource).toContain('const CANVAS_SIZE = 1024;');
+    expect(adaptiveIconScriptSource).toContain('const FOREGROUND_SIZE = 704;');
+    expect(existsSync(adaptiveIconPath)).toBe(true);
+
+    const adaptiveIconBytes = readFileSync(adaptiveIconPath);
+
+    expect(adaptiveIconBytes.readUInt32BE(16)).toBe(1024);
+    expect(adaptiveIconBytes.readUInt32BE(20)).toBe(1024);
   });
 
   it('shows explicit expand and collapse state icons on foldable panels', () => {

@@ -7,7 +7,9 @@
     "start": "expo start --dev-client",
     "test": "vitest run",
     "test:watch": "vitest",
+    "preandroid": "npm run generate:adaptive-icon",
     "android": "expo run:android",
+    "generate:adaptive-icon": "node scripts/generate-adaptive-icon.mjs",
     "release:android": "node scripts/release-android.mjs",
     "typecheck": "tsc --noEmit",
     "ios": "expo run:ios"
@@ -58,6 +60,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "babel-preset-expo": "~54.0.10",
     "jsdom": "^25.0.1",
+    "sharp": "^0.35.1",
     "typescript": "~5.9.2",
     "vite": "^6.0.7",
     "vitest": "^4.1.6"
