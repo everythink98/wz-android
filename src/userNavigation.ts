@@ -1,6 +1,8 @@
 import type { Reply, Source, Topic, TopicDetail, UserProfile } from './types';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
-import { accessRequirementFromText, textContentFromHtml } from './localHtml';
+import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE, accessRequirementFromText, textContentFromHtml } from './localHtml';
+
+const accessRequirementNoticeStartPattern = new RegExp(`^(?:${ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE})`, 'i');
 
 export function nodeSeekUserIdFromValue(value?: string) {
   const text = String(value || '').trim();
@@ -20,7 +22,7 @@ function detailContentLooksRestricted(topic: Topic | TopicDetail) {
   if (!text || text.length > 240 || !accessRequirementFromText(text)) {
     return false;
   }
-  return /^(?:查看本帖需要|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|登录后(?:才能|可见)|请先\s*登录|需要\s*登录|未登录|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|this topic is private|this topic is restricted|you are not permitted|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|private topic|restricted topic|not authorized|you do not have permission|you don't have permission)/i.test(text);
+  return accessRequirementNoticeStartPattern.test(text);
 }
 
 function shouldUseFallbackAccessRequirement(topic: Topic | TopicDetail, fallback: Topic) {

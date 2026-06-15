@@ -3,7 +3,6 @@ import type { CategoriesResponse, FeedResponse, ReactionSummary, Reply, RepliesR
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
-  absoluteUrl,
   decodeHtml,
   isRecord,
   parseHtml,

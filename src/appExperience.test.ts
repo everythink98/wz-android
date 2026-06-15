@@ -8,7 +8,6 @@ const packageJsonSource = readProjectFile('package.json');
 const packageJson = JSON.parse(packageJsonSource);
 const adaptiveIconScriptSource = readOptionalProjectFile('scripts', 'generate-adaptive-icon.mjs');
 const appSource = readAppRuntimeSource();
-const globalModalHostSource = readProjectFile('src', 'app', 'GlobalModalHost.tsx');
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const hiddenBrowserHostSource = readProjectFile('src', 'app', 'HiddenBrowserHost.tsx');
 const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');

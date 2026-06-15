@@ -7,6 +7,7 @@
     "start": "expo start --dev-client",
     "test": "vitest run",
     "test:watch": "vitest",
+    "check:unused": "tsc --noEmit --noUnusedLocals --noUnusedParameters --allowUnreachableCode false --allowUnusedLabels false",
     "preandroid": "npm run generate:adaptive-icon",
     "android": "expo run:android",
     "generate:adaptive-icon": "node scripts/generate-adaptive-icon.mjs",

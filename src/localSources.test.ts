@@ -1482,7 +1482,6 @@ describe('Android local sources', () => {
   it('passes linux.do search pages through and exposes more results', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
-      const page = url.searchParams.get('page') || '1';
       expect(url.pathname).toBe('/search');
       expect(url.searchParams.get('q')).toBe('keyword');
       expect(url.searchParams.get('page')).toBe('1');

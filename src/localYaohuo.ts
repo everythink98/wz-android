@@ -1,5 +1,5 @@
 import type { HTMLElement } from 'node-html-parser';
-import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
+import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -19,8 +19,6 @@ import {
   extractYaohuoTopicParts as extractTopicParts,
   extractYaohuoUserIdFromHref as extractUserIdFromHref,
   nextYaohuoPageFromHtml as nextPageFromHtml,
-  yaohuoTopicListNextPageUrl,
-  yaohuoUserProfileTopicListUrl,
   yaohuoUserUrl as userUrl
 } from './localYaohuoHelpers';
 

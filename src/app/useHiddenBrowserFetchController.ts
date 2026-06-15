@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { WebViewMessageEvent } from 'react-native-webview';
+import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '../localHtml';
 
 export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
@@ -10,7 +11,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
   const pageText = () => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim();
-  const restrictedNoticePattern = /本帖已经被用户设为私有，您没有阅读权限|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|需要等级|requires?[^.]{0,40}(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|minimum (?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|must be (?:at least )?(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)|登录后才能|请登录|permission denied|forbidden|private topic|not authorized|you do not have permission|you don't have permission/i;
+  const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
     || /^\\s*[{[]/.test(pageText());

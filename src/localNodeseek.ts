@@ -14,7 +14,6 @@ import {
   parseHtml,
   parsePositiveInteger,
   sanitizeContentHtml,
-  sortTopicsByTime,
   textExcerpt,
   toIsoString
 } from './localHtml';

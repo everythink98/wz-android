@@ -31,8 +31,6 @@ import {
   applyNodeSeekCollectionToTopic,
   applyPollVoteToReplies,
   applyPollVoteToTopic,
-  beginOptimisticAction,
-  completeOptimisticAction,
   linuxDoBookmarkIdFromActionResult,
   topicActionStateKey,
   type InteractionType,
@@ -71,7 +69,6 @@ type ActionRunOptions = {
 };
 type OptimisticTopicActionOptions = {
   key: string;
-  requestTopicKey: string;
   requestOwner: RequestOwner;
   currentActive: boolean;
   applyDisplayed: (desiredActive: boolean) => void;
@@ -428,7 +425,7 @@ export function useTopicActionsController({
     applyDisplayed,
     sendDesired,
     successMessage
-  }: Omit<OptimisticTopicActionOptions, 'currentActive' | 'requestTopicKey'>) => {
+  }: Omit<OptimisticTopicActionOptions, 'currentActive'>) => {
     await runOptimisticActionQueueHelper({
       key,
       requestOwner,
@@ -444,7 +441,6 @@ export function useTopicActionsController({
 
   const startOptimisticTopicAction = useCallback(({
     key,
-    requestTopicKey,
     requestOwner,
     currentActive,
     applyDisplayed,
@@ -576,7 +572,6 @@ export function useTopicActionsController({
       ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean } | undefined);
       startOptimisticTopicAction({
         key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' }),
-        requestTopicKey,
         requestOwner,
         currentActive: Boolean(target?.liked),
         applyDisplayed: (desiredActive) => {
@@ -611,7 +606,6 @@ export function useTopicActionsController({
     }
     startOptimisticTopicAction({
       key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type }),
-      requestTopicKey,
       requestOwner,
       currentActive: Boolean(target?.[activeField]),
       applyDisplayed: (desiredActive) => {
@@ -654,7 +648,6 @@ export function useTopicActionsController({
     const collected = Boolean((detail as TopicDetail).collected);
     startOptimisticTopicAction({
       key: topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' }),
-      requestTopicKey,
       requestOwner,
       currentActive: collected,
       applyDisplayed: (desiredActive) => {
@@ -683,7 +676,6 @@ export function useTopicActionsController({
     const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'bookmark' });
     startOptimisticTopicAction({
       key: actionKey,
-      requestTopicKey,
       requestOwner,
       currentActive: bookmarked,
       applyDisplayed: (desiredActive) => {

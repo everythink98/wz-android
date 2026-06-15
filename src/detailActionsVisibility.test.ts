@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource } from './sourceTestUtils';
 
 const removedBlockLabel = (target: string) => `屏${''}蔽${target}`;
 

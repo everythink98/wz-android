@@ -21,7 +21,7 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
+import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';

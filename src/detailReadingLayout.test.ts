@@ -19,7 +19,6 @@ vi.mock('react-native', () => ({
 }));
 
 const appSource = readAppRuntimeSource();
-const hiddenBrowserFetchControllerSource = readProjectFile('src', 'app', 'useHiddenBrowserFetchController.ts');
 const htmlRenderingControllerSource = readProjectFile('src', 'app', 'useHtmlRenderingController.tsx');
 const topicScreenSource = readTopicRuntimeSource();
 const topicScreenHelpersSource = readProjectFile('src', 'screens', 'topic', 'topicScreenHelpers.ts');
@@ -74,12 +73,9 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('暂无权限');
     expect(topicScreenSource).toContain('forumAccessRequirementText(topic.accessRequirement)');
     expect(topicScreenSource).toContain('if (text.length > 240)');
-    expect(topicScreenSource).toContain('requires?[^.]{0,40}(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
-    expect(topicScreenSource).toContain('minimum (?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
-    expect(topicScreenSource).toContain('must be (?:at least )?(?:trust\\s+level|level\\s*(?:of\\s+|[:：#-]\\s*)?\\d+)');
-    expect(hiddenBrowserFetchControllerSource).toContain('requires?[^.]{0,40}(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
-    expect(hiddenBrowserFetchControllerSource).toContain('minimum (?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
-    expect(hiddenBrowserFetchControllerSource).toContain('must be (?:at least )?(?:trust\\\\s+level|level\\\\s*(?:of\\\\s+|[:：#-]\\\\s*)?\\\\d+)');
+    expect(isAccessNoticeHtml('Requires trust level 2 to view.', { type: 'level', label: '需等级', detail: 'Requires trust level 2 to view.' })).toBe(true);
+    expect(isAccessNoticeHtml('Minimum level 3 required.', { type: 'level', label: '需等级', detail: 'Minimum level 3 required.' })).toBe(true);
+    expect(isAccessNoticeHtml('You must be at least trust level 4.', { type: 'level', label: '需等级', detail: 'You must be at least trust level 4.' })).toBe(true);
 
     const theme = createTheme(defaultSettings);
     const styles = createStyles(theme, defaultSettings, 800);

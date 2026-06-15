@@ -43,7 +43,6 @@ import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { Reply, Topic, TopicDetail } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
-import { pushTopicSession } from '../topicSessionState';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
 import {
@@ -699,8 +698,7 @@ export function AppRoot() {
     searchSource,
     submittedSearchQuery,
     setSearchQuery,
-    setSearchSource,
-    visibleSearchItems
+    setSearchSource
   } = useSearchController({
     categories,
     clearYaohuoLoginState,
