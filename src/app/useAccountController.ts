@@ -60,7 +60,6 @@ export function useAccountController({
   setLinuxDoLevelProfile,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
-  showLinuxDoPanelRef,
   showLinuxDoVerification,
   showLoginPanelRef,
   updateLinuxDoSession,
@@ -92,7 +91,6 @@ export function useAccountController({
   setLinuxDoLevelProfile: Dispatch<SetStateAction<LinuxDoLevelProfile | null>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
-  showLinuxDoPanelRef: Ref<boolean>;
   showLinuxDoVerification: (message?: string) => void;
   showLoginPanelRef: Ref<boolean>;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
@@ -325,11 +323,7 @@ export function useAccountController({
       if (isLinuxDoCloudflareError(error)) {
         setLinuxDoLevelProfile(null);
         setLinuxDoLevelError('linux.do 等级读取需要完成 Cloudflare 验证');
-        if (showLinuxDoPanelRef.current) {
-          showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
-        } else {
-          showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
-        }
+        showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
         return;
       }
       setLinuxDoLevelError(errorMessage(error));
@@ -346,7 +340,6 @@ export function useAccountController({
     setLinuxDoLevelBusy,
     setLinuxDoLevelError,
     setLinuxDoLevelProfile,
-    showLinuxDoPanelRef,
     showLinuxDoVerification
   ]);
 

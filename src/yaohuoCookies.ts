@@ -61,6 +61,23 @@ export function buildYaohuoSetCookieHeaders(cookieHeader: string) {
     .map(([name, value]) => `${name}=${value}; Domain=yaohuo.me; Path=/`);
 }
 
+export function yaohuoCookieMapFromHeader(cookieHeader: string) {
+  const cookies: Record<string, YaohuoNativeCookie> = {};
+  for (const setCookieHeader of buildYaohuoSetCookieHeaders(cookieHeader)) {
+    const cookiePart = setCookieHeader.split(';', 1)[0] || '';
+    const separatorIndex = cookiePart.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+    const name = cookiePart.slice(0, separatorIndex).trim();
+    const value = cookiePart.slice(separatorIndex + 1).trim();
+    if (name && value) {
+      cookies[name] = { name, value, domain: 'yaohuo.me' };
+    }
+  }
+  return cookies;
+}
+
 export function canStoreYaohuoCookieHeader(cookies: Record<string, YaohuoNativeCookie>) {
   return Boolean(buildYaohuoCookieHeader(cookies));
 }

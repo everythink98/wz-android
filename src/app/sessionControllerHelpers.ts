@@ -1,27 +1,8 @@
-import { buildYaohuoSetCookieHeaders, type YaohuoNativeCookie } from '../yaohuoCookies';
-
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
 };
-
-export function yaohuoCookieMapFromHeader(cookieHeader: string) {
-  const cookies: Record<string, YaohuoNativeCookie> = {};
-  for (const setCookieHeader of buildYaohuoSetCookieHeaders(cookieHeader)) {
-    const cookiePart = setCookieHeader.split(';', 1)[0] || '';
-    const separatorIndex = cookiePart.indexOf('=');
-    if (separatorIndex <= 0) {
-      continue;
-    }
-    const name = cookiePart.slice(0, separatorIndex).trim();
-    const value = cookiePart.slice(separatorIndex + 1).trim();
-    if (name && value) {
-      cookies[name] = { name, value, domain: 'yaohuo.me' };
-    }
-  }
-  return cookies;
-}
 
 export function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
   const target = name.toLowerCase();

@@ -14,7 +14,8 @@ import {
 import { readNodeSeekCookiesFromWebView } from '../nodeseekCookieBridge';
 import {
   buildYaohuoSetCookieHeaders,
-  summarizeYaohuoCookies
+  summarizeYaohuoCookies,
+  yaohuoCookieMapFromHeader
 } from '../yaohuoCookies';
 import {
   buildLinuxDoCookieHeader,
@@ -49,8 +50,7 @@ import {
   cleanupNodeSeekBrowserFetchRequest,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
-  requestHeaderValue,
-  yaohuoCookieMapFromHeader
+  requestHeaderValue
 } from './sessionControllerHelpers';
 
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];

@@ -628,7 +628,6 @@ export function AppRoot() {
     setLinuxDoLevelProfile,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
-    showLinuxDoPanelRef,
     showLinuxDoVerification,
     showLoginPanelRef,
     updateLinuxDoSession,

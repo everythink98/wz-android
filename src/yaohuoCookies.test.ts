@@ -5,6 +5,7 @@ import {
   canStoreYaohuoCookieHeader,
   mergeYaohuoCookies,
   summarizeYaohuoCookies,
+  yaohuoCookieMapFromHeader,
   type YaohuoNativeCookie
 } from './yaohuoCookies';
 
@@ -75,5 +76,12 @@ describe('yaohuo cookie helpers', () => {
       'GUID=guid; Domain=yaohuo.me; Path=/',
       'sidyaohuo=abc; Domain=yaohuo.me; Path=/'
     ]);
+  });
+
+  it('parses saved yaohuo cookie headers into the shared native cookie shape', () => {
+    expect(yaohuoCookieMapFromHeader('sidyaohuo=abc; bad=value; GUID=guid')).toEqual({
+      GUID: { name: 'GUID', value: 'guid', domain: 'yaohuo.me' },
+      sidyaohuo: { name: 'sidyaohuo', value: 'abc', domain: 'yaohuo.me' }
+    });
   });
 });

@@ -174,7 +174,6 @@ describe('Android best-practice boundary guards', () => {
 
   it('keeps pure session helpers outside useSessionController', () => {
     for (const helper of [
-      'yaohuoCookieMapFromHeader',
       'requestHeaderValue',
       'nodeSeekBrowserResponse',
       'linuxDoBrowserResponse',
