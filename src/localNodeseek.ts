@@ -633,6 +633,9 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
   if (isNodeSeekCloudflareResponse(response, text)) {
     throw nodeSeekCloudflareError();
   }
+  if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
+    return text;
+  }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }

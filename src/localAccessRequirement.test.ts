@@ -68,6 +68,10 @@ describe('Android local access requirement detection', () => {
       type: 'permission',
       label: '需权限'
     });
+    expect(accessRequirementFromText('本帖已经被用户设为私有，您没有阅读权限')).toMatchObject({
+      type: 'permission',
+      label: '需权限'
+    });
     expect(accessRequirementFromText('无权限查看此内容')).toMatchObject({
       type: 'permission',
       label: '需权限'
@@ -503,6 +507,32 @@ describe('Android local access requirement detection', () => {
       type: 'login',
       label: '需登录'
     });
+  });
+
+  it('turns the real private NodeSeek rendered page into restricted topic details', async () => {
+    const fetcher = vi.fn(async () => new Response(`
+      <section id="nsk-frame">
+        <div id="nsk-body" class="nsk-container">
+          <div id="nsk-body-left">
+            <div>本帖已经被用户设为私有，您没有阅读权限</div>
+          </div>
+        </div>
+      </section>
+    `, { status: 404, headers: { 'content-type': 'text/html' } }));
+
+    const topic = await getNodeSeekTopic('777282', { fetcher });
+
+    expect(topic).toMatchObject({
+      source: 'nodeseek',
+      id: '777282',
+      title: '受限帖子',
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: '本帖已经被用户设为私有，您没有阅读权限'
+      }
+    });
+    expect(topic.contentHtml).toContain('本帖已经被用户设为私有');
   });
 
   it('does not infer NodeSeek view requirements from inside-category HTML list rows', async () => {

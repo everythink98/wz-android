@@ -64,7 +64,7 @@ export function HiddenBrowserHost({
               if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {
                 return;
               }
-              if (event.nativeEvent.statusCode === 403) {
+              if (event.nativeEvent.statusCode === 403 || event.nativeEvent.statusCode === 404) {
                 onNodeSeekHttpErrorStatus(nodeSeekBrowserFetchRequest.id, event.nativeEvent.statusCode);
                 return;
               }

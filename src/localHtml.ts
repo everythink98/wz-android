@@ -184,7 +184,7 @@ export function accessRequirementFromText(value: unknown) {
   if (loginMatch) {
     return { type: 'login' as const, label: '需登录', detail: accessRequirementDetail(text, loginMatch) };
   }
-  const permissionMatch = text.match(/权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i);
+  const permissionMatch = text.match(/本帖已经被用户设为私有，您没有阅读权限|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:topic|category)\s+is\s+(?:private|restricted)|not authorized|you do not have permission|you don't have permission/i);
   if (permissionMatch) {
     return { type: 'permission' as const, label: '需权限', detail: accessRequirementDetail(text, permissionMatch) };
   }

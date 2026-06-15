@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readAppRuntimeSource, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 import { createStyles, createTheme } from './theme';
 import type { ReaderSettings } from './readerData';
+import { isAccessNoticeHtml } from './screens/topic/topicScreenHelpers';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -84,6 +85,14 @@ describe('Android topic detail reading layout', () => {
     const styles = createStyles(theme, defaultSettings, 800);
     expect(styles.topicAccessNoticeTitle.color).toBe(theme.danger);
     expect(styles.topicAccessNoticeDetail.color).toBe(theme.ink);
+  });
+
+  it('shows the real NodeSeek private-post detail as an access notice', () => {
+    expect(isAccessNoticeHtml('本帖已经被用户设为私有，您没有阅读权限', {
+      type: 'permission',
+      label: '需权限',
+      detail: '本帖已经被用户设为私有，您没有阅读权限'
+    })).toBe(true);
   });
 
   it('hides original-site actions and reply controls on restricted topic details', () => {

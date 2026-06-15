@@ -69,4 +69,26 @@ describe('NodeSeek hidden browser fetch script', () => {
 
     expect(postMessage).not.toHaveBeenCalled();
   });
+
+  it('returns the real NodeSeek private-post notice without waiting for timeout', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777282-1', `
+      <section id="nsk-frame">
+        <div id="nsk-body" class="nsk-container">
+          <div id="nsk-body-left">
+            <div>本帖已经被用户设为私有，您没有阅读权限</div>
+          </div>
+        </div>
+      </section>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: false
+    });
+    expect(payload.html).toContain('本帖已经被用户设为私有');
+    expect(stop).toHaveBeenCalled();
+  });
 });

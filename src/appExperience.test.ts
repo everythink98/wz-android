@@ -1286,7 +1286,7 @@ describe('Android App experience guards', () => {
     expect(sessionControllerSource).toContain('const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string) => {');
     expect(hiddenBrowserHostSource).toContain('onHttpError={(event) => {');
     expect(hiddenBrowserHostSource).toContain('if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {');
-    expect(hiddenBrowserHostSource).toContain('if (event.nativeEvent.statusCode === 403) {');
+    expect(hiddenBrowserHostSource).toContain('if (event.nativeEvent.statusCode === 403 || event.nativeEvent.statusCode === 404) {');
     expect(appSource).toContain('nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;');
     expect(hiddenBrowserHostSource).toContain('NodeSeek 页面返回错误');
     expect(hiddenBrowserHostSource).toContain('onRenderProcessGone={() => {');
