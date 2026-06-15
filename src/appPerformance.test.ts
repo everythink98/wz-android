@@ -224,7 +224,7 @@ describe('Android App performance guards', () => {
 
   it('does not start stale reply requests after topic changes during cookie loading', () => {
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
-    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic = useCallback/)?.[0] || '';
+    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const staleTopicGuard = 'if (!isCurrentRepliesRequest()) {';
 
     expect(refreshRepliesBlock.indexOf(staleTopicGuard)).toBeGreaterThan(refreshRepliesBlock.indexOf('const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);'));

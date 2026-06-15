@@ -621,10 +621,6 @@ export function useTopicController({
     topicRepliesRef
   ]);
 
-  const refreshTopic = useCallback(() => {
-    void refreshTopicReplies();
-  }, [refreshTopicReplies]);
-
   const refreshWholeTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
     if (detail) {
@@ -718,7 +714,6 @@ export function useTopicController({
     currentTopicKey,
     loadMoreReplies,
     openTopic,
-    refreshTopic,
     refreshTopicReplies,
     refreshWholeTopic,
     toggleQuotedFloor,

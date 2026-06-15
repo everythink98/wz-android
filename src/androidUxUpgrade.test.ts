@@ -183,7 +183,7 @@ describe('Android App UX upgrade guards', () => {
   it('applies the one-time linux.do verified retry guard to reply refresh paths', () => {
     const cloudflareHandlerBlock = verificationControllerSource.match(/const handleLinuxDoCloudflareForTopic = useCallback\(async \(topic: Topic, message: string\) => \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
-    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
+    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const toggleQuotedFloorBlock = topicControllerSource.match(/const toggleQuotedFloor = useCallback[\s\S]*?\n\n  return/)?.[0] || '';
 
     expect(cloudflareHandlerBlock).toContain('linuxDoVerifiedRetryTopicKeyRef.current === requestTopicKey');

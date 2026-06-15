@@ -63,7 +63,6 @@ const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 
 type Ref<T> = MutableRefObject<T>;
 type ActionRunOptions = {
-  refreshTopic?: boolean;
   key?: string;
   owner?: RequestOwner;
 };
@@ -85,7 +84,6 @@ export function useTopicActionsController({
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
   notify,
-  openTopic,
   optimisticTopicActionsRef,
   refreshTopicReplies,
   replyContent,
@@ -115,7 +113,6 @@ export function useTopicActionsController({
   loadYaohuoCookieForSource: (source: 'yaohuo') => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
-  openTopic: (topic: Topic, nocache?: boolean) => Promise<void>;
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
   refreshTopicReplies: (options?: { silent?: boolean; afterSubmit?: boolean }) => Promise<unknown>;
   replyContent: string;
@@ -174,9 +171,6 @@ export function useTopicActionsController({
         return false;
       }
       notify(success);
-      if (options.refreshTopic === true && topicDetail?.source === 'nodeseek') {
-        await openTopic(topicDetail, true);
-      }
       return true;
     } catch (error) {
       if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
@@ -195,7 +189,7 @@ export function useTopicActionsController({
         setActionBusy(false);
       }
     }
-  }, [actionAbortRef, actionRequestIdRef, canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, openTopic, setActionBusy, startTopicActionRequest, topicDetail]);
+  }, [actionAbortRef, actionRequestIdRef, canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, setActionBusy, startTopicActionRequest]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -232,9 +226,6 @@ export function useTopicActionsController({
       }
       const resultConfirmed = result.message !== '操作结果无法确认，请刷新原帖核对';
       notify(result.message === '操作已提交' ? success : result.message);
-      if (options.refreshTopic === true && topicDetail?.source === 'yaohuo') {
-        await openTopic(topicDetail, true);
-      }
       return resultConfirmed ? result : false;
     } catch (error) {
       if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
@@ -257,7 +248,7 @@ export function useTopicActionsController({
         setActionBusy(false);
       }
     }
-  }, [actionAbortRef, actionRequestIdRef, canUseYaohuoActions, clearYaohuoLoginState, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, openTopic, setActionBusy, showYaohuoLogin, startTopicActionRequest, topicDetail]);
+  }, [actionAbortRef, actionRequestIdRef, canUseYaohuoActions, clearYaohuoLoginState, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, setActionBusy, showYaohuoLogin, startTopicActionRequest]);
 
   const runLinuxDoRequest = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
@@ -296,9 +287,6 @@ export function useTopicActionsController({
         return false;
       }
       notify(success);
-      if (options.refreshTopic === true && topicDetail?.source === 'linuxdo') {
-        await openTopic(topicDetail, true);
-      }
       return result ?? true;
     } catch (error) {
       if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
@@ -319,7 +307,7 @@ export function useTopicActionsController({
         setActionBusy(false);
       }
     }
-  }, [actionAbortRef, actionRequestIdRef, canUseLinuxDoActions, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, openTopic, resetLinuxDoLevelState, setActionBusy, showLinuxDoLogin, startTopicActionRequest, topicDetail, updateLinuxDoSession]);
+  }, [actionAbortRef, actionRequestIdRef, canUseLinuxDoActions, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, setActionBusy, showLinuxDoLogin, startTopicActionRequest, updateLinuxDoSession]);
 
   const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
     const next = { ...optimisticTopicActionsRef.current };
@@ -493,7 +481,7 @@ export function useTopicActionsController({
           toUserId: replyTarget?.authorId
         }),
         '回复已提交',
-        { refreshTopic: false, owner: requestOwner }
+        { owner: requestOwner }
       );
       if (submitted) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
@@ -514,7 +502,7 @@ export function useTopicActionsController({
           replyToPostNumber: replyTarget?.floor
         }),
         '回复已提交',
-        { refreshTopic: false, owner: requestOwner }
+        { owner: requestOwner }
       );
       if (submitted) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
@@ -530,7 +518,7 @@ export function useTopicActionsController({
     const submitted = await runNodeSeekRequest(
       () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
       '回复已提交',
-      { refreshTopic: false, owner: requestOwner }
+      { owner: requestOwner }
     );
     if (submitted) {
       if (!isCurrentTopicActionRequest(requestOwner)) {
@@ -546,8 +534,7 @@ export function useTopicActionsController({
   const checkIn = useCallback(async () => {
     await runNodeSeekRequest(
       () => buildNodeSeekAttendanceRequest({ random: false }),
-      '签到请求已提交',
-      { refreshTopic: false }
+      '签到请求已提交'
     );
   }, [runNodeSeekRequest]);
 
@@ -634,7 +621,7 @@ export function useTopicActionsController({
         classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
       }),
       '原站收藏已提交',
-      { refreshTopic: false, owner: startTopicActionRequest(topicKey(detail)) }
+      { owner: startTopicActionRequest(topicKey(detail)) }
     );
   }, [runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
@@ -734,7 +721,7 @@ export function useTopicActionsController({
       submitted = await runNodeSeekRequest(
         () => buildNodeSeekVoteRequest({ optionIds }),
         '投票已提交',
-        { refreshTopic: false, owner: requestOwner }
+        { owner: requestOwner }
       );
     } else if (isLinuxDoActionTopic(detail)) {
       if (!poll.postId || !poll.name) {
@@ -748,7 +735,7 @@ export function useTopicActionsController({
           optionIds
         }),
         '投票已提交',
-        { refreshTopic: false, owner: requestOwner }
+        { owner: requestOwner }
       );
     } else {
       submitted = await runYaohuoRequest(
@@ -758,7 +745,7 @@ export function useTopicActionsController({
           voteIds: optionIds
         }),
         '投票已提交',
-        { refreshTopic: false, owner: requestOwner }
+        { owner: requestOwner }
       );
     }
     if (submitted) {

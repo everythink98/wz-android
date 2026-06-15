@@ -228,7 +228,7 @@ describe('Android App experience guards', () => {
     const loadFeedBlock = feedControllerSource.match(/const loadFeed = useCallback[\s\S]*?\n\n  const loadFeedRef/)?.[0] || '';
     const runSearchBlock = searchControllerSource.match(/const runSearch = useCallback[\s\S]*?\n\n  const loadMoreSearchSource/)?.[0] || '';
     const openTopicBlock = topicControllerSource.match(/const openTopic = useCallback[\s\S]*?\n\n  const refreshTopicReplies/)?.[0] || '';
-    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
+    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const statusBlock = backupStatusControllerSource.match(/const checkLocalStatus = useCallback[\s\S]*?\n\n  const abortBackupStatusRequests/)?.[0] || '';
 
     expect(loadFeedBlock).toContain('setFeedBusy(true);');
@@ -895,7 +895,7 @@ describe('Android App experience guards', () => {
   });
 
   it('marks reply page loading before reading cookies to avoid duplicate load-more requests', () => {
-    const block = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
+    const block = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const guardIndex = block.indexOf('loadingMoreRepliesRef.current = true;');
     const cookieIndex = block.indexOf('await loadYaohuoCookieForSource(detail.source)');
 
@@ -905,7 +905,7 @@ describe('Android App experience guards', () => {
   });
 
   it('stops reply load-more when the next page adds no new replies', () => {
-    const block = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
+    const block = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const staleRequestGuardIndex = block.indexOf('if (currentTopicKeyRef.current !== requestTopicKey || requestId !== repliesRequestIdRef.current) {');
     const currentRepliesIndex = block.indexOf('const currentReplies = topicRepliesRef.current;');
 
@@ -1405,9 +1405,11 @@ describe('Android App experience guards', () => {
     expect(topicActionsControllerSource).toMatch(/buildNodeSeekInteractionRequest[\s\S]*?desiredActive/);
     expect(topicActionsControllerSource).toMatch(/buildLinuxDoBookmarkRequest[\s\S]*?desiredActive/);
     expect(topicActionsControllerSource).toMatch(/buildNodeSeekCollectionRequest[\s\S]*?desiredActive/);
-    expect(topicActionsControllerSource).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
-    expect(topicActionsControllerSource).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
-    expect(topicActionsControllerSource).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
+    expect(topicActionsControllerSource).not.toContain('refreshTopic: false');
+    expect(topicActionsControllerSource).not.toContain('options.refreshTopic');
+    expect(voteBlock).toMatch(/buildNodeSeekVoteRequest[\s\S]*?\{ owner: requestOwner \}/);
+    expect(voteBlock).toMatch(/buildLinuxDoPollVoteRequest[\s\S]*?\{ owner: requestOwner \}/);
+    expect(voteBlock).toMatch(/buildYaohuoVoteRequest[\s\S]*?\{ owner: requestOwner \}/);
     expect(interactBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(interactBlock).toContain('startOptimisticTopicAction({');
     expect(interactBlock).toContain("mode: desiredActive ? 'add' as const : 'remove' as const");
@@ -1473,7 +1475,6 @@ describe('Android App experience guards', () => {
 
   it('refreshes topic replies without resetting the topic body or reading state', () => {
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
-    const refreshTopicBlock = topicControllerSource.match(/const refreshTopic = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
     const refreshWholeTopicBlock = topicControllerSource.match(/const refreshWholeTopic = useCallback[\s\S]*?\n\n  const toggleQuotedFloor/)?.[0] || '';
     const submitReplyBlock = topicActionsControllerSource.match(/const submitReply = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[/)?.[1] || '';
 
@@ -1491,17 +1492,16 @@ describe('Android App experience guards', () => {
     expect(refreshRepliesBlock).not.toContain("setReplyFilter('all')");
     expect(refreshRepliesBlock).not.toContain('resetQuoteState()');
     expect(appSource).toMatch(/useEffect\(\(\) => \{\s*\n\s*setTopicDetail\(\(current\) => \{[\s\S]*?replies: topicReplies[\s\S]*?\n\s*}, \[topicReplies\]\);/);
-    expect(refreshTopicBlock).toContain('void refreshTopicReplies();');
-    expect(refreshTopicBlock).not.toContain('openTopic(');
     expect(refreshWholeTopicBlock).toContain('void openTopic(detail, true);');
-    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
-    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
-    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?replyTarget[\s\S]*?\{ refreshTopic: false, owner: requestOwner \}/);
+    expect(submitReplyBlock).toMatch(/buildYaohuoReplyRequest[\s\S]*?\{ owner: requestOwner \}/);
+    expect(submitReplyBlock).toMatch(/buildLinuxDoReplyRequest[\s\S]*?\{ owner: requestOwner \}/);
+    expect(submitReplyBlock).toMatch(/buildNodeSeekReplyRequest[\s\S]*?replyTarget[\s\S]*?\{ owner: requestOwner \}/);
     expect(submitReplyBlock).toContain('const requestTopicKey = topicKey(detail);');
     expect(submitReplyBlock).toContain('const requestOwner = startTopicActionRequest(requestTopicKey);');
     expect(submitReplyBlock).toContain('if (!isCurrentTopicActionRequest(requestOwner)) {');
     expect(submitReplyBlock.match(/await refreshTopicReplies\(\{ silent: true, afterSubmit: true \}\);/g) || []).toHaveLength(3);
     expect(topicScreenSource).toContain('onRefreshWholeTopic');
+    expect(appSource).toContain('onRefreshTopic: refreshTopicReplies,');
     expect(topicMenuSource).toContain('刷新评论');
     expect(topicMenuSource).toContain('刷新全文');
   });
@@ -1823,7 +1823,7 @@ describe('Android App experience guards', () => {
 
   it('keeps linux.do verified retry failures in reply refreshes from reopening verification', () => {
     const refreshRepliesBlock = topicControllerSource.match(/const refreshTopicReplies = useCallback[\s\S]*?\n\n  const loadMoreReplies/)?.[0] || '';
-    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshTopic/)?.[0] || '';
+    const loadMoreRepliesBlock = topicControllerSource.match(/const loadMoreReplies = useCallback[\s\S]*?\n\n  const refreshWholeTopic/)?.[0] || '';
 
     expect(refreshRepliesBlock).toContain('await handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
     expect(loadMoreRepliesBlock).toContain('await handleLinuxDoCloudflareForTopic(detail, errorMessage(error))');
