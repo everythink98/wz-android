@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-rea
 import type { Category, FeedSource, Source, Topic } from '../types';
 import { topicKey } from '../readerData';
 import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
+import { feedSourceItems } from '../feedCategoryRail';
 import {
   buildSearchListItems,
   type SearchGroup,
@@ -23,14 +24,6 @@ import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-
-const sourceItems: Array<{ value: FeedSource; label: string }> = [
-  { value: 'all', label: '全部' },
-  { value: 'v2ex', label: 'V2EX' },
-  { value: 'linuxdo', label: 'linux.do' },
-  { value: 'nodeseek', label: 'NodeSeek' },
-  { value: 'yaohuo', label: '妖火' }
-];
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -525,13 +518,11 @@ export function SearchScreen({
   const listItems = useMemo(() => (
     showSearchGroups
       ? buildSearchListItems({
-        busy,
         expandedGroups: expandedSearchGroups,
-        groups: visibleSearchGroups,
-        query
+        groups: visibleSearchGroups
       })
       : []
-  ), [busy, expandedSearchGroups, query, showSearchGroups, visibleSearchGroups]);
+  ), [expandedSearchGroups, showSearchGroups, visibleSearchGroups]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
       return renderTopicCard(item.topic);
@@ -581,7 +572,7 @@ export function SearchScreen({
         />
       );
     }
-    return <EmptyText text={item.text} styles={styles} />;
+    return null;
   }, [busy, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme, toggleSearchGroup]);
   const keySearchListItem = useCallback((item: SearchListItem) => {
     if (item.type === 'topic') {
@@ -589,9 +580,6 @@ export function SearchScreen({
     }
     if (item.type === 'groupHeader') {
       return `${item.group.source}:header`;
-    }
-    if (item.type === 'empty') {
-      return 'empty';
     }
     return `${item.group.source}:${item.type}`;
   }, []);
@@ -616,7 +604,7 @@ export function SearchScreen({
         onSearch={onSearch}
       />
       <PillRail
-        items={sourceItems}
+        items={feedSourceItems}
         value={searchSource}
         styles={styles}
         onChange={(value) => onSearchSourceChange(value as FeedSource)}

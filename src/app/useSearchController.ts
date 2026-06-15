@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { feedSources } from '../feedCategoryRail';
 import {
   mergeTopics,
-  sortTopicsByCreatedAt,
   type SearchSort
 } from '../feedLogic';
 import {
@@ -41,9 +40,9 @@ function searchHistoryFromRaw(raw: string | null) {
   }
 }
 
-function mergeSearchGroupsToItems(groups: SearchGroup[], searchSource: FeedSource) {
+function mergedSearchGroupItemCount(groups: SearchGroup[]) {
   const merged = groups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
-  return searchSource === 'all' ? sortTopicsByCreatedAt(merged) : merged;
+  return merged.length;
 }
 
 function remoteSearchSort(searchSource: FeedSource, searchFilters: SearchFilterState) {
@@ -90,12 +89,9 @@ export function useSearchController({
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState('');
   const [searchSource, setSearchSource] = useState<FeedSource>('all');
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
-  const [searchItems, setSearchItems] = useState<Topic[]>([]);
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
-
-  const visibleSearchItems = useMemo(() => searchItems, [searchItems]);
 
   useEffect(() => {
     let active = true;
@@ -147,7 +143,6 @@ export function useSearchController({
   const clearSearchResults = useCallback(() => {
     searchRequestIdRef.current += 1;
     searchAbortRef.current?.abort();
-    setSearchItems([]);
     setSearchGroups([]);
     searchGroupsRef.current = [];
     setSearchBusy(false);
@@ -270,7 +265,6 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
     } else {
-      setSearchItems([]);
       const nextGroups = activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }));
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
@@ -288,7 +282,6 @@ export function useSearchController({
         ));
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
-        setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));
       }));
       if (!isCurrentSearchRequest()) {
         return;
@@ -298,8 +291,7 @@ export function useSearchController({
       ));
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
-      const mergedItems = mergeSearchGroupsToItems(nextGroups, searchSource);
-      setSearchItems(mergedItems);
+      const resultCount = mergedSearchGroupItemCount(nextGroups);
       const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
       if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
         requireNodeSeekSearchVerification(nodeSeekError, () => { void runSearchRef.current?.('nodeseek'); });
@@ -308,7 +300,7 @@ export function useSearchController({
       const errors = nextGroups.filter((group) => group.error);
       notify(errors.length
         ? errors.map((group) => `${group.label}：${group.error}`).join('；')
-        : `搜索完成：${mergedItems.length} 条结果`);
+        : `搜索完成：${resultCount} 条结果`);
     } catch (error) {
       if (isCurrentSearchRequest()) {
         if (isYaohuoLoginRequiredError(error)) {
@@ -386,7 +378,6 @@ export function useSearchController({
       });
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
-      setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));
       const updated = nextGroups.find((group) => group.source === source);
       if (updated?.error && source === 'nodeseek' && /Cloudflare|验证/.test(updated.error)) {
         requireNodeSeekSearchVerification(updated.error, () => { void runSearchRef.current?.('nodeseek'); });
@@ -461,7 +452,6 @@ export function useSearchController({
     searchSource,
     submittedSearchQuery,
     setSearchQuery,
-    setSearchSource,
-    visibleSearchItems
+    setSearchSource
   };
 }

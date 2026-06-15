@@ -339,8 +339,8 @@ describe('Android App experience guards', () => {
 
     expect(block).toContain('searchRequestIdRef.current += 1;');
     expect(block).toContain('searchAbortRef.current?.abort();');
-    expect(block).toContain('setSearchItems([]);');
     expect(block).toContain('setSearchGroups([]);');
+    expect(block).toContain('searchGroupsRef.current = [];');
     expect(block).toContain('setSearchBusy(false);');
   });
 
@@ -703,7 +703,7 @@ describe('Android App experience guards', () => {
     expect(runSearchBlock).toContain('activeSources.map(async (source) => {');
     expect(runSearchBlock).toContain('const group = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, requestFilter, { isCurrent: () => isCurrentSearchRequest() });');
     expect(runSearchBlock).toContain('currentGroup.source === source ? { ...group, loading: false } : currentGroup');
-    expect(runSearchBlock).toContain('setSearchItems(mergeSearchGroupsToItems(nextGroups, searchSource));');
+    expect(runSearchBlock).toContain('setSearchGroups(nextGroups);');
     expect(runSearchBlock).not.toContain('const groups = await Promise.all(activeSources.map((source) => runRemoteSearchSource');
   });
 

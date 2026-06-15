@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSearchListItems, searchCategoryOptions, type SearchGroup } from './searchListItems';
+import { buildSearchListItems, type SearchGroup } from './searchListItems';
 import type { Topic } from './types';
 
 function topic(id: string, source: Topic['source'], category = '默认'): Topic {
@@ -27,10 +27,8 @@ describe('Android search list items', () => {
     }];
 
     const items = buildSearchListItems({
-      busy: false,
       expandedGroups: { linuxdo: true },
-      groups,
-      query: 'test'
+      groups
     });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'topic', 'topic', 'groupLoadMore']);
@@ -45,37 +43,11 @@ describe('Android search list items', () => {
     }];
 
     const items = buildSearchListItems({
-      busy: false,
       expandedGroups: { linuxdo: false },
-      groups,
-      query: 'test'
+      groups
     });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader']);
   });
 
-  it('builds category filters from merged search results', () => {
-    const options = searchCategoryOptions([
-      topic('1', 'linuxdo', '开发'),
-      topic('2', 'linuxdo', '开发'),
-      topic('3', 'v2ex', '问与答')
-    ]);
-
-    expect(options).toEqual([
-      { value: 'linuxdo:开发', label: 'linux.do · 开发 2' },
-      { value: 'v2ex:问与答', label: 'V2EX · 问与答 1' }
-    ]);
-  });
-
-  it('does not expose linux.do uncategorized search filters', () => {
-    const options = searchCategoryOptions([
-      { ...topic('1', 'linuxdo', '未分类'), categoryId: '101' },
-      { ...topic('2', 'linuxdo', '未分类'), categoryId: '102' },
-      topic('3', 'linuxdo', '开发调优')
-    ]);
-
-    expect(options).toEqual([
-      { value: 'linuxdo:开发调优', label: 'linux.do · 开发调优 1' }
-    ]);
-  });
 });
