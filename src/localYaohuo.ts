@@ -35,7 +35,7 @@ export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
     || /请先\s+登录/.test(visibleText);
 }
 
-function isVerificationRequiredHtml(html: string) {
+export function isYaohuoVerificationRequiredHtml(html: string) {
   return /访问验证|ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG|请开启JavaScript并刷新该页/i.test(html);
 }
 
@@ -52,7 +52,7 @@ function loginRequiredError(reason = 'expired') {
 
 export function ensureYaohuoHtmlLoggedIn(html: string, responseUrl = '') {
   if (isYaohuoLoginRequiredHtml(html, responseUrl)) {
-    throw loginRequiredError(isVerificationRequiredHtml(html) ? 'verification' : 'expired');
+    throw loginRequiredError(isYaohuoVerificationRequiredHtml(html) ? 'verification' : 'expired');
   }
 }
 
@@ -743,9 +743,9 @@ export function checkYaohuoLoginHtml(html: string, url?: string) {
     source: 'yaohuo' as const,
     ok: !loginRequired,
     loginRequired,
-    reason: loginRequired ? (isVerificationRequiredHtml(html) ? 'verification' : 'expired') : undefined,
+    reason: loginRequired ? (isYaohuoVerificationRequiredHtml(html) ? 'verification' : 'expired') : undefined,
     loginUrl: YAOHUO_LOGIN_URL,
-    message: loginRequired ? (isVerificationRequiredHtml(html) ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。') : undefined
+    message: loginRequired ? (isYaohuoVerificationRequiredHtml(html) ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。') : undefined
   };
 }
 

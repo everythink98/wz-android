@@ -1,21 +1,26 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { textContentFromHtml } from './localHtml';
+import { isYaohuoLoginRequiredHtml, isYaohuoVerificationRequiredHtml } from './localYaohuo';
+import {
+  YAOHUO_ANDROID_USER_AGENT,
+  YAOHUO_BASE_URL,
+  YAOHUO_BBS_REFERER,
+  YAOHUO_LOGIN_URL
+} from './localYaohuoHelpers';
 
-const YAOHUO_BASE_URL = 'https://yaohuo.me';
-const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
 const YAOHUO_ACTION_HEADERS = {
   accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
   'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
   origin: YAOHUO_BASE_URL,
-  referer: `${YAOHUO_BASE_URL}/bbs/`,
+  referer: YAOHUO_BBS_REFERER,
   'sec-ch-ua': '"Chromium";v="125", "Not.A/Brand";v="24"',
   'sec-ch-ua-mobile': '?1',
   'sec-ch-ua-platform': '"Android"',
   'sec-fetch-dest': 'document',
   'sec-fetch-mode': 'navigate',
   'sec-fetch-site': 'same-origin',
-  'user-agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+  'user-agent': YAOHUO_ANDROID_USER_AGENT
 };
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
@@ -31,17 +36,6 @@ function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired'
     loginUrl: YAOHUO_LOGIN_URL
   });
   return error;
-}
-
-function isVerificationHtml(html: string) {
-  return /访问验证|ImageCaptcha|Gocaptcha|CAPTCHA_CONFIG|请开启JavaScript并刷新该页/i.test(html);
-}
-
-function isLoginHtml(html: string, responseUrl = '') {
-  const visibleText = html.replace(/<[^>]*>/g, ' ');
-  return /waplogin\.aspx/i.test(responseUrl)
-    || /身份失效了，请重新登录网站|请先登录网站/.test(html)
-    || /请先\s+登录/.test(visibleText);
 }
 
 function actionMessage(html: string) {
@@ -90,10 +84,10 @@ export async function runYaohuoAction({
   const html = await response.text();
   const responseUrl = response.url || '';
 
-  if (isVerificationHtml(html)) {
+  if (isYaohuoVerificationRequiredHtml(html)) {
     throw yaohuoLoginRequiredError('verification');
   }
-  if (isLoginHtml(html, responseUrl)) {
+  if (isYaohuoLoginRequiredHtml(html, responseUrl)) {
     throw yaohuoLoginRequiredError('expired');
   }
   if (!response.ok) {

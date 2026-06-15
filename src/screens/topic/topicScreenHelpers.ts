@@ -1,5 +1,5 @@
 import type { AccessRequirement, Reply, Topic } from '../../types';
-import { accessRequirementFromText, textContentFromHtml } from '../../localHtml';
+import { accessRequirementFromNoticeText, textContentFromHtml } from '../../localHtml';
 
 function stableTextHash(value: string) {
   let hash = 0;
@@ -67,10 +67,7 @@ export function isAccessNoticeHtml(html: string, accessRequirement?: AccessRequi
     return false;
   }
   const text = textContentFromHtml(html);
-  if (text.length > 240) {
-    return false;
-  }
-  return !text || Boolean(accessRequirementFromText(text));
+  return !text || Boolean(accessRequirementFromNoticeText(text));
 }
 
 export {

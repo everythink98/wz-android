@@ -72,10 +72,10 @@ describe('Android topic detail reading layout', () => {
     expect(topicScreenSource).toContain('topicAccessNotice');
     expect(topicScreenSource).toContain('暂无权限');
     expect(topicScreenSource).toContain('forumAccessRequirementText(topic.accessRequirement)');
-    expect(topicScreenSource).toContain('if (text.length > 240)');
     expect(isAccessNoticeHtml('Requires trust level 2 to view.', { type: 'level', label: '需等级', detail: 'Requires trust level 2 to view.' })).toBe(true);
     expect(isAccessNoticeHtml('Minimum level 3 required.', { type: 'level', label: '需等级', detail: 'Minimum level 3 required.' })).toBe(true);
     expect(isAccessNoticeHtml('You must be at least trust level 4.', { type: 'level', label: '需等级', detail: 'You must be at least trust level 4.' })).toBe(true);
+    expect(isAccessNoticeHtml(`${'普通正文'.repeat(80)} Requires trust level 2 to view.`, { type: 'level', label: '需等级', detail: 'Requires trust level 2 to view.' })).toBe(false);
 
     const theme = createTheme(defaultSettings);
     const styles = createStyles(theme, defaultSettings, 800);

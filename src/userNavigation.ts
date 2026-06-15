@@ -1,8 +1,6 @@
 import type { Reply, Source, Topic, TopicDetail, UserProfile } from './types';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
-import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE, accessRequirementFromText, textContentFromHtml } from './localHtml';
-
-const accessRequirementNoticeStartPattern = new RegExp(`^(?:${ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE})`, 'i');
+import { accessRequirementFromNoticeText, textContentFromHtml } from './localHtml';
 
 export function nodeSeekUserIdFromValue(value?: string) {
   const text = String(value || '').trim();
@@ -19,10 +17,10 @@ function detailContentLooksRestricted(topic: Topic | TopicDetail) {
     return false;
   }
   const text = textContentFromHtml(topic.contentHtml).replace(/\s+/g, ' ').trim();
-  if (!text || text.length > 240 || !accessRequirementFromText(text)) {
+  if (!text) {
     return false;
   }
-  return accessRequirementNoticeStartPattern.test(text);
+  return Boolean(accessRequirementFromNoticeText(text, { requireStart: true }));
 }
 
 function shouldUseFallbackAccessRequirement(topic: Topic | TopicDetail, fallback: Topic) {

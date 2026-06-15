@@ -8,16 +8,19 @@ import {
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
 } from './localYaohuo';
+import {
+  YAOHUO_ANDROID_USER_AGENT,
+  YAOHUO_BASE_URL,
+  YAOHUO_BBS_REFERER,
+  YAOHUO_LOGIN_URL
+} from './localYaohuoHelpers';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
 }
 
-const YAOHUO_BASE_URL = 'https://yaohuo.me';
-const YAOHUO_LOGIN_URL = `${YAOHUO_BASE_URL}/waplogin.aspx?siteid=1000`;
 const DEFAULT_CLASS_ID = '177';
-const YAOHUO_ANDROID_USER_AGENT = 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36';
 
 function yaohuoLoginRequiredError(reason = 'missing_cookie') {
   const error = new Error(reason === 'missing_cookie' ? '请先登录妖火' : '妖火登录已失效，请重新登录');
@@ -54,7 +57,7 @@ function yaohuoRequestInit(cookie: string): RequestInit {
       'Cache-Control': 'no-cache',
       Cookie: cookie,
       Pragma: 'no-cache',
-      Referer: `${YAOHUO_BASE_URL}/bbs/`,
+      Referer: YAOHUO_BBS_REFERER,
       'Sec-CH-UA': '"Chromium";v="125", "Not.A/Brand";v="24"',
       'Sec-CH-UA-Mobile': '?1',
       'Sec-CH-UA-Platform': '"Android"',

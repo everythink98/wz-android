@@ -174,6 +174,7 @@ export const ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE = [
 const accessRequirementLevelPattern = new RegExp(ACCESS_REQUIREMENT_LEVEL_PATTERN_SOURCE, 'i');
 const accessRequirementLoginPattern = new RegExp(ACCESS_REQUIREMENT_LOGIN_PATTERN_SOURCE, 'i');
 const accessRequirementPermissionPattern = new RegExp(ACCESS_REQUIREMENT_PERMISSION_PATTERN_SOURCE, 'i');
+const accessRequirementNoticeStartPattern = new RegExp(`^(?:${ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE})`, 'i');
 
 export function sortTopicsByTime<T extends { lastReplyAt?: string; createdAt: string }>(items: T[]) {
   return [...items].sort((left, right) => (
@@ -202,6 +203,20 @@ export function accessRequirementFromText(value: unknown) {
     return { type: 'permission' as const, label: '需权限', detail: accessRequirementDetail(text, permissionMatch) };
   }
   return undefined;
+}
+
+export function accessRequirementFromNoticeText(
+  value: unknown,
+  { maxLength = 240, requireStart = false }: { maxLength?: number; requireStart?: boolean } = {}
+) {
+  const text = textContentFromHtml(value).replace(/\s+/g, ' ').trim();
+  if (!text || text.length > maxLength) {
+    return undefined;
+  }
+  if (requireStart && !accessRequirementNoticeStartPattern.test(text)) {
+    return undefined;
+  }
+  return accessRequirementFromText(text);
 }
 
 function accessRequirementFromToken(value: unknown): AccessRequirement | undefined {
