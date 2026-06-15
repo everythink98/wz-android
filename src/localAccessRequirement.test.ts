@@ -747,6 +747,48 @@ describe('Android local access requirement detection', () => {
     });
   });
 
+  it('keeps V2EX detail access requirements when the origin page has surrounding text', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/topics/show.json')) {
+        return json([{
+          id: 204,
+          title: '受限主题',
+          member: { username: 'alice' },
+          node: { name: 'qna', title: '问与答' },
+          created: 1780558980,
+          replies: 0,
+          content_rendered: ''
+        }]);
+      }
+      if (url.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      return new Response(`
+        <html>
+          <body>
+            <div id="Main">
+              <div class="box">
+                <div class="cell">V2EX Topic</div>
+                <div class="problem">This topic is private.</div>
+              </div>
+            </div>
+          </body>
+        </html>
+      `, {
+        headers: { 'content-type': 'text/html' }
+      });
+    });
+
+    const topic = await getV2exTopic('204', { fetcher });
+
+    expect(topic.accessRequirement).toMatchObject({
+      type: 'permission',
+      label: '需权限',
+      detail: 'This topic is private.'
+    });
+  });
+
   it('does not mark readable empty V2EX topics as restricted from reply login prompts', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

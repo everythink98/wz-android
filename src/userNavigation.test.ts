@@ -158,6 +158,60 @@ describe('Android user navigation helpers', () => {
     expect(merged?.accessRequirement).toBeUndefined();
   });
 
+  it('does not copy a stale fallback access requirement from ordinary text mentioning private topics', () => {
+    const listTopic: Topic = {
+      source: 'v2ex',
+      id: '7204',
+      title: '权限说明讨论',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/7204',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: 'This topic is private.'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      accessRequirement: undefined,
+      contentHtml: `<p>${'公开正文'.repeat(60)} Some users call this a private topic, but this page is readable.</p>`,
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toBeUndefined();
+  });
+
+  it('does not copy a stale fallback access requirement from a short ordinary sentence mentioning a private topic', () => {
+    const listTopic: Topic = {
+      source: 'v2ex',
+      id: '7205',
+      title: '权限说明讨论',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/7205',
+      createdAt: '2026-06-04T06:58:00.000Z',
+      replyCount: 0,
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: 'This topic is private.'
+      }
+    };
+    const detailTopic: TopicDetail = {
+      ...listTopic,
+      accessRequirement: undefined,
+      contentHtml: '<p>We call this a private topic in our docs.</p>',
+      replies: []
+    };
+
+    const merged = topicWithAuthorFallback(detailTopic, listTopic);
+
+    expect(merged?.accessRequirement).toBeUndefined();
+  });
+
   it('uses a more specific list level when a restricted detail only has a generic permission notice', () => {
     const listTopic: Topic = {
       source: 'nodeseek',
