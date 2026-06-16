@@ -47,14 +47,16 @@ import {
 } from '../siteSessionState';
 import {
   cleanupLinuxDoBrowserFetchRequest,
-  cleanupNodeSeekBrowserFetchRequest,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
-  requestHeaderValue
+  requestHeaderValue,
+  runBestEffortTask,
+  settleBrowserFetchRequestOnce
 } from './sessionControllerHelpers';
 
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
+const NODESEEK_COOKIE_PERSIST_TIMEOUT_MS = 1200;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
@@ -75,6 +77,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
+  settled?: boolean;
 };
 
 export type LinuxDoBrowserFetchRequest = {
@@ -317,8 +320,7 @@ export function useSessionController({
         continue;
       }
       if (candidate.abortSignal?.aborted) {
-        cleanupNodeSeekBrowserFetchRequest(candidate);
-        candidate.reject(new Error('请求已取消'));
+        settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
         continue;
       }
       next = candidate;
@@ -339,6 +341,9 @@ export function useSessionController({
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetchRef, setNodeSeekBrowserFetchRequest]);
 
   const rejectNodeSeekBrowserFetch = useCallback((request: PendingNodeSeekBrowserFetchRequest, message: string) => {
+    if (request.settled) {
+      return;
+    }
     const queuedIndex = nodeSeekBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
     if (queuedIndex >= 0) {
       nodeSeekBrowserFetchQueueRef.current.splice(queuedIndex, 1);
@@ -348,8 +353,10 @@ export function useSessionController({
       nodeSeekBrowserFetchCurrentRef.current = null;
       setNodeSeekBrowserFetchRequest(null);
     }
-    cleanupNodeSeekBrowserFetchRequest(request);
-    request.reject(new Error(message));
+    const settled = settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)));
+    if (!settled) {
+      return;
+    }
     startNextNodeSeekBrowserFetch();
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, nodeSeekBrowserWebViewRef, setNodeSeekBrowserFetchRequest, startNextNodeSeekBrowserFetch]);
   rejectNodeSeekBrowserFetchRef.current = rejectNodeSeekBrowserFetch;
@@ -399,7 +406,6 @@ export function useSessionController({
     if (!current || data.id !== current.id) {
       return;
     }
-    cleanupNodeSeekBrowserFetchRequest(current);
     nodeSeekBrowserWebViewRef.current?.stopLoading();
     nodeSeekBrowserFetchCurrentRef.current = null;
     setNodeSeekBrowserFetchRequest(null);
@@ -410,16 +416,21 @@ export function useSessionController({
     }
     if (typeof data.cookie === 'string') {
       nodeSeekWebViewCookieHeaderRef.current = data.cookie;
-      try {
+    }
+    const settled = settleBrowserFetchRequestOnce(current, () => {
+      current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
+    });
+    if (!settled) {
+      return;
+    }
+    startNextNodeSeekBrowserFetch();
+    if (typeof data.cookie === 'string') {
+      void runBestEffortTask(async () => {
         await CookieManager.flush();
         const nativeCookies = await readNodeSeekCookiesFromWebView();
         await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')));
-      } catch {
-        // Keep the fetched page usable even if persisting refreshed cookies fails.
-      }
+      }, NODESEEK_COOKIE_PERSIST_TIMEOUT_MS);
     }
-    current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
-    startNextNodeSeekBrowserFetch();
   }, [
     nodeSeekBrowserFetchCurrentRef,
     nodeSeekBrowserWebViewRef,

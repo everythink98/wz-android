@@ -1285,6 +1285,19 @@ describe('Android App experience guards', () => {
     expect(hiddenBrowserHostSource).toContain('renderError={() => <View style={styles.hiddenBrowserWebView} />}');
   });
 
+  it('ignores late NodeSeek hidden WebView messages after the request changes', () => {
+    const completeBlock = sessionControllerSource.match(/const completeNodeSeekBrowserFetch = useCallback\(async \(data: \{[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const staleGuardIndex = completeBlock.indexOf('if (!current || data.id !== current.id) {');
+    const returnIndex = completeBlock.indexOf('return;', staleGuardIndex);
+    const cookieIndex = completeBlock.indexOf('nodeSeekWebViewCookieHeaderRef.current = data.cookie;');
+    const resolveIndex = completeBlock.indexOf('current.resolve(nodeSeekBrowserResponse');
+
+    expect(staleGuardIndex).toBeGreaterThan(-1);
+    expect(returnIndex).toBeGreaterThan(staleGuardIndex);
+    expect(cookieIndex).toBeGreaterThan(returnIndex);
+    expect(resolveIndex).toBeGreaterThan(returnIndex);
+  });
+
   it('waits for rendered NodeSeek list or detail content before returning hidden WebView HTML', () => {
     expect(hiddenBrowserFetchControllerSource).toContain('const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))');
     expect(hiddenBrowserFetchControllerSource).toContain('document.body?.innerText');
@@ -2117,14 +2130,16 @@ describe('Android App experience guards', () => {
     expect(completeBlock).toContain('current.resolve(linuxDoBrowserResponse');
   });
 
-  it('saves NodeSeek hidden WebView cookies before resolving the fallback response', () => {
+  it('does not block NodeSeek hidden fallback responses on cookie persistence', () => {
     const completeBlock = sessionControllerSource.match(/const completeNodeSeekBrowserFetch = useCallback\([\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
-    const saveIndex = completeBlock.indexOf('await saveNodeSeekCookieHeader(');
     const resolveIndex = completeBlock.indexOf('current.resolve(nodeSeekBrowserResponse');
+    const persistIndex = completeBlock.indexOf('void runBestEffortTask(');
+    const startNextIndex = completeBlock.indexOf('startNextNodeSeekBrowserFetch();');
 
     expect(completeBlock).toContain('const completeNodeSeekBrowserFetch = useCallback(async');
-    expect(saveIndex).toBeGreaterThan(-1);
-    expect(resolveIndex).toBeGreaterThan(saveIndex);
+    expect(resolveIndex).toBeGreaterThan(-1);
+    expect(persistIndex).toBeGreaterThan(resolveIndex);
+    expect(startNextIndex).toBeGreaterThan(resolveIndex);
   });
 
   it('clears stale linux.do WebView clearance before topic-triggered verification', () => {

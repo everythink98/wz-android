@@ -161,6 +161,7 @@ describe('Android App performance guards', () => {
     const fetchBlock = sessionControllerSource.match(/const nodeSeekFetchWithWebView: Fetcher = useCallback[\s\S]*?\n\n  const completeNodeSeekBrowserFetch/)?.[0] || '';
 
     expect(startBlock).toContain('next.timeout = setTimeout(() => {');
+    expect(startBlock).toContain("rejectNodeSeekBrowserFetchRef.current?.(next, 'NodeSeek 页面读取超时');");
     expect(fetchBlock).not.toContain('setTimeout(() =>');
   });
 
@@ -169,8 +170,21 @@ describe('Android App performance guards', () => {
 
     expect(startBlock).toContain('while (nodeSeekBrowserFetchQueueRef.current.length) {');
     expect(startBlock).toContain('if (candidate.abortSignal?.aborted) {');
-    expect(startBlock).toContain("candidate.reject(new Error('请求已取消'));");
+    expect(startBlock).toContain("settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));");
     expect(startBlock).toContain('continue;');
+  });
+
+  it('releases a rejected NodeSeek hidden WebView request before starting the next one', () => {
+    const rejectBlock = sessionControllerSource.match(/const rejectNodeSeekBrowserFetch = useCallback[\s\S]*?\n  \}, \[[^\]]+\]\);/)?.[0] || '';
+    const clearIndex = rejectBlock.indexOf('nodeSeekBrowserFetchCurrentRef.current = null;');
+    const settleIndex = rejectBlock.indexOf('settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)))');
+    const nextIndex = rejectBlock.indexOf('startNextNodeSeekBrowserFetch();');
+
+    expect(rejectBlock).toContain('if (request.settled) {');
+    expect(rejectBlock).toContain('if (nodeSeekBrowserFetchCurrentRef.current?.id === request.id) {');
+    expect(clearIndex).toBeGreaterThan(-1);
+    expect(settleIndex).toBeGreaterThan(clearIndex);
+    expect(nextIndex).toBeGreaterThan(settleIndex);
   });
 
   it('memoizes the Android More screen against reader data changes it does not display', () => {

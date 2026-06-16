@@ -2,6 +2,7 @@ export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
+  settled?: boolean;
 };
 
 export function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
@@ -75,6 +76,32 @@ export function cleanupNodeSeekBrowserFetchRequest(request: BrowserFetchRequestC
 
 export function cleanupLinuxDoBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {
   cleanupBrowserFetchRequest(request);
+}
+
+export function settleBrowserFetchRequestOnce(request: BrowserFetchRequestCleanupTarget, settle: () => void) {
+  if (request.settled) {
+    return false;
+  }
+  request.settled = true;
+  cleanupBrowserFetchRequest(request);
+  settle();
+  return true;
+}
+
+export async function runBestEffortTask(task: () => Promise<void>, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve().then(task).catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }
 
 function cleanupBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {
