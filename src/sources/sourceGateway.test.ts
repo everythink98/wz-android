@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Fetcher } from '../request';
-import { readProjectFile } from '../sourceTestUtils';
 import type { LinuxDoActionRequest } from '../linuxdoActions';
 import type { NodeSeekActionRequest } from '../nodeseekActions';
 import type {
@@ -75,7 +74,6 @@ import {
 const fetcherMock = vi.fn();
 const fetcher = fetcherMock as unknown as Fetcher;
 const signal = new AbortController().signal;
-const sourceGatewaySource = readProjectFile('src', 'sources', 'sourceGateway.ts');
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -113,14 +111,6 @@ describe('sourceGateway', () => {
     yaohuoApi.searchYaohuoDirect.mockReset();
     yaohuoActionClient.runYaohuoAction.mockReset();
     fetcherMock.mockReset();
-  });
-
-  it('uses explicit wrapper functions instead of direct re-export blocks', () => {
-    expect(sourceGatewaySource).not.toMatch(/export\s*\{[\s\S]*?\}\s*from\s+['"][^'"]+['"]/);
-    expect(sourceGatewaySource).toContain('export function getFeed(');
-    expect(sourceGatewaySource).toContain('export function runNodeSeekAction(');
-    expect(sourceGatewaySource).toContain('export function runLinuxDoAction(');
-    expect(sourceGatewaySource).toContain('export function runYaohuoAction(');
   });
 
   it('forwards getFeed to forumApi unchanged', async () => {

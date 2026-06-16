@@ -1001,14 +1001,6 @@ describe('Android App experience guards', () => {
     expect(moreUiSource).not.toContain('headers: yaohuoLoginCookieHeader ? { Cookie: yaohuoLoginCookieHeader } : undefined');
   });
 
-  it('does not mark saved yaohuo session cookies as logged in while loading sources', () => {
-    const loadCookieBlock = sessionControllerSource.match(/const loadYaohuoCookieForSource = useCallback[\s\S]*?\n\n  const saveNodeSeekCookieHeader/)?.[0] || '';
-
-    expect(loadCookieBlock).toContain("summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookie || ''))");
-    expect(loadCookieBlock).toContain("updateYaohuoSession(siteEventWithCookieFacts('yaohuo', summary.names, false, summary.loggedIn));");
-    expect(loadCookieBlock).not.toContain('setHasYaohuoCookie(Boolean(cookie));');
-  });
-
   it('opens the yaohuo signed-in page instead of the login form when cookies are saved', () => {
     expect(moreUiSource).toContain("const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';");
     expect(moreUiSource).toContain('uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL');

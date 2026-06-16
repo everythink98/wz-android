@@ -123,6 +123,30 @@ describe('site session state', () => {
     expect(isSiteLoggedIn(state)).toBe(false);
   });
 
+  it('loads saved yaohuo session cookies without treating them as logged in', () => {
+    const state = reduceSiteSessionState(createSiteSessionStates().yaohuo, {
+      type: 'cookie-loaded',
+      cookieSummary: ['ASP.NET_SessionId', 'GUID'],
+      hasVerification: false,
+      loggedIn: false,
+      at: '2026-06-06T02:00:00.000Z'
+    });
+    const viewModel = createSiteSessionViewModels(createSiteSessionStates({ yaohuo: state })).yaohuo;
+
+    expect(state).toMatchObject({
+      site: 'yaohuo',
+      status: 'anonymous',
+      cookieSummary: ['ASP.NET_SessionId', 'GUID'],
+      isVerifying: false
+    });
+    expect(viewModel).toMatchObject({
+      statusLabel: '未登录',
+      summaryLabel: '未登录',
+      isLoggedIn: false,
+      canWrite: false
+    });
+  });
+
   it('builds UI view models from canonical session state without separate login booleans', () => {
     const viewModels = createSiteSessionViewModels(createSiteSessionStates({
       nodeseek: {
