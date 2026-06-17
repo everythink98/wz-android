@@ -31,6 +31,7 @@ import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressF
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
+import type { TopicImageDeriver } from '../../topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -156,7 +157,8 @@ export function TopicScreen({
   onToggleQuotedFloor,
   onToggleFavorite,
   onOpenUser,
-  inlineSizedImageUrls
+  inlineSizedImageUrls,
+  topicImageDeriver
 }: {
   actionBusy: boolean;
   canUseLinuxDoActions: boolean;
@@ -215,6 +217,7 @@ export function TopicScreen({
   onToggleFavorite: (topic: Topic) => void;
   onOpenUser: (user: UserProfile) => void;
   inlineSizedImageUrls: Record<string, true>;
+  topicImageDeriver: TopicImageDeriver;
 }) {
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
@@ -517,6 +520,7 @@ export function TopicScreen({
               contentWidth={contentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={listItem.html}
+              topicImageDeriver={topicImageDeriver}
             />
           </View>
         </View>
@@ -676,6 +680,7 @@ export function TopicScreen({
           expandedQuotes={expandedQuotesRef.current}
           isActionPending={isOptimisticActionPending}
           inlineSizedImageUrls={inlineSizedImageUrls}
+          topicImageDeriver={topicImageDeriver}
           loadedQuotedReplies={loadedQuotedRepliesRef.current}
           loadingQuotedFloors={loadingQuotedFloorsRef.current}
           onTogglePollSelection={togglePollSelection}
@@ -708,6 +713,7 @@ export function TopicScreen({
     expandedQuotesRef,
     floorOpen,
     inlineSizedImageUrls,
+    topicImageDeriver,
     isOptimisticActionPending,
     jumpToFloor,
     loadedQuotedRepliesRef,

@@ -1350,6 +1350,7 @@ export function AppRoot() {
       htmlRenderersProps,
       htmlTagsStyles,
       inlineSizedImageUrls,
+      topicImageDeriver,
       expandedQuotesRef,
       loadedQuotedRepliesRef,
       loadingMoreReplies,

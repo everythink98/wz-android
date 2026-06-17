@@ -12,6 +12,7 @@ import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../th
 import { AppButton } from '../../components/AppControls';
 import { userFromReply } from '../../userNavigation';
 import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
+import type { TopicImageDeriver } from '../../topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -164,6 +165,7 @@ export function ReplyItem({
   styles,
   theme,
   topicAuthor,
+  topicImageDeriver,
   onInteract,
   onOpenUser,
   onReplyToFloor,
@@ -189,6 +191,7 @@ export function ReplyItem({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topicAuthor?: string;
+  topicImageDeriver: TopicImageDeriver;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onOpenUser: (user: UserProfile) => void;
   onReplyToFloor: (reply: Reply) => void;
@@ -309,6 +312,7 @@ export function ReplyItem({
                         contentWidth={Math.max(220, replyContentWidth - 24)}
                         inlineSizedImageUrls={inlineSizedImageUrls}
                         html={quotedReply.contentHtml}
+                        topicImageDeriver={topicImageDeriver}
                       />
                     </View>
                   ) : null}
@@ -336,6 +340,7 @@ export function ReplyItem({
             contentWidth={replyContentWidth}
             inlineSizedImageUrls={inlineSizedImageUrls}
             html={highlightedHtml}
+            topicImageDeriver={topicImageDeriver}
           />
         </View>
         <TopicPolls
@@ -356,6 +361,7 @@ export function ReplyItem({
               contentWidth={replyContentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={reply.signatureHtml}
+              topicImageDeriver={topicImageDeriver}
             />
           </View>
         ) : null}
@@ -422,6 +428,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.styles !== next.styles
     || previous.theme !== next.theme
     || previous.topicAuthor !== next.topicAuthor
+    || previous.topicImageDeriver !== next.topicImageDeriver
   ) {
     return false;
   }

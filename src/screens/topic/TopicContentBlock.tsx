@@ -1,20 +1,23 @@
 import { memo, useMemo } from 'react';
 import { RenderHTMLSource } from 'react-native-render-html';
-import { flowInlineImagesInMixedParagraphs, markInlineSizedImageHtml } from '../../htmlImages';
+import { flowInlineImagesInMixedParagraphs } from '../../htmlImages';
+import type { InlineSizedImageUrlMap, TopicImageDeriver } from '../../topicDerivedData';
 
 export function TopicContentBlock({
   contentWidth,
   html,
-  inlineSizedImageUrls
+  inlineSizedImageUrls,
+  topicImageDeriver
 }: {
   contentWidth: number;
   html: string | undefined;
-  inlineSizedImageUrls: Record<string, true>;
+  inlineSizedImageUrls: InlineSizedImageUrlMap;
+  topicImageDeriver: TopicImageDeriver;
 }) {
   const source = useMemo(() => {
-    const markedHtml = Object.keys(inlineSizedImageUrls).reduce((current, url) => markInlineSizedImageHtml(current, url), html || '<p></p>');
+    const markedHtml = topicImageDeriver.markInlineSizedImages(html || '<p></p>', inlineSizedImageUrls);
     return { html: flowInlineImagesInMixedParagraphs(markedHtml) };
-  }, [html, inlineSizedImageUrls]);
+  }, [html, inlineSizedImageUrls, topicImageDeriver]);
   return (
     <RenderHTMLSource
       contentWidth={contentWidth}
