@@ -4,17 +4,23 @@ import {
   BackHandler,
   FlatList,
   InteractionManager,
+  KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
+  ScrollView,
   Share,
   ToastAndroid,
+  View,
   useWindowDimensions
 } from 'react-native';
 import { QueryClient } from '@tanstack/react-query';
 import { DarkTheme, DefaultTheme, StackActions } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
+import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekCookies';
 import type { TopicRecord } from '../readerData';
@@ -24,8 +30,7 @@ import { useBackupStatusController } from './useBackupStatusController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { navigateMainTab, navigationRef, type MainTabParamList } from './AppNavigator';
-import { AppShell } from './AppShell';
+import { AppNavigator, navigateMainTab, navigationRef, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController, type LinuxDoBrowserFetchRequest, type NodeSeekBrowserFetchRequest } from './useSessionController';
@@ -36,8 +41,9 @@ import { useUserController } from './useUserController';
 import { useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTopicActionsController } from './useTopicActionsController';
-import { useAppScreenRenderers } from './AppScreenRenderers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
+import { GlobalModalHost } from './GlobalModalHost';
+import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoCookieBridge';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { Reply, Topic, TopicDetail } from '../types';
@@ -52,6 +58,12 @@ import {
 } from '../theme';
 import type { LibraryTab } from '../feedLogic';
 import { errorMessage } from '../appUtils';
+import { FeedScreen } from '../screens/FeedScreen';
+import { LibraryScreen } from '../screens/LibraryScreen';
+import { MoreScreen } from '../screens/MoreScreen';
+import { SearchScreen } from '../screens/SearchScreen';
+import { TopicScreen } from '../screens/TopicScreen';
+import { UserScreen } from '../screens/UserScreen';
 import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
 
@@ -1206,15 +1218,7 @@ export function AppRoot() {
     syncNavigationToScreen(screen);
   }, [screen, syncNavigationToScreen]);
 
-  const {
-    renderFeedTab,
-    renderLibraryTab,
-    renderMoreTab,
-    renderSearchTab,
-    renderTopicScreen,
-    renderUserScreen
-  } = useAppScreenRenderers({
-    feedProps: {
+  const feedProps = {
       busy: feedBusy || actionBusy,
       categories,
       categoryFilter,
@@ -1241,8 +1245,9 @@ export function AppRoot() {
       onOpenTopic: openTopic,
       onReadingFilterChange: setReadingFilter,
       onRefresh: refreshFeed
-    },
-    searchProps: {
+  };
+
+  const searchProps = {
       busy: searchBusy,
       categories,
       query: searchQuery,
@@ -1264,8 +1269,9 @@ export function AppRoot() {
       onSearchFilterApply: applySearchFilter,
       onSearchSourceChange: setSearchSource,
       onRetrySearchSource: retrySearchSource
-    },
-    libraryProps: {
+  };
+
+  const libraryProps = {
       categories,
       followedUsers: followedUserRecords,
       libraryTab,
@@ -1280,8 +1286,9 @@ export function AppRoot() {
       onRemove: removeLibraryTopic,
       onRemoveUser: removeFollowedUser,
       onTabChange: setLibraryTab
-    },
-    moreProps: {
+  };
+
+  const moreProps = {
       checking,
       healthDetails,
       healthSummary,
@@ -1329,10 +1336,9 @@ export function AppRoot() {
       onShowLinuxDoPanelChange: changeLinuxDoPanel,
       onShowSettingsPanelChange: setShowSettingsPanel,
       onUpdateSettings: updateSettings
-    },
-    moreScrollRef,
-    styles,
-    topicProps: {
+  };
+
+  const topicProps = {
       actionBusy,
       canUseLinuxDoActions,
       canUseNodeSeekActions,
@@ -1390,8 +1396,9 @@ export function AppRoot() {
       onToggleQuotedFloor: toggleQuotedFloor,
       onToggleFavorite: toggleTopicFavorite,
       onOpenUser: openUser
-    },
-    userProps: {
+  };
+
+  const userProps = {
       busy: userBusy,
       error: userError,
       followed: currentUserFollowed,
@@ -1412,8 +1419,28 @@ export function AppRoot() {
         }
       },
       onToggleFollow: toggleUserFollow
-    }
-  });
+  };
+
+  const renderFeedTab = () => (
+    <FeedScreen {...feedProps} />
+  );
+  const renderSearchTab = () => (
+    <SearchScreen {...searchProps} />
+  );
+  const renderLibraryTab = () => (
+    <LibraryScreen {...libraryProps} />
+  );
+  const renderMoreTab = () => (
+    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
+      <MoreScreen {...moreProps} />
+    </ScrollView>
+  );
+  const renderTopicScreen = () => (
+    <TopicScreen {...topicProps} />
+  );
+  const renderUserScreen = () => (
+    <UserScreen {...userProps} />
+  );
 
   const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
     if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {
@@ -1435,66 +1462,72 @@ export function AppRoot() {
   }, [changeScreen, requestTabScrollToTop, screen]);
 
   return (
-    <AppShell
-      globalModalProps={{
-        checking,
-        closeImagePreview,
-        handleLinuxDoMessage,
-        handleLinuxDoNavigation,
-        imagePreview,
-        linuxDoSession: siteSessionViewModels.linuxdo,
-        linuxDoWebViewError,
-        linuxDoWebViewKey,
-        linuxDoWebViewRef,
-        linuxDoWebViewUserAgent,
-        loadingLinuxDoPage,
-        mountLinuxDoWebView,
-        resetLinuxDoWebView,
-        checkLinuxDoCookie,
-        clearLinuxDoCookie,
-        setLinuxDoWebViewErrorForSession,
-        setLoadingLinuxDoPageForSession,
-        showLinuxDoPanel,
-        showNextImage,
-        showPreviousImage,
-        savePreviewImage,
-        selectPreviewImage,
-        changeLinuxDoPanel,
-        styles,
-        theme
-      }}
-      hiddenBrowserProps={{
-        failLinuxDoBrowserFetchById,
-        failNodeSeekBrowserFetchById,
-        handleLinuxDoBrowserFetchMessage,
-        handleNodeSeekBrowserFetchMessage,
-        linuxDoBrowserFetchRequest,
-        linuxDoBrowserWebViewRef,
-        linuxDoWebViewUserAgent,
-        nodeSeekBrowserFetchRequest,
-        nodeSeekBrowserWebViewRef,
-        nodeSeekWebViewUserAgent,
-        onLinuxDoHttpErrorStatus: markLinuxDoBrowserFetchHttpError,
-        onNodeSeekHttpErrorStatus: markNodeSeekBrowserFetchHttpError,
-        styles
-      }}
-      navigationProps={{
-        navigationTheme,
-        renderFeedTab,
-        renderLibraryTab,
-        renderMoreTab,
-        renderSearchTab,
-        renderTopicScreen,
-        renderUserScreen,
-        styles,
-        theme,
-        onReady: () => syncNavigationToScreen(screen),
-        onTabPress: handleMainTabPress,
-        onTopicClosing: flushDeferredNavigationTask,
-        onUserClosing: flushDeferredNavigationTask
-      }}
-      styles={styles}
-      theme={theme}
-    />
+    <GestureHandlerRootView style={styles.screen}>
+      <SafeAreaProvider>
+        <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.screen}>
+            <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
+            <View pointerEvents="none" style={styles.statusBarScrim} />
+            <HiddenBrowserHost
+              failLinuxDoBrowserFetchById={failLinuxDoBrowserFetchById}
+              failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
+              handleLinuxDoBrowserFetchMessage={handleLinuxDoBrowserFetchMessage}
+              handleNodeSeekBrowserFetchMessage={handleNodeSeekBrowserFetchMessage}
+              linuxDoBrowserFetchRequest={linuxDoBrowserFetchRequest}
+              linuxDoBrowserWebViewRef={linuxDoBrowserWebViewRef}
+              linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+              nodeSeekBrowserFetchRequest={nodeSeekBrowserFetchRequest}
+              nodeSeekBrowserWebViewRef={nodeSeekBrowserWebViewRef}
+              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
+              styles={styles}
+              onLinuxDoHttpErrorStatus={markLinuxDoBrowserFetchHttpError}
+              onNodeSeekHttpErrorStatus={markNodeSeekBrowserFetchHttpError}
+            />
+            <GlobalModalHost
+              checking={checking}
+              checkLinuxDoCookie={checkLinuxDoCookie}
+              clearLinuxDoCookie={clearLinuxDoCookie}
+              closeImagePreview={closeImagePreview}
+              handleLinuxDoMessage={handleLinuxDoMessage}
+              handleLinuxDoNavigation={handleLinuxDoNavigation}
+              imagePreview={imagePreview}
+              linuxDoSession={siteSessionViewModels.linuxdo}
+              linuxDoWebViewError={linuxDoWebViewError}
+              linuxDoWebViewKey={linuxDoWebViewKey}
+              linuxDoWebViewRef={linuxDoWebViewRef}
+              linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
+              loadingLinuxDoPage={loadingLinuxDoPage}
+              mountLinuxDoWebView={mountLinuxDoWebView}
+              resetLinuxDoWebView={resetLinuxDoWebView}
+              savePreviewImage={savePreviewImage}
+              selectPreviewImage={selectPreviewImage}
+              setLinuxDoWebViewErrorForSession={setLinuxDoWebViewErrorForSession}
+              setLoadingLinuxDoPageForSession={setLoadingLinuxDoPageForSession}
+              showLinuxDoPanel={showLinuxDoPanel}
+              showNextImage={showNextImage}
+              showPreviousImage={showPreviousImage}
+              styles={styles}
+              theme={theme}
+              changeLinuxDoPanel={changeLinuxDoPanel}
+            />
+            <AppNavigator
+              navigationTheme={navigationTheme}
+              renderFeedTab={renderFeedTab}
+              renderLibraryTab={renderLibraryTab}
+              renderMoreTab={renderMoreTab}
+              renderSearchTab={renderSearchTab}
+              renderTopicScreen={renderTopicScreen}
+              renderUserScreen={renderUserScreen}
+              styles={styles}
+              theme={theme}
+              onReady={() => syncNavigationToScreen(screen)}
+              onTabPress={handleMainTabPress}
+              onTopicClosing={flushDeferredNavigationTask}
+              onUserClosing={flushDeferredNavigationTask}
+            />
+          </SafeAreaView>
+        </KeyboardAvoidingView>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
