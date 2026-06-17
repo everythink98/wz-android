@@ -5,12 +5,10 @@ describe('Android release packaging', () => {
   it('builds only the 64-bit physical-device CPU architecture', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const script = packageJson.scripts['release:android'];
-    const unsignedScript = packageJson.scripts['release:android:unsigned'];
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
     expect(script).toBe('node scripts/release-android.mjs');
-    expect(unsignedScript).toBe('node scripts/release-android.mjs --unsigned');
     expect(releaseScript).toContain("'expo', 'prebuild', '--platform', 'android', '--clean'");
     expect(releaseScript).toContain("'-PreactNativeArchitectures=arm64-v8a'");
     expect(releaseScript).not.toContain('armeabi-v7a');
@@ -47,12 +45,10 @@ describe('Android release packaging', () => {
     expect(adaptiveIconIndex).toBeGreaterThan(versionIndex);
   });
 
-  it('requires formal signing unless the unsigned command is explicit', () => {
+  it('uses generated Android signing unless formal signing is configured', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
-    expect(releaseScript).toContain('requireSigningEnv();');
-    expect(releaseScript).toContain("args.includes('--unsigned')");
     expect(releaseScript).toContain('app-arm64-v8a-release.apk');
     expect(releaseScript).not.toContain('app-arm64-v8a-release-unsigned.apk');
     expect(gradle).toContain('WZ_ANDROID_KEYSTORE_PATH');

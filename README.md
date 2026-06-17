@@ -37,7 +37,7 @@
 
 **[下载阅坛 Android APK](https://github.com/everythink98/wz-android/releases/latest/download/app-arm64-v8a-release.apk)**
 
-当前版本为 `1.3.6`，Android `versionCode` 为 `10`，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
+当前版本为 `1.3.7`，Android `versionCode` 为 `11`，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
 
 ## 隐私与数据
 
@@ -58,4 +58,4 @@ npm run release:android
 
 `npm run android` 需要 Expo development build，不能用 Expo Go 验证。需要 Android Studio 提供 Android SDK / 模拟器，或准备一台已开启 USB 调试的 Android 手机。
 
-`npm run release:android` 会在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`。正式签名只通过本机环境变量或 Gradle 属性提供，不提交 keystore 或明文密码。
+`npm run release:android` 会在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`。当前发布包默认使用生成目录里的 Android debug key 签名；如需改用正式签名，只通过本机环境变量或 Gradle 属性提供，不提交 keystore 或明文密码。
