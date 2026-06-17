@@ -23,10 +23,6 @@ export function nodeSeekCookieModuleFromReactNativeImport(mod: any): NodeSeekCoo
   return nativeModules?.LinuxDoCookieModule as NodeSeekCookieModule | undefined;
 }
 
-export function nodeSeekCookiesFromHeader(cookieHeader?: string | null) {
-  return parseNodeSeekDocumentCookie(cookieHeader || '');
-}
-
 async function withNodeSeekCookieReadTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -57,7 +53,7 @@ export async function readNodeSeekCookiesFromAndroidWebViewStore() {
     return {};
   }
   try {
-    return nodeSeekCookiesFromHeader(await module.getNodeSeekCookieHeader());
+    return parseNodeSeekDocumentCookie(await module.getNodeSeekCookieHeader() || '');
   } catch {
     return {};
   }

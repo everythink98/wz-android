@@ -15,15 +15,15 @@ vi.mock('react-native', () => ({
 
 import {
   buildCookieHeader,
-  nodeSeekCookiesFromHeader,
   readNodeSeekCookiesFromStores
 } from './nodeseekCookieBridge';
+import { parseNodeSeekDocumentCookie } from './nodeseekCookies';
 
 describe('NodeSeek WebView cookie bridge', () => {
   it('merges Android WebView and CookieManager cookies so clearance does not hide login cookies', async () => {
-    const readCookieManagerStore = vi.fn(async () => nodeSeekCookiesFromHeader('session=abc'));
+    const readCookieManagerStore = vi.fn(async () => parseNodeSeekDocumentCookie('session=abc'));
     const cookies = await readNodeSeekCookiesFromStores({
-      readAndroidStore: async () => nodeSeekCookiesFromHeader('cf_clearance=native-clearance'),
+      readAndroidStore: async () => parseNodeSeekDocumentCookie('cf_clearance=native-clearance'),
       readCookieManagerStore,
       timeoutMs: 1
     });
@@ -33,9 +33,9 @@ describe('NodeSeek WebView cookie bridge', () => {
   });
 
   it('prefers refreshed CookieManager clearance over stale native cookies with login state', async () => {
-    const readCookieManagerStore = vi.fn(async () => nodeSeekCookiesFromHeader('cf_clearance=fresh-clearance'));
+    const readCookieManagerStore = vi.fn(async () => parseNodeSeekDocumentCookie('cf_clearance=fresh-clearance'));
     const cookies = await readNodeSeekCookiesFromStores({
-      readAndroidStore: async () => nodeSeekCookiesFromHeader('cf_clearance=old-clearance; session=abc'),
+      readAndroidStore: async () => parseNodeSeekDocumentCookie('cf_clearance=old-clearance; session=abc'),
       readCookieManagerStore,
       timeoutMs: 1
     });
@@ -47,7 +47,7 @@ describe('NodeSeek WebView cookie bridge', () => {
   it('falls back to CookieManager when Android store has no NodeSeek cookies', async () => {
     const cookies = await readNodeSeekCookiesFromStores({
       readAndroidStore: async () => ({}),
-      readCookieManagerStore: async () => nodeSeekCookiesFromHeader('session=abc'),
+      readCookieManagerStore: async () => parseNodeSeekDocumentCookie('session=abc'),
       timeoutMs: 1
     });
 
