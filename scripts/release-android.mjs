@@ -7,7 +7,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const androidDir = path.join(rootDir, 'android');
 const args = process.argv.slice(2);
 const unsigned = args.includes('--unsigned');
-const releaseApkFileName = unsigned ? 'app-arm64-v8a-release-unsigned.apk' : 'app-arm64-v8a-release.apk';
+const releaseApkFileName = 'app-arm64-v8a-release.apk';
 const releaseApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', releaseApkFileName);
 
 function run(command, args, options = {}) {

@@ -27,6 +27,7 @@ import type { TopicRecord } from '../readerData';
 import { useReaderDataController } from './useReaderDataController';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useBackupStatusController } from './useBackupStatusController';
+import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
@@ -749,6 +750,14 @@ export function AppRoot() {
     resetLinuxDoLevelState,
     waitForReaderDataSave
   });
+  const {
+    appUpdateBusy,
+    appUpdateDownloading,
+    appUpdateInfo,
+    appUpdateMessage,
+    checkAppUpdate,
+    downloadAppUpdate
+  } = useAppUpdateController({ notify });
 
   const changeScreen = useCallback((nextScreen: Screen) => {
     const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';
@@ -1290,6 +1299,10 @@ export function AppRoot() {
 
   const moreProps = {
       checking,
+      appUpdateBusy,
+      appUpdateDownloading,
+      appUpdateInfo,
+      appUpdateMessage,
       healthDetails,
       healthSummary,
       loginState,
@@ -1314,6 +1327,8 @@ export function AppRoot() {
       yaohuoWebViewRef,
       sessionViewModels: siteSessionViewModels,
       onCheckHealth: checkLocalStatus,
+      onCheckAppUpdate: checkAppUpdate,
+      onDownloadAppUpdate: downloadAppUpdate,
       onCheckIn: checkIn,
       onCheckLogin: checkLogin,
       onRememberNodeSeekCookies: rememberVisibleNodeSeekCookiesAndRetrySearch,

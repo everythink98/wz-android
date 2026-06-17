@@ -54,6 +54,7 @@ describe('Android release packaging', () => {
     expect(releaseScript).toContain('requireSigningEnv();');
     expect(releaseScript).toContain("args.includes('--unsigned')");
     expect(releaseScript).toContain('app-arm64-v8a-release.apk');
+    expect(releaseScript).not.toContain('app-arm64-v8a-release-unsigned.apk');
     expect(gradle).toContain('WZ_ANDROID_KEYSTORE_PATH');
     expect(gradle).toContain('releaseSigningReady');
     expect(gradle).toContain('signingConfig signingConfigs.release');
@@ -73,5 +74,15 @@ describe('Android release packaging', () => {
         /<uses-permission(?=[^>]*android:name="android\.permission\.SYSTEM_ALERT_WINDOW")(?=[^>]*tools:node="remove")[^>]*\/>/,
       );
     }
+  });
+
+  it('keeps APK self-update install support in generated Android config', () => {
+    const appConfig = JSON.parse(readProjectFile('app.json'));
+    const plugin = readProjectFile('plugins', 'withApkInstaller.js');
+
+    expect(appConfig.expo.plugins).toContain('./plugins/withApkInstaller');
+    expect(plugin).toContain('android.permission.REQUEST_INSTALL_PACKAGES');
+    expect(plugin).toContain('androidx.core.content.FileProvider');
+    expect(plugin).toContain('ACTION_MANAGE_UNKNOWN_APP_SOURCES');
   });
 });

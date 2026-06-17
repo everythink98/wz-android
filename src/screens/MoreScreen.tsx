@@ -1,13 +1,14 @@
 import { type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
+import { Activity, DatabaseBackup, Download, LogIn, Settings } from 'lucide-react-native';
+import type { AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
-import { ExpandablePanel, InfoRow, MenuButton } from '../components/AppControls';
+import { AppButton, ExpandablePanel, InfoRow, MenuButton } from '../components/AppControls';
 import {
   AppearancePanel,
   BackupRestorePanel,
@@ -19,6 +20,10 @@ import {
 } from './more/MorePanels';
 export function MoreScreen({
   checking,
+  appUpdateBusy,
+  appUpdateDownloading,
+  appUpdateInfo,
+  appUpdateMessage,
   healthDetails,
   healthSummary,
   loginState,
@@ -43,6 +48,8 @@ export function MoreScreen({
   yaohuoWebViewRef,
   sessionViewModels,
   onCheckHealth,
+  onCheckAppUpdate,
+  onDownloadAppUpdate,
   onCheckIn,
   onCheckLogin,
   onRememberNodeSeekCookies,
@@ -67,6 +74,10 @@ export function MoreScreen({
   onUpdateSettings
 }: {
   checking: boolean;
+  appUpdateBusy: boolean;
+  appUpdateDownloading: boolean;
+  appUpdateInfo: AppUpdateInfo | null;
+  appUpdateMessage: string;
   healthDetails: HealthDetail[];
   healthSummary: string;
   loginState: string;
@@ -91,6 +102,8 @@ export function MoreScreen({
   yaohuoWebViewRef: RefObject<WebView | null>;
   sessionViewModels: SiteSessionViewModels;
   onCheckHealth: () => void;
+  onCheckAppUpdate: () => void;
+  onDownloadAppUpdate: () => void;
   onCheckIn: () => void;
   onCheckLogin: () => void;
   onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
@@ -121,6 +134,7 @@ export function MoreScreen({
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
+  const updateNotes = appUpdateInfo?.notes.trim();
   useEffect(() => {
     if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {
       setAccountExpanded(true);
@@ -143,6 +157,16 @@ export function MoreScreen({
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.groupList}>
         <InfoRow icon={Activity} label="关于" value="多网站第三方客户端" styles={styles} theme={theme} />
+        <MenuButton icon={Download} label="检查更新" value={appUpdateBusy ? '检查中' : appUpdateMessage} styles={styles} theme={theme} onPress={onCheckAppUpdate} />
+        {appUpdateInfo ? (
+          <View style={styles.stack}>
+            <Text style={styles.meta}>最新版本 {appUpdateInfo.version}</Text>
+            {updateNotes ? <Text style={styles.meta} numberOfLines={5}>{updateNotes}</Text> : null}
+            <View style={styles.actions}>
+              <AppButton label={appUpdateDownloading ? '下载中' : '下载并安装'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onDownloadAppUpdate} />
+            </View>
+          </View>
+        ) : null}
       </View>
       <ExpandablePanel
         quiet

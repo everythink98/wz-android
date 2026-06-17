@@ -22,6 +22,7 @@
       }
     },
     "plugins": [
+      "./plugins/withApkInstaller",
       "./plugins/withLinuxDoCookieModule",
       "expo-secure-store"
     ]
