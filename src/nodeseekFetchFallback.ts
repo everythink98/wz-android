@@ -26,21 +26,6 @@ function isNodeSeekCloudflareResponse(response: Response, bodyText: string) {
     || (response.status === 403 && /just a moment|cloudflare|请稍候/i.test(bodyText));
 }
 
-function responseFromConsumedBody(response: Response, bodyText: string) {
-  if (typeof Response !== 'undefined') {
-    return new Response(bodyText, {
-      status: response.status,
-      headers: response.headers
-    });
-  }
-  return {
-    ok: response.ok,
-    status: response.status,
-    headers: response.headers,
-    text: () => Promise.resolve(bodyText)
-  } as Response;
-}
-
 export function createNodeSeekWebViewFallbackFetcher({
   defaultFetcher = fetch,
   webViewFetcher
@@ -57,10 +42,10 @@ export function createNodeSeekWebViewFallbackFetcher({
     if (!isNodeSeekRequestUrl(url)) {
       return response;
     }
-    const text = await response.text();
+    const text = await response.clone().text();
     if (isNodeSeekCloudflareResponse(response, text)) {
       return webViewFetcher(url, init);
     }
-    return responseFromConsumedBody(response, text);
+    return response;
   };
 }

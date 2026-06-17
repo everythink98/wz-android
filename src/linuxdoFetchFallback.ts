@@ -12,21 +12,6 @@ export function isLinuxDoRequestUrl(input: string) {
   }
 }
 
-function responseFromConsumedBody(response: Response, bodyText: string) {
-  if (typeof Response !== 'undefined') {
-    return new Response(bodyText, {
-      status: response.status,
-      headers: response.headers
-    });
-  }
-  return {
-    ok: response.ok,
-    status: response.status,
-    headers: response.headers,
-    text: () => Promise.resolve(bodyText)
-  } as Response;
-}
-
 export function createLinuxDoWebViewFallbackFetcher({
   defaultFetcher = fetch,
   webViewFetcher
@@ -40,10 +25,10 @@ export function createLinuxDoWebViewFallbackFetcher({
     if (!isLinuxDoRequestUrl(url)) {
       return response;
     }
-    const text = await response.text();
+    const text = await response.clone().text();
     if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
       return webViewFetcher(url, init);
     }
-    return responseFromConsumedBody(response, text);
+    return response;
   };
 }
