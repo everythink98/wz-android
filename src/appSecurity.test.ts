@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
-import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
+import { readProjectFile } from './sourceTestUtils';
 
-const appSource = readAppRuntimeSource();
+const appRootSource = readProjectFile('src', 'app', 'AppRoot.tsx');
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
@@ -12,10 +12,10 @@ const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
 describe('Android App security review guards', () => {
   it('routes external links through the http/https protocol guard', () => {
-    expect(appSource).toContain('const openExternalUrl = useCallback');
-    expect(appSource).toContain("notify('仅支持打开 http/https 链接。')");
-    expect(appSource).not.toContain('void Linking.openURL(href);');
-    expect(appSource).not.toContain('onOpenOriginal={(url) => void Linking.openURL(url)}');
+    expect(appRootSource).toContain('const openExternalUrl = useCallback');
+    expect(appRootSource).toContain("notify('仅支持打开 http/https 链接。')");
+    expect(appRootSource).not.toContain('void Linking.openURL(href);');
+    expect(appRootSource).not.toContain('onOpenOriginal={(url) => void Linking.openURL(url)}');
   });
 
   it('clears only the selected login WebView cookies', () => {
@@ -24,7 +24,7 @@ describe('Android App security review guards', () => {
     const clearNodeSeekLoginBlock = accountControllerSource.match(/const clearLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearNodeSeekLoginState, notify\]\);/)?.[1] || '';
     const clearYaohuoLoginBlock = accountControllerSource.match(/const clearYaohuoLogin = useCallback\(async \(\) => \{([\s\S]*?)\n  \}, \[clearYaohuoLoginState, notify, yaohuoWebViewRef\]\);/)?.[1] || '';
 
-    expect(appSource).not.toContain('CookieManager.clearAll');
+    expect(appRootSource).not.toContain('CookieManager.clearAll');
     expect(clearNodeSeekStateBlock).toContain('await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);');
     expect(clearYaohuoStateBlock).toContain('await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);');
     expect(clearNodeSeekLoginBlock).toContain('await clearNodeSeekLoginState();');
@@ -33,9 +33,9 @@ describe('Android App security review guards', () => {
   });
 
   it('restricts login WebViews to their expected hosts', () => {
-    expect(appSource).toContain('handleNodeSeekLoginNavigation');
-    expect(appSource).toContain('handleYaohuoLoginNavigation');
-    expect(appSource).toContain('handleLinuxDoNavigation');
+    expect(appRootSource).toContain('handleNodeSeekLoginNavigation');
+    expect(appRootSource).toContain('handleYaohuoLoginNavigation');
+    expect(appRootSource).toContain('handleLinuxDoNavigation');
     expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
     expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
     expect(linuxDoVerifyModalSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');

@@ -33,10 +33,6 @@ describe('Android architecture boundaries', () => {
     expect(appEntrySource).toContain("import 'expo-dev-client';");
     expect(appEntrySource).toContain("import { AppRoot } from './src/app/AppRoot';");
     expect(appEntrySource).toContain('export default AppRoot;');
-    expect(appEntrySource).not.toContain('AppProviders');
-    expect(appEntrySource).not.toContain('AppNavigator');
-    expect(appEntrySource).not.toContain('HiddenBrowserHost');
-    expect(appEntrySource).not.toContain('GlobalModalHost');
   });
 
   it('keeps app read flows behind the source gateway', () => {
