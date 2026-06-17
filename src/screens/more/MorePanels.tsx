@@ -1,4 +1,4 @@
-import { memo, type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useEffect, useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { CheckCircle, LogIn } from 'lucide-react-native';
@@ -57,8 +57,6 @@ export function BackupRestorePanel({
     </View>
   );
 }
-
-export const MemoizedBackupRestorePanel = memo(BackupRestorePanel);
 
 export function NodeSeekLoginPanel({
   accountExpanded,
@@ -185,8 +183,6 @@ export function NodeSeekLoginPanel({
   );
 }
 
-export const MemoizedNodeSeekLoginPanel = memo(NodeSeekLoginPanel);
-
 export function YaohuoLoginPanel({
   accountExpanded,
   checking,
@@ -298,8 +294,6 @@ export function YaohuoLoginPanel({
   );
 }
 
-export const MemoizedYaohuoLoginPanel = memo(YaohuoLoginPanel);
-
 export function LinuxDoVerifyPanel({
   linuxDoSession,
   showLinuxDoPanel,
@@ -318,10 +312,7 @@ export function LinuxDoVerifyPanel({
   );
 }
 
-export const MemoizedLinuxDoVerifyPanel = memo(LinuxDoVerifyPanel);
-
 export { LinuxDoLevelPanel };
-export const MemoizedLinuxDoLevelPanel = memo(LinuxDoLevelPanel);
 
 export function AppearancePanel({
   settings,
@@ -342,8 +333,6 @@ export function AppearancePanel({
     </View>
   );
 }
-
-export const MemoizedAppearancePanel = memo(AppearancePanel);
 
 export function StatusCheckPanel({
   healthDetails,
@@ -372,8 +361,6 @@ export function StatusCheckPanel({
     </View>
   );
 }
-
-export const MemoizedStatusCheckPanel = memo(StatusCheckPanel);
 
 export function SettingsPanel({
   settings,

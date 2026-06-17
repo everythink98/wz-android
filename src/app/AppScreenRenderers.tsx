@@ -3,7 +3,7 @@ import { ScrollView } from 'react-native';
 import type { createStyles } from '../theme';
 import { FeedScreen } from '../screens/FeedScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
-import { MemoizedMoreScreen } from '../screens/MoreScreen';
+import { MoreScreen } from '../screens/MoreScreen';
 import { SearchScreen } from '../screens/SearchScreen';
 import { TopicScreen } from '../screens/TopicScreen';
 import { UserScreen } from '../screens/UserScreen';
@@ -11,7 +11,7 @@ import { UserScreen } from '../screens/UserScreen';
 type UseAppScreenRenderersParams = {
   feedProps: ComponentProps<typeof FeedScreen>;
   libraryProps: ComponentProps<typeof LibraryScreen>;
-  moreProps: ComponentProps<typeof MemoizedMoreScreen>;
+  moreProps: ComponentProps<typeof MoreScreen>;
   moreScrollRef: RefObject<ScrollView | null>;
   searchProps: ComponentProps<typeof SearchScreen>;
   styles: ReturnType<typeof createStyles>;
@@ -43,7 +43,7 @@ export function useAppScreenRenderers({
 
   const renderMoreTab = useCallback(() => (
     <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
-      <MemoizedMoreScreen {...moreProps} />
+      <MoreScreen {...moreProps} />
     </ScrollView>
   ), [moreProps, moreScrollRef, styles]);
 

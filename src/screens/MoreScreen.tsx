@@ -1,4 +1,4 @@
-import { memo, type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
@@ -9,15 +9,15 @@ import type { SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { ExpandablePanel, InfoRow, MenuButton } from '../components/AppControls';
 import {
-  MemoizedAppearancePanel,
-  MemoizedBackupRestorePanel,
-  MemoizedLinuxDoVerifyPanel,
-  MemoizedLinuxDoLevelPanel,
-  MemoizedNodeSeekLoginPanel,
-  MemoizedStatusCheckPanel,
-  MemoizedYaohuoLoginPanel
+  AppearancePanel,
+  BackupRestorePanel,
+  LinuxDoVerifyPanel,
+  LinuxDoLevelPanel,
+  NodeSeekLoginPanel,
+  StatusCheckPanel,
+  YaohuoLoginPanel
 } from './more/MorePanels';
-function MoreScreen({
+export function MoreScreen({
   checking,
   healthDetails,
   healthSummary,
@@ -154,7 +154,7 @@ function MoreScreen({
         theme={theme}
         onExpandedChange={setAccountExpanded}
       >
-        <MemoizedNodeSeekLoginPanel
+        <NodeSeekLoginPanel
           checking={checking}
           nodeSeekSession={nodeSeekSession}
           accountExpanded={accountExpanded}
@@ -174,7 +174,7 @@ function MoreScreen({
           onSetLoadingLoginPage={onSetLoadingLoginPage}
           onShowLoginPanelChange={onShowLoginPanelChange}
         />
-        <MemoizedYaohuoLoginPanel
+        <YaohuoLoginPanel
           checking={checking}
           yaohuoSession={yaohuoSession}
           accountExpanded={accountExpanded}
@@ -190,7 +190,7 @@ function MoreScreen({
           onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
           onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
         />
-        <MemoizedLinuxDoVerifyPanel
+        <LinuxDoVerifyPanel
           linuxDoSession={linuxDoSession}
           showLinuxDoPanel={showLinuxDoPanel}
           styles={styles}
@@ -199,7 +199,7 @@ function MoreScreen({
         />
         <MenuButton icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
         {levelExpanded ? (
-          <MemoizedLinuxDoLevelPanel
+          <LinuxDoLevelPanel
             busy={linuxDoLevelBusy}
             error={linuxDoLevelError}
             linuxDoSession={linuxDoSession}
@@ -221,7 +221,7 @@ function MoreScreen({
         theme={theme}
         onExpandedChange={setBackupExpanded}
       >
-        <MemoizedBackupRestorePanel
+        <BackupRestorePanel
           backupJson={backupJson}
           backupBusy={backupBusy}
           styles={styles}
@@ -243,7 +243,7 @@ function MoreScreen({
         theme={theme}
         onExpandedChange={onShowSettingsPanelChange}
       >
-        <MemoizedAppearancePanel
+        <AppearancePanel
           settings={settings}
           showSettingsPanel={showSettingsPanel}
           styles={styles}
@@ -260,7 +260,7 @@ function MoreScreen({
         theme={theme}
         onExpandedChange={setStatusExpanded}
       >
-        <MemoizedStatusCheckPanel
+        <StatusCheckPanel
           healthDetails={healthDetails}
           statusBusy={statusBusy}
           styles={styles}
@@ -270,5 +270,3 @@ function MoreScreen({
     </View>
   );
 }
-
-export const MemoizedMoreScreen = memo(MoreScreen);
