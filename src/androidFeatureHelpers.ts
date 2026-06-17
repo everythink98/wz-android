@@ -136,13 +136,17 @@ export function groupLibraryRecordsByTime(records: TopicRecord[], now = new Date
   return groups.filter((group) => group.records.length > 0);
 }
 
-export function filterRepliesByQuery(replies: Reply[], query: string) {
+export function createReplyTextIndex(replies: Reply[]) {
+  return new Map(replies.map((reply) => [reply, stripHtml(reply.contentHtml).toLowerCase()]));
+}
+
+export function filterRepliesByQuery(replies: Reply[], query: string, textIndex?: Map<Reply, string>) {
   const terms = uniqueTerms(query);
   if (terms.length === 0) {
     return replies;
   }
   return replies.filter((reply) => {
-    const text = stripHtml(reply.contentHtml).toLowerCase();
+    const text = textIndex?.get(reply) ?? stripHtml(reply.contentHtml).toLowerCase();
     return terms.every((term) => text.includes(term.toLowerCase()));
   });
 }

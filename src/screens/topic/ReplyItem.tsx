@@ -12,7 +12,7 @@ import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../th
 import { AppButton } from '../../components/AppControls';
 import { userFromReply } from '../../userNavigation';
 import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
-import type { TopicImageDeriver } from '../../topicDerivedData';
+import { inlineSizedImageSignatureForHtml, type TopicImageDeriver } from '../../topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -412,7 +412,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
     || previous.isActionPending !== next.isActionPending
-    || previous.inlineSizedImageUrls !== next.inlineSizedImageUrls
+    || inlineSizedImageSignatureForHtml(previous.reply.contentHtml, previous.inlineSizedImageUrls) !== inlineSizedImageSignatureForHtml(next.reply.contentHtml, next.inlineSizedImageUrls)
     || previous.isNew !== next.isNew
     || previous.onInteract !== next.onInteract
     || previous.onOpenUser !== next.onOpenUser

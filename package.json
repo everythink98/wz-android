@@ -12,6 +12,7 @@
     "android": "expo run:android",
     "generate:adaptive-icon": "node scripts/generate-adaptive-icon.mjs",
     "release:android": "node scripts/release-android.mjs",
+    "release:android:unsigned": "node scripts/release-android.mjs --unsigned",
     "typecheck": "tsc --noEmit",
     "ios": "expo run:ios"
   },
@@ -35,6 +36,7 @@
     "expo-media-library": "~18.2.1",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
+    "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "fast-xml-parser": "^5.8.0",
     "lucide-react-native": "^1.16.0",

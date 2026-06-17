@@ -4,7 +4,7 @@ import { Image as ExpoImage } from 'expo-image';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
-import { imageRequestHeadersForUrl, imageSourceFromUrl, type ImagePreviewList } from '../htmlImages';
+import { imageRequestHeadersForUrl, imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
 import { createStyles } from '../theme';
 
 export function ImagePreviewModal({
@@ -31,6 +31,7 @@ export function ImagePreviewModal({
   const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
   const activeIndex = preview?.index ?? 0;
   const activeUri = preview?.urls[activeIndex] || '';
+  const thumbnailItems = useMemo(() => (preview ? visibleImagePreviewThumbnails(preview.urls, preview.index) : []), [previewKey]);
   useEffect(() => {
     setImagePreviewLoading(Boolean(preview));
     setImagePreviewFailed(false);
@@ -136,7 +137,7 @@ export function ImagePreviewModal({
         ) : null}
         {hasMany ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
-            {preview.urls.map((url, index) => (
+            {thumbnailItems.map(({ url, index }) => (
               <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === preview.index && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
                 <ExpoImage source={imageSourceFromUrl(url)} style={styles.imagePreviewThumbnailImage} contentFit="cover" />
               </Pressable>

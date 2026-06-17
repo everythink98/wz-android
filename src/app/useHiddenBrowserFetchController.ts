@@ -114,6 +114,7 @@ export function useHiddenBrowserFetchController({
   completeLinuxDoBrowserFetch: (data: {
     type?: string;
     id?: number;
+    url?: string;
     body?: string;
     cookie?: string;
     userAgent?: string;
@@ -122,6 +123,7 @@ export function useHiddenBrowserFetchController({
   completeNodeSeekBrowserFetch: (data: {
     type?: string;
     id?: number;
+    url?: string;
     html?: string;
     cookie?: string;
     userAgent?: string;
@@ -133,6 +135,7 @@ export function useHiddenBrowserFetchController({
       const data = JSON.parse(event.nativeEvent.data) as {
         type?: string;
         id?: number;
+        url?: string;
         html?: string;
         cookie?: string;
         userAgent?: string;
@@ -151,6 +154,7 @@ export function useHiddenBrowserFetchController({
       const data = JSON.parse(event.nativeEvent.data) as {
         type?: string;
         id?: number;
+        url?: string;
         body?: string;
         cookie?: string;
         userAgent?: string;

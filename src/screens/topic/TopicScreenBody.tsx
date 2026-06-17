@@ -38,7 +38,7 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { AuthorAvatar, MemoizedReplyItem, NodeSeekStatPill, linuxDoReactionStats, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
-import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
+import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, visibleFloorIndexReplies } from './topicScreenHelpers';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -252,6 +252,7 @@ export function TopicScreen({
     return next;
   }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
   const [floorOpen, setFloorOpen] = useState(false);
+  const floorIndexReplies = useMemo(() => visibleFloorIndexReplies(replies), [replies]);
   const newReplyFloorStart = useMemo(() => {
     if (unreadReplyCount <= 0) {
       return Number.POSITIVE_INFINITY;
@@ -569,7 +570,7 @@ export function TopicScreen({
           </View>
           {floorOpen ? (
             <View style={styles.floorIndex}>
-              {replies.map((reply, index) => {
+              {floorIndexReplies.map((reply, index) => {
                 const floor = reply.floor ?? index + 1;
                 return (
                   <Pressable key={`${floor}-${reply.createdAt}`} accessibilityRole="button" style={styles.floorIndexItem} onPress={() => jumpToFloor(floor)}>
@@ -712,6 +713,7 @@ export function TopicScreen({
     contentWidth,
     expandedQuotesRef,
     floorOpen,
+    floorIndexReplies,
     inlineSizedImageUrls,
     topicImageDeriver,
     isOptimisticActionPending,

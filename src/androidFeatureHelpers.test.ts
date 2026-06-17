@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   filterLibraryRecords,
   filterRepliesByQuery,
+  createReplyTextIndex,
   groupLibraryRecordsByTime,
   highlightHtml,
   highlightTextParts,
@@ -99,6 +100,16 @@ describe('Android feature helpers', () => {
     ];
 
     expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
+  });
+
+  it('can filter replies from a cached text index', () => {
+    const replies: Reply[] = [
+      { floor: 1, author: 'alice', createdAt: '2026-05-23T01:00:00.000Z', contentHtml: '<p>Hello VPS</p>' },
+      { floor: 2, author: 'bob', createdAt: '2026-05-23T02:00:00.000Z', contentHtml: '<p>Other</p>' }
+    ];
+    const index = createReplyTextIndex(replies);
+
+    expect(filterRepliesByQuery(replies, 'vps', index)).toEqual([replies[0]]);
   });
 
   it('keeps NodeSeek submit refresh on page one when reply pagination is still page-one offset based', () => {

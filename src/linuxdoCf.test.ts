@@ -28,6 +28,7 @@ import {
   canStoreLinuxDoAccess,
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
+  clearLinuxDoAccess,
   clearLinuxDoWebViewClearance,
   clearLinuxDoSavedAccess,
   hasFreshLinuxDoClearance,
@@ -177,6 +178,15 @@ describe('linux.do Cloudflare helpers', () => {
     expect(CookieManager.clearByName).toHaveBeenCalledWith('https://www.linux.do/latest', 'cf_clearance');
     expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_t');
     expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_forum_session');
+  });
+
+  it('flushes CookieManager after clearing linux.do login cookies', async () => {
+    vi.mocked(CookieManager.flush).mockClear();
+
+    await clearLinuxDoAccess();
+
+    expect(CookieManager.clearByName).toHaveBeenCalledWith('https://linux.do/latest', '_t');
+    expect(CookieManager.flush).toHaveBeenCalled();
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

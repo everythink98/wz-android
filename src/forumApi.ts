@@ -1,6 +1,7 @@
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
 import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuo';
+import { requireYaohuoRequestUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
@@ -384,14 +385,15 @@ export function getUserProfile({
         Referer: 'https://yaohuo.me/bbs/'
       };
       const readHtml = async (pageUrl: string) => {
-        const response = await fetchWithTimeout(pageUrl, { headers }, { fetcher, signal, timeoutMs });
+        const safeUrl = requireYaohuoRequestUrl(pageUrl);
+        const response = await fetchWithTimeout(safeUrl, { headers }, { fetcher, signal, timeoutMs });
         const html = await response.text();
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
         return {
           html,
-          url: response.url || pageUrl
+          url: requireYaohuoRequestUrl(response.url || safeUrl, safeUrl)
         };
       };
       const readProfilePage = async (pageUrl: string) => {

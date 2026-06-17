@@ -381,6 +381,21 @@ describe('Android local forum facade', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('does not send yaohuo cookies to an off-site user topic cursor', async () => {
+    const fetcher = vi.fn(async () => new Response(''));
+
+    await expect(getUserProfile({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      fetcher,
+      yaohuoCookie: 'sid=ok',
+      cursor: 'https://evil.example/bbs/book_list.aspx?page=2'
+    })).rejects.toThrow('妖火链接不属于 yaohuo.me');
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('reads V2EX user topics from the public member page and orders them newest first', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('v2ex.com/api/members/show.json')) {

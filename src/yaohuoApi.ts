@@ -12,7 +12,8 @@ import {
   YAOHUO_ANDROID_USER_AGENT,
   YAOHUO_BASE_URL,
   YAOHUO_BBS_REFERER,
-  YAOHUO_LOGIN_URL
+  YAOHUO_LOGIN_URL,
+  requireYaohuoRequestUrl
 } from './localYaohuoHelpers';
 
 interface DirectRequestOptions {
@@ -71,9 +72,10 @@ function yaohuoRequestInit(cookie: string): RequestInit {
 }
 
 async function fetchYaohuoHtml(url: string, cookie: string, fetcher: Fetcher = fetch, options: DirectRequestOptions = {}) {
-  const response = await fetchWithTimeout(url, yaohuoRequestInit(cookie), { fetcher, ...options });
+  const safeUrl = requireYaohuoRequestUrl(url);
+  const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(cookie), { fetcher, ...options });
   const html = await response.text();
-  const responseUrl = response.url || url;
+  const responseUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
   ensureYaohuoHtmlLoggedIn(html, responseUrl);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);

@@ -4,10 +4,12 @@ import { createEmptyReaderData } from './readerData';
 import { readProjectFile } from './sourceTestUtils';
 
 const appRootSource = readProjectFile('src', 'app', 'AppRoot.tsx');
+const hiddenBrowserHostSource = readProjectFile('src', 'app', 'HiddenBrowserHost.tsx');
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
 const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+const linuxDoCookiePluginSource = readProjectFile('plugins', 'withLinuxDoCookieModule.js');
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
 describe('Android App security review guards', () => {
@@ -39,6 +41,22 @@ describe('Android App security review guards', () => {
     expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}');
     expect(morePanelsSource).toContain('onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}');
     expect(linuxDoVerifyModalSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
+  });
+
+  it('restricts hidden fetch WebViews and rejects off-site browser results', () => {
+    expect(hiddenBrowserHostSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}');
+    expect(hiddenBrowserHostSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}');
+    expect(sessionControllerSource).toContain('!data.url || !isNodeSeekRequestUrl(data.url)');
+    expect(sessionControllerSource).toContain('!data.url || !isLinuxDoRequestUrl(data.url)');
+  });
+
+  it('keeps native NodeSeek cookie reads scoped to access cookies', () => {
+    const nodeSeekReadBlock = linuxDoCookiePluginSource.match(/private fun readNodeSeekCookieHeaderFrom\(cookieDb: File\): String\? \{[\s\S]*?\n  \}/)?.[0] || '';
+
+    expect(linuxDoCookiePluginSource).toContain('nodeSeekWantedCookieNames');
+    expect(nodeSeekReadBlock).toContain("cf_clearance");
+    expect(nodeSeekReadBlock).toContain("session");
+    expect(nodeSeekReadBlock).not.toContain('if (!name.isNullOrBlank() && !value.isNullOrBlank() && seen.add(name))');
   });
 
   it('removes sensitive keys and URL parameters from Android backup JSON', () => {

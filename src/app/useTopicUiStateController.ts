@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { filterRepliesByQuery } from '../androidFeatureHelpers';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createReplyTextIndex, filterRepliesByQuery } from '../androidFeatureHelpers';
 import type { ReplyFilter, ReplyTarget } from '../appTypes';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../topicDerivedData';
 import type { Reply, TopicDetail } from '../types';
@@ -22,6 +22,7 @@ export function useTopicUiStateController({
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
   const [commentQuery, setCommentQuery] = useState('');
+  const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
@@ -33,6 +34,12 @@ export function useTopicUiStateController({
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
 
   topicRepliesRef.current = topicReplies;
+  const replyTextIndex = useMemo(() => createReplyTextIndex(topicReplies), [topicReplies]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedCommentQuery(commentQuery), 180);
+    return () => clearTimeout(timer);
+  }, [commentQuery]);
 
   const updateExpandedQuotes = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
     const next = updater(expandedQuotesRef.current);
@@ -80,8 +87,8 @@ export function useTopicUiStateController({
     } else if (replyFilter === 'newest') {
       base = [...topicReplies].reverse();
     }
-    return filterRepliesByQuery(base, commentQuery);
-  }, [commentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
+    return filterRepliesByQuery(base, debouncedCommentQuery, replyTextIndex);
+  }, [debouncedCommentQuery, inlineSizedImageUrls, replyFilter, replyTextIndex, topicDetail, topicImageDeriver, topicReplies]);
 
   const toggleReplyComposer = useCallback((open: boolean) => {
     setReplyComposerOpen(open);

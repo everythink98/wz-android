@@ -6,6 +6,11 @@ export interface ImagePreviewList {
   index: number;
 }
 
+export interface ImagePreviewCatalog {
+  urls: string[];
+  previewUrlBySourceUrl: Record<string, string>;
+}
+
 export const INLINE_FORUM_IMAGE_TAG = 'forum-inline-image';
 
 const IMAGE_REQUEST_HEADER_HOSTS = [
@@ -252,16 +257,40 @@ export function createImagePreviewList({
   tappedUrl: string;
   htmlParts: string[];
 }): ImagePreviewList {
-  const tapped = normalizeImagePreviewUrl(tappedUrl);
+  return imagePreviewListFromCatalog(createImagePreviewCatalog(htmlParts), tappedUrl);
+}
+
+export function createImagePreviewCatalog(htmlParts: string[]): ImagePreviewCatalog {
+  const previewUrlBySourceUrl: Record<string, string> = {};
   const entries = htmlParts.flatMap(extractImagePreviewEntriesFromHtml);
-  const tappedEntry = entries.find((entry) => entry.sourceUrls.some((url) => normalizeImagePreviewUrl(url) === tapped));
-  const tappedPreviewUrl = tappedEntry ? normalizeImagePreviewUrl(tappedEntry.previewUrl) : tapped;
+  const urls = uniqueStrings(entries.map((entry) => normalizeImagePreviewUrl(entry.previewUrl)));
+  entries.forEach((entry) => {
+    const previewUrl = normalizeImagePreviewUrl(entry.previewUrl);
+    [previewUrl, ...entry.sourceUrls].forEach((url) => {
+      const normalized = normalizeImagePreviewUrl(url);
+      if (normalized) {
+        previewUrlBySourceUrl[normalized] = previewUrl;
+      }
+    });
+  });
+  return { urls, previewUrlBySourceUrl };
+}
+
+export function imagePreviewListFromCatalog(catalog: ImagePreviewCatalog, tappedUrl: string): ImagePreviewList {
+  const tapped = normalizeImagePreviewUrl(tappedUrl);
+  const tappedPreviewUrl = catalog.previewUrlBySourceUrl[tapped] || tapped;
   const urls = uniqueStrings([
-    ...entries.map((entry) => normalizeImagePreviewUrl(entry.previewUrl)),
+    ...catalog.urls,
     ...(tappedPreviewUrl && !isInlineForumImageUrl(tappedPreviewUrl) ? [tappedPreviewUrl] : [])
   ]);
   const index = Math.max(0, urls.findIndex((url) => url === tappedPreviewUrl));
   return { urls, index };
+}
+
+export function visibleImagePreviewThumbnails(urls: string[], index: number, radius = 6) {
+  const start = Math.max(0, index - radius);
+  const end = Math.min(urls.length, index + radius + 1);
+  return urls.slice(start, end).map((url, offset) => ({ url, index: start + offset }));
 }
 
 type ImagePreviewEntry = {

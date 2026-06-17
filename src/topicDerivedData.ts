@@ -13,8 +13,20 @@ export interface TopicImageDeriver {
   markInlineSizedImages: (html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) => string;
 }
 
+function htmlContainsImageUrl(html: string, url: string) {
+  return html.includes(url) || html.includes(url.replace(/&/g, '&amp;'));
+}
+
+function inlineSizedImageUrlsForHtml(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
+  return Object.keys(inlineSizedImageUrls).filter((url) => htmlContainsImageUrl(html, url)).sort();
+}
+
+export function inlineSizedImageSignatureForHtml(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
+  return inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls).join('\n');
+}
+
 function inlineSizedImageCacheKey(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
-  const urls = Object.keys(inlineSizedImageUrls).sort();
+  const urls = inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls);
   return urls.length ? `${html}\n__inline__\n${urls.join('\n')}` : html;
 }
 
@@ -30,7 +42,7 @@ export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}):
     if (cached !== undefined) {
       return cached;
     }
-    const marked = Object.keys(inlineSizedImageUrls).sort().reduce(
+    const marked = inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls).reduce(
       (current, url) => markInlineImage(current, url),
       html
     );

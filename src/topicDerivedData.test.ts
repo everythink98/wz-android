@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTopicImageDeriver, filterRepliesWithImages } from './topicDerivedData';
+import { createTopicImageDeriver, filterRepliesWithImages, inlineSizedImageSignatureForHtml } from './topicDerivedData';
 import type { Reply } from './types';
 
 const replyWithImage: Reply = {
@@ -39,8 +39,20 @@ describe('Android topic derived data', () => {
     });
     const inlineSizedImageUrls = { 'https://cdn.example.com/smile.png': true as const };
 
-    expect(deriver.markInlineSizedImages('<p>hello</p>', inlineSizedImageUrls)).toBe('<p>hello</p><!-- inline:https://cdn.example.com/smile.png -->');
-    expect(deriver.markInlineSizedImages('<p>hello</p>', inlineSizedImageUrls)).toBe('<p>hello</p><!-- inline:https://cdn.example.com/smile.png -->');
+    const html = '<p><img src="https://cdn.example.com/smile.png"></p>';
+
+    expect(deriver.markInlineSizedImages(html, inlineSizedImageUrls)).toBe('<p><img src="https://cdn.example.com/smile.png"></p><!-- inline:https://cdn.example.com/smile.png -->');
+    expect(deriver.markInlineSizedImages(html, inlineSizedImageUrls)).toBe('<p><img src="https://cdn.example.com/smile.png"></p><!-- inline:https://cdn.example.com/smile.png -->');
     expect(markInlineSizedImageHtml).toHaveBeenCalledTimes(1);
+  });
+
+  it('scopes inline-sized image signatures to html that contains the image', () => {
+    const inlineSizedImageUrls = {
+      'https://cdn.example.com/a.png': true as const,
+      'https://cdn.example.com/b.png': true as const
+    };
+
+    expect(inlineSizedImageSignatureForHtml('<p><img src="https://cdn.example.com/a.png"></p>', inlineSizedImageUrls)).toBe('https://cdn.example.com/a.png');
+    expect(inlineSizedImageSignatureForHtml('<p>no image</p>', inlineSizedImageUrls)).toBe('');
   });
 });

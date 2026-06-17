@@ -5,10 +5,12 @@ describe('Android release packaging', () => {
   it('builds only the 64-bit physical-device CPU architecture', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const script = packageJson.scripts['release:android'];
+    const unsignedScript = packageJson.scripts['release:android:unsigned'];
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
     expect(script).toBe('node scripts/release-android.mjs');
+    expect(unsignedScript).toBe('node scripts/release-android.mjs --unsigned');
     expect(releaseScript).toContain("'expo', 'prebuild', '--platform', 'android', '--clean'");
     expect(releaseScript).toContain("'-PreactNativeArchitectures=arm64-v8a'");
     expect(releaseScript).not.toContain('armeabi-v7a');
@@ -30,9 +32,28 @@ describe('Android release packaging', () => {
     expect(releaseScript).not.toContain('if (!fs.existsSync(gradleFile))');
   });
 
-  it('keeps formal signing optional and outside generated Android files', () => {
+  it('runs release gates before generating Android files', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const testIndex = releaseScript.indexOf("run('npm', ['test']);");
+    const typecheckIndex = releaseScript.indexOf("run('npm', ['run', 'typecheck']);");
+    const unusedIndex = releaseScript.indexOf("run('npm', ['run', 'check:unused']);");
+    const versionIndex = releaseScript.indexOf("run('node', ['scripts/check-version.mjs']);");
+    const adaptiveIconIndex = releaseScript.indexOf("run('node', ['scripts/generate-adaptive-icon.mjs']);");
+
+    expect(testIndex).toBeGreaterThanOrEqual(0);
+    expect(typecheckIndex).toBeGreaterThan(testIndex);
+    expect(unusedIndex).toBeGreaterThan(typecheckIndex);
+    expect(versionIndex).toBeGreaterThan(unusedIndex);
+    expect(adaptiveIconIndex).toBeGreaterThan(versionIndex);
+  });
+
+  it('requires formal signing unless the unsigned command is explicit', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
+    expect(releaseScript).toContain('requireSigningEnv();');
+    expect(releaseScript).toContain("args.includes('--unsigned')");
+    expect(releaseScript).toContain('app-arm64-v8a-release.apk');
     expect(gradle).toContain('WZ_ANDROID_KEYSTORE_PATH');
     expect(gradle).toContain('releaseSigningReady');
     expect(gradle).toContain('signingConfig signingConfigs.release');

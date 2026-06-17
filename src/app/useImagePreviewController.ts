@@ -3,9 +3,10 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { safeFileName } from '../backupFiles';
 import {
-  createImagePreviewList,
+  createImagePreviewCatalog,
   dataImageFileFromUrl,
   imageRequestHeadersForUrl,
+  imagePreviewListFromCatalog,
   normalizeImagePreviewUrl,
   type ImagePreviewList
 } from '../htmlImages';
@@ -33,18 +34,16 @@ export function useImagePreviewController({
   const previewHtmlParts = useMemo(() => (
     htmlParts.map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
   ), [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
-  const previewHtmlPartsRef = useRef<string[]>(previewHtmlParts);
-  previewHtmlPartsRef.current = previewHtmlParts;
+  const previewCatalog = useMemo(() => createImagePreviewCatalog(previewHtmlParts), [previewHtmlParts]);
+  const previewCatalogRef = useRef(previewCatalog);
+  previewCatalogRef.current = previewCatalog;
 
   const openImagePreview = useCallback((url: string) => {
     const clean = normalizeImageCacheKey(url);
     if (clean && inlineSizedImageUrlsRef.current[clean]) {
       return;
     }
-    const nextPreview = createImagePreviewList({
-      tappedUrl: url,
-      htmlParts: previewHtmlPartsRef.current
-    });
+    const nextPreview = imagePreviewListFromCatalog(previewCatalogRef.current, url);
     if (nextPreview.urls.length > 0) {
       setImagePreview(nextPreview);
     }

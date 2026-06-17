@@ -69,7 +69,7 @@ describe('NodeSeek cookie helpers', () => {
     expect(buildCookieHeader(cookies)).toBe('session=abc');
   });
 
-  it('allows storing unknown cookie names only when the page confirms login', () => {
+  it('does not store unknown cookie names even when the page confirms login', () => {
     const cookies: Record<string, NativeCookie> = {
       ns: {
         name: 'ns',
@@ -79,7 +79,7 @@ describe('NodeSeek cookie helpers', () => {
     };
 
     expect(canStoreNodeSeekCookieHeader(cookies)).toBe(false);
-    expect(canStoreNodeSeekCookieHeader(cookies, true)).toBe(true);
+    expect(canStoreNodeSeekCookieHeader(cookies, true)).toBe(false);
   });
 
   it('allows storing Cloudflare clearance cookies from NodeSeek verification', () => {
@@ -97,14 +97,14 @@ describe('NodeSeek cookie helpers', () => {
   it('reads NodeSeek verification cookies from document.cookie fallback data', () => {
     const cookies = parseNodeSeekDocumentCookie('theme=dark; cf_clearance=clearance; session=abc');
 
-    expect(buildCookieHeader(cookies)).toBe('theme=dark; cf_clearance=clearance; session=abc');
+    expect(buildCookieHeader(cookies)).toBe('cf_clearance=clearance; session=abc');
     expect(canStoreNodeSeekCookieHeader(cookies)).toBe(true);
   });
 
   it('can remove login cookies without deleting Cloudflare verification', () => {
     const cookies = parseNodeSeekDocumentCookie('cf_clearance=clearance; session=abc; theme=dark');
 
-    expect(buildCookieHeader(removeNodeSeekLoginCookies(cookies))).toBe('cf_clearance=clearance; theme=dark');
+    expect(buildCookieHeader(removeNodeSeekLoginCookies(cookies))).toBe('cf_clearance=clearance');
   });
 
   it('normalizes the WebView user agent before using it for NodeSeek requests', () => {

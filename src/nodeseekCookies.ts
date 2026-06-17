@@ -43,8 +43,25 @@ export function hasNodeSeekClearanceCookie(cookies: Record<string, NativeCookie>
   });
 }
 
+export function isPersistableNodeSeekCookie(name: string, cookie?: NativeCookie) {
+  if (!cookie?.value) {
+    return false;
+  }
+  return isNodeSeekDomain(cookie.domain) && (clearanceCookiePattern.test(name) || loginCookiePattern.test(name));
+}
+
+export function filterPersistableNodeSeekCookies(cookies: Record<string, NativeCookie>) {
+  return Object.entries(cookies).reduce<Record<string, NativeCookie>>((kept, [key, cookie]) => {
+    const name = cookie.name || key;
+    if (isPersistableNodeSeekCookie(name, cookie)) {
+      kept[key] = cookie;
+    }
+    return kept;
+  }, {});
+}
+
 export function buildCookieHeader(cookies: Record<string, NativeCookie>) {
-  return Object.entries(cookies)
+  return Object.entries(filterPersistableNodeSeekCookies(cookies))
     .map(([key, cookie]) => ({
       name: cookie.name || key,
       value: cookie.value || ''
@@ -97,7 +114,7 @@ export function removeNodeSeekLoginCookies(cookies: Record<string, NativeCookie>
 }
 
 export function summarizeNodeSeekCookies(cookies: Record<string, NativeCookie>) {
-  const names = Object.entries(cookies)
+  const names = Object.entries(filterPersistableNodeSeekCookies(cookies))
     .filter(([, cookie]) => Boolean(cookie.value))
     .map(([key, cookie]) => cookie.name || key)
     .sort((left, right) => left.localeCompare(right));

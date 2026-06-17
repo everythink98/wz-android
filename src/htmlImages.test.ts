@@ -11,7 +11,8 @@ import {
   inlineForumImageDisplaySize,
   isHttpOrHttpsUrl,
   isPreviewableImageUrl,
-  normalizeImagePreviewUrl
+  normalizeImagePreviewUrl,
+  visibleImagePreviewThumbnails
 } from './htmlImages';
 
 describe('Android HTML image preview helpers', () => {
@@ -140,6 +141,13 @@ describe('Android HTML image preview helpers', () => {
       urls: ['https://cdn.example.com/a.jpg', 'https://cdn.example.com/b.png'],
       index: 1
     });
+  });
+
+  it('windows image preview thumbnails around the active image', () => {
+    const urls = Array.from({ length: 100 }, (_, index) => `https://cdn.example.com/${index}.jpg`);
+
+    expect(visibleImagePreviewThumbnails(urls, 50).map((item) => item.index)).toEqual([44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56]);
+    expect(visibleImagePreviewThumbnails(urls, 2).map((item) => item.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it('keeps forum emoji images out of the preview gallery', () => {

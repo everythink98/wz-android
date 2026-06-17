@@ -397,6 +397,7 @@ export function useSessionController({
 
   const completeNodeSeekBrowserFetch = useCallback(async (data: {
     id?: number;
+    url?: string;
     html?: string;
     cookie?: string;
     userAgent?: string;
@@ -404,6 +405,10 @@ export function useSessionController({
   }) => {
     const current = nodeSeekBrowserFetchCurrentRef.current;
     if (!current || data.id !== current.id) {
+      return;
+    }
+    if (!data.url || !isNodeSeekRequestUrl(data.url)) {
+      rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
       return;
     }
     nodeSeekBrowserWebViewRef.current?.stopLoading();
@@ -436,6 +441,7 @@ export function useSessionController({
     nodeSeekBrowserWebViewRef,
     nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
+    rejectNodeSeekBrowserFetch,
     saveNodeSeekCookieHeader,
     setNodeSeekBrowserFetchRequest,
     setNodeSeekWebViewUserAgent,
@@ -543,6 +549,7 @@ export function useSessionController({
 
   const completeLinuxDoBrowserFetch = useCallback(async (data: {
     id?: number;
+    url?: string;
     body?: string;
     cookie?: string;
     userAgent?: string;
@@ -550,6 +557,10 @@ export function useSessionController({
   }) => {
     const current = linuxDoBrowserFetchCurrentRef.current;
     if (!current || data.id !== current.id) {
+      return;
+    }
+    if (!data.url || !isLinuxDoRequestUrl(data.url)) {
+      rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
       return;
     }
     cleanupLinuxDoBrowserFetchRequest(current);
@@ -605,6 +616,7 @@ export function useSessionController({
     linuxDoBrowserWebViewRef,
     linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewUserAgentRef,
+    rejectLinuxDoBrowserFetch,
     setLinuxDoBrowserFetchRequest,
     setLinuxDoWebViewCookieHeader,
     setLinuxDoWebViewUserAgent,

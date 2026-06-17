@@ -432,6 +432,28 @@ describe('Android direct yaohuo API', () => {
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
   });
 
+  it('does not send yaohuo cookies to an off-site topic url', async () => {
+    const topic: Topic = {
+      source: 'yaohuo',
+      id: '123',
+      title: '妖火帖子',
+      author: 'alice',
+      url: 'https://evil.example/bbs-123.html',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      replyCount: 1,
+      categoryId: '177'
+    };
+    const yaohuoFetcher = vi.fn(async () => new Response(''));
+
+    await expect(getYaohuoTopicDirect({
+      topic,
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    })).rejects.toThrow('妖火链接不属于 yaohuo.me');
+
+    expect(yaohuoFetcher).not.toHaveBeenCalled();
+  });
+
   it('keeps the list category when yaohuo topic detail omits class links', async () => {
     const topic: Topic = {
       source: 'yaohuo',

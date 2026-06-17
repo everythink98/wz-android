@@ -18,6 +18,24 @@ export const YAOHUO_CATEGORIES: Category[] = [
   { source: 'yaohuo', id: '288', name: '网站公告' }
 ];
 
+export function isYaohuoRequestUrl(url: string, baseUrl = YAOHUO_BASE_URL) {
+  try {
+    const parsed = new URL(url, baseUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:')
+      && (hostname === 'yaohuo.me' || hostname === 'www.yaohuo.me');
+  } catch {
+    return false;
+  }
+}
+
+export function requireYaohuoRequestUrl(url: string, baseUrl = YAOHUO_BASE_URL) {
+  if (!isYaohuoRequestUrl(url, baseUrl)) {
+    throw new Error('妖火链接不属于 yaohuo.me');
+  }
+  return new URL(url, baseUrl).toString();
+}
+
 export function extractYaohuoTopicParts(href?: string) {
   const url = absoluteUrl(href, YAOHUO_BASE_URL) || '';
   try {

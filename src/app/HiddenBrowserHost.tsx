@@ -1,9 +1,11 @@
-import type { RefObject } from 'react';
+import { useCallback, type RefObject } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 import type { createStyles } from '../theme';
+import { isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
+import { isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
 
 export function HiddenBrowserHost({
   failLinuxDoBrowserFetchById,
@@ -34,6 +36,27 @@ export function HiddenBrowserHost({
   onNodeSeekHttpErrorStatus: (requestId: number, statusCode: number) => void;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const handleNodeSeekBrowserNavigation = useCallback((request: { url?: string }) => {
+    const url = request.url || '';
+    if (!url || isNodeSeekRequestUrl(url)) {
+      return true;
+    }
+    if (nodeSeekBrowserFetchRequest) {
+      failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面跳转到外部地址，已停止读取');
+    }
+    return false;
+  }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
+  const handleLinuxDoBrowserNavigation = useCallback((request: { url?: string }) => {
+    const url = request.url || '';
+    if (!url || isLinuxDoRequestUrl(url)) {
+      return true;
+    }
+    if (linuxDoBrowserFetchRequest) {
+      failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面跳转到外部地址，已停止读取');
+    }
+    return false;
+  }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
+
   return (
     <>
       {nodeSeekBrowserFetchRequest ? (
@@ -46,9 +69,12 @@ export function HiddenBrowserHost({
               headers: nodeSeekBrowserFetchRequest.cookie ? { Cookie: nodeSeekBrowserFetchRequest.cookie } : undefined
             }}
             javaScriptEnabled
+            javaScriptCanOpenWindowsAutomatically={false}
             sharedCookiesEnabled
+            setSupportMultipleWindows={false}
             thirdPartyCookiesEnabled
             userAgent={nodeSeekBrowserFetchRequest.userAgent || nodeSeekWebViewUserAgent}
+            onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
             onLoadEnd={() => {
@@ -87,9 +113,12 @@ export function HiddenBrowserHost({
               headers: linuxDoBrowserFetchRequest.cookie ? { Cookie: linuxDoBrowserFetchRequest.cookie } : undefined
             }}
             javaScriptEnabled
+            javaScriptCanOpenWindowsAutomatically={false}
             sharedCookiesEnabled
+            setSupportMultipleWindows={false}
             thirdPartyCookiesEnabled
             userAgent={linuxDoBrowserFetchRequest.userAgent || linuxDoWebViewUserAgent}
+            onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
             onLoadEnd={() => {

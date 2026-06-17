@@ -255,6 +255,7 @@ export async function clearLinuxDoAccess() {
   await Promise.all(LINUXDO_COOKIE_URLS.flatMap((url) => (
     LINUXDO_LOGIN_COOKIE_NAMES.map((name) => CookieManager.clearByName(url, name).catch(() => false))
   )));
+  await CookieManager.flush().catch(() => undefined);
   return loadLinuxDoAccess();
 }
 

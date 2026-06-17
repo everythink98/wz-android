@@ -165,7 +165,7 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       val cookieManager = CookieManager.getInstance()
       cookieManager.flush()
       for (url in nodeSeekCookieUrls) {
-        val value = cookieManager.getCookie(url)
+        val value = nodeSeekAccessCookieHeader(cookieManager.getCookie(url))
         if (!value.isNullOrBlank()) {
           return value
         }
@@ -174,6 +174,30 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     } catch (_: Exception) {
       null
     }
+  }
+
+  private fun isNodeSeekWantedCookieName(name: String): Boolean {
+    val clean = name.lowercase()
+    val nodeSeekWantedCookieNames = listOf("session", "auth", "token", "jwt", "user", "sid")
+    return clean == "cf_clearance" || nodeSeekWantedCookieNames.any { clean.contains(it) }
+  }
+
+  private fun nodeSeekAccessCookieHeader(cookieHeader: String?): String? {
+    val parts = mutableListOf<String>()
+    val seen = mutableSetOf<String>()
+    for (part in cookieHeader.orEmpty().split(";")) {
+      val clean = part.trim()
+      val separator = clean.indexOf("=")
+      if (separator <= 0) {
+        continue
+      }
+      val name = clean.substring(0, separator).trim()
+      val value = clean.substring(separator + 1).trim()
+      if (name.isNotBlank() && value.isNotBlank() && isNodeSeekWantedCookieName(name) && seen.add(name)) {
+        parts.add("$name=$value")
+      }
+    }
+    return parts.joinToString("; ").takeIf { it.isNotBlank() }
   }
 
   private fun clearLinuxDoClearanceCookies(): Boolean {
@@ -315,6 +339,15 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
         SELECT name, value
         FROM cookies
         WHERE value != ''
+          AND (
+            lower(name) = 'cf_clearance'
+            OR lower(name) LIKE '%session%'
+            OR lower(name) LIKE '%auth%'
+            OR lower(name) LIKE '%token%'
+            OR lower(name) LIKE '%jwt%'
+            OR lower(name) LIKE '%user%'
+            OR lower(name) LIKE '%sid%'
+          )
           AND (host_key = 'nodeseek.com' OR host_key = '.nodeseek.com' OR host_key LIKE '%.nodeseek.com')
         ORDER BY last_update_utc DESC
         """.trimIndent(),
@@ -325,7 +358,7 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
         while (cursor.moveToNext()) {
           val name = cursor.getString(0)
           val value = cursor.getString(1)
-          if (!name.isNullOrBlank() && !value.isNullOrBlank() && seen.add(name)) {
+          if (!name.isNullOrBlank() && !value.isNullOrBlank() && isNodeSeekWantedCookieName(name) && seen.add(name)) {
             parts.add("$name=$value")
           }
         }
