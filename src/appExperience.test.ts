@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readLibraryRuntimeSource, readMoreRuntimeSource, readOptionalProjectFile, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
+import { readAppRuntimeSource, readLibraryRuntimeSource, readMoreRuntimeSource, readProjectFile, readThemeRuntimeSource, readTopicRuntimeSource } from './sourceTestUtils';
 
 const appConfigSource = readProjectFile('app.json');
 const packageJsonSource = readProjectFile('package.json');
 const packageJson = JSON.parse(packageJsonSource);
-const adaptiveIconScriptSource = readOptionalProjectFile('scripts', 'generate-adaptive-icon.mjs');
+const adaptiveIconScriptSource = readProjectFile('scripts', 'generate-adaptive-icon.mjs');
 const appSource = readAppRuntimeSource();
 const linuxDoVerifyModalSource = readProjectFile('src', 'app', 'LinuxDoVerifyModal.tsx');
 const hiddenBrowserHostSource = readProjectFile('src', 'app', 'HiddenBrowserHost.tsx');
@@ -18,10 +18,10 @@ const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts
 const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataController.ts');
 const searchControllerSource = readProjectFile('src', 'app', 'useSearchController.ts');
 const sessionControllerSource = readProjectFile('src', 'app', 'useSessionController.ts');
-const verificationControllerSource = readOptionalProjectFile('src', 'app', 'useVerificationController.ts');
-const accountControllerSource = readOptionalProjectFile('src', 'app', 'useAccountController.ts');
-const topicActionHelpersSource = readOptionalProjectFile('src', 'app', 'topicActionHelpers.ts');
-const topicActionsControllerSource = readOptionalProjectFile('src', 'app', 'useTopicActionsController.ts');
+const verificationControllerSource = readProjectFile('src', 'app', 'useVerificationController.ts');
+const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
+const topicActionHelpersSource = readProjectFile('src', 'app', 'topicActionHelpers.ts');
+const topicActionsControllerSource = readProjectFile('src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
 const appControlsSource = readProjectFile('src', 'components', 'AppControls.tsx');
@@ -63,7 +63,7 @@ const nodeSeekBridgeSource = readProjectFile('src', 'nodeseekCookieBridge.ts');
 const forumApiSource = readProjectFile('src', 'forumApi.ts');
 const feedLogicSource = readProjectFile('src', 'feedLogic.ts');
 const yaohuoApiSource = readProjectFile('src', 'yaohuoApi.ts');
-const linuxDoCookiePluginSource = readOptionalProjectFile('plugins', 'withLinuxDoCookieModule.js');
+const linuxDoCookiePluginSource = readProjectFile('plugins', 'withLinuxDoCookieModule.js');
 const removedLocalServiceOption = ['server', 'Url'].join('');
 
 describe('Android App experience guards', () => {

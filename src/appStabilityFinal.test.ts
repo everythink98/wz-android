@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { readAppRuntimeSource, readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
+import { readAppRuntimeSource, readProjectFile } from './sourceTestUtils';
 
 const appSource = readAppRuntimeSource();
-const accountControllerSource = readOptionalProjectFile('src', 'app', 'useAccountController.ts');
-const topicActionsControllerSource = readOptionalProjectFile('src', 'app', 'useTopicActionsController.ts');
+const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
+const topicActionsControllerSource = readProjectFile('src', 'app', 'useTopicActionsController.ts');
 const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.ts');
 const topicNavigationControllerSource = readProjectFile('src', 'app', 'useTopicNavigationController.ts');
 
