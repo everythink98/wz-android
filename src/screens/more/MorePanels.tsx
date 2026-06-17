@@ -1,9 +1,9 @@
 import { type RefObject, useEffect, useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import { TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { CheckCircle, LogIn } from 'lucide-react-native';
 import type { ReaderSettings } from '../../readerData';
-import type { HealthDetail, LoginNavigationRequest } from '../../appTypes';
+import type { LoginNavigationRequest } from '../../appTypes';
 import { NODESEEK_URL, YAOHUO_URL } from '../../appUrls';
 import type { SiteSessionViewModel } from '../../siteSessionState';
 import { createStyles, type ReaderTheme } from '../../theme';
@@ -329,34 +329,6 @@ export function AppearancePanel({
     <View style={styles.stack}>
       {showSettingsPanel ? (
         <SettingsPanel settings={settings} styles={styles} onUpdateSettings={onUpdateSettings} />
-      ) : null}
-    </View>
-  );
-}
-
-export function StatusCheckPanel({
-  healthDetails,
-  statusBusy,
-  styles,
-  onCheckHealth
-}: {
-  healthDetails: HealthDetail[];
-  statusBusy: boolean;
-  styles: ReturnType<typeof createStyles>;
-  onCheckHealth: () => void;
-}) {
-  return (
-    <View style={styles.stack}>
-      <AppButton label={statusBusy ? '检查中' : '检查状态'} styles={styles} disabled={statusBusy} onPress={onCheckHealth} />
-      {healthDetails.length ? (
-        <View style={styles.stack}>
-          {healthDetails.map((item) => (
-            <View key={item.label} style={styles.statusDetailRow}>
-              <Text style={styles.menuLabel}>{item.label}</Text>
-              <Text style={[styles.meta, item.ok ? styles.statusOk : styles.statusBad]}>{item.ok ? '可用' : '不可用'} · {item.message}</Text>
-            </View>
-          ))}
-        </View>
       ) : null}
     </View>
   );

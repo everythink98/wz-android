@@ -5,7 +5,7 @@ import { Activity, DatabaseBackup, Download, LogIn, Settings } from 'lucide-reac
 import type { AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { HealthDetail, LoginNavigationRequest } from '../appTypes';
+import type { LoginNavigationRequest } from '../appTypes';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, InfoRow, MenuButton } from '../components/AppControls';
@@ -15,7 +15,6 @@ import {
   LinuxDoVerifyPanel,
   LinuxDoLevelPanel,
   NodeSeekLoginPanel,
-  StatusCheckPanel,
   YaohuoLoginPanel
 } from './more/MorePanels';
 export function MoreScreen({
@@ -24,8 +23,6 @@ export function MoreScreen({
   appUpdateDownloading,
   appUpdateInfo,
   appUpdateMessage,
-  healthDetails,
-  healthSummary,
   loginState,
   loadingLoginPage,
   loadingYaohuoLoginPage,
@@ -47,7 +44,7 @@ export function MoreScreen({
   yaohuoLoginState,
   yaohuoWebViewRef,
   sessionViewModels,
-  onCheckHealth,
+  onRefreshAccountStatus,
   onCheckAppUpdate,
   onDownloadAppUpdate,
   onCheckIn,
@@ -78,8 +75,6 @@ export function MoreScreen({
   appUpdateDownloading: boolean;
   appUpdateInfo: AppUpdateInfo | null;
   appUpdateMessage: string;
-  healthDetails: HealthDetail[];
-  healthSummary: string;
   loginState: string;
   loadingLoginPage: boolean;
   loadingYaohuoLoginPage: boolean;
@@ -101,7 +96,7 @@ export function MoreScreen({
   yaohuoLoginState: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   sessionViewModels: SiteSessionViewModels;
-  onCheckHealth: () => void;
+  onRefreshAccountStatus: () => void;
   onCheckAppUpdate: () => void;
   onDownloadAppUpdate: () => void;
   onCheckIn: () => void;
@@ -130,7 +125,6 @@ export function MoreScreen({
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
-  const [statusExpanded, setStatusExpanded] = useState(false);
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
@@ -221,6 +215,9 @@ export function MoreScreen({
           theme={theme}
           onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}
         />
+        <View style={styles.stack}>
+          <AppButton label={statusBusy ? '刷新中' : '刷新账号状态'} styles={styles} disabled={statusBusy} onPress={onRefreshAccountStatus} />
+        </View>
         <MenuButton icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
         {levelExpanded ? (
           <LinuxDoLevelPanel
@@ -272,23 +269,6 @@ export function MoreScreen({
           showSettingsPanel={showSettingsPanel}
           styles={styles}
           onUpdateSettings={onUpdateSettings}
-        />
-      </ExpandablePanel>
-      <ExpandablePanel
-        quiet
-        title="状态检查"
-        meta={statusBusy ? '检查中' : healthSummary || '来源状态'}
-        icon={Activity}
-        expanded={statusExpanded}
-        styles={styles}
-        theme={theme}
-        onExpandedChange={setStatusExpanded}
-      >
-        <StatusCheckPanel
-          healthDetails={healthDetails}
-          statusBusy={statusBusy}
-          styles={styles}
-          onCheckHealth={onCheckHealth}
         />
       </ExpandablePanel>
     </View>

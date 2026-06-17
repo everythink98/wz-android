@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { QueryClient } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
-import { checkLinuxDoLoginAccess, checkYaohuoLoginDirect, getFeed } from '../sources/sourceGateway';
+import { checkLinuxDoLoginAccess, checkYaohuoLoginDirect } from '../sources/sourceGateway';
 import type { ReaderData } from '../readerData';
 import { exportReaderBackupJson, importReaderBackupJson } from '../readerBackup';
 import {
@@ -22,24 +21,18 @@ import {
   parseLinuxDoDocumentCookie,
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
-import { buildLocalStatusResult } from '../statusLogic';
 import { safeFileName } from '../backupFiles';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
-import type { Fetcher } from '../request';
 import type { FeedSource, Source } from '../types';
-import type { HealthDetail } from '../appTypes';
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 
 export function useBackupStatusController({
   clearYaohuoLoginState,
-  fetcher,
   linuxDoUserAgentRef,
   loadNodeSeekCookieForSource,
-  nodeSeekUserAgentRef,
   notify,
-  queryClient,
   readerDataRef,
   replaceReaderData,
   resetLinuxDoLevelState,
@@ -48,12 +41,9 @@ export function useBackupStatusController({
 }: {
   clearYaohuoLoginState: () => Promise<void>;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
-  fetcher: Fetcher;
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
-  nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  queryClient: QueryClient;
   readerDataRef: { current: ReaderData };
   replaceReaderData: (nextValue: ReaderData) => Promise<void>;
   resetLinuxDoLevelState: () => void;
@@ -70,8 +60,6 @@ export function useBackupStatusController({
   const [backupBusy, setBackupBusy] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
   const [backupJson, setBackupJson] = useState('');
-  const [healthSummary, setHealthSummary] = useState('');
-  const [healthDetails, setHealthDetails] = useState<HealthDetail[]>([]);
 
   const importBackup = useCallback(async () => {
     if (backupBusyRef.current) {
@@ -252,7 +240,7 @@ export function useBackupStatusController({
     }
   }, [notify, readerDataRef, replaceReaderData]);
 
-  const checkLocalStatus = useCallback(async () => {
+  const refreshAccountStatus = useCallback(async () => {
     if (statusBusyRef.current) {
       return;
     }
@@ -264,7 +252,7 @@ export function useBackupStatusController({
     setStatusBusy(true);
     try {
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
+      await loadNodeSeekCookieForSource('nodeseek');
       let linuxDoAccess = await loadLinuxDoAccess();
       let access = linuxDoAccessSummary(linuxDoAccess);
       const linuxDoLoginPromise = linuxDoAccess?.cookieHeader && access.loggedIn
@@ -277,33 +265,12 @@ export function useBackupStatusController({
       const yaohuoStatusPromise = yaohuoCookie
         ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
-      const checks = await queryClient.fetchQuery({
-        queryKey: ['android-status', requestId],
-        queryFn: async () => Promise.allSettled([
-          getFeed({
-            source: 'nodeseek',
-            limit: 1,
-            nocache: true,
-            fetcher,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-            signal: controller.signal
-          }),
-          getFeed({ source: 'v2ex', limit: 1, nocache: true, signal: controller.signal }),
-          getFeed({ source: 'linuxdo', limit: 1, nocache: true, signal: controller.signal }),
-          yaohuoStatusPromise,
-          linuxDoLoginPromise
-        ] as const)
-      });
+      const [yaohuoCheck, linuxDoLoginCheck] = await Promise.allSettled([yaohuoStatusPromise, linuxDoLoginPromise] as const);
       if (!isCurrentStatusRequest() || controller.signal.aborted) {
         return;
       }
-      const yaohuoCheck = checks[3];
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
-      const yaohuoMessage = yaohuoCheck.status === 'fulfilled'
-        ? (yaohuoOk ? '登录可用' : yaohuoCheck.value.message || '未登录')
-        : errorMessage(yaohuoCheck.reason);
-      const linuxDoLogin = checks[4].status === 'fulfilled' ? checks[4].value : undefined;
+      const linuxDoLogin = linuxDoLoginCheck.status === 'fulfilled' ? linuxDoLoginCheck.value : undefined;
       if (linuxDoLogin?.loginRequired) {
         linuxDoAccess = await clearLinuxDoAccess();
         if (!isCurrentStatusRequest() || controller.signal.aborted) {
@@ -312,28 +279,6 @@ export function useBackupStatusController({
         access = linuxDoAccessSummary(linuxDoAccess);
         resetLinuxDoLevelState();
       }
-      const result = buildLocalStatusResult({
-        sourceChecks: {
-          nodeseek: {
-            ok: checks[0].status === 'fulfilled',
-            message: checks[0].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[0].reason)
-          },
-          v2ex: {
-            ok: checks[1].status === 'fulfilled',
-            message: checks[1].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[1].reason)
-          },
-          linuxdo: {
-            ok: checks[2].status === 'fulfilled',
-            message: checks[2].status === 'fulfilled' ? '列表可读取' : errorMessage(checks[2].reason)
-          },
-          yaohuo: {
-            ok: yaohuoOk,
-            message: yaohuoMessage
-          }
-        },
-        linuxDoAccess: access,
-        linuxDoLogin
-      });
       const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
       if (yaohuoExpired) {
         await clearYaohuoLoginState();
@@ -349,20 +294,19 @@ export function useBackupStatusController({
           type: 'cookie-loaded',
           cookieSummary: yaohuoSummary.names,
           hasVerification: false,
-          loggedIn: result.hasYaohuoLogin,
+          loggedIn: yaohuoOk,
           at: new Date().toISOString()
         });
+      const hasLinuxDoLogin = access.loggedIn && (!linuxDoLogin || linuxDoLogin.ok || !linuxDoLogin.loginRequired);
       dispatchSiteSessionEvent({
         site: 'linuxdo',
         type: 'cookie-loaded',
         cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names,
-        hasVerification: result.hasLinuxDoClearance,
-        loggedIn: result.hasLinuxDoLogin,
+        hasVerification: access.hasClearance,
+        loggedIn: hasLinuxDoLogin,
         at: new Date().toISOString()
       });
-      setHealthDetails(result.details);
-      setHealthSummary(result.summary);
-      notify('状态已更新');
+      notify('账号状态已刷新');
     } catch (error) {
       if (isCurrentStatusRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
@@ -376,12 +320,9 @@ export function useBackupStatusController({
   }, [
     clearYaohuoLoginState,
     dispatchSiteSessionEvent,
-    fetcher,
     linuxDoUserAgentRef,
     loadNodeSeekCookieForSource,
-    nodeSeekUserAgentRef,
     notify,
-    queryClient,
     resetLinuxDoLevelState
   ]);
 
@@ -396,13 +337,11 @@ export function useBackupStatusController({
     abortBackupStatusRequests,
     backupBusy,
     backupJson,
-    checkLocalStatus,
     exportBackup,
     exportBackupFile,
-    healthDetails,
-    healthSummary,
     importBackup,
     importBackupFile,
+    refreshAccountStatus,
     setBackupJson,
     statusBusy
   };

@@ -119,17 +119,8 @@ export function createPanelStyles(theme: ReaderTheme, appFontFamily: string | un
       paddingHorizontal: 0,
       paddingVertical: 12
     },
-    statusDetailRow: {
-      gap: 3,
-      borderTopColor: theme.line,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 8
-    },
     statusOk: {
       color: theme.success
-    },
-    statusBad: {
-      color: theme.danger
     },
     buttonPrimary: {
       backgroundColor: theme.primary,

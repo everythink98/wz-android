@@ -4,11 +4,6 @@ import type { Reply, Topic, TopicDetail } from './types';
 
 export type Screen = 'feed' | 'search' | 'library' | 'more' | 'topic' | 'user';
 export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
-export type HealthDetail = {
-  label: string;
-  ok: boolean;
-  message: string;
-};
 export type LoginNavigationRequest = { url: string };
 export type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
 export type HtmlAllowedStyles = NonNullable<ComponentProps<typeof RenderHTML>['allowedStyles']>;
