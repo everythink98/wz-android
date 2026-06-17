@@ -1,5 +1,5 @@
-export const feedFloatingActionsOffset = 420;
-export const feedLoadMoreThresholdRatio = 0.6;
+const feedFloatingActionsOffset = 420;
+const feedLoadMoreThresholdRatio = 0.6;
 
 interface FeedScrollMetrics {
   contentOffset: { y: number };

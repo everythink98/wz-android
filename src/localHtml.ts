@@ -162,9 +162,9 @@ function accessRequirementDetail(text: string, match: RegExpMatchArray) {
   return textContentFromHtml(text.slice(start, start + 112)).slice(0, 80);
 }
 
-export const ACCESS_REQUIREMENT_LEVEL_PATTERN_SOURCE = String.raw`需要[^。；\n]{0,40}(?:等级|trust level|lv\s*\d+)|需要[^。；\n]{0,40}\d+\s*级[^。；\n]{0,24}(?:查看|阅读|才能|才可|以上|可见)|(?:等级|trust level|lv\s*\d+)[^。；\n]{0,40}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)`;
-export const ACCESS_REQUIREMENT_LOGIN_PATTERN_SOURCE = String.raw`请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读|可见)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)`;
-export const ACCESS_REQUIREMENT_PERMISSION_PATTERN_SOURCE = String.raw`本帖已经被用户设为私有，您没有阅读权限|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:this\s+)?(?:topic|category)\s+is\s+(?:private|restricted)\.?|you are not permitted|not authorized|you do not have permission|you don't have permission`;
+const ACCESS_REQUIREMENT_LEVEL_PATTERN_SOURCE = String.raw`需要[^。；\n]{0,40}(?:等级|trust level|lv\s*\d+)|需要[^。；\n]{0,40}\d+\s*级[^。；\n]{0,24}(?:查看|阅读|才能|才可|以上|可见)|(?:等级|trust level|lv\s*\d+)[^。；\n]{0,40}(?:不足|要求|required|才能|才可|以上)|requires?[^.]{0,40}(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|minimum (?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)|must be (?:at least )?(?:trust\s+level|level\s*(?:of\s+|[:：#-]\s*)?\d+)`;
+const ACCESS_REQUIREMENT_LOGIN_PATTERN_SOURCE = String.raw`请先\s*登录|需要\s*登录|登录后(?:可|才|才能)?(?:查看|访问|回复|阅读|可见)|未登录|login required|sign in (?:to|required)|log in (?:to|required)|must be logged in|you need to (?:log in|sign in)`;
+const ACCESS_REQUIREMENT_PERMISSION_PATTERN_SOURCE = String.raw`本帖已经被用户设为私有，您没有阅读权限|权限不足|权限不够|没有权限|暂无权限|无权限|无权(?:查看|访问|阅读)|无访问权限|当前用户组不可(?:查看|访问|阅读)|游客不可见|permission denied|access denied|insufficient privileges|not allowed|not permitted|forbidden|(?:private|restricted)\s+(?:topic|category)|(?:this\s+)?(?:topic|category)\s+is\s+(?:private|restricted)\.?|you are not permitted|not authorized|you do not have permission|you don't have permission`;
 export const ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE = [
   ACCESS_REQUIREMENT_LEVEL_PATTERN_SOURCE,
   ACCESS_REQUIREMENT_LOGIN_PATTERN_SOURCE,

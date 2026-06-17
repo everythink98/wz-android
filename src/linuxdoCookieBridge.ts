@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
 export { isCloudflareChallengeBody, isCloudflareChallengeResponse } from './cloudflareChallenge';
 
-export interface LinuxDoNativeCookie {
+interface LinuxDoNativeCookie {
   name?: string;
   value?: string;
   domain?: string;
@@ -13,7 +13,7 @@ export interface LinuxDoNativeCookie {
   secure?: boolean;
 }
 
-export interface LinuxDoAccess {
+interface LinuxDoAccess {
   cookieHeader: string;
   savedAt: string;
   source: 'webview';

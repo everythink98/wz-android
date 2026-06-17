@@ -32,7 +32,7 @@ import {
 
 const BASE_URL = NODESEEK_BASE_URL;
 const MAX_NODESEEK_SEARCH_PAGES = 5;
-export const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
+const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
 interface NodeSeekOptions {
@@ -386,7 +386,7 @@ function embeddedCandidates(html: string) {
   return [...scriptContents, ...dataAttributes].flatMap((content) => content.match(/eyJ[A-Za-z0-9+/=]{40,}/g) || []);
 }
 
-export function extractNodeSeekEmbeddedData(html: string) {
+function extractNodeSeekEmbeddedData(html: string) {
   for (const candidate of embeddedCandidates(html)) {
     try {
       const parsed = JSON.parse(Buffer.from(candidate, 'base64').toString('utf8'));
