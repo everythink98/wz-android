@@ -210,6 +210,13 @@ describe('Android reader theme helpers', () => {
     expect(styles.quoteBox.borderRadius).toBeLessThanOrEqual(8);
   });
 
+  it('does not force narrow markdown tables wider than the reading column', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.htmlTableFrame.minWidth).toBeUndefined();
+  });
+
   it('keeps dark topic rows on the same neutral background as the page', () => {
     const theme = createTheme({ ...settings, theme: 'dark' });
     const styles = createStyles(theme, { ...settings, theme: 'dark' }, 800);

@@ -1439,7 +1439,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingRight: 12
     },
     htmlTableFrame: {
-      minWidth: 520,
       borderColor: theme.line,
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,

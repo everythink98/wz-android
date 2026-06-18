@@ -25,7 +25,8 @@ import { nsEmbedFromUrl } from '../nsVideoEmbeds';
 import { parseForumTopicLink } from '../appUtils';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
 import type { Topic, TopicDetail } from '../types';
-import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles } from '../appTypes';
+import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
+import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -75,154 +76,16 @@ export function useHtmlRenderingController({
     setInlineSizedImageUrls((current) => current[clean] ? current : { ...current, [clean]: true });
   }, []);
 
-  const htmlBaseStyle = useMemo<HtmlBaseStyle>(() => ({
-    color: theme.ink,
-    fontFamily: fontFamilyValue(settings.fontFamily),
-    fontSize: Math.round(16 * settings.fontScale),
-    lineHeight: Math.round(16 * settings.fontScale * lineHeightMultiplier(settings.lineHeight))
-  }), [settings.fontFamily, settings.fontScale, settings.lineHeight, theme.ink]);
-  const htmlTagsStyles = useMemo<HtmlTagsStyles>(() => {
-    const htmlParagraph = {
-      color: theme.ink,
-      marginBottom: 10,
-      marginTop: 6
-    };
-    const listPaddingLeft = Math.round(34 * settings.fontScale);
-    return {
-      body: {
-        color: theme.ink,
-        backgroundColor: 'transparent'
-      },
-      p: htmlParagraph,
-      div: {
-        color: theme.ink
-      },
-      span: {
-        color: theme.ink
-      },
-      h1: {
-        color: theme.ink,
-        fontWeight: '700',
-        lineHeight: Math.round(28 * settings.fontScale),
-        marginBottom: 8,
-        marginTop: 18
-      },
-      h2: {
-        color: theme.ink,
-        fontWeight: '700',
-        lineHeight: Math.round(26 * settings.fontScale),
-        marginBottom: 8,
-        marginTop: 18
-      },
-      h3: {
-        color: theme.ink,
-        fontWeight: '600',
-        lineHeight: Math.round(24 * settings.fontScale),
-        marginBottom: 6,
-        marginTop: 16
-      },
-      h4: {
-        color: theme.ink,
-        fontWeight: '600'
-      },
-      h5: {
-        color: theme.ink,
-        fontWeight: '600'
-      },
-      h6: {
-        color: theme.muted,
-        fontWeight: '600'
-      },
-      a: {
-        color: theme.primary,
-        textDecorationColor: theme.primary,
-        textDecorationLine: 'underline'
-      },
-      img: { borderRadius: 8 },
-      strong: {
-        color: theme.ink
-      },
-      b: {
-        color: theme.ink
-      },
-      em: {
-        color: theme.ink
-      },
-      li: {
-        color: theme.ink,
-        marginBottom: 4
-      },
-      ul: {
-        color: theme.ink,
-        marginBottom: 10,
-        marginTop: 8,
-        paddingLeft: listPaddingLeft
-      },
-      ol: {
-        color: theme.ink,
-        marginBottom: 10,
-        marginTop: 8,
-        paddingLeft: listPaddingLeft
-      },
-      blockquote: {
-        backgroundColor: theme.surface2,
-        borderColor: theme.line,
-        borderWidth: StyleSheet.hairlineWidth,
-        color: theme.muted,
-        marginBottom: 12,
-        marginTop: 12,
-        paddingHorizontal: 13,
-        paddingVertical: 11
-      },
-      pre: {
-        backgroundColor: theme.surface2,
-        borderColor: theme.line,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderRadius: 8,
-        marginBottom: 12,
-        marginTop: 12,
-        padding: 12
-      },
-      code: {
-        backgroundColor: 'transparent',
-        color: theme.ink
-      },
-      mark: {
-        backgroundColor: theme.surface2,
-        color: theme.ink
-      },
-      table: {
-        backgroundColor: 'transparent',
-        borderColor: theme.line,
-        borderWidth: StyleSheet.hairlineWidth
-      },
-      th: {
-        color: theme.ink,
-        backgroundColor: theme.surface2,
-        borderColor: theme.line,
-        borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 8,
-        paddingVertical: 7
-      },
-      td: {
-        color: theme.ink,
-        borderColor: theme.line,
-        borderWidth: StyleSheet.hairlineWidth,
-        paddingHorizontal: 8,
-        paddingVertical: 7
-      }
-    };
-  }, [settings.fontScale, theme]);
-  const htmlIgnoredStyles = useMemo<HtmlIgnoredStyles>(() => [
-    'backgroundColor',
-    'borderTopColor',
-    'borderRightColor',
-    'borderBottomColor',
-    'borderLeftColor',
-    'color',
-    'outlineColor',
-    'textDecorationColor'
-  ], []);
+  const {
+    htmlBaseStyle,
+    htmlIgnoredStyles,
+    htmlTagsStyles
+  } = useMemo(() => buildHtmlRenderingStyles({ settings, theme }), [
+    settings.fontFamily,
+    settings.fontScale,
+    settings.lineHeight,
+    theme
+  ]);
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const VideoEmbedBlock = ({ embedUrl }: { embedUrl: string }) => (
       <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>

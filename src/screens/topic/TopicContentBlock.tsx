@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import { RenderHTMLSource } from 'react-native-render-html';
 import { flowInlineImagesInMixedParagraphs } from '../../htmlImages';
+import { normalizeRenderableHtml } from '../../topicContentHtml';
 import { inlineSizedImageSignatureForHtml, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../../topicDerivedData';
 
 export function TopicContentBlock({
@@ -15,7 +16,7 @@ export function TopicContentBlock({
   topicImageDeriver: TopicImageDeriver;
 }) {
   const source = useMemo(() => {
-    const markedHtml = topicImageDeriver.markInlineSizedImages(html || '<p></p>', inlineSizedImageUrls);
+    const markedHtml = topicImageDeriver.markInlineSizedImages(normalizeRenderableHtml(html), inlineSizedImageUrls);
     return { html: flowInlineImagesInMixedParagraphs(markedHtml) };
   }, [html, inlineSizedImageUrls, topicImageDeriver]);
   return (

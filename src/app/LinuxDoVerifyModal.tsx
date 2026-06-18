@@ -103,6 +103,7 @@ export function LinuxDoVerifyModal({
           cacheEnabled
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
+          setSupportMultipleWindows={false}
           userAgent={linuxDoWebViewUserAgent}
           injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
           onLoadProgress={(event) => {

@@ -3,15 +3,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { safeFileName } from '../backupFiles';
 import {
-  createImagePreviewCatalog,
   dataImageFileFromUrl,
   imageRequestHeadersForUrl,
-  imagePreviewListFromCatalog,
   normalizeImagePreviewUrl,
   type ImagePreviewList
 } from '../htmlImages';
 import type { TopicImageDeriver } from '../topicDerivedData';
 import { errorMessage } from '../appUtils';
+import { createLazyImagePreviewResolver } from '../imagePreviewCatalog';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -31,19 +30,20 @@ export function useImagePreviewController({
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
   inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
-  const previewHtmlParts = useMemo(() => (
-    htmlParts.map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
-  ), [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
-  const previewCatalog = useMemo(() => createImagePreviewCatalog(previewHtmlParts), [previewHtmlParts]);
-  const previewCatalogRef = useRef(previewCatalog);
-  previewCatalogRef.current = previewCatalog;
+  const resolveImagePreview = useMemo(() => createLazyImagePreviewResolver({
+    htmlParts,
+    inlineSizedImageUrls,
+    topicImageDeriver
+  }), [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
+  const resolveImagePreviewRef = useRef(resolveImagePreview);
+  resolveImagePreviewRef.current = resolveImagePreview;
 
   const openImagePreview = useCallback((url: string) => {
     const clean = normalizeImageCacheKey(url);
     if (clean && inlineSizedImageUrlsRef.current[clean]) {
       return;
     }
-    const nextPreview = imagePreviewListFromCatalog(previewCatalogRef.current, url);
+    const nextPreview = resolveImagePreviewRef.current(url);
     if (nextPreview.urls.length > 0) {
       setImagePreview(nextPreview);
     }

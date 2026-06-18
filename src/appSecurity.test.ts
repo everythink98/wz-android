@@ -43,6 +43,11 @@ describe('Android App security review guards', () => {
     expect(linuxDoVerifyModalSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoNavigation}');
   });
 
+  it('keeps login WebView links inside the App window', () => {
+    expect((morePanelsSource.match(/setSupportMultipleWindows=\{false\}/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(linuxDoVerifyModalSource).toContain('setSupportMultipleWindows={false}');
+  });
+
   it('restricts hidden fetch WebViews and rejects off-site browser results', () => {
     expect(hiddenBrowserHostSource).toContain('onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}');
     expect(hiddenBrowserHostSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}');

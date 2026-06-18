@@ -148,6 +148,7 @@ export function NodeSeekLoginPanel({
               source={{ uri: NODESEEK_URL }}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
+              setSupportMultipleWindows={false}
               userAgent={nodeSeekWebViewUserAgent}
               injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
               onLoadEnd={(event) => {
@@ -264,6 +265,7 @@ export function YaohuoLoginPanel({
               source={{ uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
+              setSupportMultipleWindows={false}
               onLoadEnd={(event) => {
                 onSetLoadingYaohuoLoginPage(false);
                 if ('code' in event.nativeEvent) {
