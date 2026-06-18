@@ -51,7 +51,7 @@ export type TopicListItem =
   | { type: 'emptyReplies'; key: string }
   | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
 
-const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'iframe', 'noscript'];
+const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
 const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 const HTML_CUSTOM_ELEMENT_MODELS = {
   details: defaultHTMLElementModels.details.extend({
@@ -63,6 +63,11 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
   [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: INLINE_FORUM_IMAGE_TAG,
     contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
+  iframe: HTMLElementModel.fromCustomModel({
+    tagName: 'iframe',
+    contentModel: HTMLContentModel.block,
     isOpaque: true
   })
 };

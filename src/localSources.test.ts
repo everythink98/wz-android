@@ -124,6 +124,29 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).not.toMatch(/\/api\/|10\.0\.2\.2|127\.0\.0\.1:3000/);
   });
 
+  it('converts NodeSeek Bilibili image syntax into embeddable player HTML', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 102,
+        title: 'NodeSeek video topic',
+        op: { name: 'alice' },
+        comments: [{
+          commentId: 1,
+          poster: { name: 'alice' },
+          markdown: '![image](https://www.bilibili.com/video/BV1GUdgBdESz/?p=2)',
+          time: { createdDate: '2026-05-20T00:00:00.000Z' }
+        }]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const topic = await getNodeSeekTopic('102', { fetcher });
+
+    expect(topic.contentHtml).toContain('<iframe');
+    expect(topic.contentHtml).toContain('https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2');
+    expect(topic.contentHtml).not.toContain('<img');
+  });
+
   it('does not infer a NodeSeek next page when the list exactly reaches the limit', async () => {
     const exactPagePayload = Buffer.from(JSON.stringify({
       rotateTopics: [

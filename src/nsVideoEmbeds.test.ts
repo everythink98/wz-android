@@ -1,0 +1,25 @@
+import { describe, expect, it } from 'vitest';
+
+import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
+
+describe('NodeSeek video embeds', () => {
+  it('builds Bilibili player URLs from NodeSeek-supported video links', () => {
+    expect(bilibiliEmbedUrlFromUrl('https://www.bilibili.com/video/BV1GUdgBdESz/?p=2')).toBe(
+      'https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2'
+    );
+    expect(bilibiliEmbedUrlFromUrl('https://m.bilibili.com/video/av123456')).toBe(
+      'https://player.bilibili.com/player.html?aid=123456'
+    );
+  });
+
+  it('keeps Bilibili player URLs and does not promote unconfirmed video hosts', () => {
+    expect(nsEmbedFromUrl('//player.bilibili.com/player.html?bvid=BV1GUdgBdESz')).toEqual({
+      type: 'bilibili',
+      sourceUrl: 'https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz',
+      embedUrl: 'https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz'
+    });
+    expect(bilibiliEmbedUrlFromUrl('https://b23.tv/demo')).toBeUndefined();
+    expect(bilibiliEmbedUrlFromUrl('https://www.youtube.com/watch?v=demo')).toBeUndefined();
+    expect(bilibiliEmbedUrlFromUrl('https://player.bilibili.com/player.html?foo=bar')).toBeUndefined();
+  });
+});

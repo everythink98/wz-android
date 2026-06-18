@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle } from 'react-native';
+import { WebView } from 'react-native-webview';
 import {
   useIMGElementProps,
   useIMGElementState,
@@ -20,6 +21,7 @@ import {
   normalizeImagePreviewUrl,
   withForumImageDimensions
 } from '../htmlImages';
+import { nsEmbedFromUrl } from '../nsVideoEmbeds';
 import { parseForumTopicLink } from '../appUtils';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
 import type { Topic, TopicDetail } from '../types';
@@ -219,6 +221,25 @@ export function useHtmlRenderingController({
     'textDecorationColor'
   ], []);
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
+    const VideoEmbedBlock = ({ embedUrl }: { embedUrl: string }) => (
+      <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
+        <WebView
+          allowsFullscreenVideo
+          domStorageEnabled
+          javaScriptEnabled
+          source={{ uri: embedUrl }}
+          style={embedStyles.webView}
+        />
+      </View>
+    );
+    const IframeRenderer: CustomBlockRenderer = (props) => {
+      const src = props.tnode.attributes.src || '';
+      const embed = nsEmbedFromUrl(src);
+      if (embed?.type !== 'bilibili') {
+        return null;
+      }
+      return <VideoEmbedBlock embedUrl={embed.embedUrl} />;
+    };
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
@@ -284,8 +305,8 @@ export function useHtmlRenderingController({
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
-    return { img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
-  }, [htmlBaseStyle.lineHeight, markImageInlineSized, onOpenImagePreview, settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText, theme.line]);
+    return { iframe: IframeRenderer, img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
+  }, [htmlBaseStyle.lineHeight, markImageInlineSized, onOpenImagePreview, settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText, theme.line, theme.surface2]);
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
     a: {
@@ -321,3 +342,18 @@ export function useHtmlRenderingController({
     topicImageDeriver
   };
 }
+
+const embedStyles = StyleSheet.create({
+  videoFrame: {
+    alignSelf: 'stretch',
+    aspectRatio: 16 / 9,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 12,
+    marginTop: 8,
+    overflow: 'hidden'
+  },
+  webView: {
+    flex: 1
+  }
+});

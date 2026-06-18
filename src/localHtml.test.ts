@@ -37,6 +37,44 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('src="https://cdn.example.com/a.png"');
   });
 
+  it('keeps Bilibili player iframes while sanitizing their attributes', () => {
+    const result = sanitizeContentHtml(`
+      <iframe
+        src="//player.bilibili.com/player.html?isOutside=true&bvid=BV1GUdgBdESz&p=1"
+        onload="alert(1)"
+        style="width:100%"
+        allowfullscreen="true"
+      ></iframe>
+    `, 'https://www.nodeseek.com/post-1-1');
+
+    expect(result).toContain('<iframe');
+    expect(result).toContain('src="https://player.bilibili.com/player.html?isOutside=true&bvid=BV1GUdgBdESz&p=1"');
+    expect(result).not.toContain('onload=');
+    expect(result).not.toContain('style=');
+  });
+
+  it('turns Bilibili video image syntax output into a player iframe', () => {
+    const result = sanitizeContentHtml(`
+      <p><img src="https://www.bilibili.com/video/BV1GUdgBdESz/?p=2" alt="image"></p>
+    `, 'https://www.nodeseek.com/post-1-1');
+
+    expect(result).toContain('<iframe');
+    expect(result).toContain('src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2"');
+    expect(result).not.toContain('<img');
+  });
+
+  it('turns untrusted iframes into openable link blocks instead of inline playback', () => {
+    const result = sanitizeContentHtml(`
+      <iframe src="https://www.youtube.com/embed/demo" onload="alert(1)"></iframe>
+    `, 'https://www.nodeseek.com/post-1-1');
+
+    expect(result).not.toContain('<iframe');
+    expect(result).toContain('<a');
+    expect(result).toContain('href="https://www.youtube.com/embed/demo"');
+    expect(result).toContain('嵌入内容 · www.youtube.com');
+    expect(result).not.toContain('onload=');
+  });
+
   it('keeps data image sources without allowing data links or non-image data media', () => {
     const result = sanitizeContentHtml(`
       <a href="data:image/png;base64,abc123">image link</a>

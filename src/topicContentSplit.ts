@@ -1,6 +1,6 @@
 import { parseHtml } from './localHtml';
 
-const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'iframe', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
 function fallbackTopLevelBlocks(clean: string) {
   const blocks: string[] = [];

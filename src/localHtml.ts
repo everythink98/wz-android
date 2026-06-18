@@ -1,5 +1,6 @@
 import { parse, type HTMLElement } from 'node-html-parser';
 import { accessRequirementLevelValue } from './appUtils';
+import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
 import type { AccessRequirement } from './types';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -119,11 +120,50 @@ function removeForumImageMetadata(root: HTMLElement) {
   });
 }
 
+function escapeHtmlAttribute(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function sanitizeIframes(root: HTMLElement, baseUrl: string) {
+  root.querySelectorAll('iframe').forEach((node) => {
+    const embed = nsEmbedFromUrl(node.getAttribute('src'), baseUrl);
+    if (!embed) {
+      node.remove();
+      return;
+    }
+    if (embed.type === 'bilibili') {
+      for (const name of Object.keys(node.attributes)) {
+        node.removeAttribute(name);
+      }
+      node.setAttribute('src', embed.embedUrl);
+      node.setAttribute('allowfullscreen', 'true');
+      return;
+    }
+    node.replaceWith(`<a class="embed-link" href="${escapeHtmlAttribute(embed.sourceUrl)}">嵌入内容 · ${escapeHtmlAttribute(embed.displayDomain)}</a>`);
+  });
+}
+
+function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
+  root.querySelectorAll('img').forEach((node) => {
+    const embedUrl = bilibiliEmbedUrlFromUrl(node.getAttribute('src'), baseUrl);
+    if (!embedUrl) {
+      return;
+    }
+    node.replaceWith(`<iframe src="${escapeHtmlAttribute(embedUrl)}" allowfullscreen="true"></iframe>`);
+  });
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   const root = parseHtml(html);
-  for (const selector of ['script', 'style', 'iframe', 'noscript']) {
+  for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
+  sanitizeIframes(root, baseUrl);
+  sanitizeNsVideoImages(root, baseUrl);
   removeForumImageMetadata(root);
   root.querySelectorAll('*').forEach((node) => {
     const attrs = { ...node.attributes };
