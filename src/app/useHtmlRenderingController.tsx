@@ -87,6 +87,7 @@ export function useHtmlRenderingController({
       marginBottom: 10,
       marginTop: 6
     };
+    const listPaddingLeft = Math.round(34 * settings.fontScale);
     return {
       body: {
         color: theme.ink,
@@ -154,12 +155,14 @@ export function useHtmlRenderingController({
       ul: {
         color: theme.ink,
         marginBottom: 10,
-        marginTop: 8
+        marginTop: 8,
+        paddingLeft: listPaddingLeft
       },
       ol: {
         color: theme.ink,
         marginBottom: 10,
-        marginTop: 8
+        marginTop: 8,
+        paddingLeft: listPaddingLeft
       },
       blockquote: {
         backgroundColor: theme.surface2,
@@ -308,29 +311,45 @@ export function useHtmlRenderingController({
     return { iframe: IframeRenderer, img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
   }, [htmlBaseStyle.lineHeight, markImageInlineSized, onOpenImagePreview, settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText, theme.line, theme.surface2]);
 
-  const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => ({
-    a: {
-      onPress: (event, href) => {
-        if (isPreviewableImageUrl(href)) {
-          event.stopPropagation?.();
-          onOpenImagePreview(href);
-          return;
-        }
-        const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);
-        if (appTopic) {
-          event.stopPropagation?.();
-          void onOpenTopic(appTopic);
-          return;
-        }
-        if (isHttpOrHttpsUrl(href)) {
-          onOpenExternalUrl(href);
-        }
+  const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => {
+    const listRendererProps = {
+      enableDynamicMarkerBoxWidth: true,
+      markerBoxStyle: {
+        paddingRight: Math.round(6 * settings.fontScale)
+      },
+      markerTextStyle: {
+        color: theme.ink,
+        fontFamily: fontFamilyValue(settings.fontFamily),
+        fontSize: Math.round(16 * settings.fontScale),
+        lineHeight: Math.round(16 * settings.fontScale * lineHeightMultiplier(settings.lineHeight))
       }
-    },
-    img: {
-      enableExperimentalPercentWidth: true
-    }
-  }), [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, selectedTopic?.url, topicDetail?.url]);
+    };
+    return {
+      a: {
+        onPress: (event, href) => {
+          if (isPreviewableImageUrl(href)) {
+            event.stopPropagation?.();
+            onOpenImagePreview(href);
+            return;
+          }
+          const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);
+          if (appTopic) {
+            event.stopPropagation?.();
+            void onOpenTopic(appTopic);
+            return;
+          }
+          if (isHttpOrHttpsUrl(href)) {
+            onOpenExternalUrl(href);
+          }
+        }
+      },
+      img: {
+        enableExperimentalPercentWidth: true
+      },
+      ol: listRendererProps,
+      ul: listRendererProps
+    };
+  }, [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, selectedTopic?.url, settings.fontFamily, settings.fontScale, settings.lineHeight, theme.ink, topicDetail?.url]);
 
   return {
     htmlBaseStyle,
