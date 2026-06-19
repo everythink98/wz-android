@@ -22,7 +22,6 @@ import {
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
 import { safeFileName } from '../backupFiles';
-import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
 import type { FeedSource, Source } from '../types';
 
@@ -49,12 +48,7 @@ export function useBackupStatusController({
   resetLinuxDoLevelState: () => void;
   waitForReaderDataSave: () => Promise<void>;
 }) {
-  const backupRequestIdRef = useRef(0);
-  const backupRequestOwnerRef = useRef(createRequestOwner('backup'));
-  const backupAbortRef = useRef<AbortController | null>(null);
   const backupBusyRef = useRef(false);
-  const statusRequestIdRef = useRef(0);
-  const statusRequestOwnerRef = useRef(createRequestOwner('status'));
   const statusAbortRef = useRef<AbortController | null>(null);
   const statusBusyRef = useRef(false);
   const [backupBusy, setBackupBusy] = useState(false);
@@ -66,38 +60,21 @@ export function useBackupStatusController({
       return;
     }
     backupBusyRef.current = true;
-    const requestId = ++backupRequestIdRef.current;
-    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:import-text');
-    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
-    const controller = startAbortableRequest(backupAbortRef);
     setBackupBusy(true);
     try {
       await waitForReaderDataSave();
-      if (!isCurrentBackupRequest() || controller.signal.aborted) {
-        return;
-      }
       if (!backupJson.trim()) {
         notify('请先粘贴备份 JSON');
         return;
       }
       const merged = importReaderBackupJson(readerDataRef.current, backupJson);
-      if (!isCurrentBackupRequest() || controller.signal.aborted) {
-        return;
-      }
       await replaceReaderData(merged);
-      if (!isCurrentBackupRequest() || controller.signal.aborted) {
-        return;
-      }
       notify('备份已恢复，本机资料已合并');
     } catch (error) {
-      if (isCurrentBackupRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
+      notify(errorMessage(error));
     } finally {
-      if (finishAbortableRequest(backupAbortRef, controller)) {
-        backupBusyRef.current = false;
-        setBackupBusy(false);
-      }
+      backupBusyRef.current = false;
+      setBackupBusy(false);
     }
   }, [backupJson, notify, readerDataRef, replaceReaderData, waitForReaderDataSave]);
 
@@ -106,27 +83,16 @@ export function useBackupStatusController({
       return;
     }
     backupBusyRef.current = true;
-    const requestId = ++backupRequestIdRef.current;
-    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:export-text');
-    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
-    const controller = startAbortableRequest(backupAbortRef);
     setBackupBusy(true);
     try {
       await waitForReaderDataSave();
-      if (!isCurrentBackupRequest() || controller.signal.aborted) {
-        return;
-      }
       setBackupJson(exportReaderBackupJson(readerDataRef.current));
       notify('备份 JSON 已生成');
     } catch (error) {
-      if (isCurrentBackupRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
-        notify(errorMessage(error));
-      }
+      notify(errorMessage(error));
     } finally {
-      if (finishAbortableRequest(backupAbortRef, controller)) {
-        backupBusyRef.current = false;
-        setBackupBusy(false);
-      }
+      backupBusyRef.current = false;
+      setBackupBusy(false);
     }
   }, [notify, readerDataRef, waitForReaderDataSave]);
 
@@ -159,31 +125,18 @@ export function useBackupStatusController({
       return;
     }
     backupBusyRef.current = true;
-    const requestId = ++backupRequestIdRef.current;
-    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:export-file');
-    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
     setBackupBusy(true);
     try {
       await waitForReaderDataSave();
-      if (!isCurrentBackupRequest()) {
-        return;
-      }
       const content = exportReaderBackupJson(readerDataRef.current);
       setBackupJson(content);
       await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
-      if (!isCurrentBackupRequest()) {
-        return;
-      }
       notify('备份文件已生成');
     } catch (error) {
-      if (isCurrentBackupRequest()) {
-        notify(errorMessage(error));
-      }
+      notify(errorMessage(error));
     } finally {
-      if (isCurrentBackupRequest()) {
-        backupBusyRef.current = false;
-        setBackupBusy(false);
-      }
+      backupBusyRef.current = false;
+      setBackupBusy(false);
     }
   }, [notify, readerDataRef, shareTextFile, waitForReaderDataSave]);
 
@@ -192,36 +145,21 @@ export function useBackupStatusController({
       return;
     }
     backupBusyRef.current = true;
-    const requestId = ++backupRequestIdRef.current;
-    const requestOwner = startOwnedRequest(backupRequestOwnerRef, 'backup:import-file');
-    const isCurrentBackupRequest = () => isCurrentOwnedRequest(requestOwner, backupRequestOwnerRef) && requestId === backupRequestIdRef.current;
     setBackupBusy(true);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         copyToCacheDirectory: true,
         type: ['application/json', 'text/json', '*/*']
       });
-      if (!isCurrentBackupRequest()) {
-        return;
-      }
       if (result.canceled || !result.assets?.[0]?.uri) {
         return;
       }
       const pickedUri = result.assets[0].uri;
       try {
         const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
-        if (!isCurrentBackupRequest()) {
-          return;
-        }
         setBackupJson(content);
         const merged = importReaderBackupJson(readerDataRef.current, content);
-        if (!isCurrentBackupRequest()) {
-          return;
-        }
         await replaceReaderData(merged);
-        if (!isCurrentBackupRequest()) {
-          return;
-        }
         notify('备份已恢复，本机资料已合并');
       } finally {
         if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
@@ -229,14 +167,10 @@ export function useBackupStatusController({
         }
       }
     } catch (error) {
-      if (isCurrentBackupRequest()) {
-        notify(errorMessage(error));
-      }
+      notify(errorMessage(error));
     } finally {
-      if (isCurrentBackupRequest()) {
-        backupBusyRef.current = false;
-        setBackupBusy(false);
-      }
+      backupBusyRef.current = false;
+      setBackupBusy(false);
     }
   }, [notify, readerDataRef, replaceReaderData]);
 
@@ -245,9 +179,6 @@ export function useBackupStatusController({
       return;
     }
     statusBusyRef.current = true;
-    const requestId = ++statusRequestIdRef.current;
-    const requestOwner = startOwnedRequest(statusRequestOwnerRef, 'status:local');
-    const isCurrentStatusRequest = () => isCurrentOwnedRequest(requestOwner, statusRequestOwnerRef) && requestId === statusRequestIdRef.current;
     const controller = startAbortableRequest(statusAbortRef);
     setStatusBusy(true);
     try {
@@ -266,14 +197,14 @@ export function useBackupStatusController({
         ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
       const [yaohuoCheck, linuxDoLoginCheck] = await Promise.allSettled([yaohuoStatusPromise, linuxDoLoginPromise] as const);
-      if (!isCurrentStatusRequest() || controller.signal.aborted) {
+      if (controller.signal.aborted) {
         return;
       }
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
       const linuxDoLogin = linuxDoLoginCheck.status === 'fulfilled' ? linuxDoLoginCheck.value : undefined;
       if (linuxDoLogin?.loginRequired) {
         linuxDoAccess = await clearLinuxDoAccess();
-        if (!isCurrentStatusRequest() || controller.signal.aborted) {
+        if (controller.signal.aborted) {
           return;
         }
         access = linuxDoAccessSummary(linuxDoAccess);
@@ -282,7 +213,7 @@ export function useBackupStatusController({
       const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
       if (yaohuoExpired) {
         await clearYaohuoLoginState();
-        if (!isCurrentStatusRequest() || controller.signal.aborted) {
+        if (controller.signal.aborted) {
           return;
         }
       }
@@ -308,7 +239,7 @@ export function useBackupStatusController({
       });
       notify('账号状态已刷新');
     } catch (error) {
-      if (isCurrentStatusRequest() && !controller.signal.aborted && !isCanceledRequest(error)) {
+      if (!controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -327,7 +258,6 @@ export function useBackupStatusController({
   ]);
 
   const abortBackupStatusRequests = useCallback(() => {
-    backupAbortRef.current?.abort();
     statusAbortRef.current?.abort();
   }, []);
 

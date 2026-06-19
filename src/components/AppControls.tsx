@@ -79,6 +79,7 @@ export function SettingRail({
 }
 
 export function MenuButton({
+  disabled = false,
   icon,
   label,
   value,
@@ -87,6 +88,7 @@ export function MenuButton({
   theme,
   onPress
 }: {
+  disabled?: boolean;
   icon: LucideIcon;
   label: string;
   value: string;
@@ -98,7 +100,7 @@ export function MenuButton({
   const Icon = icon;
   const Chevron = expanded === undefined ? ChevronRight : ChevronDown;
   return (
-    <Pressable accessibilityRole="button" style={styles.menuButton} onPress={() => pressWithFeedback(onPress)}>
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} style={[styles.menuButton, disabled && styles.buttonDisabled]} onPress={() => pressWithFeedback(onPress)}>
       <View style={styles.menuIcon}>
         <Icon size={19} color={theme.primary} strokeWidth={1.8} />
       </View>

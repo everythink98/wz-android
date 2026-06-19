@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { NativeModules, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION } from '../appUpdate';
@@ -13,11 +13,14 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
   const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
   const [appUpdateMessage, setAppUpdateMessage] = useState(`当前版本 ${CURRENT_APP_VERSION}`);
+  const appUpdateBusyRef = useRef(false);
+  const appUpdateDownloadingRef = useRef(false);
 
   const checkAppUpdate = useCallback(async () => {
-    if (appUpdateBusy) {
+    if (appUpdateBusyRef.current) {
       return;
     }
+    appUpdateBusyRef.current = true;
     setAppUpdateBusy(true);
     setAppUpdateInfo(null);
     setAppUpdateMessage('正在检查更新');
@@ -32,12 +35,13 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       setAppUpdateMessage(message);
       notify(message);
     } finally {
+      appUpdateBusyRef.current = false;
       setAppUpdateBusy(false);
     }
-  }, [appUpdateBusy, notify]);
+  }, [notify]);
 
   const downloadAppUpdate = useCallback(async () => {
-    if (!appUpdateInfo || appUpdateDownloading) {
+    if (!appUpdateInfo || appUpdateDownloadingRef.current) {
       return;
     }
     if (Platform.OS !== 'android') {
@@ -49,6 +53,7 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       notify('无法访问本机缓存目录。');
       return;
     }
+    appUpdateDownloadingRef.current = true;
     setAppUpdateDownloading(true);
     setAppUpdateMessage(`正在下载 ${appUpdateInfo.version}`);
     try {
@@ -70,9 +75,10 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       setAppUpdateMessage(message);
       notify(message);
     } finally {
+      appUpdateDownloadingRef.current = false;
       setAppUpdateDownloading(false);
     }
-  }, [appUpdateDownloading, appUpdateInfo, notify]);
+  }, [appUpdateInfo, notify]);
 
   return {
     appUpdateBusy,

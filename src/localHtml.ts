@@ -19,7 +19,7 @@ export function absoluteUrl(value: unknown, baseUrl: string) {
   }
 }
 
-export function toIsoString(value: unknown) {
+export function toIsoString(value: unknown, defaultTimezone = '') {
   if (value === undefined || value === null || value === '') {
     return '';
   }
@@ -31,7 +31,7 @@ export function toIsoString(value: unknown) {
     const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
       ? `${text}Z`
       : text.replace(/^(\d{4}-\d{1,2}-\d{1,2})\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([+-]\d{2}:?\d{2})?$/, (_match, date, clock, zone = '') => (
-        `${date}T${clock}${zone}`
+        `${date}T${clock}${zone || defaultTimezone}`
       ));
     time = Date.parse(normalized);
   }

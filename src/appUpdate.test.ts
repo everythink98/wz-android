@@ -46,11 +46,12 @@ describe('app update release parsing', () => {
       version: '1.3.7',
       apkUrl: 'https://example.com/app.apk'
     });
-    expect(fetcher).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_URL, {
+    expect(fetcher).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_URL, expect.objectContaining({
       headers: {
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28'
-      }
-    });
+      },
+      signal: expect.any(AbortSignal)
+    }));
   });
 });

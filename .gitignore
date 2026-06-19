@@ -1,9 +1,9 @@
 node_modules/
+.env*.local
 .expo/
 .expo-shared/
 android/
 AGENTS.md
-docs/
 memory/
 .idea/
 tmp-*

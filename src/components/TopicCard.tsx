@@ -1,11 +1,10 @@
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
 import type { Topic } from '../types';
-import { topicKey } from '../readerData';
 import { formatRelativeTime, forumAccessRequirementText, sourceLabel, topicListDisplayTime } from '../appUtils';
 import { highlightTextParts } from '../androidFeatureHelpers';
 import { androidRipple, createStyles, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../theme';
-import { topicListItemStatesEqual, type TopicListItemState } from '../topicListItemState';
+import type { TopicListItemState } from '../topicListItemState';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 
@@ -30,16 +29,6 @@ function HighlightedText({
       ))}
     </Text>
   );
-}
-
-function stringArrayValuesEqual(left?: string[], right?: string[]) {
-  if (!left?.length && !right?.length) {
-    return true;
-  }
-  if (!left || !right || left.length !== right.length) {
-    return false;
-  }
-  return left.every((value, index) => value === right[index]);
 }
 
 export function TopicCard({
@@ -119,30 +108,4 @@ export function TopicCard({
   );
 }
 
-export const MemoizedTopicCard = memo(TopicCard, (previous, next) => (
-  topicKey(previous.topic) === topicKey(next.topic)
-  && previous.topic.title === next.topic.title
-  && previous.topic.author === next.topic.author
-  && previous.topic.authorId === next.topic.authorId
-  && previous.topic.authorAvatar === next.topic.authorAvatar
-  && previous.topic.authorUrl === next.topic.authorUrl
-  && previous.topic.excerpt === next.topic.excerpt
-  && previous.topic.category === next.topic.category
-  && previous.topic.categoryId === next.topic.categoryId
-  && previous.topic.replyCount === next.topic.replyCount
-  && previous.topic.viewCount === next.topic.viewCount
-  && previous.topic.createdAt === next.topic.createdAt
-  && previous.topic.lastReplyAt === next.topic.lastReplyAt
-  && previous.topic.accessRequirement?.type === next.topic.accessRequirement?.type
-  && previous.topic.accessRequirement?.label === next.topic.accessRequirement?.label
-  && previous.topic.accessRequirement?.detail === next.topic.accessRequirement?.detail
-  && stringArrayValuesEqual(previous.topic.duplicateSources, next.topic.duplicateSources)
-  && stringArrayValuesEqual(previous.topic.tags, next.topic.tags)
-  && previous.styles === next.styles
-  && previous.theme === next.theme
-  && previous.hideReplyCount === next.hideReplyCount
-  && previous.highlightQuery === next.highlightQuery
-  && previous.renderTrailingAction === next.renderTrailingAction
-  && previous.onOpenTopic === next.onOpenTopic
-  && topicListItemStatesEqual(previous.readerState, next.readerState)
-));
+export const MemoizedTopicCard = memo(TopicCard);

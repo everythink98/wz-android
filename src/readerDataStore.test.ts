@@ -72,15 +72,18 @@ describe('reader data store', () => {
     const data = await loadReaderData();
 
     expect(data).toEqual(createEmptyReaderData());
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data-corrupt-backup', '{bad json');
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(createEmptyReaderData()));
   });
 
   it('rewrites structurally invalid AsyncStorage data as clean reader data', async () => {
-    asyncStorage.__store.set('reader-data', JSON.stringify({ version: 2, favorites: 'bad' }));
+    const raw = JSON.stringify({ version: 2, favorites: 'bad' });
+    asyncStorage.__store.set('reader-data', raw);
 
     const data = await loadReaderData();
 
     expect(data).toEqual(createEmptyReaderData());
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data-corrupt-backup', raw);
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(createEmptyReaderData()));
   });
 });

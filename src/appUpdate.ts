@@ -1,4 +1,5 @@
 import appConfig from '../app.json';
+import { fetchWithTimeout, type Fetcher } from './request';
 
 export const UPDATE_APK_NAME = 'app-arm64-v8a-release.apk';
 export const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/everythink98/wz-android/releases/latest';
@@ -75,13 +76,13 @@ export function getAppUpdateFromRelease(currentVersion: string, release: GitHubR
   };
 }
 
-export async function checkGithubAppUpdate(fetcher: typeof fetch = fetch, currentVersion = CURRENT_APP_VERSION) {
-  const response = await fetcher(GITHUB_LATEST_RELEASE_URL, {
+export async function checkGithubAppUpdate(fetcher: Fetcher = fetch, currentVersion = CURRENT_APP_VERSION) {
+  const response = await fetchWithTimeout(GITHUB_LATEST_RELEASE_URL, {
     headers: {
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28'
     }
-  });
+  }, { fetcher });
   if (!response.ok) {
     throw new Error(`检查更新失败：HTTP ${response.status}`);
   }

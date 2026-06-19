@@ -2366,6 +2366,32 @@ describe('Android local sources', () => {
     });
   });
 
+  it('treats V2EX HTML times without a zone as China time', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return html(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/812#reply0">V2EX unzoned time</a></span>
+            <span class="topic_info">
+              <a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp;
+              <strong><a href="/member/alice">alice</a></strong> &nbsp;•&nbsp;
+              <span title="2026-05-29 08:30:00">Just Now</span>
+            </span>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const feed = await getFeed({ source: 'v2ex', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      id: '812',
+      lastReplyAt: '2026-05-29T00:30:00.000Z'
+    });
+  });
+
   it('uses the V2EX topic reply badge instead of vote counts in HTML lists', async () => {
     clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
@@ -2769,6 +2795,36 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(webViewCalls[0]?.[0]).toBe('https://linux.do/t/42.json');
+  });
+
+  it('does not read ordinary linux.do JSON twice before handing it to callers', async () => {
+    const response = json({
+      id: 42,
+      title: 'ordinary linux.do topic',
+      created_at: '2026-05-21T00:00:00.000Z',
+      posts_count: 1,
+      post_stream: {
+        stream: [1],
+        posts: [
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-21T00:00:00.000Z' }
+        ]
+      }
+    });
+    response.clone = vi.fn(() => {
+      throw new Error('ordinary response should not be cloned');
+    });
+    const normalFetcher = vi.fn(async () => response);
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher: webViewFetcher as unknown as typeof normalFetcher
+    });
+
+    const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
+
+    expect(topic.title).toBe('ordinary linux.do topic');
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
   it('reports non-JSON linux.do HTTP errors with the HTTP status', async () => {

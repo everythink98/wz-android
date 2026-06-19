@@ -984,6 +984,53 @@ describe('Android local forum facade', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/recent?p=1');
   });
 
+  it('does not over-fetch linux.do pages for the first aggregated Android feed page', async () => {
+    clearV2exCacheForTest();
+    const nodeSeekPage = Buffer.from(JSON.stringify({
+      rotateTopics: Array.from({ length: 30 }, (_item, index) => ({
+        postId: 600 - index,
+        titleText: `NodeSeek ${index}`,
+        titleLink: `/post-${600 - index}-1`,
+        op: { name: 'alice' },
+        time: { createdDate: `2026-05-20T00:${String(59 - index).padStart(2, '0')}:00.000Z` }
+      }))
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        return new Response(`<script>${nodeSeekPage}</script>`);
+      }
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response('');
+      }
+      if (input.includes('linux.do/latest.json')) {
+        const page = Number(new URL(input).searchParams.get('page') || '0');
+        const baseId = 500 - page * 30;
+        return new Response(JSON.stringify({
+          topic_list: {
+            more_topics_url: '/latest.json?page=next',
+            topics: Array.from({ length: 30 }, (_item, index) => ({
+              id: baseId - index,
+              title: `linux.do ${page}-${index}`,
+              slug: `linux-do-${page}-${index}`,
+              created_at: `2026-05-20T00:${String(29 - index).padStart(2, '0')}:00.000Z`,
+              posts_count: 1
+            }))
+          },
+          categories: []
+        }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await getFeed({ source: 'all', limit: 30, fetcher });
+
+    const linuxDoCalls = fetcher.mock.calls.map((call) => call[0]).filter((input) => input.includes('linux.do/latest.json'));
+    expect(linuxDoCalls.length).toBeLessThanOrEqual(2);
+    expect(linuxDoCalls.join('\n')).not.toContain('page=2');
+  });
+
   it('refills an exhausted source in the aggregated Android feed even when other source buffers can fill the page', async () => {
     clearV2exCacheForTest();
     const nodeSeekPage = Buffer.from(JSON.stringify({

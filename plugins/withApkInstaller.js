@@ -85,10 +85,12 @@ function injectApkInstallerPackage(contents) {
   if (contents.includes('add(ApkInstallerPackage())')) {
     return contents;
   }
-  return contents.replace(
-    /PackageList\(this\)\.packages\.apply\s*\{/,
-    (match) => `${match}\n              add(ApkInstallerPackage())`
-  );
+  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
+  if (!packageListPattern.test(contents)) {
+    throw new Error('无法注入 ApkInstallerPackage：MainApplication 模板不匹配。');
+  }
+  const next = contents.replace(packageListPattern, (match) => `${match}\n              add(ApkInstallerPackage())`);
+  return next;
 }
 
 function ensureInstallPermission(manifest) {

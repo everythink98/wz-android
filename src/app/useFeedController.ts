@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { QueryClient } from '@tanstack/react-query';
 import { getCategories, getFeed, getYaohuoFeedDirect } from '../sources/sourceGateway';
 import { shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
@@ -63,7 +62,6 @@ export function useFeedController({
   loadYaohuoCookieForSource,
   nodeSeekUserAgentRef,
   notify,
-  queryClient,
   readerData,
   readerDataLoaded,
   showNodeSeekVerification,
@@ -75,7 +73,6 @@ export function useFeedController({
   loadYaohuoCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
-  queryClient: QueryClient;
   readerData: ReaderData;
   readerDataLoaded: boolean;
   showNodeSeekVerification: (message?: string) => void;
@@ -110,19 +107,14 @@ export function useFeedController({
     const requestId = ++categoriesRequestIdRef.current;
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const data = await queryClient.fetchQuery({
-        queryKey: ['android-categories', source, requestId],
-        queryFn: async () => {
-          const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
-          return getCategories({
-            source,
-            nocache: true,
-            fetcher,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-            signal: controller.signal
-          });
-        }
+      const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
+      const data = await getCategories({
+        source,
+        nocache: true,
+        fetcher,
+        nodeSeekCookie,
+        nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+        signal: controller.signal
       });
       if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {
         return;
@@ -146,7 +138,7 @@ export function useFeedController({
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [fetcher, loadNodeSeekCookieForSource, nodeSeekUserAgentRef, notify, queryClient, showNodeSeekVerification]);
+  }, [fetcher, loadNodeSeekCookieForSource, nodeSeekUserAgentRef, notify, showNodeSeekVerification]);
 
   const markFeedLoadMoreFailed = useCallback((source: FeedSource) => {
     setFeedStates((current) => ({

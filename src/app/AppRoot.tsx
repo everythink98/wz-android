@@ -15,7 +15,6 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
-import { QueryClient } from '@tanstack/react-query';
 import { DarkTheme, DefaultTheme, StackActions } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
@@ -106,15 +105,6 @@ export function AppRoot() {
   const linuxDoWebViewRef = useRef<WebView>(null);
   const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
   const linuxDoBrowserWebViewRef = useRef<WebView>(null);
-  const queryClientRef = useRef(new QueryClient({
-    defaultOptions: {
-      queries: {
-        gcTime: 5 * 60 * 1000,
-        retry: false,
-        staleTime: 0
-      }
-    }
-  }));
   const nodeSeekLoginPanelRequestRef = useRef(0);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
@@ -676,7 +666,6 @@ export function AppRoot() {
     loadYaohuoCookieForSource,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
-    queryClient: queryClientRef.current,
     readerData,
     readerDataLoaded,
     showNodeSeekVerification,

@@ -151,7 +151,7 @@ export function MoreScreen({
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.groupList}>
         <InfoRow icon={Activity} label="关于" value="多网站第三方客户端" styles={styles} theme={theme} />
-        <MenuButton icon={Download} label="检查更新" value={appUpdateBusy ? '检查中' : appUpdateMessage} styles={styles} theme={theme} onPress={onCheckAppUpdate} />
+        <MenuButton icon={Download} label="检查更新" value={appUpdateBusy ? '检查中' : appUpdateMessage} styles={styles} theme={theme} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
         {appUpdateInfo ? (
           <View style={styles.stack}>
             <Text style={styles.meta}>最新版本 {appUpdateInfo.version}</Text>

@@ -5,6 +5,17 @@ allprojects { project ->
         def releaseKeyAlias = System.getenv("WZ_ANDROID_KEY_ALIAS") ?: project.findProperty("WZ_ANDROID_KEY_ALIAS")
         def releaseKeyPassword = System.getenv("WZ_ANDROID_KEY_PASSWORD") ?: project.findProperty("WZ_ANDROID_KEY_PASSWORD")
         def releaseSigningReady = releaseKeystorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+        def releaseSigningUsesDebugDefaults = releaseKeyAlias == "androiddebugkey" ||
+                releaseKeystorePath?.toString()?.toLowerCase()?.endsWith("debug.keystore") ||
+                releaseStorePassword == "android" ||
+                releaseKeyPassword == "android"
+
+        if (!releaseSigningReady) {
+            throw new GradleException("正式发布需要配置 WZ_ANDROID_KEYSTORE_PATH、WZ_ANDROID_KEYSTORE_PASSWORD、WZ_ANDROID_KEY_ALIAS、WZ_ANDROID_KEY_PASSWORD。")
+        }
+        if (releaseSigningUsesDebugDefaults) {
+            throw new GradleException("正式发布不能使用 Android debug 签名默认值。")
+        }
 
         project.android {
             splits {
@@ -15,22 +26,15 @@ allprojects { project ->
                     universalApk false
                 }
             }
+        }
 
-            if (releaseSigningReady) {
-                signingConfigs {
-                    release {
-                        storeFile project.file(releaseKeystorePath)
-                        storePassword releaseStorePassword
-                        keyAlias releaseKeyAlias
-                        keyPassword releaseKeyPassword
-                    }
-                }
-                buildTypes {
-                    release {
-                        signingConfig signingConfigs.release
-                    }
-                }
-            }
+        project.androidComponents.finalizeDsl { androidExtension ->
+            def releaseSigningConfig = androidExtension.signingConfigs.maybeCreate("release")
+            releaseSigningConfig.storeFile = project.file(releaseKeystorePath)
+            releaseSigningConfig.storePassword = releaseStorePassword
+            releaseSigningConfig.keyAlias = releaseKeyAlias
+            releaseSigningConfig.keyPassword = releaseKeyPassword
+            androidExtension.buildTypes.getByName("release").signingConfig = releaseSigningConfig
         }
     }
 }

@@ -175,7 +175,7 @@ export async function getFeed({
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
     const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
-    const adapterLimit = limit * allFeedSources.length;
+    const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
     const v2exLimit = limit;
     const results = await Promise.allSettled([
       shouldFetchSource('nodeseek')

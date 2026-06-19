@@ -30,6 +30,7 @@ import {
 } from './localV2exHelpers';
 
 const HTML_LIST_PAGE_SIZE = 20;
+const V2EX_HTML_TIMEZONE = '+08:00';
 const latestCache: { savedAt: number; data: unknown[] } = { savedAt: 0, data: [] };
 const atomParser = new XMLParser({
   ignoreAttributes: false,
@@ -82,6 +83,10 @@ function v2exLastReplyAt(raw: Record<string, unknown>, createdAt: string) {
     return touchedAt;
   }
   return Number(raw.replies || 0) > 0 && touchedMs >= createdMs ? touchedAt : createdAt;
+}
+
+function toV2exHtmlIsoString(value: unknown) {
+  return toIsoString(value, V2EX_HTML_TIMEZONE);
 }
 
 function topicId(value: unknown) {
@@ -142,7 +147,7 @@ function normalizeHtmlTopic(element: ReturnType<ReturnType<typeof parseHtml>['qu
     || element.querySelector('td[align="right"] .count_livid,td[align="right"] .count_orange')
     || element.querySelector('.count_livid');
   const countText = replyBadge?.text || href.match(/#reply(\d+)/)?.[1] || '';
-  const createdAt = toIsoString(timestamp) || new Date().toISOString();
+  const createdAt = toV2exHtmlIsoString(timestamp) || new Date().toISOString();
   const accessRequirement = accessRequirementFromText(elementText(element).replace(title, ' '));
   return {
     source: 'v2ex',
@@ -254,7 +259,7 @@ function parseV2exSupplements(root: ReturnType<typeof parseHtml>) {
         return '';
       }
       const titleTime = element.querySelector('.fade span[title]')?.getAttribute('title') || '';
-      const displayTime = titleTime ? toIsoString(titleTime) || titleTime : '';
+      const displayTime = titleTime ? toV2exHtmlIsoString(titleTime) || titleTime : '';
       const label = `补充 ${index + 1}${displayTime ? ` · ${displayTime}` : ''}`;
       return `<blockquote><p><strong>${escapeHtml(label)}</strong></p>${sanitizeContentHtml(content, BASE_URL)}</blockquote>`;
     })
@@ -269,7 +274,7 @@ function parseV2exReplyMeta(root: ReturnType<typeof parseHtml>) {
   for (const element of root.querySelectorAll('[id^="r_"]')) {
     const commentId = parsePositiveInteger(String(element.getAttribute('id') || '').replace(/^r_/, ''));
     const floor = parsePositiveInteger(element.querySelector('.no')?.text);
-    const createdAt = toIsoString(element.querySelector('.ago')?.getAttribute('title'));
+    const createdAt = toV2exHtmlIsoString(element.querySelector('.ago')?.getAttribute('title'));
     const replyContent = element.querySelector('.reply_content')?.innerHTML || '';
     const thanksCount = element.querySelectorAll('.small')
       .map((item) => parseV2exThanksCount(item.innerHTML || item.text))

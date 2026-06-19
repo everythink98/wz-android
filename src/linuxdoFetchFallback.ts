@@ -25,8 +25,16 @@ export function createLinuxDoWebViewFallbackFetcher({
     if (!isLinuxDoRequestUrl(url)) {
       return response;
     }
-    const text = await response.clone().text();
-    if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+    if (isCloudflareChallengeResponse(response)) {
+      return webViewFetcher(url, init);
+    }
+    const contentType = response.headers.get('content-type') || '';
+    const shouldInspectBody = !response.ok && /html/i.test(contentType);
+    if (shouldInspectBody && isCloudflareChallengeResponse({
+      status: response.status,
+      headers: response.headers,
+      bodyText: await response.clone().text()
+    })) {
       return webViewFetcher(url, init);
     }
     return response;

@@ -45,17 +45,32 @@ describe('Android release packaging', () => {
     expect(adaptiveIconIndex).toBeGreaterThan(versionIndex);
   });
 
-  it('uses generated Android signing unless formal signing is configured', () => {
+  it('requires formal Android signing for release APKs', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
+    const gitignore = readProjectFile('.gitignore');
 
     expect(releaseScript).toContain('app-arm64-v8a-release.apk');
+    expect(releaseScript).toContain('.env.release.local');
+    expect(releaseScript).toContain('WZ_ANDROID_KEYSTORE_PATH');
+    expect(releaseScript).toContain("'--no-daemon'");
+    expect(releaseScript.indexOf('verifyReleaseSigningEnv();')).toBeLessThan(releaseScript.indexOf("run('npm', ['test']);"));
+    expect(releaseScript).toContain('androiddebugkey');
+    expect(releaseScript).toContain('debug.keystore');
     expect(releaseScript).not.toContain('app-arm64-v8a-release-unsigned.apk');
     expect(gradle).toContain('WZ_ANDROID_KEYSTORE_PATH');
     expect(gradle).toContain('releaseSigningReady');
-    expect(gradle).toContain('signingConfig signingConfigs.release');
+    expect(gradle).toContain('throw new GradleException');
+    expect(gradle).toContain('androiddebugkey');
+    expect(gradle).toContain('debug.keystore');
+    const finalizeDslIndex = gradle.indexOf('androidComponents.finalizeDsl');
+    const releaseSigningIndex = gradle.indexOf('signingConfig = releaseSigningConfig');
+    expect(finalizeDslIndex).toBeGreaterThanOrEqual(0);
+    expect(releaseSigningIndex).toBeGreaterThan(finalizeDslIndex);
+    expect(gradle).toContain('signingConfig = releaseSigningConfig');
     expect(gradle).not.toMatch(/storePassword\s+['"][^'"]+['"]/);
     expect(gradle).not.toMatch(/keyPassword\s+['"][^'"]+['"]/);
+    expect(gitignore).toContain('.env*.local');
   });
 
   it('keeps Android permissions scoped down and release cleartext traffic disabled', () => {
@@ -80,5 +95,15 @@ describe('Android release packaging', () => {
     expect(plugin).toContain('android.permission.REQUEST_INSTALL_PACKAGES');
     expect(plugin).toContain('androidx.core.content.FileProvider');
     expect(plugin).toContain('ACTION_MANAGE_UNKNOWN_APP_SOURCES');
+  });
+
+  it('fails config plugin injection when the Expo MainApplication template changes', () => {
+    const apkInstallerPlugin = readProjectFile('plugins', 'withApkInstaller.js');
+    const linuxDoCookiePlugin = readProjectFile('plugins', 'withLinuxDoCookieModule.js');
+
+    expect(apkInstallerPlugin).not.toContain('return contents.replace(');
+    expect(linuxDoCookiePlugin).not.toContain('return contents.replace(');
+    expect(apkInstallerPlugin).toContain('throw new Error');
+    expect(linuxDoCookiePlugin).toContain('throw new Error');
   });
 });

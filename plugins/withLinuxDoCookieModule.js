@@ -396,10 +396,12 @@ function injectLinuxDoCookiePackage(contents) {
   if (contents.includes('add(LinuxDoCookiePackage())')) {
     return contents;
   }
-  return contents.replace(
-    /PackageList\(this\)\.packages\.apply\s*\{/,
-    (match) => `${match}\n              add(LinuxDoCookiePackage())`
-  );
+  const packageListPattern = /PackageList\(this\)\.packages\.apply\s*\{/;
+  if (!packageListPattern.test(contents)) {
+    throw new Error('无法注入 LinuxDoCookiePackage：MainApplication 模板不匹配。');
+  }
+  const next = contents.replace(packageListPattern, (match) => `${match}\n              add(LinuxDoCookiePackage())`);
+  return next;
 }
 
 module.exports = function withLinuxDoCookieModule(config) {

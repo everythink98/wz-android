@@ -5,7 +5,7 @@ import {
   sanitizeReaderData,
   type ReaderData
 } from '../readerData';
-import { loadReaderData, saveReaderData } from '../readerDataStore';
+import { loadReaderData, saveCleanReaderData } from '../readerDataStore';
 
 export function useReaderDataController({
   notify
@@ -15,6 +15,7 @@ export function useReaderDataController({
   const [readerData, setReaderData] = useState<ReaderData>(() => createEmptyReaderData());
   const [readerDataLoaded, setReaderDataLoaded] = useState(false);
   const readerDataRef = useRef<ReaderData>(readerData);
+  const readerDataLoadedRef = useRef(false);
   const readerDataStateRef = useRef<ReaderData>(readerData);
   const saveQueueRef = useRef(Promise.resolve());
 
@@ -25,9 +26,9 @@ export function useReaderDataController({
 
   const persistReaderData = useCallback((next: ReaderData) => {
     readerDataRef.current = next;
-    saveQueueRef.current = saveQueueRef.current
+    const saveTask = saveQueueRef.current
       .catch(() => undefined)
-      .then(() => saveReaderData(next))
+      .then(() => saveCleanReaderData(next))
       .then((saved) => {
         setReaderData((latest) => {
           if (latest !== next) {
@@ -37,17 +38,28 @@ export function useReaderDataController({
           return saved;
         });
       })
-      .catch((error) => notify(errorMessage(error)));
-    return saveQueueRef.current;
+      .catch((error) => {
+        notify(errorMessage(error));
+        throw error;
+      });
+    saveQueueRef.current = saveTask;
+    return saveTask;
   }, [notify]);
 
   const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
+    if (!readerDataLoadedRef.current) {
+      notify('本机资料尚未加载完成，请稍后再试。');
+      return;
+    }
     const next = sanitizeReaderData(updater(readerDataRef.current));
     setReaderData(next);
-    void persistReaderData(next);
-  }, [persistReaderData]);
+    void persistReaderData(next).catch(() => undefined);
+  }, [notify, persistReaderData]);
 
   const replaceReaderData = useCallback((nextValue: ReaderData) => {
+    if (!readerDataLoadedRef.current) {
+      return Promise.reject(new Error('本机资料尚未加载完成，请稍后再试。'));
+    }
     const next = sanitizeReaderData(nextValue);
     setReaderData(next);
     return persistReaderData(next);
@@ -59,9 +71,15 @@ export function useReaderDataController({
 
   useEffect(() => {
     void loadReaderData()
-      .then((savedReaderData) => setReaderData(savedReaderData))
+      .then((savedReaderData) => {
+        readerDataRef.current = savedReaderData;
+        setReaderData(savedReaderData);
+      })
       .catch((error) => notify(errorMessage(error)))
-      .finally(() => setReaderDataLoaded(true));
+      .finally(() => {
+        readerDataLoadedRef.current = true;
+        setReaderDataLoaded(true);
+      });
   }, [notify]);
 
   return {

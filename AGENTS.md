@@ -31,6 +31,7 @@
 
 - 当前项目是独立 Android App。
 - 可用命令：`npm install`、`npm test`、`npm run typecheck`、`npm run android`、`npm run release:android`。
+- 正式发布需要本机 `.env.release.local` 提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`；不得提交 `.env.release.local`、keystore 或明文密码。
 
 ## 项目文档与记忆
 
