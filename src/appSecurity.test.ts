@@ -83,7 +83,6 @@ describe('Android App security review guards', () => {
         }
       },
       history: {},
-      progress: {},
       followedUsers: {},
       deletedRecords: {
         favorites: {},
@@ -122,7 +121,6 @@ describe('Android App security review guards', () => {
         }
       },
       history: {},
-      progress: {},
       followedUsers: {},
       deletedRecords: {
         favorites: {},

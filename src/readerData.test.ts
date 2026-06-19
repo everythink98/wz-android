@@ -5,7 +5,6 @@ import {
   isFavorite,
   isUserFollowed,
   MAX_HISTORY_RECORDS,
-  MAX_PROGRESS_RECORDS,
   mergeReaderData,
   recordHistory,
   removeFollowedUsers,
@@ -15,7 +14,6 @@ import {
   toggleFollowedUser,
   topicKey,
   updateFavoriteTopic,
-  updateProgress,
   userKey
 } from './readerData';
 import type { Topic, UserProfile } from './types';
@@ -245,11 +243,15 @@ describe('Android reader data helpers', () => {
     });
   });
 
-  it('tracks reading progress in the current progress map', () => {
-    let data = createEmptyReaderData();
-    data = updateProgress(data, topic, { percent: 125, scrollY: 88 });
+  it('drops old reading progress records during sanitizing', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      progress: {
+        [topicKey(topic)]: { topic, percent: 50, scrollY: 88, updatedAt: '2026-05-20T00:00:00.000Z' }
+      }
+    });
 
-    expect(data.progress[topicKey(topic)].percent).toBe(100);
+    expect(data).not.toHaveProperty('progress');
     expect(data).not.toHaveProperty('subscriptions');
   });
 
@@ -292,7 +294,6 @@ describe('Android reader data helpers', () => {
       version: 2,
       favorites: {},
       history: {},
-      progress: {},
       followedUsers: {
         'yaohuo:36925': {
           user: {
@@ -515,9 +516,8 @@ describe('Android reader data helpers', () => {
     expect(local.favorites[topicKey(yaohuoTopic)]?.topic.title).toBe('妖火帖子');
   });
 
-  it('limits history and reading progress to the newest records', () => {
+  it('limits history to the newest records', () => {
     const history: Record<string, unknown> = {};
-    const progress: Record<string, unknown> = {};
     for (let index = 0; index < MAX_HISTORY_RECORDS + 20; index += 1) {
       const item = {
         ...topic,
@@ -526,19 +526,15 @@ describe('Android reader data helpers', () => {
       };
       const time = new Date(Date.UTC(2026, 4, 20, 0, index)).toISOString();
       history[topicKey(item)] = { topic: item, savedAt: time };
-      progress[topicKey(item)] = { topic: item, percent: 50, scrollY: index, updatedAt: time };
     }
 
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
-      history,
-      progress
+      history
     });
 
     expect(Object.keys(data.history)).toHaveLength(MAX_HISTORY_RECORDS);
-    expect(Object.keys(data.progress)).toHaveLength(MAX_PROGRESS_RECORDS);
     expect(data.history['nodeseek:0']).toBeUndefined();
-    expect(data.progress['nodeseek:0']).toBeUndefined();
     expect(data.history[`nodeseek:${MAX_HISTORY_RECORDS + 19}`]?.topic.title).toBe(`Topic ${MAX_HISTORY_RECORDS + 19}`);
   });
 

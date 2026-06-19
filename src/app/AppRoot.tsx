@@ -124,7 +124,6 @@ export function AppRoot() {
   const actionRequestIdRef = useRef(0);
   const topicActionRequestOwnerRef = useRef(createTopicActionRequestOwner());
   const actionAbortRef = useRef<AbortController | null>(null);
-  const topicScrollRestoreTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigationTransitionTaskRef = useRef<(() => void) | null>(null);
   const navigationTransitionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigationInteractionTaskRef = useRef<DeferredNavigationTask | null>(null);
@@ -204,16 +203,13 @@ export function AppRoot() {
     invalidateTopicActionRequestOwner(topicActionRequestOwnerRef, nextTopicKey);
   }, []);
   const {
-    clearReaderDataTimers,
     commitReaderData,
-    flushPendingProgress,
-    queueProgressSave,
     readerData,
     readerDataLoaded,
     readerDataRef,
     replaceReaderData,
     waitForReaderDataSave
-  } = useReaderDataController({ notify, screenRef });
+  } = useReaderDataController({ notify });
 
   const resetLinuxDoLevelState = useCallback(() => {
     linuxDoLevelRequestIdRef.current += 1;
@@ -271,12 +267,6 @@ export function AppRoot() {
       };
     });
   }, [topicReplies]);
-  const clearTopicScrollRestoreTimer = useCallback(() => {
-    if (topicScrollRestoreTimerRef.current) {
-      clearTimeout(topicScrollRestoreTimerRef.current);
-      topicScrollRestoreTimerRef.current = null;
-    }
-  }, []);
   const cancelDeferredNavigationTask = useCallback(() => {
     navigationInteractionTaskIdRef.current += 1;
     navigationTransitionTaskRef.current = null;
@@ -499,10 +489,8 @@ export function AppRoot() {
     topicAbortRef.current?.abort();
     repliesAbortRef.current?.abort();
     actionAbortRef.current?.abort();
-    clearTopicScrollRestoreTimer();
-    clearReaderDataTimers();
     cancelDeferredNavigationTask();
-  }, [cancelDeferredNavigationTask, clearReaderDataTimers, clearTopicScrollRestoreTimer]);
+  }, [cancelDeferredNavigationTask]);
   const topicStateIndex = useMemo(() => createTopicListItemStateIndex(readerData), [
     readerData.favorites,
     readerData.history,
@@ -654,12 +642,11 @@ export function AppRoot() {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next) => {
       if (next !== 'active') {
-        flushPendingProgress();
         stopLinuxDoVerificationForInactiveApp();
       }
     });
     return () => subscription.remove();
-  }, [flushPendingProgress, stopLinuxDoVerificationForInactiveApp]);
+  }, [stopLinuxDoVerificationForInactiveApp]);
 
   const closeMorePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false);
@@ -759,10 +746,6 @@ export function AppRoot() {
     if (screen === 'more' && nextScreen !== 'more') {
       closeMorePanels();
     }
-    if (screen === 'topic' && nextScreen !== 'topic') {
-      screenRef.current = nextScreen;
-      flushPendingProgress();
-    }
     if (nextScreen !== 'topic') {
       linuxDoVerifiedRetryTopicKeyRef.current = null;
     }
@@ -777,7 +760,6 @@ export function AppRoot() {
       setTopicBusy(false);
     }
     if (nextScreen !== 'topic' && !leavingTopicForUser) {
-      clearTopicScrollRestoreTimer();
       topicBackStackRef.current = [];
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
@@ -795,7 +777,7 @@ export function AppRoot() {
       userReturnTopicRef.current = null;
     }
     setScreen(nextScreen);
-  }, [abortQuotedReplyRequests, clearTopicScrollRestoreTimer, closeMorePanels, flushPendingProgress, invalidateTopicActionRequests, screen]);
+  }, [abortQuotedReplyRequests, closeMorePanels, invalidateTopicActionRequests, screen]);
 
   const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback(async (options?: { silent?: boolean }) => {
     const saved = await rememberVisibleNodeSeekCookies(options);
@@ -813,7 +795,6 @@ export function AppRoot() {
   }, [changeNodeSeekLoginPanel, changeScreen, rememberVisibleNodeSeekCookies]);
 
   const { restoreTopicSnapshot, topicSnapshot } = useTopicNavigationController({
-    clearTopicScrollRestoreTimer,
     commentQuery,
     currentTopicKeyRef,
     expandedQuotesRef,
@@ -911,7 +892,6 @@ export function AppRoot() {
     topicFavorite
   } = useTopicController({
     changeScreen,
-    clearTopicScrollRestoreTimer,
     clearYaohuoLoginState,
     commitReaderData,
     currentTopicKeyRef,
@@ -967,8 +947,6 @@ export function AppRoot() {
     topicRepliesRef,
     topicRequestIdRef,
     topicReturnScreenRef,
-    topicScrollRef,
-    topicScrollRestoreTimerRef,
     topicSnapshot,
     updateExpandedQuotes
   });
@@ -1111,17 +1089,8 @@ export function AppRoot() {
   }, [cancelDeferredNavigationTask, changeScreen, openTopic, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
   const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const detail = topicDetail || selectedTopic;
-    if (!detail) {
-      return;
-    }
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const scrollY = Math.max(0, contentOffset.y);
-    topicScrollYRef.current = scrollY;
-    const scrollable = Math.max(1, contentSize.height - layoutMeasurement.height);
-    const percent = Math.min(100, Math.max(0, Math.round((scrollY / scrollable) * 100)));
-    queueProgressSave(detail, { percent, scrollY });
-  }, [queueProgressSave, selectedTopic, topicDetail]);
+    topicScrollYRef.current = Math.max(0, event.nativeEvent.contentOffset.y);
+  }, []);
 
   const {
     handleLinuxDoBrowserFetchMessage,

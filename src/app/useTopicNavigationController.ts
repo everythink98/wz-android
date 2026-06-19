@@ -5,7 +5,6 @@ import { topicKey } from '../readerData';
 import type { ReplyFilter, ReplyTarget, TopicSnapshot } from '../appTypes';
 
 export function useTopicNavigationController({
-  clearTopicScrollRestoreTimer,
   commentQuery,
   currentTopicKeyRef,
   expandedQuotesRef,
@@ -46,7 +45,6 @@ export function useTopicNavigationController({
   topicScrollYRef,
   unreadReplyCount
 }: {
-  clearTopicScrollRestoreTimer: () => void;
   commentQuery: string;
   currentTopicKeyRef: MutableRefObject<string | null>;
   expandedQuotesRef: MutableRefObject<Record<string, boolean>>;
@@ -122,7 +120,6 @@ export function useTopicNavigationController({
 
   const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
     const session = topicSessionFromSnapshot(snapshot);
-    clearTopicScrollRestoreTimer();
     setSelectedTopic(session.selectedTopic);
     setTopicDetail(session.topicDetail);
     setTopicReplies(session.topicReplies);
@@ -150,7 +147,7 @@ export function useTopicNavigationController({
     const restoredTopic = session.topicDetail || session.selectedTopic;
     invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);
     currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
-  }, [clearTopicScrollRestoreTimer, currentTopicKeyRef, expandedQuotesRef, invalidateTopicActionRequests, loadedQuotedRepliesRef, loadingMoreRepliesRef, loadingQuotedFloorsRef, setCommentQuery, setExpandedQuotes, setLoadedQuotedReplies, setLoadingMoreReplies, setLoadingQuotedFloors, setQuoteStateVersion, setReplyComposerOpen, setReplyContent, setReplyFilter, setReplyHasMore, setReplyNextOffset, setReplyNextPage, setReplyTarget, setSelectedTopic, setTopicBusy, setTopicDetail, setTopicError, setTopicReplies, setUnreadReplyCount, topicScrollYRef]);
+  }, [currentTopicKeyRef, expandedQuotesRef, invalidateTopicActionRequests, loadedQuotedRepliesRef, loadingMoreRepliesRef, loadingQuotedFloorsRef, setCommentQuery, setExpandedQuotes, setLoadedQuotedReplies, setLoadingMoreReplies, setLoadingQuotedFloors, setQuoteStateVersion, setReplyComposerOpen, setReplyContent, setReplyFilter, setReplyHasMore, setReplyNextOffset, setReplyNextPage, setReplyTarget, setSelectedTopic, setTopicBusy, setTopicDetail, setTopicError, setTopicReplies, setUnreadReplyCount, topicScrollYRef]);
 
   return {
     restoreTopicSnapshot,

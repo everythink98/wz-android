@@ -4,19 +4,11 @@ import type { AccessRequirement, Category, Source, Topic, UserProfile } from './
 
 export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 1000;
-export const MAX_PROGRESS_RECORDS = 1000;
 
 export interface TopicRecord {
   topic: Topic;
   savedAt: string;
   visitCount?: number;
-}
-
-export interface ReadingProgressRecord {
-  topic: Topic;
-  percent: number;
-  scrollY: number;
-  updatedAt: string;
 }
 
 export interface FollowedUserRecord {
@@ -43,7 +35,6 @@ export interface ReaderData {
   version: 2;
   favorites: Record<string, TopicRecord>;
   history: Record<string, TopicRecord>;
-  progress: Record<string, ReadingProgressRecord>;
   followedUsers: Record<string, FollowedUserRecord>;
   deletedRecords: DeletedRecords;
   settings: ReaderSettings;
@@ -73,10 +64,6 @@ const topicRecordSchema = z.object({
   topic: topicShapeSchema,
   savedAt: dateStringSchema
 }).passthrough();
-const readingProgressRecordSchema = z.object({
-  topic: topicShapeSchema,
-  updatedAt: dateStringSchema
-}).passthrough();
 const followedUserRecordSchema = z.object({
   user: userProfileShapeSchema,
   followedAt: dateStringSchema
@@ -93,7 +80,6 @@ const readerDataSchema = z.object({
   version: z.literal(readerDataVersion),
   favorites: z.record(z.string(), z.unknown()).optional(),
   history: z.record(z.string(), z.unknown()).optional(),
-  progress: z.record(z.string(), z.unknown()).optional(),
   followedUsers: z.record(z.string(), z.unknown()).optional(),
   deletedRecords: z.unknown().optional(),
   settings: z.unknown().optional()
@@ -223,13 +209,6 @@ function userSummary(user: UserProfile): UserProfile {
   };
 }
 
-function clampPercent(value: unknown) {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return 0;
-  }
-  return Math.max(0, Math.min(100, Math.round(value)));
-}
-
 function createEmptyDeletedRecords(): DeletedRecords {
   return {
     favorites: {},
@@ -269,7 +248,6 @@ export function createEmptyReaderData(): ReaderData {
     version: readerDataVersion,
     favorites: {},
     history: {},
-    progress: {},
     followedUsers: {},
     deletedRecords: createEmptyDeletedRecords(),
     settings: {
@@ -329,35 +307,6 @@ function limitRecordMap<T>(records: Record<string, T>, limit: number, getTime: (
       .sort(([, left], [, right]) => dateValue(getTime(right)) - dateValue(getTime(left)))
       .slice(0, limit)
   );
-}
-
-function normalizeProgress(value: unknown): Record<string, ReadingProgressRecord> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return {};
-  }
-  const next: Record<string, ReadingProgressRecord> = {};
-  for (const record of Object.values(value)) {
-    const parsed = readingProgressRecordSchema.safeParse(record);
-    if (!parsed.success) {
-      continue;
-    }
-    const candidate = parsed.data as unknown as Partial<ReadingProgressRecord>;
-    if (!candidate.topic || !isTopic(candidate.topic)) {
-      continue;
-    }
-    const updatedAt = typeof candidate.updatedAt === 'string' ? candidate.updatedAt : '';
-    if (dateValue(updatedAt) <= 0) {
-      continue;
-    }
-    const topic = topicSummary(candidate.topic);
-    next[topicKey(topic)] = {
-      topic,
-      percent: clampPercent(candidate.percent),
-      scrollY: typeof candidate.scrollY === 'number' && candidate.scrollY > 0 ? Math.round(candidate.scrollY) : 0,
-      updatedAt
-    };
-  }
-  return next;
 }
 
 function normalizeFollowedUsers(value: unknown): Record<string, FollowedUserRecord> {
@@ -440,7 +389,6 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     version: readerDataVersion,
     favorites: normalizeRecordMap(data.favorites),
     history: limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
-    progress: limitRecordMap(normalizeProgress(data.progress), MAX_PROGRESS_RECORDS, (record) => record.updatedAt),
     followedUsers: normalizeFollowedUsers(data.followedUsers),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
     settings: normalizeSettings(data.settings)
@@ -538,7 +486,6 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
     version: readerDataVersion,
     favorites: favorites.records,
     history: history.records,
-    progress: mergeTimedMap(local.progress, remote.progress, (record) => record.updatedAt),
     followedUsers: followedUsers.records,
     deletedRecords: {
       favorites: favorites.deleted,
@@ -597,22 +544,6 @@ export function updateFavoriteTopic(data: ReaderData, topic: Topic) {
       [key]: {
         ...existing,
         topic: summary
-      }
-    }
-  };
-}
-
-export function updateProgress(data: ReaderData, topic: Topic, progress: { percent: number; scrollY: number }) {
-  const summary = topicSummary(topic);
-  return {
-    ...data,
-    progress: {
-      ...data.progress,
-      [topicKey(summary)]: {
-        topic: summary,
-        percent: clampPercent(progress.percent),
-        scrollY: Math.max(0, Math.round(progress.scrollY)),
-        updatedAt: nowIso()
       }
     }
   };

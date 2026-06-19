@@ -38,7 +38,6 @@ type MutableRef<T> = { current: T };
 
 export function useTopicController({
   changeScreen,
-  clearTopicScrollRestoreTimer,
   clearYaohuoLoginState,
   commitReaderData,
   currentTopicKeyRef,
@@ -92,15 +91,12 @@ export function useTopicController({
   topicRepliesRef,
   topicRequestIdRef,
   topicReturnScreenRef,
-  topicScrollRef,
-  topicScrollRestoreTimerRef,
   topicSnapshot,
   updateExpandedQuotes,
   repliesAbortRef,
   repliesRequestIdRef
 }: {
   changeScreen: (nextScreen: Screen) => void;
-  clearTopicScrollRestoreTimer: () => void;
   clearYaohuoLoginState: () => Promise<void>;
   commitReaderData: (updater: (current: ReaderData) => ReaderData) => void;
   currentTopicKeyRef: MutableRef<string | null>;
@@ -154,8 +150,6 @@ export function useTopicController({
   topicRepliesRef: MutableRef<Reply[]>;
   topicRequestIdRef: MutableRef<number>;
   topicReturnScreenRef: MutableRef<Exclude<Screen, 'topic'>>;
-  topicScrollRef: MutableRef<{ scrollToOffset: (params: { offset: number; animated: boolean }) => void } | null>;
-  topicScrollRestoreTimerRef: MutableRef<ReturnType<typeof setTimeout> | null>;
   topicSnapshot: () => TopicSnapshot;
   updateExpandedQuotes: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
   repliesAbortRef: MutableRef<AbortController | null>;
@@ -170,7 +164,6 @@ export function useTopicController({
   ), [currentTopic, readerData.favorites]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
-    clearTopicScrollRestoreTimer();
     const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
     reopenExistingTopicScreenRef.current = false;
     if (!reopenExistingTopicScreen) {
@@ -282,18 +275,6 @@ export function useTopicController({
       setReplyNextPage(displayDetail.replyNextPage ?? null);
       setReplyNextOffset(displayDetail.replyNextOffset ?? null);
       commitReaderData((current) => updateFavoriteTopic(recordHistory(current, displayDetail), displayDetail));
-      const progress = readerDataRef.current.progress[topicKey(displayDetail)];
-      if (progress?.scrollY) {
-        const restoreTopicKey = topicKey(displayDetail);
-        topicScrollRestoreTimerRef.current = setTimeout(() => {
-          topicScrollRestoreTimerRef.current = null;
-          if (currentTopicKeyRef.current !== restoreTopicKey) {
-            return;
-          }
-          topicScrollRef.current?.scrollToOffset({ offset: progress.scrollY, animated: false });
-          notify(`已恢复到上次阅读位置 ${progress.percent}%`);
-        }, 180);
-      }
       if (nocache) {
         notify('主题已更新');
       }
@@ -331,7 +312,6 @@ export function useTopicController({
     }
   }, [
     changeScreen,
-    clearTopicScrollRestoreTimer,
     clearYaohuoLoginState,
     commitReaderData,
     currentTopicKeyRef,
@@ -376,8 +356,6 @@ export function useTopicController({
     topicBackStackRef,
     topicRequestIdRef,
     topicReturnScreenRef,
-    topicScrollRef,
-    topicScrollRestoreTimerRef,
     topicSnapshot
   ]);
 
