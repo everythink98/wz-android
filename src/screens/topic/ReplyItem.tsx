@@ -1,15 +1,12 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
-import { SvgXml } from 'react-native-svg';
 import { Drumstick, MessageCircle, ThumbsDown, ThumbsUp } from 'lucide-react-native';
 import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import { highlightHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
-import { loadRemoteAvatarSvgText } from '../../avatarImages';
-import { imageSourceFromUrl } from '../../htmlImages';
 import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
 import { AppButton } from '../../components/AppControls';
+import { Avatar } from '../../components/Avatar';
 import { userFromReply } from '../../userNavigation';
 import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
 import { inlineSizedImageSignatureForHtml, type TopicImageDeriver } from '../../topicDerivedData';
@@ -68,10 +65,6 @@ export function linuxDoReactionStats(item: Pick<Reply | TopicDetail, 'boostCount
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
 }
 
-function authorInitial(name: string | undefined) {
-  return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
-}
-
 export function NodeSeekStatPill({
   compact = false,
   label,
@@ -93,57 +86,7 @@ export function NodeSeekStatPill({
   );
 }
 
-export function AuthorAvatar({
-  name,
-  small,
-  styles,
-  uri
-}: {
-  name?: string;
-  small?: boolean;
-  styles: ReturnType<typeof createStyles>;
-  uri?: string;
-}) {
-  const [svgXml, setSvgXml] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setSvgXml(null);
-    if (!uri) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    loadRemoteAvatarSvgText(uri).then((xml) => {
-      if (!cancelled) {
-        setSvgXml(xml);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [uri]);
-
-  return (
-    <View style={[styles.replyAvatar, small ? styles.replyAvatarSmall : styles.topicAvatar]}>
-      {svgXml ? (
-        <SvgXml
-          xml={svgXml}
-          width="100%"
-          height="100%"
-        />
-      ) : uri ? (
-        <ExpoImage
-          source={imageSourceFromUrl(uri)}
-          style={[styles.replyAvatarImage, small ? styles.replyAvatarSmall : styles.topicAvatar]}
-          contentFit="cover"
-        />
-      ) : (
-        <Text style={[styles.replyAvatarText, small && styles.replyAvatarSmallText]}>{authorInitial(name)}</Text>
-      )}
-    </View>
-  );
-}
+export const AuthorAvatar = Avatar;
 
 export function ReplyItem({
   actionBusy,

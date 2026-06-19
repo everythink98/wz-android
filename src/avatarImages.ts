@@ -1,6 +1,7 @@
 import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './htmlImages';
 
 type AvatarFetcher = (input: string, init?: RequestInit) => Promise<Response>;
+const RETRY_LATER_AVATAR_RESULT = Symbol('retry-later-avatar-result');
 const AVATAR_SVG_TEXT_CACHE_LIMIT = 200;
 const avatarSvgTextCache = new Map<string, Promise<string | null>>();
 
@@ -15,6 +16,13 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
   }
   const request = Promise.resolve()
     .then(() => loadRemoteAvatarSvgTextUncached(clean, fetcher))
+    .then((result) => {
+      if (result === RETRY_LATER_AVATAR_RESULT) {
+        avatarSvgTextCache.delete(clean);
+        return null;
+      }
+      return result;
+    })
     .catch(() => {
       avatarSvgTextCache.delete(clean);
       return null;
@@ -29,8 +37,15 @@ async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetch
     method: 'HEAD',
     headers
   });
-  if (!isSvgContentType(head.headers.get('content-type'))) {
+  if (!head.ok) {
+    return RETRY_LATER_AVATAR_RESULT;
+  }
+  const headType = head.headers.get('content-type');
+  if (isBitmapContentType(headType)) {
     return null;
+  }
+  if (headType && !isSvgContentType(headType)) {
+    return RETRY_LATER_AVATAR_RESULT;
   }
   const response = await fetcher(uri, {
     headers: {
@@ -39,10 +54,13 @@ async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetch
     }
   });
   if (!response.ok) {
-    return null;
+    return RETRY_LATER_AVATAR_RESULT;
   }
   const text = await response.text();
-  return /<svg[\s>]/i.test(text) ? text : null;
+  if (/<svg[\s>]/i.test(text)) {
+    return text;
+  }
+  return isBitmapContentType(response.headers.get('content-type')) ? null : RETRY_LATER_AVATAR_RESULT;
 }
 
 function rememberAvatarSvgTextRequest(uri: string, request: Promise<string | null>) {
@@ -68,4 +86,8 @@ function isNodeSeekAvatarUrl(value: string) {
 
 function isSvgContentType(value: string | null) {
   return /(?:^|;|\s)(?:image|application)\/svg\+xml(?:;|\s|$)/i.test(value || '');
+}
+
+function isBitmapContentType(value: string | null) {
+  return /(?:^|;|\s)image\/(?:png|jpe?g|webp|gif|avif|bmp)(?:;|\s|$)/i.test(value || '');
 }

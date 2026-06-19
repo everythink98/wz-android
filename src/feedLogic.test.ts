@@ -248,7 +248,7 @@ describe('Android feed logic helpers', () => {
     expect(merged.hasMore).toBe(true);
   });
 
-  it('stops feed pagination when a load-more response adds no visible topics', () => {
+  it('keeps feed pagination when an empty load-more response still advances', () => {
     const next = nextFeedPageState({
       items: [topic],
       page: 1,
@@ -264,8 +264,52 @@ describe('Android feed logic helpers', () => {
     });
 
     expect(next.items).toEqual([topic]);
+    expect(next.hasMore).toBe(true);
+    expect(next.page).toBe(5);
+  });
+
+  it('stops feed pagination when a load-more response does not advance', () => {
+    const next = nextFeedPageState({
+      items: [topic],
+      page: 1,
+      hasMore: true,
+      nextCursor: 'cursor-before'
+    }, {
+      items: [{ ...topic }],
+      errors: {},
+      hasMore: true,
+      nextPage: 2,
+      nextCursor: 'cursor-before'
+    }, {
+      requestedPage: 2,
+      reset: false
+    });
+
+    expect(next.items).toEqual([topic]);
     expect(next.hasMore).toBe(false);
     expect(next.page).toBe(2);
+    expect(next.nextCursor).toBe('cursor-before');
+  });
+
+  it('keeps feed pagination on reset when a cursor response still has more', () => {
+    const next = nextFeedPageState({
+      items: [topic],
+      page: 3,
+      hasMore: true,
+      nextCursor: 'cursor-before'
+    }, {
+      items: [topic],
+      errors: {},
+      hasMore: true,
+      nextPage: null,
+      nextCursor: 'cursor-before'
+    }, {
+      requestedPage: 1,
+      reset: true
+    });
+
+    expect(next.hasMore).toBe(true);
+    expect(next.nextCursor).toBe('cursor-before');
   });
 
   it('preserves feed pagination when a load-more response has errors', () => {

@@ -216,7 +216,6 @@ export function nextFeedPageState(
   { requestedPage, reset }: { requestedPage: number; reset: boolean }
 ) {
   const items = reset ? response.items : mergeTopics(previous.items, response.items);
-  const addedItems = reset || items.length > previous.items.length;
   const failedLoadMore = !reset && Boolean(Object.keys(response.errors || {}).length);
   if (failedLoadMore) {
     return {
@@ -226,11 +225,15 @@ export function nextFeedPageState(
       hasMore: previous.hasMore
     };
   }
+  const nextPage = response.nextPage ?? null;
+  const nextCursor = response.nextCursor ?? undefined;
+  const pageAdvanced = typeof nextPage === 'number' && nextPage > requestedPage;
+  const cursorAdvanced = Boolean(nextCursor && (reset || nextCursor !== previous.nextCursor));
   return {
     items,
-    page: addedItems && response.nextPage ? response.nextPage - 1 : requestedPage,
-    nextCursor: response.nextCursor ?? undefined,
-    hasMore: Boolean(response.hasMore && (response.nextPage || response.nextCursor) && addedItems)
+    page: pageAdvanced ? nextPage - 1 : requestedPage,
+    nextCursor: cursorAdvanced || nextCursor === undefined ? nextCursor : previous.nextCursor,
+    hasMore: Boolean(response.hasMore && (pageAdvanced || cursorAdvanced))
   };
 }
 

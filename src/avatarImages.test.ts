@@ -63,6 +63,22 @@ describe('Android remote avatar images', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it('loads SVG avatars when HEAD cannot identify the image type', async () => {
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      if (init?.method === 'HEAD') {
+        return new Response(null);
+      }
+      return new Response('<svg viewBox="0 0 32 32"></svg>', {
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    });
+
+    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62004.png', fetcher)).resolves.toBe(
+      '<svg viewBox="0 0 32 32"></svg>'
+    );
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('caches bitmap avatar checks as null results', async () => {
     const fetcher = vi.fn(async () => new Response(null, {
       headers: { 'content-type': 'image/png' }
@@ -84,6 +100,29 @@ describe('Android remote avatar images', () => {
     await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62003.png', fetcher)).resolves.toBeNull();
     await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62003.png', fetcher)).resolves.toBeNull();
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache temporary SVG avatar HTTP failures as bitmap results', async () => {
+    let imageReads = 0;
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      if (init?.method === 'HEAD') {
+        return new Response(null, {
+          headers: { 'content-type': 'image/svg+xml' }
+        });
+      }
+      imageReads += 1;
+      return imageReads === 1
+        ? new Response('temporarily unavailable', { status: 503 })
+        : new Response('<svg viewBox="0 0 32 32"></svg>', {
+          headers: { 'content-type': 'image/svg+xml' }
+        });
+    });
+
+    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62005.png', fetcher)).resolves.toBeNull();
+    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62005.png', fetcher)).resolves.toBe(
+      '<svg viewBox="0 0 32 32"></svg>'
+    );
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   it('does not fetch SVG text for non-NodeSeek avatar URLs', async () => {

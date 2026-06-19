@@ -1,79 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Text, View } from 'react-native';
-import { Image as ExpoImage } from 'expo-image';
 import { FlashList, type ListRenderItem } from '@shopify/flash-list';
-import { SvgXml } from 'react-native-svg';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
 import type { Topic, UserProfile } from '../types';
 import { formatDateTime, sourceLabel } from '../appUtils';
-import { loadRemoteAvatarSvgText } from '../avatarImages';
-import { imageSourceFromUrl } from '../htmlImages';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, IconButton, LoadingState } from '../components/AppControls';
+import { Avatar } from '../components/Avatar';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 type UserListItem =
   | { type: 'profile'; key: 'profile' }
   | { type: 'topic'; key: string; topic: Topic };
-
-function initial(name?: string) {
-  return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
-}
-
-function ProfileAvatar({
-  name,
-  styles,
-  uri
-}: {
-  name?: string;
-  styles: ReturnType<typeof createStyles>;
-  uri?: string;
-}) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const [svgXml, setSvgXml] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setImageFailed(false);
-    setSvgXml(null);
-    if (!uri) {
-      return () => {
-        cancelled = true;
-      };
-    }
-    loadRemoteAvatarSvgText(uri).then((xml) => {
-      if (!cancelled) {
-        setSvgXml(xml);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [uri]);
-
-  return (
-    <View style={[styles.replyAvatar, styles.topicAvatar]}>
-      {svgXml ? (
-        <SvgXml
-          xml={svgXml}
-          width="100%"
-          height="100%"
-        />
-      ) : uri && !imageFailed ? (
-        <ExpoImage
-          source={imageSourceFromUrl(uri)}
-          style={[styles.replyAvatarImage, styles.topicAvatar]}
-          contentFit="cover"
-          onError={() => setImageFailed(true)}
-        />
-      ) : (
-        <Text style={styles.replyAvatarText}>{initial(name)}</Text>
-      )}
-    </View>
-  );
-}
 
 export function UserScreen({
   busy,
@@ -138,7 +78,7 @@ export function UserScreen({
       return (
         <View style={styles.article}>
           <View style={styles.topicAuthorRow}>
-            <ProfileAvatar name={user?.displayName || user?.username} styles={styles} uri={user?.avatar} />
+            <Avatar name={user?.displayName || user?.username} styles={styles} uri={user?.avatar} />
             <View style={styles.topicAuthorMeta}>
               <Text style={styles.articleTitle}>{user?.displayName || user?.username || '用户'}</Text>
               <Text style={styles.meta}>{user ? `${sourceLabel(user.source)} · ${user.username}` : '用户信息读取中'}</Text>
