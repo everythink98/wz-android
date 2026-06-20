@@ -5,8 +5,12 @@ import type { Fetcher } from './request';
 
 export function isLinuxDoRequestUrl(input: string) {
   try {
-    const host = new URL(input).hostname.toLowerCase();
-    return host === 'linux.do' || host.endsWith('.linux.do');
+    const url = new URL(input);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && (host === 'linux.do' || host.endsWith('.linux.do'));
   } catch {
     return false;
   }

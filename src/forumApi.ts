@@ -177,17 +177,24 @@ export async function getFeed({
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
     const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
+    const fetchedSources = allFeedSources.map(shouldFetchSource);
+    const requestedPages: Record<Source, number> = {
+      nodeseek: cursor ? cursorState.nextPages?.nodeseek || page : page,
+      linuxdo: cursor ? cursorState.nextPages?.linuxdo || page : page,
+      v2ex: cursor ? cursorState.nextPages?.v2ex || page : page,
+      yaohuo: page
+    };
     const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
     const v2exLimit = limit;
     const results = await Promise.allSettled([
-      shouldFetchSource('nodeseek')
-        ? getNodeSeekFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.nodeseek || page : page })
+      fetchedSources[0]
+        ? getNodeSeekFeed({ ...options, limit: adapterLimit, page: requestedPages.nodeseek })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null }),
-      shouldFetchSource('linuxdo')
-        ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: cursor ? cursorState.nextPages?.linuxdo || page : page })
+      fetchedSources[1]
+        ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: requestedPages.linuxdo })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null }),
-      shouldFetchSource('v2ex')
-        ? getV2exFeed({ ...options, limit: v2exLimit, page: cursor ? cursorState.nextPages?.v2ex || page : page })
+      fetchedSources[2]
+        ? getV2exFeed({ ...options, limit: v2exLimit, page: requestedPages.v2ex })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null })
     ]);
     const items = sortByTime([
@@ -206,11 +213,14 @@ export async function getFeed({
     const nextPages: Partial<Record<Source, number | null>> = {};
     allFeedSources.forEach((item, index) => {
       const result = results[index];
-      const nextPage = result?.status === 'fulfilled'
-        ? result.value.nextPage
-        : cursorState.nextPages?.[item];
-      if (nextPage) {
-        nextPages[item] = nextPage;
+      if (result?.status === 'fulfilled') {
+        if (result.value.nextPage) {
+          nextPages[item] = result.value.nextPage;
+        }
+        return;
+      }
+      if (fetchedSources[index] && selected.length) {
+        nextPages[item] = requestedPages[item];
       }
     });
     const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages });

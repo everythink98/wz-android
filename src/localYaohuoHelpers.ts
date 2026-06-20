@@ -22,7 +22,9 @@ export function isYaohuoRequestUrl(url: string, baseUrl = YAOHUO_BASE_URL) {
   try {
     const parsed = new URL(url, baseUrl);
     const hostname = parsed.hostname.toLowerCase();
-    return (parsed.protocol === 'https:' || parsed.protocol === 'http:')
+    return parsed.protocol === 'https:'
+      && !parsed.username
+      && !parsed.password
       && (hostname === 'yaohuo.me' || hostname === 'www.yaohuo.me');
   } catch {
     return false;

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
+import { isYaohuoRequestUrl } from './localYaohuoHelpers';
+import { isNodeSeekRequestUrl } from './nodeseekFetchFallback';
 import { readProjectFile } from './sourceTestUtils';
 
 const appRootSource = readProjectFile('src', 'app', 'AppRoot.tsx');
@@ -53,6 +55,19 @@ describe('Android App security review guards', () => {
     expect(hiddenBrowserHostSource).toContain('onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}');
     expect(sessionControllerSource).toContain('!data.url || !isNodeSeekRequestUrl(data.url)');
     expect(sessionControllerSource).toContain('!data.url || !isLinuxDoRequestUrl(data.url)');
+  });
+
+  it('allows authenticated source requests only over HTTPS on expected hosts', () => {
+    expect(isNodeSeekRequestUrl('https://www.nodeseek.com/search?q=test')).toBe(true);
+    expect(isNodeSeekRequestUrl('http://www.nodeseek.com/search?q=test')).toBe(false);
+    expect(isNodeSeekRequestUrl('https://www.nodeseek.com.evil.example/search')).toBe(false);
+    expect(isNodeSeekRequestUrl('https://evil.example@www.nodeseek.com/search')).toBe(false);
+    expect(isNodeSeekRequestUrl('https://www.nodeseek.com@evil.example/search')).toBe(false);
+
+    expect(isYaohuoRequestUrl('https://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);
+    expect(isYaohuoRequestUrl('http://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
+    expect(isYaohuoRequestUrl('https://yaohuo.me.evil.example/bbs/book_view.aspx?id=1')).toBe(false);
+    expect(isYaohuoRequestUrl('https://evil.example@yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
   });
 
   it('keeps native NodeSeek cookie reads scoped to access cookies', () => {

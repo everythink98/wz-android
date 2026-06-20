@@ -2,8 +2,12 @@ import type { Fetcher } from './request';
 
 export function isNodeSeekRequestUrl(input: string) {
   try {
-    const host = new URL(input).hostname.toLowerCase();
-    return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
+    const url = new URL(input);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && (host === 'nodeseek.com' || host.endsWith('.nodeseek.com'));
   } catch {
     return false;
   }

@@ -42,8 +42,16 @@ import {
   sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
 } from './linuxdoCookieBridge';
+import { isLinuxDoRequestUrl } from './linuxdoFetchFallback';
 
 describe('linux.do Cloudflare helpers', () => {
+  it('allows linux.do authenticated requests only over HTTPS on expected hosts', () => {
+    expect(isLinuxDoRequestUrl('https://linux.do/latest.json')).toBe(true);
+    expect(isLinuxDoRequestUrl('http://linux.do/latest.json')).toBe(false);
+    expect(isLinuxDoRequestUrl('https://linux.do.evil.example/latest.json')).toBe(false);
+    expect(isLinuxDoRequestUrl('https://evil.example@linux.do/latest.json')).toBe(false);
+  });
+
   it('detects Cloudflare challenge responses but not ordinary errors', () => {
     expect(isCloudflareChallengeResponse(new Response('ok', { status: 403, headers: { 'cf-mitigated': 'challenge' } }))).toBe(true);
     expect(isCloudflareChallengeResponse({ status: 200, headers: new Headers(), bodyText: '<html>Just a moment cf-turnstile</html>' })).toBe(true);

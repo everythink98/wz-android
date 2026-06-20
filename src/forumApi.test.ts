@@ -1075,4 +1075,69 @@ describe('Android local forum facade', () => {
     expect(second.items.map((item) => `${item.source}:${item.id}`)).toEqual(['v2ex:500', 'nodeseek:399']);
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/recent?p=1');
   });
+
+  it('retries a failed source on the next aggregated Android feed page', async () => {
+    clearV2exCacheForTest();
+    const nodeSeekPage = Buffer.from(JSON.stringify({
+      rotateTopics: [
+        { postId: 700, titleText: 'NodeSeek recovered', titleLink: '/post-700-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:03:00.000Z' } }
+      ]
+    })).toString('base64');
+    let nodeSeekCalls = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        nodeSeekCalls += 1;
+        if (nodeSeekCalls === 1) {
+          throw new Error('NodeSeek temporary failure');
+        }
+        return new Response(`<script>${nodeSeekPage}</script>`);
+      }
+      if (input.includes('linux.do')) {
+        return new Response(JSON.stringify({
+          topic_list: {
+            topics: [{
+              id: 710,
+              title: 'linux.do topic',
+              slug: 'linux-do-topic',
+              created_at: '2026-05-20T00:02:00.000Z',
+              posts_count: 1
+            }]
+          },
+          categories: []
+        }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(`
+          <div class="cell item"><a class="topic-link" href="/t/720#reply0">V2EX topic</a><a class="node" href="/go/create">分享创造</a><strong><a href="/member/neo">neo</a></strong><span title="2026-05-20 00:01:00 +08:00"></span></div>
+        `);
+      }
+      return new Response(JSON.stringify([]), {
+        headers: { 'content-type': 'application/json' }
+      });
+    });
+
+    const first = await getFeed({ source: 'all', limit: 2, fetcher });
+    const second = await getFeed({ source: 'all', page: first.nextPage ?? 2, cursor: first.nextCursor ?? undefined, limit: 2, fetcher });
+
+    expect(JSON.stringify(first.errors?.nodeseek)).toContain('NodeSeek temporary failure');
+    expect(first.nextCursor).toBeTruthy();
+    expect(second.items.map((item) => `${item.source}:${item.id}`)).toContain('nodeseek:700');
+    expect(nodeSeekCalls).toBe(2);
+  });
+
+  it('does not create an empty retry cursor when all aggregated Android feed sources fail', async () => {
+    clearV2exCacheForTest();
+    const fetcher = vi.fn(async () => {
+      throw new Error('temporary failure');
+    });
+
+    const result = await getFeed({ source: 'all', limit: 2, fetcher });
+
+    expect(result.items).toEqual([]);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextCursor).toBeUndefined();
+    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex']);
+  });
 });
