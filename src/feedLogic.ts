@@ -53,6 +53,17 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
   return items;
 }
 
+export function feedRequestKey(source: FeedSource, category = '') {
+  return `${source}:${category.trim()}`;
+}
+
+export function shouldReuseFeedStateForRequest(
+  state: { items: Topic[]; loadingMore?: boolean; refreshing?: boolean; requestKey?: string },
+  requestKey: string
+) {
+  return Boolean(state.items.length && state.requestKey === requestKey && !state.refreshing && !state.loadingMore);
+}
+
 export function searchLocal(data: ReaderData, query: string, source: FeedSource) {
   const records = [
     ...Object.values(data.favorites),

@@ -111,5 +111,6 @@ function cleanupBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {
   }
   if (request.abortSignal && request.abortHandler) {
     request.abortSignal.removeEventListener('abort', request.abortHandler);
+    request.abortHandler = undefined;
   }
 }

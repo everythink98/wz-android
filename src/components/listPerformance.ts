@@ -20,7 +20,7 @@ export const REPLY_LIST_PERFORMANCE_PROPS = {
 export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
   initialNumToRender: 6,
   maxToRenderPerBatch: 5,
-  removeClippedSubviews: false,
+  removeClippedSubviews: true,
   updateCellsBatchingPeriod: 50,
   windowSize: 7
 };

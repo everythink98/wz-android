@@ -27,6 +27,25 @@ export function createTopicSessionKey(topic: Topic | TopicDetail) {
   return topicKey(topic);
 }
 
+export function shouldReuseCurrentTopicDetail({
+  currentDetail,
+  nextTopic,
+  nocache,
+  reopenExistingTopicScreen
+}: {
+  currentDetail: TopicDetail | null;
+  nextTopic: Topic;
+  nocache: boolean;
+  reopenExistingTopicScreen: boolean;
+}) {
+  return Boolean(
+    currentDetail
+      && !nocache
+      && !reopenExistingTopicScreen
+      && createTopicSessionKey(currentDetail) === createTopicSessionKey(nextTopic)
+  );
+}
+
 export function createEmptyTopicSession(topic: Topic): TopicSession {
   return {
     key: createTopicSessionKey(topic),

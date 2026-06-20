@@ -7,6 +7,11 @@ import {
 } from '../readerData';
 import { loadReaderData, saveCleanReaderData } from '../readerDataStore';
 
+export function prepareReaderDataCommit(current: ReaderData, updater: (current: ReaderData) => ReaderData) {
+  const updated = updater(current);
+  return updated === current ? null : sanitizeReaderData(updated);
+}
+
 export function useReaderDataController({
   notify
 }: {
@@ -51,7 +56,10 @@ export function useReaderDataController({
       notify('本机资料尚未加载完成，请稍后再试。');
       return;
     }
-    const next = sanitizeReaderData(updater(readerDataRef.current));
+    const next = prepareReaderDataCommit(readerDataRef.current, updater);
+    if (!next) {
+      return;
+    }
     setReaderData(next);
     void persistReaderData(next).catch(() => undefined);
   }, [notify, persistReaderData]);

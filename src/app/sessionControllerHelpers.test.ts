@@ -24,6 +24,19 @@ describe('session controller helpers', () => {
     clearTimeoutSpy.mockRestore();
   });
 
+  it('removes abort listeners and handler references after settling', () => {
+    const abortSignal = {
+      removeEventListener: vi.fn()
+    } as unknown as AbortSignal;
+    const abortHandler = vi.fn();
+    const request: BrowserFetchRequestCleanupTarget = { abortHandler, abortSignal };
+
+    settleBrowserFetchRequestOnce(request, vi.fn());
+
+    expect(abortSignal.removeEventListener).toHaveBeenCalledWith('abort', abortHandler);
+    expect(request.abortHandler).toBeUndefined();
+  });
+
   it('does not wait indefinitely for best-effort follow-up work', async () => {
     vi.useFakeTimers();
     try {

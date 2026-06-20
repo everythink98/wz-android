@@ -3,10 +3,12 @@ import { getCategories, getFeed, getYaohuoFeedDirect } from '../sources/sourceGa
 import { shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
   applyFeedFilter,
+  feedRequestKey,
   mergeCategories,
   mergeFeedResponses,
   nextFeedPageState,
   shouldFetchAggregatedBaseFeed,
+  shouldReuseFeedStateForRequest,
   type ReadingFilter
 } from '../feedLogic';
 import type { ReaderData } from '../readerData';
@@ -32,6 +34,7 @@ type FeedSourceState = {
   nextCursor?: string;
   page: number;
   refreshing: boolean;
+  requestKey?: string;
 };
 
 function createFeedSourceState(): FeedSourceState {
@@ -174,10 +177,11 @@ export function useFeedController({
     }
     const requestSource = source;
     const requestBaseState = feedStatesRef.current[requestSource];
+    const requestKey = feedRequestKey(requestSource, category);
     feedLoadingRef.current = true;
     const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
-    const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestSource}:${category || ''}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
+    const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
     feedSourceRequestIdRef.current[requestSource] = requestId;
     const isLoadMore = !reset && page > 1;
@@ -228,7 +232,8 @@ export function useFeedController({
             ...current,
             [requestSource]: {
               ...previous,
-              ...nextPageState
+              ...nextPageState,
+              requestKey
             }
           };
         });
@@ -410,6 +415,10 @@ export function useFeedController({
 
   useEffect(() => {
     if (!readerDataLoaded) {
+      return;
+    }
+    const requestKey = feedRequestKey(feedSource, categoryFilter);
+    if (shouldReuseFeedStateForRequest(feedStatesRef.current[feedSource], requestKey)) {
       return;
     }
     void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });

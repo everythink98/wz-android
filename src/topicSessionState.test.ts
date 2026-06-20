@@ -4,11 +4,12 @@ import {
   createTopicSessionKey,
   pushTopicSession,
   restoreTopicSession,
+  shouldReuseCurrentTopicDetail,
   snapshotFromTopicSession,
   topicSessionFromSnapshot,
   type TopicSession
 } from './topicSessionState';
-import type { Topic } from './types';
+import type { Topic, TopicDetail } from './types';
 
 function topic(id: string): Topic {
   return {
@@ -19,6 +20,14 @@ function topic(id: string): Topic {
     url: `https://www.nodeseek.com/post-${id}-1`,
     createdAt: '2026-06-06T00:00:00.000Z',
     replyCount: 0
+  };
+}
+
+function detail(id: string): TopicDetail {
+  return {
+    ...topic(id),
+    contentHtml: '<p>Loaded</p>',
+    replies: []
   };
 }
 
@@ -55,6 +64,33 @@ describe('topic session state', () => {
     const stack = pushTopicSession([], current, topic('1'));
 
     expect(stack).toEqual([]);
+  });
+
+  it('reuses the loaded detail only when reopening the same topic without refresh', () => {
+    expect(shouldReuseCurrentTopicDetail({
+      currentDetail: detail('1'),
+      nextTopic: topic('1'),
+      nocache: false,
+      reopenExistingTopicScreen: false
+    })).toBe(true);
+    expect(shouldReuseCurrentTopicDetail({
+      currentDetail: detail('1'),
+      nextTopic: topic('2'),
+      nocache: false,
+      reopenExistingTopicScreen: false
+    })).toBe(false);
+    expect(shouldReuseCurrentTopicDetail({
+      currentDetail: detail('1'),
+      nextTopic: topic('1'),
+      nocache: true,
+      reopenExistingTopicScreen: false
+    })).toBe(false);
+    expect(shouldReuseCurrentTopicDetail({
+      currentDetail: null,
+      nextTopic: topic('1'),
+      nocache: false,
+      reopenExistingTopicScreen: false
+    })).toBe(false);
   });
 
   it('converts between legacy snapshots and explicit detail sessions', () => {

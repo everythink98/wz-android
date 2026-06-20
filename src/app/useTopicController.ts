@@ -24,7 +24,7 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { REPLY_PAGE_SIZE, replyRefreshTarget } from '../androidFeatureHelpers';
-import { pushTopicSession, topicSessionFromSnapshot } from '../topicSessionState';
+import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapshot } from '../topicSessionState';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import { topicWithAuthorFallback } from '../userNavigation';
 import type { Fetcher } from '../request';
@@ -202,6 +202,21 @@ export function useTopicController({
       }));
       pushTopicScreen();
     }
+    if (screen !== 'topic' && shouldReuseCurrentTopicDetail({
+      currentDetail: topicDetail,
+      nextTopic: topic,
+      nocache,
+      reopenExistingTopicScreen
+    })) {
+      onTopicContextChange(nextTopicKey);
+      currentTopicKeyRef.current = nextTopicKey;
+      setSelectedTopic(topic);
+      setTopicBusy(false);
+      if (!reopenExistingTopicScreen) {
+        changeScreen('topic');
+      }
+      return;
+    }
     if (screen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
       return;
     }
@@ -354,6 +369,7 @@ export function useTopicController({
     showYaohuoLogin,
     topicAbortRef,
     topicBackStackRef,
+    topicDetail,
     topicRequestIdRef,
     topicReturnScreenRef,
     topicSnapshot

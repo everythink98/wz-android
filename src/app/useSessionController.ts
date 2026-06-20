@@ -46,7 +46,6 @@ import {
   type SiteSessionEvent
 } from '../siteSessionState';
 import {
-  cleanupLinuxDoBrowserFetchRequest,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   requestHeaderValue,
@@ -58,6 +57,7 @@ const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
 const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const NODESEEK_COOKIE_PERSIST_TIMEOUT_MS = 1200;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
+const LINUXDO_COOKIE_PERSIST_TIMEOUT_MS = 1200;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
@@ -94,6 +94,7 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
+  settled?: boolean;
 };
 
 type MutableRef<T> = { current: T };
@@ -466,8 +467,7 @@ export function useSessionController({
         continue;
       }
       if (candidate.abortSignal?.aborted) {
-        cleanupLinuxDoBrowserFetchRequest(candidate);
-        candidate.reject(new Error('请求已取消'));
+        settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
         continue;
       }
       next = candidate;
@@ -488,6 +488,9 @@ export function useSessionController({
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetchRef, setLinuxDoBrowserFetchRequest]);
 
   const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string) => {
+    if (request.settled) {
+      return;
+    }
     const queuedIndex = linuxDoBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
     if (queuedIndex >= 0) {
       linuxDoBrowserFetchQueueRef.current.splice(queuedIndex, 1);
@@ -497,8 +500,10 @@ export function useSessionController({
       linuxDoBrowserFetchCurrentRef.current = null;
       setLinuxDoBrowserFetchRequest(null);
     }
-    cleanupLinuxDoBrowserFetchRequest(request);
-    request.reject(new Error(message));
+    const settled = settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)));
+    if (!settled) {
+      return;
+    }
     startNextLinuxDoBrowserFetch();
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, linuxDoBrowserWebViewRef, setLinuxDoBrowserFetchRequest, startNextLinuxDoBrowserFetch]);
   rejectLinuxDoBrowserFetchRef.current = rejectLinuxDoBrowserFetch;
@@ -563,7 +568,6 @@ export function useSessionController({
       rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
       return;
     }
-    cleanupLinuxDoBrowserFetchRequest(current);
     linuxDoBrowserWebViewRef.current?.stopLoading();
     linuxDoBrowserFetchCurrentRef.current = null;
     setLinuxDoBrowserFetchRequest(null);
@@ -576,8 +580,15 @@ export function useSessionController({
       linuxDoWebViewCookieHeaderRef.current = data.cookie;
       setLinuxDoWebViewCookieHeader(data.cookie);
     }
+    const settled = settleBrowserFetchRequestOnce(current, () => {
+      current.resolve(linuxDoBrowserResponse(data.body || '', Boolean(data.challenge), current.httpErrorStatus));
+    });
+    if (!settled) {
+      return;
+    }
+    startNextLinuxDoBrowserFetch();
     if (!data.challenge && typeof data.cookie === 'string') {
-      try {
+      void runBestEffortTask(async () => {
         await CookieManager.flush();
         const [savedAccess, nativeCookies] = await Promise.all([
           loadLinuxDoAccess(),
@@ -599,18 +610,12 @@ export function useSessionController({
             at: new Date().toISOString()
           });
         }
-      } catch {
-        // Keep the fetched page usable even if persisting refreshed cookies fails.
-      }
+      }, LINUXDO_COOKIE_PERSIST_TIMEOUT_MS);
     } else if (typeof data.cookie === 'string') {
-      try {
+      void runBestEffortTask(async () => {
         await CookieManager.flush();
-      } catch {
-        // Ignore flush failures on challenge pages.
-      }
+      }, LINUXDO_COOKIE_PERSIST_TIMEOUT_MS);
     }
-    current.resolve(linuxDoBrowserResponse(data.body || '', Boolean(data.challenge), current.httpErrorStatus));
-    startNextLinuxDoBrowserFetch();
   }, [
     linuxDoBrowserFetchCurrentRef,
     linuxDoBrowserWebViewRef,

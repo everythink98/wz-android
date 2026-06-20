@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, dateTime, mergeFeedResponses, mergeReplies, mergeSettledFeedResponses, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed } from './feedLogic';
+import { applyFeedFilter, dateTime, feedRequestKey, mergeFeedResponses, mergeReplies, mergeSettledFeedResponses, mergeTopics, nextFeedPageState, searchLocal, shouldFetchAggregatedBaseFeed, shouldReuseFeedStateForRequest } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -266,6 +266,29 @@ describe('Android feed logic helpers', () => {
     expect(next.items).toEqual([topic]);
     expect(next.hasMore).toBe(true);
     expect(next.page).toBe(5);
+  });
+
+  it('reuses a feed state only for the same source and category with cached items', () => {
+    const linuxDoAll = feedRequestKey('linuxdo', '');
+    const linuxDoCategory = feedRequestKey('linuxdo', '开发调优');
+
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: linuxDoAll
+    }, linuxDoAll)).toBe(true);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: linuxDoAll
+    }, linuxDoCategory)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [],
+      requestKey: linuxDoAll
+    }, linuxDoAll)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      refreshing: true,
+      requestKey: linuxDoAll
+    }, linuxDoAll)).toBe(false);
   });
 
   it('stops feed pagination when a load-more response does not advance', () => {
