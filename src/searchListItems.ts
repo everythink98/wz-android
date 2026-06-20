@@ -5,6 +5,7 @@ export type SearchGroup = {
   label: string;
   items: Topic[];
   error?: string;
+  verificationRequired?: boolean;
   loading?: boolean;
   loadingMore?: boolean;
   hasMore?: boolean;

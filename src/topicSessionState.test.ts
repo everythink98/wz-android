@@ -107,4 +107,24 @@ describe('topic session state', () => {
       scrollY: 120
     });
   });
+
+  it('does not restore transient errors or quote loading flags from snapshots', () => {
+    const session: TopicSession = {
+      ...createEmptyTopicSession(topic('4')),
+      topicError: '加载失败',
+      loadingQuotedFloors: { '2': true }
+    };
+
+    const snapshot = snapshotFromTopicSession(session);
+    const restored = topicSessionFromSnapshot({
+      ...snapshot,
+      topicError: '旧错误',
+      loadingQuotedFloors: { '3': true }
+    });
+
+    expect(snapshot.topicError).toBe('');
+    expect(snapshot.loadingQuotedFloors).toEqual({});
+    expect(restored.topicError).toBe('');
+    expect(restored.loadingQuotedFloors).toEqual({});
+  });
 });

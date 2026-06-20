@@ -18,6 +18,8 @@ const topicControllerSource = readProjectFile('src', 'app', 'useTopicController.
 const topicCardSource = readProjectFile('src', 'components', 'TopicCard.tsx');
 const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataController.ts');
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
+const mainTabScrollToTopSource = readProjectFile('src', 'app', 'useMainTabScrollToTop.ts');
+const operatorRunbookSource = readProjectFile('docs', 'operator-runbook.md');
 
 const appReadControllerSources = [
   accountControllerSource,
@@ -74,7 +76,13 @@ describe('Android architecture boundaries', () => {
 
   it('keeps reader data save failures visible to callers', () => {
     expect(readerDataControllerSource).toContain('notify(errorMessage(error));\n        throw error;');
-    expect(readerDataControllerSource).toContain('void persistReaderData(next).catch(() => undefined);');
+    expect(readerDataControllerSource).not.toContain('waitForReaderDataSave = useCallback(() => (\n    saveQueueRef.current.catch(() => undefined)\n  )');
+  });
+
+  it('does not update an unused more tab scroll signal', () => {
+    expect(mainTabScrollToTopSource).toContain("if (target === 'more')");
+    expect(mainTabScrollToTopSource).toContain('return;');
+    expect(mainTabScrollToTopSource).not.toContain('more: 0');
   });
 
   it('disables app update checks while a check is already running', () => {
@@ -114,5 +122,19 @@ describe('Android architecture boundaries', () => {
     expect(morePanelsSource).not.toContain('TextInput');
     expect(morePanelsSource).not.toContain('backupJson');
     expect(backupStatusControllerSource).not.toContain('setBackupJson');
+  });
+
+  it('does not use error display text as verification control flow', () => {
+    expect(feedControllerSource).not.toContain('/Cloudflare|验证/');
+    expect(searchControllerSource).not.toContain('/Cloudflare|验证/');
+  });
+
+  it('keeps operator runbook verification files in sync with this repo', () => {
+    expect(operatorRunbookSource).not.toContain('androidArchitectureBoundaries.test.ts');
+    expect(operatorRunbookSource).not.toContain('androidMatureComponents.test.ts');
+    expect(operatorRunbookSource).not.toContain('androidUxUpgrade.test.ts');
+    expect(operatorRunbookSource).not.toContain('appPerformance.test.ts');
+    expect(operatorRunbookSource).not.toContain('appExperience.test.ts');
+    expect(operatorRunbookSource).not.toContain('detailReadingLayout.test.ts');
   });
 });

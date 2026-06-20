@@ -1,6 +1,16 @@
 export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo';
 export type FeedSource = Source | 'all';
 
+export type SourceErrorInfo = string | {
+  message: string;
+  reason?: string;
+  loginRequired?: boolean;
+  retryable?: boolean;
+  verificationRequired?: boolean;
+};
+
+export type SourceErrors = Partial<Record<FeedSource, SourceErrorInfo>>;
+
 export interface AccessRequirement {
   type: 'login' | 'level' | 'permission';
   label: string;
@@ -149,7 +159,7 @@ export interface UserProfile {
 
 export interface FeedResponse {
   items: Topic[];
-  errors: Partial<Record<FeedSource, string>>;
+  errors: SourceErrors;
   hasMore?: boolean;
   nextPage?: number | null;
   nextCursor?: string | null;
@@ -164,12 +174,12 @@ export interface RepliesResponse {
 
 export interface CategoriesResponse {
   items: Category[];
-  errors: Partial<Record<FeedSource, string>>;
+  errors: SourceErrors;
 }
 
 export interface SearchResponse {
   items: Topic[];
-  errors: Partial<Record<FeedSource, string>>;
+  errors: SourceErrors;
   hasMore?: boolean;
   nextPage?: number | null;
 }

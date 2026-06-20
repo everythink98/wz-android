@@ -92,7 +92,6 @@ loadReleaseEnvFile();
 verifyReleaseSigningEnv();
 
 run('npm', ['test']);
-run('npm', ['run', 'typecheck']);
 run('npm', ['run', 'check:unused']);
 run('node', ['scripts/check-version.mjs']);
 

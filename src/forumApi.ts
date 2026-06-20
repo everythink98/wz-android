@@ -5,6 +5,7 @@ import { requireYaohuoRequestUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
+import { sourceErrorFromUnknown } from './sourceErrors';
 import type {
   CategoriesResponse,
   Category,
@@ -14,6 +15,7 @@ import type {
   RepliesResponse,
   SearchResponse,
   Source,
+  SourceErrors,
   Topic,
   TopicDetail,
   UserProfile
@@ -22,13 +24,13 @@ import { fetchWithTimeout, type Fetcher } from './request';
 
 const allFeedSources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
 
-function mergeErrors(results: Array<PromiseSettledResult<{ errors?: Partial<Record<FeedSource, string>> }>>, sources: Source[]) {
-  const errors: Partial<Record<FeedSource, string>> = {};
+function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>, sources: Source[]) {
+  const errors: SourceErrors = {};
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') {
       Object.assign(errors, result.value.errors || {});
     } else {
-      errors[sources[index]] = result.reason instanceof Error ? result.reason.message : String(result.reason || '读取失败');
+      errors[sources[index]] = sourceErrorFromUnknown(sources[index], result.reason);
     }
   });
   return errors;

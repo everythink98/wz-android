@@ -152,8 +152,12 @@ export function useBackupStatusController({
       if (controller.signal.aborted) {
         return;
       }
+      const failedSites: string[] = [];
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
       const linuxDoLogin = linuxDoLoginCheck.status === 'fulfilled' ? linuxDoLoginCheck.value : undefined;
+      if (linuxDoLoginCheck.status === 'rejected') {
+        failedSites.push('linux.do');
+      }
       if (linuxDoLogin?.loginRequired) {
         linuxDoAccess = await clearLinuxDoAccess();
         if (controller.signal.aborted) {
@@ -169,27 +173,47 @@ export function useBackupStatusController({
           return;
         }
       }
-      const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || ''));
-      dispatchSiteSessionEvent(yaohuoExpired
-        ? { site: 'yaohuo', type: 'login-expired', message: '妖火登录已失效' }
-        : {
+      const checkedAt = new Date().toISOString();
+      if (yaohuoCheck.status === 'rejected') {
+        failedSites.push('妖火');
+        dispatchSiteSessionEvent({
           site: 'yaohuo',
-          type: 'cookie-loaded',
-          cookieSummary: yaohuoSummary.names,
-          hasVerification: false,
-          loggedIn: yaohuoOk,
-          at: new Date().toISOString()
+          type: 'check-failed',
+          message: errorMessage(yaohuoCheck.reason),
+          at: checkedAt
         });
-      const hasLinuxDoLogin = access.loggedIn && (!linuxDoLogin || linuxDoLogin.ok || !linuxDoLogin.loginRequired);
-      dispatchSiteSessionEvent({
-        site: 'linuxdo',
-        type: 'cookie-loaded',
-        cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names,
-        hasVerification: access.hasClearance,
-        loggedIn: hasLinuxDoLogin,
-        at: new Date().toISOString()
-      });
-      notify('账号状态已刷新');
+      } else {
+        const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || ''));
+        dispatchSiteSessionEvent(yaohuoExpired
+          ? { site: 'yaohuo', type: 'login-expired', message: '妖火登录已失效' }
+          : {
+            site: 'yaohuo',
+            type: 'cookie-loaded',
+            cookieSummary: yaohuoSummary.names,
+            hasVerification: false,
+            loggedIn: yaohuoOk,
+            at: checkedAt
+          });
+      }
+      if (linuxDoLoginCheck.status === 'rejected') {
+        dispatchSiteSessionEvent({
+          site: 'linuxdo',
+          type: 'check-failed',
+          message: errorMessage(linuxDoLoginCheck.reason),
+          at: checkedAt
+        });
+      } else {
+        const hasLinuxDoLogin = access.loggedIn && (!linuxDoLogin || linuxDoLogin.ok || !linuxDoLogin.loginRequired);
+        dispatchSiteSessionEvent({
+          site: 'linuxdo',
+          type: 'cookie-loaded',
+          cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names,
+          hasVerification: access.hasClearance,
+          loggedIn: hasLinuxDoLogin,
+          at: checkedAt
+        });
+      }
+      notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
     } catch (error) {
       if (!controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));

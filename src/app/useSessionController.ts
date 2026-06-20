@@ -48,9 +48,11 @@ import {
 import {
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
+  rejectBrowserFetchRequest,
   requestHeaderValue,
   runBestEffortTask,
-  settleBrowserFetchRequestOnce
+  settleBrowserFetchRequestOnce,
+  startNextBrowserFetchRequest
 } from './sessionControllerHelpers';
 
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
@@ -311,54 +313,26 @@ export function useSessionController({
   }, [saveNodeSeekCookieHeader, updateNodeSeekSession]);
 
   const startNextNodeSeekBrowserFetch = useCallback(() => {
-    if (nodeSeekBrowserFetchCurrentRef.current) {
-      return;
-    }
-    let next: PendingNodeSeekBrowserFetchRequest | null = null;
-    while (nodeSeekBrowserFetchQueueRef.current.length) {
-      const candidate = nodeSeekBrowserFetchQueueRef.current.shift() || null;
-      if (!candidate) {
-        continue;
-      }
-      if (candidate.abortSignal?.aborted) {
-        settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
-        continue;
-      }
-      next = candidate;
-      break;
-    }
-    if (next) {
-      next.timeout = setTimeout(() => {
-        rejectNodeSeekBrowserFetchRef.current?.(next, 'NodeSeek 页面读取超时');
-      }, NODESEEK_BROWSER_FETCH_TIMEOUT_MS);
-    }
-    nodeSeekBrowserFetchCurrentRef.current = next;
-    setNodeSeekBrowserFetchRequest(next ? {
-      id: next.id,
-      url: next.url,
-      cookie: next.cookie,
-      userAgent: next.userAgent
-    } : null);
+    startNextBrowserFetchRequest({
+      currentRef: nodeSeekBrowserFetchCurrentRef,
+      queueRef: nodeSeekBrowserFetchQueueRef,
+      setActiveRequest: setNodeSeekBrowserFetchRequest,
+      timeoutMs: NODESEEK_BROWSER_FETCH_TIMEOUT_MS,
+      timeoutMessage: 'NodeSeek 页面读取超时',
+      rejectCurrent: (request, message) => rejectNodeSeekBrowserFetchRef.current?.(request, message)
+    });
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetchRef, setNodeSeekBrowserFetchRequest]);
 
   const rejectNodeSeekBrowserFetch = useCallback((request: PendingNodeSeekBrowserFetchRequest, message: string) => {
-    if (request.settled) {
-      return;
-    }
-    const queuedIndex = nodeSeekBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
-    if (queuedIndex >= 0) {
-      nodeSeekBrowserFetchQueueRef.current.splice(queuedIndex, 1);
-    }
-    if (nodeSeekBrowserFetchCurrentRef.current?.id === request.id) {
-      nodeSeekBrowserWebViewRef.current?.stopLoading();
-      nodeSeekBrowserFetchCurrentRef.current = null;
-      setNodeSeekBrowserFetchRequest(null);
-    }
-    const settled = settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)));
-    if (!settled) {
-      return;
-    }
-    startNextNodeSeekBrowserFetch();
+    rejectBrowserFetchRequest({
+      request,
+      message,
+      currentRef: nodeSeekBrowserFetchCurrentRef,
+      queueRef: nodeSeekBrowserFetchQueueRef,
+      setActiveRequest: setNodeSeekBrowserFetchRequest,
+      startNext: startNextNodeSeekBrowserFetch,
+      webViewRef: nodeSeekBrowserWebViewRef
+    });
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, nodeSeekBrowserWebViewRef, setNodeSeekBrowserFetchRequest, startNextNodeSeekBrowserFetch]);
   rejectNodeSeekBrowserFetchRef.current = rejectNodeSeekBrowserFetch;
 
@@ -457,54 +431,26 @@ export function useSessionController({
   }, [nodeSeekBrowserFetchCurrentRef, rejectNodeSeekBrowserFetch]);
 
   const startNextLinuxDoBrowserFetch = useCallback(() => {
-    if (linuxDoBrowserFetchCurrentRef.current) {
-      return;
-    }
-    let next: PendingLinuxDoBrowserFetchRequest | null = null;
-    while (linuxDoBrowserFetchQueueRef.current.length) {
-      const candidate = linuxDoBrowserFetchQueueRef.current.shift() || null;
-      if (!candidate) {
-        continue;
-      }
-      if (candidate.abortSignal?.aborted) {
-        settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
-        continue;
-      }
-      next = candidate;
-      break;
-    }
-    if (next) {
-      next.timeout = setTimeout(() => {
-        rejectLinuxDoBrowserFetchRef.current?.(next, 'linux.do 页面读取超时');
-      }, LINUXDO_BROWSER_FETCH_TIMEOUT_MS);
-    }
-    linuxDoBrowserFetchCurrentRef.current = next;
-    setLinuxDoBrowserFetchRequest(next ? {
-      id: next.id,
-      url: next.url,
-      cookie: next.cookie,
-      userAgent: next.userAgent
-    } : null);
+    startNextBrowserFetchRequest({
+      currentRef: linuxDoBrowserFetchCurrentRef,
+      queueRef: linuxDoBrowserFetchQueueRef,
+      setActiveRequest: setLinuxDoBrowserFetchRequest,
+      timeoutMs: LINUXDO_BROWSER_FETCH_TIMEOUT_MS,
+      timeoutMessage: 'linux.do 页面读取超时',
+      rejectCurrent: (request, message) => rejectLinuxDoBrowserFetchRef.current?.(request, message)
+    });
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetchRef, setLinuxDoBrowserFetchRequest]);
 
   const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string) => {
-    if (request.settled) {
-      return;
-    }
-    const queuedIndex = linuxDoBrowserFetchQueueRef.current.findIndex((item) => item.id === request.id);
-    if (queuedIndex >= 0) {
-      linuxDoBrowserFetchQueueRef.current.splice(queuedIndex, 1);
-    }
-    if (linuxDoBrowserFetchCurrentRef.current?.id === request.id) {
-      linuxDoBrowserWebViewRef.current?.stopLoading();
-      linuxDoBrowserFetchCurrentRef.current = null;
-      setLinuxDoBrowserFetchRequest(null);
-    }
-    const settled = settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)));
-    if (!settled) {
-      return;
-    }
-    startNextLinuxDoBrowserFetch();
+    rejectBrowserFetchRequest({
+      request,
+      message,
+      currentRef: linuxDoBrowserFetchCurrentRef,
+      queueRef: linuxDoBrowserFetchQueueRef,
+      setActiveRequest: setLinuxDoBrowserFetchRequest,
+      startNext: startNextLinuxDoBrowserFetch,
+      webViewRef: linuxDoBrowserWebViewRef
+    });
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, linuxDoBrowserWebViewRef, setLinuxDoBrowserFetchRequest, startNextLinuxDoBrowserFetch]);
   rejectLinuxDoBrowserFetchRef.current = rejectLinuxDoBrowserFetch;
 

@@ -5,6 +5,24 @@ export type BrowserFetchRequestCleanupTarget = {
   settled?: boolean;
 };
 
+type MutableRef<T> = { current: T };
+type WebViewStopRef = { current: { stopLoading: () => void } | null };
+
+export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
+  id: number;
+  url: string;
+  cookie?: string;
+  userAgent?: string;
+  reject: (error: Error) => void;
+};
+
+type BrowserFetchRequestView = {
+  id: number;
+  url: string;
+  cookie?: string;
+  userAgent?: string;
+};
+
 export function requestHeaderValue(headers: HeadersInit | undefined, name: string) {
   const target = name.toLowerCase();
   if (!headers) {
@@ -86,6 +104,91 @@ export function settleBrowserFetchRequestOnce(request: BrowserFetchRequestCleanu
   cleanupBrowserFetchRequest(request);
   settle();
   return true;
+}
+
+function browserFetchRequestView(request: BrowserFetchQueueRequest): BrowserFetchRequestView {
+  return {
+    id: request.id,
+    url: request.url,
+    cookie: request.cookie,
+    userAgent: request.userAgent
+  };
+}
+
+export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
+  currentRef,
+  queueRef,
+  setActiveRequest,
+  timeoutMs,
+  timeoutMessage,
+  rejectCurrent
+}: {
+  currentRef: MutableRef<T | null>;
+  queueRef: MutableRef<T[]>;
+  setActiveRequest: (request: BrowserFetchRequestView | null) => void;
+  timeoutMs: number;
+  timeoutMessage: string;
+  rejectCurrent: (request: T, message: string) => void;
+}) {
+  if (currentRef.current) {
+    return;
+  }
+  let next: T | null = null;
+  while (queueRef.current.length) {
+    const candidate = queueRef.current.shift() || null;
+    if (!candidate) {
+      continue;
+    }
+    if (candidate.abortSignal?.aborted) {
+      settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
+      continue;
+    }
+    next = candidate;
+    break;
+  }
+  if (next) {
+    next.timeout = setTimeout(() => {
+      rejectCurrent(next, timeoutMessage);
+    }, timeoutMs);
+  }
+  currentRef.current = next;
+  setActiveRequest(next ? browserFetchRequestView(next) : null);
+}
+
+export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
+  request,
+  message,
+  currentRef,
+  queueRef,
+  setActiveRequest,
+  startNext,
+  webViewRef
+}: {
+  request: T;
+  message: string;
+  currentRef: MutableRef<T | null>;
+  queueRef: MutableRef<T[]>;
+  setActiveRequest: (request: BrowserFetchRequestView | null) => void;
+  startNext: () => void;
+  webViewRef?: WebViewStopRef;
+}) {
+  if (request.settled) {
+    return;
+  }
+  const queuedIndex = queueRef.current.findIndex((item) => item.id === request.id);
+  if (queuedIndex >= 0) {
+    queueRef.current.splice(queuedIndex, 1);
+  }
+  if (currentRef.current?.id === request.id) {
+    webViewRef?.current?.stopLoading();
+    currentRef.current = null;
+    setActiveRequest(null);
+  }
+  const settled = settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)));
+  if (!settled) {
+    return;
+  }
+  startNext();
 }
 
 export async function runBestEffortTask(task: () => Promise<void>, timeoutMs: number) {

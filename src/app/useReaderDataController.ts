@@ -73,9 +73,7 @@ export function useReaderDataController({
     return persistReaderData(next);
   }, [persistReaderData]);
 
-  const waitForReaderDataSave = useCallback(() => (
-    saveQueueRef.current.catch(() => undefined)
-  ), []);
+  const waitForReaderDataSave = useCallback(() => saveQueueRef.current, []);
 
   useEffect(() => {
     void loadReaderData()

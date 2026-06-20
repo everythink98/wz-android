@@ -23,6 +23,7 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
+import { sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
 import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
 
@@ -211,11 +212,13 @@ export function useSearchController({
           filter: activeFilter,
           signal
         });
+      const sourceError = data.errors?.[source];
       return {
         source,
         label: sourceLabel(source),
         items: data.items,
-        error: data.errors?.[source],
+        error: sourceErrorMessage(sourceError) || undefined,
+        verificationRequired: sourceErrorRequiresVerification(sourceError),
         hasMore: Boolean(data.hasMore && data.nextPage),
         nextPage: data.nextPage ?? null
       };
@@ -292,9 +295,9 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
       const resultCount = mergedSearchGroupItemCount(nextGroups);
-      const nodeSeekError = nextGroups.find((group) => group.source === 'nodeseek')?.error;
-      if (nodeSeekError && /Cloudflare|验证/.test(nodeSeekError)) {
-        requireNodeSeekSearchVerification(nodeSeekError, () => { void runSearchRef.current?.('nodeseek'); });
+      const nodeSeekGroup = nextGroups.find((group) => group.source === 'nodeseek');
+      if (nodeSeekGroup?.verificationRequired && nodeSeekGroup.error) {
+        requireNodeSeekSearchVerification(nodeSeekGroup.error, () => { void runSearchRef.current?.('nodeseek'); });
         return;
       }
       const errors = nextGroups.filter((group) => group.error);
@@ -379,7 +382,7 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
       const updated = nextGroups.find((group) => group.source === source);
-      if (updated?.error && source === 'nodeseek' && /Cloudflare|验证/.test(updated.error)) {
+      if (updated?.error && source === 'nodeseek' && updated.verificationRequired) {
         requireNodeSeekSearchVerification(updated.error, () => { void runSearchRef.current?.('nodeseek'); });
         return;
       }

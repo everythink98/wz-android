@@ -24,7 +24,8 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
-import type { Category, FeedResponse, FeedSource, Source, Topic } from '../types';
+import { sourceErrorFromUnknown, sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
+import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
   hasMore: boolean;
@@ -128,11 +129,11 @@ export function useFeedController({
       setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
-        if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
-          showNodeSeekVerification(data.errors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证');
+        if (sourceErrorRequiresVerification(data.errors.nodeseek)) {
+          showNodeSeekVerification(sourceErrorMessage(data.errors.nodeseek) || 'NodeSeek 需要完成 Cloudflare 验证');
           return;
         }
-        notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as Source)}：${message}`).join('；'));
+        notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as FeedSource)}：${sourceErrorMessage(message)}`).join('；'));
       }
     } catch (error) {
       if (requestId === categoriesRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
@@ -253,7 +254,7 @@ export function useFeedController({
         showYaohuoLogin(isLoadMore ? `加载下一页失败：${message}` : message);
         return;
       }
-      let finalErrors: Partial<Record<FeedSource, string>> = {};
+      let finalErrors: SourceErrors = {};
       if (source === 'all' && yaohuoCookie) {
         const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({ page, cursor, hasYaohuoCookie: true });
         const basePromise = shouldFetchBaseFeed
@@ -294,8 +295,8 @@ export function useFeedController({
           throw baseResult.reason;
         }
         finalErrors = {
-          ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: errorMessage(baseResult.reason) }),
-          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: errorMessage(yaohuoResult.reason) })
+          ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: sourceErrorFromUnknown('all', baseResult.reason) }),
+          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
         };
       } else if (source === 'yaohuo') {
         const data = await getYaohuoFeedDirect({
@@ -334,15 +335,15 @@ export function useFeedController({
       }
       const errors = Object.entries(finalErrors);
       if (errors.length) {
-        if (errors.some(([sourceName, message]) => sourceName === 'nodeseek' && /Cloudflare|验证/.test(message))) {
-          const message = finalErrors.nodeseek || 'NodeSeek 需要完成 Cloudflare 验证';
+        if (sourceErrorRequiresVerification(finalErrors.nodeseek)) {
+          const message = sourceErrorMessage(finalErrors.nodeseek) || 'NodeSeek 需要完成 Cloudflare 验证';
           if (isLoadMore) {
             markFeedLoadMoreFailed(requestSource);
           }
           showNodeSeekVerification(isLoadMore ? `加载下一页失败：${message}` : message);
           return;
         }
-        const message = errors.map(([sourceName, error]) => `${sourceLabel(sourceName as Source)}：${error}`).join('；');
+        const message = errors.map(([sourceName, error]) => `${sourceLabel(sourceName as FeedSource)}：${sourceErrorMessage(error)}`).join('；');
         if (isLoadMore) {
           markFeedLoadMoreFailed(requestSource);
           notify(`加载下一页失败：${message}`);

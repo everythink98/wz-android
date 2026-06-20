@@ -35,6 +35,7 @@ export type SiteSessionEvent =
   | { type: 'verification-started'; at?: string }
   | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; at: string }
   | { type: 'login-expired'; message?: string; at?: string }
+  | { type: 'check-failed'; message: string; at?: string }
   | { type: 'cleared'; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
 
@@ -162,6 +163,13 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
       status: 'expired',
       isVerifying: false,
       ...(event.message ? { lastError: event.message } : {})
+    };
+  }
+  if (event.type === 'check-failed') {
+    return {
+      ...state,
+      isVerifying: false,
+      lastError: event.message
     };
   }
   return createSiteState(state.site, 'anonymous');

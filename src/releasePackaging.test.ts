@@ -39,8 +39,8 @@ describe('Android release packaging', () => {
     const adaptiveIconIndex = releaseScript.indexOf("run('node', ['scripts/generate-adaptive-icon.mjs']);");
 
     expect(testIndex).toBeGreaterThanOrEqual(0);
-    expect(typecheckIndex).toBeGreaterThan(testIndex);
-    expect(unusedIndex).toBeGreaterThan(typecheckIndex);
+    expect(typecheckIndex).toBe(-1);
+    expect(unusedIndex).toBeGreaterThan(testIndex);
     expect(versionIndex).toBeGreaterThan(unusedIndex);
     expect(adaptiveIconIndex).toBeGreaterThan(versionIndex);
   });

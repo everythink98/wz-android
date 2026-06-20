@@ -1,6 +1,7 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
 import type { Category, FeedResponse, FeedSource, Reply, Topic } from './types';
-import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, errorMessage, isCanceledRequest, sourceLabel } from './appUtils';
+import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, isCanceledRequest, sourceLabel } from './appUtils';
+import { sourceErrorFromUnknown } from './sourceErrors';
 
 export { dateTime } from './appUtils';
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
@@ -275,10 +276,10 @@ export function mergeSettledFeedResponses(
   }
   const baseData = base.status === 'fulfilled'
     ? base.value
-    : { items: [], errors: { all: errorMessage(base.reason) } };
+    : { items: [], errors: { all: sourceErrorFromUnknown('all', base.reason) } };
   const extraData = extra.status === 'fulfilled'
     ? extra.value
-    : { items: [], errors: { yaohuo: errorMessage(extra.reason) } };
+    : { items: [], errors: { yaohuo: sourceErrorFromUnknown('yaohuo', extra.reason) } };
   return mergeFeedResponses(baseData, extraData);
 }
 

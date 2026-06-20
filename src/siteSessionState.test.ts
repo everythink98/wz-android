@@ -241,4 +241,26 @@ describe('site session state', () => {
     });
     expect(cleared.nodeseek).toBe(initial.nodeseek);
   });
+
+  it('keeps the previous session when an account check fails', () => {
+    const initial: SiteSessionState = {
+      site: 'linuxdo',
+      status: 'logged-in',
+      cookieSummary: ['cf_clearance', '_t'],
+      isVerifying: false,
+      lastVerifiedAt: '2026-06-06T02:01:00.000Z'
+    };
+
+    const checked = reduceSiteSessionState(initial, {
+      type: 'check-failed',
+      message: '网络错误'
+    });
+
+    expect(checked).toMatchObject({
+      status: 'logged-in',
+      cookieSummary: ['cf_clearance', '_t'],
+      lastVerifiedAt: '2026-06-06T02:01:00.000Z',
+      lastError: '网络错误'
+    });
+  });
 });

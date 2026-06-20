@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  rejectBrowserFetchRequest,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
+  startNextBrowserFetchRequest,
   type BrowserFetchRequestCleanupTarget
 } from './sessionControllerHelpers';
 
@@ -64,5 +66,77 @@ describe('session controller helpers', () => {
     await expect(runBestEffortTask(() => {
       throw new Error('persist failed');
     }, 100)).resolves.toBeUndefined();
+  });
+
+  it('starts the next non-aborted browser fetch request', () => {
+    const rejected = vi.fn();
+    const active = {
+      id: 2,
+      url: 'https://linux.do/t/1',
+      reject: vi.fn()
+    };
+    const currentRef = { current: null };
+    const queueRef = {
+      current: [
+        {
+          id: 1,
+          url: 'https://linux.do/aborted',
+          abortSignal: { aborted: true },
+          reject: rejected
+        },
+        active
+      ]
+    };
+    const setActiveRequest = vi.fn();
+
+    startNextBrowserFetchRequest({
+      currentRef,
+      queueRef,
+      setActiveRequest,
+      timeoutMs: 1000,
+      timeoutMessage: 'timeout',
+      rejectCurrent: vi.fn()
+    });
+
+    expect(rejected).toHaveBeenCalledWith(new Error('请求已取消'));
+    expect(currentRef.current).toBe(active);
+    expect(setActiveRequest).toHaveBeenCalledWith({
+      id: 2,
+      url: 'https://linux.do/t/1',
+      cookie: undefined,
+      userAgent: undefined
+    });
+  });
+
+  it('rejects a queued browser fetch request without touching the active request', () => {
+    const active = {
+      id: 1,
+      url: 'https://linux.do/t/1',
+      reject: vi.fn()
+    };
+    const queued = {
+      id: 2,
+      url: 'https://linux.do/t/2',
+      reject: vi.fn()
+    };
+    const currentRef = { current: active };
+    const queueRef = { current: [queued] };
+    const setActiveRequest = vi.fn();
+    const startNext = vi.fn();
+
+    rejectBrowserFetchRequest({
+      request: queued,
+      message: '取消',
+      currentRef,
+      queueRef,
+      setActiveRequest,
+      startNext
+    });
+
+    expect(currentRef.current).toBe(active);
+    expect(queueRef.current).toEqual([]);
+    expect(queued.reject).toHaveBeenCalledWith(new Error('取消'));
+    expect(setActiveRequest).not.toHaveBeenCalled();
+    expect(startNext).toHaveBeenCalledTimes(1);
   });
 });

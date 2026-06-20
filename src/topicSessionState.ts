@@ -90,7 +90,7 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
     selectedTopic: session.selectedTopic,
     topicDetail: session.topicDetail,
     topicReplies: session.topicReplies,
-    topicError: session.topicError,
+    topicError: '',
     replyHasMore: session.replyHasMore,
     replyNextPage: session.replyNextPage,
     replyNextOffset: session.replyNextOffset,
@@ -102,7 +102,7 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
     replyTarget: session.replyTarget,
     expandedQuotes: session.expandedQuotes,
     loadedQuotedReplies: session.loadedQuotedReplies,
-    loadingQuotedFloors: session.loadingQuotedFloors,
+    loadingQuotedFloors: {},
     scrollY: session.scrollY
   };
 }
@@ -114,7 +114,7 @@ export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession 
     selectedTopic: snapshot.selectedTopic,
     topicDetail: snapshot.topicDetail,
     topicReplies: snapshot.topicReplies,
-    topicError: snapshot.topicError,
+    topicError: '',
     replyHasMore: snapshot.replyHasMore,
     replyNextPage: snapshot.replyNextPage,
     replyNextOffset: snapshot.replyNextOffset,
@@ -126,7 +126,7 @@ export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession 
     replyTarget: snapshot.replyTarget,
     expandedQuotes: snapshot.expandedQuotes,
     loadedQuotedReplies: snapshot.loadedQuotedReplies,
-    loadingQuotedFloors: snapshot.loadingQuotedFloors,
+    loadingQuotedFloors: {},
     scrollY: snapshot.scrollY || 0
   };
 }
