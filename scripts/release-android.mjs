@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
@@ -33,6 +34,38 @@ function verifyReleaseApk() {
     console.error(`未找到 release APK：${releaseApkPath}`);
     process.exit(1);
   }
+}
+
+function findApkSigner() {
+  const androidSdkDir = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+  if (!androidSdkDir) {
+    return null;
+  }
+  const buildToolsDir = path.join(androidSdkDir, 'build-tools');
+  if (!existsSync(buildToolsDir)) {
+    return null;
+  }
+  const executable = process.platform === 'win32' ? 'apksigner.bat' : 'apksigner';
+  return readdirSync(buildToolsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(buildToolsDir, entry.name, executable))
+    .filter((candidate) => existsSync(candidate))
+    .sort((left, right) => path.basename(path.dirname(right)).localeCompare(path.basename(path.dirname(left)), undefined, { numeric: true }))
+    [0] || null;
+}
+
+function verifyReleaseApkSignature() {
+  const apkSigner = findApkSigner();
+  if (!apkSigner) {
+    console.error('未找到 apksigner，请确认 ANDROID_HOME 或 ANDROID_SDK_ROOT 指向 Android SDK。');
+    process.exit(1);
+  }
+  run(apkSigner, ['verify', '--verbose', '--print-certs', releaseApkPath]);
+}
+
+function printReleaseApkSha256() {
+  const sha256 = createHash('sha256').update(readFileSync(releaseApkPath)).digest('hex');
+  console.log(`release APK SHA-256: ${sha256}`);
 }
 
 function parseEnvValue(value) {
@@ -116,3 +149,5 @@ run(
 );
 
 verifyReleaseApk();
+verifyReleaseApkSignature();
+printReleaseApkSha256();

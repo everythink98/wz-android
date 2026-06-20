@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { GITHUB_LATEST_RELEASE_URL, UPDATE_APK_NAME, checkGithubAppUpdate, compareAppVersions, getAppUpdateFromRelease } from './appUpdate';
 
-function release(tagName: string, assets = [{ name: UPDATE_APK_NAME, browser_download_url: 'https://example.com/app.apk' }]) {
+function releaseApkUrl(tagName: string) {
+  return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${UPDATE_APK_NAME}`;
+}
+
+function release(tagName: string, assets = [{ name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(tagName) }]) {
   return {
     tag_name: tagName,
     body: '修复问题',
@@ -13,7 +17,7 @@ describe('app update release parsing', () => {
   it('finds a newer APK asset from GitHub release', () => {
     expect(getAppUpdateFromRelease('1.3.6', release('v1.3.7'))).toEqual({
       version: '1.3.7',
-      apkUrl: 'https://example.com/app.apk',
+      apkUrl: releaseApkUrl('v1.3.7'),
       notes: '修复问题'
     });
   });
@@ -27,6 +31,20 @@ describe('app update release parsing', () => {
     expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
       { name: 'app-release.apk', browser_download_url: 'https://example.com/wrong.apk' }
     ]))).toThrow('GitHub Release 未找到 app-arm64-v8a-release.apk。');
+  });
+
+  it('rejects APK assets outside the expected GitHub release URL', () => {
+    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
+      { name: UPDATE_APK_NAME, browser_download_url: 'http://github.com/everythink98/wz-android/releases/download/v1.3.7/app-arm64-v8a-release.apk' }
+    ]))).toThrow('GitHub Release APK 下载地址不可信。');
+
+    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
+      { name: UPDATE_APK_NAME, browser_download_url: 'https://github.com/other/wz-android/releases/download/v1.3.7/app-arm64-v8a-release.apk' }
+    ]))).toThrow('GitHub Release APK 下载地址不可信。');
+
+    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
+      { name: UPDATE_APK_NAME, browser_download_url: 'https://github.com/everythink98/wz-android/releases/download/v1.3.7/app-release.apk' }
+    ]))).toThrow('GitHub Release APK 下载地址不可信。');
   });
 
   it('rejects invalid release tags', () => {
@@ -44,7 +62,7 @@ describe('app update release parsing', () => {
 
     expect(await checkGithubAppUpdate(fetcher as unknown as typeof fetch, '1.3.6')).toMatchObject({
       version: '1.3.7',
-      apkUrl: 'https://example.com/app.apk'
+      apkUrl: releaseApkUrl('v1.3.7')
     });
     expect(fetcher).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_URL, expect.objectContaining({
       headers: {

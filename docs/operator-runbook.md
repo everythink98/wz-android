@@ -20,6 +20,7 @@ npm run release:android
 - 正式发布不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`。
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
+- release 脚本生成 APK 后会用 `apksigner verify --verbose --print-certs` 校验签名，并打印 APK SHA-256；发布说明应记录同一个 SHA-256。
 - 首页、搜索、详情、回复、用户页和详情互动不应直接 import `forumApi`、`yaohuoApi`、`local*` 来源文件或站点 action client，应通过 `src/sources/sourceGateway.ts`。
 - `App.tsx` 应保持入口职责，不承载 WebView、Cookie、来源读取和业务回调。
 - `src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是兼容入口，不应重新塞回大段实现。
@@ -34,7 +35,7 @@ npm run release:android
 - 涉及来源 gateway 时，至少运行 `npm test -- src/sources/sourceGateway.test.ts src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`。
 - 涉及账号区时，至少运行相关账号、会话、来源测试和 `npm run typecheck`；当前账号 UI 位于 `src/screens/MoreScreen.tsx` 与 `src/screens/more/MorePanels.tsx`。
 - 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/androidBestPracticeBoundaries.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts src/screens/topic/topicScreenHelpers.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
-- 发布前运行 `npm run release:android`；它已经包含 `npm test`、`npm run check:unused` 和版本一致性检查。
+- 发布前运行 `npm run release:android`；它已经包含 `npm test`、`npm run check:unused`、版本一致性检查、APK 签名校验和 SHA-256 输出。
 
 ## 模拟器最新代码验证
 

@@ -89,6 +89,23 @@ describe('Android release packaging', () => {
     expect(gitignore).toContain('.env*.local');
   });
 
+  it('verifies the signed release APK and prints its SHA-256', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const assembleIndex = releaseScript.indexOf("':app:assembleRelease'");
+    const verifyApkIndex = releaseScript.indexOf('verifyReleaseApk();');
+    const signerIndex = releaseScript.indexOf('verifyReleaseApkSignature();');
+    const shaIndex = releaseScript.indexOf('printReleaseApkSha256();');
+
+    expect(releaseScript).toContain('apksigner');
+    expect(releaseScript).toContain("'verify'");
+    expect(releaseScript).toContain("'--verbose'");
+    expect(releaseScript).toContain("'--print-certs'");
+    expect(releaseScript).toContain("createHash('sha256')");
+    expect(verifyApkIndex).toBeGreaterThan(assembleIndex);
+    expect(signerIndex).toBeGreaterThan(verifyApkIndex);
+    expect(shaIndex).toBeGreaterThan(signerIndex);
+  });
+
   it('keeps Android permissions scoped down and release cleartext traffic disabled', () => {
     const appConfig = JSON.parse(readProjectFile('app.json'));
     const mainManifest = readOptionalProjectFile('android', 'app', 'src', 'main', 'AndroidManifest.xml');

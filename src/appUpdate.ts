@@ -4,6 +4,8 @@ import { fetchWithTimeout, type Fetcher } from './request';
 export const UPDATE_APK_NAME = 'app-arm64-v8a-release.apk';
 export const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/everythink98/wz-android/releases/latest';
 export const CURRENT_APP_VERSION = String(appConfig.expo.version);
+const GITHUB_RELEASE_APK_HOST = 'github.com';
+const GITHUB_RELEASE_APK_PATH_PREFIX = '/everythink98/wz-android/releases/download/';
 
 export type AppUpdateInfo = {
   version: string;
@@ -41,6 +43,21 @@ function cleanReleaseVersion(tagName: unknown) {
   return parts ? parts.join('.') : null;
 }
 
+function isExpectedReleaseApkUrl(value: string, tagName: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && url.hostname === GITHUB_RELEASE_APK_HOST
+      && !url.username
+      && !url.password
+      && !url.search
+      && !url.hash
+      && url.pathname === `${GITHUB_RELEASE_APK_PATH_PREFIX}${tagName.trim()}/${UPDATE_APK_NAME}`;
+  } catch {
+    return false;
+  }
+}
+
 export function compareAppVersions(left: string, right: string) {
   const leftParts = versionParts(left);
   const rightParts = versionParts(right);
@@ -68,6 +85,9 @@ export function getAppUpdateFromRelease(currentVersion: string, release: GitHubR
   const apk = assets.find((asset) => asset.name === UPDATE_APK_NAME);
   if (typeof apk?.browser_download_url !== 'string') {
     throw new Error(`GitHub Release 未找到 ${UPDATE_APK_NAME}。`);
+  }
+  if (!isExpectedReleaseApkUrl(apk.browser_download_url, release.tag_name)) {
+    throw new Error('GitHub Release APK 下载地址不可信。');
   }
   return {
     version,
