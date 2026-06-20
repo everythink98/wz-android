@@ -1,15 +1,12 @@
 import { Pressable, Text, View } from 'react-native';
-import { CheckCircle, CheckSquare, Circle, Square } from 'lucide-react-native';
+import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '../../types';
+import { pollParticipationLabel, pollTotalVotes } from '../../topicPollDisplay';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, triggerPressFeedback } from '../../components/AppControls';
 
 export function topicPollKey(poll: TopicPoll, index: number) {
   return poll.id || poll.name || `poll-${index}`;
-}
-
-function pollTotalVotes(poll: TopicPoll) {
-  return poll.options.reduce((total, option) => total + (typeof option.count === 'number' ? option.count : 0), 0);
 }
 
 function pollChoiceRangeLabel(poll: TopicPoll) {
@@ -98,9 +95,9 @@ export function TopicPolls({
         const pollMetaItems = [
           pollTypeLabel(poll),
           pollChoiceRangeLabel(poll),
-          hasCounts ? `${totalVotes} 票` : undefined,
           typeof poll.public === 'boolean' ? (poll.public ? '公开' : '不公开') : undefined
         ].filter((item): item is string => Boolean(item));
+        const pollParticipation = pollParticipationLabel(poll);
         const submitLabel = poll.closed
           ? '投票已关闭'
           : poll.voted
@@ -161,6 +158,12 @@ export function TopicPolls({
             </View>
             <View style={styles.pollFooter}>
               <View style={styles.pollMetaWrap}>
+                {pollParticipation ? (
+                  <View style={styles.pollParticipationPill}>
+                    <Users size={14} color={theme.primary} strokeWidth={2} />
+                    <Text style={styles.pollParticipationText}>{pollParticipation}</Text>
+                  </View>
+                ) : null}
                 {pollMetaItems.map((item) => (
                   <Text key={item} style={styles.pollMetaPill}>{item}</Text>
                 ))}

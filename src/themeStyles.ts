@@ -1219,6 +1219,26 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'flex-start',
       width: '100%'
     },
+    pollParticipationPill: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 5,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.15 : 0.075),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.18),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      minHeight: 26,
+      paddingHorizontal: 9,
+      paddingVertical: 3
+    },
+    pollParticipationText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
     pollMetaPill: {
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06),
       borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.12),

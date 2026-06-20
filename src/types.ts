@@ -101,6 +101,7 @@ export interface TopicPoll {
   closed?: boolean;
   public?: boolean;
   readonly?: boolean;
+  participantCount?: number;
   min?: number;
   max?: number;
   options: TopicPollOption[];

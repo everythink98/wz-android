@@ -591,6 +591,7 @@ describe('Android local sources', () => {
             type: 'multiple',
             status: 'open',
             public: true,
+            voters: 2,
             min: 2,
             max: 3,
             options: [
@@ -616,6 +617,7 @@ describe('Android local sources', () => {
       public: true,
       closed: false,
       multiple: true,
+      participantCount: 2,
       min: 2,
       max: 3,
       voted: true,

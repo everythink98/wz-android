@@ -365,6 +365,7 @@ function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
     const type = String(poll.type || '').trim();
     const closedByStatus = String(poll.status || '').trim().toLowerCase() === 'closed';
     const closedByDate = Boolean(poll.close && Date.parse(String(poll.close)) <= Date.now());
+    const participantCount = nonNegativeNumber(poll.voters);
     const min = positiveNumber(poll.min);
     const max = positiveNumber(poll.max);
     return {
@@ -376,6 +377,7 @@ function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
       closed: closedByStatus || closedByDate,
       multiple: type === 'multiple',
       ...(type === 'ranked_choice' || type === 'number' ? { type, readonly: true } : {}),
+      ...(participantCount !== undefined ? { participantCount } : {}),
       ...(min !== undefined ? { min } : {}),
       ...(max !== undefined ? { max } : {}),
       voted: selectedIds.size > 0,
