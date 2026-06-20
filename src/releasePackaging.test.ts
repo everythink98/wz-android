@@ -45,6 +45,22 @@ describe('Android release packaging', () => {
     expect(adaptiveIconIndex).toBeGreaterThan(versionIndex);
   });
 
+  it('does not bind package-lock downloads to a private npm mirror', () => {
+    const lockfile = readProjectFile('package-lock.json');
+
+    expect(lockfile).not.toContain('registry.npmmirror.com');
+  });
+
+  it('runs the core checks in GitHub Actions CI', () => {
+    const workflow = readProjectFile('.github', 'workflows', 'ci.yml');
+
+    expect(workflow).toContain('npm ci');
+    expect(workflow).toContain('npm test');
+    expect(workflow).toContain('npm run typecheck');
+    expect(workflow).toContain('npm run check:unused');
+    expect(workflow).toContain('node scripts/check-version.mjs');
+  });
+
   it('requires formal Android signing for release APKs', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
