@@ -58,6 +58,6 @@ npm run release:android
 
 `npm run android` 需要 Expo development build，不能用 Expo Go 验证。需要 Android Studio 提供 Android SDK / 模拟器，或准备一台已开启 USB 调试的 Android 手机。
 
-`npm run release:android` 会先读取本机 `.env.release.local`，再在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`。正式发布必须配置 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`；不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`。不要提交 keystore、`.env.release.local` 或明文密码。旧 debug 签名包用户切换到正式签名版本时，需要先备份数据再重装。
+`npm run release:android` 会先读取本机 `.env.release.local`，再在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`，随后校验 APK 签名并输出 SHA-256。正式发布必须配置 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`；不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`。不要提交 keystore、`.env.release.local` 或明文密码。旧 debug 签名包用户切换到正式签名版本时，需要先备份数据再重装。
 
 当前本机正式签名配置放在 `.env.release.local`，keystore 放在用户目录的 `.wz-android/` 下。发布前务必备份这两个文件；丢失 keystore 或密码后，同包名新版无法继续覆盖升级旧版。

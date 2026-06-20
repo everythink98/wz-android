@@ -10,6 +10,7 @@
 | --- | --- |
 | `App.tsx` | 应用入口，只加载 `AppRoot` |
 | `src/app/AppRoot.tsx` | App 根组件，组合控制器、主题、导航、Provider、全局弹层、隐藏 WebView 和页面参数 |
+| `src/app/useDeferredNavigationTask.ts` | AppRoot 的延迟导航时机，避免把 `InteractionManager` 细节留在根组件里 |
 | `src/app/use*Controller.ts` | 首页、搜索、详情、用户、账号、会话、验证、备份等运行逻辑 |
 | `src/sources/sourceGateway.ts` | App 统一来源入口，读取和互动请求先进入这里 |
 | `src/forumApi.ts`、`src/yaohuoApi.ts`、站点 action client | 当前来源实现，位于 `sourceGateway` 后面 |
@@ -29,7 +30,8 @@
 
 - App controller 通过 `src/sources/sourceGateway.ts` 读取首页、搜索、详情、回复和用户资料。
 - NodeSeek、linux.do 和妖火的回复、投票、收藏、签到等互动请求也通过 `sourceGateway` 进入。
-- `sourceGateway` 当前是统一门面，内部仍转发到 `forumApi.ts`、`yaohuoApi.ts`、`nodeseekActionClient.ts`、`linuxdoActionClient.ts` 和 `yaohuoActionClient.ts`。
+- App controller 使用不带 `Direct` 的 gateway 语义入口；`Direct` 命名只保留在妖火来源实现和 gateway 转发测试里。
+- `sourceGateway` 内部仍转发到 `forumApi.ts`、`yaohuoApi.ts`、`nodeseekActionClient.ts`、`linuxdoActionClient.ts` 和 `yaohuoActionClient.ts`。
 - `forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
 - 新增 App 调用方应优先使用 `sourceGateway`，不要在 `src/app/*Controller.ts` 里新增对旧来源文件或站点 action client 的直接调用。
 
@@ -55,5 +57,6 @@
 ## 数据边界
 
 - Cookie 只保存在 Android 本机安全存储。
-- 本机资料只通过当前版本 JSON 备份 / 恢复迁移。
+- 搜索历史保存在 `AsyncStorage`，最多 20 条，单条最多 120 字符。
+- 本机资料只通过当前版本 JSON 备份 / 恢复迁移；导入会限制 JSON 大小和嵌套深度。
 - `android/`、`.expo/`、临时截图、日志和 Cookie 数据库都不进入仓库。

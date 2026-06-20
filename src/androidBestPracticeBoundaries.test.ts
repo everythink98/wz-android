@@ -20,6 +20,7 @@ const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataC
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
 const mainTabScrollToTopSource = readProjectFile('src', 'app', 'useMainTabScrollToTop.ts');
 const deferredNavigationTaskSource = readOptionalProjectFile('src', 'app', 'useDeferredNavigationTask.ts');
+const codeCleanupMapSource = readProjectFile('docs', 'code-cleanup-map.md');
 const operatorRunbookSource = readProjectFile('docs', 'operator-runbook.md');
 
 const appReadControllerSources = [
@@ -141,12 +142,19 @@ describe('Android architecture boundaries', () => {
     expect(searchControllerSource).not.toContain('/Cloudflare|验证/');
   });
 
-  it('keeps operator runbook verification files in sync with this repo', () => {
-    expect(operatorRunbookSource).not.toContain('androidArchitectureBoundaries.test.ts');
-    expect(operatorRunbookSource).not.toContain('androidMatureComponents.test.ts');
-    expect(operatorRunbookSource).not.toContain('androidUxUpgrade.test.ts');
-    expect(operatorRunbookSource).not.toContain('appPerformance.test.ts');
-    expect(operatorRunbookSource).not.toContain('appExperience.test.ts');
-    expect(operatorRunbookSource).not.toContain('detailReadingLayout.test.ts');
+  it('keeps documentation verification files in sync with this repo', () => {
+    const obsoleteVerificationFiles = [
+      'androidArchitectureBoundaries.test.ts',
+      'androidMatureComponents.test.ts',
+      'androidUxUpgrade.test.ts',
+      'appPerformance.test.ts',
+      'appExperience.test.ts',
+      'detailReadingLayout.test.ts'
+    ];
+
+    for (const obsoleteVerificationFile of obsoleteVerificationFiles) {
+      expect(operatorRunbookSource).not.toContain(obsoleteVerificationFile);
+      expect(codeCleanupMapSource).not.toContain(obsoleteVerificationFile);
+    }
   });
 });
