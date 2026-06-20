@@ -8,6 +8,10 @@ type ApkInstallerModule = {
   installApk?: (uri: string) => Promise<boolean>;
 };
 
+type CheckAppUpdateOptions = {
+  silent?: boolean;
+};
+
 export function useAppUpdateController({ notify }: { notify: (message: string) => void }) {
   const [appUpdateBusy, setAppUpdateBusy] = useState(false);
   const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
@@ -16,24 +20,33 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
   const appUpdateBusyRef = useRef(false);
   const appUpdateDownloadingRef = useRef(false);
 
-  const checkAppUpdate = useCallback(async () => {
+  const checkAppUpdate = useCallback(async (options: CheckAppUpdateOptions = {}) => {
+    const silent = options.silent === true;
     if (appUpdateBusyRef.current) {
       return;
     }
     appUpdateBusyRef.current = true;
     setAppUpdateBusy(true);
-    setAppUpdateInfo(null);
-    setAppUpdateMessage('正在检查更新');
+    if (!silent) {
+      setAppUpdateInfo(null);
+      setAppUpdateMessage('正在检查更新');
+    }
     try {
       const update = await checkGithubAppUpdate();
       setAppUpdateInfo(update);
-      const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
-      setAppUpdateMessage(message);
-      notify(message);
+      if (update || !silent) {
+        const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
+        setAppUpdateMessage(message);
+        if (!silent) {
+          notify(message);
+        }
+      }
     } catch (error) {
-      const message = errorMessage(error);
-      setAppUpdateMessage(message);
-      notify(message);
+      if (!silent) {
+        const message = errorMessage(error);
+        setAppUpdateMessage(message);
+        notify(message);
+      }
     } finally {
       appUpdateBusyRef.current = false;
       setAppUpdateBusy(false);

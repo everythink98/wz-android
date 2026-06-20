@@ -812,6 +812,21 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 15,
       fontWeight: '600'
     },
+    updateBadge: {
+      alignSelf: 'flex-start',
+      overflow: 'hidden',
+      color: theme.danger,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      lineHeight: 16,
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.07),
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.38 : 0.20),
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 7,
+      paddingVertical: 2
+    },
     menuChevron: {
       marginLeft: 4,
       opacity: 0.45

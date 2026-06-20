@@ -1,14 +1,14 @@
 import { type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, DatabaseBackup, Download, LogIn, Settings } from 'lucide-react-native';
-import type { AppUpdateInfo } from '../appUpdate';
+import { Activity, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
+import { CURRENT_APP_VERSION, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
-import { AppButton, ExpandablePanel, InfoRow, MenuButton } from '../components/AppControls';
+import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
   AppearancePanel,
   BackupRestorePanel,
@@ -31,7 +31,6 @@ export function MoreScreen({
   linuxDoLevelProfile,
   nodeSeekWebViewUserAgent,
   settings,
-  backupJson,
   showLoginPanel,
   showYaohuoLoginPanel,
   showLinuxDoPanel,
@@ -57,11 +56,8 @@ export function MoreScreen({
   handleNodeSeekLoginNavigation,
   handleYaohuoLoginNavigation,
   onHandleLoginMessage,
-  onImportBackup,
-  onExportBackup,
   onExportBackupFile,
   onImportBackupFile,
-  onBackupJsonChange,
   onSetLoadingLoginPage,
   onSetLoadingYaohuoLoginPage,
   onShowLoginPanelChange,
@@ -83,7 +79,6 @@ export function MoreScreen({
   linuxDoLevelProfile: LinuxDoLevelProfile | null;
   nodeSeekWebViewUserAgent: string;
   settings: ReaderSettings;
-  backupJson: string;
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
   showLinuxDoPanel: boolean;
@@ -109,11 +104,8 @@ export function MoreScreen({
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
-  onImportBackup: () => void;
-  onExportBackup: () => void;
   onExportBackupFile: () => void;
   onImportBackupFile: () => void;
-  onBackupJsonChange: (value: string) => void;
   onSetLoadingLoginPage: (value: boolean) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
@@ -129,6 +121,10 @@ export function MoreScreen({
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
   const updateNotes = appUpdateInfo?.notes.trim();
+  const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
+  const appVersionMeta = appUpdateInfo
+    ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
+    : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
   useEffect(() => {
     if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {
       setAccountExpanded(true);
@@ -150,17 +146,30 @@ export function MoreScreen({
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
       <View style={styles.groupList}>
-        <InfoRow icon={Activity} label="关于" value="多网站第三方客户端" styles={styles} theme={theme} />
-        <MenuButton icon={Download} label="检查更新" value={appUpdateBusy ? '检查中' : appUpdateMessage} styles={styles} theme={theme} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
-        {appUpdateInfo ? (
-          <View style={styles.stack}>
-            <Text style={styles.meta}>最新版本 {appUpdateInfo.version}</Text>
-            {updateNotes ? <Text style={styles.meta} numberOfLines={5}>{updateNotes}</Text> : null}
-            <View style={styles.actions}>
-              <AppButton label={appUpdateDownloading ? '下载中' : '下载并安装'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onDownloadAppUpdate} />
-            </View>
+        <View style={styles.menuButton}>
+          <View style={styles.menuIcon}>
+            <Activity size={19} color={theme.primary} strokeWidth={1.8} />
           </View>
-        ) : null}
+          <View style={styles.flex}>
+            <View style={styles.actions}>
+              <Text style={styles.menuLabel}>关于阅坛</Text>
+              {appUpdateInfo ? <Text style={styles.updateBadge}>有新版本</Text> : null}
+            </View>
+            <Text style={styles.meta}>{appVersionMeta}</Text>
+          </View>
+        </View>
+        <View style={styles.actions}>
+          {appUpdateInfo ? (
+            <>
+              <AppButton variant="primary" label={appUpdateDownloading ? '下载中' : '下载并安装'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onDownloadAppUpdate} />
+              <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
+            </>
+          ) : (
+            <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
+          )}
+        </View>
+        {appUpdateStatus ? <Text style={styles.meta} numberOfLines={3}>{appUpdateStatus}</Text> : null}
+        {appUpdateInfo && updateNotes ? <Text style={styles.meta} numberOfLines={5}>{updateNotes}</Text> : null}
       </View>
       <ExpandablePanel
         quiet
@@ -235,7 +244,7 @@ export function MoreScreen({
       <ExpandablePanel
         quiet
         title="备份 / 恢复"
-        meta={backupBusy ? '处理中' : backupJson ? '已有 JSON 内容' : 'JSON 导出和导入'}
+        meta={backupBusy ? '处理中' : '文件导出和恢复'}
         icon={DatabaseBackup}
         expanded={backupExpanded}
         styles={styles}
@@ -243,13 +252,8 @@ export function MoreScreen({
         onExpandedChange={setBackupExpanded}
       >
         <BackupRestorePanel
-          backupJson={backupJson}
           backupBusy={backupBusy}
           styles={styles}
-          theme={theme}
-          onBackupJsonChange={onBackupJsonChange}
-          onExportBackup={onExportBackup}
-          onImportBackup={onImportBackup}
           onExportBackupFile={onExportBackupFile}
           onImportBackupFile={onImportBackupFile}
         />

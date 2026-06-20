@@ -1,5 +1,5 @@
 import { type RefObject, useEffect, useState } from 'react';
-import { TextInput, View } from 'react-native';
+import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { CheckCircle, LogIn } from 'lucide-react-native';
 import type { ReaderSettings } from '../../readerData';
@@ -16,43 +16,21 @@ const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
 
 export function BackupRestorePanel({
-  backupJson,
   backupBusy,
   styles,
-  theme,
-  onBackupJsonChange,
-  onExportBackup,
-  onImportBackup,
   onExportBackupFile,
   onImportBackupFile
 }: {
-  backupJson: string;
   backupBusy: boolean;
   styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onBackupJsonChange: (value: string) => void;
-  onExportBackup: () => void;
-  onImportBackup: () => void;
   onExportBackupFile: () => void;
   onImportBackupFile: () => void;
 }) {
   return (
     <View style={styles.stack}>
-      <TextInput
-        style={styles.input}
-        value={backupJson}
-        onChangeText={onBackupJsonChange}
-        placeholder="粘贴或生成本机资料 JSON"
-        placeholderTextColor={theme.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        multiline
-      />
       <View style={styles.actions}>
-        <AppButton label={backupBusy ? '处理中' : '生成备份'} styles={styles} disabled={backupBusy} onPress={onExportBackup} />
-        <AppButton label={backupBusy ? '处理中' : '恢复备份'} variant="ghost" styles={styles} disabled={backupBusy} onPress={onImportBackup} />
-        <AppButton label="分享 JSON" variant="ghost" styles={styles} disabled={backupBusy} onPress={onExportBackupFile} />
-        <AppButton label="选择 JSON" variant="ghost" styles={styles} disabled={backupBusy} onPress={onImportBackupFile} />
+        <AppButton label={backupBusy ? '处理中' : '导出备份文件'} styles={styles} disabled={backupBusy} onPress={onExportBackupFile} />
+        <AppButton label="选择备份文件恢复" variant="ghost" styles={styles} disabled={backupBusy} onPress={onImportBackupFile} />
       </View>
     </View>
   );

@@ -160,6 +160,7 @@ export function AppRoot() {
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
+  const autoAppUpdateCheckedRef = useRef(false);
   const notify = useCallback((message: string) => {
     if (!message) {
       return;
@@ -702,13 +703,9 @@ export function AppRoot() {
 
   const {
     backupBusy,
-    backupJson,
-    exportBackup,
     exportBackupFile,
-    importBackup,
     importBackupFile,
     refreshAccountStatus,
-    setBackupJson,
     statusBusy
   } = useBackupStatusController({
     clearYaohuoLoginState,
@@ -729,6 +726,13 @@ export function AppRoot() {
     checkAppUpdate,
     downloadAppUpdate
   } = useAppUpdateController({ notify });
+  useEffect(() => {
+    if (autoAppUpdateCheckedRef.current) {
+      return;
+    }
+    autoAppUpdateCheckedRef.current = true;
+    void checkAppUpdate({ silent: true });
+  }, [checkAppUpdate]);
 
   const changeScreen = useCallback((nextScreen: Screen) => {
     const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';
@@ -1264,7 +1268,6 @@ export function AppRoot() {
       linuxDoLevelProfile,
       nodeSeekWebViewUserAgent,
       settings: readerData.settings,
-      backupJson,
       showLoginPanel,
       showYaohuoLoginPanel,
       showLinuxDoPanel,
@@ -1290,11 +1293,8 @@ export function AppRoot() {
       handleNodeSeekLoginNavigation,
       handleYaohuoLoginNavigation,
       onHandleLoginMessage: handleLoginMessage,
-      onImportBackup: importBackup,
-      onExportBackup: exportBackup,
       onExportBackupFile: exportBackupFile,
       onImportBackupFile: importBackupFile,
-      onBackupJsonChange: setBackupJson,
       onSetLoadingLoginPage: setLoadingLoginPage,
       onSetLoadingYaohuoLoginPage: setLoadingYaohuoLoginPage,
       onShowLoginPanelChange: changeNodeSeekLoginPanel,
@@ -1478,6 +1478,7 @@ export function AppRoot() {
               changeLinuxDoPanel={changeLinuxDoPanel}
             />
             <AppNavigator
+              moreHasBadge={Boolean(appUpdateInfo)}
               navigationTheme={navigationTheme}
               renderFeedTab={renderFeedTab}
               renderLibraryTab={renderLibraryTab}

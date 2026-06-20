@@ -36,6 +36,20 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
     navItemIndicatorActive: {
       backgroundColor: theme.primary
     },
+    navIconWrap: {
+      position: 'relative' as const
+    },
+    navBadge: {
+      position: 'absolute' as const,
+      top: -2,
+      right: -7,
+      width: 8,
+      height: 8,
+      borderRadius: 999,
+      borderColor: theme.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.danger
+    },
     navText: {
       color: theme.muted,
       fontFamily: appFontFamily,

@@ -35,6 +35,7 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
 }
 
 export function MainTabsHost({
+  moreHasBadge,
   renderFeedTab,
   renderLibraryTab,
   renderMoreTab,
@@ -43,6 +44,7 @@ export function MainTabsHost({
   theme,
   onTabPress
 }: {
+  moreHasBadge: boolean;
   renderFeedTab: () => ReactNode;
   renderLibraryTab: () => ReactNode;
   renderMoreTab: () => ReactNode;
@@ -61,8 +63,9 @@ export function MainTabsHost({
           tabBarShowLabel: false,
           tabBarStyle: styles.nav,
           tabBarItemStyle: styles.navItem,
+          tabBarAccessibilityLabel: item.value === 'more' && moreHasBadge ? '更多，有可用更新' : item.label,
           tabBarIcon: ({ focused }: { focused: boolean }) => (
-            <TabBarIcon focused={focused} icon={item.icon} label={item.label} styles={styles} theme={theme} />
+            <TabBarIcon focused={focused} icon={item.icon} label={item.label} showBadge={item.value === 'more' && moreHasBadge} styles={styles} theme={theme} />
           )
         };
       }}
@@ -90,6 +93,7 @@ export function MainTabsHost({
 }
 
 export function AppNavigator({
+  moreHasBadge,
   navigationTheme,
   renderFeedTab,
   renderLibraryTab,
@@ -104,6 +108,7 @@ export function AppNavigator({
   onTopicClosing,
   onUserClosing
 }: {
+  moreHasBadge: boolean;
   navigationTheme: Theme;
   renderFeedTab: () => ReactNode;
   renderLibraryTab: () => ReactNode;
@@ -124,6 +129,7 @@ export function AppNavigator({
         <Stack.Screen name="MainTabs">
           {() => (
             <MainTabsHost
+              moreHasBadge={moreHasBadge}
               renderFeedTab={renderFeedTab}
               renderLibraryTab={renderLibraryTab}
               renderMoreTab={renderMoreTab}

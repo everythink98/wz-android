@@ -14,12 +14,14 @@ export function TabBarIcon({
   focused,
   icon,
   label,
+  showBadge = false,
   styles,
   theme
 }: {
   focused: boolean;
   icon: LucideIcon;
   label: string;
+  showBadge?: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
 }) {
@@ -27,7 +29,10 @@ export function TabBarIcon({
   return (
     <View style={styles.navItem}>
       <View style={[styles.navItemIndicator, focused && styles.navItemIndicatorActive]} />
-      <Icon size={21} color={focused ? theme.primary : theme.muted} strokeWidth={1.7} />
+      <View style={styles.navIconWrap}>
+        <Icon size={21} color={focused ? theme.primary : theme.muted} strokeWidth={1.7} />
+        {showBadge ? <View style={styles.navBadge} /> : null}
+      </View>
       <Text style={[styles.navText, focused && styles.navTextActive]}>{label}</Text>
     </View>
   );

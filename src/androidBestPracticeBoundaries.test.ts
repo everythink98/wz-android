@@ -3,8 +3,11 @@ import { readProjectFile } from './sourceTestUtils';
 
 const appEntrySource = readProjectFile('App.tsx');
 const appRootSource = readProjectFile('src', 'app', 'AppRoot.tsx');
+const appNavigatorSource = readProjectFile('src', 'app', 'AppNavigator.tsx');
 const accountControllerSource = readProjectFile('src', 'app', 'useAccountController.ts');
+const appUpdateControllerSource = readProjectFile('src', 'app', 'useAppUpdateController.ts');
 const backupStatusControllerSource = readProjectFile('src', 'app', 'useBackupStatusController.ts');
+const navBarSource = readProjectFile('src', 'components', 'NavBar.tsx');
 const feedControllerSource = readProjectFile('src', 'app', 'useFeedController.ts');
 const appControlsSource = readProjectFile('src', 'components', 'AppControls.tsx');
 const morePanelsSource = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
@@ -80,6 +83,17 @@ describe('Android architecture boundaries', () => {
     expect(moreScreenSource).toContain('disabled={appUpdateBusy}');
   });
 
+  it('auto-checks app updates silently and badges the more tab when a new version exists', () => {
+    expect(appUpdateControllerSource).toContain('silent?: boolean');
+    expect(appUpdateControllerSource).toContain('if (!silent)');
+    expect(appRootSource).toContain('autoAppUpdateCheckedRef');
+    expect(appRootSource).toContain('checkAppUpdate({ silent: true })');
+    expect(appRootSource).toContain('moreHasBadge={Boolean(appUpdateInfo)}');
+    expect(appNavigatorSource).toContain('moreHasBadge');
+    expect(navBarSource).toContain('showBadge');
+    expect(navBarSource).toContain('navBadge');
+  });
+
   it('does not keep React Query when feed categories already bypass caching', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
 
@@ -94,5 +108,11 @@ describe('Android architecture boundaries', () => {
     expect(backupStatusControllerSource).not.toContain('RequestOwner');
     expect(backupStatusControllerSource).not.toContain('backupRequestIdRef');
     expect(backupStatusControllerSource).not.toContain('statusRequestIdRef');
+  });
+
+  it('keeps large backup JSON out of editable UI state', () => {
+    expect(morePanelsSource).not.toContain('TextInput');
+    expect(morePanelsSource).not.toContain('backupJson');
+    expect(backupStatusControllerSource).not.toContain('setBackupJson');
   });
 });

@@ -287,6 +287,7 @@ export function AppButton({
   compact = false,
   disabled = false,
   label,
+  tiny = false,
   variant = 'default',
   styles,
   onPress
@@ -294,6 +295,7 @@ export function AppButton({
   compact?: boolean;
   disabled?: boolean;
   label: string;
+  tiny?: boolean;
   variant?: 'default' | 'danger' | 'ghost' | 'primary';
   styles: ReturnType<typeof createStyles>;
   onPress: () => void;
@@ -304,11 +306,11 @@ export function AppButton({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      style={[styles.button, compact && styles.buttonCompact, variant === 'ghost' && styles.buttonGhost, variant === 'primary' && styles.buttonPrimary, variant === 'danger' && styles.buttonDanger, disabled && styles.buttonDisabled]}
+      style={[styles.button, compact && styles.buttonCompact, tiny && styles.buttonTiny, variant === 'ghost' && styles.buttonGhost, variant === 'primary' && styles.buttonPrimary, variant === 'danger' && styles.buttonDanger, disabled && styles.buttonDisabled]}
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
-      <Text style={[styles.buttonText, compact && styles.buttonTextCompact, variant === 'primary' && styles.buttonTextPrimary, variant === 'danger' && styles.buttonTextDanger]}>{label}</Text>
+      <Text style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, variant === 'primary' && styles.buttonTextPrimary, variant === 'danger' && styles.buttonTextDanger]}>{label}</Text>
     </Pressable>
   );
 }

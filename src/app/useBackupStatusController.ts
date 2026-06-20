@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -53,55 +52,11 @@ export function useBackupStatusController({
   const statusBusyRef = useRef(false);
   const [backupBusy, setBackupBusy] = useState(false);
   const [statusBusy, setStatusBusy] = useState(false);
-  const [backupJson, setBackupJson] = useState('');
-
-  const importBackup = useCallback(async () => {
-    if (backupBusyRef.current) {
-      return;
-    }
-    backupBusyRef.current = true;
-    setBackupBusy(true);
-    try {
-      await waitForReaderDataSave();
-      if (!backupJson.trim()) {
-        notify('请先粘贴备份 JSON');
-        return;
-      }
-      const merged = importReaderBackupJson(readerDataRef.current, backupJson);
-      await replaceReaderData(merged);
-      notify('备份已恢复，本机资料已合并');
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      backupBusyRef.current = false;
-      setBackupBusy(false);
-    }
-  }, [backupJson, notify, readerDataRef, replaceReaderData, waitForReaderDataSave]);
-
-  const exportBackup = useCallback(async () => {
-    if (backupBusyRef.current) {
-      return;
-    }
-    backupBusyRef.current = true;
-    setBackupBusy(true);
-    try {
-      await waitForReaderDataSave();
-      setBackupJson(exportReaderBackupJson(readerDataRef.current));
-      notify('备份 JSON 已生成');
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      backupBusyRef.current = false;
-      setBackupBusy(false);
-    }
-  }, [notify, readerDataRef, waitForReaderDataSave]);
 
   const shareTextFile = useCallback(async (fileName: string, content: string, mimeType: string) => {
     const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
     if (!baseDirectory) {
-      await Clipboard.setStringAsync(content);
-      notify('内容已复制');
-      return;
+      throw new Error('无法生成备份文件，请检查文件权限。');
     }
     const uri = `${baseDirectory}${fileName}`;
     const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
@@ -110,15 +65,14 @@ export function useBackupStatusController({
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, { mimeType });
       } else {
-        await Clipboard.setStringAsync(content);
-        notify('内容已复制');
+        throw new Error('当前设备不支持分享备份文件。');
       }
     } finally {
       if (shouldDeleteFile) {
         await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
       }
     }
-  }, [notify]);
+  }, []);
 
   const exportBackupFile = useCallback(async () => {
     if (backupBusyRef.current) {
@@ -129,7 +83,6 @@ export function useBackupStatusController({
     try {
       await waitForReaderDataSave();
       const content = exportReaderBackupJson(readerDataRef.current);
-      setBackupJson(content);
       await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
       notify('备份文件已生成');
     } catch (error) {
@@ -157,7 +110,6 @@ export function useBackupStatusController({
       const pickedUri = result.assets[0].uri;
       try {
         const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
-        setBackupJson(content);
         const merged = importReaderBackupJson(readerDataRef.current, content);
         await replaceReaderData(merged);
         notify('备份已恢复，本机资料已合并');
@@ -266,13 +218,9 @@ export function useBackupStatusController({
   return {
     abortBackupStatusRequests,
     backupBusy,
-    backupJson,
-    exportBackup,
     exportBackupFile,
-    importBackup,
     importBackupFile,
     refreshAccountStatus,
-    setBackupJson,
     statusBusy
   };
 }
