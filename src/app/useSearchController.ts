@@ -10,6 +10,7 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '../searchFilters';
+import { normalizeSearchHistory, searchHistoryFromRaw } from '../searchHistory';
 import { searchTopics, searchYaohuoDirect } from '../sources/sourceGateway';
 import {
   errorMessage,
@@ -28,18 +29,6 @@ import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
-
-function searchHistoryFromRaw(raw: string | null) {
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string' && Boolean(item.trim())).slice(0, 20) : [];
-  } catch {
-    return [];
-  }
-}
 
 function mergedSearchGroupItemCount(groups: SearchGroup[]) {
   const merged = groups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
@@ -126,11 +115,10 @@ export function useSearchController({
       return;
     }
     setRecentSearches((current) => {
-      const next = [
+      return normalizeSearchHistory([
         clean,
         ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
-      ].slice(0, 20);
-      return next;
+      ]);
     });
   }, []);
 

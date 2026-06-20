@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData, topicKey } from './readerData';
-import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
+import { MAX_BACKUP_JSON_CHARS, exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import type { Topic } from './types';
 
 describe('reader JSON backup', () => {
@@ -49,6 +49,10 @@ describe('reader JSON backup', () => {
     };
 
     expect(() => importReaderBackupJson(local, JSON.stringify(oldBackup))).toThrow('备份格式不兼容');
+  });
+
+  it('rejects backup JSON that is too large to import safely', () => {
+    expect(() => importReaderBackupJson(createEmptyReaderData(), ' '.repeat(MAX_BACKUP_JSON_CHARS + 1))).toThrow('备份文件过大');
   });
 
   it('strips sensitive fields before importing current backups', () => {
