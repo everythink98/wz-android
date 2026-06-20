@@ -725,6 +725,53 @@ describe('Android local sources', () => {
     });
   });
 
+  it('uses linux.do unicode titles from Discourse JSON across lists and detail', async () => {
+    const displayTitle = '🫥完辣，ai又来抢饭碗啦，装机仔下岗';
+    const rawTitle = ':dotted_line_face:完辣，ai又来抢饭碗啦，装机仔下岗';
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/t/2438917.json')) {
+        return json({
+          id: 2438917,
+          title: rawTitle,
+          unicode_title: displayTitle,
+          slug: 'topic',
+          created_at: '2026-06-20T11:15:45.437Z',
+          posts_count: 1,
+          post_stream: {
+            stream: [19367641],
+            posts: [{
+              id: 19367641,
+              post_number: 1,
+              username: 'chancat',
+              cooked: '<p>body</p>',
+              created_at: '2026-06-20T11:15:45.437Z'
+            }]
+          }
+        });
+      }
+      return json({
+        topic_list: {
+          topics: [{
+            id: 2438917,
+            title: rawTitle,
+            unicode_title: displayTitle,
+            slug: 'topic',
+            created_at: '2026-06-20T11:15:45.437Z',
+            bumped_at: '2026-06-20T11:15:45.437Z',
+            posts_count: 1
+          }]
+        },
+        users: []
+      });
+    });
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
+    const topic = await getTopic({ source: 'linuxdo', id: '2438917', fetcher });
+
+    expect(feed.items[0].title).toBe(displayTitle);
+    expect(topic.title).toBe(displayTitle);
+  });
+
   it('keeps linux.do accepted answers and special reply markers from topic JSON', async () => {
     const fetcher = vi.fn(async () => json({
       id: 407,

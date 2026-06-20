@@ -143,7 +143,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   return {
     source: 'linuxdo',
     id,
-    title: String(raw.title || ''),
+    title: String(raw.unicode_title || raw.title || ''),
     author: authorName,
     authorId: authorName || undefined,
     authorAvatar,
