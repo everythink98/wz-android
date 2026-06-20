@@ -11,7 +11,7 @@ import {
   type SourceSearchFilter
 } from '../searchFilters';
 import { normalizeSearchHistory, searchHistoryFromRaw } from '../searchHistory';
-import { searchTopics, searchYaohuoDirect } from '../sources/sourceGateway';
+import { searchTopics, searchYaohuoTopics } from '../sources/sourceGateway';
 import {
   errorMessage,
   finishAbortableRequest,
@@ -179,7 +179,7 @@ export function useSearchController({
       }
       const searchLimit = source === 'linuxdo' ? 50 : 30;
       const data = source === 'yaohuo'
-        ? await searchYaohuoDirect({
+        ? await searchYaohuoTopics({
           query,
           page,
           limit: searchLimit,

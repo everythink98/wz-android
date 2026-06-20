@@ -53,21 +53,21 @@ vi.mock('../yaohuoActionClient', () => yaohuoActionClient);
 
 import {
   checkLinuxDoLoginAccess,
-  checkYaohuoLoginDirect,
+  checkYaohuoLogin,
   getCategories,
   getFeed,
   getLinuxDoLevelProfile,
   getReply,
   getReplies,
   getTopic,
-  getYaohuoFeedDirect,
-  getYaohuoRepliesDirect,
-  getYaohuoTopicDirect,
+  getYaohuoFeed,
+  getYaohuoReplies,
+  getYaohuoTopic,
   getUserProfile,
   runLinuxDoAction,
   runNodeSeekAction,
   runYaohuoAction,
-  searchYaohuoDirect,
+  searchYaohuoTopics,
   searchTopics
 } from './sourceGateway';
 
@@ -257,7 +257,7 @@ describe('sourceGateway', () => {
     expect(forumApi.searchTopics).toHaveBeenCalledWith(options);
   });
 
-  it('forwards getYaohuoFeedDirect to yaohuoApi unchanged', async () => {
+  it('forwards getYaohuoFeed to yaohuoApi unchanged', async () => {
     const response: FeedResponse = { items: [topic], errors: {}, hasMore: false, nextPage: null };
     const options = {
       yaohuoCookie: 'cookie',
@@ -270,12 +270,12 @@ describe('sourceGateway', () => {
     };
     yaohuoApi.getYaohuoFeedDirect.mockResolvedValue(response);
 
-    await expect(getYaohuoFeedDirect(options)).resolves.toBe(response);
+    await expect(getYaohuoFeed(options)).resolves.toBe(response);
 
     expect(yaohuoApi.getYaohuoFeedDirect).toHaveBeenCalledWith(options);
   });
 
-  it('forwards searchYaohuoDirect to yaohuoApi unchanged', async () => {
+  it('forwards searchYaohuoTopics to yaohuoApi unchanged', async () => {
     const response: SearchResponse = { items: [topic], errors: {}, hasMore: false, nextPage: null };
     const options = {
       yaohuoCookie: 'cookie',
@@ -289,12 +289,12 @@ describe('sourceGateway', () => {
     };
     yaohuoApi.searchYaohuoDirect.mockResolvedValue(response);
 
-    await expect(searchYaohuoDirect(options)).resolves.toBe(response);
+    await expect(searchYaohuoTopics(options)).resolves.toBe(response);
 
     expect(yaohuoApi.searchYaohuoDirect).toHaveBeenCalledWith(options);
   });
 
-  it('forwards getYaohuoTopicDirect to yaohuoApi unchanged', async () => {
+  it('forwards getYaohuoTopic to yaohuoApi unchanged', async () => {
     const response: TopicDetail = { ...topic, source: 'yaohuo', contentHtml: '<p>Topic</p>', replies: [reply] };
     const yaohuoTopic: Topic = { ...topic, source: 'yaohuo', categoryId: '177' };
     const options = {
@@ -307,12 +307,12 @@ describe('sourceGateway', () => {
     };
     yaohuoApi.getYaohuoTopicDirect.mockResolvedValue(response);
 
-    await expect(getYaohuoTopicDirect(options)).resolves.toBe(response);
+    await expect(getYaohuoTopic(options)).resolves.toBe(response);
 
     expect(yaohuoApi.getYaohuoTopicDirect).toHaveBeenCalledWith(options);
   });
 
-  it('forwards getYaohuoRepliesDirect to yaohuoApi unchanged', async () => {
+  it('forwards getYaohuoReplies to yaohuoApi unchanged', async () => {
     const response: RepliesResponse = { items: [reply], hasMore: false, nextPage: null };
     const options = {
       id: 'topic-1',
@@ -326,12 +326,12 @@ describe('sourceGateway', () => {
     };
     yaohuoApi.getYaohuoRepliesDirect.mockResolvedValue(response);
 
-    await expect(getYaohuoRepliesDirect(options)).resolves.toBe(response);
+    await expect(getYaohuoReplies(options)).resolves.toBe(response);
 
     expect(yaohuoApi.getYaohuoRepliesDirect).toHaveBeenCalledWith(options);
   });
 
-  it('forwards checkYaohuoLoginDirect to yaohuoApi unchanged', async () => {
+  it('forwards checkYaohuoLogin to yaohuoApi unchanged', async () => {
     const response = { ok: true, loginRequired: false, message: '登录可用' };
     const options = {
       yaohuoCookie: 'cookie',
@@ -341,7 +341,7 @@ describe('sourceGateway', () => {
     };
     yaohuoApi.checkYaohuoLoginDirect.mockResolvedValue(response);
 
-    await expect(checkYaohuoLoginDirect(options)).resolves.toBe(response);
+    await expect(checkYaohuoLogin(options)).resolves.toBe(response);
 
     expect(yaohuoApi.checkYaohuoLoginDirect).toHaveBeenCalledWith(options);
   });

@@ -49,6 +49,10 @@ describe('Android architecture boundaries', () => {
       expect(source).toContain("from '../sources/sourceGateway'");
       expect(source).not.toContain("from '../forumApi'");
       expect(source).not.toContain("from '../yaohuoApi'");
+      expect(source).not.toContain('getYaohuoFeedDirect');
+      expect(source).not.toContain('getYaohuoTopicDirect');
+      expect(source).not.toContain('getYaohuoRepliesDirect');
+      expect(source).not.toContain('searchYaohuoDirect');
     }
   });
 
@@ -59,6 +63,7 @@ describe('Android architecture boundaries', () => {
       expect(source).not.toContain("from '../linuxdoActionClient'");
       expect(source).not.toContain("from '../yaohuoActionClient'");
       expect(source).not.toContain("from '../linuxdoLevel'");
+      expect(source).not.toContain('checkYaohuoLoginDirect');
     }
   });
 

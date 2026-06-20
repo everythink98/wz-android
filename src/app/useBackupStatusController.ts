@@ -3,7 +3,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
-import { checkLinuxDoLoginAccess, checkYaohuoLoginDirect } from '../sources/sourceGateway';
+import { checkLinuxDoLoginAccess, checkYaohuoLogin } from '../sources/sourceGateway';
 import type { ReaderData } from '../readerData';
 import { exportReaderBackupJson, importReaderBackupJson } from '../readerBackup';
 import {
@@ -146,7 +146,7 @@ export function useBackupStatusController({
         })
         : Promise.resolve(undefined);
       const yaohuoStatusPromise = yaohuoCookie
-        ? checkYaohuoLoginDirect({ yaohuoCookie, signal: controller.signal })
+        ? checkYaohuoLogin({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
       const [yaohuoCheck, linuxDoLoginCheck] = await Promise.allSettled([yaohuoStatusPromise, linuxDoLoginPromise] as const);
       if (controller.signal.aborted) {

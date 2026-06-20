@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCategories, getFeed, getYaohuoFeedDirect } from '../sources/sourceGateway';
+import { getCategories, getFeed, getYaohuoFeed } from '../sources/sourceGateway';
 import { shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
   applyFeedFilter,
@@ -271,7 +271,7 @@ export function useFeedController({
             signal: controller.signal
           })
           : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-        const yaohuoPromise = getYaohuoFeedDirect({
+        const yaohuoPromise = getYaohuoFeed({
           yaohuoCookie,
           page,
           limit: 30,
@@ -299,7 +299,7 @@ export function useFeedController({
           ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
         };
       } else if (source === 'yaohuo') {
-        const data = await getYaohuoFeedDirect({
+        const data = await getYaohuoFeed({
           yaohuoCookie,
           page,
           limit: 30,

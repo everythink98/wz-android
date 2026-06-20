@@ -3,8 +3,8 @@ import {
   getReply,
   getReplies,
   getTopic,
-  getYaohuoRepliesDirect,
-  getYaohuoTopicDirect
+  getYaohuoReplies,
+  getYaohuoTopic
 } from '../sources/sourceGateway';
 import {
   recordHistory,
@@ -268,7 +268,7 @@ export function useTopicController({
         return;
       }
       const detail = topic.source === 'yaohuo'
-        ? await getYaohuoTopicDirect({ topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
+        ? await getYaohuoTopic({ topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
         : await getTopic({
           source: topic.source,
           id: topic.id,
@@ -411,7 +411,7 @@ export function useTopicController({
         replyNextPage
       });
       const data = detail.source === 'yaohuo'
-        ? await getYaohuoRepliesDirect({
+        ? await getYaohuoReplies({
           id: detail.id,
           categoryId: detail.categoryId,
           page: targetPage,
@@ -526,7 +526,7 @@ export function useTopicController({
       }
       controller = startAbortableRequest(repliesAbortRef);
       const data = detail.source === 'yaohuo'
-        ? await getYaohuoRepliesDirect({
+        ? await getYaohuoReplies({
           id: detail.id,
           categoryId: detail.categoryId,
           page: replyNextPage,

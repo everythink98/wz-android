@@ -30,7 +30,7 @@ import {
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError
 } from '../appUtils';
-import { checkYaohuoLoginDirect, getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../sources/sourceGateway';
+import { checkYaohuoLogin, getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
@@ -221,7 +221,7 @@ export function useAccountController({
         notify('没有检测到明确的妖火登录 Cookie。请确认已经登录后再试。');
         return;
       }
-      const yaohuoLoginCheck = await checkYaohuoLoginDirect({ yaohuoCookie: cookieHeader });
+      const yaohuoLoginCheck = await checkYaohuoLogin({ yaohuoCookie: cookieHeader });
       if (requestId !== checkingRequestIdRef.current) {
         return;
       }
