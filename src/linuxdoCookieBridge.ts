@@ -190,8 +190,10 @@ export async function readLinuxDoCookiesFromStores({
   readCookieManagerStore?: LinuxDoCookieStoreReader;
   timeoutMs?: number;
 } = {}) {
-  const androidStoreCookies = await withLinuxDoCookieReadTimeout(readAndroidStore(), {}, timeoutMs);
-  const cookieManagerCookies = await withLinuxDoCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs);
+  const [androidStoreCookies, cookieManagerCookies] = await Promise.all([
+    withLinuxDoCookieReadTimeout(readAndroidStore(), {}, timeoutMs),
+    withLinuxDoCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs)
+  ]);
   return mergeLinuxDoCookies(androidStoreCookies, cookieManagerCookies);
 }
 

@@ -53,4 +53,23 @@ describe('NodeSeek WebView cookie bridge', () => {
 
     expect(buildCookieHeader(cookies)).toBe('session=abc');
   });
+
+  it('reads Android and CookieManager stores concurrently', async () => {
+    let androidReadResolved = false;
+    let cookieManagerStartedBeforeAndroidResolved = false;
+    await readNodeSeekCookiesFromStores({
+      readAndroidStore: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        androidReadResolved = true;
+        return {};
+      },
+      readCookieManagerStore: async () => {
+        cookieManagerStartedBeforeAndroidResolved = !androidReadResolved;
+        return parseNodeSeekDocumentCookie('session=abc');
+      },
+      timeoutMs: 50
+    });
+
+    expect(cookieManagerStartedBeforeAndroidResolved).toBe(true);
+  });
 });

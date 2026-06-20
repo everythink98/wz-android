@@ -68,8 +68,10 @@ export async function readNodeSeekCookiesFromStores({
   readCookieManagerStore?: NodeSeekCookieStoreReader;
   timeoutMs?: number;
 } = {}) {
-  const androidStoreCookies = await withNodeSeekCookieReadTimeout(readAndroidStore(), {}, timeoutMs);
-  const cookieManagerCookies = await withNodeSeekCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs);
+  const [androidStoreCookies, cookieManagerCookies] = await Promise.all([
+    withNodeSeekCookieReadTimeout(readAndroidStore(), {}, timeoutMs),
+    withNodeSeekCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs)
+  ]);
   return mergeNodeSeekCookies(androidStoreCookies, cookieManagerCookies);
 }
 

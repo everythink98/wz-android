@@ -169,6 +169,25 @@ describe('linux.do Cloudflare helpers', () => {
     expect(readCookieManagerStore).toHaveBeenCalled();
   });
 
+  it('reads Android and CookieManager stores concurrently', async () => {
+    let androidReadResolved = false;
+    let cookieManagerStartedBeforeAndroidResolved = false;
+    await readLinuxDoCookiesFromStores({
+      readAndroidStore: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        androidReadResolved = true;
+        return {};
+      },
+      readCookieManagerStore: async () => {
+        cookieManagerStartedBeforeAndroidResolved = !androidReadResolved;
+        return parseLinuxDoDocumentCookie('_t=login');
+      },
+      timeoutMs: 50
+    });
+
+    expect(cookieManagerStartedBeforeAndroidResolved).toBe(true);
+  });
+
   it('can clear only the saved linux.do access state', async () => {
     vi.mocked(SecureStore.deleteItemAsync).mockClear();
 
