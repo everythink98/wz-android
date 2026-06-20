@@ -29,7 +29,7 @@ const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
 const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
 
-type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
+export type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 type Ref<T> = MutableRefObject<T>;
 
 export function useVerificationController({

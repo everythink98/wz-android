@@ -3,7 +3,6 @@ import {
   AppState,
   BackHandler,
   FlatList,
-  InteractionManager,
   KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
@@ -38,10 +37,11 @@ import { useTopicController } from './useTopicController';
 import { useTopicNavigationController } from './useTopicNavigationController';
 import { useTopicUiStateController } from './useTopicUiStateController';
 import { useUserController } from './useUserController';
-import { useVerificationController } from './useVerificationController';
+import { useVerificationController, type DeferredNavigationTask } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTopicActionsController } from './useTopicActionsController';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
+import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoCookieBridge';
@@ -88,9 +88,7 @@ type UserReturnTopic = {
   snapshot: TopicSnapshot;
   backStack: TopicSnapshot[];
 };
-type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
-const NAVIGATION_DEFERRED_TASK_FALLBACK_MS = 420;
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
 
@@ -114,10 +112,6 @@ export function AppRoot() {
   const actionRequestIdRef = useRef(0);
   const topicActionRequestOwnerRef = useRef(createTopicActionRequestOwner());
   const actionAbortRef = useRef<AbortController | null>(null);
-  const navigationTransitionTaskRef = useRef<(() => void) | null>(null);
-  const navigationTransitionFallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const navigationInteractionTaskRef = useRef<DeferredNavigationTask | null>(null);
-  const navigationInteractionTaskIdRef = useRef(0);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
@@ -157,6 +151,11 @@ export function AppRoot() {
   const linuxDoBrowserFetchQueueRef = useRef<PendingLinuxDoBrowserFetchRequest[]>([]);
   const rejectLinuxDoBrowserFetchRef = useRef<((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null>(null);
   const linuxDoLevelRequestIdRef = useRef(0);
+  const {
+    cancelDeferredNavigationTask,
+    flushDeferredNavigationTask,
+    runAfterNavigationInteractions
+  } = useDeferredNavigationTask();
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
@@ -258,46 +257,10 @@ export function AppRoot() {
       };
     });
   }, [topicReplies]);
-  const cancelDeferredNavigationTask = useCallback(() => {
-    navigationInteractionTaskIdRef.current += 1;
-    navigationTransitionTaskRef.current = null;
-    if (navigationTransitionFallbackTimerRef.current) {
-      clearTimeout(navigationTransitionFallbackTimerRef.current);
-      navigationTransitionFallbackTimerRef.current = null;
-    }
-    navigationInteractionTaskRef.current?.cancel();
-    navigationInteractionTaskRef.current = null;
-  }, []);
   const cancelLinuxDoPendingReopenTask = useCallback(() => {
     linuxDoPendingReopenTaskRef.current?.cancel();
     linuxDoPendingReopenTaskRef.current = null;
   }, []);
-  const flushDeferredNavigationTask = useCallback(() => {
-    const task = navigationTransitionTaskRef.current;
-    if (!task) {
-      return;
-    }
-    navigationTransitionTaskRef.current = null;
-    if (navigationTransitionFallbackTimerRef.current) {
-      clearTimeout(navigationTransitionFallbackTimerRef.current);
-      navigationTransitionFallbackTimerRef.current = null;
-    }
-    navigationInteractionTaskRef.current?.cancel();
-    const taskId = ++navigationInteractionTaskIdRef.current;
-    const handle = InteractionManager.runAfterInteractions(() => {
-      if (navigationInteractionTaskIdRef.current !== taskId) {
-        return;
-      }
-      navigationInteractionTaskRef.current = null;
-      task();
-    });
-    navigationInteractionTaskRef.current = handle;
-  }, []);
-  const runAfterNavigationInteractions = useCallback((task: () => void) => {
-    cancelDeferredNavigationTask();
-    navigationTransitionTaskRef.current = task;
-    navigationTransitionFallbackTimerRef.current = setTimeout(flushDeferredNavigationTask, NAVIGATION_DEFERRED_TASK_FALLBACK_MS);
-  }, [cancelDeferredNavigationTask, flushDeferredNavigationTask]);
   const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings]);
   const navigationTheme = useMemo(() => {
     const base = theme.dark ? DarkTheme : DefaultTheme;

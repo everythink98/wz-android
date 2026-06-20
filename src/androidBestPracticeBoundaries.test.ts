@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readProjectFile } from './sourceTestUtils';
+import { readOptionalProjectFile, readProjectFile } from './sourceTestUtils';
 
 const appEntrySource = readProjectFile('App.tsx');
 const appRootSource = readProjectFile('src', 'app', 'AppRoot.tsx');
@@ -19,6 +19,7 @@ const topicCardSource = readProjectFile('src', 'components', 'TopicCard.tsx');
 const readerDataControllerSource = readProjectFile('src', 'app', 'useReaderDataController.ts');
 const userControllerSource = readProjectFile('src', 'app', 'useUserController.ts');
 const mainTabScrollToTopSource = readProjectFile('src', 'app', 'useMainTabScrollToTop.ts');
+const deferredNavigationTaskSource = readOptionalProjectFile('src', 'app', 'useDeferredNavigationTask.ts');
 const operatorRunbookSource = readProjectFile('docs', 'operator-runbook.md');
 
 const appReadControllerSources = [
@@ -88,6 +89,12 @@ describe('Android architecture boundaries', () => {
     expect(mainTabScrollToTopSource).toContain("if (target === 'more')");
     expect(mainTabScrollToTopSource).toContain('return;');
     expect(mainTabScrollToTopSource).not.toContain('more: 0');
+  });
+
+  it('keeps deferred navigation timing out of AppRoot', () => {
+    expect(appRootSource).toContain('useDeferredNavigationTask');
+    expect(appRootSource).not.toContain('InteractionManager');
+    expect(deferredNavigationTaskSource).toContain('InteractionManager.runAfterInteractions');
   });
 
   it('disables app update checks while a check is already running', () => {
