@@ -76,16 +76,25 @@ export function useReaderDataController({
   const waitForReaderDataSave = useCallback(() => saveQueueRef.current, []);
 
   useEffect(() => {
+    let active = true;
     void loadReaderData()
       .then((savedReaderData) => {
+        if (!active) {
+          return;
+        }
         readerDataRef.current = savedReaderData;
         setReaderData(savedReaderData);
-      })
-      .catch((error) => notify(errorMessage(error)))
-      .finally(() => {
         readerDataLoadedRef.current = true;
         setReaderDataLoaded(true);
+      })
+      .catch((error) => {
+        if (active) {
+          notify(`本机资料读取失败，已暂停本地写入：${errorMessage(error)}`);
+        }
       });
+    return () => {
+      active = false;
+    };
   }, [notify]);
 
   return {

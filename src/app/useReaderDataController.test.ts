@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createEmptyReaderData, toggleFavorite, topicKey } from '../readerData';
 import type { Topic } from '../types';
@@ -26,5 +27,15 @@ describe('reader data controller helpers', () => {
     const next = prepareReaderDataCommit(current, (value) => toggleFavorite(value, topic));
 
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
+  });
+
+  it('does not mark reader data as loaded from a failed load path', () => {
+    const source = readFileSync(__filename.replace(/\.test\.ts$/, '.ts'), 'utf8');
+    const loadEffect = source.slice(source.indexOf('void loadReaderData()'), source.indexOf('return {'));
+    const failedLoadPath = loadEffect.slice(loadEffect.indexOf('.catch((error)'));
+
+    expect(failedLoadPath).not.toContain('readerDataLoadedRef.current = true');
+    expect(failedLoadPath).not.toContain('setReaderDataLoaded(true)');
+    expect(source).not.toContain('.finally(() => {\n        readerDataLoadedRef.current = true;');
   });
 });

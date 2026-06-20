@@ -78,9 +78,9 @@ const readerSettingsSchema = z.object({
 }).passthrough();
 const readerDataSchema = z.object({
   version: z.literal(readerDataVersion),
-  favorites: z.record(z.string(), z.unknown()).optional(),
-  history: z.record(z.string(), z.unknown()).optional(),
-  followedUsers: z.record(z.string(), z.unknown()).optional(),
+  favorites: z.unknown().optional(),
+  history: z.unknown().optional(),
+  followedUsers: z.unknown().optional(),
   deletedRecords: z.unknown().optional(),
   settings: z.unknown().optional()
 }).passthrough();

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createEmptyReaderData } from './readerData';
+import { createEmptyReaderData, topicKey } from './readerData';
 import { loadReaderData, saveReaderData } from './readerDataStore';
+import type { Topic } from './types';
 
 vi.mock('expo-secure-store', () => {
   const store = new Map<string, string>();
@@ -37,6 +38,17 @@ vi.mock('@react-native-async-storage/async-storage', () => {
 const secureStore = SecureStore as typeof SecureStore & { __store: Map<string, string> };
 const asyncStorage = AsyncStorage as typeof AsyncStorage & { __store: Map<string, string> };
 
+const topic: Topic = {
+  source: 'nodeseek',
+  id: '723704',
+  title: 'NodeSeek topic',
+  author: 'alice',
+  category: '日常',
+  url: 'https://www.nodeseek.com/post-723704-1',
+  createdAt: '2026-05-18T11:34:13.000Z',
+  replyCount: 2
+};
+
 describe('reader data store', () => {
   beforeEach(() => {
     secureStore.__store.clear();
@@ -66,24 +78,43 @@ describe('reader data store', () => {
     expect(secureStore.__store.get('nodeseek-cookie-header')).toBe('session=secret');
   });
 
-  it('replaces damaged AsyncStorage data with a clean reader data object', async () => {
+  it('preserves damaged AsyncStorage data instead of replacing it with empty data', async () => {
     asyncStorage.__store.set('reader-data', '{bad json');
 
-    const data = await loadReaderData();
+    await expect(loadReaderData()).rejects.toThrow('本机资料已损坏');
 
-    expect(data).toEqual(createEmptyReaderData());
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data-corrupt-backup', '{bad json');
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(createEmptyReaderData()));
+    expect(asyncStorage.__store.get('reader-data')).toBe('{bad json');
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
-  it('rewrites structurally invalid AsyncStorage data as clean reader data', async () => {
-    const raw = JSON.stringify({ version: 2, favorites: 'bad' });
+  it('preserves unsupported reader data versions instead of replacing them with empty data', async () => {
+    const raw = JSON.stringify({ ...createEmptyReaderData(), version: 1 });
+    asyncStorage.__store.set('reader-data', raw);
+
+    await expect(loadReaderData()).rejects.toThrow('本机资料版本不受支持');
+
+    expect(asyncStorage.__store.get('reader-data')).toBe(raw);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('keeps valid sections when another current-version section is damaged', async () => {
+    const raw = JSON.stringify({
+      ...createEmptyReaderData(),
+      favorites: 'bad',
+      history: {
+        [topicKey(topic)]: {
+          topic,
+          savedAt: '2026-05-20T00:00:00.000Z'
+        }
+      }
+    });
     asyncStorage.__store.set('reader-data', raw);
 
     const data = await loadReaderData();
 
-    expect(data).toEqual(createEmptyReaderData());
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data-corrupt-backup', raw);
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(createEmptyReaderData()));
+    expect(data.history[topicKey(topic)]?.topic).toEqual(topic);
+    expect(data.favorites).toEqual({});
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
+    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('reader-data-corrupt-backup', raw);
   });
 });
