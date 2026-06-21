@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { safeFileName } from './backupFiles';
-import { dataImageFileFromUrl, imageRequestHeadersForUrl } from './htmlImages';
+import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './htmlImages';
 
 function imageFileExtension(uri: string) {
   return uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
@@ -41,6 +41,9 @@ export async function saveImageUriToLibrary(uri: string) {
   let savedUri = '';
   try {
     const dataImage = dataImageFileFromUrl(uri);
+    if (!dataImage && !isHttpOrHttpsUrl(uri)) {
+      throw new Error('图片地址不支持保存');
+    }
     const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || imageFileExtension(uri))}`;
     if (dataImage) {
       await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });

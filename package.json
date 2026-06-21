@@ -37,7 +37,7 @@
     "expo-status-bar": "~3.0.9",
     "fast-xml-parser": "^5.8.0",
     "lucide-react-native": "^1.16.0",
-    "markdown-it": "^14.1.1",
+    "markdown-it": "^14.2.0",
     "node-html-parser": "^7.1.0",
     "react": "19.1.0",
     "react-native": "0.81.5",

@@ -72,6 +72,14 @@ describe('image library saving', () => {
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
   });
 
+  it('rejects unsupported image URL schemes before downloading', async () => {
+    await expect(saveImageUriToLibrary('javascript:alert(1)')).rejects.toThrow('图片地址不支持保存');
+
+    expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
+    expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
+    expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
+  });
+
   it('saves data images and removes the temporary file afterwards', async () => {
     await saveImageUriToLibrary('data:image/png;base64,abc123');
 
