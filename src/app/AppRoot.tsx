@@ -24,6 +24,7 @@ import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekCookies';
 import type { TopicRecord } from '../readerData';
 import { useReaderDataController } from './useReaderDataController';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
+import { useReaderSettingsController } from './useReaderSettingsController';
 import { useBackupStatusController } from './useBackupStatusController';
 import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
@@ -220,13 +221,13 @@ export function AppRoot() {
     removeFollowedUser,
     removeLibraryTopic,
     toggleTopicFavorite,
-    toggleUserFollow,
-    updateSettings
+    toggleUserFollow
   } = useReaderDataActionsController({
     commitReaderData,
     libraryTab,
     readerDataRef
   });
+  const { updateSettings } = useReaderSettingsController({ commitReaderData });
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
   const [topicError, setTopicError] = useState('');

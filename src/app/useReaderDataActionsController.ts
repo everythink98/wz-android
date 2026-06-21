@@ -5,8 +5,7 @@ import {
   removeRecords,
   toggleFavorite,
   toggleFollowedUser,
-  type ReaderData,
-  type ReaderSettings
+  type ReaderData
 } from '../readerData';
 import type { LibraryTab } from '../feedLogic';
 import type { Topic, UserProfile } from '../types';
@@ -20,16 +19,6 @@ export function useReaderDataActionsController({
   libraryTab: LibraryTab;
   readerDataRef: MutableRefObject<ReaderData>;
 }) {
-  const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
-    commitReaderData((current) => ({
-      ...current,
-      settings: {
-        ...current.settings,
-        ...patch
-      }
-    }));
-  }, [commitReaderData]);
-
   const toggleTopicFavorite = useCallback((topic: Topic) => {
     commitReaderData((current) => toggleFavorite(current, topic));
   }, [commitReaderData]);
@@ -60,7 +49,6 @@ export function useReaderDataActionsController({
     removeFollowedUser,
     removeLibraryTopic,
     toggleTopicFavorite,
-    toggleUserFollow,
-    updateSettings
+    toggleUserFollow
   };
 }
