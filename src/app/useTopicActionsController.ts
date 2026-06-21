@@ -62,6 +62,7 @@ import type { CredentialClearOptions, CredentialLoadOptions } from './sessionCon
 import {
   beginOptimisticTopicAction,
   clearExpiredLinuxDoLogin,
+  runSingleTopicAction,
   isNodeSeekLoginRequiredError,
   runOptimisticActionQueue as runOptimisticActionQueueHelper
 } from './topicActionHelpers';
@@ -166,6 +167,7 @@ export function useTopicActionsController({
   const canUseYaohuoActions = isSiteLoggedIn(siteSessionStates.yaohuo);
   const canUseLinuxDoActions = isSiteLoggedIn(siteSessionStates.linuxdo);
   const topicActionOwnersRef = useRef<TopicActionOwnerMap>({});
+  const pendingTopicActionsRef = useRef<Record<string, true>>({});
 
   const startTopicActionRequest = useCallback((key: string) => (
     startTopicActionRequestOwner(topicActionRequestOwnerRef, topicActionOwnersRef, key)
@@ -180,6 +182,15 @@ export function useTopicActionsController({
   const isCurrentTopicActionRequest = useCallback((requestOwner: TopicActionRequestOwner) => (
     isCurrentTopicActionRequestOwner(requestOwner, topicActionRequestOwnerRef, topicActionOwnersRef)
   ), [topicActionRequestOwnerRef]);
+
+  const runSingleNonIdempotentTopicAction = useCallback(<T,>(key: string, task: () => Promise<T>) => (
+    runSingleTopicAction({
+      key,
+      notifyDuplicate: () => notify('操作正在提交，请稍后。'),
+      pendingActions: pendingTopicActionsRef,
+      task
+    })
+  ), [notify]);
 
   const runNodeSeekRequest = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
@@ -508,21 +519,59 @@ export function useTopicActionsController({
       notify('请输入回复内容');
       return;
     }
-    const requestOwner = startTopicActionRequest(requestTopicKey);
-    if (isYaohuoActionTopic(detail)) {
-      if (replyTarget && !replyTarget.authorId) {
-        notify('当前楼层缺少用户 id，刷新主题后再试。');
+    await runSingleNonIdempotentTopicAction(`reply:${requestTopicKey}`, async () => {
+      const requestOwner = startTopicActionRequest(requestTopicKey);
+      if (isYaohuoActionTopic(detail)) {
+        if (replyTarget && !replyTarget.authorId) {
+          notify('当前楼层缺少用户 id，刷新主题后再试。');
+          return;
+        }
+        const submitted = await runYaohuoRequest(
+          (cookieHeader) => buildYaohuoReplyRequest({
+            topicId: detail.id,
+            classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+            content: replyContent,
+            sid: extractYaohuoSid(cookieHeader),
+            replyFloor: replyTarget?.floor,
+            toUserId: replyTarget?.authorId
+          }),
+          '回复已提交',
+          { owner: requestOwner }
+        );
+        if (submitted) {
+          if (!isCurrentTopicActionRequest(requestOwner)) {
+            return;
+          }
+          setReplyContent('');
+          setReplyComposerOpen(false);
+          setReplyTarget(null);
+          await refreshTopicReplies({ silent: true, afterSubmit: true });
+        }
         return;
       }
-      const submitted = await runYaohuoRequest(
-        (cookieHeader) => buildYaohuoReplyRequest({
-          topicId: detail.id,
-          classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-          content: replyContent,
-          sid: extractYaohuoSid(cookieHeader),
-          replyFloor: replyTarget?.floor,
-          toUserId: replyTarget?.authorId
-        }),
+      if (isLinuxDoActionTopic(detail)) {
+        const submitted = await runLinuxDoRequest(
+          () => buildLinuxDoReplyRequest({
+            topicId: detail.id,
+            content: replyContent,
+            replyToPostNumber: replyTarget?.floor
+          }),
+          '回复已提交',
+          { owner: requestOwner }
+        );
+        if (submitted) {
+          if (!isCurrentTopicActionRequest(requestOwner)) {
+            return;
+          }
+          setReplyContent('');
+          setReplyComposerOpen(false);
+          setReplyTarget(null);
+          await refreshTopicReplies({ silent: true, afterSubmit: true });
+        }
+        return;
+      }
+      const submitted = await runNodeSeekRequest(
+        () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
         '回复已提交',
         { owner: requestOwner }
       );
@@ -535,51 +584,15 @@ export function useTopicActionsController({
         setReplyTarget(null);
         await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
-      return;
-    }
-    if (isLinuxDoActionTopic(detail)) {
-      const submitted = await runLinuxDoRequest(
-        () => buildLinuxDoReplyRequest({
-          topicId: detail.id,
-          content: replyContent,
-          replyToPostNumber: replyTarget?.floor
-        }),
-        '回复已提交',
-        { owner: requestOwner }
-      );
-      if (submitted) {
-        if (!isCurrentTopicActionRequest(requestOwner)) {
-          return;
-        }
-        setReplyContent('');
-        setReplyComposerOpen(false);
-        setReplyTarget(null);
-        await refreshTopicReplies({ silent: true, afterSubmit: true });
-      }
-      return;
-    }
-    const submitted = await runNodeSeekRequest(
-      () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
-      '回复已提交',
-      { owner: requestOwner }
-    );
-    if (submitted) {
-      if (!isCurrentTopicActionRequest(requestOwner)) {
-        return;
-      }
-      setReplyContent('');
-      setReplyComposerOpen(false);
-      setReplyTarget(null);
-      await refreshTopicReplies({ silent: true, afterSubmit: true });
-    }
-  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyTarget, startTopicActionRequest, topicDetail]);
+    });
+  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyTarget, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
-    await runNodeSeekRequest(
+    await runSingleNonIdempotentTopicAction('nodeseek:attendance', () => runNodeSeekRequest(
       () => buildNodeSeekAttendanceRequest({ random: false }),
       '签到请求已提交'
-    );
-  }, [runNodeSeekRequest]);
+    ));
+  }, [runNodeSeekRequest, runSingleNonIdempotentTopicAction]);
 
   const interact = useCallback(async (type: InteractionType, commentId?: number) => {
     if (!commentId) {
@@ -662,15 +675,15 @@ export function useTopicActionsController({
     if (!isYaohuoActionTopic(detail)) {
       return;
     }
-    await runYaohuoRequest(
+    await runSingleNonIdempotentTopicAction(`yaohuo-favorite:${topicKey(detail)}`, () => runYaohuoRequest(
       () => buildYaohuoFavoriteRequest({
         topicId: detail.id,
         classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
       }),
       '原站收藏已提交',
       { owner: startTopicActionRequest(topicKey(detail)) }
-    );
-  }, [runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+    ));
+  }, [runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const collectOnNodeSeekSite = useCallback(async () => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -763,57 +776,59 @@ export function useTopicActionsController({
       return;
     }
     const requestTopicKey = topicKey(detail);
-    const requestOwner = startTopicActionRequest(requestTopicKey);
-    let submitted: unknown = false;
-    if (isNodeSeekActionTopic(detail)) {
-      submitted = await runNodeSeekRequest(
-        () => buildNodeSeekVoteRequest({ optionIds }),
-        '投票已提交',
-        { owner: requestOwner }
-      );
-    } else if (isLinuxDoActionTopic(detail)) {
-      if (!poll.postId || !poll.name) {
-        notify('当前投票信息不完整，刷新主题后再试。');
-        return;
+    await runSingleNonIdempotentTopicAction(`vote:${requestTopicKey}:${poll.id || poll.name || poll.postId || 'poll'}`, async () => {
+      const requestOwner = startTopicActionRequest(requestTopicKey);
+      let submitted: unknown = false;
+      if (isNodeSeekActionTopic(detail)) {
+        submitted = await runNodeSeekRequest(
+          () => buildNodeSeekVoteRequest({ optionIds }),
+          '投票已提交',
+          { owner: requestOwner }
+        );
+      } else if (isLinuxDoActionTopic(detail)) {
+        if (!poll.postId || !poll.name) {
+          notify('当前投票信息不完整，刷新主题后再试。');
+          return;
+        }
+        submitted = await runLinuxDoRequest(
+          () => buildLinuxDoPollVoteRequest({
+            postId: poll.postId || '',
+            pollName: poll.name || '',
+            optionIds
+          }),
+          '投票已提交',
+          { owner: requestOwner }
+        );
+      } else {
+        submitted = await runYaohuoRequest(
+          () => buildYaohuoVoteRequest({
+            topicId: detail.id,
+            classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
+            voteIds: optionIds
+          }),
+          '投票已提交',
+          { owner: requestOwner }
+        );
       }
-      submitted = await runLinuxDoRequest(
-        () => buildLinuxDoPollVoteRequest({
-          postId: poll.postId || '',
-          pollName: poll.name || '',
+      if (submitted) {
+        if (!isCurrentTopicActionRequest(requestOwner)) {
+          return;
+        }
+        setTopicDetail((current) => applyPollVoteToTopic(current, {
+          pollId: poll.id,
+          pollName: poll.name,
+          pollPostId: poll.postId,
           optionIds
-        }),
-        '投票已提交',
-        { owner: requestOwner }
-      );
-    } else {
-      submitted = await runYaohuoRequest(
-        () => buildYaohuoVoteRequest({
-          topicId: detail.id,
-          classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-          voteIds: optionIds
-        }),
-        '投票已提交',
-        { owner: requestOwner }
-      );
-    }
-    if (submitted) {
-      if (!isCurrentTopicActionRequest(requestOwner)) {
-        return;
+        }));
+        setTopicReplies((current) => applyPollVoteToReplies(current, {
+          pollId: poll.id,
+          pollName: poll.name,
+          pollPostId: poll.postId,
+          optionIds
+        }));
       }
-      setTopicDetail((current) => applyPollVoteToTopic(current, {
-        pollId: poll.id,
-        pollName: poll.name,
-        pollPostId: poll.postId,
-        optionIds
-      }));
-      setTopicReplies((current) => applyPollVoteToReplies(current, {
-        pollId: poll.id,
-        pollName: poll.name,
-        pollPostId: poll.postId,
-        optionIds
-      }));
-    }
-  }, [isCurrentTopicActionRequest, notify, runLinuxDoRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, setTopicDetail, setTopicReplies, startTopicActionRequest, topicDetail]);
+    });
+  }, [isCurrentTopicActionRequest, notify, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setTopicDetail, setTopicReplies, startTopicActionRequest, topicDetail]);
 
   return {
     bookmarkOnLinuxDoSite,
