@@ -4,7 +4,9 @@ import {
   createEmptyReaderData,
   isFavorite,
   isUserFollowed,
+  MAX_DELETED_RECORDS,
   MAX_HISTORY_RECORDS,
+  MAX_READER_STRING_LENGTH,
   mergeReaderData,
   recordHistory,
   removeFollowedUsers,
@@ -538,6 +540,26 @@ describe('Android reader data helpers', () => {
     expect(data.history[`nodeseek:${MAX_HISTORY_RECORDS + 19}`]?.topic.title).toBe(`Topic ${MAX_HISTORY_RECORDS + 19}`);
   });
 
+  it('limits deleted record markers to the newest entries', () => {
+    const favorites: Record<string, string> = {};
+    for (let index = 0; index < MAX_DELETED_RECORDS + 2; index += 1) {
+      favorites[`nodeseek:${index}`] = new Date(Date.UTC(2026, 4, 20, 0, index)).toISOString();
+    }
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      deletedRecords: {
+        favorites,
+        history: {},
+        followedUsers: {}
+      }
+    });
+
+    expect(Object.keys(data.deletedRecords.favorites)).toHaveLength(MAX_DELETED_RECORDS);
+    expect(data.deletedRecords.favorites['nodeseek:0']).toBeUndefined();
+    expect(data.deletedRecords.favorites[`nodeseek:${MAX_DELETED_RECORDS + 1}`]).toEqual(expect.any(String));
+  });
+
   it('drops local topic records with unsafe missing links or timestamps', () => {
     const data = sanitizeReaderData({
       ...createEmptyReaderData(),
@@ -586,6 +608,89 @@ describe('Android reader data helpers', () => {
     expect(url).not.toContain('secret');
     expect(params.has('sid')).toBe(false);
     expect(params.has('token')).toBe(false);
+  });
+
+  it('removes URL userinfo, fragments, and token parameter variants from stored links', () => {
+    const unsafeTopic: Topic = {
+      ...topic,
+      id: 'unsafe-url',
+      url: 'https://user:pass@www.nodeseek.com/post-723704-1?access_token=secret&auth_token=secret&csrf_token=secret&ok=1#reply'
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(unsafeTopic)]: {
+          topic: unsafeTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    const url = data.favorites[topicKey(unsafeTopic)]?.topic.url || '';
+    const parsed = new URL(url);
+    expect(parsed.username).toBe('');
+    expect(parsed.password).toBe('');
+    expect(parsed.hash).toBe('');
+    expect(parsed.searchParams.get('ok')).toBe('1');
+    expect(parsed.searchParams.has('access_token')).toBe(false);
+    expect(parsed.searchParams.has('auth_token')).toBe(false);
+    expect(parsed.searchParams.has('csrf_token')).toBe(false);
+  });
+
+  it('drops unsafe object fields and non-finite numbers while sanitizing topic records', () => {
+    const unsafeTopic = {
+      ...topic,
+      id: 'unsafe-fields',
+      author: { name: 'object author' },
+      authorId: ['bad'],
+      authorAvatar: 42,
+      category: { label: 'bad' },
+      replyCount: Number.POSITIVE_INFINITY,
+      viewCount: Number.NaN,
+      excerpt: { text: 'bad' }
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        'nodeseek:unsafe-fields': {
+          topic: unsafeTopic,
+          savedAt: '2026-05-20T03:00:00.000Z',
+          visitCount: Number.POSITIVE_INFINITY
+        }
+      }
+    });
+
+    const clean = data.favorites['nodeseek:unsafe-fields'];
+    expect(clean?.topic.author).toBe('');
+    expect(clean?.topic.authorId).toBeUndefined();
+    expect(clean?.topic.authorAvatar).toBeUndefined();
+    expect(clean?.topic.category).toBeUndefined();
+    expect(clean?.topic.replyCount).toBe(0);
+    expect(clean?.topic.viewCount).toBeUndefined();
+    expect(clean?.topic.excerpt).toBeUndefined();
+    expect(clean?.visitCount).toBeUndefined();
+  });
+
+  it('rejects records with strings beyond the local backup field limit', () => {
+    const unsafeTopic: Topic = {
+      ...topic,
+      id: 'too-long',
+      title: 'x'.repeat(MAX_READER_STRING_LENGTH + 1)
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(unsafeTopic)]: {
+          topic: unsafeTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(unsafeTopic)]).toBeUndefined();
   });
 
   it('normalizes relative topic links against the topic source', () => {

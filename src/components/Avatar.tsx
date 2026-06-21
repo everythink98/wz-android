@@ -37,13 +37,15 @@ export function Avatar({
         cancelled = true;
       };
     }
-    loadRemoteAvatarSvgText(uri).then((xml) => {
+    const controller = new AbortController();
+    loadRemoteAvatarSvgText(uri, fetch, { signal: controller.signal }).then((xml) => {
       if (!cancelled) {
         setSvgXml(xml);
       }
     });
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [uri]);
 

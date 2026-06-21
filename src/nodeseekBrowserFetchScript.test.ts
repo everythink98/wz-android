@@ -91,4 +91,26 @@ describe('NodeSeek hidden browser fetch script', () => {
     expect(payload.html).toContain('本帖已经被用户设为私有');
     expect(stop).toHaveBeenCalled();
   });
+
+  it('returns a clear error instead of sending oversized WebView bridge messages', () => {
+    const { postMessage } = runNodeSeekBrowserFetchScript('/post-777283-1', `
+      <main>
+        <article class="post-content">${'x'.repeat(950000)}</article>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      error: 'NodeSeek 页面内容过大，已停止读取'
+    });
+    expect(payload.html).toBeUndefined();
+  });
+
+  it('does not scan full innerHTML while polling challenge pages', () => {
+    expect(NODESEEK_BROWSER_FETCH_SCRIPT).not.toContain('innerHTML');
+    expect(NODESEEK_BROWSER_FETCH_SCRIPT).toContain('pageText(3000)');
+  });
 });

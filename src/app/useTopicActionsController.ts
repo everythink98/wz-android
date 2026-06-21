@@ -208,6 +208,9 @@ export function useTopicActionsController({
     setActionBusy(true);
     try {
       const access = await loadNodeSeekActionAccess();
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
+        return false;
+      }
       await runNodeSeekAction({
         cookieHeader: access?.cookieHeader || '',
         request: requestFactory(),
@@ -250,20 +253,20 @@ export function useTopicActionsController({
       showYaohuoLogin();
       return false;
     }
-    let yaohuoGeneration: number | undefined;
-    const cookieHeader = await loadYaohuoCookieForSource('yaohuo', { captureGeneration: (generation) => { yaohuoGeneration = generation; } });
-    if (!cookieHeader) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        return false;
-      }
-      showYaohuoLogin();
-      return false;
-    }
     const requestId = ++actionRequestIdRef.current;
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
     const controller = startAbortableRequest(actionAbortRef);
+    let yaohuoGeneration: number | undefined;
     setActionBusy(true);
     try {
+      const cookieHeader = await loadYaohuoCookieForSource('yaohuo', { captureGeneration: (generation) => { yaohuoGeneration = generation; } });
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
+        return false;
+      }
+      if (!cookieHeader) {
+        showYaohuoLogin();
+        return false;
+      }
       const result = await runYaohuoAction({
         cookieHeader,
         request: requestFactory(cookieHeader),
@@ -311,21 +314,24 @@ export function useTopicActionsController({
       showLinuxDoLogin();
       return false;
     }
-    const linuxDoGeneration = currentLinuxDoAccessGeneration();
-    const access = await loadLinuxDoAccess();
-    if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        return false;
-      }
-      updateLinuxDoSession({ type: 'login-expired', message: 'linux.do 登录后才能操作' });
-      showLinuxDoLogin();
-      return false;
-    }
     const requestId = ++actionRequestIdRef.current;
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
     const controller = startAbortableRequest(actionAbortRef);
+    let linuxDoGeneration: number | undefined;
+    let linuxDoAccessCookieHeader: string | undefined;
     setActionBusy(true);
     try {
+      linuxDoGeneration = currentLinuxDoAccessGeneration();
+      const access = await loadLinuxDoAccess();
+      linuxDoAccessCookieHeader = access?.cookieHeader;
+      if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
+        return false;
+      }
+      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
+        updateLinuxDoSession({ type: 'login-expired', message: 'linux.do 登录后才能操作' });
+        showLinuxDoLogin();
+        return false;
+      }
       const result = await runLinuxDoAction({
         cookieHeader: access.cookieHeader,
         userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
@@ -342,7 +348,7 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: access.cookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
+        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
         if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
@@ -381,38 +387,46 @@ export function useTopicActionsController({
       return false;
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'nodeseek-optimistic');
+    const controller = startAbortableRequest(actionAbortRef);
     const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     try {
       const access = await loadNodeSeekActionAccess();
+      if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
+        return false;
+      }
       await runNodeSeekAction({
         cookieHeader: access?.cookieHeader || '',
         request: requestFactory(),
+        signal: controller.signal,
         userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
-      if (!isCurrentTopicActionRequest(requestOwner)) {
+      if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
         return false;
       }
       return true;
     } catch (error) {
-      if (!isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
+      if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
         return false;
       }
       if (isNodeSeekLoginRequiredError(error)) {
         await clearNodeSeekLoginCookiesOnly({ generation: nodeSeekGeneration });
-        if (!isCurrentTopicActionRequest(requestOwner)) {
+        if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
       }
       notify(`${errorMessage(error)}，已恢复原状态。`);
       return false;
+    } finally {
+      finishAbortableRequest(actionAbortRef, controller);
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, startTopicActionRequest]);
+  }, [actionAbortRef, canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, startTopicActionRequest]);
 
   const runLinuxDoActionForOptimisticUpdate = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
     options: ActionRunOptions = {}
   ) => {
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'linuxdo-optimistic');
+    const controller = startAbortableRequest(actionAbortRef);
     let linuxDoGeneration: number | undefined;
     let linuxDoAccessCookieHeader: string | undefined;
     try {
@@ -427,6 +441,9 @@ export function useTopicActionsController({
       linuxDoGeneration = currentLinuxDoAccessGeneration();
       const access = await loadLinuxDoAccess();
       linuxDoAccessCookieHeader = access?.cookieHeader;
+      if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
+        return false;
+      }
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
@@ -438,19 +455,20 @@ export function useTopicActionsController({
       const result = await runLinuxDoAction({
         cookieHeader: access.cookieHeader,
         userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        request: requestFactory()
+        request: requestFactory(),
+        signal: controller.signal
       });
-      if (!isCurrentTopicActionRequest(requestOwner)) {
+      if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
         return false;
       }
       return result ?? true;
     } catch (error) {
-      if (!isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
+      if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
         await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
-        if (!isCurrentTopicActionRequest(requestOwner)) {
+        if (controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
         showLinuxDoLogin(`${errorMessage(error)}，已恢复原状态。`);
@@ -458,8 +476,10 @@ export function useTopicActionsController({
       }
       notify(`${errorMessage(error)}，已恢复原状态。`);
       return false;
+    } finally {
+      finishAbortableRequest(actionAbortRef, controller);
     }
-  }, [canUseLinuxDoActions, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, startTopicActionRequest, updateLinuxDoSession]);
+  }, [actionAbortRef, canUseLinuxDoActions, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, startTopicActionRequest, updateLinuxDoSession]);
 
   const runOptimisticActionQueue = useCallback(async ({
     key,

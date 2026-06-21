@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
-import { isYaohuoRequestUrl } from './localYaohuoHelpers';
+import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from './localYaohuoHelpers';
 import { isNodeSeekRequestUrl } from './nodeseekFetchFallback';
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
@@ -14,6 +14,8 @@ describe('Android App security review guards', () => {
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com@evil.example/search')).toBe(false);
 
     expect(isYaohuoRequestUrl('https://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);
+    expect(isYaohuoRequestUrl('https://www.yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);
+    expect(requireYaohuoRequestUrl('https://www.yaohuo.me/bbs/book_view.aspx?id=1')).toBe('https://yaohuo.me/bbs/book_view.aspx?id=1');
     expect(isYaohuoRequestUrl('http://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);
     expect(isYaohuoRequestUrl('https://yaohuo.me.evil.example/bbs/book_view.aspx?id=1')).toBe(false);
     expect(isYaohuoRequestUrl('https://evil.example@yaohuo.me/bbs/book_view.aspx?id=1')).toBe(false);

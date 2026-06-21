@@ -238,6 +238,10 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       val cookieManager = CookieManager.getInstance()
       for (url in linuxDoCookieUrls) {
         for (name in names) {
+          val expectedValue = expectedValues[name]
+          if (expectedValue != null && cookieValueFromHeader(cookieManager.getCookie(url), name) != expectedValue) {
+            continue
+          }
           cookieManager.setCookie(url, "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
           cookieManager.setCookie(url, "$name=; Domain=linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
           cookieManager.setCookie(url, "$name=; Domain=.linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
@@ -310,6 +314,16 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       val clean = part.trim()
       if (clean.startsWith("cf_clearance=")) {
         return clean.removePrefix("cf_clearance=").takeIf { it.isNotBlank() }
+      }
+    }
+    return null
+  }
+
+  private fun cookieValueFromHeader(cookieHeader: String?, cookieName: String): String? {
+    for (part in cookieHeader.orEmpty().split(";")) {
+      val pieces = part.trim().split("=", limit = 2)
+      if (pieces.size == 2 && pieces[0].trim() == cookieName) {
+        return pieces[1].trim().takeIf { it.isNotBlank() }
       }
     }
     return null

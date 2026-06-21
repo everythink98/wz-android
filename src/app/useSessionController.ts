@@ -6,6 +6,7 @@ import {
   buildCookieHeader,
   canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
+  nodeSeekLoginCookieNames,
   nodeSeekAccessRecord,
   NODESEEK_ACCESS_STORAGE_KEY,
   NODESEEK_COOKIE_STORAGE_KEY,
@@ -73,7 +74,7 @@ const NODESEEK_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const NODESEEK_COOKIE_PERSIST_TIMEOUT_MS = 1200;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const LINUXDO_COOKIE_PERSIST_TIMEOUT_MS = 1200;
-const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
+const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 
 async function readNodeSeekAccessFromStore() {
@@ -113,6 +114,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
+  deadlineMs?: number;
   httpErrorStatus?: number;
   credentialGeneration?: number;
   settled?: boolean;
@@ -131,6 +133,7 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
+  deadlineMs?: number;
   httpErrorStatus?: number;
   credentialGeneration?: number;
   settled?: boolean;
@@ -412,7 +415,8 @@ export function useSessionController({
         resolve,
         reject,
         credentialGeneration: nodeSeekCredentialGateRef.current.generation,
-        abortSignal: init?.signal || undefined
+        abortSignal: init?.signal || undefined,
+        deadlineMs: Date.now() + NODESEEK_BROWSER_FETCH_TIMEOUT_MS
       };
       request.abortHandler = () => {
         rejectNodeSeekBrowserFetch(request, '请求已取消');
@@ -436,6 +440,7 @@ export function useSessionController({
     cookie?: string;
     userAgent?: string;
     challenge?: boolean;
+    error?: string;
   }) => {
     const current = nodeSeekBrowserFetchCurrentRef.current;
     if (!current || data.id !== current.id) {
@@ -443,6 +448,10 @@ export function useSessionController({
     }
     if (!data.url || !isNodeSeekRequestUrl(data.url)) {
       rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
+      return;
+    }
+    if (data.error) {
+      rejectNodeSeekBrowserFetch(current, data.error);
       return;
     }
     nodeSeekBrowserWebViewRef.current?.stopLoading();
@@ -532,7 +541,8 @@ export function useSessionController({
         resolve,
         reject,
         credentialGeneration: currentLinuxDoAccessGeneration(),
-        abortSignal: init?.signal || undefined
+        abortSignal: init?.signal || undefined,
+        deadlineMs: Date.now() + LINUXDO_BROWSER_FETCH_TIMEOUT_MS
       };
       request.abortHandler = () => {
         rejectLinuxDoBrowserFetch(request, '请求已取消');
@@ -566,6 +576,7 @@ export function useSessionController({
     cookie?: string;
     userAgent?: string;
     challenge?: boolean;
+    error?: string;
   }) => {
     const current = linuxDoBrowserFetchCurrentRef.current;
     if (!current || data.id !== current.id) {
@@ -573,6 +584,10 @@ export function useSessionController({
     }
     if (!data.url || !isLinuxDoRequestUrl(data.url)) {
       rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
+      return;
+    }
+    if (data.error) {
+      rejectLinuxDoBrowserFetch(current, data.error);
       return;
     }
     linuxDoBrowserWebViewRef.current?.stopLoading();
@@ -760,7 +775,7 @@ export function useSessionController({
     updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
     if (verification) {
       nodeSeekWebViewCookieHeaderRef.current = verification.header;
-      await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
+      await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS, [...nodeSeekLoginCookieNames]);
       updateNodeSeekSession({
         type: 'verification-succeeded',
         cookieSummary: verification.summary.names,

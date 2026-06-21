@@ -74,4 +74,27 @@ describe('Android request helpers', () => {
 
     await expect(request).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
   });
+
+  it('cleans timers and abort listeners when the fetcher throws synchronously', async () => {
+    vi.useFakeTimers();
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const signal = {
+      aborted: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    } as unknown as AbortSignal;
+    const fetcher = vi.fn(() => {
+      throw new Error('sync failure');
+    });
+
+    try {
+      await expect(fetchWithTimeout('https://example.com/feed.json', {}, { fetcher, signal, timeoutMs: 1000 })).rejects.toThrow('sync failure');
+
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+      expect(signal.removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });

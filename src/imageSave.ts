@@ -33,7 +33,7 @@ export async function saveImageUriToLibrary(uri: string) {
   if (!dataImage && !isHttpOrHttpsUrl(uri)) {
     throw new Error('图片地址不支持保存');
   }
-  const permission = await MediaLibrary.requestPermissionsAsync();
+  const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
   if (!permission.granted) {
     throw new Error('没有图片保存权限');
   }

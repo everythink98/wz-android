@@ -125,6 +125,33 @@ describe('Android remote avatar images', () => {
     expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
+  it('rejects oversized SVG avatar responses without caching them as bitmap results', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, {
+        headers: { 'content-type': 'image/svg+xml', 'content-length': String(65 * 1024) }
+      }))
+      .mockResolvedValueOnce(new Response(null, {
+        headers: { 'content-type': 'image/png' }
+      }));
+
+    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62006.png', fetcher)).resolves.toBeNull();
+    await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62006.png', fetcher)).resolves.toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('settles canceled SVG avatar probes without throwing', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+    }));
+
+    const request = loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/62007.png', fetcher, { signal: controller.signal });
+    controller.abort();
+
+    await expect(request).resolves.toBeNull();
+  });
+
   it('does not fetch SVG text for non-NodeSeek avatar URLs', async () => {
     const fetcher = vi.fn();
 

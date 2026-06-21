@@ -5,6 +5,7 @@ import {
   sanitizeReaderData,
   type ReaderData
 } from './readerData';
+import { assertBackupJsonSize } from './readerBackup';
 
 const READER_DATA_STORAGE_KEY = 'reader-data';
 
@@ -30,8 +31,11 @@ export async function loadReaderData() {
 }
 
 export async function saveCleanReaderData(clean: ReaderData) {
-  await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, JSON.stringify(clean));
-  return clean;
+  const sanitized = sanitizeReaderData(clean);
+  const json = JSON.stringify(sanitized);
+  assertBackupJsonSize(json);
+  await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, json);
+  return sanitized;
 }
 
 export async function saveReaderData(data: ReaderData) {

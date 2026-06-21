@@ -52,6 +52,7 @@ import {
   summarizeLinuxDoCookies
 } from './linuxdoCookieBridge';
 import { isLinuxDoRequestUrl } from './linuxdoFetchFallback';
+import fs from 'node:fs';
 
 describe('linux.do Cloudflare helpers', () => {
   it('allows linux.do authenticated requests only over HTTPS on expected hosts', () => {
@@ -279,6 +280,13 @@ describe('linux.do Cloudflare helpers', () => {
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
     expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
     expect(linuxDoCookieModuleMock.clearLinuxDoLoginCookies).not.toHaveBeenCalled();
+  });
+
+  it('generates native CookieManager login clearing guarded by expected cookie values', () => {
+    const pluginSource = fs.readFileSync('plugins/withLinuxDoCookieModule.js', 'utf8');
+
+    expect(pluginSource).toContain('expectedValues[name]');
+    expect(pluginSource).toContain('cookieManager.getCookie(url)');
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

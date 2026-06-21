@@ -5,12 +5,13 @@ import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '../localHtml';
 export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __NODESEEK_BROWSER_FETCH_ID__;
+  const bridgeMessageLimit = 900000;
   const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;
+  const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim().slice(0, limit);
   const isChallengePage = () => {
-    const challengeText = [document.title || "", document.documentElement?.innerHTML || ""].join(" ");
+    const challengeText = [document.title || "", pageText(3000)].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
-  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim();
   const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
@@ -33,8 +34,25 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       return !(input.getAttribute("value") || "").trim() || !labelText;
     });
   };
-  const postResult = () => {
+  const postBridgeMessage = (payload) => {
+    const message = JSON.stringify(payload);
+    if (message.length <= bridgeMessageLimit) {
+      window.ReactNativeWebView.postMessage(message);
+      return;
+    }
     window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: 'nodeseek-browser-fetch',
+      id: requestId,
+      url: location.href,
+      title: document.title || "",
+      challenge: true,
+      error: 'NodeSeek 页面内容过大，已停止读取',
+      userAgent: navigator.userAgent || "",
+      cookie: document.cookie || ""
+    }));
+  };
+  const postResult = () => {
+    postBridgeMessage({
       type: 'nodeseek-browser-fetch',
       id: requestId,
       url: location.href,
@@ -43,7 +61,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       html: document.documentElement ? document.documentElement.outerHTML : "",
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
-    }));
+    });
     try {
       window.stop();
     } catch {}
@@ -64,15 +82,16 @@ true;
 export const LINUXDO_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __LINUXDO_BROWSER_FETCH_ID__;
+  const bridgeMessageLimit = 900000;
   const challengePattern = /just a moment|checking your browser|cf-browser-verification|challenge-running|challenge-platform|cf-turnstile|cf_chl_|attention required|enable javascript and cookies|请稍候|正在检查/i;
-  const pageText = () => (document.body?.innerText || document.documentElement?.innerText || "").trim();
+  const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || "").trim().slice(0, limit);
   const pageHtml = () => document.documentElement ? document.documentElement.outerHTML : "";
   const isChallengePage = () => {
-    const challengeText = [document.title || "", pageText(), pageHtml()].join(" ");
+    const challengeText = [document.title || "", pageText(3000)].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
   const isInteractiveChallengePage = () => {
-    const challengeText = [document.title || "", pageText(), pageHtml()].join(" ");
+    const challengeText = [document.title || "", pageText(3000)].join(" ");
     return Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response']"))
       || /cf-turnstile|attention required|verify you are human|请完成验证|正在进行安全验证/i.test(challengeText);
   };
@@ -80,10 +99,27 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
     const text = pageText();
     return /^\\s*[{[]/.test(text) ? text : "";
   };
+  const postBridgeMessage = (payload) => {
+    const message = JSON.stringify(payload);
+    if (message.length <= bridgeMessageLimit) {
+      window.ReactNativeWebView.postMessage(message);
+      return;
+    }
+    window.ReactNativeWebView.postMessage(JSON.stringify({
+      type: 'linuxdo-browser-fetch',
+      id: requestId,
+      url: location.href,
+      title: document.title || "",
+      challenge: true,
+      error: 'linux.do 页面内容过大，已停止读取',
+      userAgent: navigator.userAgent || "",
+      cookie: document.cookie || ""
+    }));
+  };
   const postResult = () => {
     const json = jsonText();
     const challenge = isChallengePage() || isInteractiveChallengePage();
-    window.ReactNativeWebView.postMessage(JSON.stringify({
+    postBridgeMessage({
       type: 'linuxdo-browser-fetch',
       id: requestId,
       url: location.href,
@@ -92,7 +128,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
       body: json || pageHtml(),
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
-    }));
+    });
   };
   const deadline = Date.now() + 8000;
   const waitForReadablePage = () => {
@@ -119,6 +155,7 @@ export function useHiddenBrowserFetchController({
     cookie?: string;
     userAgent?: string;
     challenge?: boolean;
+    error?: string;
   }) => void;
   completeNodeSeekBrowserFetch: (data: {
     type?: string;
@@ -128,6 +165,7 @@ export function useHiddenBrowserFetchController({
     cookie?: string;
     userAgent?: string;
     challenge?: boolean;
+    error?: string;
   }) => void;
 }) {
   const handleNodeSeekBrowserFetchMessage = useCallback((event: WebViewMessageEvent) => {
@@ -140,6 +178,7 @@ export function useHiddenBrowserFetchController({
         cookie?: string;
         userAgent?: string;
         challenge?: boolean;
+        error?: string;
       };
       if (data.type === 'nodeseek-browser-fetch') {
         completeNodeSeekBrowserFetch(data);
@@ -159,6 +198,7 @@ export function useHiddenBrowserFetchController({
         cookie?: string;
         userAgent?: string;
         challenge?: boolean;
+        error?: string;
       };
       if (data.type === 'linuxdo-browser-fetch') {
         completeLinuxDoBrowserFetch(data);

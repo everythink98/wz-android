@@ -1,12 +1,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { NativeModules, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION } from '../appUpdate';
+import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION, installVerifiedApk, type ApkInstaller } from '../appUpdate';
 import { errorMessage } from '../appUtils';
-
-type ApkInstallerModule = {
-  installApk?: (uri: string) => Promise<boolean>;
-};
 
 type CheckAppUpdateOptions = {
   silent?: boolean;
@@ -76,11 +72,8 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`下载失败：HTTP ${result.status}`);
       }
-      const installer = NativeModules.ApkInstallerModule as ApkInstallerModule | undefined;
-      if (!installer?.installApk) {
-        throw new Error('当前安装包不支持打开安装确认。');
-      }
-      await installer.installApk(result.uri);
+      const installer = NativeModules.ApkInstallerModule as ApkInstaller | undefined;
+      await installVerifiedApk(installer, result.uri, appUpdateInfo);
       setAppUpdateMessage('下载完成，请确认安装');
       notify('下载完成，请确认安装');
     } catch (error) {

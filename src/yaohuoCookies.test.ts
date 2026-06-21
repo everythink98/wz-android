@@ -72,16 +72,23 @@ describe('yaohuo cookie helpers', () => {
 
   it('builds Set-Cookie headers from saved yaohuo cookies for WebView reuse', () => {
     expect(buildYaohuoSetCookieHeaders('sidyaohuo=abc; GUID=guid; bad=value; ASP.NET_SessionId=session')).toEqual([
-      'ASP.NET_SessionId=session; Domain=yaohuo.me; Path=/',
-      'GUID=guid; Domain=yaohuo.me; Path=/',
-      'sidyaohuo=abc; Domain=yaohuo.me; Path=/'
+      'ASP.NET_SessionId=session; Domain=yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax',
+      'GUID=guid; Domain=yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax',
+      'sidyaohuo=abc; Domain=yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax'
     ]);
+  });
+
+  it('keeps existing https yaohuo cookies when later maps contain non-secure duplicates', () => {
+    expect(buildYaohuoCookieHeader(mergeYaohuoCookies(
+      { sidyaohuo: { name: 'sidyaohuo', value: 'https-session', domain: 'yaohuo.me', secure: true } },
+      { sidyaohuo: { name: 'sidyaohuo', value: 'http-session', domain: 'yaohuo.me', secure: false } }
+    ))).toBe('sidyaohuo=https-session');
   });
 
   it('parses saved yaohuo cookie headers into the shared native cookie shape', () => {
     expect(yaohuoCookieMapFromHeader('sidyaohuo=abc; bad=value; GUID=guid')).toEqual({
-      GUID: { name: 'GUID', value: 'guid', domain: 'yaohuo.me' },
-      sidyaohuo: { name: 'sidyaohuo', value: 'abc', domain: 'yaohuo.me' }
+      GUID: { name: 'GUID', value: 'guid', domain: 'yaohuo.me', secure: true },
+      sidyaohuo: { name: 'sidyaohuo', value: 'abc', domain: 'yaohuo.me', secure: true }
     });
   });
 });

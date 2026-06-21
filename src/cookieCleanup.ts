@@ -12,12 +12,13 @@ function expiredCookieHeader(name: string) {
   return `${name}=; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Path=/`;
 }
 
-export async function clearCookieUrls(store: CookieStore, urls: string[]) {
+export async function clearCookieUrls(store: CookieStore, urls: string[], onlyNames?: string[]) {
+  const allowedNames = onlyNames ? new Set(onlyNames) : null;
   const cookieNamesByUrl = await Promise.all(urls.map(async (url) => {
     const cookies = await store.get(url);
     const names = Object.entries(cookies)
       .map(([key, cookie]) => cookie?.name || key)
-      .filter(isValidCookieName);
+      .filter((name) => isValidCookieName(name) && (!allowedNames || allowedNames.has(name)));
     return { url, names };
   }));
 

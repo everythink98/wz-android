@@ -2,13 +2,16 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
 const releaseApkFileName = 'app-arm64-v8a-release.apk';
 const releaseApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', releaseApkFileName);
+const releaseManifestFileName = 'release-manifest.json';
+const releaseManifestPath = path.join(path.dirname(releaseApkPath), releaseManifestFileName);
 const releaseEnvPath = path.join(rootDir, '.env.release.local');
+const appConfig = JSON.parse(readFileSync(path.join(rootDir, 'app.json'), 'utf8'));
 const requiredSigningEnv = [
   'WZ_ANDROID_KEYSTORE_PATH',
   'WZ_ANDROID_KEYSTORE_PASSWORD',
@@ -48,6 +51,30 @@ function run(command, args, options = {}) {
   }
 }
 
+function runCapture(command, args, options = {}) {
+  const executable = commandForCurrentPlatform(command, args);
+  const result = spawnSync(executable.command, executable.args, {
+    cwd: rootDir,
+    encoding: 'utf8',
+    ...options
+  });
+
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+  if (result.error) {
+    console.error(`命令启动失败：${command} ${args.join(' ')}\n${result.error.message}`);
+    process.exit(1);
+  }
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+  return `${result.stdout || ''}${result.stderr || ''}`;
+}
+
 function verifyReleaseApk() {
   if (!existsSync(releaseApkPath)) {
     console.error(`未找到 release APK：${releaseApkPath}`);
@@ -78,12 +105,34 @@ function verifyReleaseApkSignature() {
     console.error('未找到 apksigner，请确认 ANDROID_HOME 或 ANDROID_SDK_ROOT 指向 Android SDK。');
     process.exit(1);
   }
-  run('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', releaseApkPath]);
+  const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', releaseApkPath]);
+  const signerSha256 = /Signer #1 certificate SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
+  if (!signerSha256 || !/^[a-f0-9]{64}$/.test(signerSha256)) {
+    console.error('无法从 apksigner 输出读取签名 SHA-256。');
+    process.exit(1);
+  }
+  return signerSha256;
 }
 
-function printReleaseApkSha256() {
-  const sha256 = createHash('sha256').update(readFileSync(releaseApkPath)).digest('hex');
+function releaseApkSha256() {
+  return createHash('sha256').update(readFileSync(releaseApkPath)).digest('hex');
+}
+
+function printReleaseApkSha256(sha256) {
   console.log(`release APK SHA-256: ${sha256}`);
+}
+
+function writeReleaseManifest({ sha256, signerSha256 }) {
+  const manifest = {
+    apkName: releaseApkFileName,
+    sha256,
+    packageName: appConfig.expo.android.package,
+    versionName: appConfig.expo.version,
+    versionCode: appConfig.expo.android.versionCode,
+    signerSha256
+  };
+  writeFileSync(releaseManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`release manifest: ${releaseManifestPath}`);
 }
 
 function parseEnvValue(value) {
@@ -169,5 +218,7 @@ run(
 );
 
 verifyReleaseApk();
-verifyReleaseApkSignature();
-printReleaseApkSha256();
+const signerSha256 = verifyReleaseApkSignature();
+const sha256 = releaseApkSha256();
+writeReleaseManifest({ sha256, signerSha256 });
+printReleaseApkSha256(sha256);

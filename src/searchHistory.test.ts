@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_RECENT_SEARCHES, MAX_SEARCH_HISTORY_QUERY_LENGTH, normalizeSearchHistory, searchHistoryFromRaw } from './searchHistory';
+import { MAX_RECENT_SEARCHES, MAX_SEARCH_HISTORY_QUERY_LENGTH, mergeLoadedSearchHistory, normalizeSearchHistory, searchHistoryFromRaw } from './searchHistory';
 
 describe('search history helpers', () => {
   it('loads only clean deduplicated search terms from storage', () => {
@@ -29,5 +29,12 @@ describe('search history helpers', () => {
   it('treats malformed stored history as empty', () => {
     expect(searchHistoryFromRaw('{bad json')).toEqual([]);
     expect(searchHistoryFromRaw(JSON.stringify({ query: 'AI' }))).toEqual([]);
+  });
+
+  it('merges loaded history without dropping searches added during startup', () => {
+    expect(mergeLoadedSearchHistory(['new query'], JSON.stringify(['old query', 'new query']))).toEqual([
+      'new query',
+      'old query'
+    ]);
   });
 });

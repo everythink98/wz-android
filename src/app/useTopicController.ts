@@ -38,6 +38,10 @@ const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
 
 type MutableRef<T> = { current: T };
 
+function replyPageVisitKey(page: number | null | undefined, offset?: number | null) {
+  return `${page ?? ''}:${offset ?? ''}`;
+}
+
 export function useTopicController({
   changeScreen,
   clearYaohuoLoginState,
@@ -159,6 +163,7 @@ export function useTopicController({
 }) {
   const topicRequestOwnerRef = useRef(createRequestOwner('topic'));
   const repliesRequestOwnerRef = useRef(createRequestOwner('topic-replies'));
+  const replyVisitedPageKeysRef = useRef<Record<string, Set<string>>>({});
   const currentTopic = topicDetail || selectedTopic;
   const currentTopicKey = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   const topicFavorite = useMemo(() => (
@@ -244,6 +249,7 @@ export function useTopicController({
     loadingMoreRepliesRef.current = false;
     onTopicContextChange(nextTopicKey);
     currentTopicKeyRef.current = nextTopicKey;
+    replyVisitedPageKeysRef.current[nextTopicKey] = new Set();
     setSelectedTopic(topic);
     setTopicDetail(null);
     setTopicError('');
@@ -446,9 +452,14 @@ export function useTopicController({
       }
       setTopicReplies((current) => afterSubmit ? mergeReplies(current, data.items) : mergeReplies(data.items, current));
       if (!afterSubmit) {
-        setReplyHasMore(Boolean(data.hasMore && data.nextPage));
-        setReplyNextPage(data.nextPage ?? null);
-        setReplyNextOffset(data.nextOffset ?? null);
+        const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
+        visitedPages.add(replyPageVisitKey(targetPage, targetOffset));
+        replyVisitedPageKeysRef.current[requestTopicKey] = visitedPages;
+        const nextPageKey = replyPageVisitKey(data.nextPage, data.nextOffset);
+        const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(nextPageKey));
+        setReplyHasMore(canLoadNext);
+        setReplyNextPage(canLoadNext ? data.nextPage ?? null : null);
+        setReplyNextOffset(canLoadNext ? data.nextOffset ?? null : null);
       }
       if (!silent) {
         notify(`评论已更新${data.items.length ? `，读取 ${data.items.length} 条` : ''}`);
@@ -561,13 +572,16 @@ export function useTopicController({
         return;
       }
       const currentReplies = topicRepliesRef.current;
-      const previousReplyCount = currentReplies.length;
       const mergedReplies = mergeReplies(currentReplies, data.items);
-      const addedReplies = mergedReplies.length > previousReplyCount;
+      const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
+      visitedPages.add(replyPageVisitKey(replyNextPage, replyNextOffset));
+      replyVisitedPageKeysRef.current[requestTopicKey] = visitedPages;
+      const nextPageKey = replyPageVisitKey(data.nextPage, data.nextOffset);
+      const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(nextPageKey));
       setTopicReplies(mergedReplies);
-      setReplyHasMore(Boolean(data.hasMore && data.nextPage && mergedReplies.length > previousReplyCount));
-      setReplyNextPage(addedReplies ? data.nextPage ?? null : null);
-      setReplyNextOffset(addedReplies ? data.nextOffset ?? null : null);
+      setReplyHasMore(canLoadNext);
+      setReplyNextPage(canLoadNext ? data.nextPage ?? null : null);
+      setReplyNextOffset(canLoadNext ? data.nextOffset ?? null : null);
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
       if (isCurrentRepliesRequest()) {

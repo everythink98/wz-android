@@ -14,7 +14,9 @@
       "package": "com.wz.reader",
       "versionCode": 17,
       "blockedPermissions": [
-        "android.permission.SYSTEM_ALERT_WINDOW"
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.READ_MEDIA_VIDEO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -24,6 +26,14 @@
     "plugins": [
       "./plugins/withApkInstaller",
       "./plugins/withLinuxDoCookieModule",
+      [
+        "expo-media-library",
+        {
+          "granularPermissions": [
+            "photo"
+          ]
+        }
+      ],
       "expo-secure-store"
     ]
   }

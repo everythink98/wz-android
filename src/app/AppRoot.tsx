@@ -192,6 +192,7 @@ export function AppRoot() {
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
     invalidateTopicActionRequestOwner(topicActionRequestOwnerRef, nextTopicKey);
+    actionAbortRef.current?.abort();
   }, []);
   const {
     commitReaderData,

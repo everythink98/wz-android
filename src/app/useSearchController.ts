@@ -10,7 +10,7 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '../searchFilters';
-import { normalizeSearchHistory, searchHistoryFromRaw } from '../searchHistory';
+import { mergeLoadedSearchHistory, normalizeSearchHistory } from '../searchHistory';
 import { searchTopics, searchYaohuoTopics } from '../sources/sourceGateway';
 import {
   errorMessage,
@@ -56,6 +56,10 @@ function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
 }
 
+function searchPageVisitKey(source: Source, query: string, filter: SourceSearchFilter | undefined) {
+  return `${source}:${query}:${JSON.stringify(filter || {})}`;
+}
+
 export function useSearchController({
   categories,
   clearYaohuoLoginState,
@@ -86,6 +90,7 @@ export function useSearchController({
   const searchQueryRef = useRef('');
   const submittedSearchQueryRef = useRef('');
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
+  const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
   const runSearchRef = useRef<((sourceOverride?: Source) => Promise<void>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const [searchBusy, setSearchBusy] = useState(false);
@@ -102,7 +107,7 @@ export function useSearchController({
     AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
       .then((raw) => {
         if (active) {
-          setRecentSearches(searchHistoryFromRaw(raw));
+          setRecentSearches((current) => mergeLoadedSearchHistory(current, raw));
         }
       })
       .catch(() => undefined)
@@ -286,6 +291,9 @@ export function useSearchController({
         ? feedSources
         : [searchSource as Source];
     const activeSort = remoteSearchSort(searchSource, searchFiltersRef.current);
+    if (!sourceOverride) {
+      searchVisitedPagesRef.current = {};
+    }
     if (sourceOverride) {
       const nextGroups = searchGroupsRef.current.map((group) => (
         group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }
@@ -387,6 +395,7 @@ export function useSearchController({
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
     const activeFilter = searchSource === 'all' ? undefined : searchFiltersRef.current[source];
+    const visitedKey = searchPageVisitKey(source, query, activeFilter);
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search-more:${source}:${query}:${page}:${JSON.stringify(activeFilter || {})}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     setSearchBusy(true);
@@ -401,12 +410,17 @@ export function useSearchController({
           return group;
         }
         const mergedItems = mergeTopics(group.items, data.items);
+        const visitedPages = searchVisitedPagesRef.current[visitedKey] || new Set<number>();
+        visitedPages.add(page);
+        searchVisitedPagesRef.current[visitedKey] = visitedPages;
+        const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(data.nextPage));
         return {
           ...data,
           items: mergedItems,
           loading: false,
           loadingMore: false,
-          hasMore: Boolean(data.hasMore && data.nextPage && mergedItems.length > group.items.length)
+          hasMore: canLoadNext,
+          nextPage: canLoadNext ? data.nextPage ?? null : null
         };
       });
       searchGroupsRef.current = nextGroups;

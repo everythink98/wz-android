@@ -1,11 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
-import { GITHUB_LATEST_RELEASE_URL, UPDATE_APK_NAME, checkGithubAppUpdate, compareAppVersions, getAppUpdateFromRelease } from './appUpdate';
+import {
+  CURRENT_ANDROID_PACKAGE,
+  GITHUB_LATEST_RELEASE_URL,
+  UPDATE_APK_NAME,
+  UPDATE_MANIFEST_NAME,
+  checkGithubAppUpdate,
+  compareAppVersions,
+  getAppUpdateFromRelease,
+  getReleaseManifestUrlFromRelease,
+  installVerifiedApk
+} from './appUpdate';
 
-function releaseApkUrl(tagName: string) {
-  return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${UPDATE_APK_NAME}`;
+const apkSha256 = 'a'.repeat(64);
+const signerSha256 = 'b'.repeat(64);
+
+function releaseAssetUrl(tagName: string, assetName: string) {
+  return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${assetName}`;
 }
 
-function release(tagName: string, assets = [{ name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(tagName) }]) {
+function releaseApkUrl(tagName: string) {
+  return releaseAssetUrl(tagName, UPDATE_APK_NAME);
+}
+
+function releaseManifestUrl(tagName: string) {
+  return releaseAssetUrl(tagName, UPDATE_MANIFEST_NAME);
+}
+
+function release(tagName: string, assets = [
+  { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(tagName) },
+  { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(tagName) }
+]) {
   return {
     tag_name: tagName,
     body: '修复问题',
@@ -13,43 +37,80 @@ function release(tagName: string, assets = [{ name: UPDATE_APK_NAME, browser_dow
   };
 }
 
+function manifest(versionName = '1.3.7') {
+  return {
+    apkName: UPDATE_APK_NAME,
+    sha256: apkSha256,
+    packageName: CURRENT_ANDROID_PACKAGE,
+    versionName,
+    versionCode: 18,
+    signerSha256
+  };
+}
+
 describe('app update release parsing', () => {
-  it('finds a newer APK asset from GitHub release', () => {
-    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.7'))).toEqual({
+  it('finds a newer APK asset from GitHub release manifest', () => {
+    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.7'), manifest())).toEqual({
       version: '1.3.7',
       apkUrl: releaseApkUrl('v1.3.7'),
-      notes: '修复问题'
+      notes: '修复问题',
+      sha256: apkSha256,
+      packageName: CURRENT_ANDROID_PACKAGE,
+      versionName: '1.3.7',
+      versionCode: 18,
+      signerSha256
     });
   });
 
   it('does not offer current or older releases', () => {
-    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.6'))).toBeNull();
-    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.5'))).toBeNull();
+    expect(getReleaseManifestUrlFromRelease('1.3.6', release('v1.3.6'))).toBeNull();
+    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.6'), manifest('1.3.6'))).toBeNull();
+    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.5'), manifest('1.3.5'))).toBeNull();
   });
 
   it('rejects newer releases without the fixed APK asset', () => {
     expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: 'app-release.apk', browser_download_url: 'https://example.com/wrong.apk' }
-    ]))).toThrow('GitHub Release 未找到 app-arm64-v8a-release.apk。');
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl('v1.3.7') }
+    ]), manifest())).toThrow('GitHub Release 未找到 app-arm64-v8a-release.apk。');
   });
 
   it('rejects APK assets outside the expected GitHub release URL', () => {
     expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_APK_NAME, browser_download_url: 'http://github.com/everythink98/wz-android/releases/download/v1.3.7/app-arm64-v8a-release.apk' }
-    ]))).toThrow('GitHub Release APK 下载地址不可信。');
+      { name: UPDATE_APK_NAME, browser_download_url: 'http://github.com/everythink98/wz-android/releases/download/v1.3.7/app-arm64-v8a-release.apk' },
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl('v1.3.7') }
+    ]), manifest())).toThrow('GitHub Release 下载地址不可信。');
+
+    expect(() => getReleaseManifestUrlFromRelease('1.3.6', release('v1.3.7', [
+      { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl('v1.3.7') },
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: 'https://github.com/other/wz-android/releases/download/v1.3.7/release-manifest.json' }
+    ]))).toThrow('GitHub Release 下载地址不可信。');
 
     expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_APK_NAME, browser_download_url: 'https://github.com/other/wz-android/releases/download/v1.3.7/app-arm64-v8a-release.apk' }
-    ]))).toThrow('GitHub Release APK 下载地址不可信。');
+      { name: UPDATE_APK_NAME, browser_download_url: 'https://github.com/everythink98/wz-android/releases/download/v1.3.7/app-release.apk' },
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl('v1.3.7') }
+    ]), manifest())).toThrow('GitHub Release 下载地址不可信。');
+  });
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_APK_NAME, browser_download_url: 'https://github.com/everythink98/wz-android/releases/download/v1.3.7/app-release.apk' }
-    ]))).toThrow('GitHub Release APK 下载地址不可信。');
+  it('rejects release manifests with mismatched package, version, or signature fields', () => {
+    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7'), {
+      ...manifest(),
+      packageName: 'evil.package'
+    })).toThrow('Release manifest 内容不可信。');
+
+    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7'), {
+      ...manifest(),
+      versionName: '1.3.8'
+    })).toThrow('Release manifest 内容不可信。');
+
+    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7'), {
+      ...manifest(),
+      signerSha256: 'not-a-sha'
+    })).toThrow('Release manifest 内容不可信。');
   });
 
   it('rejects invalid release tags', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release('latest'))).toThrow('GitHub Release 版本格式不正确。');
-    expect(() => getAppUpdateFromRelease('1.3.6', release('1.3.7'))).toThrow('GitHub Release 版本格式不正确。');
+    expect(() => getAppUpdateFromRelease('1.3.6', release('latest'), manifest())).toThrow('GitHub Release 版本格式不正确。');
+    expect(() => getAppUpdateFromRelease('1.3.6', release('1.3.7'), manifest())).toThrow('GitHub Release 版本格式不正确。');
   });
 
   it('compares multi-digit versions numerically', () => {
@@ -58,11 +119,14 @@ describe('app update release parsing', () => {
   });
 
   it('loads the latest GitHub release with the pinned API version', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(release('v1.3.7'))));
+    const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(
+      url === GITHUB_LATEST_RELEASE_URL ? release('v1.3.7') : manifest()
+    )));
 
     expect(await checkGithubAppUpdate(fetcher as unknown as typeof fetch, '1.3.6')).toMatchObject({
       version: '1.3.7',
-      apkUrl: releaseApkUrl('v1.3.7')
+      apkUrl: releaseApkUrl('v1.3.7'),
+      sha256: apkSha256
     });
     expect(fetcher).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_URL, expect.objectContaining({
       headers: {
@@ -71,5 +135,38 @@ describe('app update release parsing', () => {
       },
       signal: expect.any(AbortSignal)
     }));
+    expect(fetcher).toHaveBeenCalledWith(releaseManifestUrl('v1.3.7'), expect.objectContaining({
+      headers: {
+        Accept: 'application/json'
+      },
+      signal: expect.any(AbortSignal)
+    }));
+  });
+
+  it('does not install a downloaded APK when inspection does not match the manifest', async () => {
+    const installer = {
+      inspectApk: vi.fn(async () => ({
+        ...manifest(),
+        sha256: 'c'.repeat(64)
+      })),
+      installApk: vi.fn()
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release('v1.3.7'), manifest());
+
+    await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).rejects.toThrow('APK 文件校验失败');
+
+    expect(installer.installApk).not.toHaveBeenCalled();
+  });
+
+  it('installs a downloaded APK only after inspection matches the manifest', async () => {
+    const installer = {
+      inspectApk: vi.fn(async () => manifest()),
+      installApk: vi.fn(async () => true)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release('v1.3.7'), manifest());
+
+    await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).resolves.toBe(true);
+
+    expect(installer.installApk).toHaveBeenCalledWith('file:///cache/wz.apk');
   });
 });

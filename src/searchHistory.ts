@@ -35,3 +35,10 @@ export function searchHistoryFromRaw(raw: string | null) {
     return [];
   }
 }
+
+export function mergeLoadedSearchHistory(current: string[], raw: string | null) {
+  return normalizeSearchHistory([
+    ...current,
+    ...searchHistoryFromRaw(raw)
+  ]);
+}

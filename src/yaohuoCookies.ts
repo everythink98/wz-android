@@ -2,6 +2,7 @@ export interface YaohuoNativeCookie {
   name?: string;
   value?: string;
   domain?: string;
+  secure?: boolean;
 }
 
 const loginCookieName = 'sidyaohuo';
@@ -20,7 +21,8 @@ function normalizedCookieEntries(cookies: Record<string, YaohuoNativeCookie>) {
     .map(([key, cookie]) => ({
       name: cookie.name || key,
       value: cookie.value || '',
-      domain: cookie.domain
+      domain: cookie.domain,
+      secure: cookie.secure
     }))
     .filter((cookie) => (
       cookie.name
@@ -58,7 +60,7 @@ export function buildYaohuoSetCookieHeaders(cookieHeader: string) {
 
   return Array.from(cookies.entries())
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${name}=${value}; Domain=yaohuo.me; Path=/`);
+    .map(([name, value]) => `${name}=${value}; Domain=yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax`);
 }
 
 export function yaohuoCookieMapFromHeader(cookieHeader: string) {
@@ -72,7 +74,7 @@ export function yaohuoCookieMapFromHeader(cookieHeader: string) {
     const name = cookiePart.slice(0, separatorIndex).trim();
     const value = cookiePart.slice(separatorIndex + 1).trim();
     if (name && value) {
-      cookies[name] = { name, value, domain: 'yaohuo.me' };
+      cookies[name] = { name, value, domain: 'yaohuo.me', secure: true };
     }
   }
   return cookies;
@@ -83,10 +85,16 @@ export function canStoreYaohuoCookieHeader(cookies: Record<string, YaohuoNativeC
 }
 
 export function mergeYaohuoCookies(...cookieMaps: Array<Record<string, YaohuoNativeCookie>>) {
-  return cookieMaps.reduce<Record<string, YaohuoNativeCookie>>((merged, cookies) => ({
-    ...merged,
-    ...cookies
-  }), {});
+  return cookieMaps.reduce<Record<string, YaohuoNativeCookie>>((merged, cookies) => {
+    for (const [key, cookie] of Object.entries(cookies)) {
+      const current = merged[key];
+      if (current?.secure && cookie.secure === false) {
+        continue;
+      }
+      merged[key] = cookie;
+    }
+    return merged;
+  }, {});
 }
 
 export function summarizeYaohuoCookies(cookies: Record<string, YaohuoNativeCookie>) {

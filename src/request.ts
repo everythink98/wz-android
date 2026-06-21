@@ -49,14 +49,15 @@ export async function fetchWithTimeout(
       }, timeoutMs);
     })
     : undefined;
-  const fetchPromise = fetcher(input, { ...init, signal: controller.signal }).catch((error) => {
-    if (isAbortLikeError(error) || controller.signal.aborted) {
-      throw new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE);
-    }
-    throw error;
-  });
-
   try {
+    const fetchPromise = Promise.resolve()
+      .then(() => fetcher(input, { ...init, signal: controller.signal }))
+      .catch((error) => {
+        if (isAbortLikeError(error) || controller.signal.aborted) {
+          throw new Error(timedOut ? REQUEST_TIMEOUT_MESSAGE : REQUEST_CANCELED_MESSAGE);
+        }
+        throw error;
+      });
     return await Promise.race(timeoutPromise ? [fetchPromise, abortPromise, timeoutPromise] : [fetchPromise, abortPromise]);
   } finally {
     if (abortTimeout) {

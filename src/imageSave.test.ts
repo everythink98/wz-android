@@ -84,6 +84,7 @@ describe('image library saving', () => {
   it('saves data images and removes the temporary file afterwards', async () => {
     await saveImageUriToLibrary('data:image/png;base64,abc123');
 
+    expect(MediaLibrary.requestPermissionsAsync).toHaveBeenCalledWith(false, ['photo']);
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', { encoding: FileSystem.EncodingType.Base64 });
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png');
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });

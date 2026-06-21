@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createEmptyReaderData, topicKey } from './readerData';
-import { loadReaderData, saveReaderData } from './readerDataStore';
+import { MAX_BACKUP_JSON_BYTES } from './readerBackup';
+import { loadReaderData, saveCleanReaderData, saveReaderData } from './readerDataStore';
 import type { Topic } from './types';
 
 vi.mock('expo-secure-store', () => {
@@ -63,6 +64,30 @@ describe('reader data store', () => {
 
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized clean data before writing AsyncStorage', async () => {
+    const data = createEmptyReaderData();
+    const largeText = 'x'.repeat(4096);
+    for (let index = 0; JSON.stringify(data).length < MAX_BACKUP_JSON_BYTES + 4096; index += 1) {
+      const item: Topic = {
+        ...topic,
+        id: String(index),
+        title: largeText,
+        author: largeText,
+        category: largeText,
+        excerpt: largeText,
+        url: `https://www.nodeseek.com/post-${index}-1?pad=${largeText.slice(0, 512)}`
+      };
+      data.history[topicKey(item)] = {
+        topic: item,
+        savedAt: new Date(Date.UTC(2026, 4, 20, 0, index)).toISOString()
+      };
+    }
+
+    await expect(saveCleanReaderData(data)).rejects.toThrow('备份文件过大');
+
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
   it('starts with clean Android reader data when AsyncStorage is empty', async () => {

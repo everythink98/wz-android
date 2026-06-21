@@ -29,7 +29,8 @@ export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(
   'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
 );
 
-const loginCookieNames = new Set(['session', 'connect.sid', 'sid']);
+export const nodeSeekLoginCookieNames = ['session', 'connect.sid', 'sid'] as const;
+const loginCookieNames = new Set<string>(nodeSeekLoginCookieNames);
 const clearanceCookiePattern = /^cf_clearance$/i;
 
 function isNodeSeekLoginCookieName(name: string) {

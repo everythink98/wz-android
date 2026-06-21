@@ -54,6 +54,7 @@ export function useUserController({
   const userRequestOwnerRef = useRef(createRequestOwner('user'));
   const userAbortRef = useRef<AbortController | null>(null);
   const userLoadingMoreCursorRef = useRef<string | null>(null);
+  const userVisitedTopicCursorsRef = useRef<Set<string>>(new Set());
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userBusy, setUserBusy] = useState(false);
@@ -72,6 +73,7 @@ export function useUserController({
     setUserBusy(false);
     setUserLoadingMore(false);
     userLoadingMoreCursorRef.current = null;
+    userVisitedTopicCursorsRef.current = new Set();
   }, []);
 
   useEffect(() => {
@@ -104,6 +106,7 @@ export function useUserController({
     setUserBusy(true);
     setUserLoadingMore(false);
     userLoadingMoreCursorRef.current = null;
+    userVisitedTopicCursorsRef.current = new Set();
     const controller = startAbortableRequest(userAbortRef);
     let yaohuoGeneration: number | undefined;
     try {
@@ -226,11 +229,13 @@ export function useUserController({
           return previous;
         }
         const mergedTopics = mergeTopics(previous.topics, nextProfile.topics);
+        userVisitedTopicCursorsRef.current.add(current.nextTopicsCursor || '');
+        const canLoadNext = Boolean(nextProfile.hasMoreTopics && nextProfile.nextTopicsCursor && !userVisitedTopicCursorsRef.current.has(nextProfile.nextTopicsCursor));
         return {
           ...previous,
           topics: mergedTopics,
-          hasMoreTopics: Boolean(nextProfile.hasMoreTopics && nextProfile.nextTopicsCursor && mergedTopics.length > previous.topics.length),
-          nextTopicsCursor: mergedTopics.length > previous.topics.length ? nextProfile.nextTopicsCursor : null
+          hasMoreTopics: canLoadNext,
+          nextTopicsCursor: canLoadNext ? nextProfile.nextTopicsCursor : null
         };
       });
       notify('用户帖子已加载更多');

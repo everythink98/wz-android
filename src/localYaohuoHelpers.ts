@@ -18,30 +18,44 @@ export const YAOHUO_CATEGORIES: Category[] = [
   { source: 'yaohuo', id: '288', name: '网站公告' }
 ];
 
+function isYaohuoHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === 'yaohuo.me' || host === 'www.yaohuo.me';
+}
+
+function normalizeYaohuoUrl(url: URL) {
+  url.hostname = 'yaohuo.me';
+  return url.toString();
+}
+
 export function isYaohuoRequestUrl(url: string, baseUrl = YAOHUO_BASE_URL) {
   try {
     const parsed = new URL(url, baseUrl);
-    const hostname = parsed.hostname.toLowerCase();
     return parsed.protocol === 'https:'
       && !parsed.username
       && !parsed.password
-      && (hostname === 'yaohuo.me' || hostname === 'www.yaohuo.me');
+      && isYaohuoHost(parsed.hostname);
   } catch {
     return false;
   }
 }
 
 export function requireYaohuoRequestUrl(url: string, baseUrl = YAOHUO_BASE_URL) {
-  if (!isYaohuoRequestUrl(url, baseUrl)) {
+  try {
+    const parsed = new URL(url, baseUrl);
+    if (!isYaohuoRequestUrl(parsed.toString(), baseUrl)) {
+      throw new Error('妖火链接不属于 yaohuo.me');
+    }
+    return normalizeYaohuoUrl(parsed);
+  } catch {
     throw new Error('妖火链接不属于 yaohuo.me');
   }
-  return new URL(url, baseUrl).toString();
 }
 
 export function extractYaohuoTopicParts(href?: string) {
   const url = absoluteUrl(href, YAOHUO_BASE_URL) || '';
   try {
-    if (url && new URL(url).hostname.toLowerCase() !== 'yaohuo.me') {
+    if (url && !isYaohuoHost(new URL(url).hostname)) {
       return { id: undefined, classId: undefined, url: '' };
     }
   } catch {
@@ -50,7 +64,7 @@ export function extractYaohuoTopicParts(href?: string) {
   const id = url.match(/bbs-(\d+)\.html/i)?.[1]
     || url.match(/[?&]id=(\d+)/i)?.[1];
   const classId = url.match(/[?&]classid=(\d+)/i)?.[1];
-  return { id, classId, url };
+  return { id, classId, url: url ? normalizeYaohuoUrl(new URL(url)) : '' };
 }
 
 export function yaohuoUserUrl(id: string) {

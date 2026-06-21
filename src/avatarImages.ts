@@ -1,14 +1,26 @@
 import { imageRequestHeadersForUrl, normalizeImagePreviewUrl } from './htmlImages';
+import { fetchWithTimeout } from './request';
 
 type AvatarFetcher = (input: string, init?: RequestInit) => Promise<Response>;
+type AvatarLoadOptions = { signal?: AbortSignal };
 const RETRY_LATER_AVATAR_RESULT = Symbol('retry-later-avatar-result');
 const AVATAR_SVG_TEXT_CACHE_LIMIT = 200;
+const AVATAR_SVG_TIMEOUT_MS = 4000;
+const MAX_AVATAR_SVG_TEXT_BYTES = 64 * 1024;
 const avatarSvgTextCache = new Map<string, Promise<string | null>>();
 
-export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = fetch): Promise<string | null> {
+export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = fetch, options: AvatarLoadOptions = {}): Promise<string | null> {
   const clean = normalizeImagePreviewUrl(uri);
   if (!isNodeSeekAvatarUrl(clean)) {
     return null;
+  }
+  if (options.signal) {
+    try {
+      const result = await loadRemoteAvatarSvgTextUncached(clean, fetcher, options);
+      return result === RETRY_LATER_AVATAR_RESULT ? null : result;
+    } catch {
+      return null;
+    }
   }
   const cached = avatarSvgTextCache.get(clean);
   if (cached) {
@@ -31,11 +43,15 @@ export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetche
   return request;
 }
 
-async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetcher) {
+async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetcher, options: AvatarLoadOptions = {}) {
   const headers = imageRequestHeadersForUrl(uri);
-  const head = await fetcher(uri, {
+  const head = await fetchWithTimeout(uri, {
     method: 'HEAD',
     headers
+  }, {
+    fetcher,
+    signal: options.signal,
+    timeoutMs: AVATAR_SVG_TIMEOUT_MS
   });
   if (!head.ok) {
     return RETRY_LATER_AVATAR_RESULT;
@@ -47,16 +63,31 @@ async function loadRemoteAvatarSvgTextUncached(uri: string, fetcher: AvatarFetch
   if (headType && !isSvgContentType(headType)) {
     return RETRY_LATER_AVATAR_RESULT;
   }
-  const response = await fetcher(uri, {
+  const contentLength = headerNumber(head.headers.get('content-length'));
+  if (contentLength && contentLength > MAX_AVATAR_SVG_TEXT_BYTES) {
+    return RETRY_LATER_AVATAR_RESULT;
+  }
+  const response = await fetchWithTimeout(uri, {
     headers: {
       ...headers,
       Accept: 'image/svg+xml,image/*,*/*;q=0.8'
     }
+  }, {
+    fetcher,
+    signal: options.signal,
+    timeoutMs: AVATAR_SVG_TIMEOUT_MS
   });
   if (!response.ok) {
     return RETRY_LATER_AVATAR_RESULT;
   }
+  const responseLength = headerNumber(response.headers.get('content-length'));
+  if (responseLength && responseLength > MAX_AVATAR_SVG_TEXT_BYTES) {
+    return RETRY_LATER_AVATAR_RESULT;
+  }
   const text = await response.text();
+  if (new TextEncoder().encode(text).length > MAX_AVATAR_SVG_TEXT_BYTES) {
+    return RETRY_LATER_AVATAR_RESULT;
+  }
   if (/<svg[\s>]/i.test(text)) {
     return text;
   }
@@ -90,4 +121,9 @@ function isSvgContentType(value: string | null) {
 
 function isBitmapContentType(value: string | null) {
   return /(?:^|;|\s)image\/(?:png|jpe?g|webp|gif|avif|bmp)(?:;|\s|$)/i.test(value || '');
+}
+
+function headerNumber(value: string | null) {
+  const number = value ? Number(value) : 0;
+  return Number.isFinite(number) && number > 0 ? number : 0;
 }

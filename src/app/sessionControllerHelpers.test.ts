@@ -196,6 +196,42 @@ describe('session controller helpers', () => {
     });
   });
 
+  it('expires queued browser fetch requests by their original deadline', () => {
+    const expired = {
+      id: 1,
+      url: 'https://www.nodeseek.com/post-1-1',
+      deadlineMs: Date.now() - 1,
+      reject: vi.fn()
+    };
+    const active = {
+      id: 2,
+      url: 'https://www.nodeseek.com/post-2-1',
+      deadlineMs: Date.now() + 1000,
+      reject: vi.fn()
+    };
+    const currentRef = { current: null };
+    const queueRef = { current: [expired, active] };
+    const setActiveRequest = vi.fn();
+
+    startNextBrowserFetchRequest({
+      currentRef,
+      queueRef,
+      setActiveRequest,
+      timeoutMs: 15000,
+      timeoutMessage: 'timeout',
+      rejectCurrent: vi.fn()
+    });
+
+    expect(expired.reject).toHaveBeenCalledWith(new Error('timeout'));
+    expect(currentRef.current).toBe(active);
+    expect(setActiveRequest).toHaveBeenLastCalledWith({
+      id: 2,
+      url: 'https://www.nodeseek.com/post-2-1',
+      cookie: undefined,
+      userAgent: undefined
+    });
+  });
+
   it('rejects a queued browser fetch request without touching the active request', () => {
     const active = {
       id: 1,

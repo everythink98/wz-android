@@ -4,6 +4,8 @@ import type { AccessRequirement, Category, Source, Topic, UserProfile } from './
 
 export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 1000;
+export const MAX_DELETED_RECORDS = 1000;
+export const MAX_READER_STRING_LENGTH = 4096;
 
 export interface TopicRecord {
   topic: Topic;
@@ -41,7 +43,7 @@ export interface ReaderData {
 }
 
 const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
-const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
+const sensitiveUrlParamPattern = /(^|_)(cookie|token|password|secret|authorization|auth|session|sid|sidyaohuo|csrf)($|_)/i;
 const sourceBaseUrls: Record<Source, string> = {
   v2ex: 'https://www.v2ex.com',
   linuxdo: 'https://linux.do',
@@ -58,20 +60,22 @@ const defaultReaderSettings: ReaderSettings = {
 };
 
 const sourceSchema = z.enum(validSourceValues);
-const dateStringSchema = z.string().refine((value) => dateValue(value) > 0);
+const storedStringSchema = z.string().max(MAX_READER_STRING_LENGTH);
+const requiredStoredStringSchema = storedStringSchema.min(1);
+const dateStringSchema = storedStringSchema.refine((value) => dateValue(value) > 0);
 const topicShapeSchema = z.object({
   source: sourceSchema,
-  id: z.string().min(1),
-  title: z.string().min(1),
-  url: z.string().min(1),
+  id: requiredStoredStringSchema,
+  title: requiredStoredStringSchema,
+  url: requiredStoredStringSchema,
   createdAt: dateStringSchema,
   lastReplyAt: dateStringSchema.optional()
 }).passthrough();
 const userProfileShapeSchema = z.object({
   source: sourceSchema,
-  id: z.string().min(1),
-  username: z.string().min(1),
-  url: z.string().min(1),
+  id: requiredStoredStringSchema,
+  username: requiredStoredStringSchema,
+  url: requiredStoredStringSchema,
   topics: z.array(z.unknown()).optional()
 }).passthrough();
 const topicRecordSchema = z.object({
@@ -131,13 +135,43 @@ function isUserProfile(value: unknown): value is UserProfile {
   return userProfileShapeSchema.safeParse(value).success;
 }
 
-function sanitizeTopicUrl(value: string, source?: Source) {
+function cleanString(value: unknown, fallback = '') {
+  if (typeof value !== 'string' || value.length > MAX_READER_STRING_LENGTH) {
+    return fallback;
+  }
+  return value;
+}
+
+function cleanOptionalString(value: unknown) {
+  const clean = cleanString(value).trim();
+  return clean || undefined;
+}
+
+function cleanNonNegativeInteger(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : fallback;
+}
+
+function cleanOptionalNonNegativeInteger(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
+function sanitizeTopicUrl(value: unknown, source?: Source) {
   try {
-    const raw = String(value || '').trim();
+    const raw = cleanString(value).trim();
+    if (!raw) {
+      return '';
+    }
     const url = source ? new URL(raw, sourceBaseUrls[source]) : new URL(raw);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       return '';
     }
+    url.username = '';
+    url.password = '';
+    url.hash = '';
     for (const key of [...url.searchParams.keys()]) {
       if (sensitiveUrlParamPattern.test(key)) {
         url.searchParams.delete(key);
@@ -177,27 +211,27 @@ function topicSummary(topic: Topic): Topic {
   const accessRequirement = accessRequirementSummary(topic.accessRequirement, topic);
   return {
     source: topic.source,
-    id: String(topic.id),
-    title: topic.title,
-    author: topic.author || '',
-    authorId: topic.authorId,
-    authorAvatar: topic.authorAvatar,
-    authorUrl: topic.authorUrl ? sanitizeTopicUrl(topic.authorUrl) : undefined,
-    categoryId: topic.categoryId,
-    category: topic.category,
+    id: cleanString(topic.id),
+    title: cleanString(topic.title),
+    author: cleanString(topic.author),
+    authorId: cleanOptionalString(topic.authorId),
+    authorAvatar: cleanOptionalString(topic.authorAvatar) ? sanitizeTopicUrl(topic.authorAvatar) : undefined,
+    authorUrl: cleanOptionalString(topic.authorUrl) ? sanitizeTopicUrl(topic.authorUrl) : undefined,
+    categoryId: cleanOptionalString(topic.categoryId),
+    category: cleanOptionalString(topic.category),
     url: sanitizeTopicUrl(topic.url, topic.source),
-    createdAt: topic.createdAt,
-    lastReplyAt: topic.lastReplyAt,
-    replyCount: Number(topic.replyCount || 0),
-    viewCount: topic.viewCount,
-    excerpt: topic.excerpt,
+    createdAt: cleanString(topic.createdAt),
+    lastReplyAt: cleanOptionalString(topic.lastReplyAt),
+    replyCount: cleanNonNegativeInteger(topic.replyCount),
+    viewCount: cleanOptionalNonNegativeInteger(topic.viewCount),
+    excerpt: cleanOptionalString(topic.excerpt),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
 
 function userSummary(user: UserProfile): UserProfile {
-  const id = String(user.id || user.username || '').trim();
-  const username = user.username || user.displayName || '';
+  const id = cleanString(user.id || user.username).trim();
+  const username = cleanString(user.username || user.displayName);
   const displayName = cleanUserDisplayName(user);
   const topicCount = cleanUserStat(user.source, user.topicCount);
   const replyCount = cleanUserStat(user.source, user.replyCount);
@@ -216,10 +250,10 @@ function userSummary(user: UserProfile): UserProfile {
     id,
     username,
     displayName,
-    avatar: user.avatar ? sanitizeTopicUrl(user.avatar) : undefined,
+    avatar: cleanOptionalString(user.avatar) ? sanitizeTopicUrl(user.avatar) : undefined,
     url: sanitizeTopicUrl(userProfileUrl(user.source, id, user.url)),
-    bio: user.bio,
-    joinedAt: user.joinedAt,
+    bio: cleanOptionalString(user.bio),
+    joinedAt: cleanOptionalString(user.joinedAt),
     topicCount,
     replyCount,
     postCount,
@@ -236,7 +270,7 @@ function createEmptyDeletedRecords(): DeletedRecords {
 }
 
 function cleanUserDisplayName(user: UserProfile) {
-  const displayName = String(user.displayName || '').trim();
+  const displayName = cleanString(user.displayName).trim();
   if (
     user.source === 'yaohuo'
     && isPollutedYaohuoUserText(displayName)
@@ -247,7 +281,7 @@ function cleanUserDisplayName(user: UserProfile) {
 }
 
 function cleanUserStat(source: Source, value: unknown) {
-  if (typeof value !== 'number') {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
     return undefined;
   }
   if (source === 'yaohuo' && value > 999_999) {
@@ -306,7 +340,7 @@ function normalizeRecordMap(value: unknown): Record<string, TopicRecord> {
     next[topicKey(topic)] = {
       topic,
       savedAt,
-      visitCount: typeof candidate.visitCount === 'number' && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
+      visitCount: typeof candidate.visitCount === 'number' && Number.isFinite(candidate.visitCount) && candidate.visitCount > 0 ? Math.round(candidate.visitCount) : undefined
     };
   }
   return next;
@@ -360,7 +394,15 @@ function normalizeDeletedRecordMap(value: unknown, normalizeKey?: (key: string) 
       }
     }
   }
-  return next;
+  return limitDeletedRecordMap(next);
+}
+
+function limitDeletedRecordMap(records: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(records)
+      .sort(([, left], [, right]) => dateValue(right) - dateValue(left))
+      .slice(0, MAX_DELETED_RECORDS)
+  );
 }
 
 function normalizeDeletedRecords(value: unknown): DeletedRecords {
@@ -456,7 +498,7 @@ function mergeDeletedMap(local: Record<string, string>, remote: Record<string, s
       merged[key] = remoteDeletedAt;
     }
   }
-  return merged;
+  return limitDeletedRecordMap(merged);
 }
 
 function mergeTimedMapWithDeleted<T>(
@@ -481,10 +523,10 @@ function mergeTimedMapWithDeleted<T>(
 function markDeleted(deletedRecords: DeletedRecords, section: keyof DeletedRecords, key: string, deletedAt = nowIso()): DeletedRecords {
   return {
     ...deletedRecords,
-    [section]: {
+    [section]: limitDeletedRecordMap({
       ...deletedRecords[section],
       [key]: deletedAt
-    }
+    })
   };
 }
 

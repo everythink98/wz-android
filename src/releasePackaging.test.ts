@@ -37,6 +37,37 @@ describe('Android release packaging guards', () => {
     expect(gradle).not.toContain('armeabi-v7a');
   });
 
+  it('generates a release manifest with APK hash, package, version, and signer digest', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+
+    expect(releaseScript).toContain('release-manifest.json');
+    expect(releaseScript).toContain('apkName');
+    expect(releaseScript).toContain('sha256');
+    expect(releaseScript).toContain('packageName');
+    expect(releaseScript).toContain('versionName');
+    expect(releaseScript).toContain('versionCode');
+    expect(releaseScript).toContain('signerSha256');
+    expect(releaseScript).toContain('Signer #1 certificate SHA-256 digest');
+  });
+
+  it('keeps APK inspection available before opening the Android installer', () => {
+    const plugin = readProjectFile('plugins', 'withApkInstaller.js');
+
+    expect(plugin).toContain('fun inspectApk');
+    expect(plugin).toContain('fileSha256');
+    expect(plugin).toContain('signerSha256');
+    expect(plugin).toContain('GET_SIGNING_CERTIFICATES');
+  });
+
+  it('limits media library permissions to photos', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const mediaPlugin = app.expo.plugins.find((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-media-library');
+
+    expect(mediaPlugin?.[1]?.granularPermissions).toEqual(['photo']);
+    expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_AUDIO');
+    expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_VIDEO');
+  });
+
   it('keeps TSX tests discoverable when UI tests are added', () => {
     const vitestConfig = readProjectFile('vitest.config.ts');
 
