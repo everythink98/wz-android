@@ -3,6 +3,7 @@ import { mergeReaderData, readerDataVersion, sanitizeReaderData, type ReaderData
 const SENSITIVE_KEY_PATTERN = /(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)/i;
 export const MAX_BACKUP_JSON_CHARS = 10 * 1024 * 1024;
 const MAX_BACKUP_OBJECT_DEPTH = 32;
+const BACKUP_TOO_LARGE_MESSAGE = '备份文件过大，请减少历史记录后重新导入。';
 
 function stripSensitive(value: unknown, depth = 0): unknown {
   if (depth > MAX_BACKUP_OBJECT_DEPTH) {
@@ -34,10 +35,14 @@ export function exportReaderBackupJson(value: unknown) {
   return JSON.stringify(clean, null, 2);
 }
 
-export function importReaderBackupJson(local: ReaderData, json: string) {
-  if (json.length > MAX_BACKUP_JSON_CHARS) {
-    throw new Error('备份文件过大，请减少历史记录后重新导入。');
+export function assertBackupJsonSize(size: number | null | undefined) {
+  if (typeof size === 'number' && size > MAX_BACKUP_JSON_CHARS) {
+    throw new Error(BACKUP_TOO_LARGE_MESSAGE);
   }
+}
+
+export function importReaderBackupJson(local: ReaderData, json: string) {
+  assertBackupJsonSize(json.length);
   const parsed = JSON.parse(json);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.version !== readerDataVersion) {
     throw new Error('备份格式不兼容，请使用当前 Android 版本导出的 JSON。');

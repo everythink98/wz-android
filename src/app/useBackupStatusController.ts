@@ -22,6 +22,7 @@ import {
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
 import { safeFileName } from '../backupFiles';
+import { readBackupFileText } from '../backupImportFile';
 import { runBackupOperation } from '../backupOperation';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
@@ -106,9 +107,10 @@ export function useBackupStatusController({
         if (result.canceled || !result.assets?.[0]?.uri) {
           return;
         }
-        const pickedUri = result.assets[0].uri;
+        const pickedAsset = result.assets[0];
+        const pickedUri = pickedAsset.uri;
         try {
-          const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
+          const content = await readBackupFileText(pickedAsset);
           const merged = importReaderBackupJson(readerDataRef.current, content);
           await replaceReaderData(merged);
           notify('备份已恢复，本机资料已合并');
