@@ -15,15 +15,34 @@ const requiredSigningEnv = [
   'WZ_ANDROID_KEY_ALIAS',
   'WZ_ANDROID_KEY_PASSWORD'
 ];
+const windowsNodeCliCommands = new Map([
+  ['npm', 'npm-cli.js'],
+  ['npx', 'npx-cli.js']
+]);
+
+function commandForCurrentPlatform(command, args) {
+  const nodeCli = windowsNodeCliCommands.get(command);
+  if (process.platform !== 'win32' || !nodeCli) {
+    return { command, args };
+  }
+  return {
+    command: process.execPath,
+    args: [path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', nodeCli), ...args]
+  };
+}
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const executable = commandForCurrentPlatform(command, args);
+  const result = spawnSync(executable.command, executable.args, {
     cwd: rootDir,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
     ...options
   });
 
+  if (result.error) {
+    console.error(`命令启动失败：${command} ${args.join(' ')}\n${result.error.message}`);
+    process.exit(1);
+  }
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
@@ -36,7 +55,7 @@ function verifyReleaseApk() {
   }
 }
 
-function findApkSigner() {
+function findApkSignerJar() {
   const androidSdkDir = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
   if (!androidSdkDir) {
     return null;
@@ -45,22 +64,21 @@ function findApkSigner() {
   if (!existsSync(buildToolsDir)) {
     return null;
   }
-  const executable = process.platform === 'win32' ? 'apksigner.bat' : 'apksigner';
   return readdirSync(buildToolsDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(buildToolsDir, entry.name, executable))
+    .map((entry) => path.join(buildToolsDir, entry.name, 'lib', 'apksigner.jar'))
     .filter((candidate) => existsSync(candidate))
-    .sort((left, right) => path.basename(path.dirname(right)).localeCompare(path.basename(path.dirname(left)), undefined, { numeric: true }))
+    .sort((left, right) => path.basename(path.dirname(path.dirname(right))).localeCompare(path.basename(path.dirname(path.dirname(left))), undefined, { numeric: true }))
     [0] || null;
 }
 
 function verifyReleaseApkSignature() {
-  const apkSigner = findApkSigner();
-  if (!apkSigner) {
+  const apkSignerJar = findApkSignerJar();
+  if (!apkSignerJar) {
     console.error('未找到 apksigner，请确认 ANDROID_HOME 或 ANDROID_SDK_ROOT 指向 Android SDK。');
     process.exit(1);
   }
-  run(apkSigner, ['verify', '--verbose', '--print-certs', releaseApkPath]);
+  run('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', releaseApkPath]);
 }
 
 function printReleaseApkSha256() {
@@ -132,8 +150,10 @@ run('node', ['scripts/generate-adaptive-icon.mjs']);
 run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);
 
 run(
-  process.platform === 'win32' ? 'gradlew.bat' : './gradlew',
+  'java',
   [
+    '-jar',
+    'gradle/wrapper/gradle-wrapper.jar',
     '--no-daemon',
     ':app:clean',
     ':app:assembleRelease',

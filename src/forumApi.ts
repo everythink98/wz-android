@@ -22,9 +22,9 @@ import type {
 } from './types';
 import { fetchWithTimeout, type Fetcher } from './request';
 
-const allFeedSources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
+const allFeedSources = ['nodeseek', 'linuxdo', 'v2ex'] as const satisfies readonly Source[];
 
-function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>, sources: Source[]) {
+function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>, sources: readonly Source[]) {
   const errors: SourceErrors = {};
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') {
@@ -178,12 +178,11 @@ export async function getFeed({
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
     const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
     const fetchedSources = allFeedSources.map(shouldFetchSource);
-    const requestedPages: Record<Source, number> = {
+    const requestedPages = {
       nodeseek: cursor ? cursorState.nextPages?.nodeseek || page : page,
       linuxdo: cursor ? cursorState.nextPages?.linuxdo || page : page,
-      v2ex: cursor ? cursorState.nextPages?.v2ex || page : page,
-      yaohuo: page
-    };
+      v2ex: cursor ? cursorState.nextPages?.v2ex || page : page
+    } satisfies Record<typeof allFeedSources[number], number>;
     const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
     const v2exLimit = limit;
     const results = await Promise.allSettled([

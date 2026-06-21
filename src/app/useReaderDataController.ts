@@ -12,6 +12,29 @@ export function prepareReaderDataCommit(current: ReaderData, updater: (current: 
   return updated === current ? null : sanitizeReaderData(updated);
 }
 
+export async function loadInitialReaderData({
+  isActive,
+  load = loadReaderData,
+  notify,
+  onLoaded
+}: {
+  isActive: () => boolean;
+  load?: () => Promise<ReaderData>;
+  notify: (message: string) => void;
+  onLoaded: (readerData: ReaderData) => void;
+}) {
+  try {
+    const savedReaderData = await load();
+    if (isActive()) {
+      onLoaded(savedReaderData);
+    }
+  } catch (error) {
+    if (isActive()) {
+      notify(`本机资料读取失败，已暂停本地写入：${errorMessage(error)}`);
+    }
+  }
+}
+
 export function useReaderDataController({
   notify
 }: {
@@ -77,21 +100,16 @@ export function useReaderDataController({
 
   useEffect(() => {
     let active = true;
-    void loadReaderData()
-      .then((savedReaderData) => {
-        if (!active) {
-          return;
-        }
+    void loadInitialReaderData({
+      isActive: () => active,
+      notify,
+      onLoaded: (savedReaderData) => {
         readerDataRef.current = savedReaderData;
         setReaderData(savedReaderData);
         readerDataLoadedRef.current = true;
         setReaderDataLoaded(true);
-      })
-      .catch((error) => {
-        if (active) {
-          notify(`本机资料读取失败，已暂停本地写入：${errorMessage(error)}`);
-        }
-      });
+      }
+    });
     return () => {
       active = false;
     };

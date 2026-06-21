@@ -1,8 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, toggleFavorite, topicKey } from '../readerData';
 import type { Topic } from '../types';
-import { prepareReaderDataCommit } from './useReaderDataController';
+import { loadInitialReaderData, prepareReaderDataCommit } from './useReaderDataController';
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -29,13 +28,20 @@ describe('reader data controller helpers', () => {
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
   });
 
-  it('does not mark reader data as loaded from a failed load path', () => {
-    const source = readFileSync(__filename.replace(/\.test\.ts$/, '.ts'), 'utf8');
-    const loadEffect = source.slice(source.indexOf('void loadReaderData()'), source.indexOf('return {'));
-    const failedLoadPath = loadEffect.slice(loadEffect.indexOf('.catch((error)'));
+  it('does not mark reader data as loaded from a failed load path', async () => {
+    const notify = vi.fn();
+    const onLoaded = vi.fn();
 
-    expect(failedLoadPath).not.toContain('readerDataLoadedRef.current = true');
-    expect(failedLoadPath).not.toContain('setReaderDataLoaded(true)');
-    expect(source).not.toContain('.finally(() => {\n        readerDataLoadedRef.current = true;');
+    await loadInitialReaderData({
+      isActive: () => true,
+      load: async () => {
+        throw new Error('bad storage');
+      },
+      notify,
+      onLoaded
+    });
+
+    expect(onLoaded).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('本机资料读取失败，已暂停本地写入：bad storage');
   });
 });
