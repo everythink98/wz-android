@@ -1,17 +1,13 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
-import { safeFileName } from '../backupFiles';
 import {
   createImagePreviewCatalog,
-  dataImageFileFromUrl,
-  imageRequestHeadersForUrl,
   imagePreviewListFromCatalog,
   normalizeImagePreviewUrl,
   type ImagePreviewList
 } from '../htmlImages';
 import type { TopicImageDeriver } from '../topicDerivedData';
 import { errorMessage } from '../appUtils';
+import { saveImageUriToLibrary } from '../imageSave';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -78,40 +74,12 @@ export function useImagePreviewController({
     if (!imagePreview?.urls.length) {
       return;
     }
-    let downloadedUri = '';
-    let shouldDeleteFile = false;
     try {
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
-      const permission = await MediaLibrary.requestPermissionsAsync();
-      if (!permission.granted) {
-        notify('没有图片保存权限');
-        return;
-      }
-      const extension = uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
-      const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-      if (!baseDirectory) {
-        notify('无法创建图片文件');
-        return;
-      }
-      shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
-      const dataImage = dataImageFileFromUrl(uri);
-      const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || extension)}`;
-      if (dataImage) {
-        await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
-        downloadedUri = target;
-      } else {
-        const headers = imageRequestHeadersForUrl(uri);
-        const downloaded = await FileSystem.downloadAsync(uri, target, headers ? { headers } : undefined);
-        downloadedUri = downloaded.uri;
-      }
-      await MediaLibrary.saveToLibraryAsync(downloadedUri);
+      await saveImageUriToLibrary(uri);
       notify('图片已保存');
     } catch (error) {
       notify(errorMessage(error));
-    } finally {
-      if (shouldDeleteFile && downloadedUri) {
-        await FileSystem.deleteAsync(downloadedUri, { idempotent: true }).catch(() => undefined);
-      }
     }
   }, [imagePreview, notify]);
 
