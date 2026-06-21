@@ -21,6 +21,7 @@ import {
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
 import { safeFileName } from '../backupFiles';
+import { runBackupOperation } from '../backupOperation';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
 import type { FeedSource, Source } from '../types';
 
@@ -75,55 +76,45 @@ export function useBackupStatusController({
   }, []);
 
   const exportBackupFile = useCallback(async () => {
-    if (backupBusyRef.current) {
-      return;
-    }
-    backupBusyRef.current = true;
-    setBackupBusy(true);
-    try {
-      await waitForReaderDataSave();
-      const content = exportReaderBackupJson(readerDataRef.current);
-      await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
-      notify('备份文件已生成');
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      backupBusyRef.current = false;
-      setBackupBusy(false);
-    }
+    await runBackupOperation({
+      busyRef: backupBusyRef,
+      notify,
+      setBusy: setBackupBusy,
+      task: async () => {
+        await waitForReaderDataSave();
+        const content = exportReaderBackupJson(readerDataRef.current);
+        await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
+        notify('备份文件已生成');
+      }
+    });
   }, [notify, readerDataRef, shareTextFile, waitForReaderDataSave]);
 
   const importBackupFile = useCallback(async () => {
-    if (backupBusyRef.current) {
-      return;
-    }
-    backupBusyRef.current = true;
-    setBackupBusy(true);
-    try {
-      const result = await DocumentPicker.getDocumentAsync({
-        copyToCacheDirectory: true,
-        type: ['application/json', 'text/json', '*/*']
-      });
-      if (result.canceled || !result.assets?.[0]?.uri) {
-        return;
-      }
-      const pickedUri = result.assets[0].uri;
-      try {
-        const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
-        const merged = importReaderBackupJson(readerDataRef.current, content);
-        await replaceReaderData(merged);
-        notify('备份已恢复，本机资料已合并');
-      } finally {
-        if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
-          await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
+    await runBackupOperation({
+      busyRef: backupBusyRef,
+      notify,
+      setBusy: setBackupBusy,
+      task: async () => {
+        const result = await DocumentPicker.getDocumentAsync({
+          copyToCacheDirectory: true,
+          type: ['application/json', 'text/json', '*/*']
+        });
+        if (result.canceled || !result.assets?.[0]?.uri) {
+          return;
+        }
+        const pickedUri = result.assets[0].uri;
+        try {
+          const content = await FileSystem.readAsStringAsync(pickedUri, { encoding: FileSystem.EncodingType.UTF8 });
+          const merged = importReaderBackupJson(readerDataRef.current, content);
+          await replaceReaderData(merged);
+          notify('备份已恢复，本机资料已合并');
+        } finally {
+          if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
+            await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
+          }
         }
       }
-    } catch (error) {
-      notify(errorMessage(error));
-    } finally {
-      backupBusyRef.current = false;
-      setBackupBusy(false);
-    }
+    });
   }, [notify, readerDataRef, replaceReaderData]);
 
   const refreshAccountStatus = useCallback(async () => {
