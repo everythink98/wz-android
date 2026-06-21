@@ -26,6 +26,7 @@ import {
 import { REPLY_PAGE_SIZE, replyRefreshTarget } from '../androidFeatureHelpers';
 import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapshot } from '../topicSessionState';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
+import { isCurrentTopicLoadRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
 import type { Fetcher } from '../request';
 import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
@@ -229,7 +230,14 @@ export function useTopicController({
     }
     const requestId = ++topicRequestIdRef.current;
     const requestOwner = startOwnedRequest(topicRequestOwnerRef, `topic:${nextTopicKey}:${nocache ? 'nocache' : 'cache'}`);
-    const isCurrentTopicRequest = () => isCurrentOwnedRequest(requestOwner, topicRequestOwnerRef) && requestId === topicRequestIdRef.current;
+    const isCurrentTopicRequest = () => isCurrentTopicLoadRequest({
+      currentTopicKeyRef,
+      ownerRef: topicRequestOwnerRef,
+      requestId,
+      requestIdRef: topicRequestIdRef,
+      requestOwner,
+      requestTopicKey: nextTopicKey
+    });
     repliesRequestIdRef.current += 1;
     repliesAbortRef.current?.abort();
     loadingMoreRepliesRef.current = false;
