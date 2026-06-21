@@ -38,7 +38,7 @@ import {
 } from '../topicActionState';
 import type { Reply, Topic, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
-import { linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
+import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
 import { createRequestOwner, startOwnedRequest, type RequestOwner } from '../requestOwnership';
 import {
   isCurrentTopicActionRequestOwner,
@@ -49,6 +49,7 @@ import {
 import { errorMessage, finishAbortableRequest, isCanceledRequest, startAbortableRequest } from '../appUtils';
 import { isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
 import type { ReplyTarget } from '../appTypes';
+import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import {
   beginOptimisticTopicAction,
   clearExpiredLinuxDoLogin,
@@ -86,6 +87,7 @@ export function useTopicActionsController({
   actionRequestIdRef,
   clearNodeSeekLoginCookiesOnly,
   clearYaohuoLoginState,
+  currentNodeSeekCredentialGeneration,
   linuxDoWebViewUserAgentRef,
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
@@ -113,10 +115,11 @@ export function useTopicActionsController({
 }: {
   actionAbortRef: Ref<AbortController | null>;
   actionRequestIdRef: Ref<number>;
-  clearNodeSeekLoginCookiesOnly: () => Promise<void>;
-  clearYaohuoLoginState: () => Promise<void>;
+  clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
+  currentNodeSeekCredentialGeneration: () => number;
   linuxDoWebViewUserAgentRef: Ref<string>;
-  loadYaohuoCookieForSource: (source: 'yaohuo') => Promise<string | undefined>;
+  loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
@@ -165,6 +168,7 @@ export function useTopicActionsController({
     const requestId = ++actionRequestIdRef.current;
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
     const controller = startAbortableRequest(actionAbortRef);
+    const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     setActionBusy(true);
     try {
       const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
@@ -184,7 +188,7 @@ export function useTopicActionsController({
         return false;
       }
       if (isNodeSeekLoginRequiredError(error)) {
-        await clearNodeSeekLoginCookiesOnly();
+        await clearNodeSeekLoginCookiesOnly({ generation: nodeSeekGeneration });
         if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
@@ -196,7 +200,7 @@ export function useTopicActionsController({
         setActionBusy(false);
       }
     }
-  }, [actionAbortRef, actionRequestIdRef, canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, setActionBusy, startTopicActionRequest]);
+  }, [actionAbortRef, actionRequestIdRef, canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, setActionBusy, startTopicActionRequest]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -210,7 +214,8 @@ export function useTopicActionsController({
       showYaohuoLogin();
       return false;
     }
-    const cookieHeader = await loadYaohuoCookieForSource('yaohuo');
+    let yaohuoGeneration: number | undefined;
+    const cookieHeader = await loadYaohuoCookieForSource('yaohuo', { captureGeneration: (generation) => { yaohuoGeneration = generation; } });
     if (!cookieHeader) {
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
         return false;
@@ -240,7 +245,7 @@ export function useTopicActionsController({
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
         if ((error as { reason?: unknown }).reason === 'expired') {
-          await clearYaohuoLoginState();
+          await clearYaohuoLoginState({ generation: yaohuoGeneration });
           if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
             return false;
           }
@@ -270,6 +275,7 @@ export function useTopicActionsController({
       showLinuxDoLogin();
       return false;
     }
+    const linuxDoGeneration = currentLinuxDoAccessGeneration();
     const access = await loadLinuxDoAccess();
     if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
@@ -300,7 +306,7 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, resetLinuxDoLevelState, updateLinuxDoSession });
+        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, resetLinuxDoLevelState, updateLinuxDoSession });
         if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
@@ -339,6 +345,7 @@ export function useTopicActionsController({
       return false;
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'nodeseek-optimistic');
+    const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     try {
       const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
       await runNodeSeekAction({
@@ -355,7 +362,7 @@ export function useTopicActionsController({
         return false;
       }
       if (isNodeSeekLoginRequiredError(error)) {
-        await clearNodeSeekLoginCookiesOnly();
+        await clearNodeSeekLoginCookiesOnly({ generation: nodeSeekGeneration });
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
@@ -363,13 +370,14 @@ export function useTopicActionsController({
       notify(`${errorMessage(error)}，已恢复原状态。`);
       return false;
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, startTopicActionRequest]);
+  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, startTopicActionRequest]);
 
   const runLinuxDoActionForOptimisticUpdate = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
     options: ActionRunOptions = {}
   ) => {
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'linuxdo-optimistic');
+    let linuxDoGeneration: number | undefined;
     try {
       if (!canUseLinuxDoActions) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
@@ -379,6 +387,7 @@ export function useTopicActionsController({
         showLinuxDoLogin('linux.do 登录后才能操作，已恢复原状态。');
         return false;
       }
+      linuxDoGeneration = currentLinuxDoAccessGeneration();
       const access = await loadLinuxDoAccess();
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
@@ -402,7 +411,7 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, resetLinuxDoLevelState, updateLinuxDoSession });
+        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, resetLinuxDoLevelState, updateLinuxDoSession });
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }

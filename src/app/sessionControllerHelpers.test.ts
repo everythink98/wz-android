@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  advanceCredentialWriteGeneration,
   createCredentialWriteGate,
+  enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
   isCredentialWriteCurrent,
   rejectBrowserFetchRequest,
@@ -108,6 +110,34 @@ describe('session controller helpers', () => {
     await Promise.all([firstWrite, clearWrite]);
 
     expect(writes).toEqual(['clear']);
+  });
+
+  it('does not let async work started before a clear enqueue a fresh credential write later', async () => {
+    const gate = createCredentialWriteGate();
+    const writes: string[] = [];
+    const staleGeneration = gate.generation;
+
+    advanceCredentialWriteGeneration(gate);
+    await enqueueCredentialWriteForGeneration(gate, staleGeneration, () => {
+      writes.push('stale-save');
+    });
+
+    expect(writes).toEqual([]);
+  });
+
+  it('skips conditional clears after a newer credential generation exists', async () => {
+    const gate = createCredentialWriteGate();
+    const writes: string[] = [];
+    const staleGeneration = gate.generation;
+
+    await enqueueCredentialWrite(gate, () => {
+      writes.push('new-save');
+    }, { advanceGeneration: true });
+    await enqueueCredentialWriteForGeneration(gate, staleGeneration, () => {
+      writes.push('stale-clear');
+    });
+
+    expect(writes).toEqual(['new-save']);
   });
 
   it('starts the next non-aborted browser fetch request', () => {

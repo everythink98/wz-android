@@ -27,7 +27,8 @@ import {
   parseLinuxDoDocumentCookie,
   readLinuxDoCookiesFromWebView,
   sanitizeLinuxDoUserAgent,
-  saveLinuxDoAccess,
+  currentLinuxDoAccessGeneration,
+  saveLinuxDoAccessForGeneration,
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
 import { clearCookieUrls } from '../cookieCleanup';
@@ -47,6 +48,7 @@ import {
 } from '../siteSessionState';
 import {
   createCredentialWriteGate,
+  enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
   isCredentialWriteCurrent,
   linuxDoBrowserResponse,
@@ -55,7 +57,9 @@ import {
   requestHeaderValue,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
-  startNextBrowserFetchRequest
+  startNextBrowserFetchRequest,
+  type CredentialClearOptions,
+  type CredentialLoadOptions
 } from './sessionControllerHelpers';
 
 const NODESEEK_COOKIE_URLS = [NODESEEK_URL, 'https://nodeseek.com'];
@@ -82,6 +86,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
+  credentialGeneration?: number;
   settled?: boolean;
 };
 
@@ -99,6 +104,7 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   httpErrorStatus?: number;
+  credentialGeneration?: number;
   settled?: boolean;
 };
 
@@ -262,11 +268,12 @@ export function useSessionController({
     updateYaohuoSession
   ]);
 
-  const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source) => {
+  const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source, options?: CredentialLoadOptions) => {
     if (source !== 'all' && source !== 'yaohuo') {
       return undefined;
     }
     const generation = yaohuoCredentialGateRef.current.generation;
+    options?.captureGeneration?.(generation);
     const cookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
     if (!isCredentialWriteCurrent(yaohuoCredentialGateRef.current, generation)) {
       return undefined;
@@ -278,11 +285,11 @@ export function useSessionController({
 
   const saveNodeSeekCookieHeader = useCallback(async (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    { verifiedByPage = false, isCurrent = () => true }: { verifiedByPage?: boolean; isCurrent?: () => boolean } = {}
+    { verifiedByPage = false, isCurrent = () => true, generation }: { verifiedByPage?: boolean; isCurrent?: () => boolean; generation?: number } = {}
   ) => {
     const summary = summarizeNodeSeekCookies(cookies);
     const cookieHeader = buildCookieHeader(cookies);
-    const saved = await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, async ({ isCurrent: isWriteCurrent }) => {
+    const task = async ({ isCurrent: isWriteCurrent }: { isCurrent: () => boolean }) => {
       const stillCurrent = () => isCurrent() && isWriteCurrent();
       if (!stillCurrent()) {
         return '';
@@ -305,18 +312,22 @@ export function useSessionController({
         ...(summary.loggedIn ? { at: new Date().toISOString() } : {})
       });
       return '';
-    });
+    };
+    const saved = generation === undefined
+      ? await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, task)
+      : await enqueueCredentialWriteForGeneration(nodeSeekCredentialGateRef.current, generation, task);
     return saved || '';
   }, [nodeSeekWebViewUserAgentRef, updateNodeSeekSession]);
 
-  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source) => {
+  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source, options?: CredentialLoadOptions) => {
     if (source !== 'all' && source !== 'nodeseek') {
       return undefined;
     }
     const generation = nodeSeekCredentialGateRef.current.generation;
+    options?.captureGeneration?.(generation);
     const cookies = await readNodeSeekCookiesFromWebView();
     const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || ''), cookies));
+    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || ''), cookies), { generation });
     if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
       return undefined;
     }
@@ -374,6 +385,7 @@ export function useSessionController({
         userAgent,
         resolve,
         reject,
+        credentialGeneration: nodeSeekCredentialGateRef.current.generation,
         abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
@@ -426,10 +438,11 @@ export function useSessionController({
     }
     startNextNodeSeekBrowserFetch();
     if (typeof data.cookie === 'string') {
+      const generation = current.credentialGeneration ?? nodeSeekCredentialGateRef.current.generation;
       void runBestEffortTask(async () => {
         await CookieManager.flush();
         const nativeCookies = await readNodeSeekCookiesFromWebView();
-        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')));
+        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')), { generation });
       }, NODESEEK_COOKIE_PERSIST_TIMEOUT_MS);
     }
   }, [
@@ -492,6 +505,7 @@ export function useSessionController({
         userAgent,
         resolve,
         reject,
+        credentialGeneration: currentLinuxDoAccessGeneration(),
         abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
@@ -555,6 +569,7 @@ export function useSessionController({
     }
     startNextLinuxDoBrowserFetch();
     if (!data.challenge && typeof data.cookie === 'string') {
+      const generation = current.credentialGeneration ?? currentLinuxDoAccessGeneration();
       void runBestEffortTask(async () => {
         await CookieManager.flush();
         const [savedAccess, nativeCookies] = await Promise.all([
@@ -568,14 +583,16 @@ export function useSessionController({
         );
         const cookieHeader = buildLinuxDoCookieHeader(cookies);
         if (canStoreLinuxDoAccess(cookies) && cookieHeader) {
-          await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || userAgent || undefined);
+          await saveLinuxDoAccessForGeneration(generation, cookieHeader, linuxDoWebViewUserAgentRef.current || userAgent || undefined);
           const summary = summarizeLinuxDoCookies(cookies);
-          updateLinuxDoSession({
-            type: 'verification-succeeded',
-            cookieSummary: summary.names,
-            loggedIn: summary.loggedIn,
-            at: new Date().toISOString()
-          });
+          if (generation === currentLinuxDoAccessGeneration()) {
+            updateLinuxDoSession({
+              type: 'verification-succeeded',
+              cookieSummary: summary.names,
+              loggedIn: summary.loggedIn,
+              at: new Date().toISOString()
+            });
+          }
         }
       }, LINUXDO_COOKIE_PERSIST_TIMEOUT_MS);
     } else if (typeof data.cookie === 'string') {
@@ -632,21 +649,30 @@ export function useSessionController({
 
   const saveYaohuoCookieHeader = useCallback(async (
     cookieHeader: string,
-    { isCurrent = () => true }: { isCurrent?: () => boolean } = {}
+    { isCurrent = () => true, generation }: { isCurrent?: () => boolean; generation?: number } = {}
   ) => {
-    const saved = await enqueueCredentialWrite(yaohuoCredentialGateRef.current, async ({ isCurrent: isWriteCurrent }) => {
+    const task = async ({ isCurrent: isWriteCurrent }: { isCurrent: () => boolean }) => {
       if (!isCurrent() || !isWriteCurrent()) {
         return false;
       }
       await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);
       return isCurrent() && isWriteCurrent();
-    });
+    };
+    const saved = generation === undefined
+      ? await enqueueCredentialWrite(yaohuoCredentialGateRef.current, task)
+      : await enqueueCredentialWriteForGeneration(yaohuoCredentialGateRef.current, generation, task);
     return saved === true;
   }, []);
 
-  const clearStoredYaohuoLoginState = useCallback(async () => {
-    await enqueueCredentialWrite(yaohuoCredentialGateRef.current, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY), { advanceGeneration: true });
-    updateYaohuoSession({ type: 'cleared' });
+  const clearStoredYaohuoLoginState = useCallback(async (options: CredentialClearOptions = {}) => {
+    const cleared = options.generation !== undefined && !options.force
+      ? await enqueueCredentialWriteForGeneration(yaohuoCredentialGateRef.current, options.generation, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY))
+      : await enqueueCredentialWrite(yaohuoCredentialGateRef.current, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY), { advanceGeneration: true });
+    if (cleared !== undefined) {
+      updateYaohuoSession({ type: 'cleared' });
+      return true;
+    }
+    return false;
   }, [updateYaohuoSession]);
 
   const clearStoredNodeSeekLoginState = useCallback(async () => {
@@ -669,9 +695,14 @@ export function useSessionController({
     webLoginDetectedRef
   ]);
 
-  const clearYaohuoLoginState = useCallback(async () => {
-    await clearStoredYaohuoLoginState();
-    await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);
+  const currentNodeSeekCredentialGeneration = useCallback(() => nodeSeekCredentialGateRef.current.generation, []);
+  const currentYaohuoCredentialGeneration = useCallback(() => yaohuoCredentialGateRef.current.generation, []);
+
+  const clearYaohuoLoginState = useCallback(async (options: CredentialClearOptions = {}) => {
+    const cleared = await clearStoredYaohuoLoginState(options);
+    if (cleared) {
+      await clearCookieUrls(CookieManager, YAOHUO_COOKIE_URLS);
+    }
   }, [clearStoredYaohuoLoginState]);
 
   const clearNodeSeekLoginState = useCallback(async () => {
@@ -679,11 +710,8 @@ export function useSessionController({
     await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
   }, [clearStoredNodeSeekLoginState]);
 
-  const clearNodeSeekLoginCookiesOnly = useCallback(async () => {
-    webLoginDetectedRef.current = false;
-    setWebLoginUserId(null);
-    updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
-    const verification = await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, async () => {
+  const clearNodeSeekLoginCookiesOnly = useCallback(async (options: CredentialClearOptions = {}) => {
+    const task = async () => {
       const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
       const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
       const verificationHeader = buildCookieHeader(verificationCookies);
@@ -695,7 +723,16 @@ export function useSessionController({
         header: verificationHeader,
         summary: summarizeNodeSeekCookies(verificationCookies)
       };
-    }, { advanceGeneration: true });
+    };
+    const verification = options.generation !== undefined && !options.force
+      ? await enqueueCredentialWriteForGeneration(nodeSeekCredentialGateRef.current, options.generation, task)
+      : await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, task, { advanceGeneration: true });
+    if (verification === undefined) {
+      return;
+    }
+    webLoginDetectedRef.current = false;
+    setWebLoginUserId(null);
+    updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
     if (verification) {
       nodeSeekWebViewCookieHeaderRef.current = verification.header;
       await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
@@ -724,6 +761,8 @@ export function useSessionController({
     clearYaohuoLoginState,
     completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch,
+    currentNodeSeekCredentialGeneration,
+    currentYaohuoCredentialGeneration,
     failLinuxDoBrowserFetchById,
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,

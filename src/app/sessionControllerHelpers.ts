@@ -7,6 +7,8 @@ export type BrowserFetchRequestCleanupTarget = {
 
 type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
+export type CredentialLoadOptions = { captureGeneration?: (generation: number) => void };
+export type CredentialClearOptions = { generation?: number; force?: boolean };
 export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
@@ -225,6 +227,14 @@ export function enqueueCredentialWrite<T>(
   { advanceGeneration = false }: { advanceGeneration?: boolean } = {}
 ) {
   const generation = advanceGeneration ? advanceCredentialWriteGeneration(gate) : gate.generation;
+  return enqueueCredentialWriteForGeneration(gate, generation, task);
+}
+
+export function enqueueCredentialWriteForGeneration<T>(
+  gate: CredentialWriteGate,
+  generation: number,
+  task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T
+) {
   const isCurrent = () => isCredentialWriteCurrent(gate, generation);
   const run = gate.queue
     .catch(() => undefined)

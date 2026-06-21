@@ -1,7 +1,7 @@
 import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
-import { createCredentialWriteGate, enqueueCredentialWrite } from './app/sessionControllerHelpers';
+import { createCredentialWriteGate, enqueueCredentialWrite, enqueueCredentialWriteForGeneration } from './app/sessionControllerHelpers';
 export { isCloudflareChallengeBody, isCloudflareChallengeResponse } from './cloudflareChallenge';
 
 interface LinuxDoNativeCookie {
@@ -223,25 +223,44 @@ export async function readLinuxDoClearanceFromAndroidWebViewStore() {
   }
 }
 
-async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string, advanceGeneration = false) {
+function linuxDoAccessFromHeader(cookieHeader: string, userAgent?: string): LinuxDoAccess {
   const cleanUserAgent = sanitizeLinuxDoUserAgent(userAgent);
-  const access: LinuxDoAccess = {
+  return {
     cookieHeader,
     savedAt: new Date().toISOString(),
     source: 'webview',
     ...(cleanUserAgent ? { userAgent: cleanUserAgent } : {})
   };
+}
+
+async function writeLinuxDoAccess(access: LinuxDoAccess, isCurrent: () => boolean) {
+  if (!isCurrent()) {
+    return null;
+  }
+  await SecureStore.setItemAsync(LINUXDO_ACCESS_STORAGE_KEY, JSON.stringify(access));
+  return isCurrent() ? access : null;
+}
+
+async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string, advanceGeneration = false) {
+  const access = linuxDoAccessFromHeader(cookieHeader, userAgent);
   return enqueueCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
-    if (!isCurrent()) {
-      return null;
-    }
-    await SecureStore.setItemAsync(LINUXDO_ACCESS_STORAGE_KEY, JSON.stringify(access));
-    return isCurrent() ? access : null;
+    return writeLinuxDoAccess(access, isCurrent);
   }, { advanceGeneration });
 }
 
 export async function saveLinuxDoAccess(cookieHeader: string, userAgent?: string) {
   return saveLinuxDoAccessWithGate(cookieHeader, userAgent);
+}
+
+export function currentLinuxDoAccessGeneration() {
+  return linuxDoAccessWriteGate.generation;
+}
+
+export async function saveLinuxDoAccessForGeneration(generation: number, cookieHeader: string, userAgent?: string) {
+  const access = linuxDoAccessFromHeader(cookieHeader, userAgent);
+  return enqueueCredentialWriteForGeneration(linuxDoAccessWriteGate, generation, async ({ isCurrent }) => {
+    return writeLinuxDoAccess(access, isCurrent);
+  });
 }
 
 export async function loadLinuxDoAccess() {
@@ -271,6 +290,13 @@ export async function clearLinuxDoAccess() {
   )));
   await CookieManager.flush().catch(() => undefined);
   return loadLinuxDoAccess();
+}
+
+export async function clearLinuxDoAccessForGeneration(generation: number) {
+  if (generation !== linuxDoAccessWriteGate.generation) {
+    return loadLinuxDoAccess();
+  }
+  return clearLinuxDoAccess();
 }
 
 export async function clearLinuxDoSavedAccess() {

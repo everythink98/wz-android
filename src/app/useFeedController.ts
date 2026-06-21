@@ -24,6 +24,7 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
+import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { formatSourceErrorMessages, nodeSeekVerificationErrorMessage, sourceErrorFromUnknown } from '../sourceErrors';
 import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
@@ -71,10 +72,10 @@ export function useFeedController({
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
-  clearYaohuoLoginState: () => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
+  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
+  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   readerData: ReaderData;
@@ -187,6 +188,7 @@ export function useFeedController({
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
     feedSourceRequestIdRef.current[requestSource] = requestId;
     const isLoadMore = !reset && page > 1;
+    let yaohuoGeneration: number | undefined;
     if (!isLoadMore && reset && clearItems) {
       setFeedStates((current) => ({
         ...current,
@@ -241,7 +243,7 @@ export function useFeedController({
         });
       };
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(source),
+        loadYaohuoCookieForSource(source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
         loadNodeSeekCookieForSource(source)
       ]);
       if (!isCurrentFeedRequest()) {
@@ -289,7 +291,7 @@ export function useFeedController({
         }
         if (yaohuoResult.status === 'rejected' && isYaohuoLoginRequiredError(yaohuoResult.reason)) {
           if (isYaohuoLoginExpiredError(yaohuoResult.reason)) {
-            await clearYaohuoLoginState();
+            await clearYaohuoLoginState({ generation: yaohuoGeneration });
           }
         }
         if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
@@ -363,7 +365,7 @@ export function useFeedController({
         }
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
+            await clearYaohuoLoginState({ generation: yaohuoGeneration });
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
             showYaohuoLogin(notice);

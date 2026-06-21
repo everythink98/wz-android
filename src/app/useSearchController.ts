@@ -24,6 +24,7 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
+import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
 import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
@@ -68,10 +69,10 @@ export function useSearchController({
   showYaohuoLogin
 }: {
   categories: Category[];
-  clearYaohuoLoginState: () => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
+  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
+  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
@@ -183,10 +184,11 @@ export function useSearchController({
     filter?: SourceSearchFilter,
     options?: { isCurrent?: () => boolean }
   ): Promise<RemoteSearchSourceResult> => {
+    let yaohuoGeneration: number | undefined;
     try {
       const activeFilter = filter?.source === source ? filter : undefined;
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(source),
+        loadYaohuoCookieForSource(source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
         loadNodeSeekCookieForSource(source)
       ]);
       if (source === 'yaohuo' && !yaohuoCookie) {
@@ -239,7 +241,7 @@ export function useSearchController({
         const message = isYaohuoLoginExpiredError(error) ? '妖火登录已失效，请重新登录。' : errorMessage(error);
         if (isYaohuoLoginExpiredError(error)) {
           if (options?.isCurrent?.() !== false) {
-            await clearYaohuoLoginState();
+            await clearYaohuoLoginState({ generation: yaohuoGeneration });
           }
         }
         const group = { source, label: sourceLabel(source), items: [], error: message, hasMore: false, nextPage: null };

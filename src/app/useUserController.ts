@@ -19,6 +19,7 @@ import {
 import { nodeSeekUserIdFromValue } from '../userNavigation';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
+import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import type { FeedSource, Source, UserProfile } from '../types';
 import type { Screen } from '../appTypes';
 
@@ -36,10 +37,10 @@ export function useUserController({
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
-  clearYaohuoLoginState: () => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
+  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
+  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   onOpenUserScreen: () => void;
@@ -104,9 +105,10 @@ export function useUserController({
     setUserLoadingMore(false);
     userLoadingMoreCursorRef.current = null;
     const controller = startAbortableRequest(userAbortRef);
+    let yaohuoGeneration: number | undefined;
     try {
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(requestUser.source),
+        loadYaohuoCookieForSource(requestUser.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
         loadNodeSeekCookieForSource(requestUser.source)
       ]);
       if (!isCurrentUserRequest()) {
@@ -148,7 +150,7 @@ export function useUserController({
         }
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
+            await clearYaohuoLoginState({ generation: yaohuoGeneration });
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
             showYaohuoLogin(message);
@@ -191,9 +193,10 @@ export function useUserController({
     userLoadingMoreCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMore(true);
     setUserError('');
+    let yaohuoGeneration: number | undefined;
     try {
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(current.source),
+        loadYaohuoCookieForSource(current.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
         loadNodeSeekCookieForSource(current.source)
       ]);
       if (!isCurrentUserRequest()) {
@@ -245,7 +248,7 @@ export function useUserController({
         }
         if (isYaohuoLoginRequiredError(error)) {
           if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
+            await clearYaohuoLoginState({ generation: yaohuoGeneration });
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
             showYaohuoLogin(message);

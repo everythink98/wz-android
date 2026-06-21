@@ -288,6 +288,8 @@ export function AppRoot() {
     clearYaohuoLoginState,
     completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch,
+    currentNodeSeekCredentialGeneration,
+    currentYaohuoCredentialGeneration,
     failLinuxDoBrowserFetchById,
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
@@ -569,6 +571,7 @@ export function AppRoot() {
     checkingRequestIdRef,
     clearNodeSeekLoginState,
     clearYaohuoLoginState,
+    currentYaohuoCredentialGeneration,
     forumFetchWithWebViewFallback,
     linuxDoLevelRequestIdRef,
     linuxDoWebViewUserAgentRef,
@@ -675,6 +678,7 @@ export function AppRoot() {
     statusBusy
   } = useBackupStatusController({
     clearYaohuoLoginState,
+    currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     loadNodeSeekCookieForSource,
@@ -936,6 +940,7 @@ export function AppRoot() {
     actionRequestIdRef,
     clearNodeSeekLoginCookiesOnly,
     clearYaohuoLoginState,
+    currentNodeSeekCredentialGeneration,
     linuxDoWebViewUserAgentRef,
     loadYaohuoCookieForSource,
     nodeSeekWebViewUserAgentRef,

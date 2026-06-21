@@ -29,8 +29,10 @@ import {
   canStoreLinuxDoClearance,
   canStoreLinuxDoLogin,
   clearLinuxDoAccess,
+  clearLinuxDoAccessForGeneration,
   clearLinuxDoWebViewClearance,
   clearLinuxDoSavedAccess,
+  currentLinuxDoAccessGeneration,
   hasFreshLinuxDoClearance,
   isCloudflareChallengeResponse,
   linuxDoClearanceCookieFromValue,
@@ -41,6 +43,7 @@ import {
   removeLinuxDoLoginCookies,
   sanitizeLinuxDoUserAgent,
   saveLinuxDoAccess,
+  saveLinuxDoAccessForGeneration,
   summarizeLinuxDoCookies
 } from './linuxdoCookieBridge';
 import { isLinuxDoRequestUrl } from './linuxdoFetchFallback';
@@ -207,6 +210,30 @@ describe('linux.do Cloudflare helpers', () => {
 
     expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith('linuxdo-clearance', expect.stringContaining('old'));
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+  });
+
+  it('does not let delayed linux.do access saves use a generation captured before clearing', async () => {
+    vi.mocked(SecureStore.setItemAsync).mockClear();
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+
+    const staleGeneration = currentLinuxDoAccessGeneration();
+    await clearLinuxDoSavedAccess();
+    await saveLinuxDoAccessForGeneration(staleGeneration, 'cf_clearance=old', 'Old Agent');
+
+    expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith('linuxdo-clearance', expect.stringContaining('old'));
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+  });
+
+  it('skips stale linux.do login clears captured before a newer access generation exists', async () => {
+    const staleGeneration = currentLinuxDoAccessGeneration();
+    await clearLinuxDoSavedAccess();
+    vi.mocked(CookieManager.clearByName).mockClear();
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+
+    await clearLinuxDoAccessForGeneration(staleGeneration);
+
+    expect(CookieManager.clearByName).not.toHaveBeenCalled();
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
   });
 
   it('can clear stale WebView linux.do clearance without clearing login cookies', async () => {

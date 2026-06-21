@@ -33,6 +33,7 @@ import { checkYaohuoLogin, getLinuxDoLevelProfile, type LinuxDoLevelProfile } fr
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
+import type { CredentialClearOptions } from './sessionControllerHelpers';
 
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
 
@@ -42,6 +43,7 @@ export function useAccountController({
   checkingRequestIdRef,
   clearNodeSeekLoginState,
   clearYaohuoLoginState,
+  currentYaohuoCredentialGeneration,
   forumFetchWithWebViewFallback,
   linuxDoLevelRequestIdRef,
   linuxDoWebViewUserAgentRef,
@@ -70,7 +72,8 @@ export function useAccountController({
 }: {
   checkingRequestIdRef: Ref<number>;
   clearNodeSeekLoginState: () => Promise<void>;
-  clearYaohuoLoginState: () => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
+  currentYaohuoCredentialGeneration: () => number;
   forumFetchWithWebViewFallback: Fetcher;
   linuxDoLevelRequestIdRef: Ref<number>;
   linuxDoWebViewUserAgentRef: Ref<string>;
@@ -84,7 +87,7 @@ export function useAccountController({
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
     options?: { verifiedByPage?: boolean; isCurrent?: () => boolean }
   ) => Promise<string>;
-  saveYaohuoCookieHeader: (cookieHeader: string, options?: { isCurrent?: () => boolean }) => Promise<boolean>;
+  saveYaohuoCookieHeader: (cookieHeader: string, options?: { isCurrent?: () => boolean; generation?: number }) => Promise<boolean>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoLevelBusy: Dispatch<SetStateAction<boolean>>;
   setLinuxDoLevelError: Dispatch<SetStateAction<string>>;
@@ -203,6 +206,7 @@ export function useAccountController({
 
   const checkYaohuoCookie = useCallback(async () => {
     const requestId = ++checkingRequestIdRef.current;
+    const yaohuoGeneration = currentYaohuoCredentialGeneration();
     setChecking(true);
     try {
       await CookieManager.flush();
@@ -228,7 +232,7 @@ export function useAccountController({
       if (yaohuoLoginCheck.loginRequired || !yaohuoLoginCheck.ok) {
         if (yaohuoLoginCheck.reason === 'expired') {
           updateYaohuoSession({ type: 'login-expired', message: yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。' });
-          await clearYaohuoLoginState();
+          await clearYaohuoLoginState({ generation: yaohuoGeneration });
           if (requestId !== checkingRequestIdRef.current) {
             return;
           }
@@ -238,7 +242,7 @@ export function useAccountController({
         notify(yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。');
         return;
       }
-      const saved = await saveYaohuoCookieHeader(cookieHeader, { isCurrent: () => requestId === checkingRequestIdRef.current });
+      const saved = await saveYaohuoCookieHeader(cookieHeader, { generation: yaohuoGeneration, isCurrent: () => requestId === checkingRequestIdRef.current });
       if (!saved) {
         return;
       }
@@ -257,7 +261,7 @@ export function useAccountController({
       }
       if (isYaohuoLoginRequiredError(error)) {
         if (isYaohuoLoginExpiredError(error)) {
-          await clearYaohuoLoginState();
+          await clearYaohuoLoginState({ generation: yaohuoGeneration });
           if (requestId !== checkingRequestIdRef.current) {
             return;
           }
@@ -273,7 +277,7 @@ export function useAccountController({
         setChecking(false);
       }
     }
-  }, [checkingRequestIdRef, clearYaohuoLoginState, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);
+  }, [checkingRequestIdRef, clearYaohuoLoginState, currentYaohuoCredentialGeneration, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();

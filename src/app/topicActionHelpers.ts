@@ -4,7 +4,7 @@ import {
   completeOptimisticAction,
   type OptimisticActionState
 } from '../topicActionState';
-import { clearLinuxDoAccess, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
+import { clearLinuxDoAccess, clearLinuxDoAccessForGeneration, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { errorMessage } from '../appUtils';
 import type { SiteSessionEvent } from '../siteSessionState';
 
@@ -19,14 +19,18 @@ export function isNodeSeekLoginRequiredError(error: unknown) {
 
 export async function clearExpiredLinuxDoLogin({
   error,
+  generation,
   resetLinuxDoLevelState,
   updateLinuxDoSession
 }: {
   error: unknown;
+  generation?: number;
   resetLinuxDoLevelState: () => void;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
 }) {
-  const remainingAccess = await clearLinuxDoAccess();
+  const remainingAccess = generation === undefined
+    ? await clearLinuxDoAccess()
+    : await clearLinuxDoAccessForGeneration(generation);
   const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
   const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
   updateLinuxDoSession(remainingAccess?.cookieHeader

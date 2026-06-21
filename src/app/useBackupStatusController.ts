@@ -14,7 +14,8 @@ import {
 } from '../appUtils';
 import { summarizeYaohuoCookies, yaohuoCookieMapFromHeader } from '../yaohuoCookies';
 import {
-  clearLinuxDoAccess,
+  clearLinuxDoAccessForGeneration,
+  currentLinuxDoAccessGeneration,
   linuxDoAccessSummary,
   loadLinuxDoAccess,
   parseLinuxDoDocumentCookie,
@@ -23,12 +24,14 @@ import {
 import { safeFileName } from '../backupFiles';
 import { runBackupOperation } from '../backupOperation';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
+import type { CredentialClearOptions } from './sessionControllerHelpers';
 import type { FeedSource, Source } from '../types';
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 
 export function useBackupStatusController({
   clearYaohuoLoginState,
+  currentYaohuoCredentialGeneration,
   linuxDoUserAgentRef,
   loadNodeSeekCookieForSource,
   notify,
@@ -38,7 +41,8 @@ export function useBackupStatusController({
   dispatchSiteSessionEvent,
   waitForReaderDataSave
 }: {
-  clearYaohuoLoginState: () => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
+  currentYaohuoCredentialGeneration: () => number;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
@@ -125,6 +129,8 @@ export function useBackupStatusController({
     const controller = startAbortableRequest(statusAbortRef);
     setStatusBusy(true);
     try {
+      const yaohuoGeneration = currentYaohuoCredentialGeneration();
+      const linuxDoGeneration = currentLinuxDoAccessGeneration();
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
       await loadNodeSeekCookieForSource('nodeseek');
       let linuxDoAccess = await loadLinuxDoAccess();
@@ -150,7 +156,7 @@ export function useBackupStatusController({
         failedSites.push('linux.do');
       }
       if (linuxDoLogin?.loginRequired) {
-        linuxDoAccess = await clearLinuxDoAccess();
+        linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration);
         if (controller.signal.aborted) {
           return;
         }
@@ -159,7 +165,7 @@ export function useBackupStatusController({
       }
       const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
       if (yaohuoExpired) {
-        await clearYaohuoLoginState();
+        await clearYaohuoLoginState({ generation: yaohuoGeneration });
         if (controller.signal.aborted) {
           return;
         }
@@ -217,6 +223,7 @@ export function useBackupStatusController({
     }
   }, [
     clearYaohuoLoginState,
+    currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
     linuxDoUserAgentRef,
     loadNodeSeekCookieForSource,
