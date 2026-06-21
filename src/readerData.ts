@@ -42,6 +42,20 @@ export interface ReaderData {
 
 const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
 const sensitiveUrlParamPattern = /^(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)$/i;
+const sourceBaseUrls: Record<Source, string> = {
+  v2ex: 'https://www.v2ex.com',
+  linuxdo: 'https://linux.do',
+  nodeseek: 'https://www.nodeseek.com',
+  yaohuo: 'https://yaohuo.me'
+};
+const defaultReaderSettings: ReaderSettings = {
+  listDensity: 'standard',
+  theme: 'light',
+  fontScale: 1,
+  lineHeight: 'standard',
+  contentWidth: 'standard',
+  fontFamily: 'sans'
+};
 
 const sourceSchema = z.enum(validSourceValues);
 const dateStringSchema = z.string().refine((value) => dateValue(value) > 0);
@@ -117,9 +131,13 @@ function isUserProfile(value: unknown): value is UserProfile {
   return userProfileShapeSchema.safeParse(value).success;
 }
 
-function sanitizeTopicUrl(value: string) {
+function sanitizeTopicUrl(value: string, source?: Source) {
   try {
-    const url = new URL(value);
+    const raw = String(value || '').trim();
+    const url = source ? new URL(raw, sourceBaseUrls[source]) : new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return '';
+    }
     for (const key of [...url.searchParams.keys()]) {
       if (sensitiveUrlParamPattern.test(key)) {
         url.searchParams.delete(key);
@@ -127,7 +145,7 @@ function sanitizeTopicUrl(value: string) {
     }
     return url.toString();
   } catch {
-    return value;
+    return '';
   }
 }
 
@@ -167,7 +185,7 @@ function topicSummary(topic: Topic): Topic {
     authorUrl: topic.authorUrl ? sanitizeTopicUrl(topic.authorUrl) : undefined,
     categoryId: topic.categoryId,
     category: topic.category,
-    url: sanitizeTopicUrl(topic.url),
+    url: sanitizeTopicUrl(topic.url, topic.source),
     createdAt: topic.createdAt,
     lastReplyAt: topic.lastReplyAt,
     replyCount: Number(topic.replyCount || 0),
@@ -250,14 +268,7 @@ export function createEmptyReaderData(): ReaderData {
     history: {},
     followedUsers: {},
     deletedRecords: createEmptyDeletedRecords(),
-    settings: {
-      listDensity: 'standard',
-      theme: 'light',
-      fontScale: 1,
-      lineHeight: 'standard',
-      contentWidth: 'standard',
-      fontFamily: 'sans'
-    }
+    settings: { ...defaultReaderSettings }
   };
 }
 
@@ -366,16 +377,27 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
 function normalizeSettings(value: unknown): ReaderSettings {
   const parsed = readerSettingsSchema.safeParse(value);
   const base = parsed.success ? parsed.data as Record<string, unknown> : {};
-  const fontScale = typeof base.fontScale === 'number' && Number.isFinite(base.fontScale)
-    ? Math.max(0.9, Math.min(1.25, Math.round(base.fontScale * 100) / 100))
-    : 1;
+  return mergeReaderSettings(defaultReaderSettings, base);
+}
+
+function cleanFontScale(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0.9, Math.min(1.25, Math.round(value * 100) / 100))
+    : fallback;
+}
+
+function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return local;
+  }
+  const base = value as Record<string, unknown>;
   return {
-    listDensity: base.listDensity === 'compact' || base.listDensity === 'loose' ? base.listDensity : 'standard',
-    theme: base.theme === 'dark' ? 'dark' : 'light',
-    fontScale,
-    lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'loose' ? base.lineHeight : 'standard',
-    contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'wide' ? base.contentWidth : 'standard',
-    fontFamily: base.fontFamily === 'serif' ? 'serif' : 'sans'
+    listDensity: base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose' ? base.listDensity : local.listDensity,
+    theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : local.theme,
+    fontScale: cleanFontScale(base.fontScale, local.fontScale),
+    lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose' ? base.lineHeight : local.lineHeight,
+    contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide' ? base.contentWidth : local.contentWidth,
+    fontFamily: base.fontFamily === 'sans' || base.fontFamily === 'serif' ? base.fontFamily : local.fontFamily
   };
 }
 
@@ -418,6 +440,13 @@ function hasOwnObjectField(value: unknown, key: string) {
     && !Array.isArray(value)
     && Object.prototype.hasOwnProperty.call(value, key)
   );
+}
+
+function ownObjectField(value: unknown, key: string) {
+  if (!hasOwnObjectField(value, key)) {
+    return undefined;
+  }
+  return (value as Record<string, unknown>)[key];
 }
 
 function mergeDeletedMap(local: Record<string, string>, remote: Record<string, string>) {
@@ -471,7 +500,7 @@ function clearDeleted(deletedRecords: DeletedRecords, section: keyof DeletedReco
 export function mergeReaderData(localValue: unknown, remoteValue: unknown): ReaderData {
   const local = sanitizeReaderData(localValue);
   const remote = sanitizeReaderData(remoteValue);
-  const remoteHasSettings = hasOwnObjectField(remoteValue, 'settings');
+  const remoteSettings = ownObjectField(remoteValue, 'settings');
   const favorites = mergeTimedMapWithDeleted(local.favorites, remote.favorites, local.deletedRecords.favorites, remote.deletedRecords.favorites, (record) => record.savedAt);
   const history = mergeTimedMapWithDeleted(local.history, remote.history, local.deletedRecords.history, remote.deletedRecords.history, (record) => record.savedAt);
   const followedUsers = mergeTimedMapWithDeleted(
@@ -492,7 +521,7 @@ export function mergeReaderData(localValue: unknown, remoteValue: unknown): Read
       history: history.deleted,
       followedUsers: followedUsers.deleted
     },
-    settings: remoteHasSettings ? remote.settings : local.settings
+    settings: mergeReaderSettings(local.settings, remoteSettings)
   });
 }
 

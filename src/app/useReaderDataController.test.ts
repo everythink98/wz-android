@@ -49,6 +49,15 @@ describe('reader data controller helpers', () => {
     expect(rollbackFailedReaderDataSave(newer, failed, previous)).toBe(newer);
   });
 
+  it('rolls reader data back to the last persisted state after chained optimistic saves fail', () => {
+    const persisted = createEmptyReaderData();
+    const firstOptimistic = toggleFavorite(persisted, topic);
+    const secondTopic: Topic = { ...topic, id: '723705', title: 'Second topic' };
+    const failed = toggleFavorite(firstOptimistic, secondTopic);
+
+    expect(rollbackFailedReaderDataSave(failed, failed, firstOptimistic, persisted)).toBe(persisted);
+  });
+
   it('does not mark reader data as loaded from a failed load path', async () => {
     const notify = vi.fn();
     const onLoaded = vi.fn();

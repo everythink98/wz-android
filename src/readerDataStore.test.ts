@@ -97,7 +97,7 @@ describe('reader data store', () => {
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
-  it('keeps valid sections when another current-version section is damaged', async () => {
+  it('keeps valid sections without rewriting current-version data during load', async () => {
     const raw = JSON.stringify({
       ...createEmptyReaderData(),
       favorites: 'bad',
@@ -114,7 +114,7 @@ describe('reader data store', () => {
 
     expect(data.history[topicKey(topic)]?.topic).toEqual(topic);
     expect(data.favorites).toEqual({});
-    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
     expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('reader-data-corrupt-backup', raw);
   });
 });

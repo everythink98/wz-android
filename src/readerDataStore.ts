@@ -26,12 +26,7 @@ export async function loadReaderData() {
   if (!isRecord(parsed) || parsed.version !== readerDataVersion) {
     throw new Error('本机资料版本不受支持；为防止覆盖，未自动重置。');
   }
-  const clean = sanitizeReaderData(parsed);
-  const serialized = JSON.stringify(clean);
-  if (serialized !== raw) {
-    await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, serialized);
-  }
-  return clean;
+  return sanitizeReaderData(parsed);
 }
 
 export async function saveCleanReaderData(clean: ReaderData) {

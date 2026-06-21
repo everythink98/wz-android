@@ -12,8 +12,13 @@ export function prepareReaderDataCommit(current: ReaderData, updater: (current: 
   return updated === current ? null : sanitizeReaderData(updated);
 }
 
-export function rollbackFailedReaderDataSave(latest: ReaderData, failed: ReaderData, previous: ReaderData) {
-  return latest === failed ? previous : latest;
+export function rollbackFailedReaderDataSave(
+  latest: ReaderData,
+  failed: ReaderData,
+  previous: ReaderData,
+  lastPersisted = previous
+) {
+  return latest === failed ? lastPersisted : latest;
 }
 
 export async function loadInitialReaderData({
@@ -49,6 +54,7 @@ export function useReaderDataController({
   const readerDataRef = useRef<ReaderData>(readerData);
   const readerDataLoadedRef = useRef(false);
   const readerDataStateRef = useRef<ReaderData>(readerData);
+  const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
   const saveQueueRef = useRef(Promise.resolve());
 
   if (readerDataStateRef.current !== readerData) {
@@ -62,6 +68,7 @@ export function useReaderDataController({
       .catch(() => undefined)
       .then(() => saveCleanReaderData(next))
       .then((saved) => {
+        lastPersistedReaderDataRef.current = saved;
         setReaderData((latest) => {
           if (latest !== next) {
             return latest;
@@ -73,7 +80,7 @@ export function useReaderDataController({
       .catch((error) => {
         if (previous) {
           setReaderData((latest) => {
-            const restored = rollbackFailedReaderDataSave(latest, next, previous);
+            const restored = rollbackFailedReaderDataSave(latest, next, previous, lastPersistedReaderDataRef.current);
             if (restored !== latest) {
               readerDataRef.current = restored;
             }
@@ -120,6 +127,7 @@ export function useReaderDataController({
       notify,
       onLoaded: (savedReaderData) => {
         readerDataRef.current = savedReaderData;
+        lastPersistedReaderDataRef.current = savedReaderData;
         setReaderData(savedReaderData);
         readerDataLoadedRef.current = true;
         setReaderDataLoaded(true);

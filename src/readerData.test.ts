@@ -587,4 +587,91 @@ describe('Android reader data helpers', () => {
     expect(params.has('sid')).toBe(false);
     expect(params.has('token')).toBe(false);
   });
+
+  it('normalizes relative topic links against the topic source', () => {
+    const relativeTopic: Topic = {
+      ...topic,
+      id: 'relative',
+      url: '/post-723704-1?session=secret&tab=1'
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(relativeTopic)]: {
+          topic: relativeTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(relativeTopic)]?.topic.url).toBe('https://www.nodeseek.com/post-723704-1?tab=1');
+  });
+
+  it('drops unsafe topic link schemes during sanitizing', () => {
+    const unsafeTopic: Topic = {
+      ...topic,
+      id: 'unsafe-link',
+      url: 'javascript:alert(1)'
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(unsafeTopic)]: {
+          topic: unsafeTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(unsafeTopic)]?.topic.url).toBe('');
+  });
+
+  it('merges reader settings field by field and keeps local values for invalid remote fields', () => {
+    const local = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: {
+        ...createEmptyReaderData().settings,
+        theme: 'dark',
+        listDensity: 'compact',
+        fontScale: 1.1
+      }
+    });
+    const remote = {
+      ...createEmptyReaderData(),
+      settings: {
+        theme: 'blue',
+        listDensity: 'wide',
+        fontScale: 1.2,
+        lineHeight: 'loose'
+      }
+    };
+
+    const merged = mergeReaderData(local, remote);
+
+    expect(merged.settings.theme).toBe('dark');
+    expect(merged.settings.listDensity).toBe('compact');
+    expect(merged.settings.fontScale).toBe(1.2);
+    expect(merged.settings.lineHeight).toBe('loose');
+  });
+
+  it('keeps local reader settings when remote settings is not an object', () => {
+    const local = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      settings: {
+        ...createEmptyReaderData().settings,
+        theme: 'dark',
+        listDensity: 'compact'
+      }
+    });
+    const remote = {
+      ...createEmptyReaderData(),
+      settings: null
+    };
+
+    const merged = mergeReaderData(local, remote);
+
+    expect(merged.settings).toEqual(local.settings);
+  });
 });
