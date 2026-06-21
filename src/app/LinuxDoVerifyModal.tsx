@@ -99,6 +99,7 @@ export function LinuxDoVerifyModal({
           source={{ uri: LINUXDO_VERIFY_URL }}
           androidLayerType="software"
           javaScriptEnabled
+          javaScriptCanOpenWindowsAutomatically={false}
           domStorageEnabled
           cacheEnabled
           sharedCookiesEnabled

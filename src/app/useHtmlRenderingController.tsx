@@ -93,8 +93,10 @@ export function useHtmlRenderingController({
           allowsFullscreenVideo
           domStorageEnabled
           javaScriptEnabled
+          javaScriptCanOpenWindowsAutomatically={false}
           onShouldStartLoadWithRequest={(request) => shouldAllowBilibiliWebViewNavigation(request.url)}
           source={{ uri: embedUrl }}
+          setSupportMultipleWindows={false}
           style={embedStyles.webView}
         />
       </View>

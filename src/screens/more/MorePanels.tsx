@@ -124,6 +124,7 @@ export function NodeSeekLoginPanel({
               key={`nodeseek-login-${webViewKey}`}
               ref={webViewRef}
               source={{ uri: NODESEEK_URL }}
+              javaScriptCanOpenWindowsAutomatically={false}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
@@ -241,6 +242,7 @@ export function YaohuoLoginPanel({
               key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}
               source={{ uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
+              javaScriptCanOpenWindowsAutomatically={false}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
