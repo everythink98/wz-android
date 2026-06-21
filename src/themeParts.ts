@@ -1,4 +1,4 @@
-import { Platform, StyleSheet, type TextStyle } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import type { ReaderTheme } from './theme';
 
 type AlphaColor = (hex: string, alpha: number) => string;
@@ -62,7 +62,6 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
     }
   };
 }
-
 export function createTopicStyles(
   theme: ReaderTheme,
   appFontFamily: string | undefined,
@@ -121,7 +120,6 @@ export function createTopicStyles(
     }
   };
 }
-
 export function createPanelStyles(theme: ReaderTheme, appFontFamily: string | undefined) {
   return {
     groupList: {
@@ -153,5 +151,3 @@ export function createPanelStyles(theme: ReaderTheme, appFontFamily: string | un
     }
   };
 }
-
-export type ThemePartStyles = Record<string, TextStyle | Record<string, unknown>>;

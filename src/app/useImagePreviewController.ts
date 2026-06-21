@@ -3,14 +3,15 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { safeFileName } from '../backupFiles';
 import {
+  createImagePreviewCatalog,
   dataImageFileFromUrl,
   imageRequestHeadersForUrl,
+  imagePreviewListFromCatalog,
   normalizeImagePreviewUrl,
   type ImagePreviewList
 } from '../htmlImages';
 import type { TopicImageDeriver } from '../topicDerivedData';
 import { errorMessage } from '../appUtils';
-import { createLazyImagePreviewResolver } from '../imagePreviewCatalog';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -30,11 +31,17 @@ export function useImagePreviewController({
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
   const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
   inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
-  const resolveImagePreview = useMemo(() => createLazyImagePreviewResolver({
-    htmlParts,
-    inlineSizedImageUrls,
-    topicImageDeriver
-  }), [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
+  const resolveImagePreview = useMemo(() => {
+    let catalog: ReturnType<typeof createImagePreviewCatalog> | null = null;
+    return (tappedUrl: string) => {
+      if (!catalog) {
+        catalog = createImagePreviewCatalog(
+          htmlParts.map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
+        );
+      }
+      return imagePreviewListFromCatalog(catalog, tappedUrl);
+    };
+  }, [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
   const resolveImagePreviewRef = useRef(resolveImagePreview);
   resolveImagePreviewRef.current = resolveImagePreview;
 

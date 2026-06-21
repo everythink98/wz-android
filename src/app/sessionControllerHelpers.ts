@@ -88,14 +88,6 @@ export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErr
   } as Response;
 }
 
-export function cleanupNodeSeekBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {
-  cleanupBrowserFetchRequest(request);
-}
-
-export function cleanupLinuxDoBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {
-  cleanupBrowserFetchRequest(request);
-}
-
 export function settleBrowserFetchRequestOnce(request: BrowserFetchRequestCleanupTarget, settle: () => void) {
   if (request.settled) {
     return false;

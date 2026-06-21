@@ -34,7 +34,7 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
   }));
 }
 
-export function MainTabsHost({
+function MainTabsHost({
   moreHasBadge,
   renderFeedTab,
   renderLibraryTab,

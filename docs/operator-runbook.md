@@ -32,9 +32,9 @@ npm run release:android
 
 - 涉及首页、搜索、收藏和用户页长列表时，运行相关体验 / 性能测试和 `npm run typecheck`。
 - 涉及登录、验证、Cookie、写操作、详情返回或来源解析时，运行相关来源 / 安全 / 体验测试和 `npm run typecheck`。
-- 涉及来源 gateway 时，至少运行 `npm test -- src/sources/sourceGateway.test.ts src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`。
+- 涉及来源 gateway 时，至少运行 `npm test -- src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`。
 - 涉及账号区时，至少运行相关账号、会话、来源测试和 `npm run typecheck`；当前账号 UI 位于 `src/screens/MoreScreen.tsx` 与 `src/screens/more/MorePanels.tsx`。
-- 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/androidBestPracticeBoundaries.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts src/screens/topic/topicScreenHelpers.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
+- 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts src/screens/topic/topicScreenHelpers.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
 - 发布前运行 `npm run release:android`；它已经包含 `npm test`、`npm run check:unused`、版本一致性检查、APK 签名校验和 SHA-256 输出。
 
 ## 模拟器最新代码验证

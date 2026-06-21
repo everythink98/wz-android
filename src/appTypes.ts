@@ -38,5 +38,3 @@ export type TopicSnapshot = {
   loadingQuotedFloors: Record<string, boolean>;
   scrollY?: number;
 };
-
-export type YaohuoReplyTarget = ReplyTarget;

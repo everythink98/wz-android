@@ -314,7 +314,7 @@ export function AppearancePanel({
   );
 }
 
-export function SettingsPanel({
+function SettingsPanel({
   settings,
   styles,
   onUpdateSettings

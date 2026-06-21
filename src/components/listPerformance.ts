@@ -12,11 +12,6 @@ export const TOPIC_LIST_PERFORMANCE_PROPS = {
   maxItemsInRecyclePool: 80
 };
 
-export const REPLY_LIST_PERFORMANCE_PROPS = {
-  drawDistance: Platform.OS === 'android' ? 800 : 600,
-  maxItemsInRecyclePool: 80
-};
-
 export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
   initialNumToRender: 6,
   maxToRenderPerBatch: 5,

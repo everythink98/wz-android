@@ -181,31 +181,6 @@ export function ExpandablePanel({
   );
 }
 
-export function InfoRow({
-  icon,
-  label,
-  value,
-  styles,
-  theme
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-}) {
-  const Icon = icon;
-  return (
-    <View style={styles.menuButton}>
-      <View style={styles.menuIcon}>
-        <Icon size={19} color={theme.primary} strokeWidth={1.8} />
-      </View>
-      <Text style={[styles.menuLabel, styles.flex]}>{label}</Text>
-      <Text style={styles.meta} numberOfLines={1}>{value}</Text>
-    </View>
-  );
-}
-
 export function FloatingIconButton({
   disabled = false,
   icon,
