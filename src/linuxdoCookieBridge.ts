@@ -1,6 +1,7 @@
 import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
+import { createCredentialWriteGate, enqueueCredentialWrite } from './app/sessionControllerHelpers';
 export { isCloudflareChallengeBody, isCloudflareChallengeResponse } from './cloudflareChallenge';
 
 interface LinuxDoNativeCookie {
@@ -32,6 +33,7 @@ const LINUXDO_COOKIE_URLS = ['https://linux.do/latest', 'https://linux.do', 'htt
 const LINUXDO_COOKIE_READ_TIMEOUT_MS = 1500;
 const LINUXDO_ACCESS_COOKIE_NAMES = ['cf_clearance', '_t', '_forum_session'] as const;
 const LINUXDO_LOGIN_COOKIE_NAMES = ['_t', '_forum_session'] as const;
+const linuxDoAccessWriteGate = createCredentialWriteGate();
 
 export function sanitizeLinuxDoUserAgent(userAgent?: string) {
   return String(userAgent || '')
@@ -221,7 +223,7 @@ export async function readLinuxDoClearanceFromAndroidWebViewStore() {
   }
 }
 
-export async function saveLinuxDoAccess(cookieHeader: string, userAgent?: string) {
+async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string, advanceGeneration = false) {
   const cleanUserAgent = sanitizeLinuxDoUserAgent(userAgent);
   const access: LinuxDoAccess = {
     cookieHeader,
@@ -229,13 +231,23 @@ export async function saveLinuxDoAccess(cookieHeader: string, userAgent?: string
     source: 'webview',
     ...(cleanUserAgent ? { userAgent: cleanUserAgent } : {})
   };
-  await SecureStore.setItemAsync(LINUXDO_ACCESS_STORAGE_KEY, JSON.stringify(access));
-  return access;
+  return enqueueCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
+    if (!isCurrent()) {
+      return null;
+    }
+    await SecureStore.setItemAsync(LINUXDO_ACCESS_STORAGE_KEY, JSON.stringify(access));
+    return isCurrent() ? access : null;
+  }, { advanceGeneration });
+}
+
+export async function saveLinuxDoAccess(cookieHeader: string, userAgent?: string) {
+  return saveLinuxDoAccessWithGate(cookieHeader, userAgent);
 }
 
 export async function loadLinuxDoAccess() {
+  const generation = linuxDoAccessWriteGate.generation;
   const raw = await SecureStore.getItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-  if (!raw) {
+  if (generation !== linuxDoAccessWriteGate.generation || !raw) {
     return null;
   }
   try {
@@ -250,9 +262,9 @@ export async function clearLinuxDoAccess() {
   const savedAccess = await loadLinuxDoAccess();
   const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
   if (remainingHeader) {
-    await saveLinuxDoAccess(remainingHeader, savedAccess?.userAgent);
+    await saveLinuxDoAccessWithGate(remainingHeader, savedAccess?.userAgent, true);
   } else {
-    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+    await enqueueCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY), { advanceGeneration: true });
   }
   await Promise.all(LINUXDO_COOKIE_URLS.flatMap((url) => (
     LINUXDO_LOGIN_COOKIE_NAMES.map((name) => CookieManager.clearByName(url, name).catch(() => false))
@@ -262,16 +274,16 @@ export async function clearLinuxDoAccess() {
 }
 
 export async function clearLinuxDoSavedAccess() {
-  await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+  await enqueueCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY), { advanceGeneration: true });
 }
 
 export async function clearLinuxDoSavedClearance() {
   const savedAccess = await loadLinuxDoAccess();
   const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoClearanceCookie(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
   if (remainingHeader) {
-    await saveLinuxDoAccess(remainingHeader, savedAccess?.userAgent);
+    await saveLinuxDoAccessWithGate(remainingHeader, savedAccess?.userAgent, true);
   } else {
-    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+    await enqueueCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY), { advanceGeneration: true });
   }
   return loadLinuxDoAccess();
 }

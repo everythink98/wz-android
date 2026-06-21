@@ -1,6 +1,5 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import CookieManager from '@react-native-cookies/cookies';
-import * as SecureStore from 'expo-secure-store';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
   mergeNodeSeekCookies,
@@ -36,7 +35,6 @@ import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
 
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
-const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 
 type Ref<T> = MutableRefObject<T>;
 
@@ -54,6 +52,7 @@ export function useAccountController({
   resetLinuxDoLevelState,
   resetLinuxDoWebView,
   saveNodeSeekCookieHeader,
+  saveYaohuoCookieHeader,
   setChecking,
   setLinuxDoLevelBusy,
   setLinuxDoLevelError,
@@ -85,6 +84,7 @@ export function useAccountController({
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
     options?: { verifiedByPage?: boolean; isCurrent?: () => boolean }
   ) => Promise<string>;
+  saveYaohuoCookieHeader: (cookieHeader: string, options?: { isCurrent?: () => boolean }) => Promise<boolean>;
   setChecking: Dispatch<SetStateAction<boolean>>;
   setLinuxDoLevelBusy: Dispatch<SetStateAction<boolean>>;
   setLinuxDoLevelError: Dispatch<SetStateAction<string>>;
@@ -238,7 +238,10 @@ export function useAccountController({
         notify(yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。');
         return;
       }
-      await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);
+      const saved = await saveYaohuoCookieHeader(cookieHeader, { isCurrent: () => requestId === checkingRequestIdRef.current });
+      if (!saved) {
+        return;
+      }
       if (requestId !== checkingRequestIdRef.current) {
         return;
       }
@@ -270,7 +273,7 @@ export function useAccountController({
         setChecking(false);
       }
     }
-  }, [checkingRequestIdRef, clearYaohuoLoginState, notify, setChecking, updateYaohuoSession]);
+  }, [checkingRequestIdRef, clearYaohuoLoginState, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();

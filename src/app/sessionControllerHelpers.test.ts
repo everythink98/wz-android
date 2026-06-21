@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  createCredentialWriteGate,
+  enqueueCredentialWrite,
+  isCredentialWriteCurrent,
   rejectBrowserFetchRequest,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
@@ -66,6 +69,45 @@ describe('session controller helpers', () => {
     await expect(runBestEffortTask(() => {
       throw new Error('persist failed');
     }, 100)).resolves.toBeUndefined();
+  });
+
+  it('runs credential writes in order for the same generation', async () => {
+    const gate = createCredentialWriteGate();
+    const writes: string[] = [];
+
+    await Promise.all([
+      enqueueCredentialWrite(gate, async () => {
+        writes.push('first');
+      }),
+      enqueueCredentialWrite(gate, async () => {
+        writes.push('second');
+      })
+    ]);
+
+    expect(writes).toEqual(['first', 'second']);
+  });
+
+  it('invalidates stale credential writes after a clear generation starts', async () => {
+    const gate = createCredentialWriteGate();
+    const releaseFirstWrite = Promise.withResolvers<void>();
+    const writes: string[] = [];
+    const staleGeneration = gate.generation;
+    const firstWrite = enqueueCredentialWrite(gate, async ({ isCurrent }) => {
+      await releaseFirstWrite.promise;
+      if (isCurrent()) {
+        writes.push('stale-save');
+      }
+    });
+
+    const clearWrite = enqueueCredentialWrite(gate, async () => {
+      writes.push('clear');
+    }, { advanceGeneration: true });
+
+    expect(isCredentialWriteCurrent(gate, staleGeneration)).toBe(false);
+    releaseFirstWrite.resolve();
+    await Promise.all([firstWrite, clearWrite]);
+
+    expect(writes).toEqual(['clear']);
   });
 
   it('starts the next non-aborted browser fetch request', () => {

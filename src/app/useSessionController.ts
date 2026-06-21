@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import CookieManager from '@react-native-cookies/cookies';
 import {
@@ -46,6 +46,9 @@ import {
   type SiteSessionEvent
 } from '../siteSessionState';
 import {
+  createCredentialWriteGate,
+  enqueueCredentialWrite,
+  isCredentialWriteCurrent,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
@@ -153,6 +156,8 @@ export function useSessionController({
   webLoginDetectedRef: MutableRef<boolean>;
   webLoginUserId: number | null;
 }) {
+  const nodeSeekCredentialGateRef = useRef(createCredentialWriteGate());
+  const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
   const loginState = useMemo(() => {
@@ -204,26 +209,30 @@ export function useSessionController({
 
   useEffect(() => {
     void (async () => {
+      const nodeSeekGeneration = nodeSeekCredentialGateRef.current.generation;
+      const yaohuoGeneration = yaohuoCredentialGateRef.current.generation;
       const [savedCookie, savedNodeSeekUserAgent, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
         SecureStore.getItemAsync(COOKIE_STORAGE_KEY),
         SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
         SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
         loadLinuxDoAccess()
       ]);
-      if (savedNodeSeekUserAgent) {
+      const nodeSeekReadCurrent = isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, nodeSeekGeneration);
+      const yaohuoReadCurrent = isCredentialWriteCurrent(yaohuoCredentialGateRef.current, yaohuoGeneration);
+      if (nodeSeekReadCurrent && savedNodeSeekUserAgent) {
         const userAgent = sanitizeNodeSeekUserAgent(savedNodeSeekUserAgent);
         if (userAgent) {
           nodeSeekWebViewUserAgentRef.current = userAgent;
           setNodeSeekWebViewUserAgent(userAgent);
         }
       }
-      if (savedCookie) {
+      if (nodeSeekReadCurrent && savedCookie) {
         const savedCookies = parseNodeSeekDocumentCookie(savedCookie);
         const summary = summarizeNodeSeekCookies(savedCookies);
         updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, canStoreNodeSeekCookieHeader(savedCookies), summary.loggedIn));
         notify(summary.loggedIn ? '已找到本机保存的 NodeSeek 登录 Cookie。' : '已找到本机保存的 NodeSeek 验证信息。');
       }
-      if (savedYaohuoCookie) {
+      if (yaohuoReadCurrent && savedYaohuoCookie) {
         const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(savedYaohuoCookie));
         updateYaohuoSession(siteEventWithCookieFacts('yaohuo', yaohuoSummary.names, false, yaohuoSummary.loggedIn));
         notify('已找到本机保存的妖火 Cookie。');
@@ -257,7 +266,11 @@ export function useSessionController({
     if (source !== 'all' && source !== 'yaohuo') {
       return undefined;
     }
+    const generation = yaohuoCredentialGateRef.current.generation;
     const cookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+    if (!isCredentialWriteCurrent(yaohuoCredentialGateRef.current, generation)) {
+      return undefined;
+    }
     const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookie || ''));
     updateYaohuoSession(siteEventWithCookieFacts('yaohuo', summary.names, false, summary.loggedIn));
     return cookie || undefined;
@@ -269,36 +282,44 @@ export function useSessionController({
   ) => {
     const summary = summarizeNodeSeekCookies(cookies);
     const cookieHeader = buildCookieHeader(cookies);
-    if (!isCurrent()) {
-      return '';
-    }
-    if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
-      await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
-      await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-      if (!isCurrent()) {
+    const saved = await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, async ({ isCurrent: isWriteCurrent }) => {
+      const stillCurrent = () => isCurrent() && isWriteCurrent();
+      if (!stillCurrent()) {
         return '';
       }
-      updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, true, summary.loggedIn));
-      return cookieHeader;
-    }
-    if (!isCurrent()) {
+      if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
+        await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
+        await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+        if (!stillCurrent()) {
+          return '';
+        }
+        updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, true, summary.loggedIn));
+        return cookieHeader;
+      }
+      if (!stillCurrent()) {
+        return '';
+      }
+      updateNodeSeekSession({
+        type: summary.loggedIn ? 'login-detected' : 'verification-required',
+        ...(summary.names.length ? { cookieSummary: summary.names } : {}),
+        ...(summary.loggedIn ? { at: new Date().toISOString() } : {})
+      });
       return '';
-    }
-    updateNodeSeekSession({
-      type: summary.loggedIn ? 'login-detected' : 'verification-required',
-      ...(summary.names.length ? { cookieSummary: summary.names } : {}),
-      ...(summary.loggedIn ? { at: new Date().toISOString() } : {})
     });
-    return '';
+    return saved || '';
   }, [nodeSeekWebViewUserAgentRef, updateNodeSeekSession]);
 
   const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source) => {
     if (source !== 'all' && source !== 'nodeseek') {
       return undefined;
     }
+    const generation = nodeSeekCredentialGateRef.current.generation;
     const cookies = await readNodeSeekCookiesFromWebView();
     const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
     const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || ''), cookies));
+    if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
+      return undefined;
+    }
     if (webViewCookieHeader) {
       return webViewCookieHeader;
     }
@@ -583,32 +604,56 @@ export function useSessionController({
   }, [linuxDoBrowserFetchCurrentRef, rejectLinuxDoBrowserFetch]);
 
   const restoreSavedYaohuoCookiesToWebView = useCallback(async () => {
-    const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-    if (!cookieHeader) {
-      updateYaohuoSession({ type: 'cleared' });
-      return;
-    }
-    const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader));
-    updateYaohuoSession(siteEventWithCookieFacts('yaohuo', summary.names, false, summary.loggedIn));
-    const headers = buildYaohuoSetCookieHeaders(cookieHeader);
-    for (const url of YAOHUO_COOKIE_URLS) {
-      for (const header of headers) {
-        await CookieManager.setFromResponse(url, header);
+    await enqueueCredentialWrite(yaohuoCredentialGateRef.current, async ({ isCurrent }) => {
+      const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+      if (!isCurrent()) {
+        return;
       }
-    }
-    if (headers.length) {
-      await CookieManager.flush();
-    }
+      if (!cookieHeader) {
+        updateYaohuoSession({ type: 'cleared' });
+        return;
+      }
+      const summary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(cookieHeader));
+      updateYaohuoSession(siteEventWithCookieFacts('yaohuo', summary.names, false, summary.loggedIn));
+      const headers = buildYaohuoSetCookieHeaders(cookieHeader);
+      for (const url of YAOHUO_COOKIE_URLS) {
+        for (const header of headers) {
+          if (!isCurrent()) {
+            return;
+          }
+          await CookieManager.setFromResponse(url, header);
+        }
+      }
+      if (headers.length && isCurrent()) {
+        await CookieManager.flush();
+      }
+    });
   }, [updateYaohuoSession]);
 
+  const saveYaohuoCookieHeader = useCallback(async (
+    cookieHeader: string,
+    { isCurrent = () => true }: { isCurrent?: () => boolean } = {}
+  ) => {
+    const saved = await enqueueCredentialWrite(yaohuoCredentialGateRef.current, async ({ isCurrent: isWriteCurrent }) => {
+      if (!isCurrent() || !isWriteCurrent()) {
+        return false;
+      }
+      await SecureStore.setItemAsync(YAOHUO_COOKIE_STORAGE_KEY, cookieHeader);
+      return isCurrent() && isWriteCurrent();
+    });
+    return saved === true;
+  }, []);
+
   const clearStoredYaohuoLoginState = useCallback(async () => {
-    await SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
+    await enqueueCredentialWrite(yaohuoCredentialGateRef.current, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY), { advanceGeneration: true });
     updateYaohuoSession({ type: 'cleared' });
   }, [updateYaohuoSession]);
 
   const clearStoredNodeSeekLoginState = useCallback(async () => {
-    await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
-    await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
+    await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, async () => {
+      await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
+      await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
+    }, { advanceGeneration: true });
     webLoginDetectedRef.current = false;
     nodeSeekWebViewCookieHeaderRef.current = '';
     updateNodeSeekSession({ type: 'cleared' });
@@ -635,20 +680,28 @@ export function useSessionController({
   }, [clearStoredNodeSeekLoginState]);
 
   const clearNodeSeekLoginCookiesOnly = useCallback(async () => {
-    const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
-    const verificationHeader = buildCookieHeader(verificationCookies);
-    const verificationSummary = summarizeNodeSeekCookies(verificationCookies);
     webLoginDetectedRef.current = false;
     setWebLoginUserId(null);
     updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
-    if (canStoreNodeSeekCookieHeader(verificationCookies) && verificationHeader) {
+    const verification = await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, async () => {
+      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+      const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
+      const verificationHeader = buildCookieHeader(verificationCookies);
+      if (!canStoreNodeSeekCookieHeader(verificationCookies) || !verificationHeader) {
+        return null;
+      }
       await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, verificationHeader);
-      nodeSeekWebViewCookieHeaderRef.current = verificationHeader;
+      return {
+        header: verificationHeader,
+        summary: summarizeNodeSeekCookies(verificationCookies)
+      };
+    }, { advanceGeneration: true });
+    if (verification) {
+      nodeSeekWebViewCookieHeaderRef.current = verification.header;
       await clearCookieUrls(CookieManager, NODESEEK_COOKIE_URLS);
       updateNodeSeekSession({
         type: 'verification-succeeded',
-        cookieSummary: verificationSummary.names,
+        cookieSummary: verification.summary.names,
         loggedIn: false,
         at: new Date().toISOString()
       });
@@ -680,6 +733,7 @@ export function useSessionController({
     loginState,
     restoreSavedYaohuoCookiesToWebView,
     saveNodeSeekCookieHeader,
+    saveYaohuoCookieHeader,
     siteSessionStates,
     siteSessionViewModels,
     updateLinuxDoSession,

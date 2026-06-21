@@ -7,6 +7,10 @@ export type BrowserFetchRequestCleanupTarget = {
 
 type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
+export type CredentialWriteGate = {
+  generation: number;
+  queue: Promise<void>;
+};
 
 export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   id: number;
@@ -197,6 +201,42 @@ export async function runBestEffortTask(task: () => Promise<void>, timeoutMs: nu
       clearTimeout(timer);
     }
   }
+}
+
+export function createCredentialWriteGate(): CredentialWriteGate {
+  return {
+    generation: 0,
+    queue: Promise.resolve()
+  };
+}
+
+export function isCredentialWriteCurrent(gate: CredentialWriteGate, generation: number) {
+  return gate.generation === generation;
+}
+
+export function advanceCredentialWriteGeneration(gate: CredentialWriteGate) {
+  gate.generation += 1;
+  return gate.generation;
+}
+
+export function enqueueCredentialWrite<T>(
+  gate: CredentialWriteGate,
+  task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T,
+  { advanceGeneration = false }: { advanceGeneration?: boolean } = {}
+) {
+  const generation = advanceGeneration ? advanceCredentialWriteGeneration(gate) : gate.generation;
+  const isCurrent = () => isCredentialWriteCurrent(gate, generation);
+  const run = gate.queue
+    .catch(() => undefined)
+    .then(async () => {
+      if (!isCurrent()) {
+        return undefined;
+      }
+      const result = await task({ isCurrent });
+      return isCurrent() ? result : undefined;
+    });
+  gate.queue = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 function cleanupBrowserFetchRequest(request: BrowserFetchRequestCleanupTarget) {

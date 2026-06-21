@@ -40,6 +40,7 @@ import {
   readLinuxDoCookiesFromStores,
   removeLinuxDoLoginCookies,
   sanitizeLinuxDoUserAgent,
+  saveLinuxDoAccess,
   summarizeLinuxDoCookies
 } from './linuxdoCookieBridge';
 import { isLinuxDoRequestUrl } from './linuxdoFetchFallback';
@@ -193,6 +194,18 @@ describe('linux.do Cloudflare helpers', () => {
 
     await clearLinuxDoSavedAccess();
 
+    expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+  });
+
+  it('does not let stale linux.do access saves restore state after clearing starts', async () => {
+    vi.mocked(SecureStore.setItemAsync).mockClear();
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+
+    const staleSave = saveLinuxDoAccess('cf_clearance=old', 'Old Agent');
+    const clear = clearLinuxDoSavedAccess();
+    await Promise.all([staleSave, clear]);
+
+    expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith('linuxdo-clearance', expect.stringContaining('old'));
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
   });
 
