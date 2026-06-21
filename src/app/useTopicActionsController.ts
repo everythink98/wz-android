@@ -39,6 +39,14 @@ import {
 import type { Reply, Topic, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
 import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
+import {
+  DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+  NODESEEK_ACCESS_STORAGE_KEY,
+  NODESEEK_COOKIE_STORAGE_KEY,
+  NODESEEK_USER_AGENT_STORAGE_KEY,
+  nodeSeekAccessRecord,
+  parseNodeSeekAccessRecord
+} from '../nodeseekCookies';
 import { createRequestOwner, startOwnedRequest, type RequestOwner } from '../requestOwnership';
 import {
   currentTopicActionRequestOwner,
@@ -67,8 +75,6 @@ import {
   YAOHUO_DEFAULT_CLASS_ID
 } from './topicActionControllerHelpers';
 
-const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
-
 type Ref<T> = MutableRefObject<T>;
 type ActionRunOptions = {
   key?: string;
@@ -82,6 +88,18 @@ type OptimisticTopicActionOptions = {
   sendDesired: (desiredActive: boolean) => Promise<boolean>;
   successMessage: (active: boolean) => string;
 };
+
+async function loadNodeSeekActionAccess() {
+  const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
+  if (savedAccess) {
+    return savedAccess;
+  }
+  const [cookieHeader, userAgent] = await Promise.all([
+    SecureStore.getItemAsync(NODESEEK_COOKIE_STORAGE_KEY),
+    SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY)
+  ]);
+  return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
+}
 
 export function useTopicActionsController({
   actionAbortRef,
@@ -178,12 +196,12 @@ export function useTopicActionsController({
     const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     setActionBusy(true);
     try {
-      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+      const access = await loadNodeSeekActionAccess();
       await runNodeSeekAction({
-        cookieHeader: cookieHeader || '',
+        cookieHeader: access?.cookieHeader || '',
         request: requestFactory(),
         signal: controller.signal,
-        userAgent: nodeSeekWebViewUserAgentRef.current
+        userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
       if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
         return false;
@@ -354,11 +372,11 @@ export function useTopicActionsController({
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'nodeseek-optimistic');
     const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     try {
-      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
+      const access = await loadNodeSeekActionAccess();
       await runNodeSeekAction({
-        cookieHeader: cookieHeader || '',
+        cookieHeader: access?.cookieHeader || '',
         request: requestFactory(),
-        userAgent: nodeSeekWebViewUserAgentRef.current
+        userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
       if (!isCurrentTopicActionRequest(requestOwner)) {
         return false;

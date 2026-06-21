@@ -188,8 +188,7 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
 
   private fun isNodeSeekWantedCookieName(name: String): Boolean {
     val clean = name.lowercase()
-    val nodeSeekWantedCookieNames = listOf("session", "auth", "token", "jwt", "user", "sid")
-    return clean == "cf_clearance" || nodeSeekWantedCookieNames.any { clean.contains(it) }
+    return clean == "cf_clearance" || clean == "session"
   }
 
   private fun nodeSeekAccessCookieHeader(cookieHeader: String?): String? {
@@ -296,7 +295,7 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
       database.delete(
         "cookies",
-        "name = ? AND (host_key = 'linux.do' OR host_key = '.linux.do' OR host_key LIKE '%.linux.do')",
+        "name = ? AND (host_key = 'linux.do' OR host_key = '.linux.do')",
         arrayOf("cf_clearance")
       ) > 0
     } catch (_: Exception) {
@@ -350,7 +349,9 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
         FROM cookies
         WHERE value != ''
           AND name IN ('cf_clearance', '_t', '_forum_session')
-          AND (host_key = 'linux.do' OR host_key = '.linux.do' OR host_key LIKE '%.linux.do')
+          AND (host_key = 'linux.do' OR host_key = '.linux.do')
+          AND (path IS NULL OR path = '' OR path = '/')
+          AND (expires_utc = 0 OR expires_utc > ((strftime('%s', 'now') + 11644473600) * 1000000))
         ORDER BY last_update_utc DESC
         """.trimIndent(),
         emptyArray()
@@ -386,7 +387,9 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
         FROM cookies
         WHERE name = ?
           AND value != ''
-          AND (host_key = 'linux.do' OR host_key = '.linux.do' OR host_key LIKE '%.linux.do')
+          AND (host_key = 'linux.do' OR host_key = '.linux.do')
+          AND (path IS NULL OR path = '' OR path = '/')
+          AND (expires_utc = 0 OR expires_utc > ((strftime('%s', 'now') + 11644473600) * 1000000))
         ORDER BY last_update_utc DESC
         LIMIT 1
         """.trimIndent(),
@@ -415,14 +418,11 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
         WHERE value != ''
           AND (
             lower(name) = 'cf_clearance'
-            OR lower(name) LIKE '%session%'
-            OR lower(name) LIKE '%auth%'
-            OR lower(name) LIKE '%token%'
-            OR lower(name) LIKE '%jwt%'
-            OR lower(name) LIKE '%user%'
-            OR lower(name) LIKE '%sid%'
+            OR lower(name) = 'session'
           )
-          AND (host_key = 'nodeseek.com' OR host_key = '.nodeseek.com' OR host_key LIKE '%.nodeseek.com')
+          AND (host_key = 'nodeseek.com' OR host_key = '.nodeseek.com')
+          AND (path IS NULL OR path = '' OR path = '/')
+          AND (expires_utc = 0 OR expires_utc > ((strftime('%s', 'now') + 11644473600) * 1000000))
         ORDER BY last_update_utc DESC
         """.trimIndent(),
         emptyArray()

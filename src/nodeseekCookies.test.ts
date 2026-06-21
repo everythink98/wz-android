@@ -5,6 +5,7 @@ import {
   hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
   parseNodeSeekDocumentCookie,
+  parseNodeSeekAccessRecord,
   removeNodeSeekLoginCookies,
   sanitizeNodeSeekUserAgent,
   summarizeNodeSeekCookies,
@@ -82,6 +83,19 @@ describe('NodeSeek cookie helpers', () => {
     expect(canStoreNodeSeekCookieHeader(cookies, true)).toBe(false);
   });
 
+  it('does not persist broad token-like NodeSeek cookie names', () => {
+    const cookies: Record<string, NativeCookie> = {
+      user_token_hint: {
+        name: 'user_token_hint',
+        value: 'abc',
+        domain: 'www.nodeseek.com'
+      }
+    };
+
+    expect(hasNodeSeekLoginCookie(cookies)).toBe(false);
+    expect(buildCookieHeader(cookies)).toBe('');
+  });
+
   it('allows storing Cloudflare clearance cookies from NodeSeek verification', () => {
     const cookies: Record<string, NativeCookie> = {
       cf_clearance: {
@@ -152,6 +166,20 @@ describe('NodeSeek cookie helpers', () => {
       count: 1,
       names: ['session'],
       loggedIn: true
+    });
+  });
+
+  it('parses a combined NodeSeek access record with a normalized user agent', () => {
+    expect(parseNodeSeekAccessRecord(JSON.stringify({
+      cookieHeader: 'session=abc',
+      userAgent: 'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
+      savedAt: '2026-06-21T00:00:00.000Z',
+      source: 'webview'
+    }))).toEqual({
+      cookieHeader: 'session=abc',
+      userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36',
+      savedAt: '2026-06-21T00:00:00.000Z',
+      source: 'webview'
     });
   });
 });

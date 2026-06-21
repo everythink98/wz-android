@@ -27,6 +27,7 @@ import { runBackupOperation } from '../backupOperation';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
 import type { FeedSource, Source } from '../types';
+import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 
@@ -157,6 +158,9 @@ export function useBackupStatusController({
       if (linuxDoLoginCheck.status === 'rejected') {
         failedSites.push('linux.do');
       }
+      if (isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
+        failedSites.push('linux.do');
+      }
       if (linuxDoLogin?.loginRequired) {
         linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration, linuxDoAccess?.cookieHeader);
         if (controller.signal.aborted) {
@@ -194,15 +198,17 @@ export function useBackupStatusController({
             at: checkedAt
           });
       }
-      if (linuxDoLoginCheck.status === 'rejected') {
+      if (linuxDoLoginCheck.status === 'rejected' || isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
         dispatchSiteSessionEvent({
           site: 'linuxdo',
           type: 'check-failed',
-          message: errorMessage(linuxDoLoginCheck.reason),
+          message: linuxDoLoginCheck.status === 'rejected'
+            ? errorMessage(linuxDoLoginCheck.reason)
+            : linuxDoLogin?.message || 'linux.do 状态暂时无法确认',
           at: checkedAt
         });
       } else {
-        const hasLinuxDoLogin = access.loggedIn && (!linuxDoLogin || linuxDoLogin.ok || !linuxDoLogin.loginRequired);
+        const hasLinuxDoLogin = access.loggedIn && Boolean(linuxDoLogin?.ok);
         dispatchSiteSessionEvent({
           site: 'linuxdo',
           type: 'cookie-loaded',

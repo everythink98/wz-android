@@ -6,7 +6,12 @@ import {
   buildCookieHeader,
   canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
+  nodeSeekAccessRecord,
+  NODESEEK_ACCESS_STORAGE_KEY,
+  NODESEEK_COOKIE_STORAGE_KEY,
+  NODESEEK_USER_AGENT_STORAGE_KEY,
   parseNodeSeekDocumentCookie,
+  parseNodeSeekAccessRecord,
   removeNodeSeekLoginCookies,
   sanitizeNodeSeekUserAgent,
   summarizeNodeSeekCookies
@@ -69,9 +74,31 @@ const NODESEEK_COOKIE_PERSIST_TIMEOUT_MS = 1200;
 const LINUXDO_BROWSER_FETCH_TIMEOUT_MS = 15000;
 const LINUXDO_COOKIE_PERSIST_TIMEOUT_MS = 1200;
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me', 'http://yaohuo.me', 'http://www.yaohuo.me'];
-const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
-const NODESEEK_USER_AGENT_STORAGE_KEY = 'nodeseek-user-agent';
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
+
+async function readNodeSeekAccessFromStore() {
+  const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
+  if (savedAccess) {
+    return savedAccess;
+  }
+  const [cookieHeader, userAgent] = await Promise.all([
+    SecureStore.getItemAsync(NODESEEK_COOKIE_STORAGE_KEY),
+    SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY)
+  ]);
+  return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
+}
+
+async function writeNodeSeekAccessToStore(cookieHeader: string, userAgent?: string) {
+  await SecureStore.setItemAsync(NODESEEK_ACCESS_STORAGE_KEY, JSON.stringify(nodeSeekAccessRecord(cookieHeader, userAgent)));
+  await SecureStore.deleteItemAsync(NODESEEK_COOKIE_STORAGE_KEY).catch(() => undefined);
+  await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY).catch(() => undefined);
+}
+
+async function deleteNodeSeekAccessFromStore() {
+  await SecureStore.deleteItemAsync(NODESEEK_ACCESS_STORAGE_KEY);
+  await SecureStore.deleteItemAsync(NODESEEK_COOKIE_STORAGE_KEY);
+  await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
+}
 
 export type NodeSeekBrowserFetchRequest = {
   id: number;
@@ -218,23 +245,22 @@ export function useSessionController({
     void (async () => {
       const nodeSeekGeneration = nodeSeekCredentialGateRef.current.generation;
       const yaohuoGeneration = yaohuoCredentialGateRef.current.generation;
-      const [savedCookie, savedNodeSeekUserAgent, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
-        SecureStore.getItemAsync(COOKIE_STORAGE_KEY),
-        SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY),
+      const [savedNodeSeekAccess, savedYaohuoCookie, linuxDoAccess] = await Promise.all([
+        readNodeSeekAccessFromStore(),
         SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
         loadLinuxDoAccess()
       ]);
       const nodeSeekReadCurrent = isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, nodeSeekGeneration);
       const yaohuoReadCurrent = isCredentialWriteCurrent(yaohuoCredentialGateRef.current, yaohuoGeneration);
-      if (nodeSeekReadCurrent && savedNodeSeekUserAgent) {
-        const userAgent = sanitizeNodeSeekUserAgent(savedNodeSeekUserAgent);
+      if (nodeSeekReadCurrent && savedNodeSeekAccess?.userAgent) {
+        const userAgent = sanitizeNodeSeekUserAgent(savedNodeSeekAccess.userAgent);
         if (userAgent) {
           nodeSeekWebViewUserAgentRef.current = userAgent;
           setNodeSeekWebViewUserAgent(userAgent);
         }
       }
-      if (nodeSeekReadCurrent && savedCookie) {
-        const savedCookies = parseNodeSeekDocumentCookie(savedCookie);
+      if (nodeSeekReadCurrent && savedNodeSeekAccess?.cookieHeader) {
+        const savedCookies = parseNodeSeekDocumentCookie(savedNodeSeekAccess.cookieHeader);
         const summary = summarizeNodeSeekCookies(savedCookies);
         updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, canStoreNodeSeekCookieHeader(savedCookies), summary.loggedIn));
         notify(summary.loggedIn ? '已找到本机保存的 NodeSeek 登录 Cookie。' : '已找到本机保存的 NodeSeek 验证信息。');
@@ -296,8 +322,7 @@ export function useSessionController({
         return '';
       }
       if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
-        await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, cookieHeader);
-        await SecureStore.setItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+        await writeNodeSeekAccessToStore(cookieHeader, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
         if (!stillCurrent()) {
           return '';
         }
@@ -327,19 +352,19 @@ export function useSessionController({
     const generation = nodeSeekCredentialGateRef.current.generation;
     options?.captureGeneration?.(generation);
     const cookies = await readNodeSeekCookiesFromWebView();
-    const savedCookie = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedCookie || ''), cookies), { generation });
+    const savedAccess = await readNodeSeekAccessFromStore();
+    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedAccess?.cookieHeader || ''), cookies), { generation });
     if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
       return undefined;
     }
     if (webViewCookieHeader) {
       return webViewCookieHeader;
     }
-    if (savedCookie) {
-      const savedCookies = parseNodeSeekDocumentCookie(savedCookie);
+    if (savedAccess?.cookieHeader) {
+      const savedCookies = parseNodeSeekDocumentCookie(savedAccess.cookieHeader);
       const summary = summarizeNodeSeekCookies(savedCookies);
       updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, canStoreNodeSeekCookieHeader(savedCookies), summary.loggedIn));
-      return savedCookie;
+      return savedAccess.cookieHeader;
     }
     updateNodeSeekSession({ type: 'cleared' });
     return undefined;
@@ -678,8 +703,7 @@ export function useSessionController({
 
   const clearStoredNodeSeekLoginState = useCallback(async () => {
     await replaceCredentialWrite(nodeSeekCredentialGateRef.current, async () => {
-      await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
-      await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
+      await deleteNodeSeekAccessFromStore();
     });
     webLoginDetectedRef.current = false;
     nodeSeekWebViewCookieHeaderRef.current = '';
@@ -713,13 +737,13 @@ export function useSessionController({
 
   const clearNodeSeekLoginCookiesOnly = useCallback(async (options: CredentialClearOptions = {}) => {
     const task = async () => {
-      const cookieHeader = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-      const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(cookieHeader || ''));
+      const access = await readNodeSeekAccessFromStore();
+      const verificationCookies = removeNodeSeekLoginCookies(parseNodeSeekDocumentCookie(access?.cookieHeader || ''));
       const verificationHeader = buildCookieHeader(verificationCookies);
       if (!canStoreNodeSeekCookieHeader(verificationCookies) || !verificationHeader) {
         return null;
       }
-      await SecureStore.setItemAsync(COOKIE_STORAGE_KEY, verificationHeader);
+      await writeNodeSeekAccessToStore(verificationHeader, access?.userAgent || nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
       return {
         header: verificationHeader,
         summary: summarizeNodeSeekCookies(verificationCookies)
