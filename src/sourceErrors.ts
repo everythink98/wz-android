@@ -50,3 +50,7 @@ export function nodeSeekVerificationErrorMessage(
     ? sourceErrorMessage(errors.nodeseek) || fallback
     : '';
 }
+
+export function nodeSeekVerificationNavigationMessage(source: FeedSource, errors: SourceErrors) {
+  return source === 'all' ? '' : nodeSeekVerificationErrorMessage(errors);
+}

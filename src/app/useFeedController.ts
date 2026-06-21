@@ -25,7 +25,7 @@ import {
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
-import { formatSourceErrorMessages, nodeSeekVerificationErrorMessage, sourceErrorFromUnknown } from '../sourceErrors';
+import { formatSourceErrorMessages, nodeSeekVerificationErrorMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
 import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
@@ -338,7 +338,7 @@ export function useFeedController({
       }
       const errors = Object.entries(finalErrors);
       if (errors.length) {
-        const verificationMessage = nodeSeekVerificationErrorMessage(finalErrors);
+        const verificationMessage = nodeSeekVerificationNavigationMessage(requestSource, finalErrors);
         if (verificationMessage) {
           if (isLoadMore) {
             markFeedLoadMoreFailed(requestSource);

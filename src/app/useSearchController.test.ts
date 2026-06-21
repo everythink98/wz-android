@@ -4,6 +4,7 @@ import {
   enqueueSearchHistoryWrite,
   firstRemoteSearchAction,
   groupFromRemoteSearchResult,
+  remoteSearchActionForSource,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
 
@@ -23,6 +24,19 @@ describe('search controller result helpers', () => {
 
     expect(results.map(groupFromRemoteSearchResult).map((group) => group.source)).toEqual(['v2ex', 'yaohuo']);
     expect(firstRemoteSearchAction(results)).toEqual({ type: 'yaohuo-login', message: '请先登录妖火后再搜索。' });
+  });
+
+  it('does not auto-open login or verification panels for aggregated search', () => {
+    const results: RemoteSearchSourceResult[] = [
+      {
+        kind: 'action-required',
+        action: { type: 'nodeseek-verification', message: 'NodeSeek 需要验证' },
+        group: { source: 'nodeseek', label: 'NodeSeek', items: [], error: 'NodeSeek 需要验证', hasMore: false, nextPage: null }
+      }
+    ];
+
+    expect(remoteSearchActionForSource('all', results)).toBeUndefined();
+    expect(remoteSearchActionForSource('nodeseek', results)).toEqual({ type: 'nodeseek-verification', message: 'NodeSeek 需要验证' });
   });
 
   it('serializes search history writes so the latest state wins', async () => {

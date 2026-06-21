@@ -31,8 +31,8 @@ import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
-  firstRemoteSearchAction,
   groupFromRemoteSearchResult,
+  remoteSearchActionForSource,
   type RemoteSearchAction,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
@@ -323,7 +323,7 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
       const resultCount = mergedSearchGroupItemCount(nextGroups);
-      const action = firstRemoteSearchAction(activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
+      const action = remoteSearchActionForSource(searchSource, activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
       if (action) {
         handleRemoteSearchAction(action);
         return;

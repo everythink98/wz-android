@@ -1,4 +1,5 @@
 import type { SearchGroup } from './searchListItems';
+import type { FeedSource } from './types';
 
 export type SearchHistoryWriteQueue = {
   current: Promise<void>;
@@ -19,6 +20,10 @@ export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
 
 export function firstRemoteSearchAction(results: RemoteSearchSourceResult[]) {
   return results.find((result) => result.kind === 'action-required')?.action;
+}
+
+export function remoteSearchActionForSource(source: FeedSource, results: RemoteSearchSourceResult[]) {
+  return source === 'all' ? undefined : firstRemoteSearchAction(results);
 }
 
 export function createSearchHistoryWriteQueue(): SearchHistoryWriteQueue {
