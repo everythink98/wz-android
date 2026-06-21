@@ -69,3 +69,18 @@ export function nsEmbedFromUrl(value: unknown, baseUrl = 'https://www.nodeseek.c
   }
   return { type: 'iframeLink', sourceUrl, displayDomain: url.hostname };
 }
+
+export function shouldAllowBilibiliWebViewNavigation(value: unknown) {
+  const text = String(value || '').trim();
+  if (text === 'about:blank') {
+    return true;
+  }
+  const url = safeUrl(text, 'https://player.bilibili.com/');
+  return Boolean(
+    url
+    && url.protocol === 'https:'
+    && url.hostname.toLowerCase() === BILIBILI_PLAYER_HOST
+    && url.pathname === '/player.html'
+    && hasBilibiliPlayerId(url)
+  );
+}

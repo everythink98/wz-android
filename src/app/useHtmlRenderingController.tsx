@@ -21,7 +21,7 @@ import {
   normalizeImagePreviewUrl,
   withForumImageDimensions
 } from '../htmlImages';
-import { nsEmbedFromUrl } from '../nsVideoEmbeds';
+import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
 import { parseForumTopicLink } from '../appUtils';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
 import type { Topic, TopicDetail } from '../types';
@@ -93,6 +93,7 @@ export function useHtmlRenderingController({
           allowsFullscreenVideo
           domStorageEnabled
           javaScriptEnabled
+          onShouldStartLoadWithRequest={(request) => shouldAllowBilibiliWebViewNavigation(request.url)}
           source={{ uri: embedUrl }}
           style={embedStyles.webView}
         />

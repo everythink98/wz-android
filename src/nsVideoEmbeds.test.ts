@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
+import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from './nsVideoEmbeds';
 
 describe('NodeSeek video embeds', () => {
   it('builds Bilibili player URLs from NodeSeek-supported video links', () => {
@@ -21,5 +21,13 @@ describe('NodeSeek video embeds', () => {
     expect(bilibiliEmbedUrlFromUrl('https://b23.tv/demo')).toBeUndefined();
     expect(bilibiliEmbedUrlFromUrl('https://www.youtube.com/watch?v=demo')).toBeUndefined();
     expect(bilibiliEmbedUrlFromUrl('https://player.bilibili.com/player.html?foo=bar')).toBeUndefined();
+  });
+
+  it('allows only Bilibili player navigation inside the embedded WebView', () => {
+    expect(shouldAllowBilibiliWebViewNavigation('about:blank')).toBe(true);
+    expect(shouldAllowBilibiliWebViewNavigation('https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz')).toBe(true);
+    expect(shouldAllowBilibiliWebViewNavigation('https://www.bilibili.com/video/BV1GUdgBdESz')).toBe(false);
+    expect(shouldAllowBilibiliWebViewNavigation('https://example.com/ad')).toBe(false);
+    expect(shouldAllowBilibiliWebViewNavigation('javascript:alert(1)')).toBe(false);
   });
 });
