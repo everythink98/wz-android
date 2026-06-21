@@ -24,7 +24,7 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
-import { sourceErrorFromUnknown, sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
+import { formatSourceErrorMessages, nodeSeekVerificationErrorMessage, sourceErrorFromUnknown } from '../sourceErrors';
 import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
@@ -129,11 +129,12 @@ export function useFeedController({
       setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
-        if (sourceErrorRequiresVerification(data.errors.nodeseek)) {
-          showNodeSeekVerification(sourceErrorMessage(data.errors.nodeseek) || 'NodeSeek 需要完成 Cloudflare 验证');
+        const verificationMessage = nodeSeekVerificationErrorMessage(data.errors);
+        if (verificationMessage) {
+          showNodeSeekVerification(verificationMessage);
           return;
         }
-        notify(errors.map(([sourceName, message]) => `${sourceLabel(sourceName as FeedSource)}：${sourceErrorMessage(message)}`).join('；'));
+        notify(formatSourceErrorMessages(data.errors, sourceLabel));
       }
     } catch (error) {
       if (requestId === categoriesRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
@@ -335,15 +336,15 @@ export function useFeedController({
       }
       const errors = Object.entries(finalErrors);
       if (errors.length) {
-        if (sourceErrorRequiresVerification(finalErrors.nodeseek)) {
-          const message = sourceErrorMessage(finalErrors.nodeseek) || 'NodeSeek 需要完成 Cloudflare 验证';
+        const verificationMessage = nodeSeekVerificationErrorMessage(finalErrors);
+        if (verificationMessage) {
           if (isLoadMore) {
             markFeedLoadMoreFailed(requestSource);
           }
-          showNodeSeekVerification(isLoadMore ? `加载下一页失败：${message}` : message);
+          showNodeSeekVerification(isLoadMore ? `加载下一页失败：${verificationMessage}` : verificationMessage);
           return;
         }
-        const message = errors.map(([sourceName, error]) => `${sourceLabel(sourceName as FeedSource)}：${sourceErrorMessage(error)}`).join('；');
+        const message = formatSourceErrorMessages(finalErrors, sourceLabel);
         if (isLoadMore) {
           markFeedLoadMoreFailed(requestSource);
           notify(`加载下一页失败：${message}`);
