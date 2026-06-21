@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import {
   buildNodeSeekAttendanceRequest,
@@ -39,7 +39,13 @@ import {
 import type { Reply, Topic, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
 import { linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
-import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest, type RequestOwner } from '../requestOwnership';
+import { createRequestOwner, startOwnedRequest, type RequestOwner } from '../requestOwnership';
+import {
+  isCurrentTopicActionRequestOwner,
+  startTopicActionRequestOwner,
+  type TopicActionOwnerMap,
+  type TopicActionRequestOwner
+} from '../topicActionRequestOwners';
 import { errorMessage, finishAbortableRequest, isCanceledRequest, startAbortableRequest } from '../appUtils';
 import { isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
 import type { ReplyTarget } from '../appTypes';
@@ -64,11 +70,11 @@ const COOKIE_STORAGE_KEY = 'nodeseek-cookie-header';
 type Ref<T> = MutableRefObject<T>;
 type ActionRunOptions = {
   key?: string;
-  owner?: RequestOwner;
+  owner?: TopicActionRequestOwner;
 };
 type OptimisticTopicActionOptions = {
   key: string;
-  requestOwner: RequestOwner;
+  requestOwner: TopicActionRequestOwner;
   currentActive: boolean;
   applyDisplayed: (desiredActive: boolean) => void;
   sendDesired: (desiredActive: boolean) => Promise<boolean>;
@@ -137,13 +143,14 @@ export function useTopicActionsController({
   const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);
   const canUseYaohuoActions = isSiteLoggedIn(siteSessionStates.yaohuo);
   const canUseLinuxDoActions = isSiteLoggedIn(siteSessionStates.linuxdo);
+  const topicActionOwnersRef = useRef<TopicActionOwnerMap>({});
 
   const startTopicActionRequest = useCallback((key: string) => (
-    startOwnedRequest(topicActionRequestOwnerRef, `topic-action:${key}`)
+    startTopicActionRequestOwner(topicActionRequestOwnerRef, topicActionOwnersRef, key)
   ), [topicActionRequestOwnerRef]);
 
-  const isCurrentTopicActionRequest = useCallback((requestOwner: RequestOwner) => (
-    isCurrentOwnedRequest(requestOwner, topicActionRequestOwnerRef)
+  const isCurrentTopicActionRequest = useCallback((requestOwner: TopicActionRequestOwner) => (
+    isCurrentTopicActionRequestOwner(requestOwner, topicActionRequestOwnerRef, topicActionOwnersRef)
   ), [topicActionRequestOwnerRef]);
 
   const runNodeSeekRequest = useCallback(async (
@@ -547,18 +554,19 @@ export function useTopicActionsController({
     if (!detail) {
       return;
     }
-    const requestTopicKey = topicKey(detail);
-    const requestOwner = startTopicActionRequest(requestTopicKey);
     if (isLinuxDoActionTopic(detail)) {
       if (type !== 'like') {
         return;
       }
+      const requestTopicKey = topicKey(detail);
+      const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' });
+      const requestOwner = startTopicActionRequest(actionKey);
       const target = [
         topicDetail,
         ...topicReplies
       ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean } | undefined);
       startOptimisticTopicAction({
-        key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' }),
+        key: actionKey,
         requestOwner,
         currentActive: Boolean(target?.liked),
         applyDisplayed: (desiredActive) => {
@@ -577,6 +585,7 @@ export function useTopicActionsController({
     if (!isNodeSeekActionTopic(detail)) {
       return;
     }
+    const requestTopicKey = topicKey(detail);
     const activeFields: Record<InteractionType, 'upvoted' | 'liked' | 'disliked'> = {
       upvote: 'upvoted',
       like: 'liked',
@@ -591,8 +600,10 @@ export function useTopicActionsController({
       notify(nodeSeekInteractionRemovalMessage(type));
       return;
     }
+    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type });
+    const requestOwner = startTopicActionRequest(actionKey);
     startOptimisticTopicAction({
-      key: topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type }),
+      key: actionKey,
       requestOwner,
       currentActive: Boolean(target?.[activeField]),
       applyDisplayed: (desiredActive) => {
@@ -631,10 +642,11 @@ export function useTopicActionsController({
       return;
     }
     const requestTopicKey = topicKey(detail);
-    const requestOwner = startTopicActionRequest(requestTopicKey);
+    const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' });
+    const requestOwner = startTopicActionRequest(actionKey);
     const collected = Boolean((detail as TopicDetail).collected);
     startOptimisticTopicAction({
-      key: topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' }),
+      key: actionKey,
       requestOwner,
       currentActive: collected,
       applyDisplayed: (desiredActive) => {
@@ -657,10 +669,10 @@ export function useTopicActionsController({
       return;
     }
     const requestTopicKey = topicKey(detail);
-    const requestOwner = startTopicActionRequest(requestTopicKey);
     const bookmarked = Boolean((detail as TopicDetail).bookmarked);
     let bookmarkId = (detail as TopicDetail).bookmarkId;
     const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'bookmark' });
+    const requestOwner = startTopicActionRequest(actionKey);
     startOptimisticTopicAction({
       key: actionKey,
       requestOwner,

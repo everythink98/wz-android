@@ -5,7 +5,6 @@ import {
   type OptimisticActionState
 } from '../topicActionState';
 import { clearLinuxDoAccess, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
-import type { RequestOwner } from '../requestOwnership';
 import { errorMessage } from '../appUtils';
 import type { SiteSessionEvent } from '../siteSessionState';
 
@@ -36,7 +35,7 @@ export async function clearExpiredLinuxDoLogin({
   resetLinuxDoLevelState();
 }
 
-export async function runOptimisticActionQueue({
+export async function runOptimisticActionQueue<RequestOwnerValue>({
   applyDisplayed,
   isCurrentRequest,
   key,
@@ -48,11 +47,11 @@ export async function runOptimisticActionQueue({
   successMessage
 }: {
   applyDisplayed: (desiredActive: boolean) => void;
-  isCurrentRequest: (requestOwner: RequestOwner) => boolean;
+  isCurrentRequest: (requestOwner: RequestOwnerValue) => boolean;
   key: string;
   notify: (message: string) => void;
   optimisticActions: MutableRefObject<Record<string, OptimisticActionState>>;
-  requestOwner: RequestOwner;
+  requestOwner: RequestOwnerValue;
   sendDesired: (desiredActive: boolean) => Promise<boolean>;
   setOptimisticActionState: (key: string, state?: OptimisticActionState) => void;
   successMessage: (active: boolean) => string;
@@ -93,7 +92,7 @@ export async function runOptimisticActionQueue({
   }
 }
 
-export function beginOptimisticTopicAction({
+export function beginOptimisticTopicAction<RequestOwnerValue>({
   applyDisplayed,
   currentActive,
   isCurrentRequest,
@@ -105,10 +104,10 @@ export function beginOptimisticTopicAction({
 }: {
   applyDisplayed: (desiredActive: boolean) => void;
   currentActive: boolean;
-  isCurrentRequest: (requestOwner: RequestOwner) => boolean;
+  isCurrentRequest: (requestOwner: RequestOwnerValue) => boolean;
   key: string;
   optimisticActions: MutableRefObject<Record<string, OptimisticActionState>>;
-  requestOwner: RequestOwner;
+  requestOwner: RequestOwnerValue;
   setOptimisticActionState: (key: string, state?: OptimisticActionState) => void;
   startQueue: () => void;
 }) {
