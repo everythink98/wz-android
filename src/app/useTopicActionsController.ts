@@ -41,6 +41,7 @@ import { topicKey } from '../readerData';
 import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
 import { createRequestOwner, startOwnedRequest, type RequestOwner } from '../requestOwnership';
 import {
+  currentTopicActionRequestOwner,
   isCurrentTopicActionRequestOwner,
   startTopicActionRequestOwner,
   type TopicActionOwnerMap,
@@ -151,6 +152,12 @@ export function useTopicActionsController({
   const startTopicActionRequest = useCallback((key: string) => (
     startTopicActionRequestOwner(topicActionRequestOwnerRef, topicActionOwnersRef, key)
   ), [topicActionRequestOwnerRef]);
+
+  const startOptimisticTopicActionRequest = useCallback((key: string) => (
+    optimisticTopicActionsRef.current[key]?.inFlight
+      ? currentTopicActionRequestOwner(topicActionRequestOwnerRef, topicActionOwnersRef, key)
+      : startTopicActionRequest(key)
+  ), [optimisticTopicActionsRef, startTopicActionRequest, topicActionRequestOwnerRef]);
 
   const isCurrentTopicActionRequest = useCallback((requestOwner: TopicActionRequestOwner) => (
     isCurrentTopicActionRequestOwner(requestOwner, topicActionRequestOwnerRef, topicActionOwnersRef)
@@ -569,7 +576,7 @@ export function useTopicActionsController({
       }
       const requestTopicKey = topicKey(detail);
       const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: 'like' });
-      const requestOwner = startTopicActionRequest(actionKey);
+      const requestOwner = startOptimisticTopicActionRequest(actionKey);
       const target = [
         topicDetail,
         ...topicReplies
@@ -610,7 +617,7 @@ export function useTopicActionsController({
       return;
     }
     const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: commentId, action: type });
-    const requestOwner = startTopicActionRequest(actionKey);
+    const requestOwner = startOptimisticTopicActionRequest(actionKey);
     startOptimisticTopicAction({
       key: actionKey,
       requestOwner,
@@ -628,7 +635,7 @@ export function useTopicActionsController({
         ? type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
         : type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
     });
-  }, [notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, setTopicReplies, startOptimisticTopicAction, startTopicActionRequest, topicDetail, topicReplies]);
+  }, [notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, setTopicReplies, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail, topicReplies]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -652,7 +659,7 @@ export function useTopicActionsController({
     }
     const requestTopicKey = topicKey(detail);
     const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'collection' });
-    const requestOwner = startTopicActionRequest(actionKey);
+    const requestOwner = startOptimisticTopicActionRequest(actionKey);
     const collected = Boolean((detail as TopicDetail).collected);
     startOptimisticTopicAction({
       key: actionKey,
@@ -670,7 +677,7 @@ export function useTopicActionsController({
       ),
       successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
     });
-  }, [runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startTopicActionRequest, topicDetail]);
+  }, [runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
 
   const bookmarkOnLinuxDoSite = useCallback(async () => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -681,7 +688,7 @@ export function useTopicActionsController({
     const bookmarked = Boolean((detail as TopicDetail).bookmarked);
     let bookmarkId = (detail as TopicDetail).bookmarkId;
     const actionKey = topicActionStateKey({ topicKey: requestTopicKey, targetId: detail.id, action: 'bookmark' });
-    const requestOwner = startTopicActionRequest(actionKey);
+    const requestOwner = startOptimisticTopicActionRequest(actionKey);
     startOptimisticTopicAction({
       key: actionKey,
       requestOwner,
@@ -724,7 +731,7 @@ export function useTopicActionsController({
       },
       successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
     });
-  }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runLinuxDoActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startTopicActionRequest, topicDetail]);
+  }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runLinuxDoActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
 
   const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);

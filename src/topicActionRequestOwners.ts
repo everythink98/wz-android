@@ -36,6 +36,25 @@ export function startTopicActionRequestOwner(
   };
 }
 
+export function currentTopicActionRequestOwner(
+  contextOwnerRef: Ref<RequestOwner>,
+  actionOwnersRef: Ref<TopicActionOwnerMap>,
+  key: string
+): TopicActionRequestOwner {
+  const ownerKey = actionOwnerKey(key);
+  const action = actionOwnersRef.current[ownerKey] || createRequestOwner(ownerKey);
+  if (!actionOwnersRef.current[ownerKey]) {
+    actionOwnersRef.current = {
+      ...actionOwnersRef.current,
+      [ownerKey]: action
+    };
+  }
+  return {
+    context: contextOwnerRef.current,
+    action
+  };
+}
+
 export function isCurrentTopicActionRequestOwner(
   requestOwner: TopicActionRequestOwner,
   contextOwnerRef: Ref<RequestOwner>,

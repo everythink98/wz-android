@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRequestOwner } from './requestOwnership';
 import {
+  currentTopicActionRequestOwner,
   isCurrentTopicActionRequestOwner,
   startTopicActionRequestOwner,
   type TopicActionOwnerMap
@@ -39,5 +40,17 @@ describe('topic action request owners', () => {
     contextOwner.current = createRequestOwner('topic-action-context:topic:2');
 
     expect(isCurrentTopicActionRequestOwner(likeOwner, contextOwner, actionOwners)).toBe(false);
+  });
+
+  it('can reuse the current action owner without superseding an in-flight queue', () => {
+    const contextOwner = { current: createRequestOwner('topic-action') };
+    const actionOwners = { current: {} as TopicActionOwnerMap };
+    const firstLikeOwner = startTopicActionRequestOwner(contextOwner, actionOwners, 'topic:1:post:1:like');
+
+    const reusedLikeOwner = currentTopicActionRequestOwner(contextOwner, actionOwners, 'topic:1:post:1:like');
+
+    expect(reusedLikeOwner.action).toEqual(firstLikeOwner.action);
+    expect(isCurrentTopicActionRequestOwner(firstLikeOwner, contextOwner, actionOwners)).toBe(true);
+    expect(isCurrentTopicActionRequestOwner(reusedLikeOwner, contextOwner, actionOwners)).toBe(true);
   });
 });
