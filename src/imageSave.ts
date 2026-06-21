@@ -29,6 +29,10 @@ async function assertReadableImageFile(uri: string) {
 }
 
 export async function saveImageUriToLibrary(uri: string) {
+  const dataImage = dataImageFileFromUrl(uri);
+  if (!dataImage && !isHttpOrHttpsUrl(uri)) {
+    throw new Error('图片地址不支持保存');
+  }
   const permission = await MediaLibrary.requestPermissionsAsync();
   if (!permission.granted) {
     throw new Error('没有图片保存权限');
@@ -40,10 +44,6 @@ export async function saveImageUriToLibrary(uri: string) {
   const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
   let savedUri = '';
   try {
-    const dataImage = dataImageFileFromUrl(uri);
-    if (!dataImage && !isHttpOrHttpsUrl(uri)) {
-      throw new Error('图片地址不支持保存');
-    }
     const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || imageFileExtension(uri))}`;
     if (dataImage) {
       await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });

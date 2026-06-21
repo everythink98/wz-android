@@ -41,6 +41,22 @@ describe('backup import file reader', () => {
     expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled();
   });
 
+  it('rejects files when cached size is unavailable before reading text', async () => {
+    vi.mocked(FileSystem.getInfoAsync).mockResolvedValue({
+      exists: true,
+      isDirectory: false,
+      modificationTime: 1,
+      size: undefined,
+      uri: 'file:///cache/unknown-size.json'
+    } as unknown as Awaited<ReturnType<typeof FileSystem.getInfoAsync>>);
+
+    await expect(readBackupFileText({
+      uri: 'file:///cache/unknown-size.json'
+    })).rejects.toThrow('备份文件大小无法确认');
+
+    expect(FileSystem.readAsStringAsync).not.toHaveBeenCalled();
+  });
+
   it('reads normal backup files as UTF-8 text', async () => {
     vi.mocked(FileSystem.getInfoAsync).mockResolvedValue({
       exists: true,

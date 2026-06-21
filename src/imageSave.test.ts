@@ -75,6 +75,7 @@ describe('image library saving', () => {
   it('rejects unsupported image URL schemes before downloading', async () => {
     await expect(saveImageUriToLibrary('javascript:alert(1)')).rejects.toThrow('图片地址不支持保存');
 
+    expect(MediaLibrary.requestPermissionsAsync).not.toHaveBeenCalled();
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();

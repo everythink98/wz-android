@@ -36,6 +36,24 @@ describe('NodeSeek cookie helpers', () => {
     expect(hasNodeSeekLoginCookie(cookies)).toBe(true);
   });
 
+  it('detects known NodeSeek login cookie aliases without broad token names', () => {
+    const cookies: Record<string, NativeCookie> = {
+      connect: {
+        name: 'connect.sid',
+        value: 'abc',
+        domain: 'www.nodeseek.com'
+      },
+      tokenHint: {
+        name: 'user_token_hint',
+        value: 'secret',
+        domain: 'www.nodeseek.com'
+      }
+    };
+
+    expect(hasNodeSeekLoginCookie(cookies)).toBe(true);
+    expect(buildCookieHeader(cookies)).toBe('connect.sid=abc');
+  });
+
   it('ignores unrelated cookies and empty values', () => {
     const cookies: Record<string, NativeCookie> = {
       other: {

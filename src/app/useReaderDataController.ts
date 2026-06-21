@@ -25,11 +25,13 @@ export async function loadInitialReaderData({
   isActive,
   load = loadReaderData,
   notify,
+  onLoadFailed,
   onLoaded
 }: {
   isActive: () => boolean;
   load?: () => Promise<ReaderData>;
   notify: (message: string) => void;
+  onLoadFailed?: () => void;
   onLoaded: (readerData: ReaderData) => void;
 }) {
   try {
@@ -39,7 +41,9 @@ export async function loadInitialReaderData({
     }
   } catch (error) {
     if (isActive()) {
-      notify(`本机资料读取失败，已暂停本地写入：${errorMessage(error)}`);
+      notify(`本机资料读取失败，已进入恢复模式；请先导入备份再修改本机资料：${errorMessage(error)}`);
+      onLoadFailed?.();
+      onLoaded(createEmptyReaderData());
     }
   }
 }
@@ -53,6 +57,7 @@ export function useReaderDataController({
   const [readerDataLoaded, setReaderDataLoaded] = useState(false);
   const readerDataRef = useRef<ReaderData>(readerData);
   const readerDataLoadedRef = useRef(false);
+  const readerDataWriteSuspendedRef = useRef(false);
   const readerDataStateRef = useRef<ReaderData>(readerData);
   const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
   const saveQueueRef = useRef(Promise.resolve());
@@ -99,6 +104,10 @@ export function useReaderDataController({
       notify('本机资料尚未加载完成，请稍后再试。');
       return;
     }
+    if (readerDataWriteSuspendedRef.current) {
+      notify('本机资料读取失败，请先导入备份再修改本机资料。');
+      return;
+    }
     const previous = readerDataRef.current;
     const next = prepareReaderDataCommit(previous, updater);
     if (!next) {
@@ -115,7 +124,9 @@ export function useReaderDataController({
     const previous = readerDataRef.current;
     const next = sanitizeReaderData(nextValue);
     setReaderData(next);
-    return persistReaderData(next, previous);
+    return persistReaderData(next, previous).then(() => {
+      readerDataWriteSuspendedRef.current = false;
+    });
   }, [persistReaderData]);
 
   const waitForReaderDataSave = useCallback(() => saveQueueRef.current, []);
@@ -125,6 +136,9 @@ export function useReaderDataController({
     void loadInitialReaderData({
       isActive: () => active,
       notify,
+      onLoadFailed: () => {
+        readerDataWriteSuspendedRef.current = true;
+      },
       onLoaded: (savedReaderData) => {
         readerDataRef.current = savedReaderData;
         lastPersistedReaderDataRef.current = savedReaderData;

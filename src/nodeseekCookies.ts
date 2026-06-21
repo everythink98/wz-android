@@ -29,8 +29,12 @@ export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(
   'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
 );
 
-const loginCookieNames = new Set(['session']);
+const loginCookieNames = new Set(['session', 'connect.sid', 'sid']);
 const clearanceCookiePattern = /^cf_clearance$/i;
+
+function isNodeSeekLoginCookieName(name: string) {
+  return loginCookieNames.has(name.toLowerCase());
+}
 
 function isNodeSeekDomain(domain?: string) {
   if (!domain) {
@@ -43,7 +47,7 @@ function isNodeSeekDomain(domain?: string) {
 export function hasNodeSeekLoginCookie(cookies: Record<string, NativeCookie>) {
   return Object.entries(cookies).some(([key, cookie]) => {
     const name = cookie.name || key;
-    return Boolean(cookie.value) && isNodeSeekDomain(cookie.domain) && loginCookieNames.has(name);
+    return Boolean(cookie.value) && isNodeSeekDomain(cookie.domain) && isNodeSeekLoginCookieName(name);
   });
 }
 
@@ -58,7 +62,7 @@ export function isPersistableNodeSeekCookie(name: string, cookie?: NativeCookie)
   if (!cookie?.value) {
     return false;
   }
-  return isNodeSeekDomain(cookie.domain) && (clearanceCookiePattern.test(name) || loginCookieNames.has(name));
+  return isNodeSeekDomain(cookie.domain) && (clearanceCookiePattern.test(name) || isNodeSeekLoginCookieName(name));
 }
 
 export function filterPersistableNodeSeekCookies(cookies: Record<string, NativeCookie>) {
@@ -117,7 +121,7 @@ export function mergeNodeSeekCookies(...cookieMaps: Array<Record<string, NativeC
 export function removeNodeSeekLoginCookies(cookies: Record<string, NativeCookie>) {
   return Object.entries(cookies).reduce<Record<string, NativeCookie>>((kept, [key, cookie]) => {
     const name = cookie.name || key;
-    if (!loginCookieNames.has(name)) {
+    if (!isNodeSeekLoginCookieName(name)) {
       kept[key] = cookie;
     }
     return kept;

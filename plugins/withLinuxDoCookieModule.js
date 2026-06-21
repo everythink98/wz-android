@@ -188,7 +188,7 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
 
   private fun isNodeSeekWantedCookieName(name: String): Boolean {
     val clean = name.lowercase()
-    return clean == "cf_clearance" || clean == "session"
+    return clean == "cf_clearance" || clean == "session" || clean == "connect.sid" || clean == "sid"
   }
 
   private fun nodeSeekAccessCookieHeader(cookieHeader: String?): String? {
@@ -419,6 +419,8 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
           AND (
             lower(name) = 'cf_clearance'
             OR lower(name) = 'session'
+            OR lower(name) = 'connect.sid'
+            OR lower(name) = 'sid'
           )
           AND (host_key = 'nodeseek.com' OR host_key = '.nodeseek.com')
           AND (path IS NULL OR path = '' OR path = '/')

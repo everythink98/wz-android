@@ -58,9 +58,10 @@ describe('reader data controller helpers', () => {
     expect(rollbackFailedReaderDataSave(failed, failed, firstOptimistic, persisted)).toBe(persisted);
   });
 
-  it('does not mark reader data as loaded from a failed load path', async () => {
+  it('enters recovery mode from a failed load path', async () => {
     const notify = vi.fn();
     const onLoaded = vi.fn();
+    const onLoadFailed = vi.fn();
 
     await loadInitialReaderData({
       isActive: () => true,
@@ -68,10 +69,12 @@ describe('reader data controller helpers', () => {
         throw new Error('bad storage');
       },
       notify,
-      onLoaded
+      onLoaded,
+      onLoadFailed
     });
 
-    expect(onLoaded).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith('本机资料读取失败，已暂停本地写入：bad storage');
+    expect(onLoadFailed).toHaveBeenCalled();
+    expect(onLoaded).toHaveBeenCalledWith(createEmptyReaderData());
+    expect(notify).toHaveBeenCalledWith('本机资料读取失败，已进入恢复模式；请先导入备份再修改本机资料：bad storage');
   });
 });
