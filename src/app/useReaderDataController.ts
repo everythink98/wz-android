@@ -12,6 +12,10 @@ export function prepareReaderDataCommit(current: ReaderData, updater: (current: 
   return updated === current ? null : sanitizeReaderData(updated);
 }
 
+export function rollbackFailedReaderDataSave(latest: ReaderData, failed: ReaderData, previous: ReaderData) {
+  return latest === failed ? previous : latest;
+}
+
 export async function loadInitialReaderData({
   isActive,
   load = loadReaderData,
@@ -52,7 +56,7 @@ export function useReaderDataController({
     readerDataRef.current = readerData;
   }
 
-  const persistReaderData = useCallback((next: ReaderData) => {
+  const persistReaderData = useCallback((next: ReaderData, previous?: ReaderData) => {
     readerDataRef.current = next;
     const saveTask = saveQueueRef.current
       .catch(() => undefined)
@@ -67,6 +71,15 @@ export function useReaderDataController({
         });
       })
       .catch((error) => {
+        if (previous) {
+          setReaderData((latest) => {
+            const restored = rollbackFailedReaderDataSave(latest, next, previous);
+            if (restored !== latest) {
+              readerDataRef.current = restored;
+            }
+            return restored;
+          });
+        }
         notify(errorMessage(error));
         throw error;
       });
@@ -79,21 +92,23 @@ export function useReaderDataController({
       notify('本机资料尚未加载完成，请稍后再试。');
       return;
     }
-    const next = prepareReaderDataCommit(readerDataRef.current, updater);
+    const previous = readerDataRef.current;
+    const next = prepareReaderDataCommit(previous, updater);
     if (!next) {
       return;
     }
     setReaderData(next);
-    void persistReaderData(next).catch(() => undefined);
+    void persistReaderData(next, previous).catch(() => undefined);
   }, [notify, persistReaderData]);
 
   const replaceReaderData = useCallback((nextValue: ReaderData) => {
     if (!readerDataLoadedRef.current) {
       return Promise.reject(new Error('本机资料尚未加载完成，请稍后再试。'));
     }
+    const previous = readerDataRef.current;
     const next = sanitizeReaderData(nextValue);
     setReaderData(next);
-    return persistReaderData(next);
+    return persistReaderData(next, previous);
   }, [persistReaderData]);
 
   const waitForReaderDataSave = useCallback(() => saveQueueRef.current, []);

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, toggleFavorite, topicKey } from '../readerData';
 import type { Topic } from '../types';
-import { loadInitialReaderData, prepareReaderDataCommit } from './useReaderDataController';
+import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderDataController';
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -26,6 +26,27 @@ describe('reader data controller helpers', () => {
     const next = prepareReaderDataCommit(current, (value) => toggleFavorite(value, topic));
 
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
+  });
+
+  it('rolls reader data back when the failed save is still the visible state', () => {
+    const previous = createEmptyReaderData();
+    const failed = toggleFavorite(previous, topic);
+
+    expect(rollbackFailedReaderDataSave(failed, failed, previous)).toBe(previous);
+  });
+
+  it('keeps newer reader data when an older save fails later', () => {
+    const previous = createEmptyReaderData();
+    const failed = toggleFavorite(previous, topic);
+    const newer = {
+      ...failed,
+      settings: {
+        ...failed.settings,
+        theme: 'dark' as const
+      }
+    };
+
+    expect(rollbackFailedReaderDataSave(newer, failed, previous)).toBe(newer);
   });
 
   it('does not mark reader data as loaded from a failed load path', async () => {
