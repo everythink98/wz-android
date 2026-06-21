@@ -230,6 +230,13 @@ export function enqueueCredentialWrite<T>(
   return enqueueCredentialWriteForGeneration(gate, generation, task);
 }
 
+export function replaceCredentialWrite<T>(
+  gate: CredentialWriteGate,
+  task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T
+) {
+  return enqueueCredentialWriteForGeneration(gate, advanceCredentialWriteGeneration(gate), task);
+}
+
 export function enqueueCredentialWriteForGeneration<T>(
   gate: CredentialWriteGate,
   generation: number,

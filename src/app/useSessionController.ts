@@ -51,6 +51,7 @@ import {
   enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
   isCredentialWriteCurrent,
+  replaceCredentialWrite,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   rejectBrowserFetchRequest,
@@ -314,7 +315,7 @@ export function useSessionController({
       return '';
     };
     const saved = generation === undefined
-      ? await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, task)
+      ? await replaceCredentialWrite(nodeSeekCredentialGateRef.current, task)
       : await enqueueCredentialWriteForGeneration(nodeSeekCredentialGateRef.current, generation, task);
     return saved || '';
   }, [nodeSeekWebViewUserAgentRef, updateNodeSeekSession]);
@@ -659,7 +660,7 @@ export function useSessionController({
       return isCurrent() && isWriteCurrent();
     };
     const saved = generation === undefined
-      ? await enqueueCredentialWrite(yaohuoCredentialGateRef.current, task)
+      ? await replaceCredentialWrite(yaohuoCredentialGateRef.current, task)
       : await enqueueCredentialWriteForGeneration(yaohuoCredentialGateRef.current, generation, task);
     return saved === true;
   }, []);
@@ -667,7 +668,7 @@ export function useSessionController({
   const clearStoredYaohuoLoginState = useCallback(async (options: CredentialClearOptions = {}) => {
     const cleared = options.generation !== undefined && !options.force
       ? await enqueueCredentialWriteForGeneration(yaohuoCredentialGateRef.current, options.generation, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY))
-      : await enqueueCredentialWrite(yaohuoCredentialGateRef.current, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY), { advanceGeneration: true });
+      : await replaceCredentialWrite(yaohuoCredentialGateRef.current, () => SecureStore.deleteItemAsync(YAOHUO_COOKIE_STORAGE_KEY));
     if (cleared !== undefined) {
       updateYaohuoSession({ type: 'cleared' });
       return true;
@@ -676,10 +677,10 @@ export function useSessionController({
   }, [updateYaohuoSession]);
 
   const clearStoredNodeSeekLoginState = useCallback(async () => {
-    await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, async () => {
+    await replaceCredentialWrite(nodeSeekCredentialGateRef.current, async () => {
       await SecureStore.deleteItemAsync(COOKIE_STORAGE_KEY);
       await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY);
-    }, { advanceGeneration: true });
+    });
     webLoginDetectedRef.current = false;
     nodeSeekWebViewCookieHeaderRef.current = '';
     updateNodeSeekSession({ type: 'cleared' });
@@ -726,7 +727,7 @@ export function useSessionController({
     };
     const verification = options.generation !== undefined && !options.force
       ? await enqueueCredentialWriteForGeneration(nodeSeekCredentialGateRef.current, options.generation, task)
-      : await enqueueCredentialWrite(nodeSeekCredentialGateRef.current, task, { advanceGeneration: true });
+      : await replaceCredentialWrite(nodeSeekCredentialGateRef.current, task);
     if (verification === undefined) {
       return;
     }

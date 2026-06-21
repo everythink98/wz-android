@@ -158,7 +158,7 @@ export function useBackupStatusController({
         failedSites.push('linux.do');
       }
       if (linuxDoLogin?.loginRequired) {
-        linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration);
+        linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration, linuxDoAccess?.cookieHeader);
         if (controller.signal.aborted) {
           return;
         }

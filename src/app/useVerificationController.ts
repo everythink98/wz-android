@@ -8,14 +8,13 @@ import {
   canStoreLinuxDoClearance,
   clearLinuxDoSavedClearance,
   clearLinuxDoWebViewClearance,
-  currentLinuxDoAccessGeneration,
   linuxDoAccessSummary,
   linuxDoClearanceValue,
   loadLinuxDoAccess,
   mergeLinuxDoCookies,
   parseLinuxDoDocumentCookie,
   readLinuxDoCookiesFromWebView,
-  saveLinuxDoAccessForGeneration,
+  saveLinuxDoAccess,
   sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
 } from '../linuxdoCookieBridge';
@@ -523,7 +522,6 @@ export function useVerificationController({
   const checkLinuxDoCookie = useCallback(async () => {
     const requestId = ++checkingRequestIdRef.current;
     const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;
-    const linuxDoGeneration = currentLinuxDoAccessGeneration();
     const isCurrentLinuxDoCheck = () => {
       if (requestId !== checkingRequestIdRef.current) {
         return false;
@@ -555,7 +553,7 @@ export function useVerificationController({
         notify('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
         return;
       }
-      const savedAccess = await saveLinuxDoAccessForGeneration(linuxDoGeneration, cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
+      const savedAccess = await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
       if (!savedAccess || !isCurrentLinuxDoCheck()) {
         return;
       }

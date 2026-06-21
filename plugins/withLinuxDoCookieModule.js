@@ -15,6 +15,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableMap
 import java.io.File
 
 class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -176,6 +177,15 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     }
   }
 
+  @ReactMethod
+  fun clearLinuxDoLoginCookies(expected: ReadableMap?, promise: Promise) {
+    try {
+      promise.resolve(clearLinuxDoLoginCookies(expected))
+    } catch (_: Exception) {
+      promise.resolve(false)
+    }
+  }
+
   private fun isNodeSeekWantedCookieName(name: String): Boolean {
     val clean = name.lowercase()
     val nodeSeekWantedCookieNames = listOf("session", "auth", "token", "jwt", "user", "sid")
@@ -211,6 +221,70 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
       cleared = clearLinuxDoClearanceFrom(candidate) || cleared
     }
     return cleared
+  }
+
+  private fun clearLinuxDoLoginCookies(expected: ReadableMap?): Boolean {
+    val names = listOf("_t", "_forum_session")
+    val expectedValues = mutableMapOf<String, String>()
+    for (name in names) {
+      if (expected?.hasKey(name) == true) {
+        val value = expected.getString(name)
+        if (!value.isNullOrBlank()) {
+          expectedValues[name] = value
+        }
+      }
+    }
+    var cleared = false
+    try {
+      val cookieManager = CookieManager.getInstance()
+      for (url in linuxDoCookieUrls) {
+        for (name in names) {
+          cookieManager.setCookie(url, "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
+          cookieManager.setCookie(url, "$name=; Domain=linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
+          cookieManager.setCookie(url, "$name=; Domain=.linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
+        }
+      }
+      cookieManager.flush()
+      cleared = true
+    } catch (_: Exception) {
+      cleared = false
+    }
+
+    val dataDir = File(reactContext.applicationInfo.dataDir)
+    val candidates = listOf(
+      File(dataDir, "app_webview/Default/Cookies"),
+      File(dataDir, "app_webview/Cookies")
+    )
+    for (candidate in candidates) {
+      cleared = clearLinuxDoLoginCookiesFrom(candidate, expectedValues) || cleared
+    }
+    return cleared
+  }
+
+  private fun clearLinuxDoLoginCookiesFrom(cookieDb: File, expectedValues: Map<String, String>): Boolean {
+    if (!cookieDb.exists()) {
+      return false
+    }
+    var database: SQLiteDatabase? = null
+    return try {
+      database = SQLiteDatabase.openDatabase(cookieDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+      var deleted = 0
+      for (name in listOf("_t", "_forum_session")) {
+        val expected = expectedValues[name]
+        val selection = if (expected.isNullOrBlank()) {
+          "name = ? AND (host_key = 'linux.do' OR host_key = '.linux.do')"
+        } else {
+          "name = ? AND value = ? AND (host_key = 'linux.do' OR host_key = '.linux.do')"
+        }
+        val args = if (expected.isNullOrBlank()) arrayOf(name) else arrayOf(name, expected)
+        deleted += database.delete("cookies", selection, args)
+      }
+      deleted > 0
+    } catch (_: Exception) {
+      false
+    } finally {
+      database?.close()
+    }
   }
 
   private fun clearLinuxDoClearanceFrom(cookieDb: File): Boolean {

@@ -20,17 +20,19 @@ export function isNodeSeekLoginRequiredError(error: unknown) {
 export async function clearExpiredLinuxDoLogin({
   error,
   generation,
+  cookieHeader,
   resetLinuxDoLevelState,
   updateLinuxDoSession
 }: {
   error: unknown;
   generation?: number;
+  cookieHeader?: string;
   resetLinuxDoLevelState: () => void;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
 }) {
   const remainingAccess = generation === undefined
     ? await clearLinuxDoAccess()
-    : await clearLinuxDoAccessForGeneration(generation);
+    : await clearLinuxDoAccessForGeneration(generation, cookieHeader);
   const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
   const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
   updateLinuxDoSession(remainingAccess?.cookieHeader

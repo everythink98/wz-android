@@ -1,7 +1,7 @@
 import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
-import { createCredentialWriteGate, enqueueCredentialWrite, enqueueCredentialWriteForGeneration } from './app/sessionControllerHelpers';
+import { createCredentialWriteGate, enqueueCredentialWriteForGeneration, replaceCredentialWrite } from './app/sessionControllerHelpers';
 export { isCloudflareChallengeBody, isCloudflareChallengeResponse } from './cloudflareChallenge';
 
 interface LinuxDoNativeCookie {
@@ -24,6 +24,7 @@ interface LinuxDoAccess {
 type LinuxDoCookieModule = {
   getClearance?: () => Promise<string | null>;
   getLinuxDoCookieHeader?: () => Promise<string | null>;
+  clearLinuxDoLoginCookies?: (expected?: Partial<Record<typeof LINUXDO_LOGIN_COOKIE_NAMES[number], string>>) => Promise<boolean>;
   clearLinuxDoClearanceCookies?: () => Promise<boolean>;
 };
 type LinuxDoCookieStoreReader = () => Promise<Record<string, LinuxDoNativeCookie>>;
@@ -241,11 +242,48 @@ async function writeLinuxDoAccess(access: LinuxDoAccess, isCurrent: () => boolea
   return isCurrent() ? access : null;
 }
 
-async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string, advanceGeneration = false) {
+async function readStoredLinuxDoAccess() {
+  const raw = await SecureStore.getItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<LinuxDoAccess>;
+    return parsed.cookieHeader ? parsed as LinuxDoAccess : null;
+  } catch {
+    return null;
+  }
+}
+
+function linuxDoLoginCookieValues(cookieHeader?: string) {
+  const cookies = parseLinuxDoDocumentCookie(cookieHeader || '');
+  return Object.fromEntries(LINUXDO_LOGIN_COOKIE_NAMES
+    .map((name) => [name, cookies[name]?.value || ''])
+    .filter(([, value]) => value)) as Partial<Record<typeof LINUXDO_LOGIN_COOKIE_NAMES[number], string>>;
+}
+
+function linuxDoLoginCookiesMatch(currentHeader: string | undefined, expectedHeader?: string) {
+  if (!expectedHeader) {
+    return true;
+  }
+  const current = linuxDoLoginCookieValues(currentHeader);
+  const expected = linuxDoLoginCookieValues(expectedHeader);
+  return LINUXDO_LOGIN_COOKIE_NAMES.every((name) => current[name] === expected[name]);
+}
+
+async function clearLinuxDoLoginCookiesFromWebView(expectedHeader?: string) {
+  const module = await linuxDoAndroidCookieModule();
+  if (module?.clearLinuxDoLoginCookies) {
+    await module.clearLinuxDoLoginCookies(linuxDoLoginCookieValues(expectedHeader)).catch(() => false);
+  }
+  await CookieManager.flush().catch(() => undefined);
+}
+
+async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string) {
   const access = linuxDoAccessFromHeader(cookieHeader, userAgent);
-  return enqueueCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
+  return replaceCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
     return writeLinuxDoAccess(access, isCurrent);
-  }, { advanceGeneration });
+  });
 }
 
 export async function saveLinuxDoAccess(cookieHeader: string, userAgent?: string) {
@@ -265,51 +303,63 @@ export async function saveLinuxDoAccessForGeneration(generation: number, cookieH
 
 export async function loadLinuxDoAccess() {
   const generation = linuxDoAccessWriteGate.generation;
-  const raw = await SecureStore.getItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-  if (generation !== linuxDoAccessWriteGate.generation || !raw) {
+  const access = await readStoredLinuxDoAccess();
+  if (generation !== linuxDoAccessWriteGate.generation) {
     return null;
   }
-  try {
-    const parsed = JSON.parse(raw) as Partial<LinuxDoAccess>;
-    return parsed.cookieHeader ? parsed as LinuxDoAccess : null;
-  } catch {
-    return null;
+  return access;
+}
+
+async function clearLinuxDoAccessWithWriter(
+  writer: (task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<{ access: LinuxDoAccess | null; cleared: boolean }>) => Promise<{ access: LinuxDoAccess | null; cleared: boolean } | undefined>,
+  expectedHeader?: string
+) {
+  const result = await writer(async ({ isCurrent }) => {
+    const savedAccess = await readStoredLinuxDoAccess();
+    if (!isCurrent()) {
+      return { access: null, cleared: false };
+    }
+    if (!linuxDoLoginCookiesMatch(savedAccess?.cookieHeader, expectedHeader)) {
+      return { access: savedAccess, cleared: false };
+    }
+    const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
+    if (remainingHeader) {
+      const access = await writeLinuxDoAccess(linuxDoAccessFromHeader(remainingHeader, savedAccess?.userAgent), isCurrent);
+      return { access, cleared: Boolean(access) };
+    }
+    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+    return { access: null, cleared: isCurrent() };
+  });
+  if (result?.cleared) {
+    await clearLinuxDoLoginCookiesFromWebView(expectedHeader);
   }
+  return result ? result.access : loadLinuxDoAccess();
 }
 
 export async function clearLinuxDoAccess() {
-  const savedAccess = await loadLinuxDoAccess();
-  const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
-  if (remainingHeader) {
-    await saveLinuxDoAccessWithGate(remainingHeader, savedAccess?.userAgent, true);
-  } else {
-    await enqueueCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY), { advanceGeneration: true });
-  }
-  await Promise.all(LINUXDO_COOKIE_URLS.flatMap((url) => (
-    LINUXDO_LOGIN_COOKIE_NAMES.map((name) => CookieManager.clearByName(url, name).catch(() => false))
-  )));
-  await CookieManager.flush().catch(() => undefined);
-  return loadLinuxDoAccess();
+  return clearLinuxDoAccessWithWriter(
+    (task) => replaceCredentialWrite(linuxDoAccessWriteGate, task)
+  );
 }
 
-export async function clearLinuxDoAccessForGeneration(generation: number) {
-  if (generation !== linuxDoAccessWriteGate.generation) {
-    return loadLinuxDoAccess();
-  }
-  return clearLinuxDoAccess();
+export async function clearLinuxDoAccessForGeneration(generation: number, expectedHeader?: string) {
+  return clearLinuxDoAccessWithWriter(
+    (task) => enqueueCredentialWriteForGeneration(linuxDoAccessWriteGate, generation, task),
+    expectedHeader
+  );
 }
 
 export async function clearLinuxDoSavedAccess() {
-  await enqueueCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY), { advanceGeneration: true });
+  await replaceCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY));
 }
 
 export async function clearLinuxDoSavedClearance() {
   const savedAccess = await loadLinuxDoAccess();
   const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoClearanceCookie(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
   if (remainingHeader) {
-    await saveLinuxDoAccessWithGate(remainingHeader, savedAccess?.userAgent, true);
+    await saveLinuxDoAccessWithGate(remainingHeader, savedAccess?.userAgent);
   } else {
-    await enqueueCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY), { advanceGeneration: true });
+    await replaceCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY));
   }
   return loadLinuxDoAccess();
 }

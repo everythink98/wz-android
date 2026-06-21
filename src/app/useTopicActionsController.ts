@@ -313,7 +313,7 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, resetLinuxDoLevelState, updateLinuxDoSession });
+        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: access.cookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
         if (requestId !== actionRequestIdRef.current || controller.signal.aborted || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
@@ -385,6 +385,7 @@ export function useTopicActionsController({
   ) => {
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'linuxdo-optimistic');
     let linuxDoGeneration: number | undefined;
+    let linuxDoAccessCookieHeader: string | undefined;
     try {
       if (!canUseLinuxDoActions) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
@@ -396,6 +397,7 @@ export function useTopicActionsController({
       }
       linuxDoGeneration = currentLinuxDoAccessGeneration();
       const access = await loadLinuxDoAccess();
+      linuxDoAccessCookieHeader = access?.cookieHeader;
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
@@ -418,7 +420,7 @@ export function useTopicActionsController({
         return false;
       }
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, resetLinuxDoLevelState, updateLinuxDoSession });
+        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }

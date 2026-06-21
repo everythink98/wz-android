@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 
+const linuxDoCookieModuleMock = vi.hoisted(() => ({
+  clearLinuxDoLoginCookies: vi.fn(async () => true),
+  clearLinuxDoClearanceCookies: vi.fn(async () => true)
+}));
+
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
     flush: vi.fn(async () => undefined),
@@ -18,7 +23,7 @@ vi.mock('expo-secure-store', () => ({
 
 vi.mock('react-native', () => ({
   NativeModules: {
-    LinuxDoCookieModule: {}
+    LinuxDoCookieModule: linuxDoCookieModuleMock
   }
 }));
 
@@ -249,11 +254,31 @@ describe('linux.do Cloudflare helpers', () => {
 
   it('flushes CookieManager after clearing linux.do login cookies', async () => {
     vi.mocked(CookieManager.flush).mockClear();
+    vi.mocked(CookieManager.clearByName).mockClear();
+    linuxDoCookieModuleMock.clearLinuxDoLoginCookies.mockClear();
 
     await clearLinuxDoAccess();
 
-    expect(CookieManager.clearByName).toHaveBeenCalledWith('https://linux.do/latest', '_t');
+    expect(linuxDoCookieModuleMock.clearLinuxDoLoginCookies).toHaveBeenCalled();
+    expect(CookieManager.clearByName).not.toHaveBeenCalledWith(expect.any(String), '_t');
     expect(CookieManager.flush).toHaveBeenCalled();
+  });
+
+  it('skips conditional linux.do clears when saved login cookies changed', async () => {
+    const generation = currentLinuxDoAccessGeneration();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
+      cookieHeader: 'cf_clearance=clear; _t=new-login; _forum_session=new-session',
+      userAgent: 'LinuxDo UA'
+    }));
+    vi.mocked(SecureStore.setItemAsync).mockClear();
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+    linuxDoCookieModuleMock.clearLinuxDoLoginCookies.mockClear();
+
+    await clearLinuxDoAccessForGeneration(generation, 'cf_clearance=clear; _t=old-login; _forum_session=old-session');
+
+    expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
+    expect(linuxDoCookieModuleMock.clearLinuxDoLoginCookies).not.toHaveBeenCalled();
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

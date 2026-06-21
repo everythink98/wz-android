@@ -5,6 +5,7 @@ import {
   enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
   isCredentialWriteCurrent,
+  replaceCredentialWrite,
   rejectBrowserFetchRequest,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
@@ -138,6 +139,21 @@ describe('session controller helpers', () => {
     });
 
     expect(writes).toEqual(['new-save']);
+  });
+
+  it('advances credential generation when replacing credentials', async () => {
+    const gate = createCredentialWriteGate();
+    const writes: string[] = [];
+    const staleGeneration = gate.generation;
+
+    await replaceCredentialWrite(gate, () => {
+      writes.push('new-login');
+    });
+    await enqueueCredentialWriteForGeneration(gate, staleGeneration, () => {
+      writes.push('stale-clear');
+    });
+
+    expect(writes).toEqual(['new-login']);
   });
 
   it('starts the next non-aborted browser fetch request', () => {
