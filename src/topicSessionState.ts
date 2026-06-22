@@ -23,10 +23,6 @@ export type TopicSession = {
   scrollY: number;
 };
 
-export function createTopicSessionKey(topic: Topic | TopicDetail) {
-  return topicKey(topic);
-}
-
 export function shouldReuseCurrentTopicDetail({
   currentDetail,
   nextTopic,
@@ -42,13 +38,13 @@ export function shouldReuseCurrentTopicDetail({
     currentDetail
       && !nocache
       && !reopenExistingTopicScreen
-      && createTopicSessionKey(currentDetail) === createTopicSessionKey(nextTopic)
+      && topicKey(currentDetail) === topicKey(nextTopic)
   );
 }
 
 export function createEmptyTopicSession(topic: Topic): TopicSession {
   return {
-    key: createTopicSessionKey(topic),
+    key: topicKey(topic),
     selectedTopic: topic,
     topicDetail: null,
     topicReplies: [],
@@ -70,18 +66,10 @@ export function createEmptyTopicSession(topic: Topic): TopicSession {
 }
 
 export function pushTopicSession(stack: TopicSession[], current: TopicSession, nextTopic?: Topic) {
-  if (nextTopic && current.key === createTopicSessionKey(nextTopic)) {
+  if (nextTopic && current.key === topicKey(nextTopic)) {
     return stack;
   }
   return [...stack, current];
-}
-
-export function restoreTopicSession(stack: TopicSession[], fallback: TopicSession) {
-  const current = stack[stack.length - 1] || fallback;
-  return {
-    current,
-    stack: stack.slice(0, -1)
-  };
 }
 
 export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
@@ -110,7 +98,7 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
 export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession {
   const currentTopic = snapshot.topicDetail || snapshot.selectedTopic;
   return {
-    key: snapshot.key || (currentTopic ? createTopicSessionKey(currentTopic) : ''),
+    key: snapshot.key || (currentTopic ? topicKey(currentTopic) : ''),
     selectedTopic: snapshot.selectedTopic,
     topicDetail: snapshot.topicDetail,
     topicReplies: snapshot.topicReplies,

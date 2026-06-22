@@ -37,7 +37,3 @@ export async function saveCleanReaderData(clean: ReaderData) {
   await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, json);
   return sanitized;
 }
-
-export async function saveReaderData(data: ReaderData) {
-  return saveCleanReaderData(sanitizeReaderData(data));
-}

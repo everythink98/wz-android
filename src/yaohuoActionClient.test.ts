@@ -96,6 +96,57 @@ describe('runYaohuoAction', () => {
     expect(result.message).toBe('收藏成功');
   });
 
+  it('rejects short yaohuo failure tips', async () => {
+    const failedReplyFetcher = vi.fn(async () => htmlResponse('<div class="tip">评论失败</div>'));
+    await expect(runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '谢谢分享',
+        sid: 'secret'
+      }),
+      fetcher: failedReplyFetcher
+    })).rejects.toThrow('评论失败');
+
+    const deniedFavoriteFetcher = vi.fn(async () => htmlResponse('<html>权限不足</html>'));
+    await expect(runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
+      fetcher: deniedFavoriteFetcher
+    })).rejects.toThrow('权限不足');
+  });
+
+  it('rejects long yaohuo failure tips before shortening the message', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(`
+      <div class="tip">
+        评论失败，当前内容未能提交。请检查当前账号状态、帖子权限、重复提交限制和内容格式后再试，
+        这段失败提示超过八十个字，不能因为过长就被当成操作已提交，也不能隐藏原始失败原因。
+      </div>
+    `));
+
+    await expect(runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '谢谢分享',
+        sid: 'secret'
+      }),
+      fetcher
+    })).rejects.toThrow('评论失败');
+  });
+
+  it('rejects yaohuo failure text inside nested tip markup', async () => {
+    const fetcher = vi.fn(async () => htmlResponse('<div class="tip"><span>提示</span>权限不足</div>'));
+
+    await expect(runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
+      fetcher
+    })).rejects.toThrow('权限不足');
+  });
+
   it('times out stuck yaohuo write requests', async () => {
     const stuckFetcher = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => {

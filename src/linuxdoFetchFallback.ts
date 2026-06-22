@@ -1,6 +1,4 @@
-import {
-  isCloudflareChallengeResponse
-} from './linuxdoCookieBridge';
+import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import type { Fetcher } from './request';
 
 export function isLinuxDoRequestUrl(input: string) {

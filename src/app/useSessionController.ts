@@ -17,7 +17,7 @@ import {
   sanitizeNodeSeekUserAgent,
   summarizeNodeSeekCookies
 } from '../nodeseekCookies';
-import { readNodeSeekCookiesFromWebView } from '../nodeseekCookieBridge';
+import { readNodeSeekCookiesFromStores } from '../nodeseekCookieBridge';
 import {
   buildYaohuoSetCookieHeaders,
   summarizeYaohuoCookies,
@@ -31,7 +31,7 @@ import {
   loadLinuxDoAccess,
   mergeLinuxDoCookies,
   parseLinuxDoDocumentCookie,
-  readLinuxDoCookiesFromWebView,
+  readLinuxDoCookiesFromStores,
   sanitizeLinuxDoUserAgent,
   currentLinuxDoAccessGeneration,
   saveLinuxDoAccessForGeneration,
@@ -354,7 +354,7 @@ export function useSessionController({
     }
     const generation = nodeSeekCredentialGateRef.current.generation;
     options?.captureGeneration?.(generation);
-    const cookies = await readNodeSeekCookiesFromWebView();
+    const cookies = await readNodeSeekCookiesFromStores();
     const savedAccess = await readNodeSeekAccessFromStore();
     const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedAccess?.cookieHeader || ''), cookies), { generation });
     if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
@@ -476,7 +476,7 @@ export function useSessionController({
       const generation = current.credentialGeneration ?? nodeSeekCredentialGateRef.current.generation;
       void runBestEffortTask(async () => {
         await CookieManager.flush();
-        const nativeCookies = await readNodeSeekCookiesFromWebView();
+        const nativeCookies = await readNodeSeekCookiesFromStores();
         await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')), { generation });
       }, NODESEEK_COOKIE_PERSIST_TIMEOUT_MS);
     }
@@ -615,7 +615,7 @@ export function useSessionController({
         await CookieManager.flush();
         const [savedAccess, nativeCookies] = await Promise.all([
           loadLinuxDoAccess(),
-          readLinuxDoCookiesFromWebView()
+          readLinuxDoCookiesFromStores()
         ]);
         const cookies = mergeLinuxDoCookies(
           parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''),

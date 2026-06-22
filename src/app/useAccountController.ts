@@ -7,7 +7,7 @@ import {
   sanitizeNodeSeekUserAgent,
   summarizeNodeSeekCookies
 } from '../nodeseekCookies';
-import { readNodeSeekCookiesFromWebView } from '../nodeseekCookieBridge';
+import { readNodeSeekCookiesFromStores } from '../nodeseekCookieBridge';
 import {
   buildYaohuoCookieHeader,
   canStoreYaohuoCookieHeader,
@@ -150,7 +150,7 @@ export function useAccountController({
   const readCurrentNodeSeekCookies = useCallback(async () => {
     await probeLoginPage();
     await CookieManager.flush();
-    const nativeCookies = await readNodeSeekCookiesFromWebView();
+    const nativeCookies = await readNodeSeekCookiesFromStores();
     const nodeSeekDocumentCookieHeader = nodeSeekWebViewCookieHeaderRef.current;
     return mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(nodeSeekDocumentCookieHeader));
   }, [nodeSeekWebViewCookieHeaderRef, probeLoginPage]);

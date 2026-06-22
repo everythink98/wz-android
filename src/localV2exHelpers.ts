@@ -24,7 +24,14 @@ export function v2exMemberUrl(username: string) {
 
 export function v2exNodeIdFromHref(href?: string) {
   const match = String(href || '').match(/\/go\/([^/?#]+)/);
-  return match ? decodeURIComponent(match[1]) : undefined;
+  if (!match) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return undefined;
+  }
 }
 
 export function safeV2exNodePath(category?: string) {

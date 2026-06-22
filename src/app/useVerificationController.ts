@@ -13,7 +13,7 @@ import {
   loadLinuxDoAccess,
   mergeLinuxDoCookies,
   parseLinuxDoDocumentCookie,
-  readLinuxDoCookiesFromWebView,
+  readLinuxDoCookiesFromStores,
   saveLinuxDoAccess,
   sanitizeLinuxDoUserAgent,
   summarizeLinuxDoCookies
@@ -143,7 +143,7 @@ export function useVerificationController({
   const rememberLinuxDoClearanceBeforeVerify = useCallback(async () => {
     const [savedAccess, webViewCookies] = await Promise.all([
       loadLinuxDoAccess(),
-      readLinuxDoCookiesFromWebView().catch(() => ({}))
+      readLinuxDoCookiesFromStores().catch(() => ({}))
     ]);
     const visibleCookies = parseLinuxDoDocumentCookie(linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader);
     const cookies = mergeLinuxDoCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''), webViewCookies, visibleCookies);
@@ -496,7 +496,7 @@ export function useVerificationController({
     await probeLinuxDoPage();
     const [savedAccess, nativeCookies] = await Promise.all([
       loadLinuxDoAccess(),
-      readLinuxDoCookiesFromWebView()
+      readLinuxDoCookiesFromStores()
     ]);
     const linuxDoDocumentCookieHeader = linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader;
     return mergeLinuxDoCookies(

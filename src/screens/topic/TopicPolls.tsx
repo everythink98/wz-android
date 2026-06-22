@@ -5,7 +5,7 @@ import { pollParticipationLabel, pollTotalVotes } from '../../topicPollDisplay';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, triggerPressFeedback } from '../../components/AppControls';
 
-export function topicPollKey(poll: TopicPoll, index: number) {
+function topicPollKey(poll: TopicPoll, index: number) {
   return poll.id || poll.name || `poll-${index}`;
 }
 

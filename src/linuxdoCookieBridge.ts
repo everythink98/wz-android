@@ -2,7 +2,6 @@ import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
 import { createCredentialWriteGate, enqueueCredentialWriteForGeneration, replaceCredentialWrite } from './app/sessionControllerHelpers';
-export { isCloudflareChallengeBody, isCloudflareChallengeResponse } from './cloudflareChallenge';
 
 interface LinuxDoNativeCookie {
   name?: string;
@@ -120,7 +119,7 @@ export function removeLinuxDoLoginCookies(cookies: Record<string, LinuxDoNativeC
   return Object.fromEntries(Object.entries(cookies).filter(([name]) => !loginNames.has(name)));
 }
 
-export function removeLinuxDoClearanceCookie(cookies: Record<string, LinuxDoNativeCookie>) {
+function removeLinuxDoClearanceCookie(cookies: Record<string, LinuxDoNativeCookie>) {
   return Object.fromEntries(Object.entries(cookies).filter(([name]) => name !== 'cf_clearance'));
 }
 
@@ -200,11 +199,7 @@ export async function readLinuxDoCookiesFromStores({
   return mergeLinuxDoCookies(androidStoreCookies, cookieManagerCookies);
 }
 
-export async function readLinuxDoCookiesFromWebView() {
-  return readLinuxDoCookiesFromStores();
-}
-
-export async function readLinuxDoClearanceFromAndroidWebViewStore() {
+async function readLinuxDoClearanceFromAndroidWebViewStore() {
   const module = await linuxDoAndroidCookieModule();
   if (module?.getLinuxDoCookieHeader) {
     try {

@@ -1,7 +1,7 @@
 import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuo';
-import { requireYaohuoRequestUrl } from './localYaohuoHelpers';
+import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml } from './localYaohuo';
+import { requireYaohuoRequestUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';

@@ -250,16 +250,6 @@ export function dataImageFileFromUrl(url: unknown): { base64: string; extension:
   return base64 ? { base64, extension } : null;
 }
 
-export function createImagePreviewList({
-  tappedUrl,
-  htmlParts
-}: {
-  tappedUrl: string;
-  htmlParts: string[];
-}): ImagePreviewList {
-  return imagePreviewListFromCatalog(createImagePreviewCatalog(htmlParts), tappedUrl);
-}
-
 export function createImagePreviewCatalog(htmlParts: string[]): ImagePreviewCatalog {
   const previewUrlBySourceUrl: Record<string, string> = {};
   const entries = htmlParts.flatMap(extractImagePreviewEntriesFromHtml);

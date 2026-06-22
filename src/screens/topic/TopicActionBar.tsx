@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react-native';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { triggerPressFeedback } from '../../components/AppControls';
 
-export function TopicActionBar({
+export function DetailActionButton({
   accessibilityLabel,
   active = false,
   count,
@@ -63,5 +63,3 @@ export function TopicActionBar({
     </Pressable>
   );
 }
-
-export const DetailActionButton = TopicActionBar;

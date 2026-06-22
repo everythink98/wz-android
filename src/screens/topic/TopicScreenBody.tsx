@@ -28,6 +28,7 @@ import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
+import { Avatar } from '../../components/Avatar';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
@@ -35,7 +36,7 @@ import type { TopicImageDeriver } from '../../topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { AuthorAvatar, MemoizedReplyItem, NodeSeekStatPill, linuxDoReactionStats, nodeSeekTopicReactionStats } from './ReplyItem';
+import { MemoizedReplyItem, NodeSeekStatPill, linuxDoReactionStats, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
 import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, visibleFloorIndexReplies } from './topicScreenHelpers';
@@ -778,7 +779,7 @@ export function TopicScreen({
               }
             }}
           >
-            <AuthorAvatar name={item.author} uri={item.authorAvatar} styles={styles} />
+            <Avatar name={item.author} uri={item.authorAvatar} styles={styles} />
             <View style={styles.topicAuthorMeta}>
               <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
               <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>

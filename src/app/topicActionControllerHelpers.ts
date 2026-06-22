@@ -1,4 +1,7 @@
-import type { Source, Topic, TopicDetail } from '../types';
+import type { Screen } from '../appTypes';
+import type { TopicSnapshot } from '../appTypes';
+import type { OptimisticActionState } from '../topicActionState';
+import type { Source, Topic, TopicDetail, TopicPoll } from '../types';
 
 type TopicActionTopic = Topic | TopicDetail;
 
@@ -26,6 +29,54 @@ export function canSubmitReplyToTopic(topic: TopicActionTopic | null): topic is 
 
 export function canVotePollOnTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
   return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo']);
+}
+
+export function topicReplyActionKey(topicKey: string) {
+  return `reply:${topicKey}`;
+}
+
+export function yaohuoFavoriteActionKey(topicKey: string) {
+  return `yaohuo-favorite:${topicKey}`;
+}
+
+export function topicPollVoteActionKey(topicKey: string, poll: Pick<TopicPoll, 'id' | 'name' | 'postId'>) {
+  return `vote:${topicKey}:${poll.id || poll.name || poll.postId || 'poll'}`;
+}
+
+export function nodeSeekAttendanceActionKey() {
+  return 'nodeseek:attendance';
+}
+
+export function isTopicScopedActionKey(key: string) {
+  return key !== nodeSeekAttendanceActionKey();
+}
+
+export function shouldInvalidateTopicActionsOnScreenChange(currentScreen: Screen, nextScreen: Screen) {
+  return currentScreen === 'topic' && nextScreen !== 'topic';
+}
+
+export function hasPendingOptimisticTopicAction(actions: Record<string, OptimisticActionState>) {
+  return Object.values(actions).some((action) => action.inFlight);
+}
+
+export function topicSnapshotForUserReturn(snapshot: TopicSnapshot, hasPendingOptimisticAction: boolean): TopicSnapshot {
+  if (!hasPendingOptimisticAction) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    selectedTopic: snapshot.selectedTopic || snapshot.topicDetail,
+    topicDetail: null,
+    topicReplies: [],
+    replyHasMore: false,
+    replyNextPage: null,
+    replyNextOffset: null,
+    unreadReplyCount: 0,
+    expandedQuotes: {},
+    loadedQuotedReplies: {},
+    loadingQuotedFloors: {},
+    scrollY: 0
+  };
 }
 
 function isActionSource(source: Source | undefined, supportedSources: Source[]) {

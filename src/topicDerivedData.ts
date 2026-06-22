@@ -25,6 +25,17 @@ export function inlineSizedImageSignatureForHtml(html: string, inlineSizedImageU
   return inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls).join('\n');
 }
 
+export function replyHtmlWithSignature(reply: Pick<Reply, 'contentHtml' | 'signatureHtml'>) {
+  return `${reply.contentHtml}\n${reply.signatureHtml || ''}`;
+}
+
+export function inlineSizedImageSignatureForReply(
+  reply: Pick<Reply, 'contentHtml' | 'signatureHtml'>,
+  inlineSizedImageUrls: InlineSizedImageUrlMap
+) {
+  return inlineSizedImageSignatureForHtml(replyHtmlWithSignature(reply), inlineSizedImageUrls);
+}
+
 function inlineSizedImageCacheKey(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
   const urls = inlineSizedImageUrlsForHtml(html, inlineSizedImageUrls);
   return urls.length ? `${html}\n__inline__\n${urls.join('\n')}` : html;
@@ -70,5 +81,5 @@ export function filterRepliesWithImages(
   inlineSizedImageUrls: InlineSizedImageUrlMap,
   deriver: TopicImageDeriver
 ) {
-  return replies.filter((reply) => deriver.imageUrlsForHtml(reply.contentHtml, inlineSizedImageUrls).length > 0);
+  return replies.filter((reply) => deriver.imageUrlsForHtml(replyHtmlWithSignature(reply), inlineSizedImageUrls).length > 0);
 }

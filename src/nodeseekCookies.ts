@@ -52,21 +52,21 @@ export function hasNodeSeekLoginCookie(cookies: Record<string, NativeCookie>) {
   });
 }
 
-export function hasNodeSeekClearanceCookie(cookies: Record<string, NativeCookie>) {
+function hasNodeSeekClearanceCookie(cookies: Record<string, NativeCookie>) {
   return Object.entries(cookies).some(([key, cookie]) => {
     const name = cookie.name || key;
     return Boolean(cookie.value) && isNodeSeekDomain(cookie.domain) && clearanceCookiePattern.test(name);
   });
 }
 
-export function isPersistableNodeSeekCookie(name: string, cookie?: NativeCookie) {
+function isPersistableNodeSeekCookie(name: string, cookie?: NativeCookie) {
   if (!cookie?.value) {
     return false;
   }
   return isNodeSeekDomain(cookie.domain) && (clearanceCookiePattern.test(name) || isNodeSeekLoginCookieName(name));
 }
 
-export function filterPersistableNodeSeekCookies(cookies: Record<string, NativeCookie>) {
+function filterPersistableNodeSeekCookies(cookies: Record<string, NativeCookie>) {
   return Object.entries(cookies).reduce<Record<string, NativeCookie>>((kept, [key, cookie]) => {
     const name = cookie.name || key;
     if (isPersistableNodeSeekCookie(name, cookie)) {

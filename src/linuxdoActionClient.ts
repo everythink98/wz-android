@@ -1,9 +1,9 @@
 import { fetchWithTimeout, type Fetcher } from './request';
 import type { LinuxDoActionRequest } from './linuxdoActions';
+import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   canStoreLinuxDoLogin,
-  isCloudflareChallengeResponse,
   parseLinuxDoDocumentCookie
 } from './linuxdoCookieBridge';
 

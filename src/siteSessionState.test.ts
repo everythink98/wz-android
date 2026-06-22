@@ -1,51 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applySiteSessionEvent,
   createSiteSessionViewModels,
   reduceSiteSessionState,
-  reduceSiteSessionStates,
   createSiteSessionStates,
-  deriveLinuxDoSessionState,
-  deriveNodeSeekSessionState,
-  deriveYaohuoSessionState,
   isSiteLoggedIn,
   isSiteVerificationReady,
   type SiteSessionState
 } from './siteSessionState';
 
 describe('site session state', () => {
-  it('derives one canonical status per site from current cookie facts', () => {
-    expect(deriveNodeSeekSessionState({
-      hasCookie: true,
-      hasLoginCookie: true,
-      cookieNames: ['uid', 'session']
-    })).toMatchObject({
-      site: 'nodeseek',
-      status: 'logged-in',
-      cookieSummary: ['uid', 'session'],
-      isVerifying: false
-    });
-
-    expect(deriveLinuxDoSessionState({
-      hasClearance: true,
-      hasLogin: false,
-      cookieNames: ['cf_clearance']
-    })).toMatchObject({
-      site: 'linuxdo',
-      status: 'verified',
-      cookieSummary: ['cf_clearance']
-    });
-
-    expect(deriveYaohuoSessionState({
-      hasLoginCookie: false,
-      cookieNames: []
-    })).toMatchObject({
-      site: 'yaohuo',
-      status: 'anonymous',
-      cookieSummary: []
-    });
-  });
-
   it('keeps verification and login transitions explicit', () => {
     const initial: SiteSessionState = {
       site: 'linuxdo',
@@ -55,7 +18,7 @@ describe('site session state', () => {
       lastVerifiedAt: '2026-06-06T01:00:00.000Z'
     };
 
-    const required = applySiteSessionEvent(initial, {
+    const required = reduceSiteSessionState(initial, {
       type: 'verification-required',
       message: '需要验证',
       at: '2026-06-06T01:05:00.000Z'
@@ -66,7 +29,7 @@ describe('site session state', () => {
       lastError: '需要验证'
     });
 
-    const verifying = applySiteSessionEvent(required, {
+    const verifying = reduceSiteSessionState(required, {
       type: 'verification-started',
       at: '2026-06-06T01:06:00.000Z'
     });
@@ -75,7 +38,7 @@ describe('site session state', () => {
       isVerifying: true
     });
 
-    const verified = applySiteSessionEvent(verifying, {
+    const verified = reduceSiteSessionState(verifying, {
       type: 'verification-succeeded',
       cookieSummary: ['cf_clearance', '_t'],
       loggedIn: true,
@@ -92,9 +55,24 @@ describe('site session state', () => {
 
   it('keeps site capabilities derived from canonical status instead of scattered booleans', () => {
     const states = createSiteSessionStates({
-      nodeseek: deriveNodeSeekSessionState({ hasCookie: true, hasLoginCookie: false, cookieNames: ['cf_clearance'] }),
-      linuxdo: deriveLinuxDoSessionState({ hasClearance: true, hasLogin: true, cookieNames: ['cf_clearance', '_t'] }),
-      yaohuo: deriveYaohuoSessionState({ hasLoginCookie: true, cookieNames: ['sidyaohuo'] })
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'verified',
+        cookieSummary: ['cf_clearance'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['cf_clearance', '_t'],
+        isVerifying: false
+      },
+      yaohuo: {
+        site: 'yaohuo',
+        status: 'logged-in',
+        cookieSummary: ['sidyaohuo'],
+        isVerifying: false
+      }
     });
 
     expect(isSiteVerificationReady(states.nodeseek)).toBe(true);
@@ -196,30 +174,38 @@ describe('site session state', () => {
 
   it('moves login detection, verification success, expiry, and clearing through one reducer', () => {
     const initial = createSiteSessionStates();
-    const loggedIn = reduceSiteSessionStates(initial, {
-      site: 'linuxdo',
-      type: 'login-detected',
-      cookieSummary: ['cf_clearance', '_t', '_forum_session'],
-      at: '2026-06-06T02:01:00.000Z'
-    });
-    const verificationOnly = reduceSiteSessionStates(loggedIn, {
-      site: 'linuxdo',
-      type: 'verification-succeeded',
-      cookieSummary: ['cf_clearance'],
-      loggedIn: false,
-      at: '2026-06-06T02:02:00.000Z'
-    });
-    const expired = reduceSiteSessionStates(verificationOnly, {
-      site: 'yaohuo',
-      type: 'login-expired',
-      message: '妖火登录已失效',
-      at: '2026-06-06T02:03:00.000Z'
-    });
-    const cleared = reduceSiteSessionStates(expired, {
-      site: 'linuxdo',
-      type: 'cleared',
-      at: '2026-06-06T02:04:00.000Z'
-    });
+    const loggedIn = {
+      ...initial,
+      linuxdo: reduceSiteSessionState(initial.linuxdo, {
+        type: 'login-detected',
+        cookieSummary: ['cf_clearance', '_t', '_forum_session'],
+        at: '2026-06-06T02:01:00.000Z'
+      })
+    };
+    const verificationOnly = {
+      ...loggedIn,
+      linuxdo: reduceSiteSessionState(loggedIn.linuxdo, {
+        type: 'verification-succeeded',
+        cookieSummary: ['cf_clearance'],
+        loggedIn: false,
+        at: '2026-06-06T02:02:00.000Z'
+      })
+    };
+    const expired = {
+      ...verificationOnly,
+      yaohuo: reduceSiteSessionState(verificationOnly.yaohuo, {
+        type: 'login-expired',
+        message: '妖火登录已失效',
+        at: '2026-06-06T02:03:00.000Z'
+      })
+    };
+    const cleared = {
+      ...expired,
+      linuxdo: reduceSiteSessionState(expired.linuxdo, {
+        type: 'cleared',
+        at: '2026-06-06T02:04:00.000Z'
+      })
+    };
 
     expect(loggedIn.linuxdo).toMatchObject({
       status: 'logged-in',

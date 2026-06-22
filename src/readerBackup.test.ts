@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { safeFileName } from './backupFiles';
 import { createEmptyReaderData, topicKey } from './readerData';
-import { MAX_BACKUP_JSON_CHARS, MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
+import { MAX_BACKUP_JSON_BYTES, exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import type { Topic } from './types';
 
 describe('reader JSON backup', () => {
@@ -54,7 +54,7 @@ describe('reader JSON backup', () => {
   });
 
   it('rejects backup JSON that is too large to import safely', () => {
-    expect(() => importReaderBackupJson(createEmptyReaderData(), ' '.repeat(MAX_BACKUP_JSON_CHARS + 1))).toThrow('备份文件过大');
+    expect(() => importReaderBackupJson(createEmptyReaderData(), ' '.repeat(MAX_BACKUP_JSON_BYTES + 1))).toThrow('备份文件过大');
   });
 
   it('uses UTF-8 bytes instead of string length for import size checks', () => {

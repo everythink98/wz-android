@@ -673,10 +673,6 @@ export function clearRecords(data: ReaderData, section: 'history') {
   return removeRecords(data, section, Object.values(data[section]).map((record) => record.topic));
 }
 
-export function isFavorite(data: ReaderData, topic: Pick<Topic, 'source' | 'id'>) {
-  return Boolean(data.favorites[topicKey(topic)]);
-}
-
 export function isUserFollowed(data: ReaderData, user: Pick<UserProfile, 'source' | 'id'>) {
   return Boolean(data.followedUsers[userKey(user)]);
 }

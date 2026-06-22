@@ -53,40 +53,6 @@ function createSiteState(site: SessionSite, status: SiteSessionStatus, cookieSum
   };
 }
 
-export function deriveNodeSeekSessionState({
-  hasCookie,
-  hasLoginCookie,
-  cookieNames = []
-}: {
-  hasCookie: boolean;
-  hasLoginCookie: boolean;
-  cookieNames?: string[];
-}): SiteSessionState {
-  return createSiteState('nodeseek', hasLoginCookie ? 'logged-in' : hasCookie ? 'verified' : 'anonymous', cookieNames);
-}
-
-export function deriveLinuxDoSessionState({
-  hasClearance,
-  hasLogin,
-  cookieNames = []
-}: {
-  hasClearance: boolean;
-  hasLogin: boolean;
-  cookieNames?: string[];
-}): SiteSessionState {
-  return createSiteState('linuxdo', hasLogin ? 'logged-in' : hasClearance ? 'verified' : 'anonymous', cookieNames);
-}
-
-export function deriveYaohuoSessionState({
-  hasLoginCookie,
-  cookieNames = []
-}: {
-  hasLoginCookie: boolean;
-  cookieNames?: string[];
-}): SiteSessionState {
-  return createSiteState('yaohuo', hasLoginCookie ? 'logged-in' : 'anonymous', cookieNames);
-}
-
 export function createSiteSessionStates(states?: Partial<SiteSessionStates>): SiteSessionStates {
   return {
     nodeseek: states?.nodeseek || createSiteState('nodeseek', 'anonymous'),
@@ -173,17 +139,6 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     };
   }
   return createSiteState(state.site, 'anonymous');
-}
-
-export function reduceSiteSessionStates(states: SiteSessionStates, event: ScopedSiteSessionEvent): SiteSessionStates {
-  return {
-    ...states,
-    [event.site]: reduceSiteSessionState(states[event.site], event)
-  };
-}
-
-export function applySiteSessionEvent(state: SiteSessionState, event: SiteSessionEvent): SiteSessionState {
-  return reduceSiteSessionState(state, event);
 }
 
 export function isSiteVerificationReady(state: SiteSessionState) {

@@ -8,15 +8,12 @@ export {
   searchTopics
 } from '../forumApi';
 export {
-  checkLinuxDoLoginAccess,
-  runLinuxDoAction
+  checkLinuxDoLoginAccess
 } from '../linuxdoActionClient';
 export {
   getLinuxDoLevelProfile,
   type LinuxDoLevelProfile
 } from '../linuxdoLevel';
-export { runNodeSeekAction } from '../nodeseekActionClient';
-export { runYaohuoAction } from '../yaohuoActionClient';
 export {
   checkYaohuoLoginDirect as checkYaohuoLogin,
   getYaohuoFeedDirect as getYaohuoFeed,

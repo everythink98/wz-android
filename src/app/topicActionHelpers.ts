@@ -8,6 +8,14 @@ import { clearLinuxDoAccess, clearLinuxDoAccessForGeneration, parseLinuxDoDocume
 import { errorMessage } from '../appUtils';
 import type { SiteSessionEvent } from '../siteSessionState';
 
+function isOptimisticActionOwner(state: OptimisticActionState | undefined, ownerKey: string | undefined) {
+  return Boolean(state && (!ownerKey || state.ownerKey === ownerKey));
+}
+
+function optimisticActionStateForOwner(state: OptimisticActionState, ownerKey: string | undefined) {
+  return ownerKey ? { ...state, ownerKey } : state;
+}
+
 export function isNodeSeekLoginRequiredError(error: unknown) {
   return Boolean(
     error
@@ -72,6 +80,7 @@ export async function runOptimisticActionQueue<RequestOwnerValue>({
   key,
   notify,
   optimisticActions,
+  ownerKey,
   requestOwner,
   sendDesired,
   setOptimisticActionState,
@@ -82,6 +91,7 @@ export async function runOptimisticActionQueue<RequestOwnerValue>({
   key: string;
   notify: (message: string) => void;
   optimisticActions: MutableRefObject<Record<string, OptimisticActionState>>;
+  ownerKey?: string;
   requestOwner: RequestOwnerValue;
   sendDesired: (desiredActive: boolean) => Promise<boolean>;
   setOptimisticActionState: (key: string, state?: OptimisticActionState) => void;
@@ -89,7 +99,7 @@ export async function runOptimisticActionQueue<RequestOwnerValue>({
 }) {
   while (true) {
     const state = optimisticActions.current[key];
-    if (!state?.inFlight || typeof state.inFlightTarget !== 'boolean') {
+    if (!isOptimisticActionOwner(state, ownerKey) || !state?.inFlight || typeof state.inFlightTarget !== 'boolean') {
       return;
     }
     const desiredActive = state.inFlightTarget;
@@ -102,15 +112,17 @@ export async function runOptimisticActionQueue<RequestOwnerValue>({
       }
     }
     if (!isCurrentRequest(requestOwner)) {
-      setOptimisticActionState(key);
+      if (isOptimisticActionOwner(optimisticActions.current[key], ownerKey)) {
+        setOptimisticActionState(key);
+      }
       return;
     }
     const latest = optimisticActions.current[key];
-    if (!latest) {
+    if (!isOptimisticActionOwner(latest, ownerKey)) {
       return;
     }
     const completed = completeOptimisticAction(latest, succeeded);
-    setOptimisticActionState(key, completed.state);
+    setOptimisticActionState(key, optimisticActionStateForOwner(completed.state, ownerKey));
     if (!succeeded) {
       applyDisplayed(completed.state.displayed);
       return;
@@ -129,6 +141,7 @@ export function beginOptimisticTopicAction<RequestOwnerValue>({
   isCurrentRequest,
   key,
   optimisticActions,
+  ownerKey,
   requestOwner,
   setOptimisticActionState,
   startQueue
@@ -138,6 +151,7 @@ export function beginOptimisticTopicAction<RequestOwnerValue>({
   isCurrentRequest: (requestOwner: RequestOwnerValue) => boolean;
   key: string;
   optimisticActions: MutableRefObject<Record<string, OptimisticActionState>>;
+  ownerKey?: string;
   requestOwner: RequestOwnerValue;
   setOptimisticActionState: (key: string, state?: OptimisticActionState) => void;
   startQueue: () => void;
@@ -145,10 +159,16 @@ export function beginOptimisticTopicAction<RequestOwnerValue>({
   if (!isCurrentRequest(requestOwner)) {
     return;
   }
-  const transition = beginOptimisticAction(optimisticActions.current[key], currentActive);
-  setOptimisticActionState(key, transition.state);
+  const current = optimisticActions.current[key];
+  const transition = beginOptimisticAction(
+    isOptimisticActionOwner(current, ownerKey) ? current : undefined,
+    currentActive
+  );
+  setOptimisticActionState(key, optimisticActionStateForOwner(transition.state, ownerKey));
   if (!isCurrentRequest(requestOwner)) {
-    setOptimisticActionState(key);
+    if (isOptimisticActionOwner(optimisticActions.current[key], ownerKey)) {
+      setOptimisticActionState(key);
+    }
     return;
   }
   applyDisplayed(transition.state.displayed);

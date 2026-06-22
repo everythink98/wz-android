@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createImagePreviewList,
+  createImagePreviewCatalog,
   dataImageFileFromUrl,
   extractImageUrlsFromHtml,
   flowInlineImagesInMixedParagraphs,
+  imagePreviewListFromCatalog,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
   isForumInlineSizedImage,
@@ -27,10 +28,7 @@ describe('Android HTML image preview helpers', () => {
     const html = '<div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img src="https://cdn.example.com/optimized.png" alt="photo"></a></div>';
 
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/original.png']);
-    expect(createImagePreviewList({
-      tappedUrl: 'https://cdn.example.com/optimized.png',
-      htmlParts: [html]
-    })).toEqual({
+    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://cdn.example.com/optimized.png')).toEqual({
       urls: ['https://cdn.example.com/original.png'],
       index: 0
     });
@@ -129,13 +127,10 @@ describe('Android HTML image preview helpers', () => {
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {
-    const result = createImagePreviewList({
-      tappedUrl: 'https://cdn.example.com/b.png',
-      htmlParts: [
+    const result = imagePreviewListFromCatalog(createImagePreviewCatalog([
         '<img src="https://cdn.example.com/a.jpg">',
         '<img src="https://cdn.example.com/b.png"><img src="https://cdn.example.com/a.jpg">'
-      ]
-    });
+      ]), 'https://cdn.example.com/b.png');
 
     expect(result).toEqual({
       urls: ['https://cdn.example.com/a.jpg', 'https://cdn.example.com/b.png'],
@@ -154,10 +149,7 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p>hello <img class="emoji" src="https://linux.do/images/emoji/twitter/slight_smile.png?v=12" alt="🙂" title=":slight_smile:" width="20" height="20"><img src="https://cdn.example.com/photo.jpg"></p>';
 
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://cdn.example.com/photo.jpg']);
-    expect(createImagePreviewList({
-      tappedUrl: 'https://cdn.example.com/photo.jpg',
-      htmlParts: [html]
-    })).toEqual({
+    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://cdn.example.com/photo.jpg')).toEqual({
       urls: ['https://cdn.example.com/photo.jpg'],
       index: 0
     });
@@ -173,10 +165,7 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>';
 
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://i.imgur.com/2ejt2Q6.png']);
-    expect(createImagePreviewList({
-      tappedUrl: 'https://i.imgur.com/2ejt2Q6.png',
-      htmlParts: [html]
-    })).toEqual({
+    expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://i.imgur.com/2ejt2Q6.png')).toEqual({
       urls: ['https://i.imgur.com/2ejt2Q6.png'],
       index: 0
     });
@@ -322,13 +311,10 @@ describe('Android HTML image preview helpers', () => {
   });
 
   it('keeps real HTML images previewable even when their URLs have no file extension', () => {
-    const result = createImagePreviewList({
-      tappedUrl: 'https://www.nodeseek.com/api/attachments/123',
-      htmlParts: [
+    const result = imagePreviewListFromCatalog(createImagePreviewCatalog([
         '<p><img src="https://www.nodeseek.com/api/attachments/123" alt="photo"></p>',
         '<p><img class="emoji" src="https://www.nodeseek.com/images/emoji/smile.png" alt=":smile:" width="20" height="20"></p>'
-      ]
-    });
+      ]), 'https://www.nodeseek.com/api/attachments/123');
 
     expect(result).toEqual({
       urls: ['https://www.nodeseek.com/api/attachments/123'],

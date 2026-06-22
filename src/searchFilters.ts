@@ -111,7 +111,7 @@ export function searchTimeRangeLabel(value: SearchTimeRange) {
   return searchTimeRangeItems.find((item) => item.value === value)?.label || '不限时间';
 }
 
-export function searchTimeRangeStartDate(value: SearchTimeRange, nowMs = Date.now()) {
+function searchTimeRangeStartDate(value: SearchTimeRange, nowMs = Date.now()) {
   const days = TIME_RANGE_DAYS[value];
   if (!days) {
     return '';

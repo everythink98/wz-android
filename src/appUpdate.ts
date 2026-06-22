@@ -6,7 +6,7 @@ export const UPDATE_MANIFEST_NAME = 'release-manifest.json';
 export const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/everythink98/wz-android/releases/latest';
 export const CURRENT_APP_VERSION = String(appConfig.expo.version);
 export const CURRENT_ANDROID_PACKAGE = String(appConfig.expo.android.package);
-export const CURRENT_ANDROID_VERSION_CODE = Number(appConfig.expo.android.versionCode);
+const CURRENT_ANDROID_VERSION_CODE = Number(appConfig.expo.android.versionCode);
 const GITHUB_RELEASE_APK_HOST = 'github.com';
 const GITHUB_RELEASE_APK_PATH_PREFIX = '/everythink98/wz-android/releases/download/';
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
@@ -186,7 +186,7 @@ function normalizedInspectionSha(value: unknown) {
   return cleanSha256(value);
 }
 
-export function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: ApkInspection) {
+function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: ApkInspection) {
   const sha256 = normalizedInspectionSha(inspection.sha256);
   const signerSha256 = normalizedInspectionSha(inspection.signerSha256);
   const versionCode = typeof inspection.versionCode === 'number' ? inspection.versionCode : Number(inspection.versionCode);

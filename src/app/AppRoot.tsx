@@ -40,7 +40,12 @@ import { useTopicUiStateController } from './useTopicUiStateController';
 import { useUserController } from './useUserController';
 import { useVerificationController, type DeferredNavigationTask } from './useVerificationController';
 import { useAccountController } from './useAccountController';
-import { createTopicActionRequestOwner, invalidateTopicActionRequestOwner, useTopicActionsController } from './useTopicActionsController';
+import { useTopicActionsController } from './useTopicActionsController';
+import {
+  hasPendingOptimisticTopicAction,
+  shouldInvalidateTopicActionsOnScreenChange,
+  topicSnapshotForUserReturn
+} from './topicActionControllerHelpers';
 import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { GlobalModalHost } from './GlobalModalHost';
@@ -52,6 +57,7 @@ import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import { createTopicListItemStateIndex } from '../topicListItemState';
+import { replyHtmlWithSignature } from '../topicDerivedData';
 import {
   contentWidthValue,
   createStyles,
@@ -67,6 +73,7 @@ import { TopicScreen } from '../screens/TopicScreen';
 import { UserScreen } from '../screens/UserScreen';
 import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
+import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   resolve: (response: Response) => void;
@@ -110,9 +117,8 @@ export function AppRoot() {
   const topicRequestIdRef = useRef(0);
   const topicAbortRef = useRef<AbortController | null>(null);
   const checkingRequestIdRef = useRef(0);
-  const actionRequestIdRef = useRef(0);
-  const topicActionRequestOwnerRef = useRef(createTopicActionRequestOwner());
-  const actionAbortRef = useRef<AbortController | null>(null);
+  const topicActionRequestOwnerRef = useRef(createRequestOwner('topic-action'));
+  const actionAbortRef = useRef<{ abort: () => void; abortAll: () => void } | null>(null);
   const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
@@ -191,7 +197,7 @@ export function AppRoot() {
   const [linuxDoBrowserFetchRequest, setLinuxDoBrowserFetchRequest] = useState<LinuxDoBrowserFetchRequest | null>(null);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
-    invalidateTopicActionRequestOwner(topicActionRequestOwnerRef, nextTopicKey);
+    startOwnedRequest(topicActionRequestOwnerRef, `topic-action-context:${nextTopicKey || 'none'}`);
     actionAbortRef.current?.abort();
   }, []);
   const {
@@ -408,8 +414,8 @@ export function AppRoot() {
   });
   const topicHtmlParts = useMemo(() => [
     topicDetail?.contentHtml || '',
-    ...topicReplies.map((reply) => reply.contentHtml || ''),
-    ...Object.values(loadedQuotedReplies).map((reply) => reply.contentHtml || '')
+    ...topicReplies.map(replyHtmlWithSignature),
+    ...Object.values(loadedQuotedReplies).map(replyHtmlWithSignature)
   ].filter(Boolean), [loadedQuotedReplies, topicDetail?.contentHtml, topicReplies]);
   const {
     closeImagePreview,
@@ -447,7 +453,7 @@ export function AppRoot() {
   useEffect(() => () => {
     topicAbortRef.current?.abort();
     repliesAbortRef.current?.abort();
-    actionAbortRef.current?.abort();
+    actionAbortRef.current?.abortAll();
     cancelDeferredNavigationTask();
   }, [cancelDeferredNavigationTask]);
   const topicStateIndex = useMemo(() => createTopicListItemStateIndex(readerData), [
@@ -707,6 +713,7 @@ export function AppRoot() {
 
   const changeScreen = useCallback((nextScreen: Screen) => {
     const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';
+    const shouldInvalidateTopicActions = shouldInvalidateTopicActionsOnScreenChange(screen, nextScreen);
     if (screen === 'more' && nextScreen !== 'more') {
       closeMorePanels();
     }
@@ -719,6 +726,9 @@ export function AppRoot() {
       topicAbortRef.current?.abort();
       repliesAbortRef.current?.abort();
       abortQuotedReplyRequests();
+      if (shouldInvalidateTopicActions) {
+        invalidateTopicActionRequests(null);
+      }
       loadingMoreRepliesRef.current = false;
       setLoadingMoreReplies(false);
       setTopicBusy(false);
@@ -807,7 +817,10 @@ export function AppRoot() {
     if (screen === 'topic') {
       userReturnTopicRef.current = {
         returnScreen: topicReturnScreenRef.current,
-        snapshot: topicSnapshot(),
+        snapshot: topicSnapshotForUserReturn(
+          topicSnapshot(),
+          hasPendingOptimisticTopicAction(optimisticTopicActionsRef.current)
+        ),
         backStack: [...topicBackStackRef.current]
       };
     } else if (screen !== 'user') {
@@ -938,7 +951,6 @@ export function AppRoot() {
     votePoll
   } = useTopicActionsController({
     actionAbortRef,
-    actionRequestIdRef,
     clearNodeSeekLoginCookiesOnly,
     clearYaohuoLoginState,
     currentNodeSeekCredentialGeneration,

@@ -9,7 +9,7 @@ import { AppButton } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
 import { userFromReply } from '../../userNavigation';
 import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
-import { inlineSizedImageSignatureForHtml, type TopicImageDeriver } from '../../topicDerivedData';
+import { inlineSizedImageSignatureForReply, type TopicImageDeriver } from '../../topicDerivedData';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -85,8 +85,6 @@ export function NodeSeekStatPill({
     </View>
   );
 }
-
-export const AuthorAvatar = Avatar;
 
 export function ReplyItem({
   actionBusy,
@@ -168,7 +166,7 @@ export function ReplyItem({
           }
         }}
       >
-        <AuthorAvatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
+        <Avatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
         <View style={styles.replyAuthorBlock}>
           <View style={styles.replyAuthorNameRow}>
             <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
@@ -220,7 +218,7 @@ export function ReplyItem({
                         }
                       }}
                     >
-                      {quotedReply ? <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
+                      {quotedReply ? <Avatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
                       <View style={styles.quoteAuthorTextBlock}>
                         <Text style={styles.quoteAuthorText} numberOfLines={1}>{quotedAuthorName}</Text>
                         <Text style={styles.replyMeta}>引用 #{quotedFloor}{quotedReply ? '' : ' · 楼层未加载'}</Text>
@@ -248,7 +246,7 @@ export function ReplyItem({
                           }
                         }}
                       >
-                        <AuthorAvatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
+                        <Avatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
                         <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
                       </Pressable>
                       <MemoizedTopicContentBlock
@@ -355,7 +353,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
     || previous.isActionPending !== next.isActionPending
-    || inlineSizedImageSignatureForHtml(previous.reply.contentHtml, previous.inlineSizedImageUrls) !== inlineSizedImageSignatureForHtml(next.reply.contentHtml, next.inlineSizedImageUrls)
+    || inlineSizedImageSignatureForReply(previous.reply, previous.inlineSizedImageUrls) !== inlineSizedImageSignatureForReply(next.reply, next.inlineSizedImageUrls)
     || previous.isNew !== next.isNew
     || previous.onInteract !== next.onInteract
     || previous.onOpenUser !== next.onOpenUser

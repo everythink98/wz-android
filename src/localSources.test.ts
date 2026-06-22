@@ -25,7 +25,6 @@ import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
 import { createNodeSeekWebViewFallbackFetcher } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
-import { clearV2exCacheForTest } from './localV2ex';
 import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -1966,6 +1965,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async () => html(`
       <nav>
         <a href="/categories/daily">日常</a>
+        <a href="/categories/%E0%A4%A">坏分类</a>
         <a href="/categories/tech">技术</a>
       </nav>
       <ul>
@@ -2327,7 +2327,6 @@ describe('Android local sources', () => {
   });
 
   it('reads V2EX public JSON, HTML pages, topic detail, and SOV2EX search directly', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
         return html('<div class="cell item"><a href="/member/neo"><img class="avatar" src="//cdn.v2ex.com/a.png" alt="neo"></a><span class="item_title"><a class="topic-link" href="/t/121#reply3">V2EX latest</a></span><span class="topic_info"><a class="node" href="/go/create">分享创造</a> &nbsp;•&nbsp; <strong><a href="/member/neo">neo</a></strong> &nbsp;•&nbsp; <span title="2026-05-28 20:35:00 +08:00"></span></span><td width="70" align="right"><a href="/t/121#reply3" class="count_livid">3</a></td></div><a href="/recent">更多新主题</a>');
@@ -2382,7 +2381,6 @@ describe('Android local sources', () => {
   });
 
   it('reads the V2EX all feed from the origin all tab instead of the latest API', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
         return html(`
@@ -2415,8 +2413,34 @@ describe('Android local sources', () => {
     });
   });
 
+  it('ignores malformed V2EX node links without dropping the topic', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return html(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/813#reply0">V2EX malformed node</a></span>
+            <span class="topic_info">
+              <a class="node" href="/go/%E0%A4%A">坏节点</a> &nbsp;•&nbsp;
+              <strong><a href="/member/alice">alice</a></strong> &nbsp;•&nbsp;
+              <span title="2026-05-29 08:30:00 +08:00">Just Now</span>
+            </span>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const feed = await getFeed({ source: 'v2ex', limit: 1, fetcher });
+
+    expect(feed.items[0]).toMatchObject({
+      id: '813',
+      title: 'V2EX malformed node',
+      category: '坏节点'
+    });
+    expect(feed.items[0].categoryId).toBeUndefined();
+  });
+
   it('treats V2EX HTML times without a zone as China time', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
         return html(`
@@ -2442,7 +2466,6 @@ describe('Android local sources', () => {
   });
 
   it('uses the V2EX topic reply badge instead of vote counts in HTML lists', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/go/create?p=1')) {
         return html(`
@@ -2470,7 +2493,6 @@ describe('Android local sources', () => {
   });
 
   it('does not let stale V2EX last_touched predate topic creation on Android', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([{
@@ -2500,7 +2522,6 @@ describe('Android local sources', () => {
   });
 
   it('enriches V2EX topic details from the origin HTML without login-only actions', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([{
@@ -2560,8 +2581,34 @@ describe('Android local sources', () => {
     });
   });
 
+  it('ignores malformed V2EX reply target links without dropping replies', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 814,
+          title: 'V2EX malformed reply target',
+          url: 'https://www.v2ex.com/t/814',
+          created: 1780000000,
+          replies: 1,
+          member: { username: 'neo' }
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      if (input === 'https://www.v2ex.com/t/814') {
+        return html('<div id="r_8001" class="cell"><span class="no">1</span><div class="reply_content">@<a href="/member/%E0%A4%A">bad</a> reply</div></div>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '814', fetcher });
+
+    expect(topic.replies[0]).toMatchObject({ commentId: 8001, floor: 1 });
+    expect(topic.replies[0].replyTargetAuthor).toBeUndefined();
+  });
+
   it('falls back to V2EX origin HTML replies when the public replies API times out', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/topics/show.json')) {
         return json([{
@@ -2621,7 +2668,6 @@ describe('Android local sources', () => {
   });
 
   it('keeps V2EX all feed pagination open through the recent HTML list', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
         return html(`

@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   clearRecords,
   createEmptyReaderData,
-  isFavorite,
   isUserFollowed,
   MAX_DELETED_RECORDS,
   MAX_HISTORY_RECORDS,
@@ -96,10 +95,10 @@ describe('Android reader data helpers', () => {
     let data = createEmptyReaderData();
     data = toggleFavorite(data, topic);
 
-    expect(isFavorite(data, topic)).toBe(true);
+    expect(Boolean(data.favorites[topicKey(topic)])).toBe(true);
 
     data = toggleFavorite(data, topic);
-    expect(isFavorite(data, topic)).toBe(false);
+    expect(Boolean(data.favorites[topicKey(topic)])).toBe(false);
     expect(data.deletedRecords.favorites[topicKey(topic)]).toEqual(expect.any(String));
     expect(data).not.toHaveProperty('later');
   });

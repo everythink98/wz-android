@@ -11,6 +11,7 @@ export type OptimisticActionState = {
   desired: boolean;
   inFlight: boolean;
   inFlightTarget?: boolean;
+  ownerKey?: string;
 };
 
 type InteractionPatch = {

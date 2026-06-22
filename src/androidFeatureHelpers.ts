@@ -22,7 +22,7 @@ export function libraryCategoryKey(source: FeedSource, categoryId: string) {
   return source === 'all' ? categoryId : `${source}:${categoryId}`;
 }
 
-export function libraryCategoryLabel(source: FeedSource, category: Category) {
+function libraryCategoryLabel(source: FeedSource, category: Category) {
   if (source === 'linuxdo' && category.id === 'uncategorized') {
     return '未分类';
   }

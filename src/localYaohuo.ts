@@ -22,8 +22,6 @@ import {
   yaohuoUserUrl as userUrl
 } from './localYaohuoHelpers';
 
-export { YAOHUO_CATEGORIES, YAOHUO_LOGIN_URL, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
-
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 

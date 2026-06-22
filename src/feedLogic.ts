@@ -1,9 +1,7 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
 import type { Category, FeedResponse, FeedSource, Reply, Topic } from './types';
-import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, isCanceledRequest, sourceLabel } from './appUtils';
-import { sourceErrorFromUnknown } from './sourceErrors';
+import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './appUtils';
 
-export { dateTime } from './appUtils';
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';
 export type LibraryTab = 'favorites' | 'users' | 'history';
@@ -28,12 +26,6 @@ export function parseSearchExpression(query: string): SearchExpression {
 
 export function searchExpressionText(topic: Topic) {
   return `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`;
-}
-
-export function matchesSearchExpression(text: string, expression: SearchExpression) {
-  const normalized = text.toLowerCase();
-  return expression.include.every((term) => normalized.includes(term.toLowerCase()))
-    && expression.exclude.every((term) => !normalized.includes(term));
 }
 
 export function positiveSearchQuery(query: string) {
@@ -65,35 +57,11 @@ export function shouldReuseFeedStateForRequest(
   return Boolean(state.items.length && state.requestKey === requestKey && !state.refreshing && !state.loadingMore);
 }
 
-export function searchLocal(data: ReaderData, query: string, source: FeedSource) {
-  const records = [
-    ...Object.values(data.favorites),
-    ...Object.values(data.history)
-  ];
-  const expression = parseSearchExpression(query);
-  const seen = new Set<string>();
-  return records
-    .filter((record) => {
-      const topic = record.topic;
-      const key = topicKey(topic);
-      if (seen.has(key) || (source !== 'all' && topic.source !== source)) {
-        return false;
-      }
-      const text = `${topic.title} ${topic.excerpt || ''} ${topic.author || ''} ${topic.category || ''}`.toLowerCase();
-      const matched = matchesSearchExpression(text, expression);
-      if (matched) {
-        seen.add(key);
-      }
-      return matched;
-    })
-    .map((record) => record.topic);
-}
-
 export function sortTopicsByCreatedAt(items: Topic[]) {
   return [...items].sort((left, right) => dateTime(right.createdAt) - dateTime(left.createdAt));
 }
 
-export function sortTopicsByActivity(items: Topic[]) {
+function sortTopicsByActivity(items: Topic[]) {
   return [...items].sort((left, right) => dateTime(right.lastReplyAt || right.createdAt) - dateTime(left.lastReplyAt || left.createdAt));
 }
 
@@ -259,28 +227,6 @@ export function shouldFetchAggregatedBaseFeed({
   hasYaohuoCookie: boolean;
 }) {
   return page <= 1 || Boolean(cursor) || !hasYaohuoCookie;
-}
-
-export function mergeSettledFeedResponses(
-  base: PromiseSettledResult<FeedResponse>,
-  extra: PromiseSettledResult<FeedResponse>
-): FeedResponse {
-  if (base.status === 'rejected' && isCanceledRequest(base.reason)) {
-    throw base.reason;
-  }
-  if (extra.status === 'rejected' && isCanceledRequest(extra.reason)) {
-    throw extra.reason;
-  }
-  if (base.status === 'rejected' && extra.status === 'rejected') {
-    throw base.reason;
-  }
-  const baseData = base.status === 'fulfilled'
-    ? base.value
-    : { items: [], errors: { all: sourceErrorFromUnknown('all', base.reason) } };
-  const extraData = extra.status === 'fulfilled'
-    ? extra.value
-    : { items: [], errors: { yaohuo: sourceErrorFromUnknown('yaohuo', extra.reason) } };
-  return mergeFeedResponses(baseData, extraData);
 }
 
 export function mergeCategories(base: Category[], extra: Category[]) {

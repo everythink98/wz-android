@@ -84,7 +84,6 @@ function v2exLastReplyAt(raw: Record<string, unknown>, createdAt: string) {
   }
   return Number(raw.replies || 0) > 0 && touchedMs >= createdMs ? touchedAt : createdAt;
 }
-
 function toV2exHtmlIsoString(value: unknown) {
   return toIsoString(value, V2EX_HTML_TIMEZONE);
 }
@@ -175,7 +174,11 @@ function v2exReplyTargetAuthor(value: unknown) {
     .trim();
   const linked = text.match(/^@<a\b[^>]*href=["']\/member\/([^"']+)["'][^>]*>/i);
   if (linked) {
-    return decodeURIComponent(linked[1]);
+    try {
+      return decodeURIComponent(linked[1]);
+    } catch {
+      return undefined;
+    }
   }
   const plain = text.match(/^@([A-Za-z0-9_-]{1,32})\b/);
   return plain ? plain[1] : undefined;
@@ -809,9 +812,4 @@ export async function searchV2ex(query: string, options: V2exOptions & { limit?:
     hasMore,
     nextPage: hasMore ? page + 1 : null
   };
-}
-
-export function clearV2exCacheForTest() {
-  latestCache.savedAt = 0;
-  latestCache.data = [];
 }

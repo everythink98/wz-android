@@ -21,7 +21,6 @@ vi.mock('react-native', () => ({
 }));
 
 import { getCategories, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
-import { clearV2exCacheForTest } from './localV2ex';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{ postId: 1, titleText: 'NodeSeek', titleLink: '/post-1-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:00:00.000Z' } }],
@@ -792,7 +791,6 @@ describe('Android local forum facade', () => {
   });
 
   it('keeps all-source Android feed balanced across local source adapters', async () => {
-    clearV2exCacheForTest();
     const manyNodeSeekTopics = Buffer.from(JSON.stringify({
       rotateTopics: Array.from({ length: 4 }, (_, index) => ({
         postId: 200 + index,
@@ -871,7 +869,6 @@ describe('Android local forum facade', () => {
   });
 
   it('keeps overflow items available when paginating the aggregated Android feed', async () => {
-    clearV2exCacheForTest();
     const manyNodeSeekTopics = Buffer.from(JSON.stringify({
       rotateTopics: Array.from({ length: 4 }, (_, index) => ({
         postId: 100 + index,
@@ -907,7 +904,6 @@ describe('Android local forum facade', () => {
   });
 
   it('keeps NodeSeek next pages available in the aggregated Android feed when the first source page is shorter than the aggregate fetch window', async () => {
-    clearV2exCacheForTest();
     const pageOne = Buffer.from(JSON.stringify({
       rotateTopics: [
         { postId: 201, titleText: 'NodeSeek page 1 newer', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:01:00.000Z' } },
@@ -947,7 +943,6 @@ describe('Android local forum facade', () => {
   });
 
   it('keeps V2EX next pages available in the aggregated Android feed after the all tab', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
         return new Response('<script></script>');
@@ -985,7 +980,6 @@ describe('Android local forum facade', () => {
   });
 
   it('does not over-fetch linux.do pages for the first aggregated Android feed page', async () => {
-    clearV2exCacheForTest();
     const nodeSeekPage = Buffer.from(JSON.stringify({
       rotateTopics: Array.from({ length: 30 }, (_item, index) => ({
         postId: 600 - index,
@@ -1032,7 +1026,6 @@ describe('Android local forum facade', () => {
   });
 
   it('refills an exhausted source in the aggregated Android feed even when other source buffers can fill the page', async () => {
-    clearV2exCacheForTest();
     const nodeSeekPage = Buffer.from(JSON.stringify({
       rotateTopics: [
         { postId: 400, titleText: 'NodeSeek newest', titleLink: '/post-400-1', op: { name: 'alice' }, time: { createdDate: '2026-05-19T00:04:30.000Z' } },
@@ -1077,7 +1070,6 @@ describe('Android local forum facade', () => {
   });
 
   it('retries a failed source on the next aggregated Android feed page', async () => {
-    clearV2exCacheForTest();
     const nodeSeekPage = Buffer.from(JSON.stringify({
       rotateTopics: [
         { postId: 700, titleText: 'NodeSeek recovered', titleLink: '/post-700-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:03:00.000Z' } }
@@ -1128,7 +1120,6 @@ describe('Android local forum facade', () => {
   });
 
   it('does not create an empty retry cursor when all aggregated Android feed sources fail', async () => {
-    clearV2exCacheForTest();
     const fetcher = vi.fn(async () => {
       throw new Error('temporary failure');
     });

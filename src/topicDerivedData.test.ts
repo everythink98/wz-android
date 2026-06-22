@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTopicImageDeriver, filterRepliesWithImages, inlineSizedImageSignatureForHtml } from './topicDerivedData';
+import { createTopicImageDeriver, filterRepliesWithImages, inlineSizedImageSignatureForHtml, inlineSizedImageSignatureForReply, replyHtmlWithSignature } from './topicDerivedData';
 import type { Reply } from './types';
 
 const replyWithImage: Reply = {
@@ -54,5 +54,25 @@ describe('Android topic derived data', () => {
 
     expect(inlineSizedImageSignatureForHtml('<p><img src="https://cdn.example.com/a.png"></p>', inlineSizedImageUrls)).toBe('https://cdn.example.com/a.png');
     expect(inlineSizedImageSignatureForHtml('<p>no image</p>', inlineSizedImageUrls)).toBe('');
+  });
+
+  it('includes reply signatures in inline-sized image signatures', () => {
+    const inlineSizedImageUrls = { 'https://cdn.example.com/sign.png': true as const };
+
+    expect(inlineSizedImageSignatureForReply({
+      contentHtml: '<p>body</p>',
+      signatureHtml: '<p><img src="https://cdn.example.com/sign.png"></p>'
+    }, inlineSizedImageUrls)).toBe('https://cdn.example.com/sign.png');
+  });
+
+  it('treats reply signature images as reply images', () => {
+    const replyWithSignatureImage = {
+      ...replyWithoutImage,
+      signatureHtml: '<p><img src="https://cdn.example.com/sign.jpg"></p>'
+    };
+    const deriver = createTopicImageDeriver();
+
+    expect(filterRepliesWithImages([replyWithSignatureImage], {}, deriver)).toEqual([replyWithSignatureImage]);
+    expect(replyHtmlWithSignature(replyWithSignatureImage)).toContain('https://cdn.example.com/sign.jpg');
   });
 });

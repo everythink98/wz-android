@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createEmptyReaderData, topicKey } from './readerData';
 import { MAX_BACKUP_JSON_BYTES } from './readerBackup';
-import { loadReaderData, saveCleanReaderData, saveReaderData } from './readerDataStore';
+import { loadReaderData, saveCleanReaderData } from './readerDataStore';
 import type { Topic } from './types';
 
 vi.mock('expo-secure-store', () => {
@@ -60,7 +60,7 @@ describe('reader data store', () => {
   it('saves reader data in AsyncStorage instead of SecureStore', async () => {
     const data = createEmptyReaderData();
 
-    await saveReaderData(data);
+    await saveCleanReaderData(data);
 
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();

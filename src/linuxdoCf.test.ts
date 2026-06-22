@@ -39,7 +39,6 @@ import {
   clearLinuxDoSavedAccess,
   currentLinuxDoAccessGeneration,
   hasFreshLinuxDoClearance,
-  isCloudflareChallengeResponse,
   linuxDoClearanceCookieFromValue,
   linuxDoCookieModuleFromReactNativeImport,
   mergeLinuxDoCookies,
@@ -51,6 +50,7 @@ import {
   saveLinuxDoAccessForGeneration,
   summarizeLinuxDoCookies
 } from './linuxdoCookieBridge';
+import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import { isLinuxDoRequestUrl } from './linuxdoFetchFallback';
 import fs from 'node:fs';
 

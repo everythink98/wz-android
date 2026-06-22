@@ -592,7 +592,11 @@ function parseHtmlCategories(html: string) {
     if (!id || !name) {
       return [];
     }
-    return [{ source: 'nodeseek' as const, id: decodeURIComponent(id), name }];
+    try {
+      return [{ source: 'nodeseek' as const, id: decodeURIComponent(id), name }];
+    } catch {
+      return [];
+    }
   }));
 }
 

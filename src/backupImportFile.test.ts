@@ -1,7 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { readBackupFileText } from './backupImportFile';
-import { MAX_BACKUP_JSON_CHARS } from './readerBackup';
+import { MAX_BACKUP_JSON_BYTES } from './readerBackup';
 
 vi.mock('expo-file-system/legacy', () => ({
   EncodingType: { UTF8: 'utf8' },
@@ -18,7 +18,7 @@ describe('backup import file reader', () => {
   it('rejects oversized picked files before reading text', async () => {
     await expect(readBackupFileText({
       uri: 'file:///cache/too-large.json',
-      size: MAX_BACKUP_JSON_CHARS + 1
+      size: MAX_BACKUP_JSON_BYTES + 1
     })).rejects.toThrow('备份文件过大');
 
     expect(FileSystem.getInfoAsync).not.toHaveBeenCalled();
@@ -30,7 +30,7 @@ describe('backup import file reader', () => {
       exists: true,
       isDirectory: false,
       modificationTime: 1,
-      size: MAX_BACKUP_JSON_CHARS + 1,
+      size: MAX_BACKUP_JSON_BYTES + 1,
       uri: 'file:///cache/too-large.json'
     });
 

@@ -2,7 +2,6 @@ import { mergeReaderData, readerDataVersion, sanitizeReaderData, type ReaderData
 
 const SENSITIVE_KEY_PATTERN = /(cookie|token|password|secret|authorization|session|sid|sidyaohuo|csrf)/i;
 export const MAX_BACKUP_JSON_BYTES = 5 * 1024 * 1024;
-export const MAX_BACKUP_JSON_CHARS = MAX_BACKUP_JSON_BYTES;
 const MAX_BACKUP_OBJECT_DEPTH = 32;
 const BACKUP_TOO_LARGE_MESSAGE = '备份文件过大，请减少历史记录后重新导入。';
 

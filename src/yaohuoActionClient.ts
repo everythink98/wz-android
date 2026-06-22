@@ -1,6 +1,6 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
 import { fetchWithTimeout, type Fetcher } from './request';
-import { textContentFromHtml } from './localHtml';
+import { elementText, parseHtml, textContentFromHtml } from './localHtml';
 import { isYaohuoLoginRequiredHtml, isYaohuoVerificationRequiredHtml } from './localYaohuo';
 import {
   YAOHUO_ANDROID_USER_AGENT,
@@ -22,6 +22,7 @@ const YAOHUO_ACTION_HEADERS = {
   'sec-fetch-site': 'same-origin',
   'user-agent': YAOHUO_ANDROID_USER_AGENT
 };
+const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
   const error = new Error(
@@ -39,15 +40,25 @@ function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired'
 }
 
 function actionMessage(html: string) {
-  const tip = String(html || '').match(/<[^>]*class=["'][^"']*tip[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i);
-  const text = textContentFromHtml(tip?.[1] || html);
+  const tip = parseHtml(html).querySelector('.tip');
+  const text = tip ? elementText(tip) : textContentFromHtml(html);
+  if (tip) {
+    assertYaohuoActionSuccess(text);
+  }
   if (!tip && text.length > 80) {
     return '操作结果无法确认，请刷新原帖核对';
   }
+  assertYaohuoActionSuccess(text);
   if (text.length > 80) {
     return '操作已提交';
   }
   return text || '操作已提交';
+}
+
+function assertYaohuoActionSuccess(message: string) {
+  if (YAOHUO_ACTION_FAILURE_PATTERN.test(message)) {
+    throw new Error(message);
+  }
 }
 
 export async function runYaohuoAction({
@@ -94,8 +105,6 @@ export async function runYaohuoAction({
     throw new Error(`妖火请求失败：HTTP ${response.status}`);
   }
 
-  return {
-    ok: true,
-    message: actionMessage(html)
-  };
+  const message = actionMessage(html);
+  return { ok: true, message };
 }

@@ -12,9 +12,9 @@ import {
   textExcerpt,
   toIsoString
 } from './localHtml';
+import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-  isCloudflareChallengeResponse,
   linuxDoAccessSummary,
   loadLinuxDoAccess
 } from './linuxdoCookieBridge';

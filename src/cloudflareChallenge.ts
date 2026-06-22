@@ -13,7 +13,7 @@ const CHALLENGE_BODY_MARKERS = [
   '正在检查'
 ];
 
-export function isCloudflareChallengeBody(body: string) {
+function isCloudflareChallengeBody(body: string) {
   const text = body.toLowerCase();
   return CHALLENGE_BODY_MARKERS.some((marker) => text.includes(marker));
 }
