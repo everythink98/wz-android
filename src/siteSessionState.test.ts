@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSiteSessionViewModels,
+  applyDevAnonymousOverrides,
   nodeSeekLoginStateLabel,
   reduceSiteSessionState,
   createSiteSessionStates,
+  isDevAnonymousSource,
   isSiteLoggedIn,
   isSiteVerificationReady,
   type SiteSessionState
@@ -151,14 +153,16 @@ describe('site session state', () => {
 
     expect(viewModels.nodeseek).toMatchObject({
       statusLabel: '已验证',
-      summaryLabel: '已验证 cf_clearance',
+      summaryLabel: '已验证',
+      cookieSummary: ['cf_clearance'],
       isVerified: true,
       isLoggedIn: false,
       canWrite: false
     });
     expect(viewModels.linuxdo).toMatchObject({
       statusLabel: '已登录',
-      summaryLabel: '已登录 cf_clearance、_t',
+      summaryLabel: '已登录',
+      cookieSummary: ['cf_clearance', '_t'],
       isVerified: true,
       isLoggedIn: true,
       canWrite: true
@@ -273,5 +277,46 @@ describe('site session state', () => {
       lastVerifiedAt: '2026-06-06T02:01:00.000Z',
       lastError: '网络错误'
     });
+  });
+
+  it('applies temporary anonymous overrides without mutating saved session state', () => {
+    const states = createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['cf_clearance', '_t'],
+        isVerifying: false
+      },
+      yaohuo: {
+        site: 'yaohuo',
+        status: 'logged-in',
+        cookieSummary: ['sidyaohuo'],
+        isVerifying: false
+      }
+    });
+
+    const effective = applyDevAnonymousOverrides(states, { nodeseek: true, linuxdo: true });
+
+    expect(effective.nodeseek).toMatchObject({ status: 'anonymous', cookieSummary: [] });
+    expect(effective.linuxdo).toMatchObject({ status: 'anonymous', cookieSummary: [] });
+    expect(effective.yaohuo).toBe(states.yaohuo);
+    expect(states.nodeseek).toMatchObject({ status: 'logged-in', cookieSummary: ['session'] });
+    expect(createSiteSessionViewModels(effective).linuxdo).toMatchObject({
+      summaryLabel: '匿名可用',
+      canWrite: false
+    });
+  });
+
+  it('matches temporary anonymous overrides only for all or the selected source', () => {
+    expect(isDevAnonymousSource('all', 'nodeseek', { nodeseek: true })).toBe(true);
+    expect(isDevAnonymousSource('nodeseek', 'nodeseek', { nodeseek: true })).toBe(true);
+    expect(isDevAnonymousSource('yaohuo', 'nodeseek', { nodeseek: true })).toBe(false);
+    expect(isDevAnonymousSource('nodeseek', 'nodeseek', { nodeseek: false })).toBe(false);
   });
 });

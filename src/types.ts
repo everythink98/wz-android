@@ -1,8 +1,10 @@
 export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo';
 export type FeedSource = Source | 'all';
+export type SourceErrorKind = 'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
 
 export type SourceErrorInfo = string | {
   message: string;
+  kind?: SourceErrorKind;
   reason?: string;
   loginRequired?: boolean;
   retryable?: boolean;

@@ -555,6 +555,27 @@ export function SearchScreen({
         </View>
       );
     }
+    if (item.type === 'groupAuthNotice') {
+      const authNotice = item.group.authNotice;
+      if (!authNotice) {
+        return null;
+      }
+      const noticeBoxStyle = authNotice.tone === 'danger'
+        ? styles.authNoticeBoxDanger
+        : authNotice.tone === 'warning'
+          ? styles.authNoticeBoxWarning
+          : styles.authNoticeBoxNeutral;
+      const noticeTextStyle = authNotice.tone === 'danger'
+        ? styles.authNoticeTextDanger
+        : authNotice.tone === 'warning'
+          ? styles.authNoticeTextWarning
+          : styles.authNoticeTextNeutral;
+      return (
+        <View style={[styles.authNoticeBox, noticeBoxStyle]}>
+          <Text style={[styles.authNoticeText, noticeTextStyle]}>{authNotice.message}</Text>
+        </View>
+      );
+    }
     if (item.type === 'groupLoading') {
       return <LoadingState text={`${item.group.label} 搜索中...`} styles={styles} theme={theme} />;
     }

@@ -17,13 +17,13 @@ describe('search controller result helpers', () => {
       },
       {
         kind: 'action-required',
-        action: { type: 'yaohuo-login', message: '请先登录妖火后再搜索。' },
-        group: { source: 'yaohuo', label: '妖火', items: [], error: '请先登录妖火后再搜索。', hasMore: false, nextPage: null }
+        action: { type: 'yaohuo-login', message: '妖火需要登录后使用此功能。' },
+        group: { source: 'yaohuo', label: '妖火', items: [], error: '妖火需要登录后使用此功能。', hasMore: false, nextPage: null }
       }
     ];
 
     expect(results.map(groupFromRemoteSearchResult).map((group) => group.source)).toEqual(['v2ex', 'yaohuo']);
-    expect(firstRemoteSearchAction(results)).toEqual({ type: 'yaohuo-login', message: '请先登录妖火后再搜索。' });
+    expect(firstRemoteSearchAction(results)).toEqual({ type: 'yaohuo-login', message: '妖火需要登录后使用此功能。' });
   });
 
   it('does not auto-open login or verification panels for aggregated search', () => {

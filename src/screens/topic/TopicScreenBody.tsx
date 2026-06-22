@@ -33,6 +33,7 @@ import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerfor
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
+import { authNoticeForMessage } from '../../siteSessionPrompts';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -762,6 +763,18 @@ export function TopicScreen({
 
   const topicHeaderStatusBadges = topicStatusBadges(item);
   const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
+  const topicReadableError = topicError ? readableTopicError(topicError) : '';
+  const topicAuthNotice = authNoticeForMessage(topicError) || authNoticeForMessage(topicReadableError);
+  const topicAuthNoticeBoxStyle = topicAuthNotice?.tone === 'danger'
+    ? styles.authNoticeBoxDanger
+    : topicAuthNotice?.tone === 'warning'
+      ? styles.authNoticeBoxWarning
+      : styles.authNoticeBoxNeutral;
+  const topicAuthNoticeTextStyle = topicAuthNotice?.tone === 'danger'
+    ? styles.authNoticeTextDanger
+    : topicAuthNotice?.tone === 'warning'
+      ? styles.authNoticeTextWarning
+      : styles.authNoticeTextNeutral;
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
@@ -806,8 +819,8 @@ export function TopicScreen({
           ) : null}
         </View>
         {topicError ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{readableTopicError(topicError)}</Text>
+          <View style={topicAuthNotice ? [styles.authNoticeBox, topicAuthNoticeBoxStyle] : styles.errorBox}>
+            <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>{topicAuthNotice?.message || topicReadableError}</Text>
             <View style={styles.actions}>
               {item.source === 'linuxdo' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
               <AppButton label="重试" styles={styles} onPress={onRefreshWholeTopic} />

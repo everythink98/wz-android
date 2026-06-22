@@ -26,6 +26,8 @@ import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '..
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
+import { authNoticeForMessage, authNoticeForSource } from '../siteSessionPrompts';
+import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
 import {
@@ -69,6 +71,7 @@ export function useSearchController({
   nodeSeekUserAgentRef,
   notify,
   onNodeSeekSearchVerificationRequired,
+  sessionViewModels,
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
@@ -80,6 +83,7 @@ export function useSearchController({
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
+  sessionViewModels: SiteSessionViewModels;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
 }) {
@@ -190,6 +194,7 @@ export function useSearchController({
     options?: { isCurrent?: () => boolean }
   ): Promise<RemoteSearchSourceResult> => {
     let yaohuoGeneration: number | undefined;
+    const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
     try {
       const activeFilter = filter?.source === source ? filter : undefined;
       const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
@@ -197,8 +202,8 @@ export function useSearchController({
         loadNodeSeekCookieForSource(source)
       ]);
       if (source === 'yaohuo' && !yaohuoCookie) {
-        const message = '请先登录妖火后再搜索。';
-        const group = { source, label: sourceLabel(source), items: [], error: message, hasMore: false, nextPage: null };
+        const message = '妖火需要登录后使用此功能。';
+        const group = { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || sourceStatusNotice, hasMore: false, nextPage: null };
         return { kind: 'action-required', group, action: { type: 'yaohuo-login', message } };
       }
       const searchLimit = source === 'linuxdo' ? 50 : 30;
@@ -225,11 +230,13 @@ export function useSearchController({
           signal
         });
       const sourceError = data.errors?.[source];
+      const sourceErrorText = sourceErrorMessage(sourceError) || undefined;
       const group = {
         source,
         label: sourceLabel(source),
         items: data.items,
-        error: sourceErrorMessage(sourceError) || undefined,
+        authNotice: sourceErrorText ? authNoticeForMessage(sourceErrorText) || undefined : sourceStatusNotice,
+        error: sourceErrorText,
         verificationRequired: sourceErrorRequiresVerification(sourceError),
         hasMore: Boolean(data.hasMore && data.nextPage),
         nextPage: data.nextPage ?? null
@@ -249,17 +256,18 @@ export function useSearchController({
             await clearYaohuoLoginState({ generation: yaohuoGeneration });
           }
         }
-        const group = { source, label: sourceLabel(source), items: [], error: message, hasMore: false, nextPage: null };
+        const group = { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || sourceStatusNotice, hasMore: false, nextPage: null };
         return { kind: 'action-required', group, action: { type: 'yaohuo-login', message } };
       }
       if (source === 'nodeseek' && isNodeSeekCloudflareError(error)) {
         const message = errorMessage(error);
-        const group = { source, label: sourceLabel(source), items: [], error: message, verificationRequired: true, hasMore: false, nextPage: null };
+        const group = { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || sourceStatusNotice, verificationRequired: true, hasMore: false, nextPage: null };
         return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message } };
       }
-      return { kind: 'failed', group: { source, label: sourceLabel(source), items: [], error: errorMessage(error), hasMore: false, nextPage: null } };
+      const message = errorMessage(error);
+      return { kind: 'failed', group: { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || undefined, hasMore: false, nextPage: null } };
     }
-  }, [categories, clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef]);
+  }, [categories, clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef, sessionViewModels]);
 
   const handleRemoteSearchAction = useCallback((action: RemoteSearchAction) => {
     if (action.type === 'yaohuo-login') {
@@ -301,7 +309,7 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
     } else {
-      const nextGroups = activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], loading: true }));
+      const nextGroups = activeSources.map((source) => ({ source, label: sourceLabel(source), items: [], authNotice: authNoticeForSource(source, sessionViewModels, 'search') || undefined, loading: true }));
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
     }
@@ -375,6 +383,7 @@ export function useSearchController({
     runRemoteSearchSource,
     searchQuery,
     searchSource,
+    sessionViewModels,
     showYaohuoLogin
   ]);
 

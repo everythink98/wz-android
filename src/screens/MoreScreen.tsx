@@ -1,12 +1,12 @@
 import { type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, DatabaseBackup, LogIn, Settings } from 'lucide-react-native';
+import { Activity, DatabaseBackup, LogIn, Settings, Wrench } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
-import type { SiteSessionViewModels } from '../siteSessionState';
+import type { DevAnonymousOverrides, SessionSite, SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
@@ -41,8 +41,11 @@ export function MoreScreen({
   theme,
   webViewRef,
   yaohuoLoginState,
+  yaohuoLoginPrompt,
   yaohuoWebViewRef,
   sessionViewModels,
+  devAnonymousAvailable,
+  devAnonymousOverrides,
   onRefreshAccountStatus,
   onCheckAppUpdate,
   onDownloadAppUpdate,
@@ -64,6 +67,7 @@ export function MoreScreen({
   onShowYaohuoLoginPanelChange,
   onShowLinuxDoPanelChange,
   onShowSettingsPanelChange,
+  onToggleDevAnonymousOverride,
   onUpdateSettings
 }: {
   checking: boolean;
@@ -89,8 +93,11 @@ export function MoreScreen({
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
   yaohuoLoginState: string;
+  yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   sessionViewModels: SiteSessionViewModels;
+  devAnonymousAvailable: boolean;
+  devAnonymousOverrides: DevAnonymousOverrides;
   onRefreshAccountStatus: () => void;
   onCheckAppUpdate: () => void;
   onDownloadAppUpdate: () => void;
@@ -112,10 +119,12 @@ export function MoreScreen({
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
+  onToggleDevAnonymousOverride: (site: SessionSite) => void;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
+  const [toolsExpanded, setToolsExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
@@ -125,6 +134,8 @@ export function MoreScreen({
   const appVersionMeta = appUpdateInfo
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
     : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
+  const devAnonymousActiveCount = (devAnonymousOverrides.nodeseek ? 1 : 0) + (devAnonymousOverrides.yaohuo ? 1 : 0) + (devAnonymousOverrides.linuxdo ? 1 : 0);
+  const devAnonymousMeta = devAnonymousActiveCount ? `已开启 ${devAnonymousActiveCount} 项` : '临时匿名 · 不删除 Cookie';
   useEffect(() => {
     if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {
       setAccountExpanded(true);
@@ -174,7 +185,7 @@ export function MoreScreen({
       <ExpandablePanel
         quiet
         title="账号与验证"
-        meta={`NodeSeek ${nodeSeekSession.statusLabel} · 妖火 ${yaohuoSession.statusLabel} · linux.do ${linuxDoSession.summaryLabel}`}
+        meta={`NodeSeek ${nodeSeekSession.summaryLabel} · 妖火 ${yaohuoSession.summaryLabel} · linux.do ${linuxDoSession.summaryLabel}`}
         icon={LogIn}
         expanded={accountExpanded}
         styles={styles}
@@ -210,6 +221,7 @@ export function MoreScreen({
           styles={styles}
           theme={theme}
           yaohuoLoginState={yaohuoLoginState}
+          yaohuoLoginPrompt={yaohuoLoginPrompt}
           yaohuoWebViewRef={yaohuoWebViewRef}
           onCheckYaohuoLogin={onCheckYaohuoLogin}
           onClearYaohuoLogin={onClearYaohuoLogin}
@@ -241,6 +253,27 @@ export function MoreScreen({
           />
         ) : null}
       </ExpandablePanel>
+      {devAnonymousAvailable ? (
+        <ExpandablePanel
+          quiet
+          title="测试工具"
+          meta={devAnonymousMeta}
+          icon={Wrench}
+          expanded={toolsExpanded}
+          styles={styles}
+          theme={theme}
+          onExpandedChange={setToolsExpanded}
+        >
+          <View style={styles.stack}>
+            <Text style={styles.meta}>只影响本次运行，不删除 Cookie。重启后恢复。</Text>
+            <View style={styles.actions}>
+              <AppButton tiny variant={devAnonymousOverrides.nodeseek ? 'primary' : 'ghost'} label="NodeSeek" styles={styles} onPress={() => onToggleDevAnonymousOverride('nodeseek')} />
+              <AppButton tiny variant={devAnonymousOverrides.yaohuo ? 'primary' : 'ghost'} label="妖火" styles={styles} onPress={() => onToggleDevAnonymousOverride('yaohuo')} />
+              <AppButton tiny variant={devAnonymousOverrides.linuxdo ? 'primary' : 'ghost'} label="linux.do" styles={styles} onPress={() => onToggleDevAnonymousOverride('linuxdo')} />
+            </View>
+          </View>
+        </ExpandablePanel>
+      ) : null}
       <ExpandablePanel
         quiet
         title="备份 / 恢复"

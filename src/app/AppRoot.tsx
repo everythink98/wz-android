@@ -50,9 +50,9 @@ import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT } from '../linuxdoCookieBridge';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { Reply, Topic, TopicDetail } from '../types';
+import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
@@ -74,6 +74,14 @@ import { UserScreen } from '../screens/UserScreen';
 import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
+import {
+  applyDevAnonymousOverrides,
+  createSiteSessionViewModels,
+  isDevAnonymousSource,
+  nodeSeekLoginStateLabel,
+  type DevAnonymousOverrides,
+  type SessionSite
+} from '../siteSessionState';
 
 type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   resolve: (response: Response) => void;
@@ -248,6 +256,7 @@ export function AppRoot() {
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const showLoginPanelRef = useRef(showLoginPanel);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
+  const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
   const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
@@ -301,18 +310,15 @@ export function AppRoot() {
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    loginState,
+    loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
+    loadYaohuoCookieForSource: loadStoredYaohuoCookieForSource,
     restoreSavedYaohuoCookiesToWebView,
     saveNodeSeekCookieHeader,
     saveYaohuoCookieHeader,
     siteSessionStates,
-    siteSessionViewModels,
     updateLinuxDoSession,
     updateNodeSeekSession,
-    updateYaohuoSession,
-    yaohuoLoginState
+    updateYaohuoSession
   } = useSessionController({
     linuxDoBrowserFetchCurrentRef,
     linuxDoBrowserFetchIdRef,
@@ -339,6 +345,41 @@ export function AppRoot() {
     webLoginDetectedRef,
     webLoginUserId
   });
+
+  const [devAnonymousOverrides, setDevAnonymousOverrides] = useState<DevAnonymousOverrides>({});
+  const effectiveSiteSessionStates = useMemo(() => (
+    __DEV__ ? applyDevAnonymousOverrides(siteSessionStates, devAnonymousOverrides) : siteSessionStates
+  ), [devAnonymousOverrides, siteSessionStates]);
+  const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(effectiveSiteSessionStates), [effectiveSiteSessionStates]);
+  const loginState = useMemo(() => (
+    nodeSeekLoginStateLabel(siteSessionViewModels.nodeseek, __DEV__ && devAnonymousOverrides.nodeseek ? null : webLoginUserId)
+  ), [devAnonymousOverrides.nodeseek, siteSessionViewModels.nodeseek, webLoginUserId]);
+  const yaohuoLoginState = siteSessionViewModels.yaohuo.summaryLabel;
+  useEffect(() => {
+    setLinuxDoDevAnonymousOverride(Boolean(__DEV__ && devAnonymousOverrides.linuxdo));
+    return () => setLinuxDoDevAnonymousOverride(false);
+  }, [devAnonymousOverrides.linuxdo]);
+  const toggleDevAnonymousOverride = useCallback((site: SessionSite) => {
+    if (!__DEV__) {
+      return;
+    }
+    setDevAnonymousOverrides((current) => ({
+      ...current,
+      [site]: !current[site]
+    }));
+  }, []);
+  const loadNodeSeekCookieForSource = useCallback((source: FeedSource | Source, options?: Parameters<typeof loadStoredNodeSeekCookieForSource>[1]) => {
+    if (__DEV__ && isDevAnonymousSource(source, 'nodeseek', devAnonymousOverrides)) {
+      return Promise.resolve(undefined);
+    }
+    return loadStoredNodeSeekCookieForSource(source, options);
+  }, [devAnonymousOverrides.nodeseek, loadStoredNodeSeekCookieForSource]);
+  const loadYaohuoCookieForSource = useCallback((source: FeedSource | Source, options?: Parameters<typeof loadStoredYaohuoCookieForSource>[1]) => {
+    if (__DEV__ && isDevAnonymousSource(source, 'yaohuo', devAnonymousOverrides)) {
+      return Promise.resolve(undefined);
+    }
+    return loadStoredYaohuoCookieForSource(source, options);
+  }, [devAnonymousOverrides.yaohuo, loadStoredYaohuoCookieForSource]);
   const libraryRecords = useMemo(
     () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
     [libraryTab, readerData.favorites, readerData.history]
@@ -465,6 +506,7 @@ export function AppRoot() {
     yaohuoLoginPanelRequestRef.current += 1;
     yaohuoWebViewRef.current?.stopLoading();
     setShowYaohuoLoginPanel(false);
+    setYaohuoLoginPrompt('');
     setLoadingYaohuoLoginPage(false);
   }, []);
 
@@ -499,6 +541,7 @@ export function AppRoot() {
 
   const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
     setScreen('more');
+    setYaohuoLoginPrompt(message);
     changeYaohuoLoginPanel(true);
     notify(message);
   }, [changeYaohuoLoginPanel, notify]);
@@ -673,6 +716,7 @@ export function AppRoot() {
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
+    sessionViewModels: siteSessionViewModels,
     showNodeSeekVerification,
     showYaohuoLogin
   });
@@ -688,7 +732,7 @@ export function AppRoot() {
     currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
-    loadNodeSeekCookieForSource,
+    loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
     notify,
     readerDataRef,
     replaceReaderData,
@@ -855,6 +899,7 @@ export function AppRoot() {
     onOpenUserScreen: prepareUserNavigation,
     readerData,
     screen,
+    sessionViewModels: siteSessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin
@@ -897,6 +942,7 @@ export function AppRoot() {
     resetQuoteState,
     screen,
     selectedTopic,
+    sessionViewModels: siteSessionViewModels,
     setCommentQuery,
     setLoadedQuotedReplies: updateLoadedQuotedReplies,
     setLoadingMoreReplies,
@@ -927,7 +973,7 @@ export function AppRoot() {
     topicSnapshot,
     updateExpandedQuotes
   });
-  const showLinuxDoLogin = useCallback((message = 'linux.do 登录后才能操作，匿名仍可阅读。') => {
+  const showLinuxDoLogin = useCallback((message = '匿名可阅读，登录后才能互动。') => {
     setScreen('more');
     changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
@@ -973,7 +1019,7 @@ export function AppRoot() {
     setTopicReplies,
     showLinuxDoLogin,
     showYaohuoLogin,
-    siteSessionStates,
+    siteSessionStates: effectiveSiteSessionStates,
     topicActionRequestOwnerRef,
     topicDetail,
     topicReplies,
@@ -1262,8 +1308,11 @@ export function AppRoot() {
       theme,
       webViewRef,
       yaohuoLoginState,
+      yaohuoLoginPrompt,
       yaohuoWebViewRef,
       sessionViewModels: siteSessionViewModels,
+      devAnonymousAvailable: __DEV__,
+      devAnonymousOverrides,
       onRefreshAccountStatus: refreshAccountStatus,
       onCheckAppUpdate: checkAppUpdate,
       onDownloadAppUpdate: downloadAppUpdate,
@@ -1285,6 +1334,7 @@ export function AppRoot() {
       onShowYaohuoLoginPanelChange: changeYaohuoLoginPanel,
       onShowLinuxDoPanelChange: changeLinuxDoPanel,
       onShowSettingsPanelChange: setShowSettingsPanel,
+      onToggleDevAnonymousOverride: toggleDevAnonymousOverride,
       onUpdateSettings: updateSettings
   };
 

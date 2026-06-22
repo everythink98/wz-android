@@ -1,4 +1,4 @@
-import type { Source } from './types';
+import type { FeedSource, Source } from './types';
 
 export type SessionSite = Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
 export type SiteSessionStatus = 'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'expired';
@@ -13,6 +13,7 @@ export type SiteSessionState = {
 };
 
 export type SiteSessionStates = Record<SessionSite, SiteSessionState>;
+export type DevAnonymousOverrides = Partial<Record<SessionSite, boolean>>;
 export type SiteSessionViewModel = {
   site: SessionSite;
   status: SiteSessionStatus;
@@ -59,6 +60,21 @@ export function createSiteSessionStates(states?: Partial<SiteSessionStates>): Si
     linuxdo: states?.linuxdo || createSiteState('linuxdo', 'anonymous'),
     yaohuo: states?.yaohuo || createSiteState('yaohuo', 'anonymous')
   };
+}
+
+export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides: DevAnonymousOverrides = {}): SiteSessionStates {
+  if (!overrides.nodeseek && !overrides.linuxdo && !overrides.yaohuo) {
+    return states;
+  }
+  return {
+    nodeseek: overrides.nodeseek ? createSiteState('nodeseek', 'anonymous') : states.nodeseek,
+    linuxdo: overrides.linuxdo ? createSiteState('linuxdo', 'anonymous') : states.linuxdo,
+    yaohuo: overrides.yaohuo ? createSiteState('yaohuo', 'anonymous') : states.yaohuo
+  };
+}
+
+export function isDevAnonymousSource(source: FeedSource, site: SessionSite, overrides: DevAnonymousOverrides = {}) {
+  return Boolean(overrides[site] && (source === 'all' || source === site));
 }
 
 function stateWithCookieFacts(state: SiteSessionState, {
@@ -179,10 +195,7 @@ function siteSummaryLabel(state: SiteSessionState) {
   if (state.status === 'verification-required') {
     return state.lastError || '需要验证';
   }
-  if (!state.cookieSummary.length) {
-    return statusLabel;
-  }
-  return `${statusLabel} ${state.cookieSummary.join('、')}`;
+  return statusLabel;
 }
 
 export function createSiteSessionViewModel(state: SiteSessionState): SiteSessionViewModel {

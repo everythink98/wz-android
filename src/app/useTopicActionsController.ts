@@ -1,4 +1,4 @@
-import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useMemo, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import {
   buildNodeSeekAttendanceRequest,
@@ -68,7 +68,8 @@ import {
   type TopicActionRunMap
 } from '../topicActionRequestOwners';
 import { errorMessage, isCanceledRequest } from '../appUtils';
-import { isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
+import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
+import { authActionMessageForSource } from '../siteSessionPrompts';
 import type { ReplyTarget } from '../appTypes';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import {
@@ -192,6 +193,7 @@ export function useTopicActionsController({
   const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);
   const canUseYaohuoActions = isSiteLoggedIn(siteSessionStates.yaohuo);
   const canUseLinuxDoActions = isSiteLoggedIn(siteSessionStates.linuxdo);
+  const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
   const topicActionOwnersRef = useRef<TopicActionOwnerMap>({});
   const topicActionRunsRef = useRef<TopicActionRunMap>({});
   const detachedActionRunsRef = useRef<TopicActionRunMap>({});
@@ -271,7 +273,7 @@ export function useTopicActionsController({
     options: ActionRunOptions = {}
   ) => {
     if (!canUseNodeSeekActions) {
-      notify('请先在“更多”里登录并检测 NodeSeek Cookie。');
+      notify(authActionMessageForSource('nodeseek', siteSessionViewModels));
       return false;
     }
     const actionKey = options.key || options.owner?.action.key || success;
@@ -310,7 +312,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, true);
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, startActionRun, startTopicActionRequest]);
+  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -321,7 +323,7 @@ export function useTopicActionsController({
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
         return false;
       }
-      showYaohuoLogin();
+      showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
       return false;
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
@@ -333,7 +335,7 @@ export function useTopicActionsController({
         return false;
       }
       if (!cookieHeader) {
-        showYaohuoLogin();
+        showYaohuoLogin(authActionMessageForSource('yaohuo', siteSessionViewModels));
         return false;
       }
       const result = await runYaohuoAction({
@@ -366,7 +368,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, true);
     }
-  }, [canUseYaohuoActions, clearYaohuoLoginState, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, startActionRun, startTopicActionRequest]);
+  }, [canUseYaohuoActions, clearYaohuoLoginState, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runLinuxDoRequest = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
@@ -377,8 +379,8 @@ export function useTopicActionsController({
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
         return false;
       }
-      updateLinuxDoSession({ type: 'login-expired', message: 'linux.do 登录后才能操作' });
-      showLinuxDoLogin();
+      const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
+      showLinuxDoLogin(message);
       return false;
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
@@ -393,8 +395,9 @@ export function useTopicActionsController({
         return false;
       }
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-        updateLinuxDoSession({ type: 'login-expired', message: 'linux.do 登录后才能操作' });
-        showLinuxDoLogin();
+        const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
+        updateLinuxDoSession({ type: 'login-expired', message });
+        showLinuxDoLogin(message);
         return false;
       }
       const result = await runLinuxDoAction({
@@ -425,7 +428,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, true);
     }
-  }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
+  }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
 
   const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
     const next = { ...optimisticTopicActionsRef.current };
@@ -446,7 +449,7 @@ export function useTopicActionsController({
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
         return false;
       }
-      notify('请先在“更多”里登录并检测 NodeSeek Cookie，已恢复原状态。');
+      notify(`${authActionMessageForSource('nodeseek', siteSessionViewModels)}，已恢复原状态。`);
       return false;
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || 'nodeseek-optimistic');
@@ -482,7 +485,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, false);
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, startActionRun, startTopicActionRequest]);
+  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runLinuxDoActionForOptimisticUpdate = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
@@ -497,8 +500,8 @@ export function useTopicActionsController({
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
-        updateLinuxDoSession({ type: 'login-expired', message: 'linux.do 登录后才能操作' });
-        showLinuxDoLogin('linux.do 登录后才能操作，已恢复原状态。');
+        const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
+        showLinuxDoLogin(`${message}，已恢复原状态。`);
         return false;
       }
       linuxDoGeneration = currentLinuxDoAccessGeneration();
@@ -511,8 +514,9 @@ export function useTopicActionsController({
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
-        updateLinuxDoSession({ type: 'login-expired', message: 'linux.do 登录后才能操作' });
-        showLinuxDoLogin('linux.do 登录后才能操作，已恢复原状态。');
+        const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
+        updateLinuxDoSession({ type: 'login-expired', message });
+        showLinuxDoLogin(`${message}，已恢复原状态。`);
         return false;
       }
       const result = await runLinuxDoAction({
@@ -542,7 +546,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, false);
     }
-  }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
+  }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
 
   const runOptimisticActionQueue = useCallback(async ({
     key,

@@ -50,4 +50,66 @@ describe('Android search list items', () => {
     expect(items.map((item) => item.type)).toEqual(['groupHeader']);
   });
 
+  it('keeps source auth notices visible instead of treating them as empty results', () => {
+    const groups: SearchGroup[] = [{
+      source: 'nodeseek',
+      label: 'NodeSeek',
+      items: [],
+      authNotice: {
+        message: '未登录搜索，结果可能不完整。',
+        tone: 'warning'
+      }
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { nodeseek: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupEmpty']);
+    expect(items[1]).toMatchObject({ type: 'groupAuthNotice', group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } } });
+  });
+
+  it('renders an auth notice instead of an ordinary error when the same message is also the error', () => {
+    const groups: SearchGroup[] = [{
+      source: 'yaohuo',
+      label: '妖火',
+      items: [],
+      authNotice: {
+        message: '妖火需要登录后使用此功能。',
+        tone: 'warning'
+      },
+      error: '妖火需要登录后使用此功能。'
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { yaohuo: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '受限' });
+  });
+
+  it('keeps non-neutral auth notices visible when a separate source error also happens', () => {
+    const groups: SearchGroup[] = [{
+      source: 'nodeseek',
+      label: 'NodeSeek',
+      items: [],
+      authNotice: {
+        message: '未登录搜索，结果可能不完整。',
+        tone: 'warning'
+      },
+      error: '请求超时，请稍后重试'
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { nodeseek: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupError']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '读取失败' });
+  });
+
 });

@@ -11,6 +11,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
   const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)));
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const topicRowBackground = theme.background;
+  const warningColor = theme.dark ? '#dfbd78' : '#8a6430';
   const navigationStyles = createNavigationStyles(theme, appFontFamily);
   const topicStyles = createTopicStyles(theme, appFontFamily, fontScale, alphaColor);
   const panelStyles = createPanelStyles(theme, appFontFamily);
@@ -1537,6 +1538,52 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontFamily: appFontFamily,
       fontSize: 13,
       lineHeight: 19
+    },
+    infoBox: {
+      gap: 8,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.14 : 0.06),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.3 : 0.16),
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      padding: 12
+    },
+    infoText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      lineHeight: 19
+    },
+    authNoticeBox: {
+      gap: 8,
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      padding: 12
+    },
+    authNoticeBoxNeutral: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.09 : 0.04),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.10)
+    },
+    authNoticeBoxWarning: {
+      backgroundColor: alphaColor(warningColor, theme.dark ? 0.16 : 0.08),
+      borderColor: alphaColor(warningColor, theme.dark ? 0.38 : 0.22)
+    },
+    authNoticeBoxDanger: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
+      borderColor: alphaColor(theme.danger, 0.34)
+    },
+    authNoticeText: {
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      lineHeight: 19
+    },
+    authNoticeTextNeutral: {
+      color: theme.muted
+    },
+    authNoticeTextWarning: {
+      color: warningColor
+    },
+    authNoticeTextDanger: {
+      color: theme.danger
     },
     levelSummary: {
       gap: 7,

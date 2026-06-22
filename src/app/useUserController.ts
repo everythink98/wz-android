@@ -20,6 +20,8 @@ import { nodeSeekUserIdFromValue } from '../userNavigation';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import { authHintForSource } from '../siteSessionPrompts';
+import type { SiteSessionViewModels } from '../siteSessionState';
 import type { FeedSource, Source, UserProfile } from '../types';
 import type { Screen } from '../appTypes';
 
@@ -33,6 +35,7 @@ export function useUserController({
   onOpenUserScreen,
   readerData,
   screen,
+  sessionViewModels,
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin
@@ -46,6 +49,7 @@ export function useUserController({
   onOpenUserScreen: () => void;
   readerData: ReaderData;
   screen: Screen;
+  sessionViewModels: SiteSessionViewModels;
   showLinuxDoVerification: (message?: string) => void;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
@@ -118,8 +122,9 @@ export function useUserController({
         return;
       }
       if (requestUser.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        setUserError('请先登录妖火后再查看用户主页');
+        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
+        showYaohuoLogin(message);
+        setUserError(message);
         return;
       }
       const profile = await getUserProfile({
@@ -179,6 +184,7 @@ export function useUserController({
     nodeSeekUserAgentRef,
     notify,
     onOpenUserScreen,
+    sessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin
@@ -206,8 +212,9 @@ export function useUserController({
         return;
       }
       if (current.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
-        setUserError('请先登录妖火后再查看用户主页');
+        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
+        showYaohuoLogin(message);
+        setUserError(message);
         return;
       }
       const nextProfile = await getUserProfile({
@@ -276,6 +283,7 @@ export function useUserController({
     loadYaohuoCookieForSource,
     nodeSeekUserAgentRef,
     notify,
+    sessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,

@@ -47,7 +47,8 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('versionName');
     expect(releaseScript).toContain('versionCode');
     expect(releaseScript).toContain('signerSha256');
-    expect(releaseScript).toContain('Signer #1 certificate SHA-256 digest');
+    expect(releaseScript).toContain('Signer #1 certificate');
+    expect(releaseScript).toContain('V2 Signer: certificate');
   });
 
   it('keeps APK inspection available before opening the Android installer', () => {

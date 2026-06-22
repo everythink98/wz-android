@@ -172,6 +172,7 @@ export function YaohuoLoginPanel({
   styles,
   theme,
   yaohuoLoginState,
+  yaohuoLoginPrompt,
   yaohuoWebViewRef,
   onCheckYaohuoLogin,
   onClearYaohuoLogin,
@@ -187,6 +188,7 @@ export function YaohuoLoginPanel({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   yaohuoLoginState: string;
+  yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   onCheckYaohuoLogin: () => void;
   onClearYaohuoLogin: () => void;
@@ -222,7 +224,7 @@ export function YaohuoLoginPanel({
       <LoginWebViewModal
         visible={showYaohuoLoginPanel}
         title="妖火登录"
-        subtitle={yaohuoLoginState}
+        subtitle={yaohuoLoginPrompt || yaohuoLoginState}
         loading={loadingYaohuoLoginPage}
         loadingText="正在打开妖火..."
         error={webViewError}

@@ -4,7 +4,7 @@
 
 测试必须证明“功能没有被改坏”，不是证明 App 能打开。常规改动至少执行自动测试和 `npm run typecheck`；涉及页面流程、登录态、真实来源结果或交互时，还必须做模拟器验收。
 
-当前自动测试是 `Vitest + jsdom`，共有 58 个测试文件、578 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
+当前自动测试是 `Vitest + jsdom`，共有 68 个测试文件、641 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
 
 ## 判断原则
 
@@ -22,13 +22,13 @@
 | --- | --- | --- |
 | 入口 / 导航 | 冷启动进入首页；4 个底部入口可切换；从首页、搜索、收藏打开主题和用户页后可返回；详情页内再打开主题不会丢上一级状态 | `src/topicSessionState.test.ts`、`src/userNavigation.test.ts`、`src/androidBestPracticeBoundaries.test.ts` |
 | 首页 / 分类 / 分页 | 四站来源按当前支持范围返回；分类不串站；分页不重复、不漏掉下一页；聚合首页保留来源平衡 | `src/feedLogic.test.ts`、`src/feedCategoryRail.test.ts`、`src/forumApi.test.ts`、`src/localSources.test.ts` |
-| 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/yaohuoApi.test.ts` |
+| 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/yaohuoApi.test.ts` |
 | 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；楼层引用和图片预览可用；返回后上一层详情状态保留 | `src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/screens/topic/topicScreenHelpers.test.ts`、`src/localSources.test.ts` |
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
 | 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、分页游标正确；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupFiles.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
-| 登录 / 验证 / Cookie | Cookie 只保存在本机；检查登录态不泄露敏感值；Cloudflare / 验证状态用结构化状态判断；不能靠显示文字当流程条件 | `src/siteSessionState.test.ts`、`src/nodeseekCookies.test.ts`、`src/nodeseekCookieBridge.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/sourceErrors.test.ts`、`src/appSecurity.test.ts` |
-| 更多页 / 外观 / 更新 | 账号区状态准确；备份、状态检查、外观设置和更新检查不互相占用错误状态；更新按钮只在有新版时提示 | `src/moreAccountStatus.test.ts`、`src/theme.test.ts`、`src/appUpdate.test.ts`、`src/androidBestPracticeBoundaries.test.ts` |
+| 登录 / 验证 / Cookie | Cookie 只保存在本机；检查登录态不泄露敏感值；Cloudflare / 验证状态用结构化状态判断；不能靠显示文字当流程条件；页面提示必须区分未登录、登录失效、需要验证和普通失败 | `src/siteSessionState.test.ts`、`src/nodeseekCookies.test.ts`、`src/nodeseekCookieBridge.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/sourceErrors.test.ts`、`src/appSecurity.test.ts` |
+| 更多页 / 外观 / 更新 | 账号区状态准确且不显示 Cookie 名称；开发版测试工具独立于账号区；备份、状态检查、外观设置和更新检查不互相占用错误状态；更新按钮只在有新版时提示 | `src/moreAccountStatus.test.ts`、`src/theme.test.ts`、`src/appUpdate.test.ts`、`src/androidBestPracticeBoundaries.test.ts` |
 | 发布 / 安装 | 版本号一致；release 先跑测试和无用代码检查；正式签名有效；APK 安装能力保留；敏感文件不提交 | `src/releasePackaging.test.ts`、`npm run release:android` |
 
 ## 搜索验收
@@ -106,6 +106,7 @@ NodeSeek 单源搜索有两种通过状态：
 | 历史 | 历史数、最近阅读、已读状态 | 删除、清空历史 |
 | 关注用户 | 关注数、用户页、用户主题列表、返回 | 取消关注 |
 | 账号与验证 | 三站状态；从 App 内打开登录 / 验证页；确认包名仍为 `com.wz.reader` | 清除登录、退出登录、手工改 Cookie |
+| 测试工具 | 只在开发版可见；正式版不可见；临时匿名开关独立于账号区；说明“不删除 Cookie” | 清数据、退出登录、清 Cookie |
 | 更多页 | 版本、检查更新、linux.do 等级、备份入口、外观入口 | 导出、导入、安装更新、切换外观 |
 
 ## 改动类型对应验证

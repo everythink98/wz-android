@@ -34,6 +34,11 @@ const LINUXDO_COOKIE_READ_TIMEOUT_MS = 1500;
 const LINUXDO_ACCESS_COOKIE_NAMES = ['cf_clearance', '_t', '_forum_session'] as const;
 const LINUXDO_LOGIN_COOKIE_NAMES = ['_t', '_forum_session'] as const;
 const linuxDoAccessWriteGate = createCredentialWriteGate();
+let linuxDoDevAnonymousOverride = false;
+
+export function setLinuxDoDevAnonymousOverride(enabled: boolean) {
+  linuxDoDevAnonymousOverride = enabled;
+}
 
 export function sanitizeLinuxDoUserAgent(userAgent?: string) {
   return String(userAgent || '')
@@ -297,6 +302,9 @@ export async function saveLinuxDoAccessForGeneration(generation: number, cookieH
 }
 
 export async function loadLinuxDoAccess() {
+  if (linuxDoDevAnonymousOverride) {
+    return null;
+  }
   const generation = linuxDoAccessWriteGate.generation;
   const access = await readStoredLinuxDoAccess();
   if (generation !== linuxDoAccessWriteGate.generation) {

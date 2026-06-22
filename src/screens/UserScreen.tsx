@@ -10,6 +10,7 @@ import { AppButton, EmptyText, IconButton, LoadingState } from '../components/Ap
 import { Avatar } from '../components/Avatar';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+import { authNoticeForMessage } from '../siteSessionPrompts';
 
 type UserListItem =
   | { type: 'profile'; key: 'profile' }
@@ -56,6 +57,17 @@ export function UserScreen({
   ], [topics]);
   const autoLoadArmedRef = useRef(false);
   const followTarget = profile || requestedUser;
+  const userAuthNotice = authNoticeForMessage(error);
+  const userAuthNoticeBoxStyle = userAuthNotice?.tone === 'danger'
+    ? styles.authNoticeBoxDanger
+    : userAuthNotice?.tone === 'warning'
+      ? styles.authNoticeBoxWarning
+      : styles.authNoticeBoxNeutral;
+  const userAuthNoticeTextStyle = userAuthNotice?.tone === 'danger'
+    ? styles.authNoticeTextDanger
+    : userAuthNotice?.tone === 'warning'
+      ? styles.authNoticeTextWarning
+      : styles.authNoticeTextNeutral;
   useEffect(() => {
     autoLoadArmedRef.current = false;
   }, [user?.id, user?.source, user?.username]);
@@ -92,8 +104,8 @@ export function UserScreen({
             {profile?.joinedAt ? <Text style={styles.meta}>加入 {formatDateTime(profile.joinedAt) || profile.joinedAt}</Text> : null}
           </View>
           {error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
+            <View style={userAuthNotice ? [styles.authNoticeBox, userAuthNoticeBoxStyle] : styles.errorBox}>
+              <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>{userAuthNotice?.message || error}</Text>
             </View>
           ) : null}
           {busy ? <LoadingState text="正在读取用户主页..." styles={styles} theme={theme} /> : null}
@@ -115,7 +127,7 @@ export function UserScreen({
         onOpenTopic={onOpenTopic}
       />
     );
-  }, [busy, error, followTarget, followed, onOpenOriginal, onOpenTopic, onToggleFollow, profile, styles, theme, topicStateIndex, topics.length, user]);
+  }, [busy, error, followTarget, followed, onOpenOriginal, onOpenTopic, onToggleFollow, profile, styles, theme, topicStateIndex, topics.length, user, userAuthNotice, userAuthNoticeBoxStyle, userAuthNoticeTextStyle]);
 
   if (!user) {
     return <EmptyText text="未选择用户" styles={styles} />;

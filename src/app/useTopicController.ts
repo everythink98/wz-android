@@ -30,6 +30,8 @@ import { isCurrentTopicLoadRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import { authHintForSource } from '../siteSessionPrompts';
+import type { SiteSessionViewModels } from '../siteSessionState';
 import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
 import type { ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
 
@@ -71,6 +73,7 @@ export function useTopicController({
   resetQuoteState,
   screen,
   selectedTopic,
+  sessionViewModels,
   setCommentQuery,
   setLoadingMoreReplies,
   setLoadedQuotedReplies,
@@ -130,6 +133,7 @@ export function useTopicController({
   resetQuoteState: () => void;
   screen: Screen;
   selectedTopic: Topic | null;
+  sessionViewModels: SiteSessionViewModels;
   setCommentQuery: Dispatch<SetStateAction<string>>;
   setLoadingMoreReplies: Dispatch<SetStateAction<boolean>>;
   setLoadedQuotedReplies: (updater: (current: Record<number, Reply>) => Record<number, Reply>) => void;
@@ -280,7 +284,9 @@ export function useTopicController({
         return;
       }
       if (topic.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
+        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
+        setTopicError(message);
+        showYaohuoLogin(message);
         return;
       }
       const detail = topic.source === 'yaohuo'
@@ -366,6 +372,7 @@ export function useTopicController({
     resetQuoteState,
     screen,
     selectedTopic,
+    sessionViewModels,
     setCommentQuery,
     setLoadingMoreReplies,
     setReplyComposerOpen,
@@ -416,7 +423,7 @@ export function useTopicController({
         return false;
       }
       if (detail.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
+        showYaohuoLogin(authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。');
         return false;
       }
       controller = startAbortableRequest(repliesAbortRef);
@@ -513,6 +520,7 @@ export function useTopicController({
     repliesRequestIdRef,
     replyNextPage,
     selectedTopic,
+    sessionViewModels,
     setLoadingMoreReplies,
     setReplyHasMore,
     setReplyNextOffset,
@@ -544,7 +552,7 @@ export function useTopicController({
         return;
       }
       if (detail.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin();
+        showYaohuoLogin(authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。');
         return;
       }
       controller = startAbortableRequest(repliesAbortRef);
@@ -630,6 +638,7 @@ export function useTopicController({
     replyNextOffset,
     replyNextPage,
     selectedTopic,
+    sessionViewModels,
     setLoadingMoreReplies,
     setReplyHasMore,
     setReplyNextOffset,

@@ -106,7 +106,7 @@ function verifyReleaseApkSignature() {
     process.exit(1);
   }
   const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', releaseApkPath]);
-  const signerSha256 = /Signer #1 certificate SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
+  const signerSha256 = /(?:Signer #1 certificate|V2 Signer: certificate) SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
   if (!signerSha256 || !/^[a-f0-9]{64}$/.test(signerSha256)) {
     console.error('无法从 apksigner 输出读取签名 SHA-256。');
     process.exit(1);

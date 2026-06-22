@@ -43,7 +43,7 @@ function manifest(versionName = '1.3.7') {
     sha256: apkSha256,
     packageName: CURRENT_ANDROID_PACKAGE,
     versionName,
-    versionCode: 18,
+    versionCode: 19,
     signerSha256
   };
 }
@@ -57,7 +57,7 @@ describe('app update release parsing', () => {
       sha256: apkSha256,
       packageName: CURRENT_ANDROID_PACKAGE,
       versionName: '1.3.7',
-      versionCode: 18,
+      versionCode: 19,
       signerSha256
     });
   });
