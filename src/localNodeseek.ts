@@ -476,6 +476,15 @@ function embeddedTopics(data: Record<string, unknown>) {
   ].filter(isRecord).map((topic) => normalizeTopic(topic)).filter(Boolean) as Topic[];
 }
 
+function nodeSeekSearchTopicUrl(id: string, href: string) {
+  try {
+    const url = new URL(href, BASE_URL);
+    return safeNodeSeekTopicUrl(id, url.searchParams.get('q') || href);
+  } catch {
+    return safeNodeSeekTopicUrl(id, href);
+  }
+}
+
 function parseHtmlTopics(html: string) {
   const root = parseHtml(html);
   const renderedItems: Topic[] = [];
@@ -505,7 +514,7 @@ function parseHtmlTopics(html: string) {
       authorUrl: authorLink?.getAttribute('href') ? absoluteUrl(authorLink.getAttribute('href'), BASE_URL) : undefined,
       categoryId,
       category: categoryName,
-      url: safeNodeSeekTopicUrl(id, href),
+      url: nodeSeekSearchTopicUrl(id, href),
       createdAt: lastReplyAt || new Date().toISOString(),
       lastReplyAt: lastReplyAt || new Date().toISOString(),
       replyCount: integerFromElement(row.querySelector('.info-comments-count')),
@@ -538,7 +547,7 @@ function parseHtmlTopics(html: string) {
       id,
       title,
       author: '',
-      url: safeNodeSeekTopicUrl(id, href),
+      url: nodeSeekSearchTopicUrl(id, href),
       createdAt: new Date().toISOString(),
       lastReplyAt: new Date().toISOString(),
       replyCount: parsePositiveInteger(text.match(/回复\s*(\d+)/)?.[1]),

@@ -6,6 +6,8 @@
 - `AGENTS.md`：本仓库工作规则。
 - `docs/architecture.md`：结构说明。
 - `docs/operator-runbook.md`：维护检查方法。
+- `docs/testing-standard.md`：按功能判断测试是否真的覆盖现有行为。
+- `docs/emulator-baseline.md`：当前模拟器只读功能基线。
 - `App.tsx`、`src/`、`plugins/`、`assets/`、`scripts/`：Android App 代码与资源。
 
 ## 接手顺序
@@ -13,7 +15,8 @@
 1. 阅读 `AGENTS.md`。
 2. 阅读 `README.md`。
 3. 阅读 `docs/architecture.md` 和 `docs/operator-runbook.md`。
-4. 运行 `npm install`、`npm test`、`npm run typecheck`。
+4. 阅读 `docs/testing-standard.md` 和 `docs/emulator-baseline.md`。
+5. 运行 `npm install`、`npm test`、`npm run typecheck`。
 
 ## 当前边界
 
@@ -32,6 +35,7 @@
 - `src/screens/TopicScreen.tsx` 是兼容 facade，详情页主体在 `src/screens/topic/TopicScreenBody.tsx`，纯辅助逻辑在 `src/screens/topic/topicScreenHelpers.ts`。
 - 收藏页展示在 `src/screens/LibraryScreen.tsx`，列表模型在 `src/screens/library/libraryScreenItems.ts`。
 - 模拟器验证最新代码不得清 App 数据；用覆盖安装、重启 Metro、force-stop 和重新启动保留登录态。
+- 任何优化或清理都必须按 `docs/testing-standard.md` 选择对应功能验证，并对照 `docs/emulator-baseline.md` 做模拟器验收；只打开 App 不算完成。
 
 ## 优先查看
 

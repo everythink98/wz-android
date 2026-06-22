@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createSiteSessionViewModels,
+  nodeSeekLoginStateLabel,
   reduceSiteSessionState,
   createSiteSessionStates,
   isSiteLoggedIn,
@@ -170,6 +171,30 @@ describe('site session state', () => {
       canWrite: false,
       lastError: '妖火登录已失效'
     });
+  });
+
+  it('does not describe expired or verification-required NodeSeek sessions as saved', () => {
+    const viewModels = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'expired',
+        cookieSummary: ['session'],
+        isVerifying: false,
+        lastError: 'NodeSeek 登录已失效'
+      }
+    }));
+
+    expect(nodeSeekLoginStateLabel(viewModels.nodeseek, null)).toBe('已失效');
+    expect(nodeSeekLoginStateLabel(viewModels.nodeseek, 123)).toBe('网页已确认登录：用户 123');
+    expect(nodeSeekLoginStateLabel(createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'verification-required',
+        cookieSummary: [],
+        isVerifying: false,
+        lastError: '需要验证'
+      }
+    })).nodeseek, null)).toBe('需要验证');
   });
 
   it('moves login detection, verification success, expiry, and clearing through one reducer', () => {

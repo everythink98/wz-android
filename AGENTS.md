@@ -77,6 +77,7 @@
 
 ## 验证标准
 
+- 每次测试先按 `docs/testing-standard.md` 选择对应功能标准；需要模拟器时对照 `docs/emulator-baseline.md`；只打开 App 不算完整测试。
 - 常规改动至少运行相关测试和 `npm run typecheck`。
 - 发布相关改动还要运行 `npm run release:android`。
 - 只有验证通过，或遇到真实阻碍时，才回报结果。

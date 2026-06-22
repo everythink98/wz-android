@@ -12,6 +12,8 @@ npm run release:android
 
 ## 检查重点
 
+- 功能验证按 `docs/testing-standard.md` 执行；只打开 App 不算完整测试。
+- 当前模拟器功能基线记录在 `docs/emulator-baseline.md`；优化代码前后按基线对照，不能用“能打开 App”代替验收。
 - NodeSeek、linux.do 和妖火 Cookie 不进入备份 JSON。
 - `android/` 是生成目录，不作为长期配置来源。
 - 发布版本号以 `app.json` 和 `package*.json` 为准；每次发布递增 `expo.android.versionCode`。
@@ -30,6 +32,8 @@ npm run release:android
 
 ## Android 验证
 
+- 改动前先在 `docs/testing-standard.md` 找到对应功能标准；交付时说明执行过的自动测试和模拟器验收，无法验证的范围必须写清楚。
+- 需要模拟器验收时，对照 `docs/emulator-baseline.md` 记录同条件差异；登录 / 验证网页必须从 App 内账号入口打开，不用 Chrome 代替。
 - 涉及首页、搜索、收藏和用户页长列表时，运行相关体验 / 性能测试和 `npm run typecheck`。
 - 涉及登录、验证、Cookie、写操作、详情返回或来源解析时，运行相关来源 / 安全 / 体验测试和 `npm run typecheck`。
 - 涉及来源 gateway 时，至少运行 `npm test -- src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`。

@@ -70,6 +70,25 @@ describe('NodeSeek hidden browser fetch script', () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 
+  it('returns Google search result pages when they contain NodeSeek topic links', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/search?q=site%3Anodeseek.com+codex', `
+      <main>
+        <a href="https://www.nodeseek.com/post-861593-1">claude code 好用 还是 codex 好用</a>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: false,
+    });
+    expect(payload.url).toContain('/search?q=site%3Anodeseek.com+codex');
+    expect(payload.html).toContain('post-861593-1');
+    expect(stop).toHaveBeenCalled();
+  });
+
   it('returns the real NodeSeek private-post notice without waiting for timeout', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777282-1', `
       <section id="nsk-frame">

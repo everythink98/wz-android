@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
 import { isYaohuoRequestUrl, requireYaohuoRequestUrl } from './localYaohuoHelpers';
-import { isNodeSeekRequestUrl } from './nodeseekFetchFallback';
+import { isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from './nodeseekFetchFallback';
+
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
 describe('Android App security review guards', () => {
@@ -12,6 +13,9 @@ describe('Android App security review guards', () => {
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com.evil.example/search')).toBe(false);
     expect(isNodeSeekRequestUrl('https://evil.example@www.nodeseek.com/search')).toBe(false);
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com@evil.example/search')).toBe(false);
+    expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=site%3Anodeseek.com+codex')).toBe(true);
+    expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=codex')).toBe(false);
+    expect(isNodeSeekBrowserFetchUrl('https://example.com/search?q=site%3Anodeseek.com+codex')).toBe(false);
 
     expect(isYaohuoRequestUrl('https://yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);
     expect(isYaohuoRequestUrl('https://www.yaohuo.me/bbs/book_view.aspx?id=1')).toBe(true);

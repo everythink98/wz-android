@@ -41,12 +41,13 @@ import { clearCookieUrls } from '../cookieCleanup';
 import { NODESEEK_URL, YAOHUO_URL } from '../appUrls';
 import type { FeedSource, Source } from '../types';
 import type { Fetcher } from '../request';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
 import { errorMessage } from '../appUtils';
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
+  nodeSeekLoginStateLabel,
   reduceSiteSessionState,
   type ScopedSiteSessionEvent,
   type SessionSite,
@@ -198,32 +199,10 @@ export function useSessionController({
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
   const loginState = useMemo(() => {
-    const nodeSeekSession = siteSessionViewModels.nodeseek;
-    if (webLoginUserId) {
-      return `网页已确认登录：用户 ${webLoginUserId}`;
-    }
-    if (nodeSeekSession.status === 'anonymous' && nodeSeekSession.cookieSummary.length === 0) {
-      return '未检测到 NodeSeek 验证信息';
-    }
-    if (nodeSeekSession.isLoggedIn) {
-      return nodeSeekSession.cookieSummary.length === 0 ? '已保存 NodeSeek 登录 Cookie' : `已检测登录 Cookie：${nodeSeekSession.cookieSummary.join(', ')}`;
-    }
-    if (nodeSeekSession.cookieSummary.length === 0) {
-      return '已保存 NodeSeek 验证信息';
-    }
-    return `已检测验证 Cookie：${nodeSeekSession.cookieSummary.join(', ')}`;
+    return nodeSeekLoginStateLabel(siteSessionViewModels.nodeseek, webLoginUserId);
   }, [siteSessionViewModels.nodeseek, webLoginUserId]);
 
-  const yaohuoLoginState = useMemo(() => {
-    const yaohuoSession = siteSessionViewModels.yaohuo;
-    if (yaohuoSession.isLoggedIn) {
-      return yaohuoSession.cookieSummary.length ? `已登录：${yaohuoSession.cookieSummary.join(', ')}` : '已登录';
-    }
-    if (yaohuoSession.cookieSummary.length) {
-      return `未登录，已检测 ${yaohuoSession.cookieSummary.length} 个 Cookie：${yaohuoSession.cookieSummary.join(', ')}`;
-    }
-    return '未登录';
-  }, [siteSessionViewModels.yaohuo]);
+  const yaohuoLoginState = siteSessionViewModels.yaohuo.summaryLabel;
 
   const dispatchSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
     setSiteSessionStates((current) => ({
@@ -446,7 +425,7 @@ export function useSessionController({
     if (!current || data.id !== current.id) {
       return;
     }
-    if (!data.url || !isNodeSeekRequestUrl(data.url)) {
+    if (!data.url || !isNodeSeekBrowserFetchUrl(data.url)) {
       rejectNodeSeekBrowserFetch(current, 'NodeSeek 页面跳转到外部地址，已停止读取');
       return;
     }

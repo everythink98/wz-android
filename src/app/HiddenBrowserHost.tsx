@@ -5,7 +5,7 @@ import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './u
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 import type { createStyles } from '../theme';
 import { isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
-import { isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
+import { isNodeSeekBrowserFetchUrl } from '../nodeseekFetchFallback';
 
 export function HiddenBrowserHost({
   failLinuxDoBrowserFetchById,
@@ -38,7 +38,7 @@ export function HiddenBrowserHost({
 }) {
   const handleNodeSeekBrowserNavigation = useCallback((request: { url?: string }) => {
     const url = request.url || '';
-    if (!url || isNodeSeekRequestUrl(url)) {
+    if (!url || isNodeSeekBrowserFetchUrl(url)) {
       return true;
     }
     if (nodeSeekBrowserFetchRequest) {

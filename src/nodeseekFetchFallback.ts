@@ -13,6 +13,22 @@ export function isNodeSeekRequestUrl(input: string) {
   }
 }
 
+function isNodeSeekGoogleSearchUrl(input: string) {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.toLowerCase();
+    return (host === 'google.com' || host.endsWith('.google.com'))
+      && url.pathname.replace(/\/+$/, '') === '/search'
+      && (url.searchParams.get('q') || '').toLowerCase().includes('nodeseek.com');
+  } catch {
+    return false;
+  }
+}
+
+export function isNodeSeekBrowserFetchUrl(input: string) {
+  return isNodeSeekRequestUrl(input) || isNodeSeekGoogleSearchUrl(input);
+}
+
 function isNodeSeekSearchUrl(input: string) {
   try {
     const url = new URL(input);

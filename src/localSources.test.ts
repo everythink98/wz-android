@@ -23,7 +23,7 @@ vi.mock('react-native', () => ({
 import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
-import { createNodeSeekWebViewFallbackFetcher } from './nodeseekFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import * as SecureStore from 'expo-secure-store';
 
@@ -1416,6 +1416,40 @@ describe('Android local sources', () => {
     const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher });
 
     expect(search.items.map((item) => item.id)).toEqual(['701', '702']);
+  });
+
+  it('keeps NodeSeek search usable when anonymous search falls back to Google results', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=codex')) {
+        return html(`
+          <html>
+            <head><title>site:nodeseek.com codex - Google Search</title></head>
+            <body>
+              <a href="https://www.nodeseek.com/post-861593-1">claude code 好用 还是 codex 好用 。我小白想试下水</a>
+              <a href="/url?q=https%3A%2F%2Fwww.nodeseek.com%2Fpost-861594-1&amp;sa=U">Codex 镜像讨论</a>
+            </body>
+          </html>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['861593', '861594']);
+    expect(search.items[0]).toMatchObject({
+      source: 'nodeseek',
+      title: 'claude code 好用 还是 codex 好用 。我小白想试下水',
+      url: 'https://www.nodeseek.com/post-861593-1'
+    });
+    expect(search.items[1]?.url).toBe('https://www.nodeseek.com/post-861594-1');
+  });
+
+  it('allows only NodeSeek-scoped Google search pages in the hidden NodeSeek browser fetcher', () => {
+    expect(isNodeSeekBrowserFetchUrl('https://www.nodeseek.com/search?q=codex')).toBe(true);
+    expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=site%3Anodeseek.com+codex')).toBe(true);
+    expect(isNodeSeekBrowserFetchUrl('https://www.google.com/search?q=codex')).toBe(false);
+    expect(isNodeSeekBrowserFetchUrl('https://example.com/search?q=site%3Anodeseek.com+codex')).toBe(false);
   });
 
   it('keeps empty NodeSeek site search results empty instead of filtering the latest feed', async () => {
