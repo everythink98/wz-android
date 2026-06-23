@@ -431,7 +431,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderRadius: 18
     },
     searchSubmitInlineButton: {
-      backgroundColor: theme.primarySoft
+      width: 38,
+      height: 32,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.10 : 0.045),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.10),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth
     },
     searchFilterEntry: {
       minHeight: 42,
@@ -446,12 +451,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingVertical: 6
     },
     searchFilterEntryIcon: {
-      width: 28,
-      height: 28,
+      width: 22,
+      height: 22,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: 14,
-      backgroundColor: theme.primarySoft
+      borderRadius: 6,
+      backgroundColor: 'transparent'
     },
     searchFilterEntryText: {
       color: theme.ink,
@@ -488,8 +493,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingVertical: 6
     },
     searchSessionStatusChipNeutral: {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.08 : 0.035),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.09)
+      backgroundColor: 'transparent',
+      borderColor: 'transparent'
     },
     searchSessionStatusChipWarning: {
       backgroundColor: alphaColor(warningColor, theme.dark ? 0.14 : 0.07),
@@ -505,7 +510,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderRadius: 4
     },
     searchSessionStatusDotNeutral: {
-      backgroundColor: theme.muted
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.48 : 0.34)
     },
     searchSessionStatusDotWarning: {
       backgroundColor: warningColor

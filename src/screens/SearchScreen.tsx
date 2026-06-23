@@ -629,6 +629,7 @@ export function SearchScreen({
         onSearch={onSearch}
       />
       <PillRail
+        variant="tabs"
         items={feedSourceItems}
         value={searchSource}
         styles={styles}
