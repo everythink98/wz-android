@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authActionMessageForSource, authNoticeForMessage, authNoticeForSource } from './siteSessionPrompts';
+import { authActionMessageForSource, authNoticeForMessage, authNoticeForSource, searchSessionNoticeItems } from './siteSessionPrompts';
 import { createSiteSessionViewModels, createSiteSessionStates } from './siteSessionState';
 
 describe('site session prompts', () => {
@@ -38,6 +38,39 @@ describe('site session prompts', () => {
       tone: 'danger'
     });
     expect(authNoticeForSource('v2ex', sessions, 'search')).toBeNull();
+  });
+
+  it('builds compact search session notices for the active search source', () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'anonymous',
+        cookieSummary: [],
+        isVerifying: false
+      },
+      yaohuo: {
+        site: 'yaohuo',
+        status: 'expired',
+        cookieSummary: ['sidyaohuo'],
+        isVerifying: false
+      }
+    }));
+
+    expect(searchSessionNoticeItems('all', sessions)).toEqual([
+      { source: 'nodeseek', label: 'NodeSeek', notice: { message: '已登录搜索。', tone: 'neutral' } },
+      { source: 'linuxdo', label: 'linux.do', notice: { message: '匿名可阅读，登录后才能互动。', tone: 'neutral' } },
+      { source: 'yaohuo', label: '妖火', notice: { message: '妖火登录已失效，请重新登录。', tone: 'danger' } }
+    ]);
+    expect(searchSessionNoticeItems('nodeseek', sessions)).toEqual([
+      { source: 'nodeseek', label: 'NodeSeek', notice: { message: '已登录搜索。', tone: 'neutral' } }
+    ]);
+    expect(searchSessionNoticeItems('v2ex', sessions)).toEqual([]);
   });
 
   it('uses action messages that match the source capability', () => {

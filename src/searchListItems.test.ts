@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSearchListItems, type SearchGroup } from './searchListItems';
+import { buildSearchListItems, searchGroupEmptyText, type SearchGroup } from './searchListItems';
 import type { Topic } from './types';
 
 function topic(id: string, source: Topic['source'], category = '默认'): Topic {
@@ -70,6 +70,27 @@ describe('Android search list items', () => {
     expect(items[1]).toMatchObject({ type: 'groupAuthNotice', group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } } });
   });
 
+  it('keeps neutral auth notices out of source result bodies', () => {
+    const groups: SearchGroup[] = [{
+      source: 'nodeseek',
+      label: 'NodeSeek',
+      items: [],
+      authNotice: {
+        message: '已登录搜索。',
+        tone: 'neutral'
+      }
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { nodeseek: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupEmpty']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '0 条' });
+    expect(searchGroupEmptyText(groups[0])).toBe('NodeSeek 没有匹配结果');
+  });
+
   it('renders an auth notice instead of an ordinary error when the same message is also the error', () => {
     const groups: SearchGroup[] = [{
       source: 'yaohuo',
@@ -88,7 +109,7 @@ describe('Android search list items', () => {
     });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
-    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '受限' });
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '需登录' });
   });
 
   it('keeps non-neutral auth notices visible when a separate source error also happens', () => {
@@ -109,7 +130,29 @@ describe('Android search list items', () => {
     });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupError']);
-    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '读取失败' });
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
+  });
+
+  it('labels verification-required search groups separately from login limits', () => {
+    const groups: SearchGroup[] = [{
+      source: 'nodeseek',
+      label: 'NodeSeek',
+      items: [],
+      authNotice: {
+        message: 'NodeSeek 需要完成 Cloudflare 验证',
+        tone: 'warning'
+      },
+      error: 'NodeSeek 需要完成 Cloudflare 验证',
+      verificationRequired: true
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { nodeseek: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '需验证' });
   });
 
 });

@@ -14,9 +14,10 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
+  const isNodeSeekSearchPage = () => !/(^|\\.)google\\./i.test(location.hostname || "") && /\\/search\\/?$/i.test(location.pathname || "");
   const hasReadableContent = () => Boolean(document.querySelector(".post-list-item, .content-item .post-content, article.post-content, .post-detail .post-content, pre"))
     || /^\\s*[{[]/.test(pageText());
-  const hasSearchPageContent = () => /\\/search\\/?$/i.test(location.pathname || "")
+  const hasSearchPageContent = () => isNodeSeekSearchPage()
     && (Boolean(document.querySelector(".post-list-item"))
       || /没有找到|没有结果|暂无|未找到|no results|nothing found/i.test(pageText()));
   const hasNodeSeekSearchResultLinks = () => /\\/search\\/?$/i.test(location.pathname || "")
@@ -53,6 +54,21 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       cookie: document.cookie || ""
     }));
   };
+  const postError = (error) => {
+    postBridgeMessage({
+      type: 'nodeseek-browser-fetch',
+      id: requestId,
+      url: location.href,
+      title: document.title || "",
+      challenge: isChallengePage(),
+      error,
+      userAgent: navigator.userAgent || "",
+      cookie: document.cookie || ""
+    });
+    try {
+      window.stop();
+    } catch {}
+  };
   const postResult = () => {
     postBridgeMessage({
       type: 'nodeseek-browser-fetch',
@@ -70,7 +86,15 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
-    if ((!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) || Date.now() >= deadline) {
+    if (!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) {
+      postResult();
+      return;
+    }
+    if (Date.now() >= deadline) {
+      if (!isChallengePage() && isNodeSeekSearchPage() && !hasSearchPageContent() && !hasNodeSeekSearchResultLinks()) {
+        postError('NodeSeek 搜索页结果没有加载完成，请重试');
+        return;
+      }
       postResult();
       return;
     }

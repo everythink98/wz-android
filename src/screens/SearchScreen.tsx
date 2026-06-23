@@ -8,6 +8,7 @@ import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
 import { feedSourceItems } from '../feedCategoryRail';
 import {
   buildSearchListItems,
+  searchGroupEmptyText,
   type SearchGroup,
   type SearchListItem
 } from '../searchListItems';
@@ -24,6 +25,7 @@ import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -423,6 +425,7 @@ export function SearchScreen({
   topicStateIndex,
   searchFilters,
   searchGroups,
+  searchSessionNotices,
   searchSource,
   submittedQuery,
   scrollToTopSignal,
@@ -445,6 +448,7 @@ export function SearchScreen({
   topicStateIndex: TopicListItemStateIndex;
   searchFilters: SearchFilterState;
   searchGroups: SearchGroup[];
+  searchSessionNotices: SearchSessionNoticeItem[];
   searchSource: FeedSource;
   submittedQuery: string;
   scrollToTopSignal: number;
@@ -580,7 +584,7 @@ export function SearchScreen({
       return <LoadingState text={`${item.group.label} 搜索中...`} styles={styles} theme={theme} />;
     }
     if (item.type === 'groupEmpty') {
-      return <EmptyText text="这个来源没有结果" styles={styles} />;
+      return <EmptyText text={searchGroupEmptyText(item.group)} styles={styles} />;
     }
     if (item.type === 'groupLoadMore') {
       return (
@@ -630,6 +634,39 @@ export function SearchScreen({
         styles={styles}
         onChange={(value) => onSearchSourceChange(value as FeedSource)}
       />
+      {searchSessionNotices.length ? (
+        <View style={styles.searchSessionStatusBar}>
+          {searchSessionNotices.map((item) => {
+            const chipStyle = item.notice.tone === 'danger'
+              ? styles.searchSessionStatusChipDanger
+              : item.notice.tone === 'warning'
+                ? styles.searchSessionStatusChipWarning
+                : styles.searchSessionStatusChipNeutral;
+            const dotStyle = item.notice.tone === 'danger'
+              ? styles.searchSessionStatusDotDanger
+              : item.notice.tone === 'warning'
+                ? styles.searchSessionStatusDotWarning
+                : styles.searchSessionStatusDotNeutral;
+            const textStyle = item.notice.tone === 'danger'
+              ? styles.searchSessionStatusTextDanger
+              : item.notice.tone === 'warning'
+                ? styles.searchSessionStatusTextWarning
+                : styles.searchSessionStatusTextNeutral;
+            return (
+              <View
+                key={item.source}
+                accessible
+                accessibilityLabel={`${item.label}：${item.notice.message}`}
+                style={[styles.searchSessionStatusChip, chipStyle]}
+              >
+                <View style={[styles.searchSessionStatusDot, dotStyle]} />
+                <Text style={styles.searchSessionStatusSource}>{item.label}</Text>
+                <Text numberOfLines={2} style={[styles.searchSessionStatusText, textStyle]}>{item.notice.message}</Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
       {searchSource !== 'all' ? (
         <SearchFilterEntry
           summary={searchFilterEntrySummary}

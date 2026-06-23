@@ -1477,6 +1477,17 @@ describe('Android local sources', () => {
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
   });
 
+  it('surfaces incomplete NodeSeek search pages as a retryable failure', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/search?') && input.includes('q=retry')) {
+        return html('<main><form action="/search"><input name="q" value="retry" /></form></main>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(searchTopics({ source: 'nodeseek', query: 'retry', fetcher })).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
+  });
+
   it('surfaces NodeSeek site search failures instead of filtering the latest feed', async () => {
     const latestPayload = Buffer.from(JSON.stringify({
       rotateTopics: [{

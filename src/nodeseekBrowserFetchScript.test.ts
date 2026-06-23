@@ -59,6 +59,31 @@ describe('NodeSeek hidden browser fetch script', () => {
     }
   });
 
+  it('fails bare NodeSeek search pages at the read deadline instead of returning them as empty results', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=ai', `
+        <main>
+          <form action="/search"><input name="q" value="ai" /></form>
+        </main>
+      `);
+
+      vi.advanceTimersByTime(15000);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload).toMatchObject({
+        type: 'nodeseek-browser-fetch',
+        id: 7,
+        error: 'NodeSeek 搜索页结果没有加载完成，请重试'
+      });
+      expect(payload.html).toBeUndefined();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('does not treat Cloudflare challenge search pages as readable results', () => {
     const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=plasma%E6%95%99%E7%A8%8B', `
       <main>

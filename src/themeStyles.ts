@@ -470,6 +470,74 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       includeFontPadding: false,
       lineHeight: 17
     },
+    searchSessionStatusBar: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8
+    },
+    searchSessionStatusChip: {
+      minHeight: 34,
+      maxWidth: '100%',
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 9,
+      paddingVertical: 6
+    },
+    searchSessionStatusChipNeutral: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.08 : 0.035),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.09)
+    },
+    searchSessionStatusChipWarning: {
+      backgroundColor: alphaColor(warningColor, theme.dark ? 0.14 : 0.07),
+      borderColor: alphaColor(warningColor, theme.dark ? 0.32 : 0.18)
+    },
+    searchSessionStatusChipDanger: {
+      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.07),
+      borderColor: alphaColor(theme.danger, theme.dark ? 0.32 : 0.22)
+    },
+    searchSessionStatusDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4
+    },
+    searchSessionStatusDotNeutral: {
+      backgroundColor: theme.muted
+    },
+    searchSessionStatusDotWarning: {
+      backgroundColor: warningColor
+    },
+    searchSessionStatusDotDanger: {
+      backgroundColor: theme.danger
+    },
+    searchSessionStatusSource: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 17
+    },
+    searchSessionStatusText: {
+      flexShrink: 1,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      includeFontPadding: false,
+      lineHeight: 17
+    },
+    searchSessionStatusTextNeutral: {
+      color: theme.muted
+    },
+    searchSessionStatusTextWarning: {
+      color: warningColor
+    },
+    searchSessionStatusTextDanger: {
+      color: theme.danger
+    },
     searchFilterModalRoot: {
       flex: 1,
       justifyContent: 'flex-end'

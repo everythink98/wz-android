@@ -573,6 +573,18 @@ function parseNodeSeekSearchTopics(html: string) {
   });
 }
 
+function isIncompleteNodeSeekSearchPage(html: string, items: Topic[]) {
+  if (items.length) {
+    return false;
+  }
+  const root = parseHtml(html);
+  const hasResultSurface = Boolean(root.querySelector('li.post-list-item, .post-list, .empty-state, .notice, .alert'));
+  if (hasResultSurface) {
+    return false;
+  }
+  return Boolean(root.querySelector('form[action*="/search"], input[name="q"]'));
+}
+
 function normalizeCategories(data: Record<string, unknown>) {
   return arrayField(data.allCategory).filter(isRecord).flatMap((category) => {
     const id = String(category.key || category.id || '').trim();
@@ -1257,6 +1269,9 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   try {
     const html = await fetchNodeSeekText(searchPath(trimmedQuery, page, options.filter), options);
     items = parseNodeSeekSearchTopics(html);
+    if (isIncompleteNodeSeekSearchPage(html, items)) {
+      throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
+    }
     nextPage = page < MAX_NODESEEK_SEARCH_PAGES && nextSearchPath(html, page + 1) ? page + 1 : null;
   } catch (error) {
     if (isNodeSeekCloudflareError(error)) {

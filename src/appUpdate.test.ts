@@ -13,6 +13,9 @@ import {
 
 const apkSha256 = 'a'.repeat(64);
 const signerSha256 = 'b'.repeat(64);
+const newerVersion = '1.3.16';
+const newerTag = `v${newerVersion}`;
+const newerVersionCode = 20;
 
 function releaseAssetUrl(tagName: string, assetName: string) {
   return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${assetName}`;
@@ -37,27 +40,27 @@ function release(tagName: string, assets = [
   };
 }
 
-function manifest(versionName = '1.3.7') {
+function manifest(versionName = newerVersion) {
   return {
     apkName: UPDATE_APK_NAME,
     sha256: apkSha256,
     packageName: CURRENT_ANDROID_PACKAGE,
     versionName,
-    versionCode: 19,
+    versionCode: newerVersionCode,
     signerSha256
   };
 }
 
 describe('app update release parsing', () => {
   it('finds a newer APK asset from GitHub release manifest', () => {
-    expect(getAppUpdateFromRelease('1.3.6', release('v1.3.7'), manifest())).toEqual({
-      version: '1.3.7',
-      apkUrl: releaseApkUrl('v1.3.7'),
+    expect(getAppUpdateFromRelease('1.3.6', release(newerTag), manifest())).toEqual({
+      version: newerVersion,
+      apkUrl: releaseApkUrl(newerTag),
       notes: '修复问题',
       sha256: apkSha256,
       packageName: CURRENT_ANDROID_PACKAGE,
-      versionName: '1.3.7',
-      versionCode: 19,
+      versionName: newerVersion,
+      versionCode: newerVersionCode,
       signerSha256
     });
   });
@@ -69,40 +72,40 @@ describe('app update release parsing', () => {
   });
 
   it('rejects newer releases without the fixed APK asset', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl('v1.3.7') }
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag, [
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
     ]), manifest())).toThrow('GitHub Release 未找到 app-arm64-v8a-release.apk。');
   });
 
   it('rejects APK assets outside the expected GitHub release URL', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_APK_NAME, browser_download_url: 'http://github.com/everythink98/wz-android/releases/download/v1.3.7/app-arm64-v8a-release.apk' },
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl('v1.3.7') }
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag, [
+      { name: UPDATE_APK_NAME, browser_download_url: `http://github.com/everythink98/wz-android/releases/download/${newerTag}/app-arm64-v8a-release.apk` },
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
     ]), manifest())).toThrow('GitHub Release 下载地址不可信。');
 
-    expect(() => getReleaseManifestUrlFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl('v1.3.7') },
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: 'https://github.com/other/wz-android/releases/download/v1.3.7/release-manifest.json' }
+    expect(() => getReleaseManifestUrlFromRelease('1.3.6', release(newerTag, [
+      { name: UPDATE_APK_NAME, browser_download_url: releaseApkUrl(newerTag) },
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: `https://github.com/other/wz-android/releases/download/${newerTag}/release-manifest.json` }
     ]))).toThrow('GitHub Release 下载地址不可信。');
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7', [
-      { name: UPDATE_APK_NAME, browser_download_url: 'https://github.com/everythink98/wz-android/releases/download/v1.3.7/app-release.apk' },
-      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl('v1.3.7') }
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag, [
+      { name: UPDATE_APK_NAME, browser_download_url: `https://github.com/everythink98/wz-android/releases/download/${newerTag}/app-release.apk` },
+      { name: UPDATE_MANIFEST_NAME, browser_download_url: releaseManifestUrl(newerTag) }
     ]), manifest())).toThrow('GitHub Release 下载地址不可信。');
   });
 
   it('rejects release manifests with mismatched package, version, or signature fields', () => {
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7'), {
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
       ...manifest(),
       packageName: 'evil.package'
     })).toThrow('Release manifest 内容不可信。');
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7'), {
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
       ...manifest(),
-      versionName: '1.3.8'
+      versionName: '1.3.17'
     })).toThrow('Release manifest 内容不可信。');
 
-    expect(() => getAppUpdateFromRelease('1.3.6', release('v1.3.7'), {
+    expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
       ...manifest(),
       signerSha256: 'not-a-sha'
     })).toThrow('Release manifest 内容不可信。');
@@ -120,12 +123,12 @@ describe('app update release parsing', () => {
 
   it('loads the latest GitHub release with the pinned API version', async () => {
     const fetcher = vi.fn(async (url: string) => new Response(JSON.stringify(
-      url === GITHUB_LATEST_RELEASE_URL ? release('v1.3.7') : manifest()
+      url === GITHUB_LATEST_RELEASE_URL ? release(newerTag) : manifest()
     )));
 
     expect(await checkGithubAppUpdate(fetcher as unknown as typeof fetch, '1.3.6')).toMatchObject({
-      version: '1.3.7',
-      apkUrl: releaseApkUrl('v1.3.7'),
+      version: newerVersion,
+      apkUrl: releaseApkUrl(newerTag),
       sha256: apkSha256
     });
     expect(fetcher).toHaveBeenCalledWith(GITHUB_LATEST_RELEASE_URL, expect.objectContaining({
@@ -135,7 +138,7 @@ describe('app update release parsing', () => {
       },
       signal: expect.any(AbortSignal)
     }));
-    expect(fetcher).toHaveBeenCalledWith(releaseManifestUrl('v1.3.7'), expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith(releaseManifestUrl(newerTag), expect.objectContaining({
       headers: {
         Accept: 'application/json'
       },
@@ -151,7 +154,7 @@ describe('app update release parsing', () => {
       })),
       installApk: vi.fn()
     };
-    const update = getAppUpdateFromRelease('1.3.6', release('v1.3.7'), manifest());
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
 
     await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).rejects.toThrow('APK 文件校验失败');
 
@@ -163,7 +166,7 @@ describe('app update release parsing', () => {
       inspectApk: vi.fn(async () => manifest()),
       installApk: vi.fn(async () => true)
     };
-    const update = getAppUpdateFromRelease('1.3.6', release('v1.3.7'), manifest());
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
 
     await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).resolves.toBe(true);
 

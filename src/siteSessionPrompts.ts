@@ -1,4 +1,4 @@
-import type { FeedSource } from './types';
+import type { FeedSource, Source } from './types';
 import type { SiteSessionViewModels } from './siteSessionState';
 
 export type AuthPromptSurface = 'search' | 'read' | 'action';
@@ -7,6 +7,17 @@ export type AuthNotice = {
   message: string;
   tone: AuthNoticeTone;
 };
+export type SearchSessionNoticeItem = {
+  source: Source;
+  label: string;
+  notice: AuthNotice;
+};
+
+const searchSessionSources: Array<{ source: Source; label: string }> = [
+  { source: 'nodeseek', label: 'NodeSeek' },
+  { source: 'linuxdo', label: 'linux.do' },
+  { source: 'yaohuo', label: '妖火' }
+];
 
 function notice(message: string, tone: AuthNoticeTone): AuthNotice {
   return { message, tone };
@@ -61,6 +72,16 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
 
 export function authHintForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface) {
   return authNoticeForSource(source, sessions, surface)?.message || '';
+}
+
+export function searchSessionNoticeItems(source: FeedSource, sessions: SiteSessionViewModels): SearchSessionNoticeItem[] {
+  const sources = source === 'all'
+    ? searchSessionSources
+    : searchSessionSources.filter((item) => item.source === source);
+  return sources.flatMap((item) => {
+    const notice = authNoticeForSource(item.source, sessions, 'search');
+    return notice ? [{ ...item, notice }] : [];
+  });
 }
 
 export function authNoticeForMessage(message: string): AuthNotice | null {

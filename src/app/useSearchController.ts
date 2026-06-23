@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { feedSources } from '../feedCategoryRail';
 import {
@@ -26,7 +26,7 @@ import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '..
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
-import { authNoticeForMessage, authNoticeForSource } from '../siteSessionPrompts';
+import { authNoticeForMessage, authNoticeForSource, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
@@ -105,6 +105,9 @@ export function useSearchController({
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
+  const searchSessionNotices = useMemo(() => (
+    searchSessionNoticeItems(searchSource, sessionViewModels)
+  ), [searchSource, sessionViewModels]);
 
   useEffect(() => {
     let active = true;
@@ -504,6 +507,7 @@ export function useSearchController({
     searchBusy,
     searchFilters,
     searchGroups,
+    searchSessionNotices,
     searchQuery,
     searchSource,
     submittedSearchQuery,
