@@ -13,9 +13,9 @@ import {
 
 const apkSha256 = 'a'.repeat(64);
 const signerSha256 = 'b'.repeat(64);
-const newerVersion = '1.3.18';
+const newerVersion = '1.3.19';
 const newerTag = `v${newerVersion}`;
-const newerVersionCode = 22;
+const newerVersionCode = 23;
 
 function releaseAssetUrl(tagName: string, assetName: string) {
   return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${assetName}`;
@@ -102,7 +102,7 @@ describe('app update release parsing', () => {
 
     expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
       ...manifest(),
-      versionName: '1.3.19'
+      versionName: '1.3.20'
     })).toThrow('Release manifest 内容不可信。');
 
     expect(() => getAppUpdateFromRelease('1.3.6', release(newerTag), {
