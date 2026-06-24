@@ -22,8 +22,9 @@ import {
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
-import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
+import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
+import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
@@ -54,7 +55,6 @@ export type TopicListItem =
   | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
 
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
-const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 const HTML_CUSTOM_ELEMENT_MODELS = {
   details: defaultHTMLElementModels.details.extend({
     contentModel: HTMLContentModel.mixed

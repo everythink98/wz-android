@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildHtmlRenderingStyles } from './htmlRenderingStyles';
+import * as htmlRenderingStyles from './htmlRenderingStyles';
 import type { ReaderSettings } from './readerData';
 import { createTheme } from './theme';
 
@@ -21,7 +21,7 @@ describe('Android HTML rendering styles', () => {
 
   it('gives markdown headings real hierarchy instead of only bold text', () => {
     const theme = createTheme(settings);
-    const { htmlBaseStyle, htmlTagsStyles } = buildHtmlRenderingStyles({ settings, theme });
+    const { htmlBaseStyle, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
     const baseFontSize = Number(htmlBaseStyle.fontSize);
     const h1FontSize = Number(htmlTagsStyles.h1?.fontSize);
     const h2FontSize = Number(htmlTagsStyles.h2?.fontSize);
@@ -36,7 +36,7 @@ describe('Android HTML rendering styles', () => {
 
   it('makes inline code and code blocks visually distinct from normal prose', () => {
     const theme = createTheme(settings);
-    const { htmlTagsStyles } = buildHtmlRenderingStyles({ settings, theme });
+    const { htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
     expect(htmlTagsStyles.code).toMatchObject({
       backgroundColor: theme.surface2,
@@ -48,5 +48,26 @@ describe('Android HTML rendering styles', () => {
       borderRadius: 10
     });
     expect(htmlTagsStyles.pre?.padding).toBeGreaterThan(8);
+  });
+
+  it('uses normal markdown text color and system blue links instead of the theme accent', () => {
+    const theme = createTheme(settings);
+    const { htmlBaseStyle, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+
+    expect(htmlBaseStyle.color).toBe(theme.ink);
+    expect(htmlTagsStyles.p?.color).toBeUndefined();
+    expect(htmlTagsStyles.a?.color).toBe('#0000EE');
+    expect(htmlTagsStyles.a?.color).not.toBe(theme.primary);
+    expect(htmlTagsStyles.a).not.toHaveProperty('textDecorationLine');
+    expect(htmlTagsStyles.a).not.toHaveProperty('textDecorationColor');
+  });
+
+  it('allows source text color without allowing background colors', () => {
+    const theme = createTheme(settings);
+    const { htmlIgnoredStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+
+    expect((htmlRenderingStyles as typeof htmlRenderingStyles & { HTML_ALLOWED_INLINE_STYLES?: string[] }).HTML_ALLOWED_INLINE_STYLES).toContain('color');
+    expect(htmlIgnoredStyles).not.toContain('color');
+    expect(htmlIgnoredStyles).toContain('backgroundColor');
   });
 });

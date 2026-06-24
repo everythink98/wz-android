@@ -53,6 +53,26 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toContain('style=');
   });
 
+  it('keeps safe source text color while removing other inline styles', () => {
+    const result = sanitizeContentHtml(`
+      <p style="color: #e00; background: #fff; border-color: red" onclick="alert(1)">red</p>
+      <span style="color: rgb(1, 2, 3)">rgb</span>
+      <strong style="color: rebeccapurple">keyword</strong>
+      <em style="color: url(javascript:alert(1)); font-weight: bold">bad</em>
+      <i style="color: not-a-color">invalid</i>
+    `, 'https://example.com/base/');
+
+    expect(result).toContain('style="color: #e00"');
+    expect(result).toContain('style="color: rgb(1, 2, 3)"');
+    expect(result).toContain('style="color: rebeccapurple"');
+    expect(result).not.toContain('background');
+    expect(result).not.toContain('border-color');
+    expect(result).not.toContain('onclick');
+    expect(result).not.toContain('javascript:');
+    expect(result).not.toContain('font-weight');
+    expect(result).not.toContain('not-a-color');
+  });
+
   it('turns Bilibili video image syntax output into a player iframe', () => {
     const result = sanitizeContentHtml(`
       <p><img src="https://www.bilibili.com/video/BV1GUdgBdESz/?p=2" alt="image"></p>

@@ -11,6 +11,7 @@ import { feedSources } from '../feedCategoryRail';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, PillRail, TOUCH_HIT_SLOP, triggerPressFeedback } from '../components/AppControls';
+import { avatarInitial } from '../components/Avatar';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import {
@@ -181,7 +182,7 @@ export function LibraryScreen({
     <View style={styles.libraryUserRow}>
       <Pressable accessibilityRole="button" style={[styles.menuButton, styles.libraryUserButton]} onPress={() => onOpenUser(item.user)}>
         <View style={styles.menuIcon}>
-          <Text style={styles.replyAvatarText}>{(item.user.displayName || item.user.username || '?').slice(0, 1).toUpperCase()}</Text>
+          <Text style={styles.replyAvatarText}>{avatarInitial(item.user.displayName || item.user.username)}</Text>
         </View>
         <View style={styles.flex}>
           <Text style={styles.menuLabel} numberOfLines={1}>{item.user.displayName || item.user.username}</Text>

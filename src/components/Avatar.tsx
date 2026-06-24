@@ -4,12 +4,24 @@ import { Image as ExpoImage } from 'expo-image';
 import { SvgXml } from 'react-native-svg';
 import { loadRemoteAvatarSvgText } from '../avatarImages';
 import { imageSourceFromUrl } from '../htmlImages';
-import { createStyles } from '../theme';
+import type { createStyles } from '../theme';
 
 const MAX_IMAGE_RETRY_COUNT = 1;
 
-function avatarInitial(name?: string) {
-  return (name || '?').trim().slice(0, 1).toUpperCase() || '?';
+type GraphemeSegmenter = {
+  segment: (value: string) => Iterable<{ segment: string }>;
+};
+
+export function avatarInitial(name?: string) {
+  const text = (name || '').trim();
+  if (!text) {
+    return '?';
+  }
+  const Segmenter = (globalThis.Intl as unknown as { Segmenter?: new (locale?: string, options?: { granularity: 'grapheme' }) => GraphemeSegmenter } | undefined)?.Segmenter;
+  const segment = Segmenter
+    ? new Segmenter(undefined, { granularity: 'grapheme' }).segment(text)[Symbol.iterator]().next().value?.segment
+    : Array.from(text)[0];
+  return segment?.toUpperCase() || '?';
 }
 
 export function Avatar({

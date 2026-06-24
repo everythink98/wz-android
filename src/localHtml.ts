@@ -96,6 +96,51 @@ function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: str
   return undefined;
 }
 
+const safeCssColorPattern = /^(?:#[0-9a-f]{3,8}|rgba?\(\s*(?:\d{1,3}\s*,\s*){2}\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)|hsla?\(\s*\d{1,3}(?:deg)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$/i;
+const safeCssColorKeywords = new Set([
+  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black', 'blanchedalmond',
+  'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse', 'chocolate', 'coral', 'cornflowerblue',
+  'cornsilk', 'crimson', 'cyan', 'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgreen', 'darkgrey',
+  'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon', 'darkseagreen',
+  'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet', 'deeppink', 'deepskyblue',
+  'dimgray', 'dimgrey', 'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro',
+  'ghostwhite', 'gold', 'goldenrod', 'gray', 'green', 'greenyellow', 'grey', 'honeydew', 'hotpink', 'indianred',
+  'indigo', 'ivory', 'khaki', 'lavender', 'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral',
+  'lightcyan', 'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink', 'lightsalmon',
+  'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey', 'lightsteelblue', 'lightyellow', 'lime',
+  'limegreen', 'linen', 'magenta', 'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid', 'mediumpurple',
+  'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise', 'mediumvioletred', 'midnightblue',
+  'mintcream', 'mistyrose', 'moccasin', 'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange',
+  'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise', 'palevioletred', 'papayawhip',
+  'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple', 'rebeccapurple', 'red', 'rosybrown',
+  'royalblue', 'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell', 'sienna', 'silver', 'skyblue',
+  'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal', 'thistle',
+  'tomato', 'transparent', 'turquoise', 'violet', 'wheat', 'white', 'whitesmoke', 'yellow', 'yellowgreen'
+]);
+
+function safeCssColor(value: string) {
+  const clean = value.replace(/\s*!important\s*$/i, '').trim();
+  return safeCssColorPattern.test(clean) || safeCssColorKeywords.has(clean.toLowerCase()) ? clean : '';
+}
+
+function sanitizedStyleAttribute(value: string) {
+  for (const declaration of value.split(';')) {
+    const separatorIndex = declaration.indexOf(':');
+    if (separatorIndex < 0) {
+      continue;
+    }
+    const name = declaration.slice(0, separatorIndex).trim().toLowerCase();
+    if (name !== 'color') {
+      continue;
+    }
+    const color = safeCssColor(declaration.slice(separatorIndex + 1));
+    if (color) {
+      return `color: ${color}`;
+    }
+  }
+  return undefined;
+}
+
 export function isAllowedDataImageUrl(value: unknown) {
   return /^data:image\/(?:png|jpe?g|gif|webp|avif);base64,[\s\S]+$/i.test(String(value || '').trim());
 }
@@ -170,8 +215,17 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
     for (const [name, rawValue] of Object.entries(attrs)) {
       const lower = name.toLowerCase();
       const value = String(rawValue || '');
-      if (lower.startsWith('on') || lower === 'style') {
+      if (lower.startsWith('on')) {
         node.removeAttribute(name);
+        continue;
+      }
+      if (lower === 'style') {
+        const next = sanitizedStyleAttribute(value);
+        if (next) {
+          node.setAttribute(name, next);
+        } else {
+          node.removeAttribute(name);
+        }
         continue;
       }
       if (lower === 'href' || lower === 'src') {
