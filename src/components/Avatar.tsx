@@ -15,11 +15,13 @@ function avatarInitial(name?: string) {
 export function Avatar({
   name,
   small,
+  tiny,
   styles,
   uri
 }: {
   name?: string;
   small?: boolean;
+  tiny?: boolean;
   styles: ReturnType<typeof createStyles>;
   uri?: string;
 }) {
@@ -58,8 +60,8 @@ export function Avatar({
   }, [imageRetryCount]);
 
   return (
-    <View style={[styles.replyAvatar, small ? styles.replyAvatarSmall : styles.topicAvatar]}>
-      <Text style={[styles.replyAvatarText, small && styles.replyAvatarSmallText]}>{avatarInitial(name)}</Text>
+    <View style={[styles.replyAvatar, tiny ? styles.feedAvatarTiny : small ? styles.replyAvatarSmall : styles.topicAvatar]}>
+      <Text style={[styles.replyAvatarText, (small || tiny) && styles.replyAvatarSmallText]}>{avatarInitial(name)}</Text>
       {svgXml ? (
         <View style={StyleSheet.absoluteFillObject}>
           <SvgXml

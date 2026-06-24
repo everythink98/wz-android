@@ -37,16 +37,16 @@ describe('Android reader theme helpers', () => {
     expect(fontFamilyValue('sans')).toBeUndefined();
   });
 
-  it('creates rgba colors and Douban white light theme tokens', () => {
+  it('creates rgba colors and high-contrast light theme tokens', () => {
     expect(alphaColor('#2f6555', 0.065)).toBe('rgba(47, 101, 85, 0.065)');
     expect(createTheme(settings)).toMatchObject({
       dark: false,
       background: '#ffffff',
       surface: '#ffffff',
-      surface2: '#f5f5f5',
-      line: '#e7e7e7',
-      lineStrong: '#d9d9d9',
-      primary: '#2f6555'
+      surface2: '#eef1ec',
+      line: '#e3e7df',
+      lineStrong: '#d2d8cb',
+      primary: '#2f6a54'
     });
   });
 
@@ -123,28 +123,29 @@ describe('Android reader theme helpers', () => {
       justifyContent: 'center',
       width: 32,
       height: 32,
-      borderRadius: 999,
-      backgroundColor: theme.surface
+      borderRadius: 10,
+      backgroundColor: theme.surface2
     });
     expect(styles.expandableStateIcon.borderWidth).toBe(1);
   });
 
-  it('keeps topic rows blended into the maintained Douban white background', () => {
+  it('renders topic rows as flat full-width rows on the page surface', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
-    expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
-    expect(styles.topicCard.backgroundColor).toBe(theme.background);
+    expect(styles.topicRowShell.backgroundColor).toBe(theme.surface);
+    expect(styles.topicRowShell.borderRadius || 0).toBe(0);
+    expect(styles.topicCardPressable.backgroundColor || 'transparent').toBe('transparent');
   });
 
-  it('draws feed list separators as stable but soft full-width rows', () => {
+  it('separates feed rows with a thin divider line', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.topicListSeparator.backgroundColor).toBe(theme.line);
     expect(styles.topicListSeparator.height).toBe(1);
     expect(styles.topicRowShell.borderBottomWidth || 0).toBe(0);
-    expect(styles.topicCard.borderBottomWidth || 0).toBe(0);
+    expect(styles.topicCardPressable.borderBottomWidth || 0).toBe(0);
   });
 
   it('styles feed secondary tags as lightweight underline tabs', () => {
@@ -159,18 +160,16 @@ describe('Android reader theme helpers', () => {
     expect(styles.subtabTextActive.fontWeight).toBe('600');
   });
 
-  it('lays out topic rows as full-width rows with internal padding instead of floating cards', () => {
+  it('lays out topic rows as full-width rows with internal padding', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings, 800);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.feedListContentInner.paddingHorizontal).toBe(0);
-    expect(styles.feedListContentInner.gap).toBe(0);
     expect(styles.topicRowShell.width).toBe('100%');
-    expect(styles.topicCard.width).toBe('100%');
     expect(styles.topicCardPressable.paddingHorizontal).toBe(16);
-    expect(styles.topicCardPressable.paddingTop).toBeGreaterThan(10);
-    expect(styles.topicCardPressable.paddingBottom).toBeGreaterThan(10);
-    expect(styles.topicCard.borderRadius || 0).toBe(0);
+    expect(styles.topicCardPressable.paddingTop as number).toBeGreaterThan(10);
+    expect(styles.topicCardPressable.paddingBottom as number).toBeGreaterThan(10);
+    expect(styles.topicRowShell.borderRadius || 0).toBe(0);
   });
 
   it('presents Android topic rows as unified forum threads', () => {
@@ -178,10 +177,10 @@ describe('Android reader theme helpers', () => {
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.topicBadgeRow.flexDirection).toBe('row');
-    expect(styles.topicSourceBadge.backgroundColor).toBe(theme.mist);
+    expect(styles.topicSourceBadge.borderRadius).toBe(7);
     expect(styles.topicCategoryBadge.borderColor).toBe(theme.line);
-    expect(styles.topicStatPill.backgroundColor).toBe(theme.surface2);
-    expect(styles.topicMetaRow.justifyContent).toBe('space-between');
+    expect(styles.topicStatGroup.flexDirection).toBe('row');
+    expect(styles.topicFooterRow.justifyContent).toBe('space-between');
   });
 
   it('keeps search source headers quieter than result titles', () => {
@@ -207,7 +206,7 @@ describe('Android reader theme helpers', () => {
     expect(letterSpacingValues.every((value) => value === 0)).toBe(true);
     expect(styles.quoteBox.borderLeftWidth).toBeUndefined();
     expect(styles.quoteBox.borderWidth).toBe(1);
-    expect(styles.quoteBox.borderRadius).toBeLessThanOrEqual(8);
+    expect(styles.quoteBox.borderRadius).toBeLessThanOrEqual(14);
   });
 
   it('does not force narrow markdown tables wider than the reading column', () => {
@@ -217,26 +216,26 @@ describe('Android reader theme helpers', () => {
     expect(styles.htmlTableFrame.minWidth).toBeUndefined();
   });
 
-  it('keeps dark topic rows on the same neutral background as the page', () => {
+  it('keeps dark topic rows flat on the page surface', () => {
     const theme = createTheme({ ...settings, theme: 'dark' });
-    const styles = createStyles(theme, { ...settings, theme: 'dark' }, 800);
+    const styles = createStyles(theme, { ...settings, theme: 'dark' }, 800) as Record<string, Record<string, unknown>>;
 
     expect(theme).toMatchObject({
       dark: true,
-      background: '#171717',
-      surface: '#202020',
-      surface2: '#2b2b2b',
-      line: '#393939',
-      lineStrong: '#525252',
-      ink: '#eeeeee',
-      muted: '#a8a8a8',
-      primary: '#b7d8c9'
+      background: '#12151a',
+      surface: '#12151a',
+      surface2: '#232831',
+      line: '#313840',
+      lineStrong: '#454d54',
+      ink: '#e8ece9',
+      muted: '#97a39c',
+      primary: '#7cc9a4'
     });
-    expect(styles.topicRowShell.backgroundColor).toBe(theme.background);
-    expect(styles.topicCard.backgroundColor).toBe(theme.background);
+    expect(styles.topicRowShell.backgroundColor).toBe(theme.surface);
+    expect(styles.topicCardPressable.backgroundColor || 'transparent').toBe('transparent');
   });
 
-  it('keeps list chrome and controls in a quiet Douban white surface family', () => {
+  it('keeps chrome and controls on a single surface family', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
@@ -266,11 +265,11 @@ describe('Android reader theme helpers', () => {
   it('uses only explicit light and dark themes', () => {
     expect(createTheme({ ...settings, theme: 'light' })).toMatchObject({
       dark: false,
-      primary: '#2f6555'
+      primary: '#2f6a54'
     });
     expect(createTheme({ ...settings, theme: 'dark' })).toMatchObject({
       dark: true,
-      primary: '#b7d8c9'
+      primary: '#7cc9a4'
     });
   });
 

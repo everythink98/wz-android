@@ -26,7 +26,7 @@ import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { splitTopicContentHtml } from '../../topicContentSplit';
-import { androidRipple, createStyles, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
+import { androidRipple, createStyles, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
@@ -779,7 +779,10 @@ export function TopicScreen({
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
         <View style={styles.topicMetaStack}>
-          <Text style={styles.sourceText}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
+          <View style={styles.topicBadgeRow}>
+            <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(item.source, theme)]} numberOfLines={1}>{sourceLabel(item.source)}</Text>
+            {item.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{item.category}</Text> : null}
+          </View>
           <Text selectable style={styles.articleTitle}>{item.title}</Text>
           <Pressable
             accessibilityRole="button"

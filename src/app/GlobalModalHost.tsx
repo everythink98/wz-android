@@ -86,6 +86,7 @@ export function GlobalModalHost({
       <ImagePreviewModal
         preview={imagePreview}
         styles={styles}
+        theme={theme}
         onClose={closeImagePreview}
         onNext={showNextImage}
         onPrevious={showPreviousImage}

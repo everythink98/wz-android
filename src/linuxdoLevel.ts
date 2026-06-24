@@ -59,6 +59,7 @@ export interface LinuxDoLevelRequirement {
   displayRequired: string;
   unit?: 'seconds';
   change?: number;
+  displayChange?: string;
 }
 
 export interface LinuxDoActivityStats {
@@ -136,6 +137,13 @@ function displayNumber(value: number, unit?: LinuxDoLevelRequirement['unit']) {
     return `${minutes}分`;
   }
   return String(value);
+}
+
+function displayChange(value: number, unit?: LinuxDoLevelRequirement['unit']) {
+  if (!value) {
+    return '';
+  }
+  return `较上次 ${value > 0 ? '+' : '-'}${displayNumber(Math.abs(value), unit)}`;
 }
 
 function activityFromSummary(summary: LinuxDoSummaryInput): LinuxDoActivityStats {
@@ -344,7 +352,11 @@ function withSnapshotChange(profile: LinuxDoLevelProfile, snapshot: LinuxDoSnaps
     ...profile,
     requirements: profile.requirements.map((item) => {
       const previous = snapshot.values[item.key];
-      return typeof previous === 'number' ? { ...item, change: item.current - previous } : item;
+      if (typeof previous !== 'number') {
+        return item;
+      }
+      const change = item.current - previous;
+      return { ...item, change, displayChange: displayChange(change, item.unit) };
     })
   };
 }

@@ -59,7 +59,7 @@ export function buildHtmlRenderingStyles({
       textDecorationLine: 'underline'
     },
     img: {
-      borderRadius: 8,
+      borderRadius: 10,
       marginBottom: 8,
       marginTop: 6
     },
@@ -92,24 +92,25 @@ export function buildHtmlRenderingStyles({
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 10,
       color: theme.muted,
       marginBottom: 12,
       marginTop: 12,
-      paddingHorizontal: 13,
-      paddingVertical: 11
+      paddingHorizontal: 14,
+      paddingVertical: 12
     },
     pre: {
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
-      borderRadius: 6,
+      borderRadius: 10,
       marginBottom: 12,
       marginTop: 12,
       padding: 12
     },
     code: {
       backgroundColor: theme.surface2,
-      borderRadius: 4,
+      borderRadius: 8,
       color: theme.ink,
       fontFamily: 'monospace',
       paddingHorizontal: 3,

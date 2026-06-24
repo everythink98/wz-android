@@ -7,6 +7,7 @@ export {
   fontFamilyValue,
   lineHeightMultiplier,
   replyContextBadgeStyle,
+  sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,
   topicStatusBadgeTextColorStyle,
   topicTagColorStyle,

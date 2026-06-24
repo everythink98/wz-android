@@ -1,5 +1,6 @@
 import { Platform, type TextStyle } from 'react-native';
 import { type ReaderSettings } from './readerData';
+import type { Source } from './types';
 
 export interface ReaderTheme {
   dark: boolean;
@@ -11,10 +12,13 @@ export interface ReaderTheme {
   ink: string;
   muted: string;
   primary: string;
+  primaryStrong: string;
   primarySoft: string;
   mist: string;
   onPrimary: string;
+  onOverlay: string;
   danger: string;
+  warning: string;
   success: string;
 }
 
@@ -123,42 +127,68 @@ export function replyContextBadgeStyle(tone: StatusBadgeTone, theme: ReaderTheme
   return chipToneStyle(STATUS_BADGE_TONES[tone], theme);
 }
 
+const SOURCE_TONES: Record<Source, ChipTone> = {
+  v2ex: { light: '#6d8aa8', dark: '#9fb6cf' },
+  linuxdo: { light: '#b08a5e', dark: '#d4b790' },
+  nodeseek: { light: '#639a8f', dark: '#93c2b6' },
+  yaohuo: { light: '#a8788e', dark: '#d0a6b6' }
+};
+
+function sourceAccentColor(source: Source, theme: ReaderTheme): string {
+  const tone = SOURCE_TONES[source];
+  return theme.dark ? tone.dark : tone.light;
+}
+
+export function sourceBadgeColorStyle(source: Source, theme: ReaderTheme): TextStyle {
+  const color = sourceAccentColor(source, theme);
+  return {
+    color,
+    backgroundColor: alphaColor(color, theme.dark ? 0.18 : 0.09),
+    borderColor: alphaColor(color, theme.dark ? 0.4 : 0.22)
+  };
+}
+
 export function createTheme(settings: ReaderSettings): ReaderTheme {
   const dark = settings.theme === 'dark';
-  const palette = { light: '#2f6555', dark: '#b7d8c9', lightOn: '#f6fbf8', darkOn: '#111111' };
-  const background = { base: '#ffffff', surface: '#ffffff', surface2: '#f5f5f5', line: '#e7e7e7', lineStrong: '#d9d9d9' };
+  const palette = { light: '#2f6a54', dark: '#7cc9a4', lightOn: '#f6fbf8', darkOn: '#0c1410' };
   if (dark) {
     return {
       dark: true,
-      background: '#171717',
-      surface: '#202020',
-      surface2: '#2b2b2b',
-      line: '#393939',
-      lineStrong: '#525252',
-      ink: '#eeeeee',
-      muted: '#a8a8a8',
+      background: '#12151a',
+      surface: '#12151a',
+      surface2: '#232831',
+      line: '#313840',
+      lineStrong: '#454d54',
+      ink: '#e8ece9',
+      muted: '#97a39c',
       primary: palette.dark,
-      primarySoft: alphaColor(palette.dark, 0.13),
-      mist: alphaColor(palette.dark, 0.11),
+      primaryStrong: '#90d6b5',
+      primarySoft: alphaColor(palette.dark, 0.14),
+      mist: alphaColor(palette.dark, 0.12),
       onPrimary: palette.darkOn,
-      danger: '#d4817a',
+      onOverlay: '#f4f6f5',
+      danger: '#d98a7e',
+      warning: '#d8b06a',
       success: palette.dark
     };
   }
   return {
     dark: false,
-    background: background.base,
-    surface: background.surface,
-    surface2: background.surface2,
-    line: background.line,
-    lineStrong: background.lineStrong,
-    ink: '#20211f',
-    muted: '#7f837b',
+    background: '#ffffff',
+    surface: '#ffffff',
+    surface2: '#eef1ec',
+    line: '#e3e7df',
+    lineStrong: '#d2d8cb',
+    ink: '#1c2420',
+    muted: '#69706a',
     primary: palette.light,
-    primarySoft: alphaColor(palette.light, 0.06),
-    mist: alphaColor(palette.light, 0.065),
+    primaryStrong: '#255a46',
+    primarySoft: alphaColor(palette.light, 0.08),
+    mist: alphaColor(palette.light, 0.08),
     onPrimary: palette.lightOn,
-    danger: '#a35046',
+    onOverlay: '#ffffff',
+    danger: '#b3503f',
+    warning: '#9a6b2e',
     success: palette.light
   };
 }

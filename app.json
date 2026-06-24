@@ -2,7 +2,7 @@
   "expo": {
     "name": "阅坛 Android",
     "slug": "wz-android",
-    "version": "1.3.15",
+    "version": "1.3.16",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "platforms": [
@@ -12,7 +12,7 @@
     "userInterfaceStyle": "light",
     "android": {
       "package": "com.wz.reader",
-      "versionCode": 19,
+      "versionCode": 20,
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_MEDIA_AUDIO",

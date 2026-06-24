@@ -265,7 +265,8 @@ describe('linux.do level profile', () => {
       username: 'alice',
       values: {
         days_visited: 13,
-        posts_read_count: 80
+        posts_read_count: 80,
+        time_read: 3467
       }
     }));
     const fetcher = vi.fn(async (input: string) => {
@@ -295,6 +296,7 @@ describe('linux.do level profile', () => {
     expect(profile.username).toBe('alice');
     expect(profile.requirements.find((item) => item.key === 'days_visited')?.change).toBe(2);
     expect(profile.requirements.find((item) => item.key === 'posts_read_count')?.change).toBe(20);
+    expect(profile.requirements.find((item) => item.key === 'time_read')?.displayChange).toBe('较上次 +2分');
     expect(AsyncStorage.setItem).toHaveBeenCalledWith(
       'linuxdo-level-snapshot:alice',
       expect.stringContaining('"posts_read_count":100')

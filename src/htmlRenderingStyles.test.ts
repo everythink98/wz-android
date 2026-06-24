@@ -45,7 +45,7 @@ describe('Android HTML rendering styles', () => {
     expect(htmlTagsStyles.pre).toMatchObject({
       backgroundColor: theme.surface2,
       borderColor: theme.line,
-      borderRadius: 6
+      borderRadius: 10
     });
     expect(htmlTagsStyles.pre?.padding).toBeGreaterThan(8);
   });

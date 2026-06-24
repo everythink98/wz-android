@@ -5,11 +5,12 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { imageRequestHeadersForUrl, imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
-import { createStyles } from '../theme';
+import { createStyles, type ReaderTheme } from '../theme';
 
 export function ImagePreviewModal({
   preview,
   styles,
+  theme,
   onClose,
   onNext,
   onPrevious,
@@ -18,6 +19,7 @@ export function ImagePreviewModal({
 }: {
   preview: ImagePreviewList | null;
   styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
   onClose: () => void;
   onNext: () => void;
   onPrevious: () => void;
@@ -94,7 +96,7 @@ export function ImagePreviewModal({
               <Text style={styles.imagePreviewButtonText}>保存</Text>
             </Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel="关闭图片预览" style={styles.imagePreviewClose} onPress={onClose}>
-              <X size={22} color="#ffffff" strokeWidth={1.8} />
+              <X size={22} color={theme.onOverlay} strokeWidth={1.8} />
             </Pressable>
           </View>
         </View>
@@ -126,7 +128,7 @@ export function ImagePreviewModal({
         </View>
         {imagePreviewLoading ? (
           <View style={styles.imagePreviewState}>
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={theme.onOverlay} />
             <Text style={styles.imagePreviewStateText}>图片加载中...</Text>
           </View>
         ) : null}
@@ -147,10 +149,10 @@ export function ImagePreviewModal({
         {hasMany ? (
           <View style={styles.imagePreviewControls}>
             <Pressable accessibilityRole="button" accessibilityLabel="上一张图片" style={styles.imagePreviewControl} onPress={onPrevious}>
-              <ChevronLeft size={25} color="#ffffff" strokeWidth={1.8} />
+              <ChevronLeft size={25} color={theme.onOverlay} strokeWidth={1.8} />
             </Pressable>
             <Pressable accessibilityRole="button" accessibilityLabel="下一张图片" style={styles.imagePreviewControl} onPress={onNext}>
-              <ChevronRight size={25} color="#ffffff" strokeWidth={1.8} />
+              <ChevronRight size={25} color={theme.onOverlay} strokeWidth={1.8} />
             </Pressable>
           </View>
         ) : null}

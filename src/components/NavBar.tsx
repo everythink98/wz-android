@@ -28,10 +28,11 @@ export function TabBarIcon({
   const Icon = icon;
   return (
     <View style={styles.navItem}>
-      <View style={[styles.navItemIndicator, focused && styles.navItemIndicatorActive]} />
-      <View style={styles.navIconWrap}>
-        <Icon size={21} color={focused ? theme.primary : theme.muted} strokeWidth={1.7} />
-        {showBadge ? <View style={styles.navBadge} /> : null}
+      <View style={[styles.navIconPill, focused && styles.navIconPillActive]}>
+        <View style={styles.navIconWrap}>
+          <Icon size={21} color={focused ? theme.primary : theme.muted} strokeWidth={focused ? 2.1 : 1.7} />
+          {showBadge ? <View style={styles.navBadge} /> : null}
+        </View>
       </View>
       <Text style={[styles.navText, focused && styles.navTextActive]}>{label}</Text>
     </View>

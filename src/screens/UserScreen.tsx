@@ -51,6 +51,22 @@ export function UserScreen({
 }) {
   const user = profile || requestedUser;
   const topics = profile?.topics || [];
+  const profileStats = useMemo(() => {
+    const stats: { label: string; value: string }[] = [];
+    if (typeof profile?.topicCount === 'number') {
+      stats.push({ label: '主题', value: String(profile.topicCount) });
+    }
+    if (typeof profile?.replyCount === 'number') {
+      stats.push({ label: '回复', value: String(profile.replyCount) });
+    }
+    if (typeof profile?.postCount === 'number') {
+      stats.push({ label: '发言', value: String(profile.postCount) });
+    }
+    if (profile?.joinedAt) {
+      stats.push({ label: '加入', value: formatDateTime(profile.joinedAt) || profile.joinedAt });
+    }
+    return stats;
+  }, [profile?.joinedAt, profile?.postCount, profile?.replyCount, profile?.topicCount]);
   const listItems = useMemo<UserListItem[]>(() => [
     { type: 'profile', key: 'profile' },
     ...topics.map((topic) => ({ type: 'topic' as const, key: `${topic.source}:${topic.id}`, topic }))
@@ -97,12 +113,16 @@ export function UserScreen({
             </View>
           </View>
           {user?.bio ? <Text style={styles.excerpt}>{user.bio}</Text> : null}
-          <View style={styles.actions}>
-            {typeof profile?.topicCount === 'number' ? <Text style={styles.meta}>主题 {profile.topicCount}</Text> : null}
-            {typeof profile?.replyCount === 'number' ? <Text style={styles.meta}>回复 {profile.replyCount}</Text> : null}
-            {typeof profile?.postCount === 'number' ? <Text style={styles.meta}>发言 {profile.postCount}</Text> : null}
-            {profile?.joinedAt ? <Text style={styles.meta}>加入 {formatDateTime(profile.joinedAt) || profile.joinedAt}</Text> : null}
-          </View>
+          {profileStats.length ? (
+            <View style={styles.profileStatRail}>
+              {profileStats.map((stat) => (
+                <View key={stat.label} style={styles.profileStatPill}>
+                  <Text style={styles.profileStatLabel}>{stat.label}</Text>
+                  <Text style={styles.profileStatValue} numberOfLines={1}>{stat.value}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
           {error ? (
             <View style={userAuthNotice ? [styles.authNoticeBox, userAuthNoticeBoxStyle] : styles.errorBox}>
               <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>{userAuthNotice?.message || error}</Text>
@@ -127,7 +147,7 @@ export function UserScreen({
         onOpenTopic={onOpenTopic}
       />
     );
-  }, [busy, error, followTarget, followed, onOpenOriginal, onOpenTopic, onToggleFollow, profile, styles, theme, topicStateIndex, topics.length, user, userAuthNotice, userAuthNoticeBoxStyle, userAuthNoticeTextStyle]);
+  }, [busy, error, followTarget, followed, onOpenOriginal, onOpenTopic, onToggleFollow, profile, profileStats, styles, theme, topicStateIndex, topics.length, user, userAuthNotice, userAuthNoticeBoxStyle, userAuthNoticeTextStyle]);
 
   if (!user) {
     return <EmptyText text="未选择用户" styles={styles} />;

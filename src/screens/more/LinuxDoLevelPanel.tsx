@@ -13,13 +13,6 @@ const LINUXDO_LEVEL_TABS = [
 
 type LinuxDoLevelTab = typeof LINUXDO_LEVEL_TABS[number]['value'];
 
-function formatChange(value?: number) {
-  if (typeof value !== 'number' || value === 0) {
-    return '';
-  }
-  return value > 0 ? `较上次 +${value}` : `较上次 ${value}`;
-}
-
 function formatActivitySeconds(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   if (minutes >= 60) {
@@ -116,7 +109,7 @@ export function LinuxDoLevelPanel({
                   </View>
                   <View style={styles.levelRequirementFooter}>
                     <Text style={styles.meta}>{Math.round(item.ratio * 100)}%</Text>
-                    {formatChange(item.change) ? <Text style={styles.levelChangeText}>{formatChange(item.change)}</Text> : null}
+                    {item.displayChange ? <Text style={styles.levelChangeText}>{item.displayChange}</Text> : null}
                   </View>
                 </View>
               )) : (

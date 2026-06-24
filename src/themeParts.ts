@@ -20,12 +20,23 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
       flex: 1,
       alignItems: 'center' as const,
       justifyContent: 'center' as const,
-      gap: 2,
+      gap: 3,
       minHeight: 48,
       borderRadius: 6
     },
     navItemActive: {
       backgroundColor: 'transparent'
+    },
+    navIconPill: {
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+      minWidth: 46,
+      height: 28,
+      borderRadius: 999,
+      paddingHorizontal: 16
+    },
+    navIconPillActive: {
+      backgroundColor: theme.primarySoft
     },
     navItemIndicator: {
       width: 18,
@@ -58,7 +69,8 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
       letterSpacing: 0
     },
     navTextActive: {
-      color: theme.primary
+      color: theme.primary,
+      fontWeight: '700' as const
     }
   };
 }
@@ -73,7 +85,7 @@ export function createTopicStyles(
       gap: 8,
       backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
       borderColor: alphaColor(theme.danger, 0.28),
-      borderRadius: 8,
+      borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 12
@@ -113,7 +125,7 @@ export function createTopicStyles(
       lineHeight: 16,
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.20 : 0.12),
       borderColor: alphaColor(theme.primary, 0.32),
-      borderRadius: 999,
+      borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,
       paddingVertical: 3
@@ -135,8 +147,8 @@ export function createPanelStyles(theme: ReaderTheme, appFontFamily: string | un
       color: theme.success
     },
     buttonPrimary: {
-      backgroundColor: theme.primary,
-      borderColor: theme.primary
+      backgroundColor: theme.primaryStrong,
+      borderColor: theme.primaryStrong
     },
     buttonTextPrimary: {
       color: theme.onPrimary,
