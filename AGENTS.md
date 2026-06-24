@@ -58,6 +58,7 @@
 - 不把 Cookie、截图、UI dump、log、临时 bundle、生成目录或 release 产物提交。
 - `android/` 是生成目录；原生配置应通过 `app.json` 和 `plugins/` 持久化。
 - 在模拟器验证最新代码时，不得用 `adb uninstall`、`adb shell pm clear`、清除应用数据或重置模拟器来“确保最新”，因为这会清掉本地登录态。应优先使用覆盖安装、重启 Metro 并清 cache、`adb shell am force-stop com.wz.reader` 后重新启动 App；确实需要清数据时，必须先得到用户明确同意。
+- 用户给出 V2EX、linux.do、NodeSeek、妖火的主题链接，并要求查看该详情页效果或排查原因时，应先把链接识别为对应站点和主题 id，再用模拟器 App 内详情页验证；不得用 Chrome 或桌面浏览器代替 App 内登录态验证。除非用户明确要求 App 支持系统/浏览器链接直达，否则不要把这个内部验证流程做成产品功能。
 - 涉及登录、验证、详情返回、请求归属或来源解析时，必须运行相关测试和 `npm run typecheck`。
 - 做清理分支时，每个阶段都必须先测试、再做模拟器真实验证、再提交，提交后才开始下一个阶段。
 - 查找文件和文本优先使用 `rg`。

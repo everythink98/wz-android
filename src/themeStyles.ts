@@ -1515,6 +1515,45 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       lineHeight: 17,
       textAlignVertical: 'center'
     },
+    linuxDoReactionPill: {
+      minHeight: 30,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 5,
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.055),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.12),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 8,
+      paddingVertical: 0
+    },
+    linuxDoReactionPillCompact: {
+      minHeight: 28,
+      paddingHorizontal: 7
+    },
+    linuxDoReactionImage: {
+      width: 18,
+      height: 18
+    },
+    linuxDoReactionLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16,
+      maxWidth: 92,
+      textAlignVertical: 'center'
+    },
+    linuxDoReactionCount: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 17,
+      textAlignVertical: 'center'
+    },
     topicTagRow: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -1524,27 +1563,27 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     topicTagPill: {
       alignItems: 'center',
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
       borderRadius: 6,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: 0,
       justifyContent: 'center',
-      minHeight: 24,
-      paddingHorizontal: 8,
-      paddingVertical: 2
+      minHeight: 20,
+      paddingHorizontal: 5,
+      paddingVertical: 1
     },
     topicTagText: {
       color: theme.muted,
       fontFamily: appFontFamily,
-      fontSize: 11.5,
+      fontSize: 11,
       fontWeight: '600',
       includeFontPadding: false,
-      lineHeight: 15,
+      lineHeight: 14,
       textAlignVertical: 'center'
     },
     topicTagMorePill: {
-      backgroundColor: alphaColor(theme.muted, theme.dark ? 0.12 : 0.06),
-      borderColor: alphaColor(theme.muted, theme.dark ? 0.28 : 0.16)
+      backgroundColor: 'transparent',
+      borderColor: 'transparent'
     },
     topicTagMoreText: {
       color: theme.muted,

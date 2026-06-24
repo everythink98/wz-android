@@ -35,10 +35,12 @@ import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForMessage } from '../../siteSessionPrompts';
+import { getLinuxDoEmojiUrls } from '../../localLinuxdo';
+import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
-import { MemoizedReplyItem, NodeSeekStatPill, linuxDoReactionStats, nodeSeekTopicReactionStats } from './ReplyItem';
+import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
 import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, visibleFloorIndexReplies } from './topicScreenHelpers';
@@ -271,9 +273,33 @@ export function TopicScreen({
     return Math.max(...floors) - unreadReplyCount + 1;
   }, [sourceReplies, unreadReplyCount]);
   const [pollSelections, setPollSelections] = useState<Record<string, string[]>>({});
+  const [linuxDoEmojiUrls, setLinuxDoEmojiUrls] = useState<LinuxDoEmojiUrlMap>({});
   useEffect(() => {
     setPollSelections({});
   }, [item?.id, item?.source]);
+  useEffect(() => {
+    let cancelled = false;
+    if (itemSource !== 'linuxdo') {
+      setLinuxDoEmojiUrls({});
+      return () => {
+        cancelled = true;
+      };
+    }
+    getLinuxDoEmojiUrls()
+      .then((urls) => {
+        if (!cancelled) {
+          setLinuxDoEmojiUrls(urls);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLinuxDoEmojiUrls({});
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemSource]);
   const togglePollSelection = useCallback((key: string, poll: TopicPoll, optionId: string) => {
     setPollSelections((current) => {
       const selected = current[key] || [];
@@ -615,7 +641,7 @@ export function TopicScreen({
 
     if (listItem.type === 'topicActions') {
       const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
-      const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic) : [];
+      const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic, linuxDoEmojiUrls) : [];
       return (
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
           {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
@@ -636,7 +662,7 @@ export function TopicScreen({
           {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
             <View style={styles.topicStatRail}>
               {linuxDoTopicReactionStats.map((stat) => (
-                <NodeSeekStatPill compact key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+                <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
               ))}
             </View>
           ) : null}
@@ -688,6 +714,7 @@ export function TopicScreen({
           expandedQuotes={expandedQuotesRef.current}
           isActionPending={isOptimisticActionPending}
           inlineSizedImageUrls={inlineSizedImageUrls}
+          linuxDoEmojiUrls={linuxDoEmojiUrls}
           topicImageDeriver={topicImageDeriver}
           loadedQuotedReplies={loadedQuotedRepliesRef.current}
           loadingQuotedFloors={loadingQuotedFloorsRef.current}
@@ -727,6 +754,7 @@ export function TopicScreen({
     jumpToFloor,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
+    linuxDoEmojiUrls,
     newReplyFloorStart,
     onCommentQueryChange,
     onInteract,

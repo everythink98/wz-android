@@ -1,9 +1,12 @@
 import { memo, useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { Drumstick, MessageCircle, ThumbsDown, ThumbsUp } from 'lucide-react-native';
 import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import { highlightHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
+import { imageSourceFromUrl } from '../../htmlImages';
+import { linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
 import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
 import { AppButton } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
@@ -16,24 +19,8 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 
 type NodeSeekStat = { label: string; value: number };
 
-const LINUXDO_REACTION_LABELS: Record<string, string> = {
-  clap: '鼓掌',
-  confused: '困惑',
-  cry: '难过',
-  distorted_face: '难绷',
-  eyes: '关注',
-  heart: '喜欢',
-  laughing: '笑',
-  open_mouth: '惊讶',
-  rocket: '火箭'
-};
-
 function visibleNodeSeekStat(label: string, value: number | undefined): NodeSeekStat | null {
   return typeof value === 'number' ? { label, value } : null;
-}
-
-function visiblePositiveStat(label: string, value: number | undefined): NodeSeekStat | null {
-  return typeof value === 'number' && value > 0 ? { label, value } : null;
 }
 
 export function nodeSeekReactionStats(item: Pick<Reply | TopicDetail, 'upvoteCount' | 'likeCount' | 'dislikeCount'>) {
@@ -48,20 +35,6 @@ export function nodeSeekTopicReactionStats(item: Pick<TopicDetail, 'upvoteCount'
   return [
     ...nodeSeekReactionStats(item),
     visibleNodeSeekStat('原站收藏', item.collectionCount)
-  ].filter((stat): stat is NodeSeekStat => Boolean(stat));
-}
-
-function linuxDoReactionLabel(id: string) {
-  return LINUXDO_REACTION_LABELS[id] || id.replace(/_/g, ' ');
-}
-
-export function linuxDoReactionStats(item: Pick<Reply | TopicDetail, 'boostCount' | 'reactionSummary' | 'likeCount'>) {
-  const reactions = item.reactionSummary || [];
-  const hasHeartReaction = reactions.some((reaction) => reaction.id === 'heart');
-  return [
-    hasHeartReaction ? null : visiblePositiveStat('喜欢', item.likeCount),
-    ...reactions.map((reaction) => ({ label: linuxDoReactionLabel(reaction.id), value: reaction.count })),
-    visiblePositiveStat('加电', item.boostCount)
   ].filter((stat): stat is NodeSeekStat => Boolean(stat));
 }
 
@@ -86,6 +59,31 @@ export function NodeSeekStatPill({
   );
 }
 
+export function LinuxDoReactionPill({
+  compact = false,
+  stat,
+  styles
+}: {
+  compact?: boolean;
+  stat: LinuxDoReactionStat;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${stat.label} ${stat.value}`}
+      style={[styles.linuxDoReactionPill, compact && styles.linuxDoReactionPillCompact]}
+    >
+      {stat.imageUrl ? (
+        <ExpoImage source={imageSourceFromUrl(stat.imageUrl)} style={styles.linuxDoReactionImage} contentFit="contain" />
+      ) : (
+        <Text style={styles.linuxDoReactionLabel} numberOfLines={1}>{stat.label}</Text>
+      )}
+      <Text style={styles.linuxDoReactionCount}>{stat.value}</Text>
+    </View>
+  );
+}
+
 export function ReplyItem({
   actionBusy,
   canWrite,
@@ -96,6 +94,7 @@ export function ReplyItem({
   loadedQuotedReplies,
   loadingQuotedFloors,
   inlineSizedImageUrls,
+  linuxDoEmojiUrls,
   onTogglePollSelection,
   pollSelections,
   query,
@@ -119,6 +118,7 @@ export function ReplyItem({
   expandedQuotes: Record<string, boolean>;
   isActionPending: (targetId: string | number | undefined, action: TopicActionStateKind) => boolean;
   inlineSizedImageUrls: Record<string, true>;
+  linuxDoEmojiUrls?: LinuxDoEmojiUrlMap;
   isNew?: boolean;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
@@ -145,7 +145,7 @@ export function ReplyItem({
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
-  const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply) : [];
+  const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply, linuxDoEmojiUrls) : [];
   const replyTargetUser = source && reply.replyTargetAuthor ? {
     source,
     id: reply.replyTargetAuthor,
@@ -312,7 +312,7 @@ export function ReplyItem({
         {source === 'linuxdo' && linuxDoReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
             {linuxDoReplyReactionStats.map((stat) => (
-              <NodeSeekStatPill compact key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+              <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
             ))}
           </View>
         ) : null}
@@ -355,6 +355,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.isActionPending !== next.isActionPending
     || inlineSizedImageSignatureForReply(previous.reply, previous.inlineSizedImageUrls) !== inlineSizedImageSignatureForReply(next.reply, next.inlineSizedImageUrls)
     || previous.isNew !== next.isNew
+    || previous.linuxDoEmojiUrls !== next.linuxDoEmojiUrls
     || previous.onInteract !== next.onInteract
     || previous.onOpenUser !== next.onOpenUser
     || previous.onReplyToFloor !== next.onReplyToFloor

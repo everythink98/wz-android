@@ -28,12 +28,14 @@ import {
   normalizeLinuxDoTopicId as normalizeTopicId,
   preferredLinuxDoAccessRequirement
 } from './localLinuxdoHelpers';
+import { linuxDoEmojiUrlMapFromData, type LinuxDoEmojiUrlMap } from './linuxdoReactions';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
 const TOPIC_STREAM_CACHE_LIMIT = 100;
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
 let csrfTokenCache: string | null = null;
+let emojiUrlCache: LinuxDoEmojiUrlMap | null = null;
 
 interface LinuxDoOptions {
   fetcher?: Fetcher;
@@ -318,6 +320,15 @@ function reactionSummary(value: unknown): ReactionSummary[] | undefined {
     return id && count ? { id, count } : null;
   }).filter((item): item is ReactionSummary => Boolean(item));
   return items.length ? items : undefined;
+}
+
+export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
+  if (emojiUrlCache) {
+    return emojiUrlCache;
+  }
+  const data = await fetchLinuxDoJson<Record<string, unknown>>('/emojis.json', undefined, options);
+  emojiUrlCache = linuxDoEmojiUrlMapFromData(data);
+  return emojiUrlCache;
 }
 
 function boostCount(value: unknown) {

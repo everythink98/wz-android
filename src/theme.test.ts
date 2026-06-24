@@ -183,6 +183,16 @@ describe('Android reader theme helpers', () => {
     expect(styles.topicFooterRow.justifyContent).toBe('space-between');
   });
 
+  it('keeps topic tags lighter than reaction chips', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.topicTagPill.minHeight).toBeLessThan(styles.nodeSeekStatCompact.minHeight as number);
+    expect(styles.topicTagPill.backgroundColor).toBe('transparent');
+    expect(styles.topicTagPill.borderWidth).toBe(0);
+    expect(styles.topicTagText.fontSize).toBeLessThan(styles.nodeSeekStatText.fontSize as number);
+  });
+
   it('keeps search source headers quieter than result titles', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
