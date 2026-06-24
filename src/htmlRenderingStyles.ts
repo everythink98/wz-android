@@ -99,18 +99,26 @@ export function buildHtmlRenderingStyles({
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth
     },
+    tr: {
+      flexDirection: 'row',
+      flexWrap: 'nowrap'
+    },
     th: {
-      backgroundColor: theme.surface2,
+      backgroundColor: theme.surface,
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
+      flexShrink: 0,
       paddingHorizontal: 8,
-      paddingVertical: 7
+      paddingVertical: 7,
+      width: 118
     },
     td: {
       borderColor: theme.line,
       borderWidth: StyleSheet.hairlineWidth,
+      flexShrink: 0,
       paddingHorizontal: 8,
-      paddingVertical: 7
+      paddingVertical: 7,
+      width: 118
     }
   };
   const htmlIgnoredStyles: HtmlIgnoredStyles = [

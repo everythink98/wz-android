@@ -70,4 +70,23 @@ describe('Android HTML rendering styles', () => {
     expect(htmlIgnoredStyles).not.toContain('color');
     expect(htmlIgnoredStyles).toContain('backgroundColor');
   });
+
+  it('keeps markdown table columns readable and aligned on narrow screens', () => {
+    const theme = createTheme(settings);
+    const { htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+
+    expect(htmlTagsStyles.tr).toMatchObject({
+      flexDirection: 'row',
+      flexWrap: 'nowrap'
+    });
+    expect(htmlTagsStyles.th).toMatchObject({
+      backgroundColor: theme.surface,
+      flexShrink: 0,
+      width: 118
+    });
+    expect(htmlTagsStyles.td).toMatchObject({
+      flexShrink: 0,
+      width: 118
+    });
+  });
 });
