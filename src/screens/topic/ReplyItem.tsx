@@ -105,6 +105,7 @@ export function ReplyItem({
   styles,
   theme,
   topicAuthor,
+  topicBaseUrl,
   topicImageDeriver,
   onInteract,
   onOpenUser,
@@ -132,6 +133,7 @@ export function ReplyItem({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topicAuthor?: string;
+  topicBaseUrl?: string;
   topicImageDeriver: TopicImageDeriver;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onOpenUser: (user: UserProfile) => void;
@@ -250,6 +252,7 @@ export function ReplyItem({
                         <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
                       </Pressable>
                       <MemoizedTopicContentBlock
+                        baseUrl={topicBaseUrl}
                         contentWidth={Math.max(220, replyContentWidth - 24)}
                         inlineSizedImageUrls={inlineSizedImageUrls}
                         html={quotedReply.contentHtml}
@@ -278,6 +281,7 @@ export function ReplyItem({
         ) : null}
         <View style={styles.replyBody}>
           <MemoizedTopicContentBlock
+            baseUrl={topicBaseUrl}
             contentWidth={replyContentWidth}
             inlineSizedImageUrls={inlineSizedImageUrls}
             html={highlightedHtml}
@@ -299,6 +303,7 @@ export function ReplyItem({
         {reply.signatureHtml ? (
           <View style={styles.replySignature}>
             <MemoizedTopicContentBlock
+              baseUrl={topicBaseUrl}
               contentWidth={replyContentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={reply.signatureHtml}
@@ -370,6 +375,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.styles !== next.styles
     || previous.theme !== next.theme
     || previous.topicAuthor !== next.topicAuthor
+    || previous.topicBaseUrl !== next.topicBaseUrl
     || previous.topicImageDeriver !== next.topicImageDeriver
   ) {
     return false;

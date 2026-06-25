@@ -321,7 +321,7 @@ function extractMarkedContent(html: string, start: string, end: string) {
 
 const yaohuoDownloadContentPattern = /下载|网盘|提取码|提取密码|解压密码|访问码|夸克|百度云?|蓝奏|123云盘|迅雷|天翼云|阿里云盘|城通|apk\b|pan\.|quark|lanzou|123pan|aliyundrive|cloud\.189|ctfile|uc\.cn/i;
 const yaohuoNonPostClassNames = new Set(['content', 'subtitle', 'line1', 'line2', 'listdata', 'page', 'pager', 'nav', 'footer', 'header']);
-const yaohuoPostBoundaryTextPattern = /原站收藏|回复列表|更多回帖|评论内查找|楼层目录|写回复|只看楼主|只看带图|倒序/;
+const yaohuoPostBoundaryTextPattern = /原站收藏|回复列表|更多回帖|评论内查找|写回复|只看楼主|只看带图|倒序/;
 const yaohuoRawPostBoundaryPatterns = [
   /<div\b[^>]*class=["'][^"']*\blouzhuxinxi\b[^"']*["'][^>]*>/i,
   /<div\b[^>]*class=["'][^"']*\brecontent\b[^"']*["'][^>]*>/i,

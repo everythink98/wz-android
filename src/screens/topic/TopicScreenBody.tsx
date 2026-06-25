@@ -26,6 +26,7 @@ import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProp
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
+import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
@@ -43,7 +44,7 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
-import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, visibleFloorIndexReplies } from './topicScreenHelpers';
+import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -67,6 +68,11 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
   [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: INLINE_FORUM_IMAGE_TAG,
     contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
+  [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_REPLY_REFERENCE_TAG,
+    contentModel: HTMLContentModel.block,
     isOpaque: true
   }),
   iframe: HTMLElementModel.fromCustomModel({
@@ -236,6 +242,7 @@ export function TopicScreen({
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
   const itemSource = topic?.source;
+  const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
   const isOptimisticActionPending = useCallback((targetId: string | number | undefined, action: TopicActionStateKind) => {
     if (!detailTopicStateKey || !targetId) {
@@ -260,8 +267,6 @@ export function TopicScreen({
     });
     return next;
   }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
-  const [floorOpen, setFloorOpen] = useState(false);
-  const floorIndexReplies = useMemo(() => visibleFloorIndexReplies(replies), [replies]);
   const newReplyFloorStart = useMemo(() => {
     if (unreadReplyCount <= 0) {
       return Number.POSITIVE_INFINITY;
@@ -386,14 +391,6 @@ export function TopicScreen({
     }
     return items;
   }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
-  const jumpToFloor = useCallback((floor: number) => {
-    topicScrollRetryIdRef.current += 1;
-    const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
-    if (index >= 0) {
-      topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
-      setFloorOpen(false);
-    }
-  }, [topicListItems, topicScrollRef]);
   const handleTopicScrollToIndexFailed = useCallback(({ index, averageItemLength }: { index: number; averageItemLength: number }) => {
     const retryId = ++topicScrollRetryIdRef.current;
     const offset = Math.max(0, averageItemLength * index);
@@ -551,6 +548,7 @@ export function TopicScreen({
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <MemoizedTopicContentBlock
+              baseUrl={topicBaseUrl}
               contentWidth={contentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={listItem.html}
@@ -598,21 +596,6 @@ export function TopicScreen({
             />
             {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
           </View>
-          <View style={styles.actions}>
-            <AppButton compact label={floorOpen ? '收起楼层目录' : '楼层目录'} variant="ghost" styles={styles} onPress={() => setFloorOpen((value) => !value)} />
-          </View>
-          {floorOpen ? (
-            <View style={styles.floorIndex}>
-              {floorIndexReplies.map((reply, index) => {
-                const floor = reply.floor ?? index + 1;
-                return (
-                  <Pressable key={`${floor}-${reply.createdAt}`} accessibilityRole="button" style={styles.floorIndexItem} onPress={() => jumpToFloor(floor)}>
-                    <Text style={styles.meta}>#{floor} {reply.author || '未知作者'}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
         </View>
       );
     }
@@ -716,6 +699,7 @@ export function TopicScreen({
           inlineSizedImageUrls={inlineSizedImageUrls}
           linuxDoEmojiUrls={linuxDoEmojiUrls}
           topicImageDeriver={topicImageDeriver}
+          topicBaseUrl={topicBaseUrl}
           loadedQuotedReplies={loadedQuotedRepliesRef.current}
           loadingQuotedFloors={loadingQuotedFloorsRef.current}
           onTogglePollSelection={togglePollSelection}
@@ -746,12 +730,9 @@ export function TopicScreen({
     commentQuery,
     contentWidth,
     expandedQuotesRef,
-    floorOpen,
-    floorIndexReplies,
     inlineSizedImageUrls,
     topicImageDeriver,
     isOptimisticActionPending,
-    jumpToFloor,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
     linuxDoEmojiUrls,
@@ -782,6 +763,7 @@ export function TopicScreen({
     theme,
     togglePollSelection,
     topic,
+    topicBaseUrl,
     topicColumnStyle
   ]);
 

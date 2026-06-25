@@ -29,18 +29,6 @@ function getReplyKey(reply: Reply) {
   return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
 }
 
-export function visibleFloorIndexReplies(replies: Reply[], limit = 160) {
-  if (replies.length <= limit) {
-    return replies;
-  }
-  const headCount = Math.floor(limit / 2);
-  const tailCount = limit - headCount;
-  return [
-    ...replies.slice(0, headCount),
-    ...replies.slice(-tailCount)
-  ];
-}
-
 export function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>) {
   const badges: { label: string; tone: 'success' | 'accent' | 'danger' | 'neutral' | 'warning' }[] = [];
   if (item.solved) {

@@ -52,7 +52,7 @@ import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
+import type { FeedSource, Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
@@ -149,6 +149,7 @@ export function AppRoot() {
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPendingReopenTaskRef = useRef<DeferredNavigationTask | null>(null);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
+  const openUserRef = useRef<((user: UserProfile, nocache?: boolean) => Promise<void>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
@@ -397,6 +398,9 @@ export function AppRoot() {
   const openTopicFromHtml = useCallback((topic: Topic) => {
     void openTopicRef.current?.(topic);
   }, []);
+  const openUserFromHtml = useCallback((user: UserProfile) => {
+    void openUserRef.current?.(user);
+  }, []);
   const {
     htmlBaseStyle,
     htmlIgnoredStyles,
@@ -409,6 +413,7 @@ export function AppRoot() {
     onOpenExternalUrl: openExternalUrl,
     onOpenImagePreview: openImagePreviewFromRenderer,
     onOpenTopic: openTopicFromHtml,
+    onOpenUser: openUserFromHtml,
     selectedTopic,
     settings: readerData.settings,
     styles,
@@ -985,6 +990,7 @@ export function AppRoot() {
   }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
   openTopicRef.current = openTopic;
+  openUserRef.current = openUser;
 
   const {
     bookmarkOnLinuxDoSite,

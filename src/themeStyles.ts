@@ -2086,6 +2086,63 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '600',
       lineHeight: 16
     },
+    htmlMentionLink: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(15 * fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(24 * fontScale)
+    },
+    htmlFloorLink: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(22 * fontScale)
+    },
+    htmlReplyReferenceRow: {
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 5,
+      marginBottom: 4,
+      marginTop: -1
+    },
+    htmlReplyReferenceLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
+    htmlReplyReferenceMentionText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * fontScale),
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
+    htmlReplyReferenceSeparator: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
+    htmlReplyReferenceFloorText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
     replyBody: {
       paddingTop: 0
     },
@@ -2117,21 +2174,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'flex-start',
       minHeight: 48,
       paddingTop: 2
-    },
-    floorIndex: {
-      maxHeight: 220,
-      gap: 4,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 12,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 8
-    },
-    floorIndexItem: {
-      minHeight: 34,
-      justifyContent: 'center',
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
     },
     quoteStack: {
       gap: 12

@@ -125,6 +125,20 @@ describe('Android reader theme helpers', () => {
     expect(styles.replyDetailActionButton.flexBasis).toBe(0);
   });
 
+  it('styles reply references as quiet metadata instead of plain blue links or badges', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.htmlMentionLink.color).toBe(theme.primary);
+    expect(styles.htmlFloorLink.color).toBe(theme.muted);
+    expect('backgroundColor' in styles.htmlReplyReferenceRow).toBe(false);
+    expect('borderWidth' in styles.htmlReplyReferenceRow).toBe(false);
+    expect(styles.htmlReplyReferenceRow.alignSelf).toBe('stretch');
+    expect(styles.htmlReplyReferenceLabel.color).toBe(theme.muted);
+    expect(styles.htmlReplyReferenceMentionText.color).toBe(theme.primary);
+    expect(styles.htmlReplyReferenceFloorText.color).toBe(theme.muted);
+  });
+
   it('makes foldable panel state icons visible and tappable', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);

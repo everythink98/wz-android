@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
+  getNativePropsForTNode,
   useIMGElementProps,
   useIMGElementState,
   type CustomBlockRenderer,
@@ -22,11 +23,12 @@ import {
   withForumImageDimensions
 } from '../htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
-import { parseForumTopicLink } from '../appUtils';
+import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
-import type { Topic, TopicDetail } from '../types';
+import type { Topic, TopicDetail, UserProfile } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
+import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -36,6 +38,7 @@ export function useHtmlRenderingController({
   onOpenExternalUrl,
   onOpenImagePreview,
   onOpenTopic,
+  onOpenUser,
   selectedTopic,
   settings,
   styles,
@@ -46,11 +49,19 @@ export function useHtmlRenderingController({
   onOpenExternalUrl: (url: string) => void;
   onOpenImagePreview: (url: string) => void;
   onOpenTopic: (topic: Topic) => void | Promise<void>;
+  onOpenUser: (user: UserProfile) => void | Promise<void>;
   selectedTopic: Topic | null;
   settings: ReaderSettings;
   styles: {
     inlineForumImage: StyleProp<ImageStyle>;
     inlineForumImageText: StyleProp<TextStyle>;
+    htmlFloorLink: StyleProp<TextStyle>;
+    htmlMentionLink: StyleProp<TextStyle>;
+    htmlReplyReferenceFloorText: StyleProp<TextStyle>;
+    htmlReplyReferenceLabel: StyleProp<TextStyle>;
+    htmlReplyReferenceMentionText: StyleProp<TextStyle>;
+    htmlReplyReferenceRow: StyleProp<ViewStyle>;
+    htmlReplyReferenceSeparator: StyleProp<TextStyle>;
   };
   theme: ReaderTheme;
   topicDetail: TopicDetail | null;
@@ -86,7 +97,83 @@ export function useHtmlRenderingController({
     settings.lineHeight,
     theme
   ]);
+  const openHtmlLink = useCallback((href: string, event?: { stopPropagation?: () => void }) => {
+    if (isPreviewableImageUrl(href)) {
+      event?.stopPropagation?.();
+      onOpenImagePreview(href);
+      return;
+    }
+    const baseUrl = selectedTopic?.url || topicDetail?.url;
+    const appTopic = parseForumTopicLink(href, baseUrl);
+    if (appTopic) {
+      event?.stopPropagation?.();
+      void onOpenTopic(appTopic);
+      return;
+    }
+    const appUser = parseForumUserLink(href, baseUrl, [
+      ...(selectedTopic ? [selectedTopic] : []),
+      ...(topicDetail ? [topicDetail, ...(topicDetail.replies || [])] : [])
+    ]);
+    if (appUser) {
+      event?.stopPropagation?.();
+      void onOpenUser(appUser);
+      return;
+    }
+    if (isHttpOrHttpsUrl(href)) {
+      onOpenExternalUrl(href);
+    }
+  }, [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic, topicDetail]);
+
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
+    const ReplyReferenceRenderer: CustomBlockRenderer = (props) => {
+      const attributes = props.tnode.attributes || {};
+      const mention = attributes['data-mention'] || '';
+      const floor = attributes['data-floor'] || '';
+      const userHref = attributes['data-user-href'] || '';
+      if (!mention && !floor) {
+        return null;
+      }
+      return (
+        <View style={styles.htmlReplyReferenceRow}>
+          <Text style={styles.htmlReplyReferenceLabel}>回复</Text>
+          {mention ? (
+            <Pressable accessibilityRole="link" disabled={!userHref} onPress={(event) => openHtmlLink(userHref, event)}>
+              <Text style={styles.htmlReplyReferenceMentionText}>{mention}</Text>
+            </Pressable>
+          ) : null}
+          {mention && floor ? <Text style={styles.htmlReplyReferenceSeparator}>·</Text> : null}
+          {floor ? <Text style={styles.htmlReplyReferenceFloorText}>{floor}</Text> : null}
+        </View>
+      );
+    };
+    const ReplyReferenceLinkRenderer: CustomMixedRenderer = (props) => {
+      const className = String(props.tnode.attributes?.class || '');
+      const isMentionLink = className.split(/\s+/).includes('forum-mention-link');
+      const isFloorLink = className.split(/\s+/).includes('forum-floor-link');
+      if (!isMentionLink && !isFloorLink) {
+        const { InternalRenderer, ...internalRendererProps } = props;
+        return <InternalRenderer {...internalRendererProps} />;
+      }
+      const nativeProps = getNativePropsForTNode(props);
+      if (isFloorLink) {
+        const { accessibilityRole, onPress, ...textProps } = nativeProps;
+        return (
+          <Text
+            {...textProps}
+            style={[textProps.style, styles.htmlFloorLink]}
+          />
+        );
+      }
+      const href = props.tnode.attributes?.href || '';
+      return (
+        <Text
+          {...nativeProps}
+          accessibilityRole="link"
+          onPress={(event) => openHtmlLink(href, event)}
+          style={[nativeProps.style, isMentionLink ? styles.htmlMentionLink : styles.htmlFloorLink]}
+        />
+      );
+    };
     const VideoEmbedBlock = ({ embedUrl }: { embedUrl: string }) => (
       <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
         <WebView
@@ -174,8 +261,31 @@ export function useHtmlRenderingController({
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
-    return { iframe: IframeRenderer, img: PreviewImageRenderer, [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer };
-  }, [htmlBaseStyle.lineHeight, markImageInlineSized, onOpenImagePreview, settings.fontScale, styles.inlineForumImage, styles.inlineForumImageText, theme.line, theme.surface2]);
+    return {
+      a: ReplyReferenceLinkRenderer,
+      iframe: IframeRenderer,
+      img: PreviewImageRenderer,
+      [FORUM_REPLY_REFERENCE_TAG]: ReplyReferenceRenderer,
+      [INLINE_FORUM_IMAGE_TAG]: InlineForumImageRenderer
+    };
+  }, [
+    htmlBaseStyle.lineHeight,
+    markImageInlineSized,
+    onOpenImagePreview,
+    openHtmlLink,
+    settings.fontScale,
+    styles.htmlFloorLink,
+    styles.htmlMentionLink,
+    styles.htmlReplyReferenceFloorText,
+    styles.htmlReplyReferenceLabel,
+    styles.htmlReplyReferenceMentionText,
+    styles.htmlReplyReferenceRow,
+    styles.htmlReplyReferenceSeparator,
+    styles.inlineForumImage,
+    styles.inlineForumImageText,
+    theme.line,
+    theme.surface2
+  ]);
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => {
     const listRendererProps = {
@@ -192,22 +302,7 @@ export function useHtmlRenderingController({
     };
     return {
       a: {
-        onPress: (event, href) => {
-          if (isPreviewableImageUrl(href)) {
-            event.stopPropagation?.();
-            onOpenImagePreview(href);
-            return;
-          }
-          const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);
-          if (appTopic) {
-            event.stopPropagation?.();
-            void onOpenTopic(appTopic);
-            return;
-          }
-          if (isHttpOrHttpsUrl(href)) {
-            onOpenExternalUrl(href);
-          }
-        }
+        onPress: (event, href) => openHtmlLink(href, event)
       },
       img: {
         enableExperimentalPercentWidth: true
@@ -215,7 +310,7 @@ export function useHtmlRenderingController({
       ol: listRendererProps,
       ul: listRendererProps
     };
-  }, [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, selectedTopic?.url, settings.fontFamily, settings.fontScale, settings.lineHeight, theme.ink, topicDetail?.url]);
+  }, [openHtmlLink, settings.fontFamily, settings.fontScale, settings.lineHeight, theme.ink]);
 
   return {
     htmlBaseStyle,
