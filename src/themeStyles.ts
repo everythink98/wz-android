@@ -775,6 +775,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.13 : 0.07)
     },
     replyDetailActionButton: {
+      flexBasis: 0,
+      flexGrow: 1,
+      minWidth: 0,
+      gap: 4,
       justifyContent: 'flex-start',
       paddingHorizontal: 0
     },
@@ -2063,7 +2067,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyContentArea: {
       gap: 10,
-      paddingLeft: 42
+      paddingLeft: 42,
+      paddingRight: 28
     },
     replyTargetPill: {
       alignSelf: 'flex-start',
@@ -2107,8 +2112,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replyActionRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
+      flexWrap: 'nowrap',
+      gap: 4,
       justifyContent: 'flex-start',
       minHeight: 48,
       paddingTop: 2

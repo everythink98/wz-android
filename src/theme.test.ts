@@ -114,6 +114,17 @@ describe('Android reader theme helpers', () => {
     expect(styles.replyHeader.borderTopColor).toBe(theme.line);
   });
 
+  it('keeps reply body and actions inside the floor-number edge', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.replyContentArea.paddingRight).toBe(28);
+    expect(styles.replyActionRow.flexWrap).toBe('nowrap');
+    expect(styles.replyDetailActionButton.minWidth).toBe(0);
+    expect(styles.replyDetailActionButton.flexGrow).toBe(1);
+    expect(styles.replyDetailActionButton.flexBasis).toBe(0);
+  });
+
   it('makes foldable panel state icons visible and tappable', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
