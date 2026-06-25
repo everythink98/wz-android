@@ -175,4 +175,8 @@ describe('Android local HTML helpers', () => {
   it('decodes apostrophe entities', () => {
     expect(decodeHtml('A&apos;B')).toBe("A'B");
   });
+
+  it('decodes numeric entities outside the BMP', () => {
+    expect(decodeHtml('&#128512; &#x1F600;')).toBe('😀 😀');
+  });
 });

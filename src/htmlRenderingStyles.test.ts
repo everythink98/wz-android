@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as htmlRenderingStyles from './htmlRenderingStyles';
 import type { ReaderSettings } from './readerData';
-import { createTheme } from './theme';
+import { alphaColor, createTheme } from './theme';
 
 vi.mock('react-native', () => ({
   StyleSheet: {
@@ -52,7 +52,7 @@ describe('Android HTML rendering styles', () => {
 
   it('uses normal markdown text color and system blue links instead of the theme accent', () => {
     const theme = createTheme(settings);
-    const { htmlBaseStyle, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+    const { htmlBaseStyle, htmlClassesStyles, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
     expect(htmlBaseStyle.color).toBe(theme.ink);
     expect(htmlTagsStyles.p?.color).toBeUndefined();
@@ -60,6 +60,15 @@ describe('Android HTML rendering styles', () => {
     expect(htmlTagsStyles.a?.color).not.toBe(theme.primary);
     expect(htmlTagsStyles.a).not.toHaveProperty('textDecorationLine');
     expect(htmlTagsStyles.a).not.toHaveProperty('textDecorationColor');
+    expect(htmlClassesStyles['forum-user-mention']).toMatchObject({
+      backgroundColor: alphaColor(theme.primary, 0.14),
+      borderColor: alphaColor(theme.primary, 0.28),
+      borderWidth: 1,
+      color: theme.primary,
+      fontWeight: '700',
+      paddingHorizontal: 5,
+      textDecorationLine: 'none'
+    });
   });
 
   it('allows source text color without allowing background colors', () => {

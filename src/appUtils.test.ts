@@ -8,6 +8,7 @@ import {
   isYaohuoLoginRequiredError,
   linuxDoExternalSearchItems,
   parseForumTopicLink,
+  parseForumUserLink,
   sourceLabel,
   startAbortableRequest,
   topicListDisplayTime
@@ -147,8 +148,29 @@ describe('Android app utils', () => {
     expect(parseForumTopicLink('https://github.com/openai/codex', 'https://linux.do/t/1')).toBeNull();
     expect(parseForumTopicLink('https://linux.do/u/alice', 'https://linux.do/t/1')).toBeNull();
     expect(parseForumTopicLink('https://linux.do/t/not-a-topic', 'https://linux.do/t/1')).toBeNull();
+    expect(parseForumTopicLink('https://www.v2ex.com/member/lijianan', 'https://www.v2ex.com/t/1222389')).toBeNull();
     expect(parseForumTopicLink('https://www.v2ex.com/go/create', 'https://www.v2ex.com/t/1')).toBeNull();
     expect(parseForumTopicLink('mailto:test@example.com', 'https://www.nodeseek.com/post-1-1')).toBeNull();
+  });
+
+  it('recognizes V2EX member links as app users', () => {
+    expect(parseForumUserLink('https://www.v2ex.com/member/lijianan', 'https://www.v2ex.com/t/1222389')).toMatchObject({
+      source: 'v2ex',
+      id: 'lijianan',
+      username: 'lijianan',
+      displayName: 'lijianan',
+      url: 'https://www.v2ex.com/member/lijianan'
+    });
+    expect(parseForumUserLink('/member/cc77', 'https://www.v2ex.com/t/1222389')).toMatchObject({
+      source: 'v2ex',
+      id: 'cc77',
+      username: 'cc77',
+      displayName: 'cc77',
+      url: 'https://www.v2ex.com/member/cc77'
+    });
+    expect(parseForumUserLink('https://www.v2ex.com/t/1222389', 'https://www.v2ex.com/t/1222389')).toBeNull();
+    expect(parseForumUserLink('mailto:test@example.com', 'https://www.v2ex.com/t/1222389')).toBeNull();
+    expect(parseForumUserLink('https://www.v2ex.com/member/%E0%A4%A', 'https://www.v2ex.com/t/1222389')).toBeNull();
   });
 
   it('uses active time for V2EX list display time', () => {

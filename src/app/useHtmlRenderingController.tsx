@@ -22,9 +22,9 @@ import {
   withForumImageDimensions
 } from '../htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
-import { parseForumTopicLink } from '../appUtils';
+import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
 import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
-import type { Topic, TopicDetail } from '../types';
+import type { Topic, TopicDetail, UserProfile } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 
@@ -36,6 +36,7 @@ export function useHtmlRenderingController({
   onOpenExternalUrl,
   onOpenImagePreview,
   onOpenTopic,
+  onOpenUser,
   selectedTopic,
   settings,
   styles,
@@ -46,6 +47,7 @@ export function useHtmlRenderingController({
   onOpenExternalUrl: (url: string) => void;
   onOpenImagePreview: (url: string) => void;
   onOpenTopic: (topic: Topic) => void | Promise<void>;
+  onOpenUser: (user: UserProfile) => void | Promise<void>;
   selectedTopic: Topic | null;
   settings: ReaderSettings;
   styles: {
@@ -78,6 +80,7 @@ export function useHtmlRenderingController({
 
   const {
     htmlBaseStyle,
+    htmlClassesStyles,
     htmlIgnoredStyles,
     htmlTagsStyles
   } = useMemo(() => buildHtmlRenderingStyles({ settings, theme }), [
@@ -198,6 +201,12 @@ export function useHtmlRenderingController({
             onOpenImagePreview(href);
             return;
           }
+          const appUser = parseForumUserLink(href, selectedTopic?.url || topicDetail?.url);
+          if (appUser) {
+            event.stopPropagation?.();
+            void onOpenUser(appUser);
+            return;
+          }
           const appTopic = parseForumTopicLink(href, selectedTopic?.url || topicDetail?.url);
           if (appTopic) {
             event.stopPropagation?.();
@@ -215,10 +224,11 @@ export function useHtmlRenderingController({
       ol: listRendererProps,
       ul: listRendererProps
     };
-  }, [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, selectedTopic?.url, settings.fontFamily, settings.fontScale, settings.lineHeight, theme.ink, topicDetail?.url]);
+  }, [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic?.url, settings.fontFamily, settings.fontScale, settings.lineHeight, theme.ink, topicDetail?.url]);
 
   return {
     htmlBaseStyle,
+    htmlClassesStyles,
     htmlIgnoredStyles,
     htmlRenderers,
     htmlRenderersProps,

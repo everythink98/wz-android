@@ -1,7 +1,7 @@
 import { StyleSheet } from 'react-native';
-import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlIgnoredStyles, HtmlTagsStyles } from './appTypes';
+import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './appTypes';
 import type { ReaderSettings } from './readerData';
-import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from './theme';
+import { alphaColor, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from './theme';
 
 export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['color', 'fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
 const SYSTEM_LINK_COLOR = '#0000EE';
@@ -121,6 +121,19 @@ export function buildHtmlRenderingStyles({
       width: 118
     }
   };
+  const htmlClassesStyles: HtmlClassesStyles = {
+    'forum-user-mention': {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.14),
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.38 : 0.28),
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      color: theme.primary,
+      fontWeight: '700',
+      paddingHorizontal: 5,
+      paddingVertical: 1,
+      textDecorationLine: 'none'
+    }
+  };
   const htmlIgnoredStyles: HtmlIgnoredStyles = [
     'backgroundColor',
     'borderTopColor',
@@ -133,6 +146,7 @@ export function buildHtmlRenderingStyles({
 
   return {
     htmlBaseStyle,
+    htmlClassesStyles,
     htmlIgnoredStyles,
     htmlTagsStyles
   };

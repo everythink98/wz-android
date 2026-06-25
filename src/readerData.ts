@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { accessRequirementFromText } from './localHtml';
+import { accessRequirementFromText, decodeHtml } from './localHtml';
 import type { AccessRequirement, Category, Source, Topic, UserProfile } from './types';
 
 export const readerDataVersion = 2;
@@ -212,7 +212,7 @@ function topicSummary(topic: Topic): Topic {
   return {
     source: topic.source,
     id: cleanString(topic.id),
-    title: cleanString(topic.title),
+    title: decodeHtml(cleanString(topic.title)),
     author: cleanString(topic.author),
     authorId: cleanOptionalString(topic.authorId),
     authorAvatar: cleanOptionalString(topic.authorAvatar) ? sanitizeTopicUrl(topic.authorAvatar) : undefined,

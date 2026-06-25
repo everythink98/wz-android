@@ -7,6 +7,7 @@ export type ReplyFilter = 'all' | 'author' | 'images' | 'newest';
 export type LoginNavigationRequest = { url: string };
 export type HtmlBaseStyle = NonNullable<ComponentProps<typeof RenderHTML>['baseStyle']>;
 export type HtmlAllowedStyles = NonNullable<ComponentProps<typeof RenderHTML>['allowedStyles']>;
+export type HtmlClassesStyles = NonNullable<ComponentProps<typeof RenderHTML>['classesStyles']>;
 export type HtmlIgnoredStyles = NonNullable<ComponentProps<typeof RenderHTML>['ignoredStyles']>;
 export type HtmlRenderers = NonNullable<ComponentProps<typeof RenderHTML>['renderers']>;
 export type HtmlRenderersProps = NonNullable<ComponentProps<typeof RenderHTML>['renderersProps']>;
