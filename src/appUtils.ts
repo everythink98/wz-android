@@ -1,6 +1,6 @@
 import { type MutableRefObject } from 'react';
 import { REQUEST_CANCELED_MESSAGE } from './request';
-import type { AccessRequirement, FeedSource, Source, Topic } from './types';
+import type { AccessRequirement, FeedSource, Source, Topic, UserProfile } from './types';
 
 export function sourceLabel(source: Source | FeedSource) {
   if (source === 'all') {
@@ -140,6 +140,30 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
     });
   }
   return null;
+}
+
+export function parseForumUserLink(href: string, baseUrl?: string): UserProfile | null {
+  const url = forumLinkUrl(href, baseUrl);
+  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:') || !isForumHost(url.hostname, 'v2ex.com')) {
+    return null;
+  }
+  const rawUsername = url.pathname.match(/^\/member\/([^/]+)\/?$/i)?.[1];
+  if (!rawUsername) {
+    return null;
+  }
+  try {
+    const username = decodeURIComponent(rawUsername);
+    return username ? {
+      source: 'v2ex',
+      id: username,
+      username,
+      displayName: username,
+      url: `https://www.v2ex.com/member/${encodeURIComponent(username)}`,
+      topics: []
+    } : null;
+  } catch {
+    return null;
+  }
 }
 
 export function isYaohuoLoginRequiredError(error: unknown) {

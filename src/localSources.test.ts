@@ -773,6 +773,49 @@ describe('Android local sources', () => {
     expect(topic.title).toBe(displayTitle);
   });
 
+  it('decodes linux.do numeric title entities when unicode_title is missing', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/t/2438918.json')) {
+        return json({
+          id: 2438918,
+          title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗',
+          slug: 'topic',
+          created_at: '2026-06-20T11:15:45.437Z',
+          posts_count: 1,
+          post_stream: {
+            stream: [19367642],
+            posts: [{
+              id: 19367642,
+              post_number: 1,
+              username: 'chancat',
+              cooked: '<p>body</p>',
+              created_at: '2026-06-20T11:15:45.437Z'
+            }]
+          }
+        });
+      }
+      return json({
+        topic_list: {
+          topics: [{
+            id: 2438918,
+            title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗',
+            slug: 'topic',
+            created_at: '2026-06-20T11:15:45.437Z',
+            bumped_at: '2026-06-20T11:15:45.437Z',
+            posts_count: 1
+          }]
+        },
+        users: []
+      });
+    });
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 1, fetcher });
+    const topic = await getTopic({ source: 'linuxdo', id: '2438918', fetcher });
+
+    expect(feed.items[0].title).toBe('🫥完辣，ai又来抢饭碗啦，装机仔下岗');
+    expect(topic.title).toBe('🫥完辣，ai又来抢饭碗啦，装机仔下岗');
+  });
+
   it('keeps linux.do accepted answers and special reply markers from topic JSON', async () => {
     const fetcher = vi.fn(async () => json({
       id: 407,

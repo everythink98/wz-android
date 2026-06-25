@@ -22,7 +22,7 @@ import {
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
-import type { HtmlBaseStyle, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
+import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
@@ -116,6 +116,7 @@ export function TopicScreen({
   canUseYaohuoActions,
   contentWidth,
   htmlBaseStyle,
+  htmlClassesStyles,
   htmlIgnoredStyles,
   htmlRenderers,
   htmlRenderersProps,
@@ -175,6 +176,7 @@ export function TopicScreen({
   canUseYaohuoActions: boolean;
   contentWidth: number;
   htmlBaseStyle: HtmlBaseStyle;
+  htmlClassesStyles: HtmlClassesStyles;
   htmlIgnoredStyles: HtmlIgnoredStyles;
   htmlRenderers: HtmlRenderers;
   htmlRenderersProps: HtmlRenderersProps;
@@ -864,7 +866,7 @@ export function TopicScreen({
   );
 
   return (
-    <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
+    <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} classesStyles={htmlClassesStyles} customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
       <RenderHTMLConfigProvider
         renderers={topicHtmlRenderers}
         renderersProps={htmlRenderersProps}

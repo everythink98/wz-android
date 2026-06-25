@@ -13,4 +13,10 @@ describe('Android topic content HTML', () => {
   it('keeps mixed text and HTML fragments renderable', () => {
     expect(normalizeRenderableHtml('see <a href="https://example.com">link</a>')).toBe('see <a href="https://example.com">link</a>');
   });
+
+  it('marks V2EX member mentions without changing ordinary member links', () => {
+    expect(normalizeRenderableHtml('@<a href="/member/lijianan">lijianan</a> hi')).toBe('<a href="/member/lijianan" class="forum-user-mention">@lijianan</a> hi');
+    expect(normalizeRenderableHtml('@<a href="/member/lijianan">lijianan</a> @<a href="/member/cc77">cc77</a>')).toBe('<a href="/member/lijianan" class="forum-user-mention">@lijianan</a> <a href="/member/cc77" class="forum-user-mention">@cc77</a>');
+    expect(normalizeRenderableHtml('<a href="/member/lijianan">lijianan</a>')).toBe('<a href="/member/lijianan">lijianan</a>');
+  });
 });

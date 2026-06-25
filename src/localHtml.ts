@@ -7,6 +7,14 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function htmlEntityCodePoint(entity: string, codePoint: number) {
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return entity;
+  }
+}
+
 export function absoluteUrl(value: unknown, baseUrl: string) {
   const text = String(value || '').trim();
   if (!text) {
@@ -47,8 +55,8 @@ export function decodeHtml(value: unknown) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number.parseInt(code, 10)));
+    .replace(/&#x([0-9a-f]+);/gi, (entity, hex) => htmlEntityCodePoint(entity, Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (entity, code) => htmlEntityCodePoint(entity, Number.parseInt(code, 10)));
 }
 
 export function textContentFromHtml(value: unknown) {

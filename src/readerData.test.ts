@@ -672,6 +672,26 @@ describe('Android reader data helpers', () => {
     expect(clean?.visitCount).toBeUndefined();
   });
 
+  it('decodes HTML entities in stored topic titles', () => {
+    const encodedTopic: Topic = {
+      ...topic,
+      id: 'encoded-title',
+      title: '&#129765;完辣，ai又来抢饭碗啦，装机仔下岗'
+    };
+
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(encodedTopic)]: {
+          topic: encodedTopic,
+          savedAt: '2026-05-20T03:00:00.000Z'
+        }
+      }
+    });
+
+    expect(data.favorites[topicKey(encodedTopic)]?.topic.title).toBe('🫥完辣，ai又来抢饭碗啦，装机仔下岗');
+  });
+
   it('rejects records with strings beyond the local backup field limit', () => {
     const unsafeTopic: Topic = {
       ...topic,
