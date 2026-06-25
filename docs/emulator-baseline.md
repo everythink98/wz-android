@@ -15,6 +15,19 @@
 
 当前 `codex` 的 NodeSeek 结果来自已登录状态下的站内搜索；未登录时 NodeSeek 可能跳到 Google 搜索页，该路径作为兼容标准和自动化测试覆盖，不等同于本次模拟器结果。
 
+## 2026-06-25 linux.do 列表 CF 验证自动打开复测
+
+| 项 | 当前结果 |
+| --- | --- |
+| 环境 | 分支 `codex/linuxdo-feed-cf-verify`；版本 `1.3.18`；模拟器 `emulator-5554` / `WZ_Pixel_API_35`；App `com.wz.reader`；Metro `8081` |
+| 数据处理 | 未卸载、未清数据、未清 Cookie、未退出登录、未使用 Chrome 登录态 |
+| 范围 | 首页 `linux.do` 单站列表 CF 验证自动打开；`全部` 聚合列表不自动打开；通过验证后 `linux.do` 单站正常刷新不再自动打开 |
+| `全部` 首页刷新 | 保持在首页列表，没有自动打开 `linux.do 登录 / 验证` 弹层 |
+| `linux.do` 单站刷新遇到 CF | 自动打开 App 内 `linux.do 登录 / 验证` 弹层，副状态显示 `验证中`，包名仍为 `com.wz.reader` |
+| App 内验证 | 点击 `检测状态` 后状态显示 `已登录`；WebView 仍显示 Cloudflare 验证时，点击 `Verify you are human`，随后 WebView 进入 `LINUX DO` 页面 |
+| 验证后 `linux.do` 单站刷新 | 关闭弹层后重新刷新 `linux.do` 单站，未再次自动打开验证弹层；列表显示 linux.do 分类和主题 |
+| 自动测试补充 | `sourceErrors` 覆盖 `linux.do` 单站验证错误会触发、`全部` 不触发、普通 linux.do 错误不触发 |
+
 ## 2026-06-24 linux.do reaction 表情与标签样式全流程复测
 
 | 项 | 当前结果 |

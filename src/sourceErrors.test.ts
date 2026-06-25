@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, sourceErrorKind } from './sourceErrors';
+import { linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, sourceErrorKind } from './sourceErrors';
 
 describe('source error navigation helpers', () => {
   it('does not auto-open verification for aggregated feed errors', () => {
@@ -13,6 +13,28 @@ describe('source error navigation helpers', () => {
 
     expect(nodeSeekVerificationNavigationMessage('all', errors)).toBe('');
     expect(nodeSeekVerificationNavigationMessage('nodeseek', errors)).toBe('NodeSeek 需要验证');
+  });
+
+  it('auto-opens linux.do verification only for the single-source feed', () => {
+    const errors = {
+      linuxdo: {
+        message: 'linux.do 需要验证',
+        reason: 'cloudflare',
+        verificationRequired: true
+      }
+    };
+
+    expect(linuxDoVerificationNavigationMessage('all', errors)).toBe('');
+    expect(linuxDoVerificationNavigationMessage('linuxdo', errors)).toBe('linux.do 需要验证');
+    expect(linuxDoVerificationNavigationMessage('nodeseek', errors)).toBe('');
+  });
+
+  it('does not auto-open linux.do verification for ordinary single-source errors', () => {
+    const errors = {
+      linuxdo: sourceErrorFromUnknown('linuxdo', new Error('linux.do 网络失败'))
+    };
+
+    expect(linuxDoVerificationNavigationMessage('linuxdo', errors)).toBe('');
   });
 
   it('classifies login, verification, and permission failures without flattening them', () => {

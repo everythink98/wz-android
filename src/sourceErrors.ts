@@ -91,3 +91,13 @@ export function nodeSeekVerificationErrorMessage(
 export function nodeSeekVerificationNavigationMessage(source: FeedSource, errors: SourceErrors) {
   return source === 'all' ? '' : nodeSeekVerificationErrorMessage(errors);
 }
+
+export function linuxDoVerificationNavigationMessage(
+  source: FeedSource,
+  errors: SourceErrors,
+  fallback = 'linux.do 需要完成 Cloudflare 验证'
+) {
+  return source === 'linuxdo' && sourceErrorRequiresVerification(errors.linuxdo)
+    ? sourceErrorMessage(errors.linuxdo) || fallback
+    : '';
+}

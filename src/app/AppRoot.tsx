@@ -688,6 +688,7 @@ export function AppRoot() {
     notify,
     readerData,
     readerDataLoaded,
+    showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin
   });

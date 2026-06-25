@@ -16,6 +16,7 @@ import {
   errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
+  isLinuxDoCloudflareError,
   isNodeSeekCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
@@ -25,7 +26,7 @@ import {
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
-import { formatSourceErrorMessages, nodeSeekVerificationErrorMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
+import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationErrorMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
 import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
@@ -69,6 +70,7 @@ export function useFeedController({
   notify,
   readerData,
   readerDataLoaded,
+  showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin
 }: {
@@ -80,6 +82,7 @@ export function useFeedController({
   notify: (message: string) => void;
   readerData: ReaderData;
   readerDataLoaded: boolean;
+  showLinuxDoVerification: (message?: string) => void;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
 }) {
@@ -346,6 +349,14 @@ export function useFeedController({
           showNodeSeekVerification(isLoadMore ? `加载下一页失败：${verificationMessage}` : verificationMessage);
           return;
         }
+        const linuxDoVerificationMessage = linuxDoVerificationNavigationMessage(requestSource, finalErrors);
+        if (linuxDoVerificationMessage) {
+          if (isLoadMore) {
+            markFeedLoadMoreFailed(requestSource);
+          }
+          showLinuxDoVerification(isLoadMore ? `加载下一页失败：${linuxDoVerificationMessage}` : linuxDoVerificationMessage);
+          return;
+        }
         const message = formatSourceErrorMessages(finalErrors, sourceLabel);
         if (isLoadMore) {
           markFeedLoadMoreFailed(requestSource);
@@ -374,6 +385,10 @@ export function useFeedController({
         }
         if (isNodeSeekCloudflareError(error)) {
           showNodeSeekVerification(notice);
+          return;
+        }
+        if (isLinuxDoCloudflareError(error)) {
+          showLinuxDoVerification(notice);
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -408,6 +423,7 @@ export function useFeedController({
     markFeedLoadMoreFailed,
     nodeSeekUserAgentRef,
     notify,
+    showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin
   ]);
