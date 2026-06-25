@@ -6,6 +6,7 @@ import { triggerPressFeedback } from '../../components/AppControls';
 export function DetailActionButton({
   accessibilityLabel,
   active = false,
+  compact = false,
   count,
   disabled = false,
   icon,
@@ -18,6 +19,7 @@ export function DetailActionButton({
 }: {
   accessibilityLabel: string;
   active?: boolean;
+  compact?: boolean;
   count?: number;
   disabled?: boolean;
   icon: LucideIcon;
@@ -30,6 +32,7 @@ export function DetailActionButton({
 }) {
   const Icon = icon;
   const color = active ? theme.primary : theme.ink;
+  const visibleCount = typeof count === 'number' ? compact && count > 99 ? '99+' : String(count) : '';
   return (
     <Pressable
       accessibilityRole="button"
@@ -40,6 +43,7 @@ export function DetailActionButton({
       style={[
         styles.detailActionButton,
         alignStart && styles.replyDetailActionButton,
+        compact && styles.replyCompactActionButton,
         active && styles.detailActionButtonActive,
         alignStart && active && styles.replyDetailActionButtonActive,
         disabled && styles.buttonDisabled
@@ -56,9 +60,9 @@ export function DetailActionButton({
           <Icon size={18} color={color} fill={active ? theme.primarySoft : 'none'} strokeWidth={active ? 2.1 : 1.8} />
         )}
       </View>
-      <View style={styles.detailActionTextBlock}>
+      <View style={[styles.detailActionTextBlock, compact && styles.detailActionCompactTextBlock]}>
         <Text numberOfLines={1} style={[styles.detailActionLabel, active && styles.detailActionLabelActive]}>{label}</Text>
-        {typeof count === 'number' ? <Text numberOfLines={1} style={[styles.detailActionCount, active && styles.detailActionLabelActive]}>{count}</Text> : null}
+        {visibleCount ? <Text numberOfLines={1} style={[styles.detailActionCount, active && styles.detailActionLabelActive]}>{visibleCount}</Text> : null}
       </View>
     </Pressable>
   );

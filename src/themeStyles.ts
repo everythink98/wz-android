@@ -778,6 +778,15 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'flex-start',
       paddingHorizontal: 0
     },
+    replyCompactActionButton: {
+      flexShrink: 0,
+      minHeight: 44,
+      minWidth: 44,
+      width: 76,
+      justifyContent: 'flex-start',
+      gap: 3,
+      paddingHorizontal: 0
+    },
     replyDetailActionButtonActive: {
       backgroundColor: 'transparent'
     },
@@ -793,6 +802,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       gap: 3,
       minWidth: 0
+    },
+    detailActionCompactTextBlock: {
+      flexShrink: 1,
+      gap: 2
     },
     detailActionLabel: {
       color: theme.muted,
@@ -2107,8 +2120,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replyActionRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
+      gap: 4,
       justifyContent: 'flex-start',
       minHeight: 48,
       paddingTop: 2

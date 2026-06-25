@@ -114,6 +114,21 @@ describe('Android reader theme helpers', () => {
     expect(styles.replyHeader.borderTopColor).toBe(theme.line);
   });
 
+  it('keeps reply action rows single-line with compact tappable buttons', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.replyActionRow.flexWrap).toBeUndefined();
+    expect(styles.replyActionRow.gap).toBeLessThan(8);
+    expect(styles.replyCompactActionButton.flex).toBeUndefined();
+    expect(styles.replyCompactActionButton.flexShrink).toBe(0);
+    expect(styles.replyCompactActionButton.width).toBe(76);
+    expect(styles.replyCompactActionButton.justifyContent).toBe('flex-start');
+    expect(styles.detailActionCompactTextBlock.gap).toBe(2);
+    expect(styles.replyCompactActionButton.minWidth).toBeGreaterThanOrEqual(44);
+    expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(44);
+  });
+
   it('makes foldable panel state icons visible and tappable', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);

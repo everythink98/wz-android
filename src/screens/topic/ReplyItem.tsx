@@ -325,10 +325,10 @@ export function ReplyItem({
         ) : null}
         {canWrite && source === 'nodeseek' ? (
           <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-            <DetailActionButton alignStart active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
+            <DetailActionButton alignStart compact accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+            <DetailActionButton alignStart compact active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
+            <DetailActionButton alignStart compact active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+            <DetailActionButton alignStart compact active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
           </View>
         ) : null}
         {canWrite && source === 'yaohuo' ? (
