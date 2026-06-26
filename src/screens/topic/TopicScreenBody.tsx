@@ -44,7 +44,7 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
-import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, visibleFloorIndexReplies } from './topicScreenHelpers';
+import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
 
 type TopicListContentItem = { type: 'content'; key: string; html: string };
 export type TopicListItem =
@@ -269,8 +269,6 @@ export function TopicScreen({
     });
     return next;
   }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
-  const [floorOpen, setFloorOpen] = useState(false);
-  const floorIndexReplies = useMemo(() => visibleFloorIndexReplies(replies), [replies]);
   const newReplyFloorStart = useMemo(() => {
     if (unreadReplyCount <= 0) {
       return Number.POSITIVE_INFINITY;
@@ -395,14 +393,6 @@ export function TopicScreen({
     }
     return items;
   }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
-  const jumpToFloor = useCallback((floor: number) => {
-    topicScrollRetryIdRef.current += 1;
-    const index = topicListItems.findIndex((entry) => entry.type === 'reply' && entry.replyFloor === floor);
-    if (index >= 0) {
-      topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
-      setFloorOpen(false);
-    }
-  }, [topicListItems, topicScrollRef]);
   const handleTopicScrollToIndexFailed = useCallback(({ index, averageItemLength }: { index: number; averageItemLength: number }) => {
     const retryId = ++topicScrollRetryIdRef.current;
     const offset = Math.max(0, averageItemLength * index);
@@ -608,21 +598,6 @@ export function TopicScreen({
             />
             {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
           </View>
-          <View style={styles.actions}>
-            <AppButton compact label={floorOpen ? '收起楼层目录' : '楼层目录'} variant="ghost" styles={styles} onPress={() => setFloorOpen((value) => !value)} />
-          </View>
-          {floorOpen ? (
-            <View style={styles.floorIndex}>
-              {floorIndexReplies.map((reply, index) => {
-                const floor = reply.floor ?? index + 1;
-                return (
-                  <Pressable key={`${floor}-${reply.createdAt}`} accessibilityRole="button" style={styles.floorIndexItem} onPress={() => jumpToFloor(floor)}>
-                    <Text style={styles.meta}>#{floor} {reply.author || '未知作者'}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
         </View>
       );
     }
@@ -757,12 +732,9 @@ export function TopicScreen({
     commentQuery,
     contentWidth,
     expandedQuotesRef,
-    floorOpen,
-    floorIndexReplies,
     inlineSizedImageUrls,
     topicImageDeriver,
     isOptimisticActionPending,
-    jumpToFloor,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
     linuxDoEmojiUrls,

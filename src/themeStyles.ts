@@ -2183,21 +2183,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 48,
       paddingTop: 2
     },
-    floorIndex: {
-      maxHeight: 220,
-      gap: 4,
-      backgroundColor: theme.surface2,
-      borderColor: theme.line,
-      borderRadius: 12,
-      borderWidth: StyleSheet.hairlineWidth,
-      padding: 8
-    },
-    floorIndexItem: {
-      minHeight: 34,
-      justifyContent: 'center',
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
-    },
     quoteStack: {
       gap: 12
     },
