@@ -26,6 +26,7 @@ import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
+import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
@@ -67,6 +68,11 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
   [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: INLINE_FORUM_IMAGE_TAG,
     contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
+  [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_REPLY_REFERENCE_TAG,
+    contentModel: HTMLContentModel.block,
     isOpaque: true
   }),
   iframe: HTMLElementModel.fromCustomModel({
@@ -238,6 +244,7 @@ export function TopicScreen({
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
   const itemSource = topic?.source;
+  const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
   const isOptimisticActionPending = useCallback((targetId: string | number | undefined, action: TopicActionStateKind) => {
     if (!detailTopicStateKey || !targetId) {
@@ -553,6 +560,7 @@ export function TopicScreen({
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <MemoizedTopicContentBlock
+              baseUrl={topicBaseUrl}
               contentWidth={contentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={listItem.html}
@@ -718,6 +726,7 @@ export function TopicScreen({
           inlineSizedImageUrls={inlineSizedImageUrls}
           linuxDoEmojiUrls={linuxDoEmojiUrls}
           topicImageDeriver={topicImageDeriver}
+          topicBaseUrl={topicBaseUrl}
           loadedQuotedReplies={loadedQuotedRepliesRef.current}
           loadingQuotedFloors={loadingQuotedFloorsRef.current}
           onTogglePollSelection={togglePollSelection}
@@ -784,6 +793,7 @@ export function TopicScreen({
     theme,
     togglePollSelection,
     topic,
+    topicBaseUrl,
     topicColumnStyle
   ]);
 

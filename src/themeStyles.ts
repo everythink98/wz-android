@@ -2076,7 +2076,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyContentArea: {
       gap: 10,
-      paddingLeft: 42
+      paddingLeft: 42,
+      paddingRight: 28
     },
     replyTargetPill: {
       alignSelf: 'flex-start',
@@ -2093,6 +2094,63 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontSize: 12,
       fontWeight: '600',
       lineHeight: 16
+    },
+    htmlMentionLink: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(15 * fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(24 * fontScale)
+    },
+    htmlFloorLink: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * fontScale),
+      fontWeight: '600',
+      lineHeight: Math.round(22 * fontScale)
+    },
+    htmlReplyReferenceRow: {
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 5,
+      marginBottom: 4,
+      marginTop: -1
+    },
+    htmlReplyReferenceLabel: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
+    htmlReplyReferenceMentionText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(13 * fontScale),
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
+    htmlReplyReferenceSeparator: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
+    },
+    htmlReplyReferenceFloorText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(12 * fontScale),
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: Math.round(18 * fontScale),
+      textAlignVertical: 'center'
     },
     replyBody: {
       paddingTop: 0

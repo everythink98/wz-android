@@ -105,6 +105,13 @@ function internalTopic(source: Source, id: string, title: string, url: string, e
   };
 }
 
+type ForumUserLinkCandidate = {
+  author?: string;
+  authorId?: string;
+  authorAvatar?: string;
+  authorUrl?: string;
+};
+
 export function parseForumTopicLink(href: string, baseUrl?: string): Topic | null {
   const url = forumLinkUrl(href, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
@@ -142,9 +149,43 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
   return null;
 }
 
-export function parseForumUserLink(href: string, baseUrl?: string): UserProfile | null {
+export function parseForumUserLink(href: string, baseUrl?: string, candidates: ForumUserLinkCandidate[] = []): UserProfile | null {
   const url = forumLinkUrl(href, baseUrl);
-  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:') || !isForumHost(url.hostname, 'v2ex.com')) {
+  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+    return null;
+  }
+  if (isForumHost(url.hostname, 'nodeseek.com')) {
+    const id = url.pathname.match(/^\/space\/(\d+)\/?$/i)?.[1];
+    if (id) {
+      return {
+        source: 'nodeseek',
+        id,
+        username: id,
+        url: `https://www.nodeseek.com/space/${id}`,
+        topics: []
+      };
+    }
+    if (!/^\/member\/?$/i.test(url.pathname)) {
+      return null;
+    }
+    const username = url.searchParams.get('t')?.trim();
+    if (!username) {
+      return null;
+    }
+    const candidate = candidates.find((item) => item.author === username);
+    const candidateId = candidate?.authorId?.match(/^\d+$/)?.[0]
+      || candidate?.authorUrl?.match(/(?:^|\/)space\/(\d+)(?:[/?#]|$)/)?.[1];
+    return candidateId ? {
+      source: 'nodeseek',
+      id: candidateId,
+      username,
+      displayName: username,
+      avatar: candidate?.authorAvatar,
+      url: `https://www.nodeseek.com/space/${candidateId}`,
+      topics: []
+    } : null;
+  }
+  if (!isForumHost(url.hostname, 'v2ex.com')) {
     return null;
   }
   const rawUsername = url.pathname.match(/^\/member\/([^/]+)\/?$/i)?.[1];

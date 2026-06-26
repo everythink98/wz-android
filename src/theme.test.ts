@@ -118,6 +118,7 @@ describe('Android reader theme helpers', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
+    expect(styles.replyContentArea.paddingRight).toBe(28);
     expect(styles.replyActionRow.flexWrap).toBeUndefined();
     expect(styles.replyActionRow.gap).toBeLessThan(8);
     expect(styles.replyCompactActionButton.flex).toBeUndefined();
@@ -127,6 +128,20 @@ describe('Android reader theme helpers', () => {
     expect(styles.detailActionCompactTextBlock.gap).toBe(2);
     expect(styles.replyCompactActionButton.minWidth).toBeGreaterThanOrEqual(44);
     expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(44);
+  });
+
+  it('styles reply references as quiet metadata instead of plain blue links or badges', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.htmlMentionLink.color).toBe(theme.primary);
+    expect(styles.htmlFloorLink.color).toBe(theme.muted);
+    expect('backgroundColor' in styles.htmlReplyReferenceRow).toBe(false);
+    expect('borderWidth' in styles.htmlReplyReferenceRow).toBe(false);
+    expect(styles.htmlReplyReferenceRow.alignSelf).toBe('stretch');
+    expect(styles.htmlReplyReferenceLabel.color).toBe(theme.muted);
+    expect(styles.htmlReplyReferenceMentionText.color).toBe(theme.primary);
+    expect(styles.htmlReplyReferenceFloorText.color).toBe(theme.muted);
   });
 
   it('makes foldable panel state icons visible and tappable', () => {
