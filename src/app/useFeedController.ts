@@ -461,8 +461,7 @@ export function useFeedController({
     }
     notify('正在更新列表');
     void loadFeed({ reset: true, page: 1, nocache: true, successMessage: '列表已更新' });
-    void loadCategories();
-  }, [loadCategories, loadFeed, notify]);
+  }, [loadFeed, notify]);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
     setFeedSource(source);
