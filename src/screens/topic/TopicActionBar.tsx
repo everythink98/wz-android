@@ -33,6 +33,7 @@ export function DetailActionButton({
   const Icon = icon;
   const color = active ? theme.primary : theme.ink;
   const visibleCount = typeof count === 'number' ? compact && count > 99 ? '99+' : String(count) : '';
+  const iconSize = compact ? 16 : 18;
   return (
     <Pressable
       accessibilityRole="button"
@@ -53,16 +54,16 @@ export function DetailActionButton({
         onPress();
       }}
     >
-      <View style={styles.detailActionIconSlot}>
+      <View style={[styles.detailActionIconSlot, compact && styles.replyCompactActionIconSlot]}>
         {pending ? (
           <ActivityIndicator size="small" color={theme.primary} />
         ) : (
-          <Icon size={18} color={color} fill={active ? theme.primarySoft : 'none'} strokeWidth={active ? 2.1 : 1.8} />
+          <Icon size={iconSize} color={color} fill={active ? theme.primarySoft : 'none'} strokeWidth={active ? 2.1 : 1.8} />
         )}
       </View>
       <View style={[styles.detailActionTextBlock, compact && styles.detailActionCompactTextBlock]}>
-        <Text numberOfLines={1} style={[styles.detailActionLabel, active && styles.detailActionLabelActive]}>{label}</Text>
-        {visibleCount ? <Text numberOfLines={1} style={[styles.detailActionCount, active && styles.detailActionLabelActive]}>{visibleCount}</Text> : null}
+        <Text numberOfLines={1} style={[styles.detailActionLabel, compact && styles.detailActionCompactLabel, active && styles.detailActionLabelActive]}>{label}</Text>
+        {visibleCount ? <Text numberOfLines={1} style={[styles.detailActionCount, compact && styles.detailActionCompactCount, active && styles.detailActionLabelActive]}>{visibleCount}</Text> : null}
       </View>
     </Pressable>
   );

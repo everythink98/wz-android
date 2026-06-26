@@ -779,12 +779,13 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingHorizontal: 0
     },
     replyCompactActionButton: {
-      flexShrink: 0,
+      flexBasis: 0,
+      flexGrow: 1,
+      flexShrink: 1,
       minHeight: 44,
       minWidth: 44,
-      width: 76,
       justifyContent: 'flex-start',
-      gap: 3,
+      gap: 2,
       paddingHorizontal: 0
     },
     replyDetailActionButtonActive: {
@@ -796,6 +797,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       justifyContent: 'center',
       width: 22
     },
+    replyCompactActionIconSlot: {
+      height: 20,
+      width: 18
+    },
     detailActionTextBlock: {
       alignItems: 'center',
       flexShrink: 1,
@@ -805,7 +810,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     detailActionCompactTextBlock: {
       flexShrink: 1,
-      gap: 2
+      gap: 1
     },
     detailActionLabel: {
       color: theme.muted,
@@ -824,6 +829,14 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '700',
       includeFontPadding: false,
       lineHeight: 16
+    },
+    detailActionCompactLabel: {
+      fontSize: 11,
+      lineHeight: 15
+    },
+    detailActionCompactCount: {
+      fontSize: 11,
+      lineHeight: 15
     },
     detailActionLabelActive: {
       color: theme.primary,
