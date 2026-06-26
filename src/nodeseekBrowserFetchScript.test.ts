@@ -99,6 +99,7 @@ describe('NodeSeek hidden browser fetch script', () => {
       id: 7,
       challenge: true
     });
+    expect(payload.html).toBe('');
     expect(stop).toHaveBeenCalled();
   });
 

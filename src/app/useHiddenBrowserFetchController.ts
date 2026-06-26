@@ -75,13 +75,14 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     } catch {}
   };
   const postResult = () => {
+    const challenge = isChallengePage();
     postBridgeMessage({
       type: 'nodeseek-browser-fetch',
       id: requestId,
       url: location.href,
       title: document.title || "",
-      challenge: isChallengePage(),
-      html: document.documentElement ? document.documentElement.outerHTML : "",
+      challenge,
+      html: challenge ? "" : (document.documentElement ? document.documentElement.outerHTML : ""),
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
     });
