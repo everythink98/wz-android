@@ -90,7 +90,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       window.stop();
     } catch {}
   };
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 12000;
   const waitForReadablePage = () => {
     if (isInteractiveChallengePage()) {
       postResult();
