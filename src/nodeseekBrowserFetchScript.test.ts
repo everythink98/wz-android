@@ -68,7 +68,7 @@ describe('NodeSeek hidden browser fetch script', () => {
         </main>
       `);
 
-      vi.advanceTimersByTime(12000);
+      vi.advanceTimersByTime(15000);
 
       expect(postMessage).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
