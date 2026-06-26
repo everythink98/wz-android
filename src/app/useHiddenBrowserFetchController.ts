@@ -12,6 +12,11 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     const challengeText = [document.title || "", pageText(3000)].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
   };
+  const isInteractiveChallengePage = () => {
+    const challengeText = [document.title || "", pageText(3000)].join(" ");
+    return Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response']"))
+      || /cf-turnstile|attention required|verify you are human|请完成验证|正在进行安全验证/i.test(challengeText);
+  };
   const restrictedNoticePattern = new RegExp(${JSON.stringify(ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE)}, "i");
   const hasRestrictedNotice = () => restrictedNoticePattern.test(pageText());
   const isNodeSeekSearchPage = () => !/(^|\\.)google\\./i.test(location.hostname || "") && /\\/search\\/?$/i.test(location.pathname || "");
@@ -86,6 +91,10 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
+    if (isInteractiveChallengePage()) {
+      postResult();
+      return;
+    }
     if (!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) {
       postResult();
       return;

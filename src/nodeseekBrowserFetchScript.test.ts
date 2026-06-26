@@ -84,15 +84,22 @@ describe('NodeSeek hidden browser fetch script', () => {
     }
   });
 
-  it('does not treat Cloudflare challenge search pages as readable results', () => {
-    const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=plasma%E6%95%99%E7%A8%8B', `
+  it('returns interactive Cloudflare challenge pages immediately', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/search?q=plasma%E6%95%99%E7%A8%8B', `
       <main>
         <h1>Just a moment...</h1>
         <div class="cf-turnstile"></div>
       </main>
     `);
 
-    expect(postMessage).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: true
+    });
+    expect(stop).toHaveBeenCalled();
   });
 
   it('returns Google search result pages when they contain NodeSeek topic links', () => {
