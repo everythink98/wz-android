@@ -394,6 +394,9 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('vote-panel');
     expect(topic.contentHtml).not.toContain('embed-vote');
     expect(topic.contentHtml.trim()).toBe('');
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const fetchCalls = fetcher.mock.calls as unknown as Array<[string]>;
+    expect(String(fetchCalls[0]?.[0])).toBe('https://www.nodeseek.com/post-759903-1');
   });
 
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {
@@ -1869,12 +1872,14 @@ describe('Android local sources', () => {
   });
 
   it('uses normal fetch for NodeSeek when the HTML is already readable', async () => {
-    const normalFetcher = vi.fn(async () => html(`
+    const response = html(`
       <a class="post-title" href="/post-743010-1">NodeSeek normal detail</a>
       <div class="content-item">
         <article class="post-content"><p>正常正文</p></article>
       </div>
-    `));
+    `);
+    const cloneSpy = vi.spyOn(response, 'clone');
+    const normalFetcher = vi.fn(async () => response);
     const webViewFetcher = vi.fn(async () => html('<html>webview fallback should not be used</html>'));
     const fetcher = createNodeSeekWebViewFallbackFetcher({
       defaultFetcher: normalFetcher,
@@ -1885,6 +1890,7 @@ describe('Android local sources', () => {
 
     expect(topic.title).toBe('NodeSeek normal detail');
     expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(cloneSpy).not.toHaveBeenCalled();
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 

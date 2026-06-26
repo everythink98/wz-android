@@ -107,6 +107,7 @@ export function useAccountController({
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
         type?: string;
+        blank?: boolean;
         loggedIn?: boolean;
         userId?: number | null;
         userAgent?: string;
@@ -121,6 +122,9 @@ export function useAccountController({
       }
       if (data.type === 'nodeseek-login' && typeof data.cookie === 'string') {
         nodeSeekWebViewCookieHeaderRef.current = data.cookie;
+      }
+      if (data.type === 'nodeseek-login' && data.blank) {
+        return;
       }
       if (data.type === 'nodeseek-login' && data.loggedIn && Number.isInteger(data.userId)) {
         webLoginDetectedRef.current = true;

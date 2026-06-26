@@ -71,4 +71,29 @@ describe('account session labels', () => {
     expect(moreScreen).toContain('yaohuoLoginPrompt={yaohuoLoginPrompt}');
     expect(morePanels).toContain('subtitle={yaohuoLoginPrompt || yaohuoLoginState}');
   });
+
+  it('keeps NodeSeek login verification from spinning forever', () => {
+    const morePanels = readFileSync('src/screens/more/MorePanels.tsx', 'utf8');
+
+    expect(morePanels).toContain('NODESEEK_WEBVIEW_LOADING_TIMEOUT_MS');
+    expect(morePanels).toContain('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
+    expect(morePanels).toContain('setWebViewNeedsRemount(true);');
+    expect(morePanels).toContain('onRequestClose={handleRequestClose}');
+    expect(morePanels).toContain('webViewRef.current?.goBack();');
+    expect(morePanels).toContain('!isNodeSeekTopLevelUrl(webViewCurrentUrlRef.current)');
+    expect(morePanels).toContain("const NODESEEK_WEBVIEW_CLOSE_URL = 'about:blank';");
+    expect(morePanels).toContain('setWebViewUrl(NODESEEK_WEBVIEW_CLOSE_URL);');
+  });
+
+  it('does not treat a blank NodeSeek WebView as logged in', () => {
+    const loginWebViewScripts = readFileSync('src/loginWebViewScripts.ts', 'utf8');
+    const accountController = readFileSync('src/app/useAccountController.ts', 'utf8');
+    const morePanels = readFileSync('src/screens/more/MorePanels.tsx', 'utf8');
+
+    expect(loginWebViewScripts).toContain('const blank = body.trim().length === 0;');
+    expect(loginWebViewScripts).toContain('loggedIn: Boolean(match) || (!blank && !/登录|注册|Sign in/i.test(body))');
+    expect(loginWebViewScripts).toContain('body.match(/UID\\\\s*[:：]\\\\s*(\\\\d+)/i)');
+    expect(accountController).toContain("if (data.type === 'nodeseek-login' && data.blank) {");
+    expect(morePanels).toContain('NodeSeek 页面为空白，请刷新页面重试。');
+  });
 });

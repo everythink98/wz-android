@@ -346,8 +346,8 @@ function mergeNodeSeekPolls(...groups: Array<TopicPoll[] | undefined>) {
   return polls.length ? polls : undefined;
 }
 
-async function readNodeSeekPollsFromVoteLinks(values: unknown[], options: NodeSeekOptions) {
-  const ids = extractNodeSeekVoteIds(...values);
+async function readNodeSeekPollsFromVoteLinks(values: unknown[], options: NodeSeekOptions, skipIds = new Set<string>()) {
+  const ids = extractNodeSeekVoteIds(...values).filter((id) => !skipIds.has(id));
   if (!ids.length) {
     return undefined;
   }
@@ -779,9 +779,10 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   };
 }
 
-function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }) {
+function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffset = 0, limit }: { skipFirst: boolean; start?: number; floorOffset?: number; limit?: number }) {
   const source = skipFirst ? comments.slice(1) : comments;
-  return source.slice(start).filter(isRecord).map((comment, index) => {
+  const selected = typeof limit === 'number' ? source.slice(start, start + limit) : source.slice(start);
+  return selected.filter(isRecord).map((comment, index) => {
     const poster = isRecord(comment.poster) ? comment.poster : {};
     const authorId = nodeSeekEmbeddedUserId(poster);
     const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
@@ -829,8 +830,8 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     : typeof data.categoryWord === 'string'
       ? data.categoryWord
       : undefined;
-  const allReplies = normalizeReplies(comments, { skipFirst: true });
-  const replies = allReplies.slice(0, replyLimit);
+  const replyCount = comments.slice(1).filter(isRecord).length;
+  const replies = normalizeReplies(comments, { skipFirst: true, limit: replyLimit });
   const createdAt = toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
   const lastComment = comments.at(-1);
   let lastCommentDate: unknown;
@@ -854,7 +855,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     url,
     createdAt,
     lastReplyAt,
-    replyCount: allReplies.length,
+    replyCount,
     viewCount: parseViewCount(data.views),
     excerpt: textExcerpt(first.markdown),
     contentHtml: markdownToHtml(first.markdown),
@@ -870,9 +871,9 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     locked: optionalBoolean(data.locked),
     ...(accessRequirement ? { accessRequirement } : {}),
     replies,
-    replyHasMore: allReplies.length > replyLimit,
-    replyNextPage: allReplies.length > replyLimit ? 1 : null,
-    replyNextOffset: allReplies.length > replyLimit ? replies.length : null
+    replyHasMore: replyCount > replyLimit,
+    replyNextPage: replyCount > replyLimit ? 1 : null,
+    replyNextOffset: replyCount > replyLimit ? replies.length : null
   };
 }
 
@@ -1046,7 +1047,8 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     return Boolean(replyContent?.innerHTML && row !== firstContentItem);
   });
-  const allReplies = replyRows.map((row, index) => {
+  const replyCount = replyRows.length;
+  const replies = replyRows.slice(0, replyLimit).map((row, index) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
@@ -1071,8 +1073,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
       signatureHtml: renderedNodeSeekSignature(row)
     };
   });
-  const replies = allReplies.slice(0, replyLimit);
-  const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt;
+  const lastReplyAt = renderedNodeSeekTime(replyRows.at(-1)?.querySelector('time') || null) || replies.at(-1)?.createdAt || createdAt;
   const authorHref = authorContainer?.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
   const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
   return {
@@ -1088,7 +1089,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     url: nodeSeekTopicUrl(id),
     createdAt,
     lastReplyAt,
-    replyCount: allReplies.length,
+    replyCount,
     excerpt: textExcerpt(cleanedContentHtml || contentHtml),
     contentHtml: sanitizeContentHtml(cleanedContentHtml, BASE_URL),
     ...(renderedPolls.polls ? { polls: renderedPolls.polls } : {}),
@@ -1102,9 +1103,9 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     disliked: renderedNodeSeekReactionClicked(firstContentItem, ['反对', 'bad-one', 'oppose', 'dislike']),
     collectionCount: renderedNodeSeekReactionCount(firstContentItem, ['收藏', 'star', 'favorite', 'collect', 'bookmark']),
     replies,
-    replyHasMore: allReplies.length > replyLimit,
-    replyNextPage: allReplies.length > replyLimit ? 1 : null,
-    replyNextOffset: allReplies.length > replyLimit ? replies.length : null
+    replyHasMore: replyCount > replyLimit,
+    replyNextPage: replyCount > replyLimit ? 1 : null,
+    replyNextOffset: replyCount > replyLimit ? replies.length : null
   };
 }
 
@@ -1136,9 +1137,10 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   }
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
   if (rendered) {
+    const renderedPollIds = new Set((rendered.polls || []).map((poll) => poll.id).filter((pollId): pollId is string => Boolean(pollId)));
     const polls = mergeNodeSeekPolls(
       rendered.polls,
-      await readNodeSeekPollsFromVoteLinks([rendered.contentHtml, html], options)
+      await readNodeSeekPollsFromVoteLinks([rendered.contentHtml, html], options, renderedPollIds)
     );
     return withNodeSeekReplyPagination(polls ? { ...rendered, polls } : rendered, html, id, 1);
   }

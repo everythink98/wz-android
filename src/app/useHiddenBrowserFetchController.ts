@@ -5,9 +5,37 @@ import { ACCESS_REQUIREMENT_NOTICE_PATTERN_SOURCE } from '../localHtml';
 export const NODESEEK_BROWSER_FETCH_SCRIPT = `
 (() => {
   const requestId = __NODESEEK_BROWSER_FETCH_ID__;
+  if (window.__wzNodeSeekBrowserFetchRequestId === requestId) {
+    return true;
+  }
+  window.__wzNodeSeekBrowserFetchRequestId = requestId;
   const bridgeMessageLimit = 900000;
+  const htmlByteLimit = 800000;
+  const readDeadlineMs = 9000;
+  const votePanelGraceMs = 2000;
   const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;
   const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim().slice(0, limit);
+  const byteLength = (value) => {
+    try {
+      return new TextEncoder().encode(value).length;
+    } catch {
+      return unescape(encodeURIComponent(value)).length;
+    }
+  };
+  const pageHtml = () => {
+    const root = document.documentElement?.cloneNode(true);
+    if (!root) {
+      return "";
+    }
+    root.querySelectorAll("script, style, noscript, template, svg, canvas, iframe, video, audio, source, link[rel='stylesheet']").forEach((element) => element.remove());
+    root.querySelectorAll("img").forEach((image) => {
+      image.removeAttribute("srcset");
+      image.removeAttribute("data-srcset");
+      image.removeAttribute("sizes");
+    });
+    return root.outerHTML || "";
+  };
+  let sent = false;
   const isChallengePage = () => {
     const challengeText = [document.title || "", pageText(3000)].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
@@ -38,8 +66,12 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     });
   };
   const postBridgeMessage = (payload) => {
+    if (sent) {
+      return;
+    }
+    sent = true;
     const message = JSON.stringify(payload);
-    if (message.length <= bridgeMessageLimit) {
+    if (byteLength(message) <= bridgeMessageLimit) {
       window.ReactNativeWebView.postMessage(message);
       return;
     }
@@ -70,13 +102,19 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
     } catch {}
   };
   const postResult = () => {
+    const challenge = isChallengePage();
+    const html = challenge ? "" : pageHtml();
+    if (html && byteLength(html) > htmlByteLimit) {
+      postError('NodeSeek 页面内容过大，已停止读取');
+      return;
+    }
     postBridgeMessage({
       type: 'nodeseek-browser-fetch',
       id: requestId,
       url: location.href,
       title: document.title || "",
-      challenge: isChallengePage(),
-      html: document.documentElement ? document.documentElement.outerHTML : "",
+      challenge,
+      html,
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
     });
@@ -84,9 +122,12 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       window.stop();
     } catch {}
   };
-  const deadline = Date.now() + 15000;
+  const startedAt = Date.now();
+  const deadline = startedAt + readDeadlineMs;
+  const votePanelDeadline = startedAt + votePanelGraceMs;
   const waitForReadablePage = () => {
-    if (!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && !hasPendingVotePanel()) {
+    const votePending = hasPendingVotePanel();
+    if (!isChallengePage() && (hasReadableContent() || hasRestrictedNotice() || hasSearchPageContent() || hasNodeSeekSearchResultLinks()) && (!votePending || Date.now() >= votePanelDeadline)) {
       postResult();
       return;
     }

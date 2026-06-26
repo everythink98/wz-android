@@ -38,9 +38,16 @@ function isNodeSeekSearchUrl(input: string) {
   }
 }
 
-function isNodeSeekCloudflareResponse(response: Response, bodyText: string) {
-  return response.headers.get('cf-mitigated') === 'challenge'
-    || /cf-turnstile|challenge-platform/i.test(bodyText)
+function hasNodeSeekCloudflareHeader(response: Response) {
+  return response.headers.get('cf-mitigated') === 'challenge';
+}
+
+function shouldInspectNodeSeekCloudflareBody(response: Response) {
+  return response.status === 403 || response.status === 503;
+}
+
+function isNodeSeekCloudflareBody(response: Response, bodyText: string) {
+  return /cf-turnstile|challenge-platform/i.test(bodyText)
     || /<title>\s*(?:just a moment|请稍候)/i.test(bodyText)
     || /正在进行安全验证|安全服务防护恶意自动程序/i.test(bodyText)
     || (response.status === 403 && /just a moment|cloudflare|请稍候/i.test(bodyText));
@@ -62,8 +69,14 @@ export function createNodeSeekWebViewFallbackFetcher({
     if (!isNodeSeekRequestUrl(url)) {
       return response;
     }
+    if (hasNodeSeekCloudflareHeader(response)) {
+      return webViewFetcher(url, init);
+    }
+    if (!shouldInspectNodeSeekCloudflareBody(response)) {
+      return response;
+    }
     const text = await response.clone().text();
-    if (isNodeSeekCloudflareResponse(response, text)) {
+    if (isNodeSeekCloudflareBody(response, text)) {
       return webViewFetcher(url, init);
     }
     return response;

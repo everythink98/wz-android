@@ -21,6 +21,7 @@ function runNodeSeekBrowserFetchScript(url: string, html: string) {
 describe('NodeSeek hidden browser fetch script', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    delete (window as typeof window & { __wzNodeSeekBrowserFetchRequestId?: number }).__wzNodeSeekBrowserFetchRequestId;
     vi.restoreAllMocks();
   });
 
@@ -68,7 +69,7 @@ describe('NodeSeek hidden browser fetch script', () => {
         </main>
       `);
 
-      vi.advanceTimersByTime(15000);
+      vi.advanceTimersByTime(9000);
 
       expect(postMessage).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -82,6 +83,75 @@ describe('NodeSeek hidden browser fetch script', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it('returns unresolved challenge pages before the native WebView timeout', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/post-777285-1', `
+        <main>
+          <h1>Just a moment...</h1>
+          <div class="cf-turnstile"></div>
+          <article class="post-content">${'x'.repeat(2000)}</article>
+        </main>
+      `);
+
+      vi.advanceTimersByTime(9000);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload).toMatchObject({
+        type: 'nodeseek-browser-fetch',
+        id: 7,
+        challenge: true
+      });
+      expect(payload.html || '').toBe('');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns readable detail content when a vote panel stays pending', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/post-777286-1', `
+        <main>
+          <article class="post-content"><p>正文先出来</p></article>
+          <div class="embed-vote">
+            <div class="form-mask"></div>
+            <input name="vote-item" id="vote-item-1" value="" />
+            <label for="vote-item-1"><span class="vote-item-text"></span></label>
+          </div>
+        </main>
+      `);
+
+      expect(postMessage).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(2500);
+
+      expect(postMessage).toHaveBeenCalledTimes(1);
+      const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+      expect(payload).toMatchObject({
+        type: 'nodeseek-browser-fetch',
+        id: 7,
+        challenge: false
+      });
+      expect(payload.html).toContain('正文先出来');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('sends only once when injected twice into the same page', () => {
+    const { postMessage } = runNodeSeekBrowserFetchScript('/post-777287-1', `
+      <main><article class="post-content"><p>正文内容</p></article></main>
+    `);
+    const script = NODESEEK_BROWSER_FETCH_SCRIPT.replace('__NODESEEK_BROWSER_FETCH_ID__', '7');
+
+    window.eval(script);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
   });
 
   it('does not treat Cloudflare challenge search pages as readable results', () => {
@@ -134,6 +204,26 @@ describe('NodeSeek hidden browser fetch script', () => {
     });
     expect(payload.html).toContain('本帖已经被用户设为私有');
     expect(stop).toHaveBeenCalled();
+  });
+
+  it('returns readable NodeSeek HTML without heavy browser-only tags', () => {
+    const { postMessage } = runNodeSeekBrowserFetchScript('/post-777284-1', `
+      <main>
+        <script>window.__BIG_STATE__ = "${'x'.repeat(1000)}";</script>
+        <style>.post-content { color: red; }</style>
+        <iframe src="/embedded"></iframe>
+        <article class="post-content"><p>正文内容</p><img src="/image.png" srcset="/image@2x.png 2x" /></article>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload.html).toContain('正文内容');
+    expect(payload.html).toContain('/image.png');
+    expect(payload.html).not.toContain('<script');
+    expect(payload.html).not.toContain('<style');
+    expect(payload.html).not.toContain('<iframe');
+    expect(payload.html).not.toContain('srcset');
   });
 
   it('returns a clear error instead of sending oversized WebView bridge messages', () => {

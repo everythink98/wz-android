@@ -15,7 +15,8 @@ export function LoginWebViewModal({
   title,
   subtitle,
   visible,
-  onClose
+  onClose,
+  onRequestClose
 }: {
   actions?: ReactNode;
   children: ReactNode;
@@ -28,11 +29,12 @@ export function LoginWebViewModal({
   subtitle: string;
   visible: boolean;
   onClose: () => void;
+  onRequestClose?: () => void;
 }) {
   const insets = useSafeAreaInsets();
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={onRequestClose || onClose}>
       <View style={[styles.loginWebViewModal, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
         <View style={styles.loginWebViewHeader}>
           <View style={styles.loginWebViewTitleBlock}>

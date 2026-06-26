@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from 'react';
+import { type RefObject, useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { CheckCircle, LogIn } from 'lucide-react-native';
@@ -14,6 +14,20 @@ import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
+const NODESEEK_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
+const NODESEEK_WEBVIEW_CLOSE_URL = 'about:blank';
+const NODESEEK_WEBVIEW_CLOSE_TIMEOUT_MS = 1500;
+
+function isNodeSeekTopLevelUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const isNodeSeek = hostname === 'nodeseek.com' || hostname.endsWith('.nodeseek.com');
+    return isNodeSeek && (parsed.pathname === '' || parsed.pathname === '/');
+  } catch {
+    return false;
+  }
+}
 
 export function BackupRestorePanel({
   backupBusy,
@@ -78,16 +92,56 @@ export function NodeSeekLoginPanel({
   const [webViewError, setWebViewError] = useState('');
   const [webViewKey, setWebViewKey] = useState(0);
   const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
+  const [webViewCanGoBack, setWebViewCanGoBack] = useState(false);
+  const [webViewUrl, setWebViewUrl] = useState(NODESEEK_URL);
+  const webViewReadyRef = useRef(false);
+  const webViewCurrentUrlRef = useRef(NODESEEK_URL);
+  const closePendingRef = useRef(false);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const markWebViewReady = () => {
+    webViewReadyRef.current = true;
+    onSetLoadingLoginPage(false);
+  };
 
   useEffect(() => {
     if (!showLoginPanel) {
       setWebViewError('');
       setWebViewNeedsRemount(false);
+      setWebViewCanGoBack(false);
+      setWebViewUrl(NODESEEK_URL);
+      webViewCurrentUrlRef.current = NODESEEK_URL;
+      closePendingRef.current = false;
     }
   }, [showLoginPanel]);
 
+  useEffect(() => {
+    webViewReadyRef.current = false;
+  }, [showLoginPanel, webViewKey]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!showLoginPanel || !loadingLoginPage) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => {
+      webViewRef.current?.stopLoading();
+      setWebViewNeedsRemount(true);
+      onSetLoadingLoginPage(false);
+      setWebViewError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
+    }, NODESEEK_WEBVIEW_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [loadingLoginPage, onSetLoadingLoginPage, showLoginPanel, webViewKey, webViewRef]);
+
   const refreshWebView = () => {
     setWebViewError('');
+    closePendingRef.current = false;
+    setWebViewUrl(NODESEEK_URL);
     onSetLoadingLoginPage(true);
     if (webViewNeedsRemount) {
       setWebViewNeedsRemount(false);
@@ -95,6 +149,44 @@ export function NodeSeekLoginPanel({
       return;
     }
     webViewRef.current?.reload();
+  };
+  const finishCloseWebView = () => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    closePendingRef.current = false;
+    onShowLoginPanelChange(false);
+  };
+  const closeWebView = () => {
+    webViewRef.current?.stopLoading();
+    closePendingRef.current = true;
+    setWebViewUrl(NODESEEK_WEBVIEW_CLOSE_URL);
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+    }
+    closeTimerRef.current = setTimeout(finishCloseWebView, NODESEEK_WEBVIEW_CLOSE_TIMEOUT_MS);
+  };
+  const handleRequestClose = () => {
+    if (webViewCanGoBack && !isNodeSeekTopLevelUrl(webViewCurrentUrlRef.current)) {
+      webViewRef.current?.goBack();
+      return;
+    }
+    closeWebView();
+  };
+  const handleNodeSeekMessage = (event: WebViewMessageEvent) => {
+    try {
+      const data = JSON.parse(event.nativeEvent.data) as { type?: string; blank?: boolean };
+      if (data.type === 'nodeseek-login' && data.blank) {
+        webViewRef.current?.stopLoading();
+        setWebViewNeedsRemount(true);
+        onSetLoadingLoginPage(false);
+        setWebViewError('NodeSeek 页面为空白，请刷新页面重试。');
+      }
+    } catch {
+      // Ignore unrelated messages from the page.
+    }
+    onHandleLoginMessage(event);
   };
 
   return (
@@ -110,7 +202,8 @@ export function NodeSeekLoginPanel({
         error={webViewError}
         styles={styles}
         theme={theme}
-        onClose={() => onShowLoginPanelChange(false)}
+        onClose={closeWebView}
+        onRequestClose={handleRequestClose}
         actions={(
           <View style={styles.actions}>
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
@@ -123,15 +216,30 @@ export function NodeSeekLoginPanel({
             <WebView
               key={`nodeseek-login-${webViewKey}`}
               ref={webViewRef}
-              source={{ uri: NODESEEK_URL }}
+              source={{ uri: webViewUrl }}
+              androidLayerType="software"
               javaScriptCanOpenWindowsAutomatically={false}
+              domStorageEnabled
+              cacheEnabled
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
               userAgent={nodeSeekWebViewUserAgent}
               injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
+              onLoadProgress={(event) => {
+                if (event.nativeEvent.progress >= 0.8) {
+                  markWebViewReady();
+                }
+              }}
               onLoadEnd={(event) => {
-                onSetLoadingLoginPage(false);
+                markWebViewReady();
+                webViewCurrentUrlRef.current = event.nativeEvent.url;
+                if (event.nativeEvent.url === NODESEEK_WEBVIEW_CLOSE_URL) {
+                  if (closePendingRef.current) {
+                    finishCloseWebView();
+                  }
+                  return;
+                }
                 if ('code' in event.nativeEvent) {
                   return;
                 }
@@ -142,20 +250,32 @@ export function NodeSeekLoginPanel({
               onLoadStart={() => {
                 setWebViewError('');
                 setWebViewNeedsRemount(false);
-                onSetLoadingLoginPage(true);
+                if (!webViewReadyRef.current) {
+                  onSetLoadingLoginPage(true);
+                }
               }}
-              onMessage={onHandleLoginMessage}
+              onMessage={handleNodeSeekMessage}
+              onNavigationStateChange={(event) => {
+                webViewCurrentUrlRef.current = event.url;
+                setWebViewCanGoBack(event.canGoBack);
+              }}
               onError={(event) => {
                 onSetLoadingLoginPage(false);
                 setWebViewError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
+                if (closePendingRef.current) {
+                  finishCloseWebView();
+                  return;
+                }
                 onSetLoadingLoginPage(false);
                 setWebViewNeedsRemount(true);
                 setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
               }}
-              onShouldStartLoadWithRequest={handleNodeSeekLoginNavigation}
+              onShouldStartLoadWithRequest={(request) => (
+                request.url === NODESEEK_WEBVIEW_CLOSE_URL || handleNodeSeekLoginNavigation(request)
+              )}
             />
         ) : null}
       </LoginWebViewModal>
