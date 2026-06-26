@@ -26,7 +26,7 @@ import {
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
-import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationErrorMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
+import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
 import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
@@ -133,7 +133,7 @@ export function useFeedController({
       setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
-        const verificationMessage = nodeSeekVerificationErrorMessage(data.errors);
+        const verificationMessage = nodeSeekVerificationNavigationMessage(source, data.errors);
         if (verificationMessage) {
           showNodeSeekVerification(verificationMessage);
           return;
