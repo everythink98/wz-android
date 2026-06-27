@@ -75,6 +75,15 @@ describe('reader data store', () => {
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-data', JSON.stringify(data));
   });
 
+  it('skips AsyncStorage writes when the clean JSON has not changed', async () => {
+    const data = createEmptyReaderData();
+
+    const saved = await saveCleanReaderData(data, JSON.stringify(data));
+
+    expect(saved).toBe(data);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
   it('rejects oversized clean data before writing AsyncStorage', async () => {
     const data = createEmptyReaderData();
     const largeText = 'x'.repeat(4096);

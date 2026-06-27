@@ -21,6 +21,15 @@ describe('reader data controller helpers', () => {
     expect(prepareReaderDataCommit(current, (value) => value)).toBeNull();
   });
 
+  it('skips persistence when sanitizing leaves reader data unchanged', () => {
+    const current = createEmptyReaderData();
+
+    expect(prepareReaderDataCommit(current, (value) => ({
+      ...value,
+      favorites: undefined as unknown as typeof value.favorites
+    }))).toBeNull();
+  });
+
   it('sanitizes changed reader data before persistence', () => {
     const current = createEmptyReaderData();
     const next = prepareReaderDataCommit(current, (value) => toggleFavorite(value, topic));

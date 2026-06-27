@@ -24,6 +24,7 @@ import {
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
+type YaohuoClock = { year: number; month: number; day: number };
 
 export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
@@ -54,20 +55,21 @@ export function ensureYaohuoHtmlLoggedIn(html: string, responseUrl = '') {
   }
 }
 
-function parseYaohuoDate(value: unknown) {
+function currentYaohuoClock(): YaohuoClock {
+  const beijingNow = new Date(Date.now() + BEIJING_OFFSET_MS);
+  return {
+    year: beijingNow.getUTCFullYear(),
+    month: beijingNow.getUTCMonth() + 1,
+    day: beijingNow.getUTCDate()
+  };
+}
+
+function parseYaohuoDate(value: unknown, now = currentYaohuoClock()) {
   const text = String(value || '').trim();
   const full = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/);
   const partial = text.match(/(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/);
-  const beijingNow = new Date(Date.now() + BEIJING_OFFSET_MS);
-  const currentYear = beijingNow.getUTCFullYear();
-  const currentMonth = beijingNow.getUTCMonth() + 1;
-  const currentDay = beijingNow.getUTCDate();
-  const relative = parseYaohuoRelativeDate(text, {
-    year: currentYear,
-    month: currentMonth,
-    day: currentDay
-  });
-  const parts = full ? full.slice(1) : partial ? [String(currentYear), ...partial.slice(1)] : null;
+  const relative = parseYaohuoRelativeDate(text, now);
+  const parts = full ? full.slice(1) : partial ? [String(now.year), ...partial.slice(1)] : null;
   if (relative) {
     return relative;
   }
@@ -75,7 +77,7 @@ function parseYaohuoDate(value: unknown) {
     return '';
   }
   let [year, month, day, hour, minute] = parts.map(Number);
-  if (!full && month > currentMonth) {
+  if (!full && month > now.month) {
     year -= 1;
   }
   const date = beijingDateToIso(year, month, day, hour, minute);
@@ -176,7 +178,12 @@ function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>[
     .find(Boolean);
 }
 
-function parseListItem(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallbackClassId?: string, fallbackCreatedAt = new Date().toISOString()) {
+function parseListItem(
+  element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
+  fallbackClassId?: string,
+  fallbackCreatedAt = new Date().toISOString(),
+  now = currentYaohuoClock()
+) {
   const link = element.querySelectorAll('a[href]').find((item) => {
     const href = item.getAttribute('href') || '';
     return elementText(item) && (/bbs-\d+\.html/i.test(href) || /view\.aspx/i.test(href) || (/[?&]id=\d+/i.test(href) && !/book_re\.aspx/i.test(href)));
@@ -196,7 +203,7 @@ function parseListItem(element: ReturnType<ReturnType<typeof parseHtml>['querySe
     || text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || '';
-  const createdAt = parseYaohuoDate(timeText || text) || fallbackCreatedAt;
+  const createdAt = parseYaohuoDate(timeText || text, now) || fallbackCreatedAt;
   const author = text.replace(title, '').split('/').map((part) => part.trim().replace(/^\d+\.\s*/, '')).find((part) => (
     part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
   )) || '';
@@ -282,8 +289,9 @@ export function parseYaohuoListHtml(html: string, {
   const seen = new Set<string>();
   const items: Topic[] = [];
   const fallbackCreatedAt = new Date().toISOString();
+  const now = currentYaohuoClock();
   for (const row of rows) {
-    const item = parseListItem(row, classId, fallbackCreatedAt) as Topic | null;
+    const item = parseListItem(row, classId, fallbackCreatedAt, now) as Topic | null;
     if (item && !seen.has(item.id)) {
       seen.add(item.id);
       items.push(item);
@@ -292,14 +300,17 @@ export function parseYaohuoListHtml(html: string, {
       }
     }
   }
-  for (const chunk of parseListDataChunks(html)) {
-    if (items.length >= limit) {
-      break;
-    }
-    const item = parseListItem(parseHtml(chunk), classId, fallbackCreatedAt) as Topic | null;
-    if (item && !seen.has(item.id)) {
-      seen.add(item.id);
-      items.push(item);
+  const chunks = items.length < limit ? parseListDataChunks(html) : [];
+  if (chunks.length > items.length) {
+    for (const chunk of chunks) {
+      if (items.length >= limit) {
+        break;
+      }
+      const item = parseListItem(parseHtml(chunk), classId, fallbackCreatedAt, now) as Topic | null;
+      if (item && !seen.has(item.id)) {
+        seen.add(item.id);
+        items.push(item);
+      }
     }
   }
   if (!items.length) {

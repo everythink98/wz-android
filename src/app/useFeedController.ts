@@ -62,6 +62,10 @@ function createFeedStates(): Record<FeedSource, FeedSourceState> {
   };
 }
 
+export function shouldWaitForReaderDataBeforeFeed(source: FeedSource, readingFilter: ReadingFilter) {
+  return shouldUseReadingFilter(source) && readingFilter !== 'all';
+}
+
 export function mergedFeedResponseAfterSplitFetch(responses: FeedResponse[], errors: SourceErrors, isLoadMore: boolean) {
   if (!responses.length || (isLoadMore && Object.keys(errors).length > 0)) {
     return null;
@@ -466,7 +470,7 @@ export function useFeedController({
   }, [loadFeed]);
 
   useEffect(() => {
-    if (!readerDataLoaded) {
+    if (!readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter)) {
       return;
     }
     const requestKey = feedRequestKey(feedSource, categoryFilter);
@@ -474,7 +478,7 @@ export function useFeedController({
       return;
     }
     void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
-  }, [categoryFilter, feedSource, readerDataLoaded]);
+  }, [categoryFilter, feedSource, readerDataLoaded, readingFilter]);
 
   useEffect(() => {
     void loadCategories();

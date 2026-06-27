@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { mergedFeedResponseAfterSplitFetch } from './useFeedController';
+import { mergedFeedResponseAfterSplitFetch, shouldWaitForReaderDataBeforeFeed } from './useFeedController';
 import type { FeedResponse } from '../types';
 
 describe('feed controller helpers', () => {
@@ -37,5 +37,10 @@ describe('feed controller helpers', () => {
 
   it('keeps partial all-feed refresh results when a source failed', () => {
     expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: 'HTTP 500' }, false)).toEqual(response);
+  });
+
+  it('lets the default all feed load before reader data finishes loading', () => {
+    expect(shouldWaitForReaderDataBeforeFeed('all', 'all')).toBe(false);
+    expect(shouldWaitForReaderDataBeforeFeed('all', 'favorite')).toBe(true);
   });
 });

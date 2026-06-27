@@ -9,7 +9,11 @@ import { loadReaderData, saveCleanReaderData } from '../readerDataStore';
 
 export function prepareReaderDataCommit(current: ReaderData, updater: (current: ReaderData) => ReaderData) {
   const updated = updater(current);
-  return updated === current ? null : sanitizeReaderData(updated);
+  if (updated === current) {
+    return null;
+  }
+  const clean = sanitizeReaderData(updated);
+  return JSON.stringify(clean) === JSON.stringify(current) ? null : clean;
 }
 
 export function rollbackFailedReaderDataSave(
@@ -60,6 +64,7 @@ export function useReaderDataController({
   const readerDataWriteSuspendedRef = useRef(false);
   const readerDataStateRef = useRef<ReaderData>(readerData);
   const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
+  const lastPersistedReaderDataJsonRef = useRef(JSON.stringify(readerData));
   const saveQueueRef = useRef(Promise.resolve());
 
   if (readerDataStateRef.current !== readerData) {
@@ -71,9 +76,10 @@ export function useReaderDataController({
     readerDataRef.current = next;
     const saveTask = saveQueueRef.current
       .catch(() => undefined)
-      .then(() => saveCleanReaderData(next))
+      .then(() => saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current))
       .then((saved) => {
         lastPersistedReaderDataRef.current = saved;
+        lastPersistedReaderDataJsonRef.current = JSON.stringify(saved);
         setReaderData((latest) => {
           if (latest !== next) {
             return latest;
@@ -142,6 +148,7 @@ export function useReaderDataController({
       onLoaded: (savedReaderData) => {
         readerDataRef.current = savedReaderData;
         lastPersistedReaderDataRef.current = savedReaderData;
+        lastPersistedReaderDataJsonRef.current = JSON.stringify(savedReaderData);
         setReaderData(savedReaderData);
         readerDataLoadedRef.current = true;
         setReaderDataLoaded(true);

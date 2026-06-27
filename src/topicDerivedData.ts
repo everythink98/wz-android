@@ -4,6 +4,7 @@ import { extractImageUrlsFromHtml, markInlineSizedImageHtml } from './htmlImages
 export type InlineSizedImageUrlMap = Record<string, true>;
 
 interface TopicImageDeriverOptions {
+  cacheLimit?: number;
   extractImageUrls?: (html: string) => string[];
   markInlineSizedImageHtml?: (html: string, url: string) => string;
 }
@@ -44,9 +45,24 @@ function inlineSizedImageCacheKey(html: string, inlineSizedImageUrls: InlineSize
   return urls.length ? `${html}\n__inline__\n${urls.join('\n')}` : html;
 }
 
+function rememberCacheValue<T>(cache: Map<string, T>, key: string, value: T, limit: number) {
+  if (cache.has(key)) {
+    cache.delete(key);
+  }
+  cache.set(key, value);
+  while (cache.size > limit) {
+    const oldest = cache.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    cache.delete(oldest.value);
+  }
+}
+
 export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}): TopicImageDeriver {
   const extractImages = options.extractImageUrls || extractImageUrlsFromHtml;
   const markInlineImage = options.markInlineSizedImageHtml || markInlineSizedImageHtml;
+  const cacheLimit = Math.max(1, Math.floor(options.cacheLimit || 200));
   const markedHtmlCache = new Map<string, string>();
   const imageUrlsCache = new Map<string, string[]>();
 
@@ -60,7 +76,7 @@ export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}):
       (current, url) => markInlineImage(current, url),
       html
     );
-    markedHtmlCache.set(cacheKey, marked);
+    rememberCacheValue(markedHtmlCache, cacheKey, marked, cacheLimit);
     return marked;
   };
 
@@ -72,7 +88,7 @@ export function createTopicImageDeriver(options: TopicImageDeriverOptions = {}):
         return cached;
       }
       const urls = extractImages(marked);
-      imageUrlsCache.set(marked, urls);
+      rememberCacheValue(imageUrlsCache, marked, urls, cacheLimit);
       return urls;
     },
     markInlineSizedImages

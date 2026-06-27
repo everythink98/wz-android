@@ -240,6 +240,29 @@ describe('Android direct yaohuo API', () => {
     }
   });
 
+  it('uses one Beijing clock snapshot for all rows in a single yaohuo list parse', () => {
+    const firstNow = new Date('2026-05-25T01:00:00+08:00').getTime();
+    const secondNow = new Date('2026-05-26T01:00:00+08:00').getTime();
+    const nowSpy = vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(firstNow)
+      .mockReturnValueOnce(secondNow)
+      .mockReturnValue(secondNow);
+    try {
+      const result = parseYaohuoListHtml(`
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">第一条</a>/alice/阅1 <span class="right">今天 午夜</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">第二条</a>/bob/阅1 <span class="right">今天 午夜</span></div>
+      `, {
+        page: 1,
+        limit: 30
+      });
+
+      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
+      expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it('sorts yaohuo list rows by newest real time and keeps equal-time rows in source order', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T01:00:00+08:00'));

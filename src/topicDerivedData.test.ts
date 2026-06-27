@@ -87,4 +87,18 @@ describe('Android topic derived data', () => {
     expect(filterRepliesWithImages([replyWithSignatureImage], {}, deriver)).toEqual([replyWithSignatureImage]);
     expect(replyHtmlWithSignature(replyWithSignatureImage)).toContain('https://cdn.example.com/sign.jpg');
   });
+
+  it('evicts old HTML image derivation cache entries after the configured limit', () => {
+    const extractImageUrls = vi.fn((html: string) => [html.match(/src="([^"]+)"/)?.[1] || '']);
+    const deriver = createTopicImageDeriver({ extractImageUrls, cacheLimit: 2 });
+    const first = '<p><img src="https://cdn.example.com/1.jpg"></p>';
+    const second = '<p><img src="https://cdn.example.com/2.jpg"></p>';
+    const third = '<p><img src="https://cdn.example.com/3.jpg"></p>';
+
+    expect(deriver.imageUrlsForHtml(first, {})).toEqual(['https://cdn.example.com/1.jpg']);
+    expect(deriver.imageUrlsForHtml(second, {})).toEqual(['https://cdn.example.com/2.jpg']);
+    expect(deriver.imageUrlsForHtml(third, {})).toEqual(['https://cdn.example.com/3.jpg']);
+    expect(deriver.imageUrlsForHtml(first, {})).toEqual(['https://cdn.example.com/1.jpg']);
+    expect(extractImageUrls).toHaveBeenCalledTimes(4);
+  });
 });
