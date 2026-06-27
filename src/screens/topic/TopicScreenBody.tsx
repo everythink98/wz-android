@@ -860,7 +860,7 @@ export const TopicScreen = memo(function TopicScreen({
         <FlashList
           ref={topicScrollRef}
           style={[styles.content, styles.topicContent]}
-          contentContainerStyle={styles.contentInner}
+          contentContainerStyle={styles.topicContentInner}
           data={topicListItems}
           keyExtractor={topicListItemKey}
           getItemType={topicListItemType}

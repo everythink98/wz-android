@@ -50,12 +50,8 @@ function rememberCacheValue<T>(cache: Map<string, T>, key: string, value: T, lim
     cache.delete(key);
   }
   cache.set(key, value);
-  while (cache.size > limit) {
-    const oldest = cache.keys().next();
-    if (oldest.done) {
-      break;
-    }
-    cache.delete(oldest.value);
+  if (cache.size > limit) {
+    cache.delete(cache.keys().next().value!);
   }
 }
 

@@ -21,13 +21,16 @@ describe('reader data controller helpers', () => {
     expect(prepareReaderDataCommit(current, (value) => value)).toBeNull();
   });
 
-  it('skips persistence when sanitizing leaves reader data unchanged', () => {
+  it('keeps sanitized reader data commits and lets storage skip unchanged writes', () => {
     const current = createEmptyReaderData();
 
-    expect(prepareReaderDataCommit(current, (value) => ({
+    const next = prepareReaderDataCommit(current, (value) => ({
       ...value,
       favorites: undefined as unknown as typeof value.favorites
-    }))).toBeNull();
+    }));
+
+    expect(next).toEqual(current);
+    expect(next).not.toBe(current);
   });
 
   it('sanitizes changed reader data before persistence', () => {

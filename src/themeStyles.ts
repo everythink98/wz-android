@@ -59,7 +59,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     topicContentInner: {
       alignItems: 'center',
-      paddingTop: 18
+      gap: 10,
+      padding: 16,
+      paddingTop: 18,
+      paddingBottom: Platform.OS === 'android' ? 96 : 94
     },
     topicListItemFrame: {
       width: '100%',

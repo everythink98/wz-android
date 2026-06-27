@@ -83,6 +83,15 @@ describe('Android reader theme helpers', () => {
     expect(styles.statusBarScrim.zIndex).toBeGreaterThan(10);
   });
 
+  it('does not double count the Android status bar on topic details', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.topicTopBar.paddingTop).toBe(32);
+    expect(styles.contentInner.paddingTop).toBe(28);
+    expect(styles.topicContentInner.paddingTop).toBe(18);
+  });
+
   it('keeps the feed fixed header visually quiet', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);

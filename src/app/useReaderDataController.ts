@@ -12,8 +12,7 @@ export function prepareReaderDataCommit(current: ReaderData, updater: (current: 
   if (updated === current) {
     return null;
   }
-  const clean = sanitizeReaderData(updated);
-  return JSON.stringify(clean) === JSON.stringify(current) ? null : clean;
+  return sanitizeReaderData(updated);
 }
 
 export function rollbackFailedReaderDataSave(
