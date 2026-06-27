@@ -92,6 +92,20 @@ describe('Android reader theme helpers', () => {
     expect(styles.topicContentInner.paddingTop).toBe(18);
   });
 
+  it('keeps user profiles close to the top bar without changing shared page spacing', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as ReturnType<typeof createStyles> & {
+      userContentInner?: {
+        paddingTop?: number;
+        paddingBottom?: number;
+      };
+    };
+
+    expect(styles.contentInner.paddingTop).toBe(28);
+    expect(styles.userContentInner?.paddingTop).toBe(8);
+    expect(styles.userContentInner?.paddingBottom).toBe(styles.contentInner.paddingBottom);
+  });
+
   it('keeps the feed fixed header visually quiet', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);

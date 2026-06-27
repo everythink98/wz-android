@@ -45,6 +45,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
       paddingBottom: Platform.OS === 'android' ? 96 : 94
     },
+    userContentInner: {
+      gap: 10,
+      padding: 16,
+      paddingTop: 8,
+      paddingBottom: Platform.OS === 'android' ? 96 : 94
+    },
     libraryContentInner: {
       gap: 0,
       padding: 16,

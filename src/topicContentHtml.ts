@@ -1,6 +1,7 @@
 import { elementText, parseHtml } from './localHtml';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
+const FORUM_USER_MENTION_CLASS = 'forum-user-mention';
 const NODESEEK_MENTION_CLASS = 'forum-mention-link';
 const NODESEEK_FLOOR_CLASS = 'forum-floor-link';
 
@@ -25,10 +26,31 @@ function addHtmlClass(attributes: string, className: string) {
   return `${attributes} class="${className}"`;
 }
 
+function hrefAttribute(attributes: string) {
+  return attributes.match(/\bhref=(["'])(.*?)\1/i)?.[2] || '';
+}
+
+function isForumUserMentionHref(href: string) {
+  return /^(?:https?:\/\/(?:www\.)?v2ex\.com)?\/member\/[^/?#"'<>]+/i.test(href)
+    || /^(?:https?:\/\/(?:www\.)?yaohuo\.me)?\/(?:bbs\/)?userinfo\.aspx\?[^"'<>]*\b(?:touserid|userid)=\d+/i.test(href);
+}
+
+function mentionLabel(label: string) {
+  return `@${label.replace(/^@+/, '')}`;
+}
+
 function markForumUserMentions(html: string) {
-  return html.replace(/@<a\b([^>]*\bhref=(["'])(?:https?:\/\/(?:www\.)?v2ex\.com)?\/member\/[^"']+\2[^>]*)>([^<]+)<\/a>/gi, (_match, attributes: string, _quote: string, label: string) => (
-    `<a${addHtmlClass(attributes, 'forum-user-mention')}>@${label}</a>`
-  ));
+  return html
+    .replace(/@<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>([^<]+)<\/a>/gi, (match, attributes: string, _quote: string, label: string) => (
+      isForumUserMentionHref(hrefAttribute(attributes))
+        ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
+        : match
+    ))
+    .replace(/<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>(@[^<]+)<\/a>/gi, (match, attributes: string, _quote: string, label: string) => (
+      isForumUserMentionHref(hrefAttribute(attributes))
+        ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
+        : match
+    ));
 }
 
 function isNodeSeekHost(hostname: string) {

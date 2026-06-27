@@ -185,6 +185,21 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       topics: []
     } : null;
   }
+  if (isForumHost(url.hostname, 'yaohuo.me')) {
+    if (!/^\/(?:bbs\/)?userinfo\.aspx$/i.test(url.pathname)) {
+      return null;
+    }
+    const id = [...url.searchParams.entries()]
+      .find(([key]) => /^(touserid|userid)$/i.test(key))?.[1]
+      .trim() || '';
+    return /^\d+$/.test(id) ? {
+      source: 'yaohuo',
+      id,
+      username: id,
+      url: `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`,
+      topics: []
+    } : null;
+  }
   if (!isForumHost(url.hostname, 'v2ex.com')) {
     return null;
   }

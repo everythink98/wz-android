@@ -212,6 +212,22 @@ describe('Android app utils', () => {
     ])).toBeNull();
   });
 
+  it('recognizes Yaohuo user links as app users', () => {
+    expect(parseForumUserLink('/bbs/userinfo.aspx?touserid=30878', 'https://yaohuo.me/bbs-1540797.html')).toMatchObject({
+      source: 'yaohuo',
+      id: '30878',
+      username: '30878',
+      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=30878'
+    });
+    expect(parseForumUserLink('https://yaohuo.me/userinfo.aspx?userid=42', 'https://yaohuo.me/bbs-1540797.html')).toMatchObject({
+      source: 'yaohuo',
+      id: '42',
+      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=42'
+    });
+    expect(parseForumUserLink('https://yaohuo.me/bbs/userinfo.aspx', 'https://yaohuo.me/bbs-1540797.html')).toBeNull();
+    expect(parseForumUserLink('https://evil.example/bbs/userinfo.aspx?touserid=30878', 'https://yaohuo.me/bbs-1540797.html')).toBeNull();
+  });
+
   it('uses active time for V2EX list display time', () => {
     expect(topicListDisplayTime({
       source: 'v2ex',

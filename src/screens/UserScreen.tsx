@@ -166,7 +166,7 @@ export const UserScreen = memo(function UserScreen({
       </View>
       <FlashList
         style={styles.content}
-        contentContainerStyle={styles.contentInner}
+        contentContainerStyle={styles.userContentInner}
         data={listItems}
         keyExtractor={(item) => item.key}
         getItemType={(item) => item.type}

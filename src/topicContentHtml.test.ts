@@ -20,6 +20,12 @@ describe('Android topic content HTML', () => {
     expect(normalizeRenderableHtml('<a href="/member/lijianan">lijianan</a>')).toBe('<a href="/member/lijianan">lijianan</a>');
   });
 
+  it('marks Yaohuo user mentions with the app mention style', () => {
+    expect(normalizeRenderableHtml('问问@<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>')).toBe('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878" class="forum-user-mention">@Max、爱芯i</a>');
+    expect(normalizeRenderableHtml('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">@Max、爱芯i</a>')).toBe('问问<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878" class="forum-user-mention">@Max、爱芯i</a>');
+    expect(normalizeRenderableHtml('<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>')).toBe('<a href="https://yaohuo.me/bbs/userinfo.aspx?touserid=30878">Max、爱芯i</a>');
+  });
+
   it('extracts leading NodeSeek mention and floor links as a reply reference row', () => {
     const html = [
       '<p>',
