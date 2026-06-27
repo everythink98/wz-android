@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -118,7 +118,7 @@ function topicListItemType(item: TopicListItem) {
   return item.type;
 }
 
-export function TopicScreen({
+export const TopicScreen = memo(function TopicScreen({
   actionBusy,
   canUseLinuxDoActions,
   canUseNodeSeekActions,
@@ -899,4 +899,4 @@ export function TopicScreen({
       </RenderHTMLConfigProvider>
     </TRenderEngineProvider>
   );
-}
+});

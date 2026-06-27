@@ -11,6 +11,12 @@ vi.mock('lucide-react-native', () => ({
   MessageCircle: () => null
 }));
 
+vi.mock('@shopify/flash-list', () => ({
+  useMappingHelper: () => ({
+    getMappingKey: (key: string, index: number) => `${key}:${index}`
+  })
+}));
+
 vi.mock('./Avatar', () => ({
   Avatar: () => null
 }));

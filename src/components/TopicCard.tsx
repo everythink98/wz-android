@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-native';
+import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
 import type { Topic } from '../types';
 import { formatRelativeTime, forumAccessRequirementText, sourceLabel, topicListDisplayTime } from '../appUtils';
@@ -101,6 +102,7 @@ export function TopicCard({
   theme,
   onOpenTopic
 }: TopicCardProps) {
+  const { getMappingKey } = useMappingHelper();
   const openTopicPress = useCallback(() => {
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
@@ -130,7 +132,7 @@ export function TopicCard({
         {visibleTopicTags.length ? (
           <View style={styles.topicTagRow}>
             {visibleTopicTags.map((tag, index) => (
-              <View key={`${tag}-${index}`} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
+              <View key={getMappingKey(tag, index)} style={[styles.topicTagPill, topicTagColorStyle(tag, theme)]}>
                 <Text style={[styles.topicTagText, topicTagTextColorStyle(tag, theme)]} numberOfLines={1}>{tag}</Text>
               </View>
             ))}

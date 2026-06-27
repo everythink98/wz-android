@@ -1225,7 +1225,25 @@ export function AppRoot() {
     syncNavigationToScreen(screen);
   }, [screen, syncNavigationToScreen]);
 
-  const feedProps = {
+  const loadMoreActiveFeed = useCallback(() => {
+    if (!feedAllowsRemotePagination) {
+      return;
+    }
+    loadFeed({ page: activeFeedState.page + 1, cursor: feedSource === 'all' ? activeFeedState.nextCursor : undefined, nocache: true });
+  }, [activeFeedState.nextCursor, activeFeedState.page, feedAllowsRemotePagination, feedSource, loadFeed]);
+
+  const runCurrentSearch = useCallback(() => {
+    void runSearch();
+  }, [runSearch]);
+
+  const refreshCurrentUser = useCallback(() => {
+    const user = userProfile || selectedUser;
+    if (user) {
+      void openUser(user, true);
+    }
+  }, [openUser, selectedUser, userProfile]);
+
+  const feedProps = useMemo(() => ({
       busy: feedBusy || actionBusy,
       categories,
       categoryFilter,
@@ -1243,18 +1261,35 @@ export function AppRoot() {
       theme,
       onCategoryChange: setCategoryFilter,
       onFeedSourceChange: changeFeedSource,
-      onLoadMore: () => {
-        if (!feedAllowsRemotePagination) {
-          return;
-        }
-        loadFeed({ page: activeFeedState.page + 1, cursor: feedSource === 'all' ? activeFeedState.nextCursor : undefined, nocache: true });
-      },
+      onLoadMore: loadMoreActiveFeed,
       onOpenTopic: openTopic,
       onReadingFilterChange: setReadingFilter,
       onRefresh: refreshFeed
-  };
+  }), [
+    actionBusy,
+    activeFeedState.hasMore,
+    activeFeedState.loadMoreFailureSignal,
+    activeFeedState.loadingMore,
+    activeFeedState.page,
+    activeFeedState.refreshing,
+    categories,
+    categoryFilter,
+    changeFeedSource,
+    feedAllowsRemotePagination,
+    feedBusy,
+    feedSource,
+    loadMoreActiveFeed,
+    openTopic,
+    readingFilter,
+    refreshFeed,
+    shownFeedItems,
+    styles,
+    tabScrollToTopSignals.feed,
+    theme,
+    topicStateIndex
+  ]);
 
-  const searchProps = {
+  const searchProps = useMemo(() => ({
       busy: searchBusy,
       categories,
       query: searchQuery,
@@ -1273,13 +1308,34 @@ export function AppRoot() {
       onOpenTopic: openTopic,
       onRemoveRecentSearch: removeRecentSearch,
       onQueryChange: setSearchQuery,
-      onSearch: () => runSearch(),
+      onSearch: runCurrentSearch,
       onSearchFilterApply: applySearchFilter,
       onSearchSourceChange: setSearchSource,
       onRetrySearchSource: retrySearchSource
-  };
+  }), [
+    applySearchFilter,
+    categories,
+    loadMoreSearchSource,
+    openExternalUrl,
+    openTopic,
+    recentSearches,
+    removeRecentSearch,
+    retrySearchSource,
+    runCurrentSearch,
+    searchBusy,
+    searchFilters,
+    searchGroups,
+    searchQuery,
+    searchSessionNotices,
+    searchSource,
+    styles,
+    submittedSearchQuery,
+    tabScrollToTopSignals.search,
+    theme,
+    topicStateIndex
+  ]);
 
-  const libraryProps = {
+  const libraryProps = useMemo(() => ({
       categories,
       followedUsers: followedUserRecords,
       libraryTab,
@@ -1294,9 +1350,23 @@ export function AppRoot() {
       onRemove: removeLibraryTopic,
       onRemoveUser: removeFollowedUser,
       onTabChange: setLibraryTab
-  };
+  }), [
+    categories,
+    clearHistory,
+    followedUserRecords,
+    libraryRecords,
+    libraryTab,
+    openTopic,
+    openUser,
+    removeFollowedUser,
+    removeLibraryTopic,
+    styles,
+    tabScrollToTopSignals.library,
+    theme,
+    topicStateIndex
+  ]);
 
-  const moreProps = {
+  const moreProps = useMemo(() => ({
       checking,
       appUpdateBusy,
       appUpdateDownloading,
@@ -1348,9 +1418,55 @@ export function AppRoot() {
       onShowSettingsPanelChange: setShowSettingsPanel,
       onToggleDevAnonymousOverride: toggleDevAnonymousOverride,
       onUpdateSettings: updateSettings
-  };
+  }), [
+    appUpdateBusy,
+    appUpdateDownloading,
+    appUpdateInfo,
+    appUpdateMessage,
+    backupBusy,
+    changeLinuxDoPanel,
+    changeNodeSeekLoginPanel,
+    changeYaohuoLoginPanel,
+    checkAppUpdate,
+    checkIn,
+    checkLogin,
+    checkYaohuoCookie,
+    checking,
+    clearLogin,
+    clearYaohuoLogin,
+    devAnonymousOverrides,
+    downloadAppUpdate,
+    exportBackupFile,
+    handleLoginMessage,
+    handleNodeSeekLoginNavigation,
+    handleYaohuoLoginNavigation,
+    importBackupFile,
+    linuxDoLevelBusy,
+    linuxDoLevelError,
+    linuxDoLevelProfile,
+    loadingLoginPage,
+    loadingYaohuoLoginPage,
+    loginState,
+    nodeSeekWebViewUserAgent,
+    readerData.settings,
+    refreshAccountStatus,
+    refreshLinuxDoLevel,
+    rememberVisibleNodeSeekCookiesAndRetrySearch,
+    showLinuxDoPanel,
+    showLoginPanel,
+    showSettingsPanel,
+    showYaohuoLoginPanel,
+    siteSessionViewModels,
+    statusBusy,
+    styles,
+    theme,
+    toggleDevAnonymousOverride,
+    updateSettings,
+    yaohuoLoginPrompt,
+    yaohuoLoginState
+  ]);
 
-  const topicProps = {
+  const topicProps = useMemo(() => ({
       actionBusy,
       canUseLinuxDoActions,
       canUseNodeSeekActions,
@@ -1411,9 +1527,67 @@ export function AppRoot() {
       onToggleQuotedFloor: toggleQuotedFloor,
       onToggleFavorite: toggleTopicFavorite,
       onOpenUser: openUser
-  };
+  }), [
+    actionBusy,
+    bookmarkOnLinuxDoSite,
+    canUseLinuxDoActions,
+    canUseNodeSeekActions,
+    canUseYaohuoActions,
+    collectOnNodeSeekSite,
+    commentQuery,
+    contentWidth,
+    debouncedCommentQuery,
+    expandedQuotesRef,
+    favoriteOnYaohuoSite,
+    filteredReplies,
+    goBackFromTopic,
+    handleTopicScroll,
+    htmlBaseStyle,
+    htmlClassesStyles,
+    htmlIgnoredStyles,
+    htmlRenderers,
+    htmlRenderersProps,
+    htmlTagsStyles,
+    inlineSizedImageUrls,
+    interact,
+    loadMoreReplies,
+    loadedQuotedRepliesRef,
+    loadingMoreReplies,
+    loadingQuotedFloorsRef,
+    openExternalUrl,
+    openReadingSettingsFromTopic,
+    openUser,
+    optimisticTopicActions,
+    quoteStateVersion,
+    refreshTopicReplies,
+    refreshWholeTopic,
+    replyComposerOpen,
+    replyContent,
+    replyFilter,
+    replyHasMore,
+    replyTarget,
+    replyToFloor,
+    selectedTopic,
+    shareTopic,
+    styles,
+    submitReply,
+    theme,
+    toggleReplyComposer,
+    toggleTopicFavorite,
+    toggleQuotedFloor,
+    topicBusy,
+    topicDetail,
+    topicError,
+    topicFavorite,
+    topicImageDeriver,
+    topicReplies,
+    topicScrollRef,
+    unreadReplyCount,
+    verifyLinuxDoFromTopic,
+    votePoll
+  ]);
 
-  const userProps = {
+  const userProps = useMemo(() => ({
       busy: userBusy,
       error: userError,
       followed: currentUserFollowed,
@@ -1427,35 +1601,46 @@ export function AppRoot() {
       onLoadMoreTopics: loadMoreUserTopics,
       onOpenOriginal: openExternalUrl,
       onOpenTopic: openTopic,
-      onRefresh: () => {
-        const user = userProfile || selectedUser;
-        if (user) {
-          void openUser(user, true);
-        }
-      },
+      onRefresh: refreshCurrentUser,
       onToggleFollow: toggleUserFollow
-  };
+  }), [
+    currentUserFollowed,
+    goBackFromUser,
+    loadMoreUserTopics,
+    openExternalUrl,
+    openTopic,
+    refreshCurrentUser,
+    selectedUser,
+    styles,
+    theme,
+    toggleUserFollow,
+    topicStateIndex,
+    userBusy,
+    userError,
+    userLoadingMore,
+    userProfile
+  ]);
 
-  const renderFeedTab = () => (
+  const renderFeedTab = useCallback(() => (
     <FeedScreen {...feedProps} />
-  );
-  const renderSearchTab = () => (
+  ), [feedProps]);
+  const renderSearchTab = useCallback(() => (
     <SearchScreen {...searchProps} />
-  );
-  const renderLibraryTab = () => (
+  ), [searchProps]);
+  const renderLibraryTab = useCallback(() => (
     <LibraryScreen {...libraryProps} />
-  );
-  const renderMoreTab = () => (
+  ), [libraryProps]);
+  const renderMoreTab = useCallback(() => (
     <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
       <MoreScreen {...moreProps} />
     </ScrollView>
-  );
-  const renderTopicScreen = () => (
+  ), [moreProps, styles]);
+  const renderTopicScreen = useCallback(() => (
     <TopicScreen {...topicProps} />
-  );
-  const renderUserScreen = () => (
+  ), [topicProps]);
+  const renderUserScreen = useCallback(() => (
     <UserScreen {...userProps} />
-  );
+  ), [userProps]);
 
   const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
     if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {

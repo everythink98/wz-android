@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Text, View } from 'react-native';
 import { FlashList, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
@@ -16,7 +16,7 @@ type UserListItem =
   | { type: 'profile'; key: 'profile' }
   | { type: 'topic'; key: string; topic: Topic };
 
-export function UserScreen({
+export const UserScreen = memo(function UserScreen({
   busy,
   error,
   followed,
@@ -185,4 +185,4 @@ export function UserScreen({
       />
     </View>
   );
-}
+});

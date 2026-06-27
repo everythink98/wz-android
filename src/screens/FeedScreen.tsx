@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, Text, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabView } from 'react-native-tab-view';
@@ -15,8 +15,12 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { FEED_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
+const FEED_PAGER_ROUTES = feedSourceItems.map((item) => ({ key: item.value, title: item.label }));
+function renderEmptyTabBar() {
+  return null;
+}
 
-export function FeedScreen({
+export const FeedScreen = memo(function FeedScreen({
   busy,
   categories,
   categoryFilter,
@@ -70,6 +74,7 @@ export function FeedScreen({
   const activeFeedSourceIndex = Math.max(0, feedSourceItems.findIndex((item) => item.value === feedSource));
   const [pagerIndex, setPagerIndex] = useState(activeFeedSourceIndex);
   const secondaryRailResetKey = feedSource;
+  const feedNavigationState = useMemo(() => ({ index: pagerIndex, routes: FEED_PAGER_ROUTES }), [pagerIndex]);
 
   const requestFeedLoadMore = useCallback((source: 'button' | 'scroll' = 'button', offsetY = 0) => {
     if (!feedHasMore || busy || loadingMore) {
@@ -169,6 +174,15 @@ export function FeedScreen({
       onFeedSourceChange(next.value);
     }
   }, [feedSource, onFeedSourceChange]);
+  const changeFeedSourceValue = useCallback((value: string) => {
+    changeFeedSourceAtIndex(feedSourceItems.findIndex((item) => item.value === value));
+  }, [changeFeedSourceAtIndex]);
+  const changeReadingFilter = useCallback((value: string) => {
+    onReadingFilterChange(value as ReadingFilter);
+  }, [onReadingFilterChange]);
+  const scrollFeedToTopPress = useCallback(() => {
+    scrollFeedToTop();
+  }, [scrollFeedToTop]);
 
   const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
     <MemoizedTopicCard
@@ -261,7 +275,7 @@ export function FeedScreen({
           items={feedSourceItems}
           value={feedSource}
           styles={styles}
-          onChange={(value) => changeFeedSourceAtIndex(feedSourceItems.findIndex((item) => item.value === value))}
+          onChange={changeFeedSourceValue}
         />
         {shouldUseReadingFilter(feedSource) ? (
           <PillRail
@@ -270,7 +284,7 @@ export function FeedScreen({
             value={readingFilter}
             resetScrollKey={secondaryRailResetKey}
             styles={styles}
-            onChange={(value) => onReadingFilterChange(value as ReadingFilter)}
+            onChange={changeReadingFilter}
           />
         ) : (
           <PillRail
@@ -285,16 +299,16 @@ export function FeedScreen({
       </View>
       <TabView
         style={styles.feedPager}
-        navigationState={{ index: pagerIndex, routes: feedSourceItems.map((item) => ({ key: item.value, title: item.label })) }}
+        navigationState={feedNavigationState}
         renderScene={renderFeedScene}
-        renderTabBar={() => null}
+        renderTabBar={renderEmptyTabBar}
         onIndexChange={changeFeedSourceAtIndex}
       />
       {showFloatingActions ? (
         <View style={styles.feedFloatingActions}>
-          <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={() => scrollFeedToTop()} />
+          <FloatingIconButton icon={ChevronUp} label="回到顶部" styles={styles} theme={theme} onPress={scrollFeedToTopPress} />
         </View>
       ) : null}
     </View>
   );
-}
+});

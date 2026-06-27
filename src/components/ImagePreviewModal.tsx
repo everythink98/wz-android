@@ -7,6 +7,8 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { imageRequestHeadersForUrl, imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
 import { createStyles, type ReaderTheme } from '../theme';
 
+const EMPTY_PREVIEW_URLS: string[] = [];
+
 export function ImagePreviewModal({
   preview,
   styles,
@@ -30,15 +32,17 @@ export function ImagePreviewModal({
   const [imagePreviewLoading, setImagePreviewLoading] = useState(false);
   const [imagePreviewFailed, setImagePreviewFailed] = useState(false);
   const [imagePreviewResolution, setImagePreviewResolution] = useState<{ width: number; height: number } | null>(null);
-  const previewKey = preview ? `${preview.index}:${preview.urls.join('|')}` : '';
+  const previewUrls = preview?.urls || EMPTY_PREVIEW_URLS;
+  const previewCount = previewUrls.length;
   const activeIndex = preview?.index ?? 0;
-  const activeUri = preview?.urls[activeIndex] || '';
-  const thumbnailItems = useMemo(() => (preview ? visibleImagePreviewThumbnails(preview.urls, preview.index) : []), [previewKey]);
+  const activeUri = previewUrls[activeIndex] || '';
+  const previewKey = `${activeIndex}:${activeUri}`;
+  const thumbnailItems = useMemo(() => (previewCount ? visibleImagePreviewThumbnails(previewUrls, activeIndex) : []), [activeIndex, previewCount, previewUrls]);
   useEffect(() => {
-    setImagePreviewLoading(Boolean(preview));
+    setImagePreviewLoading(previewCount > 0);
     setImagePreviewFailed(false);
     setImagePreviewResolution(null);
-  }, [previewKey]);
+  }, [activeUri, previewCount]);
 
   useEffect(() => {
     if (!activeUri) {
@@ -81,16 +85,16 @@ export function ImagePreviewModal({
     return Math.max(3, Math.min(8, pixelScale));
   }, [imagePreviewResolution, imagePreviewSize]);
 
-  if (!preview || preview.urls.length === 0) {
+  if (!preview || previewCount === 0) {
     return null;
   }
-  const hasMany = preview.urls.length > 1;
+  const hasMany = previewCount > 1;
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <GestureHandlerRootView style={styles.imagePreviewOverlay}>
         <View style={styles.imagePreviewTopBar}>
-          <Text style={styles.imagePreviewCount}>{preview.index + 1} / {preview.urls.length}</Text>
+          <Text style={styles.imagePreviewCount}>{activeIndex + 1} / {previewCount}</Text>
           <View style={styles.imagePreviewTopActions}>
             <Pressable accessibilityRole="button" accessibilityLabel="保存图片" style={styles.imagePreviewTextButton} onPress={onSave}>
               <Text style={styles.imagePreviewButtonText}>保存</Text>
@@ -140,7 +144,7 @@ export function ImagePreviewModal({
         {hasMany ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
             {thumbnailItems.map(({ url, index }) => (
-              <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === preview.index && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
+              <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
                 <ExpoImage source={imageSourceFromUrl(url)} style={styles.imagePreviewThumbnailImage} contentFit="cover" />
               </Pressable>
             ))}

@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useState } from 'react';
+import { memo, type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, DatabaseBackup, LogIn, Settings, Wrench } from 'lucide-react-native';
@@ -17,7 +17,7 @@ import {
   NodeSeekLoginPanel,
   YaohuoLoginPanel
 } from './more/MorePanels';
-export function MoreScreen({
+export const MoreScreen = memo(function MoreScreen({
   checking,
   appUpdateBusy,
   appUpdateDownloading,
@@ -310,4 +310,4 @@ export function MoreScreen({
       </ExpandablePanel>
     </View>
   );
-}
+});

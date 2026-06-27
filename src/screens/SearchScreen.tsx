@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-react-native';
@@ -418,7 +418,7 @@ function SearchFilterEntry({
   );
 }
 
-export function SearchScreen({
+export const SearchScreen = memo(function SearchScreen({
   busy,
   categories,
   query,
@@ -467,6 +467,11 @@ export function SearchScreen({
 }) {
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const [filterSheetVisible, setFilterSheetVisible] = useState(false);
+  const openFilterSheet = useCallback(() => setFilterSheetVisible(true), []);
+  const closeFilterSheet = useCallback(() => setFilterSheetVisible(false), []);
+  const changeSearchSource = useCallback((value: string) => {
+    onSearchSourceChange(value as FeedSource);
+  }, [onSearchSourceChange]);
   const renderTopicCard = useCallback((item: Topic) => (
     <MemoizedTopicCard
       highlightQuery={query}
@@ -615,7 +620,7 @@ export function SearchScreen({
     }
   }, [scrollToTopSignal]);
 
-  const header = (
+  const header = useMemo(() => (
     <View style={styles.stack}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>搜索</Text>
@@ -634,7 +639,7 @@ export function SearchScreen({
         items={feedSourceItems}
         value={searchSource}
         styles={styles}
-        onChange={(value) => onSearchSourceChange(value as FeedSource)}
+        onChange={changeSearchSource}
       />
       {searchSessionNotices.length ? (
         <View style={styles.searchSessionStatusBar}>
@@ -677,7 +682,7 @@ export function SearchScreen({
           summary={searchFilterEntrySummary}
           styles={styles}
           theme={theme}
-          onPress={() => setFilterSheetVisible(true)}
+          onPress={openFilterSheet}
         />
       ) : null}
       {showIdleRecentSearches ? (
@@ -714,7 +719,27 @@ export function SearchScreen({
         </View>
       ) : null}
     </View>
-  );
+  ), [
+    busy,
+    changeSearchSource,
+    hasInputValue,
+    hasSearchTerm,
+    hasSubmittedQuery,
+    linuxDoExternalItems,
+    onOpenExternalUrl,
+    onQueryChange,
+    onRemoveRecentSearch,
+    onSearch,
+    openFilterSheet,
+    query,
+    recentSearches,
+    searchFilterEntrySummary,
+    searchSessionNotices,
+    searchSource,
+    showIdleRecentSearches,
+    styles,
+    theme
+  ]);
 
   return (
     <View style={styles.content}>
@@ -746,9 +771,9 @@ export function SearchScreen({
           theme={theme}
           visible={filterSheetVisible}
           onApply={onSearchFilterApply}
-          onClose={() => setFilterSheetVisible(false)}
+          onClose={closeFilterSheet}
         />
       ) : null}
     </View>
   );
-}
+});

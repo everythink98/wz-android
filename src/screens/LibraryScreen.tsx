@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, Text, View, type GestureResponderEvent } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { Star, Trash2, type LucideIcon } from 'lucide-react-native';
@@ -23,6 +23,16 @@ import {
   type LibraryDataItem,
   type LibraryListItem
 } from './library/libraryScreenItems';
+
+const LIBRARY_TAB_ITEMS = [
+  { value: 'favorites', label: '帖子' },
+  { value: 'users', label: '关注用户' },
+  { value: 'history', label: '历史' }
+];
+const LIBRARY_SOURCE_ITEMS = [
+  { value: 'all', label: '全部' },
+  ...feedSources.map((source) => ({ value: source, label: sourceLabel(source) }))
+];
 
 function pressLibraryAction(event: GestureResponderEvent, onPress: () => void) {
   event.stopPropagation?.();
@@ -84,7 +94,7 @@ function LibraryIconAction({
   );
 }
 
-export function LibraryScreen({
+export const LibraryScreen = memo(function LibraryScreen({
   libraryTab,
   categories,
   followedUsers,
@@ -125,6 +135,12 @@ export function LibraryScreen({
     category: categoryFilter
   }), [categoryFilter, records, sourceFilter]);
   const listItems = useMemo<LibraryListItem[]>(() => createLibraryListItems(filteredRecords), [filteredRecords]);
+  const changeLibraryTab = useCallback((value: string) => {
+    onTabChange(value as LibraryTab);
+  }, [onTabChange]);
+  const changeSourceFilter = useCallback((value: string) => {
+    setSourceFilter(value as FeedSource);
+  }, []);
   useEffect(() => {
     setSourceFilter('all');
     setCategoryFilter('all');
@@ -195,7 +211,7 @@ export function LibraryScreen({
     </View>
   ), [onOpenUser, onRemoveUser, styles]);
 
-  const header = (
+  const header = useMemo(() => (
     <View style={styles.stack}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>收藏</Text>
@@ -203,24 +219,17 @@ export function LibraryScreen({
       </View>
       <PillRail
         variant="tabs"
-        items={[
-          { value: 'favorites', label: '帖子' },
-          { value: 'users', label: '关注用户' },
-          { value: 'history', label: '历史' }
-        ]}
+        items={LIBRARY_TAB_ITEMS}
         value={libraryTab}
         styles={styles}
-        onChange={(value) => onTabChange(value as LibraryTab)}
+        onChange={changeLibraryTab}
       />
       <PillRail
         variant="subtabs"
-        items={[
-          { value: 'all', label: '全部' },
-          ...feedSources.map((source) => ({ value: source, label: sourceLabel(source) }))
-        ]}
+        items={LIBRARY_SOURCE_ITEMS}
         value={sourceFilter}
         styles={styles}
-        onChange={(value) => setSourceFilter(value as FeedSource)}
+        onChange={changeSourceFilter}
       />
       {libraryTab !== 'users' && categoryItems.length > 1 ? (
         <PillRail
@@ -238,7 +247,20 @@ export function LibraryScreen({
       ) : null}
       {libraryTab === 'users' ? <View style={styles.libraryUserListSpacer} /> : null}
     </View>
-  );
+  ), [
+    categoryFilter,
+    categoryItems,
+    changeLibraryTab,
+    changeSourceFilter,
+    confirmClearHistory,
+    filteredRecords,
+    followedUsers,
+    libraryTab,
+    records,
+    sourceFilter,
+    styles,
+    userRecords
+  ]);
 
   return (
     <FlashList
@@ -255,4 +277,4 @@ export function LibraryScreen({
       renderItem={libraryTab === 'users' ? renderUserItem as ListRenderItem<FollowedUserRecord | LibraryListItem> : renderLibraryItem as ListRenderItem<FollowedUserRecord | LibraryListItem>}
     />
   );
-}
+});
