@@ -10,7 +10,7 @@ import {
   type SearchFilterState,
   type SourceSearchFilter
 } from '../searchFilters';
-import { mergeLoadedSearchHistory, normalizeSearchHistory } from '../searchHistory';
+import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '../searchHistory';
 import { searchTopics, searchYaohuoTopics } from '../sources/sourceGateway';
 import {
   errorMessage,
@@ -32,11 +32,13 @@ import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
+  createNodeSeekRetrySearchOptions,
   enqueueSearchHistoryWrite,
   groupFromRemoteSearchResult,
   remoteSearchActionForSource,
   type RemoteSearchAction,
-  type RemoteSearchSourceResult
+  type RemoteSearchSourceResult,
+  type SearchRunOptions
 } from '../searchControllerResults';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
@@ -95,8 +97,9 @@ export function useSearchController({
   const submittedSearchQueryRef = useRef('');
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
-  const runSearchRef = useRef<((sourceOverride?: Source) => Promise<void>) | null>(null);
+  const runSearchRef = useRef<((options?: Source | SearchRunOptions) => Promise<void>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
+  const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState('');
@@ -114,7 +117,11 @@ export function useSearchController({
     AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
       .then((raw) => {
         if (active) {
-          setRecentSearches((current) => mergeLoadedSearchHistory(current, raw));
+          setRecentSearches((current) => {
+            const merged = mergeLoadedSearchHistory(current, raw);
+            lastSavedRecentSearchesRef.current = merged;
+            return sameSearchHistory(current, merged) ? current : merged;
+          });
         }
       })
       .catch(() => undefined)
@@ -132,9 +139,17 @@ export function useSearchController({
     if (!recentSearchesLoaded) {
       return;
     }
+    if (sameSearchHistory(lastSavedRecentSearchesRef.current, recentSearches)) {
+      return;
+    }
+    const nextRecentSearches = recentSearches;
     void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () => (
-      AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(recentSearches))
-    )).catch(() => undefined);
+      AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(nextRecentSearches))
+    ))
+      .then(() => {
+        lastSavedRecentSearchesRef.current = nextRecentSearches;
+      })
+      .catch(() => undefined);
   }, [recentSearches, recentSearchesLoaded]);
 
   const addRecentSearch = useCallback((query: string) => {
@@ -272,36 +287,47 @@ export function useSearchController({
     }
   }, [categories, clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef, sessionViewModels]);
 
-  const handleRemoteSearchAction = useCallback((action: RemoteSearchAction) => {
+  const handleRemoteSearchAction = useCallback((action: RemoteSearchAction, retryNodeSeek = () => { void runSearchRef.current?.('nodeseek'); }) => {
     if (action.type === 'yaohuo-login') {
       showYaohuoLogin(action.message);
       return;
     }
-    requireNodeSeekSearchVerification(action.message, () => { void runSearchRef.current?.('nodeseek'); });
+    requireNodeSeekSearchVerification(action.message, retryNodeSeek);
   }, [requireNodeSeekSearchVerification, showYaohuoLogin]);
 
-  const runSearch = useCallback(async (sourceOverride?: Source) => {
-    const query = searchQuery.trim();
+  const runSearch = useCallback(async (options?: Source | SearchRunOptions) => {
+    const runOptions: Partial<SearchRunOptions> & { sourceOverride?: Source } = typeof options === 'string' ? { sourceOverride: options } : options || {};
+    const query = (runOptions.query ?? searchQuery).trim();
     if (!query) {
       notify('请输入搜索词');
       return;
     }
+    if (runOptions.query !== undefined && searchQueryRef.current !== query) {
+      searchQueryRef.current = query;
+      setSearchQuery(query);
+    }
+    if (runOptions.source !== undefined && runOptions.source !== searchSource) {
+      setSearchSource(runOptions.source);
+    }
+    const requestSearchSource = runOptions.source ?? searchSource;
+    const requestFilters = runOptions.filters ?? searchFiltersRef.current;
+    const sourceOverride = runOptions.sourceOverride;
     submittedSearchQueryRef.current = query;
     setSubmittedSearchQuery(query);
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
-    const activeFilter = searchSource === 'all'
+    const activeFilter = requestSearchSource === 'all'
       ? undefined
-      : searchFiltersRef.current[(sourceOverride || searchSource) as Source];
-    const requestFilter = searchSource === 'all' ? undefined : activeFilter;
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || searchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
+      : requestFilters[(sourceOverride || requestSearchSource) as Source];
+    const requestFilter = requestSearchSource === 'all' ? undefined : activeFilter;
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     const activeSources = sourceOverride
       ? [sourceOverride]
-      : searchSource === 'all'
+      : requestSearchSource === 'all'
         ? feedSources
-        : [searchSource as Source];
-    const activeSort = remoteSearchSort(searchSource, searchFiltersRef.current);
+        : [requestSearchSource as Source];
+    const activeSort = remoteSearchSort(requestSearchSource, requestFilters);
     if (!sourceOverride) {
       searchVisitedPagesRef.current = {};
     }
@@ -342,9 +368,15 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
       const resultCount = mergedSearchGroupItemCount(nextGroups);
-      const action = remoteSearchActionForSource(searchSource, activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
+      const action = remoteSearchActionForSource(requestSearchSource, activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
       if (action) {
-        handleRemoteSearchAction(action);
+        handleRemoteSearchAction(action, () => {
+          void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
+            filters: requestFilters,
+            query,
+            searchSource: requestSearchSource
+          }));
+        });
         return;
       }
       const errors = nextGroups.filter((group) => group.error);
@@ -364,7 +396,13 @@ export function useSearchController({
         }
         if (isNodeSeekCloudflareError(error)) {
           const message = errorMessage(error);
-          requireNodeSeekSearchVerification(message, () => { void runSearchRef.current?.('nodeseek'); });
+          requireNodeSeekSearchVerification(message, () => {
+            void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
+              filters: requestFilters,
+              query,
+              searchSource: requestSearchSource
+            }));
+          });
           return;
         }
         if (!isCanceledRequest(error)) {

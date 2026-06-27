@@ -46,6 +46,18 @@ describe('Android topic derived data', () => {
     expect(markInlineSizedImageHtml).toHaveBeenCalledTimes(1);
   });
 
+  it('does not mark inline-sized image URLs in text-only html', () => {
+    const markInlineSizedImageHtml = vi.fn((html: string, url: string) => `${html}<!-- inline:${url} -->`);
+    const deriver = createTopicImageDeriver({
+      extractImageUrls: () => [],
+      markInlineSizedImageHtml
+    });
+    const html = '<p>https://cdn.example.com/smile.png</p>';
+
+    expect(deriver.markInlineSizedImages(html, { 'https://cdn.example.com/smile.png': true })).toBe(html);
+    expect(markInlineSizedImageHtml).not.toHaveBeenCalled();
+  });
+
   it('scopes inline-sized image signatures to html that contains the image', () => {
     const inlineSizedImageUrls = {
       'https://cdn.example.com/a.png': true as const,

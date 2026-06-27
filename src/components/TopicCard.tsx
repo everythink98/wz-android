@@ -10,6 +10,64 @@ import { Avatar } from './Avatar';
 
 const TOPIC_CARD_TAG_LIMIT = 3;
 
+type TopicCardProps = {
+  highlightQuery?: string;
+  hideReplyCount?: boolean;
+  renderTrailingAction?: (topic: Topic) => ReactNode;
+  topic: Topic;
+  readerState: TopicListItemState;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onOpenTopic: (topic: Topic) => void;
+};
+
+function sameStringArray(left: string[] | undefined, right: string[] | undefined) {
+  if (!left?.length && !right?.length) {
+    return true;
+  }
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
+}
+
+function sameAccessRequirement(left: Topic['accessRequirement'], right: Topic['accessRequirement']) {
+  if (!left || !right) {
+    return left === right;
+  }
+  return left.type === right.type && left.label === right.label && left.detail === right.detail;
+}
+
+function sameTopicCardTopic(left: Topic, right: Topic) {
+  return left.source === right.source
+    && left.id === right.id
+    && left.title === right.title
+    && left.author === right.author
+    && left.authorAvatar === right.authorAvatar
+    && left.category === right.category
+    && left.createdAt === right.createdAt
+    && left.lastReplyAt === right.lastReplyAt
+    && left.replyCount === right.replyCount
+    && left.viewCount === right.viewCount
+    && left.excerpt === right.excerpt
+    && sameStringArray(left.tags, right.tags)
+    && sameStringArray(left.duplicateSources, right.duplicateSources)
+    && sameAccessRequirement(left.accessRequirement, right.accessRequirement);
+}
+
+export function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCardProps) {
+  return previous.highlightQuery === next.highlightQuery
+    && previous.hideReplyCount === next.hideReplyCount
+    && previous.renderTrailingAction === next.renderTrailingAction
+    && previous.onOpenTopic === next.onOpenTopic
+    && previous.styles === next.styles
+    && previous.theme === next.theme
+    && previous.readerState.favorite === next.readerState.favorite
+    && previous.readerState.read === next.readerState.read
+    && previous.readerState.listDensity === next.readerState.listDensity
+    && sameTopicCardTopic(previous.topic, next.topic);
+}
+
 function HighlightedText({
   highlightStyle,
   numberOfLines,
@@ -42,16 +100,7 @@ export function TopicCard({
   styles,
   theme,
   onOpenTopic
-}: {
-  highlightQuery?: string;
-  hideReplyCount?: boolean;
-  renderTrailingAction?: (topic: Topic) => ReactNode;
-  topic: Topic;
-  readerState: TopicListItemState;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onOpenTopic: (topic: Topic) => void;
-}) {
+}: TopicCardProps) {
   const openTopicPress = useCallback(() => {
     onOpenTopic(topic);
   }, [onOpenTopic, topic]);
@@ -118,4 +167,4 @@ export function TopicCard({
   );
 }
 
-export const MemoizedTopicCard = memo(TopicCard);
+export const MemoizedTopicCard = memo(TopicCard, topicCardPropsAreEqual);

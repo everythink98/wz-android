@@ -18,6 +18,9 @@ function htmlContainsImageUrl(html: string, url: string) {
 }
 
 function inlineSizedImageUrlsForHtml(html: string, inlineSizedImageUrls: InlineSizedImageUrlMap) {
+  if (!/<img\b/i.test(html)) {
+    return [];
+  }
   return Object.keys(inlineSizedImageUrls).filter((url) => htmlContainsImageUrl(html, url)).sort();
 }
 

@@ -220,13 +220,15 @@ export function nextFeedPageState(
 export function shouldFetchAggregatedBaseFeed({
   page,
   cursor,
-  hasYaohuoCookie
+  hasYaohuoCookie,
+  retryWithoutCursor = false
 }: {
   page: number;
   cursor?: string;
   hasYaohuoCookie: boolean;
+  retryWithoutCursor?: boolean;
 }) {
-  return page <= 1 || Boolean(cursor) || !hasYaohuoCookie;
+  return page <= 1 || Boolean(cursor) || !hasYaohuoCookie || retryWithoutCursor;
 }
 
 export function mergeCategories(base: Category[], extra: Category[]) {

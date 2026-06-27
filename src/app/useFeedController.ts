@@ -30,6 +30,7 @@ import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSe
 import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
+  baseFeedRetryPending?: boolean;
   hasMore: boolean;
   items: Topic[];
   loadMoreFailureSignal: number;
@@ -262,7 +263,12 @@ export function useFeedController({
       }
       let finalErrors: SourceErrors = {};
       if (source === 'all' && yaohuoCookie) {
-        const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({ page, cursor, hasYaohuoCookie: true });
+        const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({
+          page,
+          cursor,
+          hasYaohuoCookie: true,
+          retryWithoutCursor: Boolean(requestBaseState.baseFeedRetryPending)
+        });
         const basePromise = shouldFetchBaseFeed
           ? getFeed({
             source,
@@ -300,6 +306,16 @@ export function useFeedController({
         if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
           throw baseResult.reason;
         }
+        if (!isCurrentFeedRequest()) {
+          return;
+        }
+        setFeedStates((current) => ({
+          ...current,
+          [requestSource]: {
+            ...current[requestSource],
+            baseFeedRetryPending: baseResult.status === 'rejected' && yaohuoResult.status === 'fulfilled'
+          }
+        }));
         finalErrors = {
           ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: sourceErrorFromUnknown('all', baseResult.reason) }),
           ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })

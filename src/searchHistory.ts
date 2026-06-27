@@ -42,3 +42,10 @@ export function mergeLoadedSearchHistory(current: string[], raw: string | null) 
     ...searchHistoryFromRaw(raw)
   ]);
 }
+
+export function sameSearchHistory(left: string[] | null | undefined, right: string[] | null | undefined) {
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
+}

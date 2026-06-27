@@ -69,8 +69,15 @@ export function useHtmlRenderingController({
 }) {
   const [inlineSizedImageUrls, setInlineSizedImageUrls] = useState<Record<string, true>>({});
   const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
+  const pendingInlineSizedImageUrlsRef = useRef<Record<string, true>>({});
+  const inlineSizedImageFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
   useEffect(() => {
+    pendingInlineSizedImageUrlsRef.current = {};
+    if (inlineSizedImageFlushTimerRef.current) {
+      clearTimeout(inlineSizedImageFlushTimerRef.current);
+      inlineSizedImageFlushTimerRef.current = null;
+    }
     setInlineSizedImageUrls({});
   }, [selectedTopic?.id, selectedTopic?.source]);
 
@@ -81,10 +88,35 @@ export function useHtmlRenderingController({
 
   const markImageInlineSized = useCallback((url: string) => {
     const clean = normalizeImageCacheKey(url);
-    if (!clean || inlineSizedImageUrlsRef.current[clean]) {
+    if (!clean || inlineSizedImageUrlsRef.current[clean] || pendingInlineSizedImageUrlsRef.current[clean]) {
       return;
     }
-    setInlineSizedImageUrls((current) => current[clean] ? current : { ...current, [clean]: true });
+    pendingInlineSizedImageUrlsRef.current[clean] = true;
+    if (inlineSizedImageFlushTimerRef.current) {
+      return;
+    }
+    inlineSizedImageFlushTimerRef.current = setTimeout(() => {
+      inlineSizedImageFlushTimerRef.current = null;
+      const pending = pendingInlineSizedImageUrlsRef.current;
+      pendingInlineSizedImageUrlsRef.current = {};
+      setInlineSizedImageUrls((current) => {
+        const freshUrls = Object.keys(pending).filter((item) => !current[item]);
+        if (!freshUrls.length) {
+          return current;
+        }
+        const next = { ...current };
+        freshUrls.forEach((item) => {
+          next[item] = true;
+        });
+        return next;
+      });
+    }, 0);
+  }, []);
+
+  useEffect(() => () => {
+    if (inlineSizedImageFlushTimerRef.current) {
+      clearTimeout(inlineSizedImageFlushTimerRef.current);
+    }
   }, []);
 
   const {

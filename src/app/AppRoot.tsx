@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   BackHandler,
-  FlatList,
   KeyboardAvoidingView,
   Linking,
   type NativeScrollEvent,
@@ -14,6 +13,7 @@ import {
   View,
   useWindowDimensions
 } from 'react-native';
+import type { FlashListRef } from '@shopify/flash-list';
 import { DarkTheme, DefaultTheme, StackActions } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
@@ -131,7 +131,7 @@ export function AppRoot() {
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
   const currentTopicKeyRef = useRef<string | null>(null);
-  const topicScrollRef = useRef<FlatList<TopicListItem> | null>(null);
+  const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const topicBackStackRef = useRef<TopicSnapshot[]>([]);
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
@@ -425,6 +425,7 @@ export function AppRoot() {
   const {
     abortQuotedReplyRequests,
     commentQuery,
+    debouncedCommentQuery,
     expandedQuotesRef,
     filteredReplies,
     loadedQuotedReplies,
@@ -1367,6 +1368,7 @@ export function AppRoot() {
       loadingMoreReplies,
       loadingQuotedFloorsRef,
       commentQuery,
+      replyHighlightQuery: debouncedCommentQuery,
       quoteStateVersion,
       topicFavorite,
       replyComposerOpen,

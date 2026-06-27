@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createNodeSeekRetrySearchOptions,
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
   firstRemoteSearchAction,
@@ -56,5 +57,31 @@ describe('search controller result helpers', () => {
     await Promise.all([first, second]);
 
     expect(writes).toEqual(['with A', 'without A']);
+  });
+
+  it('snapshots NodeSeek verification retry search inputs', () => {
+    const filters = {
+      v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
+      linuxdo: { source: 'linuxdo' as const, scope: 'all' as const, category: '', tags: '', timeRange: 'all' as const, order: 'relevance' as const, username: '' },
+      nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
+      yaohuo: { source: 'yaohuo' as const, category: '0' }
+    };
+
+    const retry = createNodeSeekRetrySearchOptions({
+      filters,
+      query: 'codex',
+      searchSource: 'nodeseek'
+    });
+    filters.nodeseek.category = 'changed';
+
+    expect(retry).toEqual({
+      filters: {
+        ...filters,
+        nodeseek: { source: 'nodeseek', category: 'tech', sort: 'replyTime' }
+      },
+      query: 'codex',
+      source: 'nodeseek',
+      sourceOverride: 'nodeseek'
+    });
   });
 });

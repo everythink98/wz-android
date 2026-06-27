@@ -307,6 +307,7 @@ describe('Android feed logic helpers', () => {
     expect(shouldFetchAggregatedBaseFeed({ page: 1, hasYaohuoCookie: true })).toBe(true);
     expect(shouldFetchAggregatedBaseFeed({ page: 2, cursor: 'base-cursor', hasYaohuoCookie: true })).toBe(true);
     expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true })).toBe(false);
+    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true, retryWithoutCursor: true })).toBe(true);
     expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: false })).toBe(true);
   });
 });

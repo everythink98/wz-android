@@ -13,9 +13,6 @@ export const TOPIC_LIST_PERFORMANCE_PROPS = {
 };
 
 export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
-  initialNumToRender: 6,
-  maxToRenderPerBatch: 5,
-  removeClippedSubviews: true,
-  updateCellsBatchingPeriod: 50,
-  windowSize: 7
+  drawDistance: DEFAULT_DRAW_DISTANCE,
+  maxItemsInRecyclePool: 80
 };

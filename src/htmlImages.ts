@@ -162,6 +162,9 @@ export function inlineForumImageAlignmentStyle(attributes: Record<string, string
 }
 
 export function flowInlineImagesInMixedParagraphs(html: string) {
+  if (!/<(?:aside|img)\b/i.test(html)) {
+    return html;
+  }
   try {
     const root = parseHtml(html);
     upgradeBlockImageSources(root);

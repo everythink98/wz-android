@@ -1,7 +1,5 @@
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  FlatList,
-  type ListRenderItem,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -10,6 +8,7 @@ import {
   TextInput,
   View
 } from 'react-native';
+import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import {
   HTMLContentModel,
   HTMLElementModel,
@@ -115,6 +114,10 @@ function topicListItemKey(item: TopicListItem) {
   return item.key;
 }
 
+function topicListItemType(item: TopicListItem) {
+  return item.type;
+}
+
 export function TopicScreen({
   actionBusy,
   canUseLinuxDoActions,
@@ -132,6 +135,7 @@ export function TopicScreen({
   loadingMoreReplies,
   loadingQuotedFloorsRef,
   commentQuery,
+  replyHighlightQuery,
   quoteStateVersion,
   replyComposerOpen,
   replyContent,
@@ -192,6 +196,7 @@ export function TopicScreen({
   loadingMoreReplies: boolean;
   loadingQuotedFloorsRef: RefObject<Record<string, boolean>>;
   commentQuery: string;
+  replyHighlightQuery: string;
   quoteStateVersion: number;
   replyComposerOpen: boolean;
   replyContent: string;
@@ -207,7 +212,7 @@ export function TopicScreen({
   topicBusy: boolean;
   topicError: string;
   topicFavorite: boolean;
-  topicScrollRef: RefObject<FlatList<TopicListItem> | null>;
+  topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
   unreadReplyCount: number;
   onBack: () => void;
   onCommentQueryChange: (value: string) => void;
@@ -254,7 +259,6 @@ export function TopicScreen({
   }, [detailTopicStateKey, optimisticActions]);
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const autoLoadRepliesArmedRef = useRef(false);
-  const topicScrollRetryIdRef = useRef(0);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -393,17 +397,6 @@ export function TopicScreen({
     }
     return items;
   }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
-  const handleTopicScrollToIndexFailed = useCallback(({ index, averageItemLength }: { index: number; averageItemLength: number }) => {
-    const retryId = ++topicScrollRetryIdRef.current;
-    const offset = Math.max(0, averageItemLength * index);
-    topicScrollRef.current?.scrollToOffset({ offset, animated: true });
-    setTimeout(() => {
-      if (topicScrollRetryIdRef.current !== retryId) {
-        return;
-      }
-      topicScrollRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.08 });
-    }, 80);
-  }, [topicScrollRef]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -422,12 +415,6 @@ export function TopicScreen({
     setTopicMenuOpen(false);
     autoLoadRepliesArmedRef.current = false;
   }, [item?.id, item?.source]);
-  useEffect(() => {
-    topicScrollRetryIdRef.current += 1;
-  }, [item?.id, item?.source]);
-  useEffect(() => {
-    topicScrollRetryIdRef.current += 1;
-  }, [topicListItems]);
   const runTopicMenuAction = useCallback((action: () => void) => {
     triggerPressFeedback();
     setTopicMenuOpen(false);
@@ -532,9 +519,12 @@ export function TopicScreen({
     };
     return { ...htmlRenderers, aside: QuoteAsideRenderer, details: DetailsRenderer, summary: SummaryRenderer, table: TableRenderer };
   }, [htmlRenderers, styles, theme.ink, theme.primary, theme.primarySoft]);
+  const renderTopicListItemFrame = useCallback((children: ReactNode) => (
+    <View style={styles.topicListItemFrame}>{children}</View>
+  ), [styles]);
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'accessNotice') {
-      return (
+      return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.topicAccessNotice}>
             {listItem.label ? <Text style={styles.topicAccessBadge}>{listItem.label}</Text> : null}
@@ -546,7 +536,7 @@ export function TopicScreen({
     }
 
     if (listItem.type === 'content') {
-      return (
+      return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <MemoizedTopicContentBlock
@@ -562,7 +552,7 @@ export function TopicScreen({
     }
 
     if (listItem.type === 'replyControls') {
-      return (
+      return renderTopicListItemFrame(
         <View style={[styles.replyHeader, topicColumnStyle]}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{sourceReplies.length} 条</Text></Text>
@@ -603,7 +593,7 @@ export function TopicScreen({
     }
 
     if (listItem.type === 'topicPolls') {
-      return (
+      return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <TopicPolls
@@ -627,7 +617,7 @@ export function TopicScreen({
     if (listItem.type === 'topicActions') {
       const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
       const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic, linuxDoEmojiUrls) : [];
-      return (
+      return renderTopicListItemFrame(
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
           {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
             <View style={styles.topicStatRail}>
@@ -667,7 +657,7 @@ export function TopicScreen({
     }
 
     if (listItem.type === 'replyComposer') {
-      return (
+      return renderTopicListItemFrame(
         <ReplyComposer
           actionBusy={actionBusy}
           replyContent={replyContent}
@@ -683,14 +673,14 @@ export function TopicScreen({
     }
 
     if (listItem.type === 'emptyReplies') {
-      return (
+      return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <EmptyText text="暂无回复" styles={styles} />
         </View>
       );
     }
 
-    return (
+    return renderTopicListItemFrame(
       <View style={[styles.replyListItem, topicColumnStyle]}>
         <MemoizedReplyItem
           actionBusy={actionBusy}
@@ -716,7 +706,7 @@ export function TopicScreen({
           onVotePoll={onVotePoll}
           onReplyToFloor={onReplyToFloor}
           onToggleQuotedFloor={onToggleQuotedFloor}
-          query={commentQuery}
+          query={replyHighlightQuery}
           isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
           source={itemSource}
           onOpenUser={onOpenUser}
@@ -754,8 +744,10 @@ export function TopicScreen({
     onVotePoll,
     pollSelections,
     quoteStateVersion,
+    renderTopicListItemFrame,
     itemSource,
     replyComposerOpen,
+    replyHighlightQuery,
     replyContent,
     replyFilter,
     replyTarget,
@@ -865,12 +857,13 @@ export function TopicScreen({
             <IconButton iconOnly ghost icon={MoreHorizontal} label="更多操作" styles={styles} theme={theme} active={topicMenuOpen} onPress={() => setTopicMenuOpen((value) => !value)} />
           </View>
         </View>
-        <FlatList
+        <FlashList
           ref={topicScrollRef}
           style={[styles.content, styles.topicContent]}
-          contentContainerStyle={[styles.contentInner, styles.topicContentInner]}
+          contentContainerStyle={styles.contentInner}
           data={topicListItems}
           keyExtractor={topicListItemKey}
+          getItemType={topicListItemType}
           keyboardShouldPersistTaps="handled"
           onMomentumScrollEnd={onTopicScroll}
           onScrollEndDrag={onTopicScroll}
@@ -878,13 +871,14 @@ export function TopicScreen({
           onEndReached={handleReplyEndReached}
           onScrollBeginDrag={armReplyAutoLoad}
           onMomentumScrollBegin={armReplyAutoLoad}
-          onScrollToIndexFailed={handleTopicScrollToIndexFailed}
           extraData={quoteStateVersion}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
           ListFooterComponent={canShowReplies && replyHasMore ? (
-            <View style={[styles.topicFooter, topicColumnStyle]}>
-              <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
+            <View style={styles.topicListItemFrame}>
+              <View style={[styles.topicFooter, topicColumnStyle]}>
+                <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
+              </View>
             </View>
           ) : null}
           renderItem={renderReplyItem}

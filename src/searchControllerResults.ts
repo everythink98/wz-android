@@ -1,5 +1,6 @@
 import type { SearchGroup } from './searchListItems';
-import type { FeedSource } from './types';
+import type { SearchFilterState } from './searchFilters';
+import type { FeedSource, Source } from './types';
 
 export type SearchHistoryWriteQueue = {
   current: Promise<void>;
@@ -13,6 +14,39 @@ export type RemoteSearchSourceResult =
   | { kind: 'success'; group: SearchGroup }
   | { kind: 'failed'; group: SearchGroup }
   | { kind: 'action-required'; group: SearchGroup; action: RemoteSearchAction };
+
+export type SearchRunOptions = {
+  filters: SearchFilterState;
+  query: string;
+  source: FeedSource;
+  sourceOverride?: Source;
+};
+
+function snapshotSearchFilters(filters: SearchFilterState): SearchFilterState {
+  return {
+    v2ex: { ...filters.v2ex },
+    linuxdo: { ...filters.linuxdo },
+    nodeseek: { ...filters.nodeseek },
+    yaohuo: { ...filters.yaohuo }
+  };
+}
+
+export function createNodeSeekRetrySearchOptions({
+  filters,
+  query,
+  searchSource
+}: {
+  filters: SearchFilterState;
+  query: string;
+  searchSource: FeedSource;
+}): SearchRunOptions {
+  return {
+    filters: snapshotSearchFilters(filters),
+    query,
+    source: searchSource,
+    sourceOverride: 'nodeseek'
+  };
+}
 
 export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
   return result.group;

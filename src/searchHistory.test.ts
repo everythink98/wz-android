@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_RECENT_SEARCHES, MAX_SEARCH_HISTORY_QUERY_LENGTH, mergeLoadedSearchHistory, normalizeSearchHistory, searchHistoryFromRaw } from './searchHistory';
+import { MAX_RECENT_SEARCHES, MAX_SEARCH_HISTORY_QUERY_LENGTH, mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory, searchHistoryFromRaw } from './searchHistory';
 
 describe('search history helpers', () => {
   it('loads only clean deduplicated search terms from storage', () => {
@@ -36,5 +36,11 @@ describe('search history helpers', () => {
       'new query',
       'old query'
     ]);
+  });
+
+  it('detects unchanged search history snapshots', () => {
+    expect(sameSearchHistory(['AI', 'linux'], ['AI', 'linux'])).toBe(true);
+    expect(sameSearchHistory(['AI', 'linux'], ['linux', 'AI'])).toBe(false);
+    expect(sameSearchHistory(['AI'], ['ai'])).toBe(false);
   });
 });

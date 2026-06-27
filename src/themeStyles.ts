@@ -61,6 +61,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       paddingTop: 18
     },
+    topicListItemFrame: {
+      width: '100%',
+      alignItems: 'center'
+    },
     topicHeaderStack: {
       width: '100%',
       alignItems: 'center',

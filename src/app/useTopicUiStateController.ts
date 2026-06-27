@@ -114,6 +114,7 @@ export function useTopicUiStateController({
   return {
     abortQuotedReplyRequests,
     commentQuery,
+    debouncedCommentQuery,
     expandedQuotes,
     expandedQuotesRef,
     filteredReplies,
