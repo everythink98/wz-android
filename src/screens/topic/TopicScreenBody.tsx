@@ -555,7 +555,7 @@ export function TopicScreen({
       return renderTopicListItemFrame(
         <View style={[styles.replyHeader, topicColumnStyle]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{sourceReplies.length} 条</Text></Text>
+            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{replies.length} 条</Text></Text>
             {canWrite ? (
               <AppButton
                 label={replyComposerOpen ? '收起回复' : '写回复'}
@@ -752,7 +752,7 @@ export function TopicScreen({
     replyFilter,
     replyTarget,
     repliesByFloor,
-    sourceReplies.length,
+    replies.length,
     styles,
     theme,
     togglePollSelection,

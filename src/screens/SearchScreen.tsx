@@ -26,6 +26,7 @@ import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '..
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
+import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -643,9 +644,12 @@ export function SearchScreen({
               : item.notice.tone === 'warning'
                 ? styles.searchSessionStatusChipWarning
                 : styles.searchSessionStatusChipNeutral;
-            const dotStyle = item.notice.tone === 'danger'
+            const lightTone = searchSessionNoticeLightTone(item.notice);
+            const dotStyle = lightTone === 'success'
+              ? styles.searchSessionStatusDotSuccess
+              : lightTone === 'danger'
               ? styles.searchSessionStatusDotDanger
-              : item.notice.tone === 'warning'
+              : lightTone === 'warning'
                 ? styles.searchSessionStatusDotWarning
                 : styles.searchSessionStatusDotNeutral;
             const textStyle = item.notice.tone === 'danger'

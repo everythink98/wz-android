@@ -45,6 +45,23 @@ function isNodeSeekDomain(domain?: string) {
   return normalized === 'nodeseek.com' || normalized.endsWith('.nodeseek.com');
 }
 
+function isNodeSeekCookieSourceUrl(input?: string) {
+  try {
+    const url = new URL(String(input || ''));
+    const host = url.hostname.toLowerCase();
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && (host === 'nodeseek.com' || host.endsWith('.nodeseek.com'));
+  } catch {
+    return false;
+  }
+}
+
+export function nodeSeekBrowserCookieHeaderForPersistence(url?: string, cookieHeader?: string) {
+  return isNodeSeekCookieSourceUrl(url) ? String(cookieHeader || '') : '';
+}
+
 export function hasNodeSeekLoginCookie(cookies: Record<string, NativeCookie>) {
   return Object.entries(cookies).some(([key, cookie]) => {
     const name = cookie.name || key;

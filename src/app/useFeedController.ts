@@ -62,6 +62,17 @@ function createFeedStates(): Record<FeedSource, FeedSourceState> {
   };
 }
 
+export function mergedFeedResponseAfterSplitFetch(responses: FeedResponse[], errors: SourceErrors, isLoadMore: boolean) {
+  if (!responses.length || (isLoadMore && Object.keys(errors).length > 0)) {
+    return null;
+  }
+  let merged: FeedResponse | null = null;
+  for (const response of responses) {
+    merged = merged ? mergeFeedResponses(merged, response) : response;
+  }
+  return merged;
+}
+
 export function useFeedController({
   clearYaohuoLoginState,
   fetcher,
@@ -289,8 +300,6 @@ export function useFeedController({
           limit: 30,
           signal: controller.signal
         });
-        void basePromise.then(applyFeedResponse).catch(() => undefined);
-        void yaohuoPromise.then(applyFeedResponse).catch(() => undefined);
         const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
         if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
           throw baseResult.reason;
@@ -320,6 +329,13 @@ export function useFeedController({
           ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: sourceErrorFromUnknown('all', baseResult.reason) }),
           ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
         };
+        const splitResponse = mergedFeedResponseAfterSplitFetch([
+          ...(baseResult.status === 'fulfilled' ? [baseResult.value] : []),
+          ...(yaohuoResult.status === 'fulfilled' ? [yaohuoResult.value] : [])
+        ], finalErrors, isLoadMore);
+        if (splitResponse) {
+          applyFeedResponse(splitResponse);
+        }
       } else if (source === 'yaohuo') {
         const data = await getYaohuoFeed({
           yaohuoCookie,

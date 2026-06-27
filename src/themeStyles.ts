@@ -528,6 +528,9 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     searchSessionStatusDotNeutral: {
       backgroundColor: alphaColor(theme.primary, theme.dark ? 0.48 : 0.34)
     },
+    searchSessionStatusDotSuccess: {
+      backgroundColor: theme.success
+    },
     searchSessionStatusDotWarning: {
       backgroundColor: warningColor
     },

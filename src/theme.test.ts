@@ -240,6 +240,13 @@ describe('Android reader theme helpers', () => {
     expect(styles.searchGroupMetaPill).toBeUndefined();
   });
 
+  it('uses a green status light for logged-in search sessions', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect(styles.searchSessionStatusDotSuccess.backgroundColor).toBe(theme.success);
+  });
+
   it('keeps reading typography and quotes quiet instead of decorative', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;

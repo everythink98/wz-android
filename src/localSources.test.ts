@@ -2788,6 +2788,35 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/recent?p=1');
   });
 
+  it('does not skip V2EX recent items after the all tab default page', async () => {
+    const item = (id: number, title: string, time: string) => `
+      <div class="cell item">
+        <a class="topic-link" href="/t/${id}#reply0">${title}</a>
+        <a class="node" href="/go/create">分享创造</a>
+        <strong><a href="/member/neo">neo</a></strong>
+        <span title="${time} +08:00"></span>
+      </div>
+    `;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return html(`${Array.from({ length: 20 }, (_, index) => item(900 - index, `all ${index}`, `2026-05-20 00:${String(59 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent">更多新主题</a>`);
+      }
+      if (input === 'https://www.v2ex.com/recent?p=2') {
+        return html(`${Array.from({ length: 20 }, (_, index) => item(800 - index, `recent p2 ${index}`, `2026-05-19 23:${String(59 - index).padStart(2, '0')}:00`)).join('')}<a href="/recent?p=3">下一页</a>`);
+      }
+      if (input === 'https://www.v2ex.com/recent?p=3') {
+        return html(Array.from({ length: 20 }, (_, index) => item(700 - index, `recent p3 ${index}`, `2026-05-19 22:${String(59 - index).padStart(2, '0')}:00`)).join(''));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const first = await getFeed({ source: 'v2ex', limit: 30, fetcher });
+    const second = await getFeed({ source: 'v2ex', page: first.nextPage ?? 2, limit: 30, fetcher });
+
+    expect(first.items).toHaveLength(20);
+    expect(second.items.map((topic) => topic.id).slice(0, 3)).toEqual(['800', '799', '798']);
+  });
+
   it('reads V2EX search hits when SOV2EX returns a top-level hits array', async () => {
     const fetcher = vi.fn(async () => json({
       total: 1,

@@ -281,8 +281,9 @@ export function useAccountController({
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();
+    webViewRef.current?.reload();
     notify('已清除本机保存的 NodeSeek Cookie。');
-  }, [clearNodeSeekLoginState, notify]);
+  }, [clearNodeSeekLoginState, notify, webViewRef]);
 
   const clearYaohuoLogin = useCallback(async () => {
     await clearYaohuoLoginState();

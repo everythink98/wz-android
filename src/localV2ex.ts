@@ -343,6 +343,13 @@ function appendV2exSupplementHtml(contentHtml: string, supplementHtml: string) {
   return [contentHtml, supplementHtml].filter((part) => String(part || '').trim()).join('\n');
 }
 
+function v2exHtmlWindowStart(options: { page: number; limit: number; category?: string }) {
+  if (options.category || options.page <= 1) {
+    return (options.page - 1) * options.limit;
+  }
+  return Math.min(options.limit, HTML_LIST_PAGE_SIZE) + ((options.page - 2) * options.limit);
+}
+
 function parseV2exAllTabPage(html: string, limit: number) {
   const root = parseHtml(html);
   const items = root.querySelectorAll('.cell.item')
@@ -419,7 +426,7 @@ async function fetchHtmlWindow(options: V2exOptions & {
   if (!path) {
     return null;
   }
-  const start = (options.page - 1) * options.limit;
+  const start = v2exHtmlWindowStart(options);
   const firstHtmlPage = Math.floor(start / HTML_LIST_PAGE_SIZE) + 1;
   const skip = start % HTML_LIST_PAGE_SIZE;
   const needed = skip + options.limit;

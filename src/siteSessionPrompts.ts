@@ -12,6 +12,7 @@ export type SearchSessionNoticeItem = {
   label: string;
   notice: AuthNotice;
 };
+export type SearchSessionNoticeLightTone = AuthNoticeTone | 'success';
 
 const searchSessionSources: Array<{ source: Source; label: string }> = [
   { source: 'nodeseek', label: 'NodeSeek' },
@@ -82,6 +83,16 @@ export function searchSessionNoticeItems(source: FeedSource, sessions: SiteSessi
     const notice = authNoticeForSource(item.source, sessions, 'search');
     return notice ? [{ ...item, notice }] : [];
   });
+}
+
+export function searchSessionNoticeLightTone(notice: AuthNotice): SearchSessionNoticeLightTone {
+  if (notice.message.includes('已登录')) {
+    return 'success';
+  }
+  if (notice.message.includes('登录已失效') || notice.message.includes('需要登录')) {
+    return 'danger';
+  }
+  return notice.tone;
 }
 
 export function authNoticeForMessage(message: string): AuthNotice | null {

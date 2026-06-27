@@ -4,6 +4,7 @@ import {
   canStoreNodeSeekCookieHeader,
   hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
+  nodeSeekBrowserCookieHeaderForPersistence,
   parseNodeSeekDocumentCookie,
   parseNodeSeekAccessRecord,
   removeNodeSeekLoginCookies,
@@ -131,6 +132,17 @@ describe('NodeSeek cookie helpers', () => {
 
     expect(buildCookieHeader(cookies)).toBe('cf_clearance=clearance; session=abc');
     expect(canStoreNodeSeekCookieHeader(cookies)).toBe(true);
+  });
+
+  it('does not persist Google cookies collected during NodeSeek browser fallback', () => {
+    expect(nodeSeekBrowserCookieHeaderForPersistence(
+      'https://www.google.com/search?q=site%3Anodeseek.com+login',
+      'SID=google; cf_clearance=google-clearance'
+    )).toBe('');
+    expect(nodeSeekBrowserCookieHeaderForPersistence(
+      'https://www.nodeseek.com/search?q=login',
+      'session=abc; cf_clearance=clearance'
+    )).toBe('session=abc; cf_clearance=clearance');
   });
 
   it('can remove login cookies without deleting Cloudflare verification', () => {

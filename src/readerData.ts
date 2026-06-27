@@ -43,7 +43,7 @@ export interface ReaderData {
 }
 
 const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
-const sensitiveUrlParamPattern = /(^|_)(cookie|token|password|secret|authorization|auth|session|sid|sidyaohuo|csrf)($|_)/i;
+const sensitiveUrlParamPattern = /(^|[^a-z0-9])(cookie|token|password|secret|authorization|auth|session|sidyaohuo|sid|csrf)([^a-z0-9]|$)/i;
 const sourceBaseUrls: Record<Source, string> = {
   v2ex: 'https://www.v2ex.com',
   linuxdo: 'https://linux.do',
@@ -159,6 +159,10 @@ function cleanOptionalNonNegativeInteger(value: unknown) {
     : undefined;
 }
 
+function isSensitiveUrlParamKey(key: string) {
+  return sensitiveUrlParamPattern.test(key.replace(/([a-z0-9])([A-Z])/g, '$1 $2'));
+}
+
 function sanitizeTopicUrl(value: unknown, source?: Source) {
   try {
     const raw = cleanString(value).trim();
@@ -173,7 +177,7 @@ function sanitizeTopicUrl(value: unknown, source?: Source) {
     url.password = '';
     url.hash = '';
     for (const key of [...url.searchParams.keys()]) {
-      if (sensitiveUrlParamPattern.test(key)) {
+      if (isSensitiveUrlParamKey(key)) {
         url.searchParams.delete(key);
       }
     }

@@ -6,6 +6,7 @@ import {
   buildCookieHeader,
   canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
+  nodeSeekBrowserCookieHeaderForPersistence,
   nodeSeekLoginCookieNames,
   nodeSeekAccessRecord,
   NODESEEK_ACCESS_STORAGE_KEY,
@@ -441,8 +442,11 @@ export function useSessionController({
       nodeSeekWebViewUserAgentRef.current = userAgent;
       setNodeSeekWebViewUserAgent(userAgent);
     }
-    if (typeof data.cookie === 'string') {
-      nodeSeekWebViewCookieHeaderRef.current = data.cookie;
+    const cookieHeaderForPersistence = typeof data.cookie === 'string'
+      ? nodeSeekBrowserCookieHeaderForPersistence(data.url, data.cookie)
+      : '';
+    if (cookieHeaderForPersistence) {
+      nodeSeekWebViewCookieHeaderRef.current = cookieHeaderForPersistence;
     }
     const settled = settleBrowserFetchRequestOnce(current, () => {
       current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
@@ -451,12 +455,12 @@ export function useSessionController({
       return;
     }
     startNextNodeSeekBrowserFetch();
-    if (typeof data.cookie === 'string') {
+    if (cookieHeaderForPersistence) {
       const generation = current.credentialGeneration ?? nodeSeekCredentialGateRef.current.generation;
       void runBestEffortTask(async () => {
         await CookieManager.flush();
         const nativeCookies = await readNodeSeekCookiesFromStores();
-        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(data.cookie || '')), { generation });
+        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(cookieHeaderForPersistence)), { generation });
       }, NODESEEK_COOKIE_PERSIST_TIMEOUT_MS);
     }
   }, [

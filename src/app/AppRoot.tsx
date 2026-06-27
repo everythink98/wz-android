@@ -50,6 +50,7 @@ import { useMainTabScrollToTop } from './useMainTabScrollToTop';
 import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
+import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { FeedSource, Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
@@ -1163,7 +1164,7 @@ export function AppRoot() {
         setShowSettingsPanel(false);
         return true;
       }
-      if (replyComposerOpen) {
+      if (shouldCloseReplyComposerOnBack(screen, replyComposerOpen)) {
         setReplyComposerOpen(false);
         setReplyTarget(null);
         return true;

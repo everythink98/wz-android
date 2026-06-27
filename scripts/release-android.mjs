@@ -12,6 +12,7 @@ const releaseManifestFileName = 'release-manifest.json';
 const releaseManifestPath = path.join(path.dirname(releaseApkPath), releaseManifestFileName);
 const releaseEnvPath = path.join(rootDir, '.env.release.local');
 const appConfig = JSON.parse(readFileSync(path.join(rootDir, 'app.json'), 'utf8'));
+const expectedReleaseSignerSha256 = cleanSha256(appConfig.expo?.extra?.releaseSignerSha256);
 const requiredSigningEnv = [
   'WZ_ANDROID_KEYSTORE_PATH',
   'WZ_ANDROID_KEYSTORE_PASSWORD',
@@ -112,6 +113,22 @@ function verifyReleaseApkSignature() {
     process.exit(1);
   }
   return signerSha256;
+}
+
+function cleanSha256(value) {
+  const clean = String(value || '').replace(/:/g, '').trim().toLowerCase();
+  return /^[a-f0-9]{64}$/.test(clean) ? clean : '';
+}
+
+function verifyExpectedReleaseSigner(signerSha256) {
+  if (!expectedReleaseSignerSha256) {
+    console.error('app.json 缺少固定的正式签名 SHA-256：expo.extra.releaseSignerSha256。');
+    process.exit(1);
+  }
+  if (signerSha256 !== expectedReleaseSignerSha256) {
+    console.error(`release APK 签名不是已固定的正式签名：${signerSha256}`);
+    process.exit(1);
+  }
 }
 
 function releaseApkSha256() {
@@ -219,6 +236,7 @@ run(
 
 verifyReleaseApk();
 const signerSha256 = verifyReleaseApkSignature();
+verifyExpectedReleaseSigner(signerSha256);
 const sha256 = releaseApkSha256();
 writeReleaseManifest({ sha256, signerSha256 });
 printReleaseApkSha256(sha256);

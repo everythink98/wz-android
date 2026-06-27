@@ -35,7 +35,7 @@ describe('Android App security review guards', () => {
             source: 'nodeseek',
             id: '1',
             title: '安全测试',
-            url: `https://www.nodeseek.com/post-1-1?token=${fakeSecret}&ok=1`,
+            url: `https://www.nodeseek.com/post-1-1?token=${fakeSecret}&authToken=${fakeSecret}&sessionId=${fakeSecret}&csrfToken=${fakeSecret}&access-token=${fakeSecret}&connect.sid=${fakeSecret}&ok=1`,
             createdAt: '2026-06-06T00:00:00.000Z',
             cookie: fakeSecret,
             session: fakeSecret,
@@ -60,6 +60,11 @@ describe('Android App security review guards', () => {
 
     expect(exported).not.toContain(fakeSecret);
     expect(exported).not.toContain('token');
+    expect(exported).not.toContain('authToken');
+    expect(exported).not.toContain('sessionId');
+    expect(exported).not.toContain('csrfToken');
+    expect(exported).not.toContain('access-token');
+    expect(exported).not.toContain('connect.sid');
     expect(exported).not.toContain('password');
     expect(exported).not.toContain('sidyaohuo');
     expect(exported).toContain('ok=1');

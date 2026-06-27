@@ -51,6 +51,15 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('V2 Signer: certificate');
   });
 
+  it('pins the expected release signer digest before writing the manifest', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+
+    expect(app.expo.extra.releaseSignerSha256).toBe('6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66');
+    expect(releaseScript).toContain('expectedReleaseSignerSha256');
+    expect(releaseScript).toContain('verifyExpectedReleaseSigner(signerSha256);');
+  });
+
   it('keeps APK inspection available before opening the Android installer', () => {
     const plugin = readProjectFile('plugins', 'withApkInstaller.js');
 

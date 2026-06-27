@@ -717,7 +717,7 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
     throw new Error('引用楼层未找到');
   }
   const posts = await fetchPosts(id, [guessed], options);
-  const post = posts.find((item) => isRecord(item) && item.post_number === floor) || posts[0];
+  const post = posts.find((item) => isRecord(item) && item.post_number === floor);
   const reply = normalizePost(post, floor - 1, id, floor);
   if (!reply) {
     throw new Error('引用楼层未找到');

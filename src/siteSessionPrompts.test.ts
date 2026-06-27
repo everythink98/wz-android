@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authActionMessageForSource, authNoticeForMessage, authNoticeForSource, searchSessionNoticeItems } from './siteSessionPrompts';
+import { authActionMessageForSource, authNoticeForMessage, authNoticeForSource, searchSessionNoticeItems, searchSessionNoticeLightTone } from './siteSessionPrompts';
 import { createSiteSessionViewModels, createSiteSessionStates } from './siteSessionState';
 
 describe('site session prompts', () => {
@@ -109,5 +109,13 @@ describe('site session prompts', () => {
       tone: 'danger'
     });
     expect(authNoticeForMessage('读取失败，请稍后重试。')).toBeNull();
+  });
+
+  it('uses separate light colors for login status without changing copy tones', () => {
+    expect(searchSessionNoticeLightTone({ message: '已登录搜索。', tone: 'neutral' })).toBe('success');
+    expect(searchSessionNoticeLightTone({ message: '匿名可阅读，登录后才能互动。', tone: 'neutral' })).toBe('neutral');
+    expect(searchSessionNoticeLightTone({ message: '未登录搜索，结果可能不完整。', tone: 'warning' })).toBe('warning');
+    expect(searchSessionNoticeLightTone({ message: '妖火需要登录后使用此功能。', tone: 'warning' })).toBe('danger');
+    expect(searchSessionNoticeLightTone({ message: 'NodeSeek 登录已失效，请重新登录。', tone: 'danger' })).toBe('danger');
   });
 });
