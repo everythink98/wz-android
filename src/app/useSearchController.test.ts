@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createNodeSeekRetrySearchOptions,
+  createSearchMoreRequestSnapshot,
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
   firstRemoteSearchAction,
@@ -82,6 +83,29 @@ describe('search controller result helpers', () => {
       query: 'codex',
       source: 'nodeseek',
       sourceOverride: 'nodeseek'
+    });
+  });
+
+  it('uses the submitted query for search pagination', () => {
+    const filters = {
+      v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
+      linuxdo: { source: 'linuxdo' as const, scope: 'all' as const, category: '', tags: '', timeRange: 'all' as const, order: 'relevance' as const, username: '' },
+      nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
+      yaohuo: { source: 'yaohuo' as const, category: '0' }
+    };
+
+    expect(createSearchMoreRequestSnapshot({
+      filters,
+      page: 2,
+      searchSource: 'nodeseek',
+      source: 'nodeseek',
+      submittedQuery: ' codex '
+    })).toEqual({
+      activeFilter: { source: 'nodeseek', category: 'tech', sort: 'replyTime' },
+      ownerKey: 'search-more:nodeseek:codex:2:{"source":"nodeseek","category":"tech","sort":"replyTime"}',
+      query: 'codex',
+      sort: 'relevance',
+      visitedKey: 'nodeseek:codex:{"source":"nodeseek","category":"tech","sort":"replyTime"}'
     });
   });
 });

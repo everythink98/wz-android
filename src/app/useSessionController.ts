@@ -56,6 +56,7 @@ import {
 } from '../siteSessionState';
 import {
   createCredentialWriteGate,
+  enqueueLatestBrowserFetchRequest,
   enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
   isCredentialWriteCurrent,
@@ -408,7 +409,11 @@ export function useSessionController({
         }
         request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
       }
-      nodeSeekBrowserFetchQueueRef.current.push(request);
+      enqueueLatestBrowserFetchRequest({
+        queueRef: nodeSeekBrowserFetchQueueRef,
+        request,
+        message: '请求已取消'
+      });
       startNextNodeSeekBrowserFetch();
     });
   }, [nodeSeekBrowserFetchIdRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
@@ -537,7 +542,11 @@ export function useSessionController({
         }
         request.abortSignal.addEventListener('abort', request.abortHandler, { once: true });
       }
-      linuxDoBrowserFetchQueueRef.current.push(request);
+      enqueueLatestBrowserFetchRequest({
+        queueRef: linuxDoBrowserFetchQueueRef,
+        request,
+        message: '请求已取消'
+      });
       startNextLinuxDoBrowserFetch();
     });
   }, [linuxDoBrowserFetchIdRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);

@@ -205,6 +205,22 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   startNext();
 }
 
+export function enqueueLatestBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
+  queueRef,
+  request,
+  message
+}: {
+  queueRef: MutableRef<T[]>;
+  request: T;
+  message: string;
+}) {
+  const staleRequests = queueRef.current.splice(0);
+  for (const staleRequest of staleRequests) {
+    settleBrowserFetchRequestOnce(staleRequest, () => staleRequest.reject(new Error(message)));
+  }
+  queueRef.current.push(request);
+}
+
 export async function runBestEffortTask(task: () => Promise<void>, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

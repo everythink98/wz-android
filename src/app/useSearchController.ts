@@ -33,9 +33,12 @@ import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
   createNodeSeekRetrySearchOptions,
+  createSearchMoreRequestSnapshot,
   enqueueSearchHistoryWrite,
   groupFromRemoteSearchResult,
+  remoteSearchSort,
   remoteSearchActionForSource,
+  snapshotSearchFilters,
   type RemoteSearchAction,
   type RemoteSearchSourceResult,
   type SearchRunOptions
@@ -48,20 +51,8 @@ function mergedSearchGroupItemCount(groups: SearchGroup[]) {
   return merged.length;
 }
 
-function remoteSearchSort(searchSource: FeedSource, searchFilters: SearchFilterState) {
-  return searchSource === 'all'
-    ? 'time'
-    : searchSource === 'v2ex' && searchFilters.v2ex.sort === 'time'
-      ? searchFilters.v2ex.sort
-      : 'relevance';
-}
-
 function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
-}
-
-function searchPageVisitKey(source: Source, query: string, filter: SourceSearchFilter | undefined) {
-  return `${source}:${query}:${JSON.stringify(filter || {})}`;
 }
 
 export function useSearchController({
@@ -95,6 +86,8 @@ export function useSearchController({
   const searchGroupsRef = useRef<SearchGroup[]>([]);
   const searchQueryRef = useRef('');
   const submittedSearchQueryRef = useRef('');
+  const submittedSearchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
+  const submittedSearchSourceRef = useRef<FeedSource>('all');
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
   const runSearchRef = useRef<((options?: Source | SearchRunOptions) => Promise<void>) | null>(null);
@@ -313,6 +306,8 @@ export function useSearchController({
     const requestFilters = runOptions.filters ?? searchFiltersRef.current;
     const sourceOverride = runOptions.sourceOverride;
     submittedSearchQueryRef.current = query;
+    submittedSearchFiltersRef.current = snapshotSearchFilters(requestFilters);
+    submittedSearchSourceRef.current = requestSearchSource;
     setSubmittedSearchQuery(query);
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
@@ -429,10 +424,19 @@ export function useSearchController({
   ]);
 
   const loadMoreSearchSource = useCallback(async (source: Source, page: number) => {
-    const query = searchQuery.trim();
-    if (!query) {
+    const requestFilters = snapshotSearchFilters(submittedSearchFiltersRef.current);
+    const requestSearchSource = submittedSearchSourceRef.current;
+    const requestSnapshot = createSearchMoreRequestSnapshot({
+      filters: requestFilters,
+      page,
+      searchSource: requestSearchSource,
+      source,
+      submittedQuery: submittedSearchQueryRef.current
+    });
+    if (!requestSnapshot) {
       return;
     }
+    const { activeFilter, ownerKey, query, sort, visitedKey } = requestSnapshot;
     const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
     if (!currentGroup || currentGroup.loading || currentGroup.loadingMore || !currentGroup.hasMore) {
       return;
@@ -444,13 +448,11 @@ export function useSearchController({
     setSearchGroups(markedGroups);
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
-    const activeFilter = searchSource === 'all' ? undefined : searchFiltersRef.current[source];
-    const visitedKey = searchPageVisitKey(source, query, activeFilter);
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search-more:${source}:${query}:${page}:${JSON.stringify(activeFilter || {})}`);
+    const requestOwner = startOwnedRequest(searchRequestOwnerRef, ownerKey);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     setSearchBusy(true);
     try {
-      const result = await runRemoteSearchSource(source, query, page, controller.signal, remoteSearchSort(searchSource, searchFiltersRef.current), activeFilter, { isCurrent: () => isCurrentSearchRequest() });
+      const result = await runRemoteSearchSource(source, query, page, controller.signal, sort, activeFilter, { isCurrent: () => isCurrentSearchRequest() });
       if (!isCurrentSearchRequest()) {
         return;
       }
@@ -477,7 +479,13 @@ export function useSearchController({
       setSearchGroups(nextGroups);
       const updated = nextGroups.find((group) => group.source === source);
       if (result.kind === 'action-required') {
-        handleRemoteSearchAction(result.action);
+        handleRemoteSearchAction(result.action, () => {
+          void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
+            filters: requestFilters,
+            query,
+            searchSource: requestSearchSource
+          }));
+        });
         return;
       }
       notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
@@ -496,7 +504,7 @@ export function useSearchController({
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [handleRemoteSearchAction, notify, runRemoteSearchSource, searchQuery, searchSource]);
+  }, [handleRemoteSearchAction, notify, runRemoteSearchSource]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;

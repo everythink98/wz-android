@@ -1,5 +1,6 @@
 import type { SearchGroup } from './searchListItems';
-import type { SearchFilterState } from './searchFilters';
+import type { SearchSort } from './feedLogic';
+import type { SearchFilterState, SourceSearchFilter } from './searchFilters';
 import type { FeedSource, Source } from './types';
 
 export type SearchHistoryWriteQueue = {
@@ -22,12 +23,52 @@ export type SearchRunOptions = {
   sourceOverride?: Source;
 };
 
-function snapshotSearchFilters(filters: SearchFilterState): SearchFilterState {
+export function snapshotSearchFilters(filters: SearchFilterState): SearchFilterState {
   return {
     v2ex: { ...filters.v2ex },
     linuxdo: { ...filters.linuxdo },
     nodeseek: { ...filters.nodeseek },
     yaohuo: { ...filters.yaohuo }
+  };
+}
+
+export function remoteSearchSort(searchSource: FeedSource, searchFilters: SearchFilterState): SearchSort {
+  return searchSource === 'all'
+    ? 'time'
+    : searchSource === 'v2ex' && searchFilters.v2ex.sort === 'time'
+      ? searchFilters.v2ex.sort
+      : 'relevance';
+}
+
+function searchPageVisitKey(source: Source, query: string, filter: SourceSearchFilter | undefined) {
+  return `${source}:${query}:${JSON.stringify(filter || {})}`;
+}
+
+export function createSearchMoreRequestSnapshot({
+  filters,
+  page,
+  searchSource,
+  source,
+  submittedQuery
+}: {
+  filters: SearchFilterState;
+  page: number;
+  searchSource: FeedSource;
+  source: Source;
+  submittedQuery: string;
+}) {
+  const query = submittedQuery.trim();
+  if (!query) {
+    return null;
+  }
+  const activeFilter = searchSource === 'all' ? undefined : filters[source];
+  const filterKey = JSON.stringify(activeFilter || {});
+  return {
+    activeFilter,
+    ownerKey: `search-more:${source}:${query}:${page}:${filterKey}`,
+    query,
+    sort: remoteSearchSort(searchSource, filters),
+    visitedKey: searchPageVisitKey(source, query, activeFilter)
   };
 }
 

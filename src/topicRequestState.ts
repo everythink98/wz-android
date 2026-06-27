@@ -21,3 +21,5 @@ export function isCurrentTopicLoadRequest({
     && requestId === requestIdRef.current
     && currentTopicKeyRef.current === requestTopicKey;
 }
+
+export const isCurrentTopicRepliesRequest = isCurrentTopicLoadRequest;

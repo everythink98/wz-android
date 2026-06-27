@@ -4,6 +4,7 @@ import {
   createCredentialWriteGate,
   enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
+  enqueueLatestBrowserFetchRequest,
   isCredentialWriteCurrent,
   replaceCredentialWrite,
   rejectBrowserFetchRequest,
@@ -262,5 +263,35 @@ describe('session controller helpers', () => {
     expect(queued.reject).toHaveBeenCalledWith(new Error('取消'));
     expect(setActiveRequest).not.toHaveBeenCalled();
     expect(startNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps only the latest queued browser fetch request', () => {
+    const first = {
+      id: 1,
+      url: 'https://linux.do/t/1',
+      reject: vi.fn()
+    };
+    const second = {
+      id: 2,
+      url: 'https://linux.do/t/2',
+      reject: vi.fn()
+    };
+    const latest = {
+      id: 3,
+      url: 'https://linux.do/t/3',
+      reject: vi.fn()
+    };
+    const queueRef = { current: [first, second] };
+
+    enqueueLatestBrowserFetchRequest({
+      queueRef,
+      request: latest,
+      message: '请求已取消'
+    });
+
+    expect(queueRef.current).toEqual([latest]);
+    expect(first.reject).toHaveBeenCalledWith(new Error('请求已取消'));
+    expect(second.reject).toHaveBeenCalledWith(new Error('请求已取消'));
+    expect(latest.reject).not.toHaveBeenCalled();
   });
 });

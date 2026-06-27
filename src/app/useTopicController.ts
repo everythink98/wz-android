@@ -25,8 +25,8 @@ import {
 } from '../appUtils';
 import { REPLY_PAGE_SIZE, replyRefreshTarget } from '../androidFeatureHelpers';
 import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapshot } from '../topicSessionState';
-import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
-import { isCurrentTopicLoadRequest } from '../topicRequestState';
+import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
+import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
@@ -410,7 +410,14 @@ export function useTopicController({
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
     const requestOwner = startOwnedRequest(repliesRequestOwnerRef, `topic-replies:${requestTopicKey}:refresh:${afterSubmit ? 'after-submit' : 'manual'}`);
-    const isCurrentRepliesRequest = () => isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current;
+    const isCurrentRepliesRequest = () => isCurrentTopicRepliesRequest({
+      currentTopicKeyRef,
+      ownerRef: repliesRequestOwnerRef,
+      requestId,
+      requestIdRef: repliesRequestIdRef,
+      requestOwner,
+      requestTopicKey
+    });
     loadingMoreRepliesRef.current = true;
     repliesAbortRef.current?.abort();
     let controller: AbortController | null = null;
@@ -497,7 +504,7 @@ export function useTopicController({
       }
       return false;
     } finally {
-      if (isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && requestId === repliesRequestIdRef.current) {
+      if (isCurrentRepliesRequest()) {
         loadingMoreRepliesRef.current = false;
         setLoadingMoreReplies(false);
       }
@@ -540,7 +547,14 @@ export function useTopicController({
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
     const requestOwner = startOwnedRequest(repliesRequestOwnerRef, `topic-replies:${requestTopicKey}:more:${replyNextPage}:${replyNextOffset || ''}`);
-    const isCurrentRepliesRequest = () => isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && currentTopicKeyRef.current === requestTopicKey && requestId === repliesRequestIdRef.current;
+    const isCurrentRepliesRequest = () => isCurrentTopicRepliesRequest({
+      currentTopicKeyRef,
+      ownerRef: repliesRequestOwnerRef,
+      requestId,
+      requestIdRef: repliesRequestIdRef,
+      requestOwner,
+      requestTopicKey
+    });
     loadingMoreRepliesRef.current = true;
     let controller: AbortController | null = null;
     setLoadingMoreReplies(true);
@@ -615,7 +629,7 @@ export function useTopicController({
         }
       }
     } finally {
-      if (isCurrentOwnedRequest(requestOwner, repliesRequestOwnerRef) && requestId === repliesRequestIdRef.current) {
+      if (isCurrentRepliesRequest()) {
         loadingMoreRepliesRef.current = false;
         setLoadingMoreReplies(false);
       }
