@@ -2,7 +2,7 @@ import { memo, type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, DatabaseBackup, LogIn, Settings, Wrench } from 'lucide-react-native';
-import { CURRENT_APP_VERSION, type AppUpdateInfo } from '../appUpdate';
+import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
@@ -21,6 +21,7 @@ export const MoreScreen = memo(function MoreScreen({
   checking,
   appUpdateBusy,
   appUpdateDownloading,
+  appUpdateDownloadProgress,
   appUpdateInfo,
   appUpdateMessage,
   loginState,
@@ -73,6 +74,7 @@ export const MoreScreen = memo(function MoreScreen({
   checking: boolean;
   appUpdateBusy: boolean;
   appUpdateDownloading: boolean;
+  appUpdateDownloadProgress: AppUpdateDownloadProgress | null;
   appUpdateInfo: AppUpdateInfo | null;
   appUpdateMessage: string;
   loginState: string;
@@ -131,6 +133,7 @@ export const MoreScreen = memo(function MoreScreen({
   const yaohuoSession = sessionViewModels.yaohuo;
   const updateNotes = appUpdateInfo?.notes.trim();
   const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
+  const appUpdateProgressWidth = appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null ? `${appUpdateDownloadProgress.percent}%` as `${number}%` : null;
   const appVersionMeta = appUpdateInfo
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
     : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
@@ -173,14 +176,28 @@ export const MoreScreen = memo(function MoreScreen({
           {appUpdateInfo ? (
             <>
               <AppButton variant="primary" label={appUpdateDownloading ? '下载中' : '下载并安装'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onDownloadAppUpdate} />
-              <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
+              <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy || appUpdateDownloading} onPress={onCheckAppUpdate} />
             </>
           ) : (
             <AppButton tiny label={appUpdateBusy ? '检查中' : '检查更新'} styles={styles} disabled={appUpdateBusy} onPress={onCheckAppUpdate} />
           )}
         </View>
-        {appUpdateStatus ? <Text style={styles.meta} numberOfLines={3}>{appUpdateStatus}</Text> : null}
-        {appUpdateInfo && updateNotes ? <Text style={styles.meta} numberOfLines={5}>{updateNotes}</Text> : null}
+        {appUpdateDownloadProgress ? (
+          <View style={styles.updateProgressBox}>
+            <View style={styles.updateProgressHeader}>
+              <Text style={styles.updateProgressTitle}>{appUpdateDownloadProgress.title}</Text>
+              {appUpdateDownloadProgress.percentLabel ? <Text style={styles.updateProgressPercent}>{appUpdateDownloadProgress.percentLabel}</Text> : null}
+            </View>
+            {appUpdateProgressWidth ? (
+              <View style={styles.updateProgressTrack}>
+                <View style={[styles.updateProgressFill, { width: appUpdateProgressWidth }]} />
+              </View>
+            ) : null}
+            <Text style={styles.updateProgressMeta}>{appUpdateDownloadProgress.sizeLabel}</Text>
+          </View>
+        ) : null}
+        {appUpdateStatus && !appUpdateDownloadProgress ? <Text style={styles.meta}>{appUpdateStatus}</Text> : null}
+        {appUpdateInfo && updateNotes ? <Text style={styles.meta}>{updateNotes}</Text> : null}
       </View>
       <ExpandablePanel
         quiet

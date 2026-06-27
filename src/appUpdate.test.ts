@@ -8,14 +8,15 @@ import {
   compareAppVersions,
   getAppUpdateFromRelease,
   getReleaseManifestUrlFromRelease,
+  formatAppUpdateDownloadProgress,
   installVerifiedApk
 } from './appUpdate';
 
 const apkSha256 = 'a'.repeat(64);
 const signerSha256 = 'b'.repeat(64);
-const newerVersion = '1.3.26';
+const newerVersion = '1.3.27';
 const newerTag = `v${newerVersion}`;
-const newerVersionCode = 30;
+const newerVersionCode = 31;
 
 function releaseAssetUrl(tagName: string, assetName: string) {
   return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${assetName}`;
@@ -119,6 +120,31 @@ describe('app update release parsing', () => {
   it('compares multi-digit versions numerically', () => {
     expect(compareAppVersions('1.10.0', '1.9.9')).toBeGreaterThan(0);
     expect(compareAppVersions('2.0.0', '10.0.0')).toBeLessThan(0);
+  });
+
+  it('formats app update download progress with percent and size', () => {
+    expect(formatAppUpdateDownloadProgress('1.3.26', 12.3 * 1024 * 1024, 29 * 1024 * 1024)).toMatchObject({
+      title: '正在下载 1.3.26',
+      percent: 42,
+      percentLabel: '42%',
+      sizeLabel: '12.3 MB / 29.0 MB'
+    });
+  });
+
+  it('formats app update download progress without percent when total size is unknown', () => {
+    expect(formatAppUpdateDownloadProgress('1.3.26', 12.3 * 1024 * 1024, -1)).toMatchObject({
+      title: '正在下载 1.3.26',
+      percent: null,
+      percentLabel: '',
+      sizeLabel: '已下载 12.3 MB'
+    });
+  });
+
+  it('does not show app update download progress above 100 percent', () => {
+    expect(formatAppUpdateDownloadProgress('1.3.26', 120, 100)).toMatchObject({
+      percent: 100,
+      percentLabel: '100%'
+    });
   });
 
   it('loads the latest GitHub release with the pinned API version', async () => {

@@ -44,6 +44,15 @@ export type ApkInstaller = {
   installApk?: (uri: string) => Promise<boolean>;
 };
 
+export type AppUpdateDownloadProgress = {
+  title: string;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+  percentLabel: string;
+  sizeLabel: string;
+};
+
 type GitHubReleaseAsset = {
   name?: unknown;
   browser_download_url?: unknown;
@@ -102,6 +111,31 @@ export function compareAppVersions(left: string, right: string) {
     }
   }
   return 0;
+}
+
+function formatDownloadBytes(value: number) {
+  const bytes = Number.isFinite(value) ? Math.max(0, value) : 0;
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+  if (bytes >= 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${Math.round(bytes)} B`;
+}
+
+export function formatAppUpdateDownloadProgress(version: string, downloadedBytes: number, totalBytes: number): AppUpdateDownloadProgress {
+  const downloaded = Number.isFinite(downloadedBytes) ? Math.max(0, downloadedBytes) : 0;
+  const total = Number.isFinite(totalBytes) && totalBytes > 0 ? totalBytes : null;
+  const percent = total === null ? null : Math.min(100, Math.max(0, Math.round((downloaded / total) * 100)));
+  return {
+    title: `正在下载 ${version}`,
+    downloadedBytes: downloaded,
+    totalBytes: total,
+    percent,
+    percentLabel: percent === null ? '' : `${percent}%`,
+    sizeLabel: total === null ? `已下载 ${formatDownloadBytes(downloaded)}` : `${formatDownloadBytes(downloaded)} / ${formatDownloadBytes(total)}`
+  };
 }
 
 function releaseAssetUrl(release: GitHubRelease, tagName: string, assetName: string) {

@@ -93,22 +93,14 @@ describe('Android feature helpers', () => {
     ]);
   });
 
-  it('filters replies by query', () => {
-    const replies: Reply[] = [
-      { floor: 1, author: 'alice', createdAt: '2026-05-23T01:00:00.000Z', contentHtml: '<p>Hello VPS</p>' },
-      { floor: 2, author: 'bob', createdAt: '2026-05-23T02:00:00.000Z', contentHtml: '<p>Other</p>' }
-    ];
-
-    expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
-  });
-
-  it('can filter replies from a cached text index', () => {
+  it('filters replies by query with or without a cached text index', () => {
     const replies: Reply[] = [
       { floor: 1, author: 'alice', createdAt: '2026-05-23T01:00:00.000Z', contentHtml: '<p>Hello VPS</p>' },
       { floor: 2, author: 'bob', createdAt: '2026-05-23T02:00:00.000Z', contentHtml: '<p>Other</p>' }
     ];
     const index = createReplyTextIndex(replies);
 
+    expect(filterRepliesByQuery(replies, 'vps')).toEqual([replies[0]]);
     expect(filterRepliesByQuery(replies, 'vps', index)).toEqual([replies[0]]);
   });
 

@@ -4,7 +4,7 @@
 
 测试必须证明“功能没有被改坏”，不是证明 App 能打开。常规改动至少执行自动测试和 `npm run typecheck`；涉及页面流程、登录态、真实来源结果或交互时，还必须做模拟器验收。
 
-当前自动测试是 `Vitest + jsdom`，共有 73 个测试文件、685 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
+当前自动测试是 `Vitest + jsdom`，共有 71 个测试文件、664 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
 
 ## 判断原则
 
@@ -15,6 +15,13 @@
 - 只打开 App、看首页显示、截图留存，都不算完整测试。
 - 优化代码前先看 `docs/emulator-baseline.md`；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异。
 - 登录和验证网页必须从 App 的 `更多 -> 账号与验证` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
+
+## 有用测试标准
+
+| 保留 | 删除或合并 |
+| --- | --- |
+| 能证明站点解析、请求目标、Cookie、登录态、安全边界、写操作、本地数据保存、备份恢复、请求归属或竞态回滚没有被改坏 | 只锁定 `padding`、`color`、`fontSize`、`borderRadius`、memo 比较、性能常量或内部 helper 形状 |
+| 能防止用户能感知的回归，例如用户页顶部距离、回复按钮可点、mention 不像普通网页链接、隐藏 WebView 不可见 | 同一行为分支的重复样例，或只复述当前实现写法的断言 |
 
 ## 功能标准
 
@@ -117,7 +124,7 @@ NodeSeek 单源搜索有两种通过状态：
 | App controller、请求归属、取消请求 | 对应 controller helper 测试、`src/requestOwnership.test.ts`、`npm run typecheck`、模拟器验收 |
 | 登录、验证、Cookie、写操作 | 相关 cookie / action / session 测试、`src/appSecurity.test.ts`、`npm run typecheck`、模拟器验收 |
 | 收藏、历史、备份 / 恢复 | reader data / backup 测试、`src/appSecurity.test.ts`、`npm run typecheck` |
-| UI 样式、主题、列表性能 | 相关 UI helper 测试、`src/theme.test.ts`、`src/components/listPerformance.test.ts`、`npm run typecheck`、模拟器验收 |
+| UI 样式、主题 | 只保留事故级 UI helper 测试、`src/theme.test.ts`、`npm run typecheck`、模拟器验收 |
 | 发布、安装、自更新 | `npm run release:android` |
 
 ## Review 修复回归基线

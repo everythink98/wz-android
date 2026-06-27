@@ -955,6 +955,57 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingHorizontal: 7,
       paddingVertical: 2
     },
+    updateProgressBox: {
+      gap: 7,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 10,
+      paddingVertical: 9
+    },
+    updateProgressHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 10
+    },
+    updateProgressTitle: {
+      flex: 1,
+      minWidth: 0,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 17
+    },
+    updateProgressPercent: {
+      flexShrink: 0,
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      lineHeight: 17
+    },
+    updateProgressTrack: {
+      width: '100%',
+      height: 6,
+      overflow: 'hidden',
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.08),
+      borderRadius: 999
+    },
+    updateProgressFill: {
+      height: '100%',
+      backgroundColor: theme.primary,
+      borderRadius: 999
+    },
+    updateProgressMeta: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      fontWeight: '500',
+      lineHeight: 15
+    },
     menuChevron: {
       marginLeft: 4,
       opacity: 0.45

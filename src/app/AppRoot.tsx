@@ -752,6 +752,7 @@ export function AppRoot() {
   const {
     appUpdateBusy,
     appUpdateDownloading,
+    appUpdateDownloadProgress,
     appUpdateInfo,
     appUpdateMessage,
     checkAppUpdate,
@@ -1370,6 +1371,7 @@ export function AppRoot() {
       checking,
       appUpdateBusy,
       appUpdateDownloading,
+      appUpdateDownloadProgress,
       appUpdateInfo,
       appUpdateMessage,
       loginState,
@@ -1421,6 +1423,7 @@ export function AppRoot() {
   }), [
     appUpdateBusy,
     appUpdateDownloading,
+    appUpdateDownloadProgress,
     appUpdateInfo,
     appUpdateMessage,
     backupBusy,

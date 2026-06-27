@@ -22,7 +22,7 @@ NodeSeek 私密帖只是来源解析里的一个回归样例，不是清理中�
 | 详情 / 回复 | `src/screens/topic/TopicScreenBody.tsx`、`src/screens/topic/topicScreenHelpers.ts`、`src/screens/topic/ReplyItem.tsx`、`src/screens/topic/TopicActionBar.tsx`、`src/screens/topic/TopicMenu.tsx`、`src/screens/topic/TopicPolls.tsx`、`src/topicActionState.ts`、`src/topicDerivedData.ts`、`src/topicContentSplit.ts`、`src/topicListItemState.ts`、`src/topicSessionState.ts` | 历史 fallback、重复徽标 / 提示、旧操作状态、旧引用路径 | 需要证明，次优先清 |
 | 来源 / 解析 | `src/localHtml.ts`、`src/localV2ex.ts`、`src/localLinuxdo.ts`、`src/localNodeseek.ts`、`src/localYaohuo.ts`、`src/forumApi.ts`、`src/sources/sourceGateway.ts` | 重复 access-requirement 识别、重复解析分支、旧兼容路径 | 需要证明，重点清 |
 | 账号 / Cookie / 验证 | `src/app/useAccountController.ts`、`src/app/useSessionController.ts`、`src/linuxdoCookieBridge.ts`、`src/nodeseekCookieBridge.ts`、`src/yaohuoCookies.ts`、`src/verificationFlow.ts` | 旧登录标记、重复状态映射、旧错误路径、旧中间态 | 需要证明，重点清 |
-| 测试守卫 | `src/components/listPerformance.test.ts`、`src/localSources.test.ts`、`src/localAccessRequirement.test.ts`、`src/appSecurity.test.ts` | 解析回归、数据安全、少量真正 boundary tests | 已删主要源码字符串断言 |
+| 测试守卫 | `src/theme.test.ts`、`src/htmlRenderingStyles.test.ts`、`src/localSources.test.ts`、`src/localAccessRequirement.test.ts`、`src/appSecurity.test.ts` | 解析回归、数据安全、少量真正 boundary tests | 已删主要源码字符串断言和纯性能常量测试 |
 
 ## 继续观察的承接层
 
