@@ -124,6 +124,12 @@ function originalPoster(topic: Record<string, unknown>, users: Map<string, Recor
   return isRecord(poster) ? users.get(String(poster.user_id)) : undefined;
 }
 
+function linuxDoLevelLabel(raw?: Record<string, unknown>) {
+  const value = raw?.trust_level ?? raw?.trustLevel;
+  const level = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  return Number.isInteger(level) && level >= 0 ? `Lv${level}` : undefined;
+}
+
 function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>(), author?: string, authorData?: Record<string, unknown>): Topic | null {
   if (!isRecord(raw)) {
     return null;
@@ -139,6 +145,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
   const authorName = author || String(createdBy.username || raw.last_poster_username || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
+  const authorLevelLabel = linuxDoLevelLabel(authorData) || linuxDoLevelLabel(createdBy);
   const tags = tagNames(raw.tags);
   const acceptedAnswerFloor = acceptedAnswerPostNumber(raw);
   const slowModeSeconds = positiveNumber(raw.slow_mode_seconds);
@@ -165,6 +172,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     ...(raw.has_accepted_answer === true || acceptedAnswerFloor ? { solved: true } : {}),
     ...(acceptedAnswerFloor ? { acceptedAnswerFloor } : {}),
     ...(slowModeSeconds ? { slowModeSeconds } : {}),
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
@@ -412,6 +420,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const postType = Number(raw.post_type);
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
   const polls = normalizeDiscoursePolls(raw);
+  const authorLevelLabel = linuxDoLevelLabel(raw);
   return {
     author: String(raw.username || ''),
     authorId: String(raw.username || '') || undefined,
@@ -435,6 +444,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     ...(raw.action_code ? { actionCode: String(raw.action_code) } : {}),
     ...(reactions ? { reactionSummary: reactions } : {}),
     ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(polls ? { polls } : {}),
     ...(positiveNumber(raw.bookmark_id) ? { bookmarkId: positiveNumber(raw.bookmark_id), bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {})
   };
@@ -807,10 +817,18 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   }
   const data = await fetchLinuxDoJson<Record<string, unknown>>(`/u/${encodeURIComponent(name)}/summary.json`, undefined, options);
   const summary = isRecord(data.user_summary) ? data.user_summary : {};
-  const user = isRecord(summary.user) ? summary.user : isRecord(data.user) ? data.user : {};
+  const summaryUser = isRecord(summary.user) ? summary.user : {};
+  const dataUser = isRecord(data.user) ? data.user : {};
+  const listedUsers = Array.isArray(data.users) ? data.users.filter(isRecord) : [];
+  const listedUser = listedUsers.find((item) => String(item.username || item.name || '').toLowerCase() === name.toLowerCase())
+    || listedUsers.find((item) => String(item.id || '') === String(summaryUser.id || dataUser.id || id))
+    || listedUsers[0]
+    || {};
+  const user = { ...listedUser, ...dataUser, ...summaryUser };
   const resolvedUsername = String(user.username || name);
   const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
   const avatar = avatarUrl(user.avatar_template);
+  const levelLabel = linuxDoLevelLabel(user);
   const rawTopics = Array.isArray(data.topics) ? data.topics : [];
   const categoryMap = await categoryMapForTopics(data, rawTopics, categoryMapFromData(data), options);
   const topics = rawTopics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[];
@@ -826,6 +844,7 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     topicCount: Number(summary.topic_count || 0) || visibleTopics.length || undefined,
     replyCount: Number(summary.reply_count || 0) || undefined,
     postCount: Number(summary.post_count || 0) || undefined,
+    ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics
   };
 }

@@ -193,7 +193,7 @@ describe('Android local sources', () => {
           {
             commentId: 10,
             floorIndex: 0,
-            poster: { name: 'alice', uid: 9891, isOp: true, info: '楼主', avatar: '/avatar/9891.png', profile: '/space/9891' },
+            poster: { name: 'alice', uid: 9891, isOp: true, info: '楼主', avatar: '/avatar/9891.png', profile: '/space/9891', roles: [{ name: 'admin', display_text: '管理' }] },
             markdown: '正文',
             time: { createdDate: '2026-05-20T00:00:00.000Z' },
             upvoteCount: 1,
@@ -205,7 +205,7 @@ describe('Android local sources', () => {
             floorIndex: 15,
             hot: true,
             pined: true,
-            poster: { name: 'bob', uid: 42, avatar: '/avatar/42.png', profile: '/space/42' },
+            poster: { name: 'bob', uid: 42, avatar: '/avatar/42.png', profile: '/space/42', roles: [{ name: 'active', display_text: '活跃' }] },
             markdown: '热门回复',
             signature: '签名 **内容**',
             time: { createdDate: '2026-05-20T00:15:00.000Z' },
@@ -236,9 +236,11 @@ describe('Android local sources', () => {
       locked: false
     });
     expect(topic.authorId).toBe('9891');
+    expect(topic.authorLevelLabel).toBe('管理');
     expect(topic.replies[0]).toMatchObject({
       author: 'bob',
       authorId: '42',
+      authorLevelLabel: '活跃',
       authorUrl: 'https://www.nodeseek.com/space/42',
       floor: 15,
       hot: true,
@@ -255,6 +257,81 @@ describe('Android local sources', () => {
       floor: 1,
       isOp: true
     });
+  });
+
+  it('reads linux.do author trust levels from list and topic post data', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/latest.json')) {
+        return json({
+          topic_list: {
+            topics: [{
+              id: 42,
+              title: 'linux.do list topic',
+              slug: 'linux-list-topic',
+              created_at: '2026-05-20T00:00:00.000Z',
+              posts_count: 1,
+              posters: [{ user_id: 7, description: 'Original Poster' }],
+              notification_level: 1
+            }]
+          },
+          users: [{ id: 7, username: 'alice', trust_level: 4 }]
+        });
+      }
+      if (input.includes('/t/42.json')) {
+        return json({
+          id: 42,
+          title: 'linux.do detail topic',
+          slug: 'linux-detail-topic',
+          created_at: '2026-05-20T00:00:00.000Z',
+          posts_count: 2,
+          notification_level: 1,
+          post_stream: {
+            posts: [
+              { id: 100, post_number: 1, username: 'alice', trust_level: 4, cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+              { id: 101, post_number: 2, username: 'bob', trust_level: 2, cooked: '<p>reply</p>', created_at: '2026-05-20T00:01:00.000Z' }
+            ]
+          }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const feed = await getFeed({ source: 'linuxdo', fetcher });
+    const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
+
+    expect(feed.items[0].authorLevelLabel).toBe('Lv4');
+    expect(topic.authorLevelLabel).toBe('Lv4');
+    expect(topic.replies[0].authorLevelLabel).toBe('Lv2');
+  });
+
+  it('reads V2EX Pro labels from topic and reply API members', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 810,
+          title: 'V2EX Pro topic',
+          url: 'https://www.v2ex.com/t/810',
+          created: 1780000000,
+          replies: 1,
+          member: { username: 'neo', pro: 1 },
+          content_rendered: '<p>detail body</p>'
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([
+          { id: 7001, member: { username: 'alice', pro: true }, content_rendered: '<p>first reply</p>', created: 1780000100 }
+        ]);
+      }
+      if (input === 'https://www.v2ex.com/t/810') {
+        return html('');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '810', fetcher });
+
+    expect(topic.authorLevelLabel).toBe('Pro');
+    expect(topic.replies[0].authorLevelLabel).toBe('Pro');
   });
 
   it('loads NodeSeek vote info from nsapp vote links in topic content', async () => {
@@ -400,7 +477,7 @@ describe('Android local sources', () => {
     const fetcher = vi.fn(async () => html(`
       <h1>Rendered NodeSeek detail</h1>
       <div id="0" data-comment-id="100" class="content-item">
-        <div class="author-info"><a href="/space/9891" class="author-name">alice</a><span class="is-poster">楼主</span></div>
+        <div class="author-info"><a href="/space/9891" class="author-name">alice</a><span class="is-poster">楼主</span><span class="nsk-badge role-tag role-admin"><span>管理</span></span></div>
         <span class="content-category"><a href="/categories/daily">日常</a></span>
         <time datetime="2026-05-20T00:00:00.000Z"></time>
         <article class="post-content"><p>正文</p></article>
@@ -413,7 +490,7 @@ describe('Android local sources', () => {
       </div>
       <ul>
         <li id="15" data-comment-id="102" class="content-item">
-          <div class="author-info"><a href="/space/42" class="author-name">bob</a></div>
+          <div class="author-info"><a href="/space/42" class="author-name">bob</a><span class="nsk-badge role-tag role-active"><span>活跃</span></span></div>
           <time datetime="2026-05-20T00:15:00.000Z"></time>
           <div class="floor-link-wrapper"><div class="hot-badge"></div><a class="floor-link" href="#15">#15</a></div>
           <article class="post-content"><p>热门回复</p></article>
@@ -443,6 +520,7 @@ describe('Android local sources', () => {
     expect(topic).toMatchObject({
       categoryId: 'daily',
       category: '日常',
+      authorLevelLabel: '管理',
       upvoteCount: 1,
       likeCount: 0,
       dislikeCount: 0,
@@ -451,6 +529,7 @@ describe('Android local sources', () => {
     expect(topic.replies[0]).toMatchObject({
       author: 'bob',
       authorId: '42',
+      authorLevelLabel: '活跃',
       floor: 15,
       hot: true,
       upvoteCount: 0,

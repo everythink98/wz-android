@@ -180,6 +180,28 @@ function profileStatValue(text: string, labels: string) {
   return 0;
 }
 
+function cleanYaohuoLevelLabel(value: unknown) {
+  const text = String(value || '').replace(/\s+/g, '').trim();
+  return /^\d{1,3}级/.test(text) && text.length <= 32 ? text : '';
+}
+
+function yaohuoProfileLevelLabel(text: string) {
+  return cleanYaohuoLevelLabel(text.match(/【等级】\s*([^【\s]+)/)?.[1])
+    || cleanYaohuoLevelLabel(text.match(/(\d{1,3}\s*级)\s*等级/)?.[1])
+    || cleanYaohuoLevelLabel(text.match(/经验值\s*[:：]\s*[\d,]+\s*(\d{1,3}\s*级)/)?.[1])
+    || undefined;
+}
+
+function yaohuoAuthorLevelLabel(text: string) {
+  for (const match of text.matchAll(/[（(]([^（）()]{0,32}\d{1,3}\s*级[^（）()]{0,32})[)）]/g)) {
+    const levelLabel = cleanYaohuoLevelLabel(match[1]);
+    if (levelLabel) {
+      return levelLabel;
+    }
+  }
+  return undefined;
+}
+
 function safeYaohuoProfileName(value: unknown) {
   const text = String(value || '').trim();
   if (!text || text.length > 32 || /正在论坛|查看更多|动态|人气|留言板|小时前|分钟前|今天|昨天/.test(text)) {
@@ -604,6 +626,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const author = elementText(root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')) || elementText(root.querySelector('div.subtitle a'));
   const authorHref = root.querySelector('div.subtitle a[href*="userinfo"], div.subtitle a[href*="touserid"]')?.getAttribute('href') || '';
   const authorId = extractUserIdFromHref(authorHref);
+  const authorLevelLabel = yaohuoAuthorLevelLabel(elementText(root.querySelector('div.louzhuxinxi, div.subtitle')));
   const createdAt = parseYaohuoDate(contentText.match(/\[时间\]\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\[时间\]\s*(\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2})/)?.[1]
     || contentText.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]) || new Date().toISOString();
@@ -627,6 +650,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     excerpt: textExcerpt(contentHtml),
     contentHtml: sanitizeContentHtml(contentHtml, BASE_URL),
     replies: [],
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {}),
     ...(polls ? { polls } : {})
   };
@@ -710,6 +734,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     || safeYaohuoProfileName(elementText(root.querySelector('.username, .user-name, h1')))
     || username
     || id;
+  const levelLabel = yaohuoProfileLevelLabel(visibleText);
   const stats = profileStats(root, visibleText);
   const seen = new Set<string>();
   const rows = [
@@ -741,7 +766,8 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
       url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
       createdAt,
       lastReplyAt: createdAt,
-      replyCount: 0
+      replyCount: 0,
+      ...(levelLabel ? { authorLevelLabel: levelLabel } : {})
     }];
   });
   return {
@@ -749,6 +775,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     id,
     username: username || displayName,
     displayName,
+    ...(levelLabel ? { levelLabel } : {}),
     url: userUrl(id),
     ...stats,
     topics: sortTopicsByCreatedAt(topics).slice(0, 30)

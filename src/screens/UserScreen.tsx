@@ -51,8 +51,12 @@ export const UserScreen = memo(function UserScreen({
 }) {
   const user = profile || requestedUser;
   const topics = profile?.topics || [];
+  const levelLabel = profile?.levelLabel || requestedUser?.levelLabel;
   const profileStats = useMemo(() => {
     const stats: { label: string; value: string }[] = [];
+    if (levelLabel) {
+      stats.push({ label: '等级', value: levelLabel });
+    }
     if (typeof profile?.topicCount === 'number') {
       stats.push({ label: '主题', value: String(profile.topicCount) });
     }
@@ -66,7 +70,7 @@ export const UserScreen = memo(function UserScreen({
       stats.push({ label: '加入', value: formatDateTime(profile.joinedAt) || profile.joinedAt });
     }
     return stats;
-  }, [profile?.joinedAt, profile?.postCount, profile?.replyCount, profile?.topicCount]);
+  }, [levelLabel, profile?.joinedAt, profile?.postCount, profile?.replyCount, profile?.topicCount]);
   const listItems = useMemo<UserListItem[]>(() => [
     { type: 'profile', key: 'profile' },
     ...topics.map((topic) => ({ type: 'topic' as const, key: `${topic.source}:${topic.id}`, topic }))

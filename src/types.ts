@@ -26,6 +26,7 @@ export interface Topic {
   author: string;
   authorId?: string;
   authorAvatar?: string;
+  authorLevelLabel?: string;
   authorUrl?: string;
   categoryId?: string;
   category?: string;
@@ -56,6 +57,7 @@ export interface Reply {
   author: string;
   authorId?: string;
   authorAvatar?: string;
+  authorLevelLabel?: string;
   authorUrl?: string;
   contentHtml: string;
   createdAt: string;
@@ -149,6 +151,7 @@ export interface UserProfile {
   username: string;
   displayName?: string;
   avatar?: string;
+  levelLabel?: string;
   url: string;
   bio?: string;
   joinedAt?: string;

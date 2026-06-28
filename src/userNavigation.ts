@@ -53,6 +53,7 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
   const fallbackTopicFields = hasRestrictedPlaceholder ? {
     title: fallback.title || topic.title,
     author: fallback.author || topic.author,
+    authorLevelLabel: fallback.authorLevelLabel || topic.authorLevelLabel,
     categoryId: fallback.categoryId || topic.categoryId,
     category: fallback.category || topic.category
   } : {};
@@ -77,6 +78,7 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
     author: hasRestrictedPlaceholder ? fallback.author || topic.author : topic.author || fallback.author,
     authorId: authorId || topic.authorId,
     authorAvatar: topic.authorAvatar || fallback.authorAvatar,
+    authorLevelLabel: topic.authorLevelLabel || fallback.authorLevelLabel,
     authorUrl: topic.authorUrl || fallback.authorUrl
   };
 }

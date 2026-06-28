@@ -93,6 +93,10 @@ function topicId(value: unknown) {
   return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
 }
 
+function v2exMemberLevelLabel(member: Record<string, unknown>) {
+  return member.pro === true || Number(member.pro) > 0 ? 'Pro' : undefined;
+}
+
 function normalizeApiTopic(raw: unknown): Topic | null {
   if (!isRecord(raw)) {
     return null;
@@ -106,6 +110,7 @@ function normalizeApiTopic(raw: unknown): Topic | null {
   const createdAt = toIsoString(raw.created) || new Date().toISOString();
   const lastReplyAt = v2exLastReplyAt(raw, createdAt);
   const accessRequirement = accessRequirementFromObject(raw);
+  const authorLevelLabel = v2exMemberLevelLabel(member);
   return {
     source: 'v2ex',
     id,
@@ -121,6 +126,7 @@ function normalizeApiTopic(raw: unknown): Topic | null {
     lastReplyAt,
     replyCount: Number(raw.replies || 0),
     excerpt: textExcerpt(raw.content || raw.content_rendered || ''),
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
 }
@@ -529,6 +535,7 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
   const contentHtml = sanitizeContentHtml(raw.content_rendered || raw.content || '', BASE_URL);
   const commentId = typeof raw.id === 'number' ? raw.id : parsePositiveInteger(raw.id);
   const replyTargetAuthor = v2exReplyTargetAuthor(raw.content_rendered || raw.content || contentHtml);
+  const authorLevelLabel = v2exMemberLevelLabel(member);
   return {
     author: String(member.username || ''),
     authorId: typeof member.username === 'string' ? member.username : undefined,
@@ -538,6 +545,7 @@ function normalizeReply(raw: unknown, index: number): Reply | null {
     createdAt: toIsoString(raw.created),
     floor: index + 1,
     ...(commentId ? { commentId } : {}),
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(replyTargetAuthor ? { replyTargetAuthor } : {})
   };
 }
@@ -647,16 +655,20 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   }
   const resolvedUsername = String(memberData.username || key);
   const avatar = absoluteUrl(memberData.avatar_large || memberData.avatar_normal || memberData.avatar_mini, BASE_URL);
+  const levelLabel = v2exMemberLevelLabel(memberData);
   const topics = memberHtml ? parseV2exMemberTopics(memberHtml, resolvedUsername, avatar) : [];
   const topicsPageTopics = topics.length ? topics : await fetchV2exMemberTopics(resolvedUsername, options);
   const feedTopics = topicsPageTopics.length ? topicsPageTopics : await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options);
-  const profileTopics = sortTopicsByCreatedAt(feedTopics).slice(0, 30);
+  const profileTopics = sortTopicsByCreatedAt(feedTopics).slice(0, 30).map((topic) => (
+    levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || levelLabel } : topic
+  ));
   return {
     source: 'v2ex',
     id: resolvedUsername,
     username: resolvedUsername,
     displayName: resolvedUsername,
     avatar,
+    ...(levelLabel ? { levelLabel } : {}),
     url: memberUrl(resolvedUsername),
     bio: typeof memberData.tagline === 'string' ? memberData.tagline : undefined,
     topics: profileTopics,

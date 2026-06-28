@@ -45,6 +45,7 @@ function sameTopicCardTopic(left: Topic, right: Topic) {
     && left.title === right.title
     && left.author === right.author
     && left.authorAvatar === right.authorAvatar
+    && left.authorLevelLabel === right.authorLevelLabel
     && left.category === right.category
     && left.createdAt === right.createdAt
     && left.lastReplyAt === right.lastReplyAt
@@ -108,6 +109,7 @@ export function TopicCard({
   }, [onOpenTopic, topic]);
   const authorMeta = [
     topic.author || '未知作者',
+    topic.authorLevelLabel || '',
     readerState.favorite ? '已收藏' : '',
     topic.duplicateSources?.length ? `同链：${topic.duplicateSources.join('、')}` : ''
   ].filter(Boolean).join(' · ');

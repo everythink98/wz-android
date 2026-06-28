@@ -147,6 +147,11 @@ function cleanOptionalString(value: unknown) {
   return clean || undefined;
 }
 
+function cleanOptionalLabelString(value: unknown) {
+  const clean = cleanOptionalString(value);
+  return clean && clean.length <= 32 ? clean : undefined;
+}
+
 function cleanNonNegativeInteger(value: unknown, fallback = 0) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.round(value)
@@ -220,6 +225,7 @@ function topicSummary(topic: Topic): Topic {
     author: cleanString(topic.author),
     authorId: cleanOptionalString(topic.authorId),
     authorAvatar: cleanOptionalString(topic.authorAvatar) ? sanitizeTopicUrl(topic.authorAvatar) : undefined,
+    authorLevelLabel: cleanOptionalLabelString(topic.authorLevelLabel),
     authorUrl: cleanOptionalString(topic.authorUrl) ? sanitizeTopicUrl(topic.authorUrl) : undefined,
     categoryId: cleanOptionalString(topic.categoryId),
     category: cleanOptionalString(topic.category),
@@ -255,6 +261,7 @@ function userSummary(user: UserProfile): UserProfile {
     username,
     displayName,
     avatar: cleanOptionalString(user.avatar) ? sanitizeTopicUrl(user.avatar) : undefined,
+    levelLabel: cleanOptionalLabelString(user.levelLabel),
     url: sanitizeTopicUrl(userProfileUrl(user.source, id, user.url)),
     bio: cleanOptionalString(user.bio),
     joinedAt: cleanOptionalString(user.joinedAt),

@@ -27,7 +27,7 @@ import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { splitTopicContentHtml } from '../../topicContentSplit';
-import { androidRipple, createStyles, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
+import { androidRipple, createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
@@ -801,7 +801,10 @@ export const TopicScreen = memo(function TopicScreen({
           >
             <Avatar name={item.author} uri={item.authorAvatar} styles={styles} />
             <View style={styles.topicAuthorMeta}>
-              <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
+              <View style={styles.replyAuthorNameRow}>
+                <Text style={styles.replyAuthor} numberOfLines={1}>{item.author || '未知作者'}</Text>
+                {item.authorLevelLabel ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>{item.authorLevelLabel}</Text> : null}
+              </View>
               <Text style={styles.meta}>{formatDateTime(item.createdAt)} · {item.replyCount} 回复{item.viewCount ? ` · ${item.viewCount} 浏览` : ''}</Text>
             </View>
           </Pressable>

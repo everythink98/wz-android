@@ -202,7 +202,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         </View>
         <View style={styles.flex}>
           <Text style={styles.menuLabel} numberOfLines={1}>{item.user.displayName || item.user.username}</Text>
-          <Text style={styles.meta} numberOfLines={2}>{sourceLabel(item.user.source)} · 关注于 {formatDateTime(item.followedAt) || item.followedAt}</Text>
+          <Text style={styles.meta} numberOfLines={2}>{[sourceLabel(item.user.source), item.user.levelLabel, `关注于 ${formatDateTime(item.followedAt) || item.followedAt}`].filter(Boolean).join(' · ')}</Text>
         </View>
       </Pressable>
       <View style={styles.libraryUserAction}>

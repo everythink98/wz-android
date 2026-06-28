@@ -365,6 +365,19 @@ function nodeSeekEmbeddedUserId(user: Record<string, unknown>) {
   return String(user.uid || user.id || user.userId || user.user_id || user.member_id || '').trim();
 }
 
+function nodeSeekLevelLabel(user: Record<string, unknown>) {
+  const value = user.rank;
+  const level = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  return Number.isInteger(level) && level >= 0 ? `Lv${level}` : undefined;
+}
+
+function nodeSeekRoleLabel(user: Record<string, unknown>) {
+  const labels = (Array.isArray(user.roles) ? user.roles : [])
+    .map((role) => isRecord(role) ? String(role.display_text || role.displayText || role.name || '').trim() : '')
+    .filter((label) => label && label !== '楼主');
+  return labels.join(' · ') || undefined;
+}
+
 function integerFromElement(element: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
   return parsePositiveInteger(elementText(element) || element?.getAttribute('title'));
 }
@@ -785,6 +798,7 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
     const poster = isRecord(comment.poster) ? comment.poster : {};
     const authorId = nodeSeekEmbeddedUserId(poster);
     const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
+    const authorLevelLabel = nodeSeekRoleLabel(poster);
     const signatureHtml = String(comment.signature || '').trim()
       ? markdownToHtml(comment.signature)
       : undefined;
@@ -794,6 +808,7 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
       authorAvatar: absoluteUrl(poster.avatar, BASE_URL),
       authorId: authorId || undefined,
       authorUrl,
+      ...(authorLevelLabel ? { authorLevelLabel } : {}),
       contentHtml: markdownToHtml(comment.markdown),
       createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
       floor: floorIndex ?? floorOffset + start + index + 1,
@@ -841,6 +856,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   const accessRequirement = accessRequirementFromObject(data);
   const authorId = nodeSeekEmbeddedUserId(op) || nodeSeekEmbeddedUserId(poster);
   const authorUrl = absoluteUrl(op.profile || poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
+  const authorLevelLabel = nodeSeekRoleLabel(poster) || nodeSeekRoleLabel(op);
   return {
     source: 'nodeseek',
     id,
@@ -849,6 +865,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     authorAvatar: absoluteUrl(op.avatar || poster.avatar, BASE_URL),
     authorId: authorId || undefined,
     authorUrl,
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     categoryId,
     category: categoryName,
     url,
@@ -962,6 +979,15 @@ function renderedNodeSeekIsOp(element: HTMLElement | null | undefined) {
   return Boolean(element?.querySelector('.is-poster, .poster-badge') || elementText(element?.querySelector('.role-tag')).trim() === '楼主') || undefined;
 }
 
+function renderedNodeSeekRoleLabel(element: HTMLElement | null | undefined) {
+  const authorInfo = element?.querySelector('.author-info, .post-info, .comment-author, .reply-author') || element;
+  const labels = (authorInfo?.querySelectorAll('.role-tag, .nsk-badge') || [])
+    .filter((badge) => !String(badge.getAttribute('class') || '').split(/\s+/).some((className) => className === 'is-poster' || className === 'poster-badge'))
+    .map((badge) => elementText(badge))
+    .filter((label) => label && label !== '楼主');
+  return labels.join(' · ') || undefined;
+}
+
 function nodeSeekMetaContent(root: ReturnType<typeof parseHtml>, selector: string) {
   return String(root.querySelector(selector)?.getAttribute('content') || '').trim();
 }
@@ -1050,11 +1076,13 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
+    const authorLevelLabel = renderedNodeSeekRoleLabel(row);
     return {
       author: renderedNodeSeekAuthor(row),
       authorAvatar: renderedNodeSeekAvatar(row),
       authorId,
       authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
+      ...(authorLevelLabel ? { authorLevelLabel } : {}),
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
       floor: renderedNodeSeekFloor(row, index + 1),
@@ -1075,6 +1103,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   const lastReplyAt = allReplies.at(-1)?.createdAt || createdAt;
   const authorHref = authorContainer?.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
   const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
+  const authorLevelLabel = renderedNodeSeekRoleLabel(authorContainer);
   return {
     source: 'nodeseek',
     id,
@@ -1083,6 +1112,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     authorAvatar: renderedNodeSeekAvatar(authorContainer),
     authorId,
     authorUrl: authorHref ? absoluteUrl(authorHref, BASE_URL) : undefined,
+    ...(authorLevelLabel ? { authorLevelLabel } : {}),
     categoryId: categoryHref.match(/\/categories\/([^/?#]+)/)?.[1],
     category: elementText(categoryLink) || undefined,
     url: nodeSeekTopicUrl(id),
@@ -1213,6 +1243,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   const avatar = absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(userId)}.png`, BASE_URL);
   const bio = String(user.bio || user.readme || '').trim() || undefined;
   const joinedAt = toIsoString(user.created_at || user.createdAt || user.createdDate);
+  const levelLabel = nodeSeekLevelLabel(user);
   const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=1`, options);
   const discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
   const topics = discussions.filter(isRecord).map((discussion) => {
@@ -1252,6 +1283,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     topicCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
     postCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
     replyCount: parsePositiveInteger(user.nComment) || undefined,
+    ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics
   };
 }

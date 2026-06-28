@@ -139,6 +139,24 @@ describe('Android reader data helpers', () => {
     });
   });
 
+  it('keeps author and profile levels in local reader data summaries', () => {
+    const leveledTopic: Topic = {
+      ...topic,
+      authorLevelLabel: 'Lv6'
+    };
+    const leveledProfile: UserProfile = {
+      ...profile,
+      levelLabel: 'Lv6',
+      topics: [leveledTopic]
+    };
+
+    const data = toggleFollowedUser(toggleFavorite(createEmptyReaderData(), leveledTopic), leveledProfile);
+
+    expect(data.favorites[topicKey(leveledTopic)].topic.authorLevelLabel).toBe('Lv6');
+    expect(data.followedUsers[userKey(leveledProfile)].user.levelLabel).toBe('Lv6');
+    expect(data.followedUsers[userKey(leveledProfile)].user.topics[0].authorLevelLabel).toBe('Lv6');
+  });
+
   it('updates existing favorite topic summaries with access requirements without changing saved time', () => {
     const savedAt = '2026-06-04T06:59:04.776Z';
     const restrictedTopic: Topic = {
@@ -659,6 +677,7 @@ describe('Android reader data helpers', () => {
       author: { name: 'object author' },
       authorId: ['bad'],
       authorAvatar: 42,
+      authorLevelLabel: { label: 'Lv6' },
       category: { label: 'bad' },
       replyCount: Number.POSITIVE_INFINITY,
       viewCount: Number.NaN,
@@ -680,6 +699,7 @@ describe('Android reader data helpers', () => {
     expect(clean?.topic.author).toBe('');
     expect(clean?.topic.authorId).toBeUndefined();
     expect(clean?.topic.authorAvatar).toBeUndefined();
+    expect(clean?.topic.authorLevelLabel).toBeUndefined();
     expect(clean?.topic.category).toBeUndefined();
     expect(clean?.topic.replyCount).toBe(0);
     expect(clean?.topic.viewCount).toBeUndefined();

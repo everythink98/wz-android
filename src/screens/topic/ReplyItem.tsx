@@ -172,6 +172,7 @@ export function ReplyItem({
         <View style={styles.replyAuthorBlock}>
           <View style={styles.replyAuthorNameRow}>
             <Text style={styles.replyAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
+            {reply.authorLevelLabel ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]} numberOfLines={1}>{reply.authorLevelLabel}</Text> : null}
             {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
             {reply.hot ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text> : null}
             {reply.pinned ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text> : null}

@@ -554,6 +554,29 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
+  it('reads yaohuo topic author level from the original poster row only', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 妖火等级主题 (阅1) [时间] 2026-05-20 10:00</div>
+      <div class="bbscontent"><!--listS--><p>body</p><!--listE--></div>
+      <div class="louzhuxinxi subtitle">[楼主]<a href="/bbs/userinfo.aspx?touserid=36925">一葉知秋</a>(4级水面的小草)[荣誉]</div>
+    `, {
+      id: '1559685',
+      url: 'https://yaohuo.me/bbs-1559685.html'
+    });
+
+    expect(detail.author).toBe('一葉知秋');
+    expect(detail.authorLevelLabel).toBe('4级水面的小草');
+  });
+
+  it('does not treat yaohuo reply user ids as author levels', () => {
+    const result = parseYaohuoRepliesHtml(`
+      <div class="line1">[261楼][回]口乞..<a href="/bbs/userinfo.aspx?touserid=45264">孟婆烤串</a>(45264) 06-28 23:22</div>
+    `, { page: 1, limit: 30 });
+
+    expect(result.items[0]).toMatchObject({ author: '孟婆烤串', authorId: '45264' });
+    expect(result.items[0].authorLevelLabel).toBeUndefined();
+  });
+
   it('maps yaohuo vote options to unified polls with state', () => {
     const detail = parseYaohuoTopicHtml(`
       <div class="content">[标题] 妖火投票 (阅2) [时间] 2026-05-20 10:00</div>

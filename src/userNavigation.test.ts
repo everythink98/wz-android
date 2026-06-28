@@ -16,6 +16,7 @@ describe('Android user navigation helpers', () => {
       title: 'NodeSeek topic',
       author: 'Bugs',
       authorId: '15105',
+      authorLevelLabel: 'Lv6',
       authorUrl: 'https://www.nodeseek.com/space/15105#/discussions',
       url: 'https://www.nodeseek.com/post-746779-1',
       createdAt: '2026-05-25T03:34:00.000Z',
@@ -34,6 +35,7 @@ describe('Android user navigation helpers', () => {
     const user = userFromTopic(merged!);
 
     expect(merged?.authorId).toBe('15105');
+    expect(merged?.authorLevelLabel).toBe('Lv6');
     expect(user).toMatchObject({
       source: 'nodeseek',
       id: '15105',

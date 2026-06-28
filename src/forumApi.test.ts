@@ -109,7 +109,7 @@ describe('Android local forum facade', () => {
   it('routes user profile reads to each public source site', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
-        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, readme: 'bio' } }));
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, readme: 'bio', rank: 6 } }));
       }
       if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
         return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0 }] }));
@@ -124,17 +124,18 @@ describe('Android local forum facade', () => {
             topic_count: 2,
             post_count: 8
           },
+          users: [{ id: 7, username: 'alice', trust_level: 2 }],
           topics: [{ id: 42, title: 'linux topic', slug: 'linux-topic', created_at: '2026-05-20T00:00:00.000Z', posts_count: 1 }]
         }));
       }
       if (input.includes('v2ex.com/api/members/show.json')) {
-        return new Response(JSON.stringify({ id: 9, username: 'neo', avatar_large: '//cdn.v2ex.com/avatar.png', tagline: 'hello' }));
+        return new Response(JSON.stringify({ id: 9, username: 'neo', avatar_large: '//cdn.v2ex.com/avatar.png', tagline: 'hello', pro: 1 }));
       }
       if (input.includes('v2ex.com/member/neo')) {
         return new Response('<div class="cell item"><a class="topic-link" href="/t/121">V2EX topic</a><a class="node" href="/go/create">分享创造</a><span title="2026-05-20 10:00:00"></span></div>');
       }
       if (input.includes('yaohuo.me')) {
-        return new Response('<div class="content">昵称:火友<br/>发帖:3<br/>回帖:9</div><a href="/bbs-66.html">妖火主题</a>');
+        return new Response('<div class="content">昵称:火友<br/>1万妖晶2级等级7年注册时长<br/>发帖:3<br/>回帖:9</div><a href="/bbs-66.html">妖火主题</a>');
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -148,6 +149,12 @@ describe('Android local forum facade', () => {
     expect(linuxdo).toMatchObject({ source: 'linuxdo', id: 'alice', username: 'alice', postCount: 8, topicCount: 2 });
     expect(v2ex).toMatchObject({ source: 'v2ex', id: 'neo', username: 'neo', bio: 'hello' });
     expect(yaohuo).toMatchObject({ source: 'yaohuo', id: '7', username: '火友', postCount: 12 });
+    expect(nodeseek.levelLabel).toBe('Lv6');
+    expect(linuxdo.levelLabel).toBe('Lv2');
+    expect(linuxdo.topics[0].authorLevelLabel).toBe('Lv2');
+    expect(v2ex.levelLabel).toBe('Pro');
+    expect(yaohuo.levelLabel).toBe('2级');
+    expect(yaohuo.topics[0].authorLevelLabel).toBe('2级');
   });
 
   it('reads user profile topic times from all four Android sources', async () => {
