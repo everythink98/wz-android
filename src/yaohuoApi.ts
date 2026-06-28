@@ -76,10 +76,15 @@ async function fetchYaohuoHtml(url: string, cookie: string, fetcher: Fetcher = f
   const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(cookie), { fetcher, ...options });
   const html = await response.text();
   const responseUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
-  ensureYaohuoHtmlLoggedIn(html, responseUrl);
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    const error = new Error(`HTTP ${response.status}`);
+    Object.assign(error, {
+      status: response.status,
+      statusCode: response.status
+    });
+    throw error;
   }
+  ensureYaohuoHtmlLoggedIn(html, responseUrl);
   return {
     html,
     url: responseUrl

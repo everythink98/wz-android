@@ -153,6 +153,10 @@ describe('Android local HTML helpers', () => {
     expect(decodeHtml('A&apos;B')).toBe("A'B");
   });
 
+  it('decodes each HTML entity only once', () => {
+    expect(decodeHtml('&amp;lt;script&amp;gt;')).toBe('&lt;script&gt;');
+  });
+
   it('decodes numeric entities outside the BMP', () => {
     expect(decodeHtml('&#128512; &#x1F600;')).toBe('😀 😀');
   });

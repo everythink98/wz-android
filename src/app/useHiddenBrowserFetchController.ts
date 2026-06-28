@@ -161,7 +161,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
       url: location.href,
       title: document.title || "",
       challenge,
-      body: json || pageHtml(),
+      body: challenge ? "" : (json || pageHtml()),
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
     });

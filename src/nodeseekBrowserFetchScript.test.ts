@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NODESEEK_BROWSER_FETCH_SCRIPT } from './app/useHiddenBrowserFetchController';
+import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './app/useHiddenBrowserFetchController';
 
 function runNodeSeekBrowserFetchScript(url: string, html: string) {
   window.history.pushState(null, '', url);
@@ -18,7 +18,23 @@ function runNodeSeekBrowserFetchScript(url: string, html: string) {
   return { postMessage, stop };
 }
 
-describe('NodeSeek hidden browser fetch script', () => {
+function runLinuxDoBrowserFetchScript(url: string, html: string) {
+  window.history.pushState(null, '', url);
+  document.title = '';
+  document.body.innerHTML = html;
+  const postMessage = vi.fn();
+  Object.defineProperty(window, 'ReactNativeWebView', {
+    configurable: true,
+    value: { postMessage }
+  });
+
+  const script = LINUXDO_BROWSER_FETCH_SCRIPT.replace('__LINUXDO_BROWSER_FETCH_ID__', '9');
+  window.eval(script);
+
+  return { postMessage };
+}
+
+describe('hidden browser fetch scripts', () => {
   afterEach(() => {
     document.body.innerHTML = '';
     vi.restoreAllMocks();
@@ -164,5 +180,23 @@ describe('NodeSeek hidden browser fetch script', () => {
   it('does not scan full innerHTML while polling challenge pages', () => {
     expect(NODESEEK_BROWSER_FETCH_SCRIPT).not.toContain('innerHTML');
     expect(NODESEEK_BROWSER_FETCH_SCRIPT).toContain('pageText(3000)');
+  });
+
+  it('does not send linux.do challenge page HTML through the bridge', () => {
+    const { postMessage } = runLinuxDoBrowserFetchScript('/latest.json', `
+      <main>
+        <h1>Just a moment...</h1>
+        <div class="cf-turnstile"></div>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'linuxdo-browser-fetch',
+      id: 9,
+      challenge: true
+    });
+    expect(payload.body).toBe('');
   });
 });

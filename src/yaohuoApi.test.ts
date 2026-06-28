@@ -744,7 +744,7 @@ describe('Android direct yaohuo API', () => {
     });
   });
 
-  it('surfaces non-200 yaohuo verification pages as verification errors', async () => {
+  it('surfaces non-200 yaohuo verification pages as HTTP errors', async () => {
     const yaohuoFetcher = vi.fn(async () => new Response('<script>window.CAPTCHA_CONFIG={}</script>', {
       status: 403
     }));
@@ -753,8 +753,8 @@ describe('Android direct yaohuo API', () => {
       yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
     })).rejects.toMatchObject({
-      loginRequired: true,
-      reason: 'verification'
+      message: 'HTTP 403',
+      status: 403
     });
   });
 });

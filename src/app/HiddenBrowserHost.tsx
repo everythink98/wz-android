@@ -1,6 +1,7 @@
 import { useCallback, type RefObject } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
+import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 import type { createStyles } from '../theme';
@@ -94,7 +95,11 @@ export function HiddenBrowserHost({
               failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, event.nativeEvent.description || 'NodeSeek 页面加载失败');
             }}
             onHttpError={(event) => {
-              if (event.nativeEvent.url !== nodeSeekBrowserFetchRequest.url) {
+              if (!shouldHandleBrowserHttpError(
+                nodeSeekBrowserFetchRequest.url,
+                event.nativeEvent.url,
+                isNodeSeekBrowserFetchUrl
+              )) {
                 return;
               }
               if (event.nativeEvent.statusCode === 403 || event.nativeEvent.statusCode === 404) {
@@ -138,7 +143,11 @@ export function HiddenBrowserHost({
               failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, event.nativeEvent.description || 'linux.do 页面加载失败');
             }}
             onHttpError={(event) => {
-              if (event.nativeEvent.url !== linuxDoBrowserFetchRequest.url) {
+              if (!shouldHandleBrowserHttpError(
+                linuxDoBrowserFetchRequest.url,
+                event.nativeEvent.url,
+                isLinuxDoRequestUrl
+              )) {
                 return;
               }
               if (event.nativeEvent.statusCode === 403) {

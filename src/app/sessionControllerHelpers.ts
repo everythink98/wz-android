@@ -48,33 +48,9 @@ export function requestHeaderValue(headers: HeadersInit | undefined, name: strin
 
 export function nodeSeekBrowserResponse(html: string, challenge: boolean, httpErrorStatus?: number) {
   const status = challenge ? 403 : httpErrorStatus || 200;
+  const body = challenge ? '' : html;
   const headerValues: Record<string, string> = {
     'content-type': 'text/html'
-  };
-  if (challenge) {
-    headerValues['cf-mitigated'] = 'challenge';
-  }
-  if (typeof Response !== 'undefined') {
-    return new Response(html, {
-      status,
-      headers: headerValues
-    });
-  }
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    headers: {
-      get: (headerName: string) => headerValues[headerName.toLowerCase()] || null
-    },
-    text: () => Promise.resolve(html)
-  } as Response;
-}
-
-export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErrorStatus?: number) {
-  const status = challenge ? 403 : httpErrorStatus || 200;
-  const isJson = /^\s*[{[]/.test(body);
-  const headerValues: Record<string, string> = {
-    'content-type': isJson ? 'application/json' : 'text/html'
   };
   if (challenge) {
     headerValues['cf-mitigated'] = 'challenge';
@@ -93,6 +69,73 @@ export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErr
     },
     text: () => Promise.resolve(body)
   } as Response;
+}
+
+export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErrorStatus?: number) {
+  const status = challenge ? 403 : httpErrorStatus || 200;
+  const responseBody = challenge ? '' : body;
+  const isJson = /^\s*[{[]/.test(responseBody);
+  const headerValues: Record<string, string> = {
+    'content-type': isJson ? 'application/json' : 'text/html'
+  };
+  if (challenge) {
+    headerValues['cf-mitigated'] = 'challenge';
+  }
+  if (typeof Response !== 'undefined') {
+    return new Response(responseBody, {
+      status,
+      headers: headerValues
+    });
+  }
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: {
+      get: (headerName: string) => headerValues[headerName.toLowerCase()] || null
+    },
+    text: () => Promise.resolve(responseBody)
+  } as Response;
+}
+
+export function shouldHandleBrowserHttpError(
+  requestUrl: string,
+  eventUrl: string | undefined,
+  isAllowedUrl: (url: string) => boolean
+) {
+  const url = String(eventUrl || '').trim();
+  if (!url) {
+    return true;
+  }
+  if (sameBrowserDocumentUrl(requestUrl, url)) {
+    return true;
+  }
+  return isAllowedUrl(url) && isLikelyBrowserDocumentUrl(url);
+}
+
+function sameBrowserDocumentUrl(left: string, right: string) {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    return leftUrl.origin === rightUrl.origin
+      && normalizeBrowserPath(leftUrl.pathname) === normalizeBrowserPath(rightUrl.pathname)
+      && leftUrl.search === rightUrl.search;
+  } catch {
+    return left === right;
+  }
+}
+
+function normalizeBrowserPath(path: string) {
+  return path.replace(/\/+$/, '') || '/';
+}
+
+function isLikelyBrowserDocumentUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const lastSegment = parsed.pathname.split('/').pop() || '';
+    return !/\.[a-z0-9]{1,8}$/i.test(lastSegment);
+  } catch {
+    return false;
+  }
 }
 
 export function settleBrowserFetchRequestOnce(request: BrowserFetchRequestCleanupTarget, settle: () => void) {

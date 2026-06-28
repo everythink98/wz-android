@@ -15,6 +15,15 @@ function htmlEntityCodePoint(entity: string, codePoint: number) {
   }
 }
 
+const NAMED_HTML_ENTITIES: Record<string, string> = {
+  nbsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'"
+};
+
 export function absoluteUrl(value: unknown, baseUrl: string) {
   const text = String(value || '').trim();
   if (!text) {
@@ -47,16 +56,16 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
 }
 
 export function decodeHtml(value: unknown) {
-  return String(value || '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (entity, hex) => htmlEntityCodePoint(entity, Number.parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (entity, code) => htmlEntityCodePoint(entity, Number.parseInt(code, 10)));
+  return String(value || '').replace(/&(#x[0-9a-f]+|#\d+|nbsp|amp|lt|gt|quot|apos);/gi, (entity, name) => {
+    const key = String(name).toLowerCase();
+    if (key.startsWith('#x')) {
+      return htmlEntityCodePoint(entity, Number.parseInt(key.slice(2), 16));
+    }
+    if (key.startsWith('#')) {
+      return htmlEntityCodePoint(entity, Number.parseInt(key.slice(1), 10));
+    }
+    return NAMED_HTML_ENTITIES[key] || entity;
+  });
 }
 
 export function textContentFromHtml(value: unknown) {

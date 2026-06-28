@@ -6,10 +6,13 @@ import {
   enqueueCredentialWrite,
   enqueueLatestBrowserFetchRequest,
   isCredentialWriteCurrent,
+  linuxDoBrowserResponse,
+  nodeSeekBrowserResponse,
   replaceCredentialWrite,
   rejectBrowserFetchRequest,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
+  shouldHandleBrowserHttpError,
   startNextBrowserFetchRequest,
   type BrowserFetchRequestCleanupTarget
 } from './sessionControllerHelpers';
@@ -293,5 +296,40 @@ describe('session controller helpers', () => {
     expect(first.reject).toHaveBeenCalledWith(new Error('请求已取消'));
     expect(second.reject).toHaveBeenCalledWith(new Error('请求已取消'));
     expect(latest.reject).not.toHaveBeenCalled();
+  });
+
+  it('clears browser challenge response bodies even if a script sends page HTML', async () => {
+    await expect(nodeSeekBrowserResponse('<html>challenge</html>', true).text()).resolves.toBe('');
+    await expect(linuxDoBrowserResponse('<html>challenge</html>', true).text()).resolves.toBe('');
+  });
+
+  it('handles document HTTP errors after allowed redirects', () => {
+    const isAllowed = (url: string) => new URL(url).hostname.endsWith('nodeseek.com');
+
+    expect(shouldHandleBrowserHttpError(
+      'https://www.nodeseek.com/post-1-1',
+      'https://www.nodeseek.com/post-1-1/',
+      isAllowed
+    )).toBe(true);
+    expect(shouldHandleBrowserHttpError(
+      'https://www.nodeseek.com/post-1-1',
+      'https://www.nodeseek.com/login',
+      isAllowed
+    )).toBe(true);
+  });
+
+  it('ignores off-site and static resource HTTP errors in hidden browser pages', () => {
+    const isAllowed = (url: string) => new URL(url).hostname.endsWith('nodeseek.com');
+
+    expect(shouldHandleBrowserHttpError(
+      'https://www.nodeseek.com/post-1-1',
+      'https://example.com/login',
+      isAllowed
+    )).toBe(false);
+    expect(shouldHandleBrowserHttpError(
+      'https://www.nodeseek.com/post-1-1',
+      'https://www.nodeseek.com/assets/missing.png',
+      isAllowed
+    )).toBe(false);
   });
 });
