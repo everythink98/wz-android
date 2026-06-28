@@ -2035,6 +2035,40 @@ describe('Android local sources', () => {
     expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
   });
 
+  it('retries NodeSeek topic details through the WebView fallback when normal fetch stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      const normalFetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        }, { once: true });
+      }));
+      const webViewFetcher = vi.fn(async () => html(`
+        <a class="post-title" href="/post-743012-1">NodeSeek slow fallback detail</a>
+        <div class="content-item">
+          <article class="post-content"><p>慢请求兜底正文</p></article>
+        </div>
+      `));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const topicPromise = getTopic({ source: 'nodeseek', id: '743012', fetcher });
+      await vi.advanceTimersByTimeAsync(8000);
+      const topic = await topicPromise;
+
+      expect(topic.title).toBe('NodeSeek slow fallback detail');
+      expect(normalFetcher).toHaveBeenCalledTimes(1);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+      expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743012-1');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('reads every NodeSeek search page through the WebView fallback', async () => {
     const normalFetcher = vi.fn(async () => html('<main>NodeSeek search for post</main><ul class="post-list"></ul>'));
     const webViewFetcher = vi.fn(async (input: string) => {

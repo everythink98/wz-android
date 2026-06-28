@@ -75,6 +75,23 @@ describe('hidden browser fetch scripts', () => {
     }
   });
 
+  it('does not treat NodeSeek search page config as post detail data', () => {
+    vi.useFakeTimers();
+    try {
+      const { postMessage } = runNodeSeekBrowserFetchScript('/search?q=ai', `
+        <main>
+          <script id="temp-script" type="application/json">eyJhbGxDYXRlZ29yeSI6W119</script>
+          <form action="/search"><input name="q" value="ai" /></form>
+        </main>
+      `);
+
+      expect(postMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('fails bare NodeSeek search pages at the read deadline instead of returning them as empty results', () => {
     vi.useFakeTimers();
     try {
@@ -175,6 +192,44 @@ describe('hidden browser fetch scripts', () => {
       error: 'NodeSeek 页面内容过大，已停止读取'
     });
     expect(payload.html).toBeUndefined();
+  });
+
+  it('returns only NodeSeek embedded post data when the rendered page is huge', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777284-1', `
+      <main>
+        <script id="temp-script" type="application/json">eyJwb3N0RGF0YSI6eyJwb3N0SWQiOjc3NzI4NH19</script>
+        <article class="post-content">${'x'.repeat(950000)}</article>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: false
+    });
+    expect(payload.html).toContain('id="temp-script"');
+    expect(payload.html.length).toBeLessThan(1000);
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('does not wait for vote widgets when NodeSeek embedded post data is ready', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777285-1', `
+      <main>
+        <script id="temp-script" type="application/json">eyJwb3N0RGF0YSI6eyJwb3N0SWQiOjc3NzI4NX19</script>
+        <div class="embed-vote">
+          <div class="form-mask"></div>
+          <input name="vote-item" id="vote-1" value="">
+          <label for="vote-1"></label>
+        </div>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload.html).toContain('id="temp-script"');
+    expect(stop).toHaveBeenCalled();
   });
 
   it('does not scan full innerHTML while polling challenge pages', () => {

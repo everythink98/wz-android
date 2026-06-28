@@ -91,7 +91,7 @@ export function useTopicController({
   setTopicError,
   setTopicReplies,
   setUnreadReplyCount,
-  showNodeSeekVerification,
+  onNodeSeekTopicVerificationRequired,
   showYaohuoLogin,
   topicAbortRef,
   topicBackStackRef,
@@ -151,7 +151,7 @@ export function useTopicController({
   setTopicError: Dispatch<SetStateAction<string>>;
   setTopicReplies: Dispatch<SetStateAction<Reply[]>>;
   setUnreadReplyCount: Dispatch<SetStateAction<number>>;
-  showNodeSeekVerification: (message?: string) => void;
+  onNodeSeekTopicVerificationRequired: (message: string) => void;
   showYaohuoLogin: (message?: string) => void;
   topicAbortRef: MutableRef<AbortController | null>;
   topicBackStackRef: MutableRef<TopicSnapshot[]>;
@@ -325,7 +325,7 @@ export function useTopicController({
           return;
         }
         if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
+          onNodeSeekTopicVerificationRequired(message);
           return;
         }
         if (isYaohuoLoginRequiredError(error)) {
@@ -388,7 +388,7 @@ export function useTopicController({
     setTopicError,
     setTopicReplies,
     setUnreadReplyCount,
-    showNodeSeekVerification,
+    onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicAbortRef,
     topicBackStackRef,
@@ -495,7 +495,9 @@ export function useTopicController({
           return false;
         }
         if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
+          const message = errorMessage(error);
+          setTopicError(message);
+          onNodeSeekTopicVerificationRequired(message);
           return false;
         }
         if (!isCanceledRequest(error)) {
@@ -533,7 +535,7 @@ export function useTopicController({
     setReplyNextOffset,
     setReplyNextPage,
     setTopicReplies,
-    showNodeSeekVerification,
+    onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicDetail,
     topicReplies.length
@@ -621,7 +623,9 @@ export function useTopicController({
           return;
         }
         if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(errorMessage(error));
+          const message = errorMessage(error);
+          setTopicError(message);
+          onNodeSeekTopicVerificationRequired(message);
           return;
         }
         if (!isCanceledRequest(error)) {
@@ -658,7 +662,7 @@ export function useTopicController({
     setReplyNextOffset,
     setReplyNextPage,
     setTopicReplies,
-    showNodeSeekVerification,
+    onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicDetail,
     topicRepliesRef

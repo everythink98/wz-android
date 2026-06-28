@@ -172,6 +172,7 @@ export const TopicScreen = memo(function TopicScreen({
   onRefreshTopic,
   onRefreshWholeTopic,
   onVerifyLinuxDo,
+  onVerifyNodeSeek,
   onSubmitReply,
   onTopicScroll,
   onToggleQuotedFloor,
@@ -233,6 +234,7 @@ export const TopicScreen = memo(function TopicScreen({
   onRefreshTopic: () => void;
   onRefreshWholeTopic: () => void;
   onVerifyLinuxDo: () => void;
+  onVerifyNodeSeek: () => void;
   onSubmitReply: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
@@ -833,6 +835,7 @@ export const TopicScreen = memo(function TopicScreen({
             <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>{topicAuthNotice?.message || topicReadableError}</Text>
             <View style={styles.actions}>
               {item.source === 'linuxdo' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              {item.source === 'nodeseek' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} /> : null}
               <AppButton label="重试" styles={styles} onPress={onRefreshWholeTopic} />
             </View>
           </View>

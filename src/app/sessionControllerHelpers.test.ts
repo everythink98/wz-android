@@ -14,6 +14,7 @@ import {
   settleBrowserFetchRequestOnce,
   shouldHandleBrowserHttpError,
   startNextBrowserFetchRequest,
+  takeNodeSeekVerificationRetry,
   type BrowserFetchRequestCleanupTarget
 } from './sessionControllerHelpers';
 
@@ -301,6 +302,32 @@ describe('session controller helpers', () => {
   it('clears browser challenge response bodies even if a script sends page HTML', async () => {
     await expect(nodeSeekBrowserResponse('<html>challenge</html>', true).text()).resolves.toBe('');
     await expect(linuxDoBrowserResponse('<html>challenge</html>', true).text()).resolves.toBe('');
+  });
+
+  it('takes a pending NodeSeek topic verification retry only once', () => {
+    const topic = { source: 'nodeseek' as const, id: '42' };
+    const searchRetryRef = { current: null };
+    const topicRetryRef = { current: topic };
+
+    expect(takeNodeSeekVerificationRetry(searchRetryRef, topicRetryRef)).toEqual({
+      type: 'topic',
+      topic
+    });
+    expect(takeNodeSeekVerificationRetry(searchRetryRef, topicRetryRef)).toBeNull();
+  });
+
+  it('keeps existing NodeSeek search verification retry ahead of topic retry', () => {
+    const retry = vi.fn();
+    const topic = { source: 'nodeseek' as const, id: '42' };
+    const searchRetryRef = { current: retry };
+    const topicRetryRef = { current: topic };
+
+    expect(takeNodeSeekVerificationRetry(searchRetryRef, topicRetryRef)).toEqual({
+      type: 'search',
+      retry
+    });
+    expect(searchRetryRef.current).toBeNull();
+    expect(topicRetryRef.current).toBeNull();
   });
 
   it('handles document HTTP errors after allowed redirects', () => {

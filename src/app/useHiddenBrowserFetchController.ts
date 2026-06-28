@@ -27,6 +27,17 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       || /没有找到|没有结果|暂无|未找到|no results|nothing found/i.test(pageText()));
   const hasNodeSeekSearchResultLinks = () => /\\/search\\/?$/i.test(location.pathname || "")
     && Array.from(document.querySelectorAll('a[href*="post-"]')).some((link) => /nodeseek\\.com|post-\\d+-\\d+/i.test(link.href || ""));
+  const isNodeSeekPostPage = () => /\\/post-\\d+-\\d+\\/?$/i.test(location.pathname || "");
+  const embeddedPostDataHtml = () => {
+    if (!isNodeSeekPostPage()) {
+      return "";
+    }
+    const script = document.querySelector("#temp-script");
+    if (!script || !(script.textContent || "").trim()) {
+      return "";
+    }
+    return "<html><body>" + script.outerHTML + "</body></html>";
+  };
   const hasPendingVotePanel = () => {
     const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
       const style = window.getComputedStyle(element);
@@ -76,13 +87,14 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const postResult = () => {
     const challenge = isChallengePage();
+    const compactHtml = challenge ? "" : embeddedPostDataHtml();
     postBridgeMessage({
       type: 'nodeseek-browser-fetch',
       id: requestId,
       url: location.href,
       title: document.title || "",
       challenge,
-      html: challenge ? "" : (document.documentElement ? document.documentElement.outerHTML : ""),
+      html: challenge ? "" : (compactHtml || (document.documentElement ? document.documentElement.outerHTML : "")),
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
     });
@@ -93,6 +105,10 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
     if (isInteractiveChallengePage()) {
+      postResult();
+      return;
+    }
+    if (!isChallengePage() && embeddedPostDataHtml()) {
       postResult();
       return;
     }

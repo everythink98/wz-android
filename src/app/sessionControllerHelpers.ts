@@ -8,6 +8,9 @@ export type BrowserFetchRequestCleanupTarget = {
 
 type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
+export type NodeSeekVerificationRetry<TopicLike> =
+  | { type: 'search'; retry: () => void }
+  | { type: 'topic'; topic: TopicLike };
 export type CredentialLoadOptions = { captureGeneration?: (generation: number) => void };
 export type CredentialClearOptions = { generation?: number; force?: boolean };
 export type CredentialWriteGate = {
@@ -69,6 +72,20 @@ export function nodeSeekBrowserResponse(html: string, challenge: boolean, httpEr
     },
     text: () => Promise.resolve(body)
   } as Response;
+}
+
+export function takeNodeSeekVerificationRetry<TopicLike>(
+  searchRetryRef: MutableRef<(() => void) | null>,
+  topicRetryRef: MutableRef<TopicLike | null>
+): NodeSeekVerificationRetry<TopicLike> | null {
+  const retry = searchRetryRef.current;
+  const topic = topicRetryRef.current;
+  searchRetryRef.current = null;
+  topicRetryRef.current = null;
+  if (retry) {
+    return { type: 'search', retry };
+  }
+  return topic ? { type: 'topic', topic } : null;
 }
 
 export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErrorStatus?: number) {

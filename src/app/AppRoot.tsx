@@ -40,6 +40,7 @@ import { useUserController } from './useUserController';
 import { useVerificationController, type DeferredNavigationTask } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useTopicActionsController } from './useTopicActionsController';
+import { takeNodeSeekVerificationRetry } from './sessionControllerHelpers';
 import {
   hasPendingOptimisticTopicAction,
   shouldInvalidateTopicActionsOnScreenChange,
@@ -136,6 +137,7 @@ export function AppRoot() {
   const openUserRef = useRef<((user: UserProfile, nocache?: boolean) => Promise<void>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
+  const pendingNodeSeekTopicRetryRef = useRef<Topic | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
   const linuxDoWebViewCookieHeaderRef = useRef('');
@@ -503,6 +505,7 @@ export function AppRoot() {
     nodeSeekLoginPanelRequestRef.current += 1;
     if (!visible) {
       pendingNodeSeekSearchRetryRef.current = null;
+      pendingNodeSeekTopicRetryRef.current = null;
     }
     webViewRef.current?.stopLoading();
     setLoadingLoginPage(visible);
@@ -577,6 +580,10 @@ export function AppRoot() {
     pendingNodeSeekSearchRetryRef.current = retry;
     showNodeSeekVerification(message);
   }, [showNodeSeekVerification]);
+
+  const handleNodeSeekTopicVerificationRequired = useCallback((message: string) => {
+    updateNodeSeekSession({ type: 'verification-required', message });
+  }, [updateNodeSeekSession]);
 
   const {
     checkLogin,
@@ -775,12 +782,16 @@ export function AppRoot() {
     if (!saved) {
       return false;
     }
-    const retryPendingNodeSeekSearch = pendingNodeSeekSearchRetryRef.current;
-    if (retryPendingNodeSeekSearch) {
-      pendingNodeSeekSearchRetryRef.current = null;
+    const retry = takeNodeSeekVerificationRetry(pendingNodeSeekSearchRetryRef, pendingNodeSeekTopicRetryRef);
+    if (retry?.type === 'search') {
       changeNodeSeekLoginPanel(false);
       changeScreen('search');
-      retryPendingNodeSeekSearch();
+      retry.retry();
+    } else if (retry?.type === 'topic') {
+      reopenExistingTopicScreenRef.current = true;
+      changeNodeSeekLoginPanel(false);
+      changeScreen('topic');
+      void openTopicRef.current?.(retry.topic, true);
     }
     return true;
   }, [changeNodeSeekLoginPanel, changeScreen, rememberVisibleNodeSeekCookies]);
@@ -903,6 +914,7 @@ export function AppRoot() {
     loadingMoreRepliesRef,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
+    onNodeSeekTopicVerificationRequired: handleNodeSeekTopicVerificationRequired,
     pendingLinuxDoTopicRef,
     pushTopicScreen,
     quotedReplyAbortRefs,
@@ -934,7 +946,6 @@ export function AppRoot() {
     setTopicError,
     setTopicReplies,
     setUnreadReplyCount,
-    showNodeSeekVerification,
     showYaohuoLogin,
     onTopicContextChange: invalidateTopicActionRequests,
     topicAbortRef,
@@ -957,6 +968,15 @@ export function AppRoot() {
   }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
 
   openTopicRef.current = openTopic;
+
+  const verifyNodeSeekFromTopic = useCallback(() => {
+    const detail = topicDetail || selectedTopic;
+    if (detail?.source !== 'nodeseek') {
+      return;
+    }
+    pendingNodeSeekTopicRetryRef.current = detail;
+    showNodeSeekVerification(topicError || 'NodeSeek 需要完成 Cloudflare 验证');
+  }, [selectedTopic, showNodeSeekVerification, topicDetail, topicError]);
 
   const {
     bookmarkOnLinuxDoSite,
@@ -1487,6 +1507,7 @@ export function AppRoot() {
       onRefreshTopic: refreshTopicReplies,
       onRefreshWholeTopic: refreshWholeTopic,
       onVerifyLinuxDo: verifyLinuxDoFromTopic,
+      onVerifyNodeSeek: verifyNodeSeekFromTopic,
       onSubmitReply: submitReply,
       onTopicScroll: handleTopicScroll,
       onToggleQuotedFloor: toggleQuotedFloor,
@@ -1548,6 +1569,7 @@ export function AppRoot() {
     topicReplies,
     topicScrollRef,
     unreadReplyCount,
+    verifyNodeSeekFromTopic,
     verifyLinuxDoFromTopic,
     votePoll
   ]);
