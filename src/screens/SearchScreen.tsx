@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, FeedSource, Source, Topic } from '../types';
@@ -227,7 +227,7 @@ function SearchFilterSheet({
 
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'android' ? 'height' : 'padding'} style={styles.searchFilterModalRoot}>
+      <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
         <Pressable accessibilityRole="button" accessibilityLabel="关闭筛选" style={styles.searchFilterBackdrop} onPress={onClose} />
         <View style={styles.searchFilterSheet}>
           <View style={styles.searchFilterHandle} />

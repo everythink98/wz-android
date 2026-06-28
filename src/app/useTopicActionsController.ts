@@ -96,8 +96,12 @@ import {
 
 type Ref<T> = MutableRefObject<T>;
 type ActionRunOptions = {
+  busy?: boolean;
+  fallbackKey?: string;
   key?: string;
+  notifySuccess?: boolean;
   owner?: TopicActionRequestOwner;
+  restoreOnFailure?: boolean;
 };
 type ActionRun = TopicActionRun & {
   cancelOnTopicChange: boolean;
@@ -118,6 +122,9 @@ function optimisticOwnerKey(requestOwner: TopicActionRequestOwner) {
     requestOwner.action.key,
     requestOwner.action.token
   ].join(':');
+}
+function actionMessage(message: string, restoreOnFailure?: boolean) {
+  return restoreOnFailure ? `${message}，已恢复原状态。` : message;
 }
 async function loadNodeSeekActionAccess() {
   const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
@@ -273,13 +280,17 @@ export function useTopicActionsController({
     options: ActionRunOptions = {}
   ) => {
     if (!canUseNodeSeekActions) {
-      notify(authActionMessageForSource('nodeseek', siteSessionViewModels));
+      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
+        return false;
+      }
+      notify(actionMessage(authActionMessageForSource('nodeseek', siteSessionViewModels), options.restoreOnFailure));
       return false;
     }
-    const actionKey = options.key || options.owner?.action.key || success;
+    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || 'nodeseek-action';
     const topicScoped = isTopicScopedActionKey(actionKey);
     const requestOwner = options.owner || (topicScoped ? startTopicActionRequest(actionKey) : undefined);
-    const run = startActionRun(actionKey, true, topicScoped);
+    const busy = options.busy ?? true;
+    const run = startActionRun(actionKey, busy, topicScoped);
     const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     try {
       const access = await loadNodeSeekActionAccess();
@@ -295,7 +306,9 @@ export function useTopicActionsController({
       if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
         return false;
       }
-      notify(success);
+      if (options.notifySuccess !== false && success) {
+        notify(success);
+      }
       return true;
     } catch (error) {
       if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner)) || isCanceledRequest(error)) {
@@ -307,10 +320,10 @@ export function useTopicActionsController({
           return false;
         }
       }
-      notify(errorMessage(error));
+      notify(actionMessage(errorMessage(error), options.restoreOnFailure));
       return false;
     } finally {
-      finishActionRun(run, true);
+      finishActionRun(run, busy);
     }
   }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
@@ -380,11 +393,13 @@ export function useTopicActionsController({
         return false;
       }
       const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
-      showLinuxDoLogin(message);
+      showLinuxDoLogin(actionMessage(message, options.restoreOnFailure));
       return false;
     }
-    const requestOwner = options.owner || startTopicActionRequest(options.key || success);
-    const run = startActionRun(options.key || requestOwner.action.key || success, true);
+    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || 'linuxdo-action';
+    const requestOwner = options.owner || startTopicActionRequest(actionKey);
+    const busy = options.busy ?? true;
+    const run = startActionRun(actionKey, busy);
     let linuxDoGeneration: number | undefined;
     let linuxDoAccessCookieHeader: string | undefined;
     try {
@@ -397,7 +412,7 @@ export function useTopicActionsController({
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
         const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
         updateLinuxDoSession({ type: 'login-expired', message });
-        showLinuxDoLogin(message);
+        showLinuxDoLogin(actionMessage(message, options.restoreOnFailure));
         return false;
       }
       const result = await runLinuxDoAction({
@@ -409,7 +424,9 @@ export function useTopicActionsController({
       if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
         return false;
       }
-      notify(success);
+      if (options.notifySuccess !== false && success) {
+        notify(success);
+      }
       return result ?? true;
     } catch (error) {
       if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
@@ -420,13 +437,13 @@ export function useTopicActionsController({
         if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
           return false;
         }
-        showLinuxDoLogin(errorMessage(error));
+        showLinuxDoLogin(actionMessage(errorMessage(error), options.restoreOnFailure));
         return false;
       }
-      notify(errorMessage(error));
+      notify(actionMessage(errorMessage(error), options.restoreOnFailure));
       return false;
     } finally {
-      finishActionRun(run, true);
+      finishActionRun(run, busy);
     }
   }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
 
@@ -444,109 +461,24 @@ export function useTopicActionsController({
   const runNodeSeekActionForOptimisticUpdate = useCallback(async (
     requestFactory: () => NodeSeekActionRequest,
     options: ActionRunOptions = {}
-  ) => {
-    if (!canUseNodeSeekActions) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        return false;
-      }
-      notify(`${authActionMessageForSource('nodeseek', siteSessionViewModels)}，已恢复原状态。`);
-      return false;
-    }
-    const requestOwner = options.owner || startTopicActionRequest(options.key || 'nodeseek-optimistic');
-    const run = startActionRun(options.key || requestOwner.action.key || 'nodeseek-optimistic', false);
-    const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
-    try {
-      const access = await loadNodeSeekActionAccess();
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        return false;
-      }
-      await runNodeSeekAction({
-        cookieHeader: access?.cookieHeader || '',
-        request: requestFactory(),
-        signal: run.controller.signal,
-        userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
-      });
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        return false;
-      }
-      return true;
-    } catch (error) {
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
-        return false;
-      }
-      if (isNodeSeekLoginRequiredError(error)) {
-        await clearNodeSeekLoginCookiesOnly({ generation: nodeSeekGeneration });
-        if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-          return false;
-        }
-      }
-      notify(`${errorMessage(error)}，已恢复原状态。`);
-      return false;
-    } finally {
-      finishActionRun(run, false);
-    }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+  ) => runNodeSeekRequest(requestFactory, '', {
+    ...options,
+    busy: false,
+    fallbackKey: 'nodeseek-optimistic',
+    notifySuccess: false,
+    restoreOnFailure: true
+  }), [runNodeSeekRequest]);
 
   const runLinuxDoActionForOptimisticUpdate = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
     options: ActionRunOptions = {}
-  ) => {
-    const requestOwner = options.owner || startTopicActionRequest(options.key || 'linuxdo-optimistic');
-    const run = startActionRun(options.key || requestOwner.action.key || 'linuxdo-optimistic', false);
-    let linuxDoGeneration: number | undefined;
-    let linuxDoAccessCookieHeader: string | undefined;
-    try {
-      if (!canUseLinuxDoActions) {
-        if (!isCurrentTopicActionRequest(requestOwner)) {
-          return false;
-        }
-        const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
-        showLinuxDoLogin(`${message}，已恢复原状态。`);
-        return false;
-      }
-      linuxDoGeneration = currentLinuxDoAccessGeneration();
-      const access = await loadLinuxDoAccess();
-      linuxDoAccessCookieHeader = access?.cookieHeader;
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        return false;
-      }
-      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-        if (!isCurrentTopicActionRequest(requestOwner)) {
-          return false;
-        }
-        const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
-        updateLinuxDoSession({ type: 'login-expired', message });
-        showLinuxDoLogin(`${message}，已恢复原状态。`);
-        return false;
-      }
-      const result = await runLinuxDoAction({
-        cookieHeader: access.cookieHeader,
-        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        request: requestFactory(),
-        signal: run.controller.signal
-      });
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        return false;
-      }
-      return result ?? true;
-    } catch (error) {
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
-        return false;
-      }
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
-        if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-          return false;
-        }
-        showLinuxDoLogin(`${errorMessage(error)}，已恢复原状态。`);
-        return false;
-      }
-      notify(`${errorMessage(error)}，已恢复原状态。`);
-      return false;
-    } finally {
-      finishActionRun(run, false);
-    }
-  }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
+  ) => runLinuxDoRequest(requestFactory, '', {
+    ...options,
+    busy: false,
+    fallbackKey: 'linuxdo-optimistic',
+    notifySuccess: false,
+    restoreOnFailure: true
+  }), [runLinuxDoRequest]);
 
   const runOptimisticActionQueue = useCallback(async ({
     key,

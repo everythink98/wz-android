@@ -23,7 +23,7 @@ export function buildHtmlRenderingStyles({
   };
   const htmlParagraph = {
     marginBottom: 10,
-    marginTop: 6
+    marginTop: 0
   };
   const heading = (size: number, lineHeight: number, weight: '600' | '700', marginTop: number, marginBottom: number) => ({
     fontSize: Math.round(size * settings.fontScale),

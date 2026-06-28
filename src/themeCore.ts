@@ -1,4 +1,4 @@
-import { Platform, type TextStyle } from 'react-native';
+import type { TextStyle } from 'react-native';
 import { type ReaderSettings } from './readerData';
 import type { Source } from './types';
 
@@ -23,7 +23,7 @@ export interface ReaderTheme {
 }
 
 export function androidRipple(color: string, borderless = false) {
-  return Platform.OS === 'android' ? { color, borderless } : undefined;
+  return { color, borderless };
 }
 
 export function lineHeightMultiplier(value: ReaderSettings['lineHeight']) {

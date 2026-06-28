@@ -1,74 +1,73 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-
-const sessionController = readFileSync('src/app/useSessionController.ts', 'utf8');
-const morePanels = readFileSync('src/screens/more/MorePanels.tsx', 'utf8');
+import {
+  applyDevAnonymousOverrides,
+  createSiteSessionStates,
+  createSiteSessionViewModels,
+  nodeSeekLoginStateLabel
+} from './siteSessionState';
+import { authActionMessageForSource, authNoticeForMessage } from './siteSessionPrompts';
 
 describe('account session labels', () => {
-  it('uses readable session labels for yaohuo and linux.do account rows', () => {
-    expect(sessionController).toContain('const yaohuoLoginState = siteSessionViewModels.yaohuo.summaryLabel;');
-    expect(sessionController).not.toContain('未登录，已检测');
-    expect(morePanels).toContain('value={linuxDoSession.summaryLabel}');
+  it('uses readable account summaries instead of cookie names', () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'anonymous',
+        cookieSummary: [],
+        isVerifying: false
+      },
+      yaohuo: {
+        site: 'yaohuo',
+        status: 'expired',
+        cookieSummary: ['sidyaohuo'],
+        isVerifying: false
+      }
+    }));
+
+    expect(nodeSeekLoginStateLabel(sessions.nodeseek, 48872)).toBe('网页已确认登录：用户 48872');
+    expect(sessions.linuxdo.summaryLabel).toBe('匿名可用');
+    expect(sessions.yaohuo.summaryLabel).toBe('已失效');
+    expect(Object.values(sessions).map((item) => item.summaryLabel).join(' ')).not.toContain('sidyaohuo');
   });
 
-  it('moves temporary anonymous controls into a separate development tools panel', () => {
-    const moreScreen = readFileSync('src/screens/MoreScreen.tsx', 'utf8');
-    const appRoot = readFileSync('src/app/AppRoot.tsx', 'utf8');
+  it('applies temporary anonymous controls without deleting saved sessions', () => {
+    const saved = createSiteSessionStates({
+      nodeseek: {
+        site: 'nodeseek',
+        status: 'logged-in',
+        cookieSummary: ['session'],
+        isVerifying: false
+      },
+      linuxdo: {
+        site: 'linuxdo',
+        status: 'logged-in',
+        cookieSummary: ['cf_clearance', '_t'],
+        isVerifying: false
+      }
+    });
 
-    expect(appRoot).toContain('devAnonymousAvailable: __DEV__');
-    expect(moreScreen).toContain('title="测试工具"');
-    expect(moreScreen).toContain("meta={devAnonymousMeta}");
-    expect(moreScreen).toContain('{devAnonymousAvailable ? (');
-    expect(moreScreen).toContain('只影响本次运行，不删除 Cookie。重启后恢复。');
-    expect(moreScreen).toContain("label=\"NodeSeek\"");
-    expect(moreScreen).toContain("label=\"妖火\"");
-    expect(moreScreen).toContain("label=\"linux.do\"");
+    const effective = applyDevAnonymousOverrides(saved, { nodeseek: true, linuxdo: true });
 
-    const accountPanelIndex = moreScreen.indexOf('title="账号与验证"');
-    const toolsPanelIndex = moreScreen.indexOf('title="测试工具"');
-    expect(accountPanelIndex).toBeGreaterThan(-1);
-    expect(toolsPanelIndex).toBeGreaterThan(accountPanelIndex);
-    expect(moreScreen.slice(accountPanelIndex, toolsPanelIndex)).not.toContain('临时匿名');
+    expect(createSiteSessionViewModels(effective).nodeseek.summaryLabel).toBe('未登录');
+    expect(createSiteSessionViewModels(effective).linuxdo.summaryLabel).toBe('匿名可用');
+    expect(saved.nodeseek.status).toBe('logged-in');
+    expect(saved.linuxdo.cookieSummary).toEqual(['cf_clearance', '_t']);
   });
 
-  it('keeps account summaries human-readable instead of listing cookie names', () => {
-    const siteSessionState = readFileSync('src/siteSessionState.ts', 'utf8');
+  it('classifies login limitations as notices and ordinary failures as errors', () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates());
 
-    expect(siteSessionState).not.toContain('state.cookieSummary.join');
-    expect(siteSessionState).toContain("return statusLabel;");
-  });
-
-  it('renders login-state limitations as auth notices instead of ordinary errors', () => {
-    const searchScreen = readFileSync('src/screens/SearchScreen.tsx', 'utf8');
-    const topicScreen = readFileSync('src/screens/topic/TopicScreenBody.tsx', 'utf8');
-    const userScreen = readFileSync('src/screens/UserScreen.tsx', 'utf8');
-
-    expect(searchScreen).toContain("item.type === 'groupAuthNotice'");
-    expect(searchScreen).toContain('styles.authNoticeBox');
-    expect(searchScreen).toContain('styles.authNoticeBoxWarning');
-    expect(topicScreen).toContain('authNoticeForMessage(topicError)');
-    expect(topicScreen).toContain('styles.authNoticeBox');
-    expect(userScreen).toContain('authNoticeForMessage(error)');
-    expect(userScreen).toContain('styles.authNoticeBox');
-  });
-
-  it('keeps ordinary detail and user read failures in the error style', () => {
-    const topicScreen = readFileSync('src/screens/topic/TopicScreenBody.tsx', 'utf8');
-    const userScreen = readFileSync('src/screens/UserScreen.tsx', 'utf8');
-
-    expect(topicScreen).toContain('topicAuthNotice');
-    expect(topicScreen).toContain('styles.errorBox');
-    expect(userScreen).toContain('userAuthNotice');
-    expect(userScreen).toContain('styles.errorBox');
-  });
-
-  it('shows the yaohuo login reason inside the login panel', () => {
-    const appRoot = readFileSync('src/app/AppRoot.tsx', 'utf8');
-    const moreScreen = readFileSync('src/screens/MoreScreen.tsx', 'utf8');
-    const morePanels = readFileSync('src/screens/more/MorePanels.tsx', 'utf8');
-
-    expect(appRoot).toContain('setYaohuoLoginPrompt(message);');
-    expect(moreScreen).toContain('yaohuoLoginPrompt={yaohuoLoginPrompt}');
-    expect(morePanels).toContain('subtitle={yaohuoLoginPrompt || yaohuoLoginState}');
+    expect(authActionMessageForSource('linuxdo', sessions)).toBe('匿名可阅读，登录后才能互动。');
+    expect(authNoticeForMessage('linux.do 登录已失效，请重新登录。')).toEqual({
+      message: 'linux.do 登录已失效，请重新登录。',
+      tone: 'danger'
+    });
+    expect(authNoticeForMessage('读取失败，请稍后重试。')).toBeNull();
   });
 });

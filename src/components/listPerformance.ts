@@ -1,6 +1,4 @@
-import { Platform } from 'react-native';
-
-const DEFAULT_DRAW_DISTANCE = Platform.OS === 'android' ? 900 : 700;
+const DEFAULT_DRAW_DISTANCE = 900;
 
 export const FEED_LIST_PERFORMANCE_PROPS = {
   drawDistance: DEFAULT_DRAW_DISTANCE,

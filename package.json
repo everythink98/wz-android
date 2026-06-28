@@ -12,8 +12,7 @@
     "android": "expo run:android",
     "generate:adaptive-icon": "node scripts/generate-adaptive-icon.mjs",
     "release:android": "node scripts/release-android.mjs",
-    "typecheck": "tsc --noEmit",
-    "ios": "expo run:ios"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -22,7 +21,6 @@
     "@react-navigation/native": "^7.2.4",
     "@react-navigation/native-stack": "^7.15.1",
     "@shopify/flash-list": "^2.3.1",
-    "@types/markdown-it": "^14.1.2",
     "buffer": "^6.0.3",
     "expo": "~54.0.33",
     "expo-clipboard": "~8.0.8",
@@ -55,6 +53,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.5",
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",

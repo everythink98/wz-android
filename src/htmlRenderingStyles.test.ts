@@ -37,4 +37,12 @@ describe('Android HTML rendering styles', () => {
     expect(htmlIgnoredStyles).not.toContain('color');
     expect(htmlIgnoredStyles).toContain('backgroundColor');
   });
+
+  it('uses bottom-only paragraph spacing so list item text is not pushed below markers', () => {
+    const theme = createTheme(settings);
+    const { htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
+
+    expect(htmlTagsStyles.p?.marginTop).toBe(0);
+    expect(htmlTagsStyles.p?.marginBottom).toBe(10);
+  });
 });

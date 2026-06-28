@@ -1,4 +1,4 @@
-import { Platform, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import type { ReaderTheme } from './theme';
 
 type AlphaColor = (hex: string, alpha: number) => string;
@@ -11,10 +11,10 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
       borderTopWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface,
       elevation: 0,
-      paddingBottom: Platform.OS === 'android' ? 8 : 10,
+      paddingBottom: 8,
       paddingHorizontal: 10,
       paddingTop: 4,
-      height: Platform.OS === 'android' ? 64 : 70
+      height: 64
     },
     navItem: {
       flex: 1,

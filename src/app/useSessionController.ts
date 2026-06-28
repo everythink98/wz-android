@@ -146,56 +146,46 @@ type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
 
 export function useSessionController({
-  linuxDoBrowserFetchCurrentRef,
-  linuxDoBrowserFetchIdRef,
-  linuxDoBrowserFetchQueueRef,
   linuxDoBrowserWebViewRef,
   linuxDoClearanceBeforeVerifyRef,
   linuxDoWebViewCookieHeaderRef,
   linuxDoWebViewUserAgentRef,
-  nodeSeekBrowserFetchCurrentRef,
-  nodeSeekBrowserFetchIdRef,
-  nodeSeekBrowserFetchQueueRef,
   nodeSeekBrowserWebViewRef,
   nodeSeekWebViewCookieHeaderRef,
   nodeSeekWebViewUserAgentRef,
   notify,
-  rejectLinuxDoBrowserFetchRef,
-  rejectNodeSeekBrowserFetchRef,
-  setLinuxDoBrowserFetchRequest,
   setLinuxDoWebViewCookieHeader,
   setLinuxDoWebViewUserAgent,
-  setNodeSeekBrowserFetchRequest,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
   webLoginDetectedRef,
   webLoginUserId
 }: {
-  linuxDoBrowserFetchCurrentRef: MutableRef<PendingLinuxDoBrowserFetchRequest | null>;
-  linuxDoBrowserFetchIdRef: MutableRef<number>;
-  linuxDoBrowserFetchQueueRef: MutableRef<PendingLinuxDoBrowserFetchRequest[]>;
   linuxDoBrowserWebViewRef: WebViewStopRef;
   linuxDoClearanceBeforeVerifyRef: MutableRef<string | null>;
   linuxDoWebViewCookieHeaderRef: MutableRef<string>;
   linuxDoWebViewUserAgentRef: MutableRef<string>;
-  nodeSeekBrowserFetchCurrentRef: MutableRef<PendingNodeSeekBrowserFetchRequest | null>;
-  nodeSeekBrowserFetchIdRef: MutableRef<number>;
-  nodeSeekBrowserFetchQueueRef: MutableRef<PendingNodeSeekBrowserFetchRequest[]>;
   nodeSeekBrowserWebViewRef: WebViewStopRef;
   nodeSeekWebViewCookieHeaderRef: MutableRef<string>;
   nodeSeekWebViewUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
-  rejectLinuxDoBrowserFetchRef: MutableRef<((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null>;
-  rejectNodeSeekBrowserFetchRef: MutableRef<((request: PendingNodeSeekBrowserFetchRequest, message: string) => void) | null>;
-  setLinuxDoBrowserFetchRequest: Dispatch<SetStateAction<LinuxDoBrowserFetchRequest | null>>;
   setLinuxDoWebViewCookieHeader: Dispatch<SetStateAction<string>>;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
-  setNodeSeekBrowserFetchRequest: Dispatch<SetStateAction<NodeSeekBrowserFetchRequest | null>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
   webLoginDetectedRef: MutableRef<boolean>;
   webLoginUserId: number | null;
 }) {
+  const nodeSeekBrowserFetchIdRef = useRef(0);
+  const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
+  const nodeSeekBrowserFetchQueueRef = useRef<PendingNodeSeekBrowserFetchRequest[]>([]);
+  const rejectNodeSeekBrowserFetchRef = useRef<((request: PendingNodeSeekBrowserFetchRequest, message: string) => void) | null>(null);
+  const linuxDoBrowserFetchIdRef = useRef(0);
+  const linuxDoBrowserFetchCurrentRef = useRef<PendingLinuxDoBrowserFetchRequest | null>(null);
+  const linuxDoBrowserFetchQueueRef = useRef<PendingLinuxDoBrowserFetchRequest[]>([]);
+  const rejectLinuxDoBrowserFetchRef = useRef<((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null>(null);
+  const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(null);
+  const [linuxDoBrowserFetchRequest, setLinuxDoBrowserFetchRequest] = useState<LinuxDoBrowserFetchRequest | null>(null);
   const nodeSeekCredentialGateRef = useRef(createCredentialWriteGate());
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
@@ -487,6 +477,12 @@ export function useSessionController({
     }
   }, [nodeSeekBrowserFetchCurrentRef, rejectNodeSeekBrowserFetch]);
 
+  const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
+    if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {
+      nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
+    }
+  }, []);
+
   const startNextLinuxDoBrowserFetch = useCallback(() => {
     startNextBrowserFetchRequest({
       currentRef: linuxDoBrowserFetchCurrentRef,
@@ -653,6 +649,12 @@ export function useSessionController({
     }
   }, [linuxDoBrowserFetchCurrentRef, rejectLinuxDoBrowserFetch]);
 
+  const markLinuxDoBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
+    if (linuxDoBrowserFetchCurrentRef.current?.id === requestId) {
+      linuxDoBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
+    }
+  }, []);
+
   const restoreSavedYaohuoCookiesToWebView = useCallback(async () => {
     await enqueueCredentialWrite(yaohuoCredentialGateRef.current, async ({ isCurrent }) => {
       const cookieHeader = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
@@ -799,9 +801,15 @@ export function useSessionController({
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
+    hiddenBrowserFetchRequests: {
+      linuxDo: linuxDoBrowserFetchRequest,
+      nodeSeek: nodeSeekBrowserFetchRequest
+    },
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     loginState,
+    markLinuxDoBrowserFetchHttpError,
+    markNodeSeekBrowserFetchHttpError,
     restoreSavedYaohuoCookiesToWebView,
     saveNodeSeekCookieHeader,
     saveYaohuoCookieHeader,

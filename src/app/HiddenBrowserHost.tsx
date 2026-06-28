@@ -7,35 +7,42 @@ import type { createStyles } from '../theme';
 import { isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
 import { isNodeSeekBrowserFetchUrl } from '../nodeseekFetchFallback';
 
+type HiddenBrowserState = {
+  linuxDo: {
+    request: LinuxDoBrowserFetchRequest | null;
+    userAgent: string;
+  };
+  nodeSeek: {
+    request: NodeSeekBrowserFetchRequest | null;
+    userAgent: string;
+  };
+};
+
 export function HiddenBrowserHost({
   failLinuxDoBrowserFetchById,
   failNodeSeekBrowserFetchById,
   handleLinuxDoBrowserFetchMessage,
   handleNodeSeekBrowserFetchMessage,
-  linuxDoBrowserFetchRequest,
   linuxDoBrowserWebViewRef,
-  linuxDoWebViewUserAgent,
-  nodeSeekBrowserFetchRequest,
   nodeSeekBrowserWebViewRef,
-  nodeSeekWebViewUserAgent,
   onLinuxDoHttpErrorStatus,
   onNodeSeekHttpErrorStatus,
+  state,
   styles
 }: {
   failLinuxDoBrowserFetchById: (requestId: number, message: string) => void;
   failNodeSeekBrowserFetchById: (requestId: number, message: string) => void;
   handleLinuxDoBrowserFetchMessage: (event: WebViewMessageEvent) => void;
   handleNodeSeekBrowserFetchMessage: (event: WebViewMessageEvent) => void;
-  linuxDoBrowserFetchRequest: LinuxDoBrowserFetchRequest | null;
   linuxDoBrowserWebViewRef: RefObject<WebView | null>;
-  linuxDoWebViewUserAgent: string;
-  nodeSeekBrowserFetchRequest: NodeSeekBrowserFetchRequest | null;
   nodeSeekBrowserWebViewRef: RefObject<WebView | null>;
-  nodeSeekWebViewUserAgent: string;
   onLinuxDoHttpErrorStatus: (requestId: number, statusCode: number) => void;
   onNodeSeekHttpErrorStatus: (requestId: number, statusCode: number) => void;
+  state: HiddenBrowserState;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const linuxDoBrowserFetchRequest = state.linuxDo.request;
+  const nodeSeekBrowserFetchRequest = state.nodeSeek.request;
   const handleNodeSeekBrowserNavigation = useCallback((request: { url?: string }) => {
     const url = request.url || '';
     if (!url || isNodeSeekBrowserFetchUrl(url)) {
@@ -73,7 +80,7 @@ export function HiddenBrowserHost({
             sharedCookiesEnabled
             setSupportMultipleWindows={false}
             thirdPartyCookiesEnabled
-            userAgent={nodeSeekBrowserFetchRequest.userAgent || nodeSeekWebViewUserAgent}
+            userAgent={nodeSeekBrowserFetchRequest.userAgent || state.nodeSeek.userAgent}
             onShouldStartLoadWithRequest={handleNodeSeekBrowserNavigation}
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
@@ -117,7 +124,7 @@ export function HiddenBrowserHost({
             sharedCookiesEnabled
             setSupportMultipleWindows={false}
             thirdPartyCookiesEnabled
-            userAgent={linuxDoBrowserFetchRequest.userAgent || linuxDoWebViewUserAgent}
+            userAgent={linuxDoBrowserFetchRequest.userAgent || state.linuxDo.userAgent}
             onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}

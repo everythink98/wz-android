@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { NativeModules, Platform } from 'react-native';
+import { NativeModules } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, installVerifiedApk, type ApkInstaller, type AppUpdateDownloadProgress } from '../appUpdate';
 import { errorMessage } from '../appUtils';
@@ -53,10 +53,6 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
 
   const downloadAppUpdate = useCallback(async () => {
     if (!appUpdateInfo || appUpdateDownloadingRef.current) {
-      return;
-    }
-    if (Platform.OS !== 'android') {
-      notify('仅 Android 支持安装 APK。');
       return;
     }
     const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;

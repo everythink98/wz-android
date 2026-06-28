@@ -6,7 +6,6 @@ import {
   Linking,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  Platform,
   ScrollView,
   Share,
   ToastAndroid,
@@ -33,7 +32,7 @@ import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchControll
 import { AppNavigator, navigateMainTab, navigationRef, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
-import { useSessionController, type LinuxDoBrowserFetchRequest, type NodeSeekBrowserFetchRequest } from './useSessionController';
+import { useSessionController } from './useSessionController';
 import { useTopicController } from './useTopicController';
 import { useTopicNavigationController } from './useTopicNavigationController';
 import { useTopicUiStateController } from './useTopicUiStateController';
@@ -84,22 +83,6 @@ import {
   type SessionSite
 } from '../siteSessionState';
 
-type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
-  resolve: (response: Response) => void;
-  reject: (error: Error) => void;
-  timeout?: ReturnType<typeof setTimeout>;
-  abortSignal?: AbortSignal;
-  abortHandler?: () => void;
-  httpErrorStatus?: number;
-};
-type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
-  resolve: (response: Response) => void;
-  reject: (error: Error) => void;
-  timeout?: ReturnType<typeof setTimeout>;
-  abortSignal?: AbortSignal;
-  abortHandler?: () => void;
-  httpErrorStatus?: number;
-};
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
   snapshot: TopicSnapshot;
@@ -155,18 +138,10 @@ export function AppRoot() {
   const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
   const nodeSeekWebViewCookieHeaderRef = useRef('');
   const nodeSeekWebViewUserAgentRef = useRef(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  const nodeSeekBrowserFetchIdRef = useRef(0);
-  const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
-  const nodeSeekBrowserFetchQueueRef = useRef<PendingNodeSeekBrowserFetchRequest[]>([]);
-  const rejectNodeSeekBrowserFetchRef = useRef<((request: PendingNodeSeekBrowserFetchRequest, message: string) => void) | null>(null);
   const linuxDoWebViewCookieHeaderRef = useRef('');
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const linuxDoClearanceBeforeVerifyRef = useRef<string | null>(null);
   const linuxDoRequireFreshClearanceRef = useRef(false);
-  const linuxDoBrowserFetchIdRef = useRef(0);
-  const linuxDoBrowserFetchCurrentRef = useRef<PendingLinuxDoBrowserFetchRequest | null>(null);
-  const linuxDoBrowserFetchQueueRef = useRef<PendingLinuxDoBrowserFetchRequest[]>([]);
-  const rejectLinuxDoBrowserFetchRef = useRef<((request: PendingLinuxDoBrowserFetchRequest, message: string) => void) | null>(null);
   const linuxDoLevelRequestIdRef = useRef(0);
   const {
     cancelDeferredNavigationTask,
@@ -181,11 +156,7 @@ export function AppRoot() {
     if (!message) {
       return;
     }
-    if (Platform.OS === 'android') {
-      ToastAndroid.show(message, ToastAndroid.SHORT);
-    } else {
-      console.log(message);
-    }
+    ToastAndroid.show(message, ToastAndroid.SHORT);
   }, []);
   const [loadingLoginPage, setLoadingLoginPage] = useState(true);
   const [loadingYaohuoLoginPage, setLoadingYaohuoLoginPage] = useState(true);
@@ -203,8 +174,6 @@ export function AppRoot() {
   const [actionBusy, setActionBusy] = useState(false);
   const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
-  const [nodeSeekBrowserFetchRequest, setNodeSeekBrowserFetchRequest] = useState<NodeSeekBrowserFetchRequest | null>(null);
-  const [linuxDoBrowserFetchRequest, setLinuxDoBrowserFetchRequest] = useState<LinuxDoBrowserFetchRequest | null>(null);
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
     startOwnedRequest(topicActionRequestOwnerRef, `topic-action-context:${nextTopicKey || 'none'}`);
@@ -312,36 +281,29 @@ export function AppRoot() {
     failNodeSeekBrowserFetchById,
     dispatchSiteSessionEvent,
     forumFetchWithWebViewFallback,
+    hiddenBrowserFetchRequests,
     loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
     loadYaohuoCookieForSource: loadStoredYaohuoCookieForSource,
     restoreSavedYaohuoCookiesToWebView,
     saveNodeSeekCookieHeader,
     saveYaohuoCookieHeader,
     siteSessionStates,
+    markLinuxDoBrowserFetchHttpError,
+    markNodeSeekBrowserFetchHttpError,
     updateLinuxDoSession,
     updateNodeSeekSession,
     updateYaohuoSession
   } = useSessionController({
-    linuxDoBrowserFetchCurrentRef,
-    linuxDoBrowserFetchIdRef,
-    linuxDoBrowserFetchQueueRef,
     linuxDoBrowserWebViewRef,
     linuxDoClearanceBeforeVerifyRef,
     linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewUserAgentRef,
-    nodeSeekBrowserFetchCurrentRef,
-    nodeSeekBrowserFetchIdRef,
-    nodeSeekBrowserFetchQueueRef,
     nodeSeekBrowserWebViewRef,
     nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
     notify,
-    rejectLinuxDoBrowserFetchRef,
-    rejectNodeSeekBrowserFetchRef,
-    setLinuxDoBrowserFetchRequest,
     setLinuxDoWebViewCookieHeader,
     setLinuxDoWebViewUserAgent,
-    setNodeSeekBrowserFetchRequest,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
     webLoginDetectedRef,
@@ -1645,18 +1607,6 @@ export function AppRoot() {
     <UserScreen {...userProps} />
   ), [userProps]);
 
-  const markNodeSeekBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
-    if (nodeSeekBrowserFetchCurrentRef.current?.id === requestId) {
-      nodeSeekBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
-    }
-  }, []);
-
-  const markLinuxDoBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
-    if (linuxDoBrowserFetchCurrentRef.current?.id === requestId) {
-      linuxDoBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
-    }
-  }, []);
-
   const handleMainTabPress = useCallback((targetScreen: keyof MainTabParamList) => {
     if (screen === targetScreen) {
       requestTabScrollToTop(targetScreen);
@@ -1667,7 +1617,7 @@ export function AppRoot() {
   return (
     <GestureHandlerRootView style={styles.screen}>
       <SafeAreaProvider>
-        <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={styles.screen}>
           <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.screen}>
             <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
             <View pointerEvents="none" style={styles.statusBarScrim} />
@@ -1676,12 +1626,18 @@ export function AppRoot() {
               failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
               handleLinuxDoBrowserFetchMessage={handleLinuxDoBrowserFetchMessage}
               handleNodeSeekBrowserFetchMessage={handleNodeSeekBrowserFetchMessage}
-              linuxDoBrowserFetchRequest={linuxDoBrowserFetchRequest}
               linuxDoBrowserWebViewRef={linuxDoBrowserWebViewRef}
-              linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
-              nodeSeekBrowserFetchRequest={nodeSeekBrowserFetchRequest}
               nodeSeekBrowserWebViewRef={nodeSeekBrowserWebViewRef}
-              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
+              state={{
+                linuxDo: {
+                  request: hiddenBrowserFetchRequests.linuxDo,
+                  userAgent: linuxDoWebViewUserAgent
+                },
+                nodeSeek: {
+                  request: hiddenBrowserFetchRequests.nodeSeek,
+                  userAgent: nodeSeekWebViewUserAgent
+                }
+              }}
               styles={styles}
               onLinuxDoHttpErrorStatus={markLinuxDoBrowserFetchHttpError}
               onNodeSeekHttpErrorStatus={markNodeSeekBrowserFetchHttpError}

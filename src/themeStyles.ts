@@ -1,4 +1,4 @@
-import { Platform, StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
+import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import { type ReaderSettings } from './readerData';
 import { createNavigationStyles, createPanelStyles, createTopicStyles } from './themeParts';
 import { alphaColor, fontFamilyValue, type ReaderTheme } from './themeCore';
@@ -28,7 +28,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       top: 0,
       right: 0,
       left: 0,
-      height: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) : 0,
+      height: NativeStatusBar.currentHeight ?? 0,
       backgroundColor: theme.background,
       zIndex: 20,
       elevation: 0
@@ -42,33 +42,33 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     contentInner: {
       gap: 10,
       padding: 16,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
-      paddingBottom: Platform.OS === 'android' ? 96 : 94
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
+      paddingBottom: 96
     },
     userContentInner: {
       gap: 10,
       padding: 16,
       paddingTop: 8,
-      paddingBottom: Platform.OS === 'android' ? 96 : 94
+      paddingBottom: 96
     },
     libraryContentInner: {
       gap: 0,
       padding: 16,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
-      paddingBottom: Platform.OS === 'android' ? 96 : 94
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
+      paddingBottom: 96
     },
     moreContentInner: {
       gap: 10,
       padding: 16,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 4 : 14,
-      paddingBottom: Platform.OS === 'android' ? 124 : 118
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 4,
+      paddingBottom: 124
     },
     topicContentInner: {
       alignItems: 'center',
       gap: 10,
       padding: 16,
       paddingTop: 18,
-      paddingBottom: Platform.OS === 'android' ? 96 : 94
+      paddingBottom: 96
     },
     topicListItemFrame: {
       width: '100%',
@@ -123,7 +123,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 16,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 8 : 14,
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 8,
       paddingBottom: 6,
       zIndex: 3,
       elevation: 0
@@ -135,7 +135,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 0,
       paddingHorizontal: 0,
       paddingTop: 0,
-      paddingBottom: Platform.OS === 'android' ? 96 : 94
+      paddingBottom: 96
     },
     floatingIconButton: {
       alignItems: 'center',
@@ -587,7 +587,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopRightRadius: radiusLg,
       paddingHorizontal: 16,
       paddingTop: 9,
-      paddingBottom: Platform.OS === 'android' ? 18 : 24
+      paddingBottom: 18
     },
     searchFilterHandle: {
       alignSelf: 'center',
@@ -1256,7 +1256,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       gap: 6,
       paddingHorizontal: 12,
-      paddingTop: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 8 : 12,
+      paddingTop: (NativeStatusBar.currentHeight ?? 0) + 8,
       paddingBottom: 8,
       backgroundColor: theme.surface,
       borderBottomColor: theme.line,
@@ -1289,7 +1289,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     topicOverflowMenu: {
       position: 'absolute',
-      top: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 58 : 62,
+      top: (NativeStatusBar.currentHeight ?? 0) + 58,
       right: 12,
       minWidth: 154,
       overflow: 'hidden',
@@ -2398,7 +2398,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     imagePreviewTopBar: {
       position: 'absolute',
-      top: Platform.OS === 'android' ? (NativeStatusBar.currentHeight ?? 0) + 10 : 18,
+      top: (NativeStatusBar.currentHeight ?? 0) + 10,
       right: 14,
       left: 14,
       zIndex: 2,
@@ -2480,7 +2480,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     imagePreviewControls: {
       position: 'absolute',
       right: 18,
-      bottom: Platform.OS === 'android' ? 30 : 24,
+      bottom: 30,
       left: 18,
       flexDirection: 'row',
       justifyContent: 'space-between'
@@ -2496,7 +2496,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     imagePreviewThumbnailRail: {
       position: 'absolute',
       right: 78,
-      bottom: Platform.OS === 'android' ? 30 : 24,
+      bottom: 30,
       left: 78,
       maxHeight: 58
     },
