@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
   getNativePropsForTNode,
@@ -248,6 +248,14 @@ export function useHtmlRenderingController({
       }
       const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
       const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
+      const imageStateFrameStyle = [{
+        alignItems: 'center' as const,
+        backgroundColor: theme.surface2,
+        borderColor: theme.line,
+        borderWidth: StyleSheet.hairlineWidth,
+        justifyContent: 'center' as const,
+        overflow: 'hidden' as const
+      }, imageState.dimensions];
       const content = imageState.type === 'success' ? (
         <Image
           source={imageState.source}
@@ -256,9 +264,11 @@ export function useHtmlRenderingController({
           onError={(event) => imageState.onError(event.nativeEvent.error as unknown as Error)}
         />
       ) : imageState.type === 'loading' ? (
-        <View style={imageState.dimensions} />
+        <View style={imageStateFrameStyle}>
+          <ActivityIndicator color={theme.primary} size="small" />
+        </View>
       ) : (
-        <View style={[{ borderColor: theme.line, borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center' as const, overflow: 'hidden' as const }, imageState.dimensions]}>
+        <View style={imageStateFrameStyle}>
           <Text numberOfLines={2} style={styles.inlineForumImageText}>{imageState.alt || '图片加载失败'}</Text>
         </View>
       );
@@ -312,6 +322,7 @@ export function useHtmlRenderingController({
     styles.inlineForumImage,
     styles.inlineForumImageText,
     theme.line,
+    theme.primary,
     theme.surface2
   ]);
 
