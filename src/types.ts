@@ -32,6 +32,7 @@ export interface Topic {
   url: string;
   createdAt: string;
   lastReplyAt?: string;
+  displayTimeText?: string;
   replyCount: number;
   viewCount?: number;
   excerpt?: string;

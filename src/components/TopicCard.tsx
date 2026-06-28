@@ -3,7 +3,7 @@ import { Pressable, Text, type StyleProp, type TextStyle, View } from 'react-nat
 import { useMappingHelper } from '@shopify/flash-list';
 import { Eye, MessageCircle } from 'lucide-react-native';
 import type { Topic } from '../types';
-import { formatRelativeTime, forumAccessRequirementText, sourceLabel, topicListDisplayTime } from '../appUtils';
+import { forumAccessRequirementText, sourceLabel, topicListDisplayTimeText } from '../appUtils';
 import { highlightTextParts } from '../androidFeatureHelpers';
 import { androidRipple, createStyles, sourceBadgeColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../theme';
 import type { TopicListItemState } from '../topicListItemState';
@@ -123,7 +123,7 @@ export function TopicCard({
             {topic.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{topic.category}</Text> : null}
           </View>
           <View style={styles.topicCardHeadMeta}>
-            <Text style={styles.timeText} numberOfLines={1}>{formatRelativeTime(topicListDisplayTime(topic))}</Text>
+            <Text style={styles.timeText} numberOfLines={1}>{topicListDisplayTimeText(topic)}</Text>
             {renderTrailingAction ? renderTrailingAction(topic) : null}
           </View>
         </View>

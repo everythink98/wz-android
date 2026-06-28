@@ -11,7 +11,8 @@ import {
   parseForumUserLink,
   sourceLabel,
   startAbortableRequest,
-  topicListDisplayTime
+  topicListDisplayTime,
+  topicListDisplayTimeText
 } from './appUtils';
 import { REQUEST_CANCELED_MESSAGE } from './request';
 
@@ -239,5 +240,14 @@ describe('Android app utils', () => {
       createdAt: '2026-05-24T08:50:00.000Z',
       lastReplyAt: '2026-05-24T09:00:00.000Z'
     })).toBe('2026-05-24T09:00:00.000Z');
+  });
+
+  it('uses source-provided list time text before formatting relative time', () => {
+    expect(topicListDisplayTimeText({
+      source: 'yaohuo',
+      createdAt: '2026-05-24T23:30:00.000Z',
+      lastReplyAt: '2026-05-24T23:30:00.000Z',
+      displayTimeText: '今天 午夜'
+    })).toBe('今天 午夜');
   });
 });

@@ -24,7 +24,7 @@ import {
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
-type YaohuoClock = { year: number; month: number; day: number };
+type YaohuoClock = { year: number; month: number; day: number; nowMs: number };
 
 export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
@@ -56,11 +56,13 @@ export function ensureYaohuoHtmlLoggedIn(html: string, responseUrl = '') {
 }
 
 function currentYaohuoClock(): YaohuoClock {
-  const beijingNow = new Date(Date.now() + BEIJING_OFFSET_MS);
+  const nowMs = Date.now();
+  const beijingNow = new Date(nowMs + BEIJING_OFFSET_MS);
   return {
     year: beijingNow.getUTCFullYear(),
     month: beijingNow.getUTCMonth() + 1,
-    day: beijingNow.getUTCDate()
+    day: beijingNow.getUTCDate(),
+    nowMs
   };
 }
 
@@ -89,7 +91,17 @@ function beijingDateToIso(year: number, month: number, day: number, hour: number
   return Number.isNaN(date.getTime()) ? '' : date.toISOString();
 }
 
-function parseYaohuoRelativeDate(text: string, now: { year: number; month: number; day: number }) {
+function parseYaohuoRelativeDate(text: string, now: YaohuoClock) {
+  const numericRelative = text.match(/^(\d{1,4})\s*(分钟|小时|天)前$/);
+  if (/^(刚刚|刚才)$/.test(text)) {
+    return new Date(now.nowMs).toISOString();
+  }
+  if (numericRelative) {
+    const value = Number(numericRelative[1]);
+    const unit = numericRelative[2];
+    const unitMs = unit === '分钟' ? 60_000 : unit === '小时' ? 60 * 60_000 : 24 * 60 * 60_000;
+    return new Date(now.nowMs - value * unitMs).toISOString();
+  }
   const dayAndTime = text.match(/(今天|昨天|前天)\s*(?:(午夜|凌晨|上午|中午|下午|晚上)\s*)?(\d{1,2}):(\d{1,2})/);
   const periodTime = text.match(/(?:(今天|昨天|前天)\s*)?(午夜|凌晨|上午|中午|下午|晚上)(?:\s*(\d{1,2}):(\d{1,2}))?/);
   const match = dayAndTime || periodTime;
@@ -127,6 +139,10 @@ function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
     return 0;
   }
   return hour;
+}
+
+function isYaohuoPeriodOnlyTime(text: string) {
+  return /^(?:(?:今天|昨天|前天)\s*)?(?:午夜|凌晨|上午|中午|下午|晚上)$/.test(text);
 }
 
 function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
@@ -203,7 +219,9 @@ function parseListItem(
     || text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || '';
-  const createdAt = parseYaohuoDate(timeText || text, now) || fallbackCreatedAt;
+  const displayTimeText = rightText && isYaohuoPeriodOnlyTime(rightText) ? rightText : '';
+  const parsedCreatedAt = displayTimeText ? '' : parseYaohuoDate(timeText || text, now);
+  const createdAt = parsedCreatedAt || fallbackCreatedAt;
   const author = text.replace(title, '').split('/').map((part) => part.trim().replace(/^\d+\.\s*/, '')).find((part) => (
     part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
   )) || '';
@@ -222,6 +240,7 @@ function parseListItem(
     url: url || `${BASE_URL}/bbs-${id}.html`,
     createdAt,
     lastReplyAt: createdAt,
+    ...(displayTimeText ? { displayTimeText } : {}),
     replyCount,
     viewCount: viewCount || undefined,
     excerpt: textExcerpt(text),

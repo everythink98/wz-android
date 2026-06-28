@@ -34,6 +34,10 @@ function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
 }
 
+export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
+  return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
+}
+
 export function useHtmlRenderingController({
   onOpenExternalUrl,
   onOpenImagePreview,
@@ -225,8 +229,10 @@ export function useHtmlRenderingController({
       return <VideoEmbedBlock embedUrl={embed.embedUrl} />;
     };
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
+      const [nativeImageLoadState, setNativeImageLoadState] = useState({ src: '', loaded: false });
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
+      const nativeImageLoaded = nativeImageLoadState.src === src && nativeImageLoadState.loaded;
       const imageSource = imageSourceFromUrl(src, imageProps.source);
       const imageState = useIMGElementState({
         ...imageProps,
@@ -256,14 +262,28 @@ export function useHtmlRenderingController({
         justifyContent: 'center' as const,
         overflow: 'hidden' as const
       }, imageState.dimensions];
+      const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
+      const showImageLoading = shouldShowPreviewImageLoading(imageState.type, nativeImageLoaded);
       const content = imageState.type === 'success' ? (
-        <Image
-          source={imageState.source}
-          style={[{ resizeMode: 'contain' as const }, imageState.dimensions, imageState.imageStyle]}
-          resizeMethod="none"
-          onError={(event) => imageState.onError(event.nativeEvent.error as unknown as Error)}
-        />
-      ) : imageState.type === 'loading' ? (
+        <View style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
+          <Image
+            source={imageState.source}
+            style={[{ resizeMode: 'contain' as const }, imageState.dimensions, imageState.imageStyle, nativeImageLoaded ? null : { opacity: 0 }]}
+            resizeMethod="none"
+            onLoadStart={() => setNativeImageLoadState({ src, loaded: false })}
+            onLoadEnd={() => setNativeImageLoadState({ src, loaded: true })}
+            onError={(event) => {
+              setNativeImageLoadState({ src, loaded: true });
+              imageState.onError(event.nativeEvent.error as unknown as Error);
+            }}
+          />
+          {showImageLoading ? (
+            <View style={imageLoadingOverlayStyle}>
+              <ActivityIndicator color={theme.primary} size="small" />
+            </View>
+          ) : null}
+        </View>
+      ) : showImageLoading ? (
         <View style={imageStateFrameStyle}>
           <ActivityIndicator color={theme.primary} size="small" />
         </View>

@@ -231,10 +231,55 @@ describe('Android direct yaohuo API', () => {
         limit: 30
       });
 
-      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
+      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T17:00:00.000Z');
+      expect(result.items.find((item) => item.id === '1539321')?.displayTimeText).toBe('今天 午夜');
       expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2026-05-25T15:50:00.000Z');
       expect(result.items.find((item) => item.id === '1539323')?.createdAt).toBe('2026-05-23T16:05:00.000Z');
       expect(result.items.find((item) => item.id === '1539324')?.createdAt).toBe('2026-05-25T07:20:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not derive midnight from yaohuo period-only list times', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T07:30:00+08:00'));
+    try {
+      const result = parseYaohuoListHtml(`
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">午夜主题</a>/alice/阅1 <span class="right">今天 午夜</span></div>
+      `, {
+        page: 1,
+        limit: 30
+      });
+
+      expect(result.items[0].createdAt).toBe('2026-05-24T23:30:00.000Z');
+      expect(result.items[0].lastReplyAt).toBe('2026-05-24T23:30:00.000Z');
+      expect(result.items[0].displayTimeText).toBe('今天 午夜');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('parses yaohuo numeric relative list times from the current clock snapshot', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T09:30:00+08:00'));
+    try {
+      const result = parseYaohuoListHtml(`
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">分钟主题</a>/alice/阅1 <span class="right">20分钟前</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">小时主题</a>/bob/阅1 <span class="right">7小时前</span></div>
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539323.html">天主题</a>/carol/阅1 <span class="right">2天前</span></div>
+      `, {
+        page: 1,
+        limit: 30,
+        preserveOrder: true
+      });
+
+      expect(result.items.map((item) => item.createdAt)).toEqual([
+        '2026-05-25T01:10:00.000Z',
+        '2026-05-24T18:30:00.000Z',
+        '2026-05-23T01:30:00.000Z'
+      ]);
+      expect(result.items.map((item) => item.displayTimeText)).toEqual([undefined, undefined, undefined]);
     } finally {
       vi.useRealTimers();
     }
@@ -249,8 +294,8 @@ describe('Android direct yaohuo API', () => {
       .mockReturnValue(secondNow);
     try {
       const result = parseYaohuoListHtml(`
-        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">第一条</a>/alice/阅1 <span class="right">今天 午夜</span></div>
-        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">第二条</a>/bob/阅1 <span class="right">今天 午夜</span></div>
+        <div class="listdata line1"><a class="topic-link" href="/bbs-1539321.html">第一条</a>/alice/阅1 <span class="right">1小时前</span></div>
+        <div class="listdata line2"><a class="topic-link" href="/bbs-1539322.html">第二条</a>/bob/阅1 <span class="right">1小时前</span></div>
       `, {
         page: 1,
         limit: 30
@@ -718,6 +763,23 @@ describe('Android direct yaohuo API', () => {
     expect(result.items[0].contentHtml).toContain('.gif');
     expect(result.items[0].contentHtml).not.toContain('顶楼');
     expect(result.items[0].contentHtml).not.toContain('replyicon');
+  });
+
+  it('keeps period-only yaohuo reply times parsed outside list cards', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T07:30:00+08:00'));
+    try {
+      const result = parseYaohuoRepliesHtml(`
+        <div class="line1">
+          回复内容 <span class="retime">今天 午夜</span>
+          <a href="/bbs/userinfo.aspx?touserid=1">bob</a>
+        </div>
+      `);
+
+      expect(result.items[0].createdAt).toBe('2026-05-24T16:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses the page offset as the fallback floor for yaohuo replies without floor labels', () => {

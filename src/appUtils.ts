@@ -289,6 +289,10 @@ export function topicListDisplayTime(topic: { source: Source; createdAt: string;
   return topic.lastReplyAt || topic.createdAt;
 }
 
+export function topicListDisplayTimeText(topic: { source: Source; createdAt: string; lastReplyAt?: string; displayTimeText?: string }) {
+  return topic.displayTimeText?.trim() || formatRelativeTime(topicListDisplayTime(topic));
+}
+
 export function dateTime(value?: string) {
   if (!value) {
     return 0;

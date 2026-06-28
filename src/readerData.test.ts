@@ -91,6 +91,21 @@ describe('Android reader data helpers', () => {
     expect(data.history[topicKey(topic)]).not.toHaveProperty('note');
   });
 
+  it('does not persist source-provided display time text when recording history', () => {
+    const yaohuoTopic: Topic = {
+      ...topic,
+      source: 'yaohuo',
+      id: '1539321',
+      title: '妖火主题',
+      url: 'https://yaohuo.me/bbs-1539321.html',
+      displayTimeText: '今天 晚上'
+    };
+
+    const data = recordHistory(createEmptyReaderData(), yaohuoTopic);
+
+    expect(data.history[topicKey(yaohuoTopic)].topic.displayTimeText).toBeUndefined();
+  });
+
   it('toggles favorites with deletion markers only', () => {
     let data = createEmptyReaderData();
     data = toggleFavorite(data, topic);
