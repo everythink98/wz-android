@@ -10,6 +10,7 @@ import {
   isSiteVerificationReady,
   type SiteSessionState
 } from './siteSessionState';
+import type { UserProfile } from './types';
 
 describe('site session state', () => {
   it('keeps verification and login transitions explicit', () => {
@@ -277,6 +278,53 @@ describe('site session state', () => {
       lastVerifiedAt: '2026-06-06T02:01:00.000Z',
       lastError: '网络错误'
     });
+  });
+
+  it('attaches current user identity only while the site is logged in', () => {
+    const currentUser: UserProfile = {
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      displayName: '火友',
+      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      topics: []
+    };
+
+    const loggedIn = reduceSiteSessionState(createSiteSessionStates().yaohuo, {
+      type: 'cookie-loaded',
+      cookieSummary: ['sidyaohuo'],
+      loggedIn: true,
+      currentUser,
+      at: '2026-06-06T02:00:00.000Z'
+    });
+    const expired = reduceSiteSessionState(loggedIn, {
+      type: 'login-expired',
+      message: '妖火登录已失效'
+    });
+    const refreshed = reduceSiteSessionState(loggedIn, {
+      type: 'cookie-loaded',
+      cookieSummary: ['sidyaohuo'],
+      loggedIn: true
+    });
+    const cleared = reduceSiteSessionState(refreshed, {
+      type: 'cookie-loaded',
+      cookieSummary: ['sidyaohuo'],
+      loggedIn: true,
+      currentUser: null
+    });
+
+    expect(createSiteSessionViewModels(createSiteSessionStates({ yaohuo: loggedIn })).yaohuo.currentUser).toMatchObject({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友'
+    });
+    expect(refreshed.currentUser).toMatchObject({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友'
+    });
+    expect(cleared.currentUser).toBeUndefined();
+    expect(expired.currentUser).toBeUndefined();
   });
 
   it('applies temporary anonymous overrides without mutating saved session state', () => {

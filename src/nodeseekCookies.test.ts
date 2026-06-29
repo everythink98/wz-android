@@ -203,11 +203,13 @@ describe('NodeSeek cookie helpers', () => {
     expect(parseNodeSeekAccessRecord(JSON.stringify({
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
+      userId: 48872,
       savedAt: '2026-06-21T00:00:00.000Z',
       source: 'webview'
     }))).toEqual({
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36',
+      userId: 48872,
       savedAt: '2026-06-21T00:00:00.000Z',
       source: 'webview'
     });

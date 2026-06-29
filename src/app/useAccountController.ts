@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import CookieManager from '@react-native-cookies/cookies';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
@@ -85,7 +85,7 @@ export function useAccountController({
   resetLinuxDoWebView: () => void;
   saveNodeSeekCookieHeader: (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    options?: { verifiedByPage?: boolean; isCurrent?: () => boolean }
+    options?: { verifiedByPage?: boolean; isCurrent?: () => boolean; resetCurrentUser?: boolean; userId?: number | null }
   ) => Promise<string>;
   saveYaohuoCookieHeader: (cookieHeader: string, options?: { isCurrent?: () => boolean; generation?: number }) => Promise<boolean>;
   setChecking: Dispatch<SetStateAction<boolean>>;
@@ -103,6 +103,7 @@ export function useAccountController({
   webViewRef: Ref<WebView | null>;
   yaohuoWebViewRef: Ref<WebView | null>;
 }) {
+  const nodeSeekWebLoginUserIdRef = useRef<number | null>(null);
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
@@ -123,9 +124,11 @@ export function useAccountController({
         nodeSeekWebViewCookieHeaderRef.current = data.cookie;
       }
       if (data.type === 'nodeseek-login' && data.loggedIn && Number.isInteger(data.userId)) {
+        nodeSeekWebLoginUserIdRef.current = data.userId || null;
         webLoginDetectedRef.current = true;
         setWebLoginUserId(data.userId || null);
       } else if (data.type === 'nodeseek-login' && data.loggedIn === false) {
+        nodeSeekWebLoginUserIdRef.current = null;
         webLoginDetectedRef.current = false;
         updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
         setWebLoginUserId(null);
@@ -136,6 +139,7 @@ export function useAccountController({
   }, [
     nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
+    nodeSeekWebLoginUserIdRef,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
     updateNodeSeekSession,
@@ -161,7 +165,12 @@ export function useAccountController({
       return false;
     }
     const summary = summarizeNodeSeekCookies(cookies);
-    const cookieHeader = await saveNodeSeekCookieHeader(cookies, { verifiedByPage: webLoginDetectedRef.current, isCurrent });
+    const cookieHeader = await saveNodeSeekCookieHeader(cookies, {
+      verifiedByPage: webLoginDetectedRef.current,
+      isCurrent,
+      resetCurrentUser: true,
+      userId: nodeSeekWebLoginUserIdRef.current
+    });
     if (cookieHeader) {
       if (!isCurrent()) {
         return false;

@@ -378,6 +378,41 @@ function nodeSeekRoleLabel(user: Record<string, unknown>) {
   return labels.join(' · ') || undefined;
 }
 
+function nodeSeekCurrentUserFromRecord(user: Record<string, unknown>): UserProfile | null {
+  const id = String(user.member_id || user.uid || user.id || user.userId || user.user_id || '').trim();
+  const username = String(user.member_name || user.username || user.name || user.displayName || '').trim();
+  if (!id || !username) {
+    return null;
+  }
+  return {
+    source: 'nodeseek',
+    id,
+    username,
+    displayName: username,
+    avatar: absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(id)}.png`, BASE_URL),
+    url: nodeSeekSpaceUrl(id),
+    topics: []
+  };
+}
+
+function findNodeSeekCurrentUser(value: unknown, seen = new Set<unknown>()): UserProfile | null {
+  if (!isRecord(value) || seen.has(value)) {
+    return null;
+  }
+  seen.add(value);
+  const direct = nodeSeekCurrentUserFromRecord(value);
+  if (direct) {
+    return direct;
+  }
+  for (const key of ['user', 'currentUser', 'current_user', 'account', 'detail', 'member', 'profile']) {
+    const found = findNodeSeekCurrentUser(value[key], seen);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
 function integerFromElement(element: ReturnType<ReturnType<typeof parseHtml>['querySelector']>) {
   return parsePositiveInteger(elementText(element) || element?.getAttribute('title'));
 }
@@ -1286,6 +1321,89 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics
   };
+}
+
+export async function getNodeSeekBasicUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
+  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, options);
+  if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
+    throw new Error('NodeSeek 用户身份读取失败');
+  }
+  const user = userData.detail;
+  const userId = String(user.member_id || user.id || id).trim() || id;
+  const username = String(user.member_name || user.username || user.name || userId).trim() || userId;
+  return {
+    source: 'nodeseek',
+    id: userId,
+    username,
+    displayName: username,
+    avatar: absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(userId)}.png`, BASE_URL),
+    url: nodeSeekSpaceUrl(userId),
+    topics: []
+  };
+}
+
+function parseNodeSeekCurrentUserHtml(html: string) {
+  const embeddedUser = findNodeSeekCurrentUser(extractNodeSeekEmbeddedData(html));
+  if (embeddedUser) {
+    return embeddedUser;
+  }
+  const root = parseHtml(html);
+  const text = elementText(root);
+  const uid = text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '';
+  const links = root.querySelectorAll('a[href]');
+  const spaceLinks = root.querySelectorAll('a[href*="/space/"]').filter((link) => /\/space\/\d+/i.test(link.getAttribute('href') || ''));
+  const signOutIndex = links.findIndex((link) => /\/api\/account\/signOut/i.test(link.getAttribute('href') || ''));
+  const accountLinks = signOutIndex >= 0 ? links.slice(Math.max(0, signOutIndex - 8), signOutIndex) : [];
+  const spaceLink = uid
+    ? spaceLinks.find((link) => link.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] === uid)
+    : [...accountLinks].reverse().find((link) => /\/space\/\d+/i.test(link.getAttribute('href') || '') && elementText(link))
+    || spaceLinks.find((link) => {
+      const parent = nodeSeekParentElement(link);
+      const context = elementText(parent || link);
+      return /退出|设置|通知|消息|我的|账号|个人|sign\s*out|setting|notification|account/i.test(context);
+    });
+  const id = uid || spaceLink?.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] || '';
+  if (!id) {
+    return null;
+  }
+  const img = spaceLink?.querySelector('img');
+  const username = elementText(spaceLink) || String(img?.getAttribute('alt') || '').trim() || id;
+  return {
+    source: 'nodeseek' as const,
+    id,
+    username,
+    displayName: username,
+    avatar: absoluteUrl(img?.getAttribute('src'), BASE_URL),
+    url: nodeSeekSpaceUrl(id),
+    topics: []
+  };
+}
+
+export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
+  try {
+    const data = await fetchNodeSeekJson('/api/account/getInfo?readme=1', options);
+    const user = findNodeSeekCurrentUser(data);
+    if (user) {
+      return user;
+    }
+  } catch {
+    // Fall back to the rendered home page below.
+  }
+  let lastError: unknown;
+  for (const path of ['/', '/setting']) {
+    try {
+      const user = parseNodeSeekCurrentUserHtml(await fetchNodeSeekText(path, options));
+      if (user) {
+        return user;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError && options.signal?.aborted) {
+    throw lastError;
+  }
+  throw new Error('无法读取当前 NodeSeek 用户身份，请重新检测 NodeSeek 登录。');
 }
 
 export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number; page?: number; filter?: NodeSeekSearchFilter } = {}): Promise<SearchResponse> {

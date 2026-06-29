@@ -1,5 +1,6 @@
 export {
   getCategories,
+  getCurrentUserProfile,
   getFeed,
   getReply,
   getReplies,

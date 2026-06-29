@@ -7,6 +7,7 @@ export interface NativeCookie {
 export type NodeSeekAccessRecord = {
   cookieHeader: string;
   userAgent?: string;
+  userId?: number;
   savedAt: string;
   source: 'webview';
 };
@@ -146,13 +147,20 @@ export function removeNodeSeekLoginCookies(cookies: Record<string, NativeCookie>
   }, {});
 }
 
-export function nodeSeekAccessRecord(cookieHeader: string, userAgent?: string): NodeSeekAccessRecord {
+function positiveInteger(value: unknown) {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(number) && number > 0 ? number : undefined;
+}
+
+export function nodeSeekAccessRecord(cookieHeader: string, userAgent?: string, userId?: number | null): NodeSeekAccessRecord {
   const cleanUserAgent = sanitizeNodeSeekUserAgent(userAgent);
+  const cleanUserId = positiveInteger(userId);
   return {
     cookieHeader,
     savedAt: new Date().toISOString(),
     source: 'webview',
-    ...(cleanUserAgent ? { userAgent: cleanUserAgent } : {})
+    ...(cleanUserAgent ? { userAgent: cleanUserAgent } : {}),
+    ...(cleanUserId ? { userId: cleanUserId } : {})
   };
 }
 
@@ -169,7 +177,8 @@ export function parseNodeSeekAccessRecord(raw?: string | null): NodeSeekAccessRe
       cookieHeader: parsed.cookieHeader,
       savedAt: typeof parsed.savedAt === 'string' && parsed.savedAt ? parsed.savedAt : new Date(0).toISOString(),
       source: 'webview',
-      ...(parsed.userAgent ? { userAgent: sanitizeNodeSeekUserAgent(parsed.userAgent) } : {})
+      ...(parsed.userAgent ? { userAgent: sanitizeNodeSeekUserAgent(parsed.userAgent) } : {}),
+      ...(positiveInteger(parsed.userId) ? { userId: positiveInteger(parsed.userId) } : {})
     };
   } catch {
     return null;

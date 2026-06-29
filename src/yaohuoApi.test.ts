@@ -6,7 +6,7 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
-import { parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
+import { parseYaohuoCurrentUserHtml, parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
@@ -422,7 +422,7 @@ describe('Android direct yaohuo API', () => {
   });
 
   it('checks login with Android-fetched HTML and does not send the cookie to a server', async () => {
-    const yaohuoFetcher = vi.fn(async () => new Response('<html>ok</html>'));
+    const yaohuoFetcher = vi.fn(async () => new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>'));
 
     const result = await checkYaohuoLoginDirect({
       yaohuoCookie: 'sidyaohuo=secret',
@@ -430,7 +430,27 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(result.loginRequired).toBe(false);
+    expect(result.currentUser).toMatchObject({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7'
+    });
     expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/wapindex.aspx?sid=-2', expect.any(Object));
+  });
+
+  it('does not treat yaohuo navigation text as the current username', () => {
+    const currentUser = parseYaohuoCurrentUserHtml('<div class="top">火友的<a href="/bbs/userinfo.aspx?touserid=7">空间</a> <a href="/bbs/logout.aspx">退出</a></div>');
+    const fallbackUser = parseYaohuoCurrentUserHtml('<div class="top"><a href="/bbs/userinfo.aspx?touserid=8">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
+
+    expect(currentUser).toMatchObject({
+      id: '7',
+      username: '火友'
+    });
+    expect(fallbackUser).toMatchObject({
+      id: '8',
+      username: '8'
+    });
   });
 
   it('passes cancellation signals through direct yaohuo fetches', async () => {

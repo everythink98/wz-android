@@ -43,6 +43,11 @@ interface LinuxDoOptions {
   timeoutMs?: number;
 }
 
+interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
+  linuxDoCookie?: string;
+  linuxDoUserAgent?: string;
+}
+
 export class LinuxDoCloudflareError extends Error {
   source = 'linuxdo' as const;
   reason = 'cloudflare' as const;
@@ -846,5 +851,54 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     postCount: Number(summary.post_count || 0) || undefined,
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics
+  };
+}
+
+export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOptions = {}): Promise<UserProfile> {
+  const cookieHeader = options.linuxDoCookie?.trim();
+  if (!cookieHeader) {
+    throw new Error('请先登录 linux.do');
+  }
+  const response = await fetchWithTimeout(`${BASE_URL}/session/current.json`, {
+    headers: {
+      Accept: 'application/json, text/javascript, */*; q=0.01',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      Referer: BASE_URL,
+      Cookie: cookieHeader,
+      'User-Agent': options.linuxDoUserAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+  }, options);
+  const text = await response.text();
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+    throw new LinuxDoCloudflareError();
+  }
+  let data: unknown = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error('linux.do 当前用户返回内容格式不正确');
+  }
+  if (!response.ok) {
+    throw new Error(linuxDoErrorText(data, `HTTP ${response.status}`));
+  }
+  const currentUser = isRecord(data) && isRecord(data.current_user) ? data.current_user : {};
+  const user = isRecord(data) && isRecord(data.user) ? data.user : {};
+  const merged = { ...user, ...currentUser };
+  const username = String(merged.username || '').trim();
+  if (!username) {
+    throw new Error('无法读取当前 linux.do 用户名，请重新检测 linux.do 登录状态。');
+  }
+  const displayName = typeof merged.name === 'string' ? merged.name : username;
+  const levelLabel = linuxDoLevelLabel(merged);
+  return {
+    source: 'linuxdo',
+    id: username,
+    username,
+    displayName,
+    avatar: avatarUrl(merged.avatar_template),
+    url: userUrl(username),
+    ...(levelLabel ? { levelLabel } : {}),
+    topics: []
   };
 }

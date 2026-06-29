@@ -1,12 +1,13 @@
-import { memo, type RefObject, useEffect, useState } from 'react';
+import { memo, type RefObject, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, DatabaseBackup, LogIn, Settings, Wrench } from 'lucide-react-native';
+import { Activity, DatabaseBackup, LogIn, Settings, User, Wrench } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
 import type { DevAnonymousOverrides, SessionSite, SiteSessionViewModels } from '../siteSessionState';
+import type { UserProfile } from '../types';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
@@ -17,6 +18,7 @@ import {
   NodeSeekLoginPanel,
   YaohuoLoginPanel
 } from './more/MorePanels';
+import { createPersonalCenterItems, needsPersonalCenterIdentityRefresh } from './more/personalCenterItems';
 export const MoreScreen = memo(function MoreScreen({
   checking,
   appUpdateBusy,
@@ -48,6 +50,7 @@ export const MoreScreen = memo(function MoreScreen({
   devAnonymousAvailable,
   devAnonymousOverrides,
   onRefreshAccountStatus,
+  onOpenUser,
   onCheckAppUpdate,
   onDownloadAppUpdate,
   onCheckIn,
@@ -101,6 +104,7 @@ export const MoreScreen = memo(function MoreScreen({
   devAnonymousAvailable: boolean;
   devAnonymousOverrides: DevAnonymousOverrides;
   onRefreshAccountStatus: () => void;
+  onOpenUser: (user: UserProfile) => void;
   onCheckAppUpdate: () => void;
   onDownloadAppUpdate: () => void;
   onCheckIn: () => void;
@@ -126,11 +130,16 @@ export const MoreScreen = memo(function MoreScreen({
 }) {
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
+  const [personalCenterExpanded, setPersonalCenterExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
+  const personalCenterAutoRefreshRequestedRef = useRef(false);
+  const personalCenterItems = createPersonalCenterItems(sessionViewModels);
+  const personalCenterReadyCount = personalCenterItems.filter((item) => item.canOpen).length;
+  const personalCenterNeedsRefresh = needsPersonalCenterIdentityRefresh(sessionViewModels);
   const updateNotes = appUpdateInfo?.notes.trim();
   const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
   const appUpdateProgressWidth = appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null ? `${appUpdateDownloadProgress.percent}%` as `${number}%` : null;
@@ -149,6 +158,17 @@ export const MoreScreen = memo(function MoreScreen({
       onRefreshLinuxDoLevel();
     }
   }, [levelExpanded, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoSession.canWrite, onRefreshLinuxDoLevel]);
+  useEffect(() => {
+    if (!personalCenterNeedsRefresh) {
+      personalCenterAutoRefreshRequestedRef.current = false;
+      return;
+    }
+    if (statusBusy || personalCenterAutoRefreshRequestedRef.current) {
+      return;
+    }
+    personalCenterAutoRefreshRequestedRef.current = true;
+    onRefreshAccountStatus();
+  }, [onRefreshAccountStatus, personalCenterNeedsRefresh, statusBusy]);
   const levelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
     : linuxDoLevelBusy
@@ -199,6 +219,33 @@ export const MoreScreen = memo(function MoreScreen({
         {appUpdateStatus && !appUpdateDownloadProgress ? <Text style={styles.meta}>{appUpdateStatus}</Text> : null}
         {appUpdateInfo && updateNotes ? <Text style={styles.meta}>{updateNotes}</Text> : null}
       </View>
+      <ExpandablePanel
+        quiet
+        title="个人中心"
+        meta={personalCenterReadyCount ? `已识别 ${personalCenterReadyCount}/3 · 当前登录账号主页` : '未识别当前账号'}
+        icon={User}
+        expanded={personalCenterExpanded}
+        styles={styles}
+        theme={theme}
+        onExpandedChange={setPersonalCenterExpanded}
+      >
+        {personalCenterItems.map((item) => (
+          <MenuButton
+            key={item.source}
+            disabled={!item.canOpen}
+            icon={User}
+            label={item.label}
+            value={item.canOpen ? `${item.value} · 我的主页` : item.value}
+            styles={styles}
+            theme={theme}
+            onPress={() => {
+              if (item.user) {
+                onOpenUser(item.user);
+              }
+            }}
+          />
+        ))}
+      </ExpandablePanel>
       <ExpandablePanel
         quiet
         title="账号与验证"

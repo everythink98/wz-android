@@ -3,7 +3,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
-import { checkLinuxDoLoginAccess, checkYaohuoLogin } from '../sources/sourceGateway';
+import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile } from '../sources/sourceGateway';
 import type { ReaderData } from '../readerData';
 import { exportReaderBackupJson, importReaderBackupJson } from '../readerBackup';
 import {
@@ -13,6 +13,7 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { summarizeYaohuoCookies, yaohuoCookieMapFromHeader } from '../yaohuoCookies';
+import { parseNodeSeekDocumentCookie, summarizeNodeSeekCookies } from '../nodeseekCookies';
 import {
   clearLinuxDoAccessForGeneration,
   currentLinuxDoAccessGeneration,
@@ -27,6 +28,7 @@ import { runBackupOperation } from '../backupOperation';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
 import type { FeedSource, Source } from '../types';
+import type { Fetcher } from '../request';
 import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
@@ -36,6 +38,9 @@ export function useBackupStatusController({
   currentYaohuoCredentialGeneration,
   linuxDoUserAgentRef,
   loadNodeSeekCookieForSource,
+  fetcher,
+  nodeSeekUserId,
+  nodeSeekUserAgentRef,
   notify,
   readerDataRef,
   replaceReaderData,
@@ -48,6 +53,9 @@ export function useBackupStatusController({
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
+  fetcher: Fetcher;
+  nodeSeekUserId?: number | null;
+  nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   readerDataRef: { current: ReaderData };
   replaceReaderData: (nextValue: ReaderData) => Promise<void>;
@@ -135,30 +143,74 @@ export function useBackupStatusController({
       const yaohuoGeneration = currentYaohuoCredentialGeneration();
       const linuxDoGeneration = currentLinuxDoAccessGeneration();
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-      await loadNodeSeekCookieForSource('nodeseek');
+      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
+      const nodeSeekSummary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(nodeSeekCookie || ''));
       let linuxDoAccess = await loadLinuxDoAccess();
       let access = linuxDoAccessSummary(linuxDoAccess);
       const linuxDoLoginPromise = linuxDoAccess?.cookieHeader && access.loggedIn
         ? checkLinuxDoLoginAccess({
           cookieHeader: linuxDoAccess.cookieHeader,
+          fetcher,
           userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current,
           signal: controller.signal
         })
         : Promise.resolve(undefined);
+      const nodeSeekCurrentUserPromise = nodeSeekSummary.loggedIn
+        ? getCurrentUserProfile({
+          source: 'nodeseek',
+          fetcher,
+          nodeSeekCookie,
+          nodeSeekUserId,
+          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+          signal: controller.signal
+        })
+        : Promise.resolve(null);
+      const linuxDoCurrentUserPromise = linuxDoAccess?.cookieHeader && access.loggedIn
+        ? getCurrentUserProfile({
+          source: 'linuxdo',
+          fetcher,
+          linuxDoCookie: linuxDoAccess.cookieHeader,
+          linuxDoUserAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current,
+          signal: controller.signal
+        })
+        : Promise.resolve(null);
       const yaohuoStatusPromise = yaohuoCookie
         ? checkYaohuoLogin({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
-      const [yaohuoCheck, linuxDoLoginCheck] = await Promise.allSettled([yaohuoStatusPromise, linuxDoLoginPromise] as const);
+      const yaohuoCurrentUserPromise = yaohuoCookie
+        ? getCurrentUserProfile({
+          source: 'yaohuo',
+          fetcher,
+          yaohuoCookie,
+          signal: controller.signal
+        })
+        : Promise.resolve(null);
+      const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck] = await Promise.allSettled([
+        yaohuoStatusPromise,
+        linuxDoLoginPromise,
+        nodeSeekCurrentUserPromise,
+        linuxDoCurrentUserPromise,
+        yaohuoCurrentUserPromise
+      ] as const);
       if (controller.signal.aborted) {
         return;
       }
       const failedSites: string[] = [];
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
+      if (nodeSeekSummary.loggedIn && nodeSeekCurrentUserCheck.status === 'rejected') {
+        failedSites.push('NodeSeek');
+      }
+      if (yaohuoOk && yaohuoCurrentUserCheck.status === 'rejected') {
+        failedSites.push('妖火');
+      }
       const linuxDoLogin = linuxDoLoginCheck.status === 'fulfilled' ? linuxDoLoginCheck.value : undefined;
       if (linuxDoLoginCheck.status === 'rejected') {
         failedSites.push('linux.do');
       }
       if (isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
+        failedSites.push('linux.do');
+      }
+      if (access.loggedIn && !linuxDoLogin?.loginRequired && linuxDoCurrentUserCheck.status === 'rejected') {
         failedSites.push('linux.do');
       }
       if (linuxDoLogin?.loginRequired) {
@@ -177,6 +229,15 @@ export function useBackupStatusController({
         }
       }
       const checkedAt = new Date().toISOString();
+      dispatchSiteSessionEvent({
+        site: 'nodeseek',
+        type: 'cookie-loaded',
+        cookieSummary: nodeSeekSummary.names,
+        hasVerification: nodeSeekSummary.count > 0,
+        loggedIn: nodeSeekSummary.loggedIn,
+        currentUser: nodeSeekCurrentUserCheck.status === 'fulfilled' ? nodeSeekCurrentUserCheck.value : null,
+        at: checkedAt
+      });
       if (yaohuoCheck.status === 'rejected') {
         failedSites.push('妖火');
         dispatchSiteSessionEvent({
@@ -195,6 +256,7 @@ export function useBackupStatusController({
             cookieSummary: yaohuoSummary.names,
             hasVerification: false,
             loggedIn: yaohuoOk,
+            currentUser: yaohuoCurrentUserCheck.status === 'fulfilled' ? yaohuoCurrentUserCheck.value : null,
             at: checkedAt
           });
       }
@@ -215,10 +277,12 @@ export function useBackupStatusController({
           cookieSummary: summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(linuxDoAccess?.cookieHeader || '')).names,
           hasVerification: access.hasClearance,
           loggedIn: hasLinuxDoLogin,
+          currentUser: linuxDoCurrentUserCheck.status === 'fulfilled' ? linuxDoCurrentUserCheck.value : null,
           at: checkedAt
         });
       }
-      notify(failedSites.length ? `账号状态部分刷新失败：${failedSites.join('、')}` : '账号状态已刷新');
+      const uniqueFailedSites = Array.from(new Set(failedSites));
+      notify(uniqueFailedSites.length ? `账号状态部分刷新失败：${uniqueFailedSites.join('、')}` : '账号状态已刷新');
     } catch (error) {
       if (!controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
@@ -233,8 +297,11 @@ export function useBackupStatusController({
     clearYaohuoLoginState,
     currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
+    fetcher,
     linuxDoUserAgentRef,
     loadNodeSeekCookieForSource,
+    nodeSeekUserId,
+    nodeSeekUserAgentRef,
     notify,
     resetLinuxDoLevelState
   ]);

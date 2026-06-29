@@ -1,6 +1,6 @@
-import { getLinuxDoCategories, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
-import { getNodeSeekCategories, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml } from './localYaohuo';
+import { getLinuxDoCategories, getLinuxDoCurrentUserProfile, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
+import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
+import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml } from './localYaohuo';
 import { requireYaohuoRequestUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
@@ -480,12 +480,91 @@ export function getUserProfile({
         addTopics(pageResult.result.items, authorFallback);
         nextUrl = pageResult.nextUrl;
       }
+      const visibleTopics = sortTopicsByCreatedAt(topics).slice(0, 30);
+      const topicAuthor = visibleTopics.map((topic) => topic.author).find((author) => author && author !== targetId);
+      const profile = topicAuthor && firstPage.profile.displayName === targetId
+        ? { ...firstPage.profile, username: topicAuthor, displayName: topicAuthor }
+        : firstPage.profile;
       return {
-        ...firstPage.profile,
-        topics: sortTopicsByCreatedAt(topics).slice(0, 30),
+        ...profile,
+        topics: visibleTopics,
         hasMoreTopics: Boolean(nextUrl),
         nextTopicsCursor: nextUrl || null
       };
+    }
+  });
+}
+
+export function getCurrentUserProfile({
+  source,
+  fetcher,
+  linuxDoCookie,
+  linuxDoUserAgent,
+  nodeSeekCookie,
+  nodeSeekUserId,
+  nodeSeekUserAgent,
+  yaohuoCookie,
+  signal,
+  timeoutMs
+}: {
+  source: Source;
+  fetcher?: Fetcher;
+  linuxDoCookie?: string;
+  linuxDoUserAgent?: string;
+  nodeSeekCookie?: string;
+  nodeSeekUserId?: string | number | null;
+  nodeSeekUserAgent?: string;
+  yaohuoCookie?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<UserProfile> {
+  return pickSource(source, {
+    nodeseek: async () => {
+      try {
+        return await getNodeSeekCurrentUserProfile({ fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
+      } catch (error) {
+        if (!nodeSeekUserId) {
+          throw error;
+        }
+        return getNodeSeekBasicUserProfile(String(nodeSeekUserId), { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
+      }
+    },
+    linuxdo: () => getLinuxDoCurrentUserProfile({ fetcher, linuxDoCookie, linuxDoUserAgent, signal, timeoutMs }),
+    v2ex: () => {
+      throw new Error('V2EX 不支持当前登录身份读取');
+    },
+    yaohuo: async () => {
+      if (!yaohuoCookie?.trim()) {
+        throw new Error('请先登录妖火');
+      }
+      const response = await fetchWithTimeout('https://yaohuo.me/wapindex.aspx?sid=-2', {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          Cookie: yaohuoCookie,
+          Referer: 'https://yaohuo.me/bbs/'
+        }
+      }, { fetcher, signal, timeoutMs });
+      const html = await response.text();
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const check = checkYaohuoLoginHtml(html, response.url);
+      if (check.currentUser) {
+        const profile = await getUserProfile({
+          source: 'yaohuo',
+          id: check.currentUser.id,
+          username: check.currentUser.username,
+          fetcher,
+          yaohuoCookie,
+          signal,
+          timeoutMs
+        });
+        return { ...profile, topics: [] };
+      }
+      if (check.loginRequired) {
+        throw new Error(check.message || '妖火登录已失效，请重新登录。');
+      }
+      throw new Error('无法读取当前妖火用户身份，请重新检测妖火登录状态。');
     }
   });
 }

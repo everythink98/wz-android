@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { getCategories, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
+import { getCategories, getCurrentUserProfile, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{ postId: 1, titleText: 'NodeSeek', titleLink: '/post-1-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:00:00.000Z' } }],
@@ -155,6 +155,159 @@ describe('Android local forum facade', () => {
     expect(v2ex.levelLabel).toBe('Pro');
     expect(yaohuo.levelLabel).toBe('2级');
     expect(yaohuo.topics[0].authorLevelLabel).toBe('2级');
+  });
+
+  it('reads current logged-in users for account status without V2EX', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, avatar: '/avatar/48872.png' } }));
+      }
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response('<a href="/space/48872"><img src="/avatar/48872.png" alt="我是ikun" /></a>');
+      }
+      if (input === 'https://linux.do/session/current.json') {
+        return new Response(JSON.stringify({
+          current_user: {
+            username: 'alice',
+            name: 'Alice',
+            avatar_template: '/user_avatar/linux.do/alice/{size}/1_2.png',
+            trust_level: 2
+          }
+        }));
+      }
+      if (input === 'https://yaohuo.me/wapindex.aspx?sid=-2') {
+        return new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>');
+      }
+      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
+        return new Response('<div>昵称：火友</div><div>主题 0 回复 0</div>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const nodeseek = await getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' });
+    const linuxdo = await getCurrentUserProfile({ source: 'linuxdo', fetcher, linuxDoCookie: '_t=ok' });
+    const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher, yaohuoCookie: 'sidyaohuo=ok' });
+
+    expect(nodeseek).toMatchObject({
+      source: 'nodeseek',
+      id: '48872',
+      username: '我是ikun',
+      url: 'https://www.nodeseek.com/space/48872',
+      topics: []
+    });
+    expect(linuxdo).toMatchObject({
+      source: 'linuxdo',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice',
+      levelLabel: 'Lv2',
+      topics: []
+    });
+    expect(yaohuo).toMatchObject({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      topics: []
+    });
+    expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
+  });
+
+  it('falls back to the latest dynamic NodeSeek login id only when current account reading fails', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
+        return new Response('{}');
+      }
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response('<div>NodeSeek</div>');
+      }
+      if (input === 'https://www.nodeseek.com/api/account/getInfo/15105?readme=1') {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '备用用户', member_id: 15105 } }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok', nodeSeekUserId: 15105 })).resolves.toMatchObject({
+      source: 'nodeseek',
+      id: '15105',
+      username: '备用用户',
+      topics: []
+    });
+  });
+
+  it('reads the current NodeSeek account from settings when the home page has no user link', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
+        return new Response('{}');
+      }
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response('<div>NodeSeek</div>');
+      }
+      if (input === 'https://www.nodeseek.com/setting') {
+        return new Response('<main>UID: 15105 <a href="/space/15105">新账号</a></main>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).resolves.toMatchObject({
+      source: 'nodeseek',
+      id: '15105',
+      username: '新账号',
+      topics: []
+    });
+  });
+
+  it('reads the current NodeSeek account near the sign-out link instead of random author links', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
+        return new Response('{}');
+      }
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response(`
+          <a href="/space/1">帖子作者</a>
+          <a href="/space/54874"></a>
+          <a href="/space/54874">凡想世界</a>
+          <a href="/setting"></a>
+          <a href="/api/account/signOut"></a>
+          <a href="/space/54874#discussions">主题帖 0</a>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).resolves.toMatchObject({
+      source: 'nodeseek',
+      id: '54874',
+      username: '凡想世界',
+      topics: []
+    });
+  });
+
+  it('reads the current yaohuo account name from the signed-in user topic list when the profile only exposes an id', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://yaohuo.me/wapindex.aspx?sid=-2') {
+        return new Response('<div class="top"><a href="/bbs/userinfo.aspx?touserid=45245">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
+      }
+      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=45245&siteid=1000') {
+        return new Response(`
+          <div class="content">用户:45245人气值1空间人气1今日人气留言板</div>
+          <div class="content"><a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub">贴子(1)</a></div>
+        `);
+      }
+      if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub') {
+        return new Response('<div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=177&id=1">主题</a>/流金岁月/阅1/2026-05-20 10:00</div>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({ source: 'yaohuo', fetcher, yaohuoCookie: 'sidyaohuo=ok' })).resolves.toMatchObject({
+      source: 'yaohuo',
+      id: '45245',
+      username: '流金岁月',
+      displayName: '流金岁月',
+      topics: []
+    });
   });
 
   it('reads user profile topic times from all four Android sources', async () => {

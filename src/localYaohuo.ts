@@ -204,10 +204,22 @@ function yaohuoAuthorLevelLabel(text: string) {
 
 function safeYaohuoProfileName(value: unknown) {
   const text = String(value || '').trim();
-  if (!text || text.length > 32 || /正在论坛|查看更多|动态|人气|留言板|小时前|分钟前|今天|昨天/.test(text)) {
+  if (!text || text.length > 32 || /正在论坛|查看更多|动态|人气|留言板|我的地盘|小时前|分钟前|今天|昨天/.test(text)) {
     return '';
   }
   return text;
+}
+
+function safeYaohuoCurrentUserName(value: unknown) {
+  const text = safeYaohuoProfileName(value);
+  return text && !/^(我的|个人|空间|资料|消息|退出|用户中心|个人中心|我的地盘)$/.test(text) ? text : '';
+}
+
+function yaohuoCurrentUserNameFromContext(context: string) {
+  const normalized = context.replace(/\s+/g, ' ').trim();
+  const beforeSpace = normalized.match(/([^\s，,、:：<>]{1,32})\s*的?\s*(?:空间|资料|个人中心|用户中心)/)?.[1]?.replace(/的$/, '');
+  const welcomed = normalized.match(/(?:欢迎|你好|您好)\s*([^\s，,、:：<>]{1,32})/)?.[1];
+  return safeYaohuoCurrentUserName(beforeSpace) || safeYaohuoCurrentUserName(welcomed);
 }
 
 function extractClassIdFromRow(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
@@ -782,6 +794,34 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
   };
 }
 
+export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProfile | null {
+  if (isYaohuoLoginRequiredHtml(html, url)) {
+    return null;
+  }
+  const root = parseHtml(html);
+  for (const link of root.querySelectorAll('a[href*="userinfo"], a[href*="touserid"]')) {
+    const id = extractUserIdFromHref(link.getAttribute('href'));
+    const parentNode = link.parentNode as unknown;
+    const contextNode = parentNode && typeof parentNode === 'object' && 'rawTagName' in parentNode
+      ? parentNode as HTMLElement
+      : link;
+    const context = elementText(contextNode);
+    const username = safeYaohuoCurrentUserName(elementText(link)) || yaohuoCurrentUserNameFromContext(context) || id;
+    if (!id || !username || !/欢迎|我的|个人|空间|资料|退出|消息|用户中心/.test(context)) {
+      continue;
+    }
+    return {
+      source: 'yaohuo',
+      id,
+      username,
+      displayName: username,
+      url: userUrl(id),
+      topics: []
+    };
+  }
+  return null;
+}
+
 export function parseYaohuoSearchHtml(html: string, options: { classId?: string; page?: number; limit?: number; url?: string } = {}): SearchResponse {
   const result = parseYaohuoListHtml(html, { ...options, classId: options.classId || '0', preserveOrder: true });
   return {
@@ -794,11 +834,13 @@ export function parseYaohuoSearchHtml(html: string, options: { classId?: string;
 
 export function checkYaohuoLoginHtml(html: string, url?: string) {
   const loginRequired = isYaohuoLoginRequiredHtml(html, url);
+  const currentUser = loginRequired ? null : parseYaohuoCurrentUserHtml(html, url);
   return {
     source: 'yaohuo' as const,
     ok: !loginRequired,
     loginRequired,
     reason: loginRequired ? (isYaohuoVerificationRequiredHtml(html) ? 'verification' : 'expired') : undefined,
+    ...(currentUser ? { currentUser } : {}),
     loginUrl: YAOHUO_LOGIN_URL,
     message: loginRequired ? (isYaohuoVerificationRequiredHtml(html) ? '妖火需要完成访问验证，请在登录页完成验证后重试' : '妖火登录已失效，请重新登录。') : undefined
   };

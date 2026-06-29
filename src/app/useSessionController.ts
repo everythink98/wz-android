@@ -92,8 +92,8 @@ async function readNodeSeekAccessFromStore() {
   return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
 }
 
-async function writeNodeSeekAccessToStore(cookieHeader: string, userAgent?: string) {
-  await SecureStore.setItemAsync(NODESEEK_ACCESS_STORAGE_KEY, JSON.stringify(nodeSeekAccessRecord(cookieHeader, userAgent)));
+async function writeNodeSeekAccessToStore(cookieHeader: string, userAgent?: string, userId?: number | null) {
+  await SecureStore.setItemAsync(NODESEEK_ACCESS_STORAGE_KEY, JSON.stringify(nodeSeekAccessRecord(cookieHeader, userAgent, userId)));
   await SecureStore.deleteItemAsync(NODESEEK_COOKIE_STORAGE_KEY).catch(() => undefined);
   await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY).catch(() => undefined);
 }
@@ -233,6 +233,9 @@ export function useSessionController({
           setNodeSeekWebViewUserAgent(userAgent);
         }
       }
+      if (nodeSeekReadCurrent) {
+        setWebLoginUserId(savedNodeSeekAccess?.userId || null);
+      }
       if (nodeSeekReadCurrent && savedNodeSeekAccess?.cookieHeader) {
         const savedCookies = parseNodeSeekDocumentCookie(savedNodeSeekAccess.cookieHeader);
         const summary = summarizeNodeSeekCookies(savedCookies);
@@ -264,6 +267,7 @@ export function useSessionController({
     notify,
     setLinuxDoWebViewUserAgent,
     setNodeSeekWebViewUserAgent,
+    setWebLoginUserId,
     updateLinuxDoSession,
     updateNodeSeekSession,
     updateYaohuoSession
@@ -286,7 +290,7 @@ export function useSessionController({
 
   const saveNodeSeekCookieHeader = useCallback(async (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    { verifiedByPage = false, isCurrent = () => true, generation }: { verifiedByPage?: boolean; isCurrent?: () => boolean; generation?: number } = {}
+    { verifiedByPage = false, isCurrent = () => true, generation, resetCurrentUser = false, userId }: { verifiedByPage?: boolean; isCurrent?: () => boolean; generation?: number; resetCurrentUser?: boolean; userId?: number | null } = {}
   ) => {
     const summary = summarizeNodeSeekCookies(cookies);
     const cookieHeader = buildCookieHeader(cookies);
@@ -296,11 +300,17 @@ export function useSessionController({
         return '';
       }
       if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
-        await writeNodeSeekAccessToStore(cookieHeader, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+        await writeNodeSeekAccessToStore(cookieHeader, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT, userId);
         if (!stillCurrent()) {
           return '';
         }
-        updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, true, summary.loggedIn));
+        updateNodeSeekSession({
+          type: 'cookie-loaded',
+          cookieSummary: summary.names,
+          hasVerification: true,
+          loggedIn: summary.loggedIn,
+          ...(summary.loggedIn && resetCurrentUser ? { currentUser: null } : {})
+        });
         return cookieHeader;
       }
       if (!stillCurrent()) {

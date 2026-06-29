@@ -1,4 +1,4 @@
-import type { FeedSource, Source } from './types';
+import type { FeedSource, Source, UserProfile } from './types';
 
 export type SessionSite = Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
 export type SiteSessionStatus = 'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'expired';
@@ -8,6 +8,7 @@ export type SiteSessionState = {
   status: SiteSessionStatus;
   cookieSummary: string[];
   isVerifying: boolean;
+  currentUser?: UserProfile;
   lastVerifiedAt?: string;
   lastError?: string;
 };
@@ -24,17 +25,18 @@ export type SiteSessionViewModel = {
   isLoggedIn: boolean;
   isVerifying: boolean;
   canWrite: boolean;
+  currentUser?: UserProfile;
   lastVerifiedAt?: string;
   lastError?: string;
 };
 export type SiteSessionViewModels = Record<SessionSite, SiteSessionViewModel>;
 
 export type SiteSessionEvent =
-  | { type: 'cookie-loaded'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; at?: string }
-  | { type: 'login-detected'; cookieSummary?: string[]; at?: string }
+  | { type: 'cookie-loaded'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; at?: string }
+  | { type: 'login-detected'; cookieSummary?: string[]; currentUser?: UserProfile | null; at?: string }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
-  | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; at: string }
+  | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; currentUser?: UserProfile | null; at: string }
   | { type: 'login-expired'; message?: string; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
   | { type: 'cleared'; at?: string };
@@ -62,6 +64,16 @@ export function createSiteSessionStates(states?: Partial<SiteSessionStates>): Si
   };
 }
 
+function currentUserForSite(site: SessionSite, currentUser: UserProfile | null | undefined, loggedIn?: boolean) {
+  if (!loggedIn || !currentUser || currentUser.source !== site || !currentUser.id || !currentUser.username) {
+    return undefined;
+  }
+  return {
+    ...currentUser,
+    topics: []
+  };
+}
+
 export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides: DevAnonymousOverrides = {}): SiteSessionStates {
   if (!overrides.nodeseek && !overrides.linuxdo && !overrides.yaohuo) {
     return states;
@@ -77,24 +89,24 @@ export function isDevAnonymousSource(source: FeedSource, site: SessionSite, over
   return Boolean(overrides[site] && (source === 'all' || source === site));
 }
 
-function stateWithCookieFacts(state: SiteSessionState, {
-  cookieSummary,
-  hasVerification,
-  loggedIn,
-  at
-}: {
+function stateWithCookieFacts(state: SiteSessionState, event: {
   cookieSummary?: string[];
   hasVerification?: boolean;
   loggedIn?: boolean;
+  currentUser?: UserProfile | null;
   at?: string;
 }) {
+  const { cookieSummary, hasVerification, loggedIn, currentUser, at } = event;
   const nextCookieSummary = cleanCookieSummary(cookieSummary || state.cookieSummary);
   const status: SiteSessionStatus = loggedIn ? 'logged-in' : (hasVerification ?? nextCookieSummary.length > 0) ? 'verified' : 'anonymous';
+  const currentUserProvided = Object.prototype.hasOwnProperty.call(event, 'currentUser');
+  const nextCurrentUser = currentUserProvided ? currentUserForSite(state.site, currentUser, loggedIn) : loggedIn ? state.currentUser : undefined;
   return {
     ...state,
     status,
     cookieSummary: nextCookieSummary,
     isVerifying: false,
+    currentUser: nextCurrentUser,
     lastVerifiedAt: status === 'anonymous' ? state.lastVerifiedAt : at || state.lastVerifiedAt,
     lastError: undefined
   };
@@ -105,11 +117,13 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     return stateWithCookieFacts(state, event);
   }
   if (event.type === 'login-detected') {
+    const currentUser = currentUserForSite(state.site, event.currentUser, true);
     return {
       ...state,
       status: 'logged-in',
       cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary),
       isVerifying: false,
+      currentUser,
       lastVerifiedAt: event.at || state.lastVerifiedAt,
       lastError: undefined
     };
@@ -119,6 +133,7 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
       ...state,
       status: 'verification-required',
       isVerifying: false,
+      currentUser: undefined,
       ...(event.message ? { lastError: event.message } : {})
     };
   }
@@ -126,15 +141,18 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     return {
       ...state,
       status: 'verifying',
-      isVerifying: true
+      isVerifying: true,
+      currentUser: undefined
     };
   }
   if (event.type === 'verification-succeeded') {
+    const currentUser = currentUserForSite(state.site, event.currentUser, event.loggedIn);
     return {
       ...state,
       status: event.loggedIn ? 'logged-in' : 'verified',
       cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary),
       isVerifying: false,
+      currentUser,
       lastVerifiedAt: event.at,
       lastError: undefined
     };
@@ -144,6 +162,7 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
       ...state,
       status: 'expired',
       isVerifying: false,
+      currentUser: undefined,
       ...(event.message ? { lastError: event.message } : {})
     };
   }
@@ -211,6 +230,7 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
     isLoggedIn,
     isVerifying: state.isVerifying,
     canWrite: isLoggedIn,
+    ...(state.currentUser ? { currentUser: state.currentUser } : {}),
     ...(state.lastVerifiedAt ? { lastVerifiedAt: state.lastVerifiedAt } : {}),
     ...(state.lastError ? { lastError: state.lastError } : {})
   };
