@@ -3,6 +3,8 @@ import { accessRequirementLevelValue } from './appUtils';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
 import type { AccessRequirement } from './types';
 
+export const FORUM_VIDEO_STICKER_TAG = 'forum-video-sticker';
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -219,11 +221,85 @@ function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
   });
 }
 
+function isNodeSeekHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
+}
+
+function nodeSeekStickerPngUrl(value: unknown, baseUrl: string) {
+  const source = absoluteUrl(value, baseUrl);
+  if (!source) {
+    return '';
+  }
+  try {
+    const url = new URL(source);
+    if (!isNodeSeekHost(url.hostname) || !/^\/static\/image\/sticker\//i.test(url.pathname)) {
+      return '';
+    }
+    if (!/\.(?:webm|mov|mp4)$/i.test(url.pathname)) {
+      return '';
+    }
+    url.pathname = url.pathname.replace(/\.(?:webm|mov|mp4)$/i, '.png');
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+function nodeSeekStickerVideoUrl(value: unknown, baseUrl: string) {
+  const source = absoluteUrl(value, baseUrl);
+  if (!source) {
+    return '';
+  }
+  try {
+    const url = new URL(source);
+    if (!isNodeSeekHost(url.hostname) || !/^\/static\/image\/sticker\//i.test(url.pathname)) {
+      return '';
+    }
+    return /\.(?:webm|mov|mp4)$/i.test(url.pathname) ? url.toString() : '';
+  } catch {
+    return '';
+  }
+}
+
+function safeStickerDimension(value: unknown, fallback = '100') {
+  const text = String(value || '').trim();
+  return /^\d{1,4}$/.test(text) ? text : fallback;
+}
+
+function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
+  root.querySelectorAll('video').forEach((node) => {
+    if (!classTokens(node.getAttribute('class')).includes('sticker')) {
+      return;
+    }
+    const sourceNodes = node.querySelectorAll('source');
+    const videoUrl = sourceNodes
+      .map((source) => nodeSeekStickerVideoUrl(source.getAttribute('src'), baseUrl))
+      .find(Boolean);
+    const fallbackUrl = sourceNodes
+      .map((source) => nodeSeekStickerPngUrl(source.getAttribute('src'), baseUrl))
+      .find(Boolean);
+    if (!videoUrl && !fallbackUrl) {
+      return;
+    }
+    const width = safeStickerDimension(node.getAttribute('width'));
+    const height = safeStickerDimension(node.getAttribute('height'));
+    const alt = String(node.getAttribute('alt') || node.getAttribute('title') || 'sticker');
+    const stickerSrc = videoUrl || fallbackUrl || '';
+    node.replaceWith(
+      `<${FORUM_VIDEO_STICKER_TAG} class="sticker" src="${escapeHtmlAttribute(stickerSrc)}" data-fallback-src="${escapeHtmlAttribute(fallbackUrl || '')}" alt="${escapeHtmlAttribute(alt)}" width="${width}" height="${height}"></${FORUM_VIDEO_STICKER_TAG}>`
+    );
+  });
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   const root = parseHtml(html);
   for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
+  sanitizeNodeSeekStickerVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);
   sanitizeNsVideoImages(root, baseUrl);
   removeForumImageMetadata(root);
@@ -245,8 +321,8 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
         }
         continue;
       }
-      if (lower === 'href' || lower === 'src') {
-        const next = sanitizedUrlAttribute(lower, value, baseUrl);
+      if (lower === 'href' || lower === 'src' || lower === 'data-fallback-src') {
+        const next = sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
         if (next) {
           node.setAttribute(name, next);
         } else {

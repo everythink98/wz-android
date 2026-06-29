@@ -88,6 +88,20 @@ describe('Android topic derived data', () => {
     expect(replyHtmlWithSignature(replyWithSignatureImage)).toContain('https://cdn.example.com/sign.jpg');
   });
 
+  it('treats dimension-only small images as reply images without counting emoji', () => {
+    const smallRealImage = {
+      ...replyWithImage,
+      contentHtml: '<p><img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p>'
+    };
+    const emojiOnly = {
+      ...replyWithoutImage,
+      contentHtml: '<p><img class="emoji" src="https://linux.do/images/emoji/twitter/slight_smile.png" alt=":slight_smile:" title=":slight_smile:" width="20" height="20"></p>'
+    };
+    const deriver = createTopicImageDeriver();
+
+    expect(filterRepliesWithImages([smallRealImage, emojiOnly], {}, deriver)).toEqual([smallRealImage]);
+  });
+
   it('evicts old HTML image derivation cache entries after the configured limit', () => {
     const extractImageUrls = vi.fn((html: string) => [html.match(/src="([^"]+)"/)?.[1] || '']);
     const deriver = createTopicImageDeriver({ extractImageUrls, cacheLimit: 2 });

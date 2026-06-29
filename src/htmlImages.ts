@@ -11,6 +11,8 @@ export interface ImagePreviewCatalog {
   previewUrlBySourceUrl: Record<string, string>;
 }
 
+export const FORUM_STICKER_TAG = 'forum-sticker';
+export const FORUM_STICKER_ROW_TAG = 'forum-sticker-row';
 export const INLINE_FORUM_IMAGE_TAG = 'forum-inline-image';
 
 const IMAGE_REQUEST_HEADER_HOSTS = [
@@ -68,34 +70,6 @@ export function isInlineForumImage(attributes: Record<string, string | undefined
   return isInlineForumImageAttributes(attributes);
 }
 
-export function isForumInlineSizedImage(dimensions: { width?: number; height?: number } | null | undefined) {
-  const width = dimensions?.width || 0;
-  const height = dimensions?.height || 0;
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return false;
-  }
-  const maxDimension = Math.max(width, height);
-  const minDimension = Math.min(width, height);
-  return maxDimension <= 96 && minDimension <= 64;
-}
-
-export function withForumImageDimensions(
-  attributes: Record<string, string | undefined>,
-  dimensions: { width?: number; height?: number } | null | undefined
-) {
-  const width = dimensions?.width || 0;
-  const height = dimensions?.height || 0;
-  if (!isForumInlineSizedImage(dimensions)) {
-    return attributes;
-  }
-  return {
-    ...attributes,
-    'data-forum-inline-sized': 'true',
-    width: String(Math.round(width)),
-    height: String(Math.round(height))
-  };
-}
-
 export function markInlineSizedImageHtml(html: string, url: string) {
   const target = normalizeImagePreviewUrl(url);
   if (!target) {
@@ -126,10 +100,11 @@ export function inlineForumImageDisplaySize(attributes: Record<string, string | 
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const isSticker = isForumStickerImageAttributes(attributes);
-  const fallbackSize = isSticker ? 24 : 20;
-  let displayWidth = width || height || fallbackSize;
-  let displayHeight = height || width || fallbackSize;
-  const maxSize = isInlineForumImageAttributes(attributes) ? 24 : 64;
+  const stickerFallback = forumStickerFallbackSize(attributes);
+  const fallbackSize = stickerFallback?.width || (isSticker ? 24 : 20);
+  let displayWidth = stickerFallback?.width || width || height || fallbackSize;
+  let displayHeight = stickerFallback?.height || height || width || fallbackSize;
+  const maxSize = isSticker ? 104 : isInlineForumImageAttributes(attributes) ? 24 : 64;
   const minSize = 12;
   const maxDimension = Math.max(displayWidth, displayHeight);
   if (maxDimension > maxSize) {
@@ -168,6 +143,7 @@ export function flowInlineImagesInMixedParagraphs(html: string) {
   try {
     const root = parseHtml(html);
     upgradeBlockImageSources(root);
+    upgradeForumStickerImages(root);
     root.querySelectorAll('p').forEach((paragraph) => {
       flowImagesInMixedContainer(paragraph);
     });
@@ -433,6 +409,7 @@ type ParsedImageNode = {
   innerHTML?: string;
   set_content?: (content: string) => void;
   setAttribute?: (name: string, value: string) => void;
+  replaceWith?: (content: string) => void;
   querySelectorAll?: (selector: string) => ParsedImageNode[];
   parentNode?: unknown;
   parent?: unknown;
@@ -519,6 +496,43 @@ function flowImagesInMixedContainer(
       image.innerHTML = label;
     }
   });
+}
+
+function upgradeForumStickerImages(root: { querySelectorAll?: (selector: string) => ParsedImageNode[] }) {
+  root.querySelectorAll?.('img').forEach((image) => {
+    if (!shouldRenderForumStickerBlock(image.attributes) || isInsideLightboxImage(image)) {
+      return;
+    }
+    const label = attributeValue(image.attributes, 'alt') || attributeValue(image.attributes, 'title') || attributeValue(image.attributes, 'src') || 'sticker';
+    image.tagName = FORUM_STICKER_TAG;
+    if (typeof image.set_content === 'function') {
+      image.set_content(label);
+    } else {
+      image.innerHTML = label;
+    }
+  });
+  root.querySelectorAll?.('p').forEach((paragraph) => {
+    if (!/<forum-sticker\b/i.test(paragraph.innerHTML || '')) {
+      return;
+    }
+    const replacementHtml = stickerRowHtmlFromParagraph(paragraph.innerHTML || '');
+    if (replacementHtml && typeof paragraph.replaceWith === 'function') {
+      paragraph.replaceWith(replacementHtml);
+    }
+  });
+}
+
+function stickerRowHtmlFromParagraph(html: string) {
+  const pieces = html.split(/<br\s*\/?>/i)
+    .map((piece) => piece.trim())
+    .filter(Boolean);
+  const sourcePieces = pieces.length ? pieces : [html.trim()].filter(Boolean);
+  return sourcePieces.map((piece) => {
+    if (/<forum-sticker\b/i.test(piece)) {
+      return `<${FORUM_STICKER_ROW_TAG}>${piece}</${FORUM_STICKER_ROW_TAG}>`;
+    }
+    return `<p>${piece}</p>`;
+  }).join('');
 }
 
 function upgradeBlockImageSources(root: { querySelectorAll?: (selector: string) => ParsedImageNode[] }) {
@@ -609,7 +623,6 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
-  const hasInlineSizedDimensions = isForumInlineSizedImage({ width, height });
   const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
   const classMarksSticker = /(^|\s)sticker(\s|$)/i.test(className);
   const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
@@ -621,7 +634,6 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const labelMarksSticker = isForumStickerImageAttributes(attributes);
   const hasEmojiMarker = classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
   return runtimeMarksInlineSized
-    || hasInlineSizedDimensions
     || labelMarksSticker
     || (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
     || ((classMarksAvatar || urlMarksAvatar) && hasSmallSize);
@@ -632,6 +644,26 @@ function isForumStickerImageAttributes(attributes: Record<string, string | undef
   return /(^|\s)sticker(\s|$)/i.test(className)
     || isForumStickerLabel(attributeValue(attributes, 'title'))
     || isForumStickerLabel(attributeValue(attributes, 'alt'));
+}
+
+function shouldRenderForumStickerBlock(attributes: Record<string, string | undefined>) {
+  if (!isForumStickerImageAttributes(attributes)) {
+    return false;
+  }
+  const size = inlineForumImageDisplaySize(attributes);
+  return Math.max(size.width, size.height) > 64;
+}
+
+function forumStickerFallbackSize(attributes: Record<string, string | undefined>) {
+  const className = attributeValue(attributes, 'class');
+  const src = attributeValue(attributes, 'src');
+  if (!/(^|\s)sticker(\s|$)/i.test(className)) {
+    return null;
+  }
+  if (/\/static\/image\/sticker\/emoji\//i.test(src)) {
+    return { width: 100, height: 100 };
+  }
+  return { width: 150, height: 130 };
 }
 
 function isForumEmojiLabel(value: string) {

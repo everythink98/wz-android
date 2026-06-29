@@ -14,6 +14,7 @@ describe('Android local HTML helpers', () => {
       <a href="vbscript:msgbox(1)">vb</a>
       <img src="data:text/html,hello">
       <img src="vbscript:msgbox(1)">
+      <forum-video-sticker src="javascript:alert(1)" data-fallback-src="vbscript:msgbox(1)"></forum-video-sticker>
     `, 'https://example.com/base/');
 
     expect(result).not.toContain('javascript:');
@@ -21,6 +22,7 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toContain('vbscript:');
     expect(result).not.toContain('href=');
     expect(result).not.toContain('src=');
+    expect(result).not.toContain('data-fallback-src=');
   });
 
   it('keeps allowed sanitized links and converts relative URLs', () => {
@@ -81,6 +83,26 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('<iframe');
     expect(result).toContain('src="https://player.bilibili.com/player.html?bvid=BV1GUdgBdESz&p=2"');
     expect(result).not.toContain('<img');
+  });
+
+  it('keeps NodeSeek video stickers as playable sticker elements', () => {
+    const result = sanitizeContentHtml(`
+      <p>
+        <video autoplay="" loop="" muted="" playsinline="" class="sticker" width="100" height="100">
+          <source src="/static/image/sticker/emoji/35.webm" type="video/webm">
+          <source src="/static/image/sticker/emoji/35.mov" type="video/mp4">
+        </video>
+      </p>
+    `, 'https://www.nodeseek.com/post-797740-1');
+
+    expect(result).toContain('<forum-video-sticker');
+    expect(result).toContain('class="sticker"');
+    expect(result).toContain('src="https://www.nodeseek.com/static/image/sticker/emoji/35.webm"');
+    expect(result).toContain('data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/35.png"');
+    expect(result).toContain('width="100"');
+    expect(result).toContain('height="100"');
+    expect(result).not.toContain('<video');
+    expect(result).not.toContain('<source');
   });
 
   it('turns untrusted iframes into openable link blocks instead of inline playback', () => {

@@ -24,7 +24,8 @@ import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../ty
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
-import { INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
+import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
+import { FORUM_VIDEO_STICKER_TAG } from '../../localHtml';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
@@ -69,8 +70,23 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
     contentModel: HTMLContentModel.textual,
     isOpaque: true
   }),
+  [FORUM_STICKER_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_STICKER_TAG,
+    contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
+  [FORUM_STICKER_ROW_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_STICKER_ROW_TAG,
+    contentModel: HTMLContentModel.mixed,
+    isOpaque: false
+  }),
   [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_REPLY_REFERENCE_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [FORUM_VIDEO_STICKER_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_VIDEO_STICKER_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),

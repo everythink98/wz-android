@@ -7,7 +7,6 @@ import {
   imagePreviewListFromCatalog,
   imageRequestHeadersForUrl,
   imageSourceFromUrl,
-  isForumInlineSizedImage,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
   isHttpOrHttpsUrl,
@@ -161,21 +160,14 @@ describe('Android HTML image preview helpers', () => {
     expect(extractImageUrlsFromHtml(html)).toEqual([]);
   });
 
-  it('keeps V2EX tiny Imgur emoji-like images out of preview when dimensions are known', () => {
+  it('keeps dimension-only tiny images previewable because size alone is not an emoji signal', () => {
     const html = '<p>去年是机房火灾 <img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p><p><img alt="" class="embedded_image" src="https://i.imgur.com/2ejt2Q6.png" width="2198" height="912"></p>';
 
-    expect(extractImageUrlsFromHtml(html)).toEqual(['https://i.imgur.com/2ejt2Q6.png']);
+    expect(extractImageUrlsFromHtml(html)).toEqual(['https://i.imgur.com/agAJ0Rd.png', 'https://i.imgur.com/2ejt2Q6.png']);
     expect(imagePreviewListFromCatalog(createImagePreviewCatalog([html]), 'https://i.imgur.com/2ejt2Q6.png')).toEqual({
-      urls: ['https://i.imgur.com/2ejt2Q6.png'],
-      index: 0
+      urls: ['https://i.imgur.com/agAJ0Rd.png', 'https://i.imgur.com/2ejt2Q6.png'],
+      index: 1
     });
-  });
-
-  it('identifies real image dimensions that should be rendered as inline forum images', () => {
-    expect(isForumInlineSizedImage({ width: 20, height: 20 })).toBe(true);
-    expect(isForumInlineSizedImage({ width: 48, height: 36 })).toBe(true);
-    expect(isForumInlineSizedImage({ width: 2198, height: 912 })).toBe(false);
-    expect(isForumInlineSizedImage({ width: 320, height: 24 })).toBe(false);
   });
 
   it('keeps forum emoji paths from all Android sources out of preview', () => {
@@ -237,13 +229,33 @@ describe('Android HTML image preview helpers', () => {
     expect(extractImageUrlsFromHtml(html)).toEqual([]);
   });
 
-  it('keeps NodeSeek xhj stickers inline even when the source declares large dimensions', () => {
+  it('renders large NodeSeek xhj stickers in a sticker row instead of a text line', () => {
     const html = '<p>rt<br>有什么特别之处吗 <img alt="xhj032" title="xhj032" width="120" height="99" src="https://www.nodeseek.com/static/image/smiley/xhj032.png"><br><img alt="photo" src="https://www.nodeseek.com/api/attachments/123"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('<forum-inline-image alt="xhj032"');
+    expect(result).toContain('<forum-sticker-row>');
+    expect(result).toContain('<forum-sticker alt="xhj032"');
     expect(result).not.toContain('<img alt="xhj032"');
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://www.nodeseek.com/api/attachments/123']);
+  });
+
+  it('renders NodeSeek sticker class images with adjacent text in a sticker row', () => {
+    const html = '<p><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" loading="lazy" alt="ac01"> 拉段了吗</p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-sticker-row>');
+    expect(result).toContain('<forum-sticker class="sticker"');
+    expect(result).toContain('拉段了吗');
+    expect(result).not.toContain('<forum-inline-image');
+  });
+
+  it('preserves text before a line break when a later line contains a NodeSeek sticker', () => {
+    const html = '<p>rt,刚坠机，我只是带上自己的ip段<br>ipv6顶一会儿 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<p>rt,刚坠机，我只是带上自己的ip段</p>');
+    expect(result).toContain('<forum-sticker-row>ipv6顶一会儿 <forum-sticker class="sticker"');
+    expect(result).not.toContain('<forum-inline-image');
   });
 
   it('uses a readable inline size for xhj sticker images without explicit dimensions', () => {
@@ -253,14 +265,32 @@ describe('Android HTML image preview helpers', () => {
     })).toEqual({ width: 24, height: 24 });
   });
 
-  it('caps NodeSeek xhj stickers near text size when source dimensions are large', () => {
+  it('uses NodeSeek sticker class size when source omits dimensions', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'sticker',
+      alt: 'ac01',
+      src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png'
+    })).toEqual({ width: 104, height: 90 });
+  });
+
+  it('keeps NodeSeek sticker class size when source declares tiny dimensions', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'sticker',
+      alt: 'ac01',
+      src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png',
+      width: '30',
+      height: '26'
+    })).toEqual({ width: 104, height: 90 });
+  });
+
+  it('caps NodeSeek xhj sticker source dimensions instead of shrinking them to emoji size', () => {
     expect(inlineForumImageDisplaySize({
       alt: 'xhj032',
       title: 'xhj032',
       src: 'https://cdn.example.com/xhj032.png',
       width: '120',
       height: '99'
-    })).toEqual({ width: 24, height: 20 });
+    })).toEqual({ width: 104, height: 86 });
   });
 
   it('caps generic forum emoji near text size when source dimensions are large', () => {

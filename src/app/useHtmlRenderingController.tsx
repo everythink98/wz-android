@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
   getNativePropsForTNode,
+  TChildrenRenderer,
   useIMGElementProps,
   useIMGElementState,
   type CustomBlockRenderer,
@@ -14,13 +15,12 @@ import {
   imageSourceFromUrl,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
+  FORUM_STICKER_ROW_TAG,
+  FORUM_STICKER_TAG,
   INLINE_FORUM_IMAGE_TAG,
-  isForumInlineSizedImage,
   isHttpOrHttpsUrl,
   isInlineForumImage,
-  isPreviewableImageUrl,
-  normalizeImagePreviewUrl,
-  withForumImageDimensions
+  isPreviewableImageUrl
 } from '../htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
@@ -29,10 +29,7 @@ import type { Topic, TopicDetail, UserProfile } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
-
-function normalizeImageCacheKey(url: string) {
-  return normalizeImagePreviewUrl(url).trim();
-}
+import { FORUM_VIDEO_STICKER_TAG } from '../localHtml';
 
 export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
   return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
@@ -71,57 +68,12 @@ export function useHtmlRenderingController({
   topicDetail: TopicDetail | null;
   topicKey: string;
 }) {
-  const [inlineSizedImageUrls, setInlineSizedImageUrls] = useState<Record<string, true>>({});
-  const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
-  const pendingInlineSizedImageUrlsRef = useRef<Record<string, true>>({});
-  const inlineSizedImageFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
-  useEffect(() => {
-    pendingInlineSizedImageUrlsRef.current = {};
-    if (inlineSizedImageFlushTimerRef.current) {
-      clearTimeout(inlineSizedImageFlushTimerRef.current);
-      inlineSizedImageFlushTimerRef.current = null;
-    }
-    setInlineSizedImageUrls({});
-  }, [selectedTopic?.id, selectedTopic?.source]);
+  const inlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [selectedTopic?.id, selectedTopic?.source]);
 
   const topicImageDeriver = useMemo(
     () => createTopicImageDeriver(),
     [topicKey]
   );
-
-  const markImageInlineSized = useCallback((url: string) => {
-    const clean = normalizeImageCacheKey(url);
-    if (!clean || inlineSizedImageUrlsRef.current[clean] || pendingInlineSizedImageUrlsRef.current[clean]) {
-      return;
-    }
-    pendingInlineSizedImageUrlsRef.current[clean] = true;
-    if (inlineSizedImageFlushTimerRef.current) {
-      return;
-    }
-    inlineSizedImageFlushTimerRef.current = setTimeout(() => {
-      inlineSizedImageFlushTimerRef.current = null;
-      const pending = pendingInlineSizedImageUrlsRef.current;
-      pendingInlineSizedImageUrlsRef.current = {};
-      setInlineSizedImageUrls((current) => {
-        const freshUrls = Object.keys(pending).filter((item) => !current[item]);
-        if (!freshUrls.length) {
-          return current;
-        }
-        const next = { ...current };
-        freshUrls.forEach((item) => {
-          next[item] = true;
-        });
-        return next;
-      });
-    }, 0);
-  }, []);
-
-  useEffect(() => () => {
-    if (inlineSizedImageFlushTimerRef.current) {
-      clearTimeout(inlineSizedImageFlushTimerRef.current);
-    }
-  }, []);
 
   const {
     htmlBaseStyle,
@@ -220,6 +172,44 @@ export function useHtmlRenderingController({
         />
       </View>
     );
+    const ForumVideoStickerRenderer: CustomBlockRenderer = (props) => {
+      const attributes = props.tnode.attributes || {};
+      const src = attributes.src || '';
+      const fallbackSrc = attributes['data-fallback-src'] || '';
+      const size = inlineForumImageDisplaySize(attributes, settings.fontScale);
+      if (!src) {
+        return fallbackSrc ? <Image source={imageSourceFromUrl(fallbackSrc)} style={[styles.inlineForumImage, size]} /> : null;
+      }
+      return (
+        <View pointerEvents="none" style={[styles.inlineForumImage, size, embedStyles.stickerVideoFrame]}>
+          <WebView
+            allowsInlineMediaPlayback
+            javaScriptEnabled={false}
+            mediaPlaybackRequiresUserAction={false}
+            originWhitelist={['*']}
+            scrollEnabled={false}
+            source={{ html: forumVideoStickerHtml(src, fallbackSrc) }}
+            style={embedStyles.stickerWebView}
+          />
+        </View>
+      );
+    };
+    const ForumStickerRenderer: CustomMixedRenderer = (props) => {
+      const attributes = props.tnode.attributes || {};
+      const src = attributes.src || '';
+      const size = inlineForumImageDisplaySize(attributes, settings.fontScale);
+      if (!src) {
+        return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
+      }
+      return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, size]} />;
+    };
+    const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
+      return (
+        <View style={embedStyles.stickerRow}>
+          <TChildrenRenderer tchildren={props.tnode.children} />
+        </View>
+      );
+    };
     const IframeRenderer: CustomBlockRenderer = (props) => {
       const src = props.tnode.attributes.src || '';
       const embed = nsEmbedFromUrl(src);
@@ -239,18 +229,11 @@ export function useHtmlRenderingController({
         source: imageSource,
         style: [imageProps.style, { resizeMode: 'contain' }]
       });
-      const sizedAttributes = withForumImageDimensions(props.tnode.attributes, imageState.type === 'success' ? imageState.dimensions : null);
-      const runtimeInlineSized = !isInlineForumImage(props.tnode.attributes) && isForumInlineSizedImage(imageState.type === 'success' ? imageState.dimensions : null);
-      useEffect(() => {
-        if (runtimeInlineSized) {
-          markImageInlineSized(src);
-        }
-      }, [markImageInlineSized, runtimeInlineSized, src]);
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
-      if (isInlineForumImage(sizedAttributes)) {
-        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(sizedAttributes, settings.fontScale), inlineForumImageAlignmentStyle(sizedAttributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+      if (isInlineForumImage(props.tnode.attributes)) {
+        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
       const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
@@ -321,6 +304,9 @@ export function useHtmlRenderingController({
     };
     return {
       a: ReplyReferenceLinkRenderer,
+      [FORUM_STICKER_ROW_TAG]: ForumStickerRowRenderer,
+      [FORUM_STICKER_TAG]: ForumStickerRenderer,
+      [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,
       iframe: IframeRenderer,
       img: PreviewImageRenderer,
       [FORUM_REPLY_REFERENCE_TAG]: ReplyReferenceRenderer,
@@ -328,7 +314,6 @@ export function useHtmlRenderingController({
     };
   }, [
     htmlBaseStyle.lineHeight,
-    markImageInlineSized,
     onOpenImagePreview,
     openHtmlLink,
     settings.fontScale,
@@ -384,6 +369,21 @@ export function useHtmlRenderingController({
 }
 
 const embedStyles = StyleSheet.create({
+  stickerRow: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 6,
+    marginTop: 4
+  },
+  stickerVideoFrame: {
+    overflow: 'hidden'
+  },
+  stickerWebView: {
+    backgroundColor: 'transparent',
+    flex: 1
+  },
   videoFrame: {
     alignSelf: 'stretch',
     aspectRatio: 16 / 9,
@@ -397,3 +397,16 @@ const embedStyles = StyleSheet.create({
     flex: 1
   }
 });
+
+function escapeHtmlAttribute(value: string) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function forumVideoStickerHtml(src: string, fallbackSrc: string) {
+  const poster = fallbackSrc ? ` poster="${escapeHtmlAttribute(fallbackSrc)}"` : '';
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden;}video,img{width:100%;height:100%;object-fit:contain;display:block;background:transparent;}</style></head><body><video autoplay loop muted playsinline webkit-playsinline${poster}><source src="${escapeHtmlAttribute(src)}"></video></body></html>`;
+}

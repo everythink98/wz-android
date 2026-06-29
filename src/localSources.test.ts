@@ -2229,6 +2229,48 @@ describe('Android local sources', () => {
     });
   });
 
+  it('keeps rendered NodeSeek image and video stickers in replies', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <main>
+        <article class="post-detail">
+          <h1 class="post-title">sticker topic</h1>
+          <div class="post-info">
+            <span class="info-author"><a href="/space/1">alice</a></span>
+            <time datetime="2026-05-22T16:00:00.000Z"></time>
+          </div>
+          <div class="post-content"><p>正文</p></div>
+        </article>
+        <section class="comment-list">
+          <div class="comment-item" id="comment-201">
+            <a href="/space/2" class="comment-author">BettyFord</a>
+            <time datetime="2026-05-22T16:01:00.000Z"></time>
+            <div class="comment-content">
+              <p><video autoplay="" loop="" muted="" playsinline="" class="sticker" width="100" height="100">
+                <source src="/static/image/sticker/emoji/35.webm" type="video/webm">
+                <source src="/static/image/sticker/emoji/35.mov" type="video/mp4">
+              </video></p>
+            </div>
+          </div>
+          <div class="comment-item" id="comment-202">
+            <a href="/space/3" class="comment-author">7olove</a>
+            <time datetime="2026-05-22T16:02:00.000Z"></time>
+            <div class="comment-content"><p><img class="sticker" src="/static/image/sticker/ac/01.png" loading="lazy" alt="ac01"> 拉段了吗</p></div>
+          </div>
+        </section>
+      </main>
+    `));
+
+    const topic = await getTopic({ source: 'nodeseek', id: '797740', fetcher });
+
+    expect(topic.replies[0].contentHtml).toContain('<forum-video-sticker');
+    expect(topic.replies[0].contentHtml).toContain('src="https://www.nodeseek.com/static/image/sticker/emoji/35.webm"');
+    expect(topic.replies[0].contentHtml).toContain('data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/35.png"');
+    expect(topic.replies[0].contentHtml).toContain('class="sticker"');
+    expect(topic.replies[0].contentHtml).not.toContain('<video');
+    expect(topic.replies[1].contentHtml).toContain('src="https://www.nodeseek.com/static/image/sticker/ac/01.png"');
+    expect(topic.replies[1].contentHtml).toContain('class="sticker"');
+  });
+
   it('reads rendered NodeSeek topic title from meta fallback', async () => {
     const fetcher = vi.fn(async () => html(`
       <html>
