@@ -14,9 +14,9 @@ import {
 
 const apkSha256 = 'a'.repeat(64);
 const signerSha256 = 'b'.repeat(64);
-const newerVersion = '1.3.34';
+const newerVersion = '1.3.35';
 const newerTag = `v${newerVersion}`;
-const newerVersionCode = 38;
+const newerVersionCode = 39;
 
 function releaseAssetUrl(tagName: string, assetName: string) {
   return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${assetName}`;
