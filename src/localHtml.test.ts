@@ -105,6 +105,32 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toContain('<source');
   });
 
+  it('keeps ordinary safe videos as playable content blocks', () => {
+    const result = sanitizeContentHtml(`
+      <video controls onplay="alert(1)" poster="/cover.jpg">
+        <source src="/uploads/demo.mp4" type="video/mp4">
+      </video>
+    `, 'https://yaohuo.me/bbs-1560017.html');
+
+    expect(result).toContain('<forum-video');
+    expect(result).toContain('src="https://yaohuo.me/uploads/demo.mp4"');
+    expect(result).toContain('poster="https://yaohuo.me/cover.jpg"');
+    expect(result).not.toContain('<video');
+    expect(result).not.toContain('<source');
+    expect(result).not.toContain('onplay');
+  });
+
+  it('drops ordinary videos without a safe http source', () => {
+    const result = sanitizeContentHtml(`
+      <video src="javascript:alert(1)"></video>
+      <video><source src="data:text/html,hello"></video>
+    `, 'https://yaohuo.me/bbs-1560017.html');
+
+    expect(result).not.toContain('<forum-video');
+    expect(result).not.toContain('javascript:');
+    expect(result).not.toContain('data:text/html');
+  });
+
   it('turns untrusted iframes into openable link blocks instead of inline playback', () => {
     const result = sanitizeContentHtml(`
       <iframe src="https://www.youtube.com/embed/demo" onload="alert(1)"></iframe>

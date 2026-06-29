@@ -25,7 +25,7 @@ import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
-import { FORUM_VIDEO_STICKER_TAG } from '../../localHtml';
+import { FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
@@ -87,6 +87,11 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
   }),
   [FORUM_VIDEO_STICKER_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_VIDEO_STICKER_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [FORUM_VIDEO_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_VIDEO_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),

@@ -695,6 +695,45 @@ describe('Android direct yaohuo API', () => {
     expect(detail.contentHtml).not.toContain('更多回帖');
   });
 
+  it('keeps yaohuo video-only topic content', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 视频主题 (阅2) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent">
+        <!--listS--><video controls><source src="/uploads/demo.mp4" type="video/mp4"></video><!--listE-->
+      </div>
+      更多回帖(1)
+      <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
+    `, {
+      id: '1560017',
+      url: 'https://yaohuo.me/bbs-1560017.html'
+    });
+
+    expect(detail.contentHtml).toContain('<forum-video');
+    expect(detail.contentHtml).toContain('src="https://yaohuo.me/uploads/demo.mp4"');
+    expect(detail.excerpt).toBe('');
+  });
+
+  it('keeps yaohuo video blocks after the marked post body', () => {
+    const detail = parseYaohuoTopicHtml(`
+      <div class="content">[标题] 视频主题 (阅2) [时间] 2026-05-20 10:00</div>
+      <div class="subtitle"><a href="/userinfo.aspx?touserid=1">alice</a></div>
+      <div class="bbscontent">
+        <!--listS--><p>正文</p><!--listE-->
+      </div>
+      <video controls><source src="/uploads/after-body.mp4" type="video/mp4"></video>
+      更多回帖(1)
+      <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
+    `, {
+      id: '1560017',
+      url: 'https://yaohuo.me/bbs-1560017.html'
+    });
+
+    expect(detail.contentHtml).toContain('正文');
+    expect(detail.contentHtml).toContain('src="https://yaohuo.me/uploads/after-body.mp4"');
+    expect(detail.contentHtml).not.toContain('更多回帖');
+  });
+
   it('keeps yaohuo activity reward status in topic content', () => {
     const detail = parseYaohuoTopicHtml(`
       <div class="rectangle-container">

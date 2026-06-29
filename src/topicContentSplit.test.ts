@@ -45,4 +45,25 @@ describe('Android topic content splitting', () => {
       vi.doUnmock('./localHtml');
     }
   });
+
+  it('keeps playable video blocks together when the parser fallback splits topic HTML', async () => {
+    vi.resetModules();
+    vi.doMock('./localHtml', () => ({
+      parseHtml: () => {
+        throw new Error('parser unavailable');
+      }
+    }));
+    try {
+      const { splitTopicContentHtml: splitWithFallback } = await import('./topicContentSplit');
+      const chunks = splitWithFallback('<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video><p>after</p>', 1);
+
+      expect(chunks).toEqual([
+        '<p>before</p>',
+        '<forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>',
+        '<p>after</p>'
+      ]);
+    } finally {
+      vi.doUnmock('./localHtml');
+    }
+  });
 });

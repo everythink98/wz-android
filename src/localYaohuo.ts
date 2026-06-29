@@ -4,6 +4,7 @@ import {
   absoluteUrl,
   accessRequirementFromText,
   elementText,
+  hasRenderableHtmlContent,
   parseHtml,
   parsePositiveInteger,
   sanitizeContentHtml,
@@ -419,7 +420,7 @@ function extractRawYaohuoPostContent(html: string) {
   const followingContent = (boundaryIndex >= 0 ? rest.slice(0, boundaryIndex) : rest)
     .replace(/^\s*(?:<\/div>\s*)+/, '');
   return [marked.content, followingContent]
-    .filter((part) => textContentFromHtml(part))
+    .filter((part) => hasRenderableHtmlContent(part))
     .join('\n');
 }
 
@@ -479,7 +480,7 @@ function collectFollowingYaohuoPostContent(mainContent: HTMLElement | null | und
     }
     const html = node.toString();
     const text = textContentFromHtml(html);
-    if (!text) {
+    if (!hasRenderableHtmlContent(html)) {
       continue;
     }
     if (isYaohuoPostBoundaryText(text, html)) {
@@ -518,7 +519,7 @@ function collectYaohuoDownloadContent(root: ReturnType<typeof parseHtml>, mainCo
 function appendYaohuoPostContent(contentHtml: string, root: ReturnType<typeof parseHtml>, mainContent: HTMLElement | null | undefined) {
   const followingContent = collectFollowingYaohuoPostContent(mainContent);
   const extraHtml = followingContent.length ? followingContent : collectYaohuoDownloadContent(root, mainContent);
-  return [contentHtml, ...extraHtml].filter((part) => textContentFromHtml(part)).join('\n');
+  return [contentHtml, ...extraHtml].filter((part) => hasRenderableHtmlContent(part)).join('\n');
 }
 
 function escapeHtmlText(value: string) {
@@ -631,7 +632,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const postContentHtml = extractRawYaohuoPostContent(html)
     || appendYaohuoPostContent(extractMarkedContent(bbsContent, '<!--listS-->', '<!--listE-->'), root, bbsContentElement);
   const contentHtml = [activitySummaryHtml, postContentHtml]
-    .filter((part) => textContentFromHtml(part))
+    .filter((part) => hasRenderableHtmlContent(part))
     .join('\n');
   const contentText = elementText(root.querySelector('div.content'));
   const classId = root.querySelectorAll('a[href*="classid="]').map((link) => link.getAttribute('href')?.match(/[?&]classid=(\d+)/i)?.[1]).find(Boolean);

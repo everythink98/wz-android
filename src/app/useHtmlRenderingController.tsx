@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
@@ -29,7 +29,7 @@ import type { Topic, TopicDetail, UserProfile } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
-import { FORUM_VIDEO_STICKER_TAG } from '../localHtml';
+import { FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 
 export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
   return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
@@ -194,6 +194,52 @@ export function useHtmlRenderingController({
         </View>
       );
     };
+    const ForumVideoRenderer: CustomBlockRenderer = (props) => {
+      const webViewRef = useRef<WebView>(null);
+      const [playing, setPlaying] = useState(false);
+      const attributes = props.tnode.attributes || {};
+      const src = attributes.src || '';
+      const poster = attributes.poster || '';
+      if (!src) {
+        return null;
+      }
+      const togglePlayback = () => {
+        const nextPlaying = !playing;
+        setPlaying(nextPlaying);
+        webViewRef.current?.injectJavaScript(
+          `(() => { const video = document.querySelector('video'); if (video) { video.${nextPlaying ? 'play' : 'pause'}(); } })(); true;`
+        );
+      };
+      return (
+        <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
+          <WebView
+            ref={webViewRef}
+            allowsFullscreenVideo
+            allowsInlineMediaPlayback
+            javaScriptEnabled
+            mediaPlaybackRequiresUserAction={false}
+            originWhitelist={['*']}
+            source={{ html: forumContentVideoHtml(src, poster) }}
+            style={embedStyles.webView}
+          />
+          <Pressable
+            accessibilityLabel={playing ? '暂停视频' : '播放视频'}
+            accessibilityRole="button"
+            onPress={togglePlayback}
+            style={embedStyles.videoPlayButtonHitbox}
+          >
+            <View style={[embedStyles.videoPlayButton, { backgroundColor: theme.surface }]}>
+              {playing ? (
+                <View style={embedStyles.videoPauseIcon}>
+                  <View style={[embedStyles.videoPauseBar, { backgroundColor: theme.ink }]} />
+                  <View style={[embedStyles.videoPauseBar, { backgroundColor: theme.ink }]} />
+                </View>
+              ) : <View style={[embedStyles.videoPlayIcon, { borderLeftColor: theme.ink }]} />}
+            </View>
+          </Pressable>
+        </View>
+      );
+    };
     const ForumStickerRenderer: CustomMixedRenderer = (props) => {
       const attributes = props.tnode.attributes || {};
       const src = attributes.src || '';
@@ -306,6 +352,7 @@ export function useHtmlRenderingController({
       a: ReplyReferenceLinkRenderer,
       [FORUM_STICKER_ROW_TAG]: ForumStickerRowRenderer,
       [FORUM_STICKER_TAG]: ForumStickerRenderer,
+      [FORUM_VIDEO_TAG]: ForumVideoRenderer,
       [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,
       iframe: IframeRenderer,
       img: PreviewImageRenderer,
@@ -393,6 +440,45 @@ const embedStyles = StyleSheet.create({
     marginTop: 8,
     overflow: 'hidden'
   },
+  videoPlayButton: {
+    alignItems: 'center',
+    borderRadius: 36,
+    height: 72,
+    justifyContent: 'center',
+    opacity: 0.92,
+    width: 72
+  },
+  videoPlayButtonHitbox: {
+    alignItems: 'center',
+    height: 96,
+    justifyContent: 'center',
+    left: '50%',
+    marginLeft: -48,
+    marginTop: -48,
+    position: 'absolute',
+    top: '50%',
+    width: 96
+  },
+  videoPauseBar: {
+    borderRadius: 2,
+    height: 30,
+    width: 9
+  },
+  videoPauseIcon: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: 28
+  },
+  videoPlayIcon: {
+    borderBottomColor: 'transparent',
+    borderBottomWidth: 17,
+    borderLeftWidth: 26,
+    borderTopColor: 'transparent',
+    borderTopWidth: 17,
+    height: 0,
+    marginLeft: 6,
+    width: 0
+  },
   webView: {
     flex: 1
   }
@@ -409,4 +495,9 @@ function escapeHtmlAttribute(value: string) {
 function forumVideoStickerHtml(src: string, fallbackSrc: string) {
   const poster = fallbackSrc ? ` poster="${escapeHtmlAttribute(fallbackSrc)}"` : '';
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden;}video,img{width:100%;height:100%;object-fit:contain;display:block;background:transparent;}</style></head><body><video autoplay loop muted playsinline webkit-playsinline${poster}><source src="${escapeHtmlAttribute(src)}"></video></body></html>`;
+}
+
+function forumContentVideoHtml(src: string, poster: string) {
+  const posterAttribute = poster ? ` poster="${escapeHtmlAttribute(poster)}"` : '';
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden;}video{width:100%;height:100%;object-fit:contain;display:block;background:#000;}</style></head><body><video controls playsinline webkit-playsinline preload="metadata"${posterAttribute}><source src="${escapeHtmlAttribute(src)}"></video></body></html>`;
 }

@@ -3,6 +3,7 @@ import { accessRequirementLevelValue } from './appUtils';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
 import type { AccessRequirement } from './types';
 
+export const FORUM_VIDEO_TAG = 'forum-video';
 export const FORUM_VIDEO_STICKER_TAG = 'forum-video-sticker';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -96,6 +97,17 @@ export function parseHtml(value: unknown) {
   });
 }
 
+export function hasRenderableHtmlContent(value: unknown) {
+  if (textContentFromHtml(value)) {
+    return true;
+  }
+  try {
+    return Boolean(parseHtml(value).querySelector('img, iframe, video, forum-video, forum-video-sticker'));
+  } catch {
+    return /<(?:img|iframe|video|forum-video|forum-video-sticker)\b/i.test(String(value || ''));
+  }
+}
+
 function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: string) {
   const next = absoluteUrl(value, baseUrl);
   if (!next) {
@@ -113,6 +125,19 @@ function sanitizedUrlAttribute(name: 'href' | 'src', value: string, baseUrl: str
     return undefined;
   }
   return undefined;
+}
+
+function sanitizedHttpMediaUrl(value: unknown, baseUrl: string) {
+  const next = absoluteUrl(value, baseUrl);
+  if (!next) {
+    return '';
+  }
+  try {
+    const protocol = new URL(next).protocol.toLowerCase();
+    return protocol === 'http:' || protocol === 'https:' ? next : '';
+  } catch {
+    return '';
+  }
 }
 
 const safeCssColorPattern = /^(?:#[0-9a-f]{3,8}|rgba?\(\s*(?:\d{1,3}\s*,\s*){2}\d{1,3}(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\)|hsla?\(\s*\d{1,3}(?:deg)?\s*,\s*\d{1,3}%\s*,\s*\d{1,3}%(?:\s*,\s*(?:0|1|0?\.\d+))?\s*\))$/i;
@@ -294,16 +319,45 @@ function sanitizeNodeSeekStickerVideos(root: HTMLElement, baseUrl: string) {
   });
 }
 
+function videoSourceUrl(node: HTMLElement, baseUrl: string) {
+  const candidates = [
+    node.getAttribute('src'),
+    ...node.querySelectorAll('source').map((source) => source.getAttribute('src'))
+  ];
+  return candidates.map((value) => sanitizedHttpMediaUrl(value, baseUrl)).find(Boolean) || '';
+}
+
+function safeTagName(node: HTMLElement) {
+  const record = node as unknown as { rawTagName?: string; tagName?: string };
+  return String(record.rawTagName || record.tagName || '').toLowerCase();
+}
+
+function sanitizePlayableVideos(root: HTMLElement, baseUrl: string) {
+  root.querySelectorAll('video').forEach((node) => {
+    const src = videoSourceUrl(node, baseUrl);
+    if (!src) {
+      node.remove();
+      return;
+    }
+    const poster = sanitizedUrlAttribute('src', node.getAttribute('poster') || '', baseUrl) || '';
+    node.replaceWith(
+      `<${FORUM_VIDEO_TAG} src="${escapeHtmlAttribute(src)}"${poster ? ` poster="${escapeHtmlAttribute(poster)}"` : ''}></${FORUM_VIDEO_TAG}>`
+    );
+  });
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   const root = parseHtml(html);
   for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
   sanitizeNodeSeekStickerVideos(root, baseUrl);
+  sanitizePlayableVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);
   sanitizeNsVideoImages(root, baseUrl);
   removeForumImageMetadata(root);
   root.querySelectorAll('*').forEach((node) => {
+    const tagName = safeTagName(node);
     const attrs = { ...node.attributes };
     for (const [name, rawValue] of Object.entries(attrs)) {
       const lower = name.toLowerCase();
@@ -322,7 +376,18 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
         continue;
       }
       if (lower === 'href' || lower === 'src' || lower === 'data-fallback-src') {
-        const next = sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
+        const next = tagName === FORUM_VIDEO_TAG && lower === 'src'
+          ? sanitizedHttpMediaUrl(value, baseUrl)
+          : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);
+        if (next) {
+          node.setAttribute(name, next);
+        } else {
+          node.removeAttribute(name);
+        }
+        continue;
+      }
+      if (lower === 'poster') {
+        const next = tagName === FORUM_VIDEO_TAG ? sanitizedUrlAttribute('src', value, baseUrl) : undefined;
         if (next) {
           node.setAttribute(name, next);
         } else {
