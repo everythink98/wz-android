@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { splitTopicContentHtml } from './topicContentSplit';
+import { forumVideoBlockFromHtml, splitTopicContentHtml } from './topicContentSplit';
 
 describe('Android topic content splitting', () => {
   it('keeps nested same-name blocks together when splitting topic HTML', () => {
@@ -11,6 +11,7 @@ describe('Android topic content splitting', () => {
   it('keeps details blocks together when the parser fallback splits topic HTML', async () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
+      FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
       }
@@ -28,6 +29,7 @@ describe('Android topic content splitting', () => {
   it('keeps iframe blocks together when the parser fallback splits topic HTML', async () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
+      FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
       }
@@ -49,6 +51,7 @@ describe('Android topic content splitting', () => {
   it('keeps playable video blocks together when the parser fallback splits topic HTML', async () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
+      FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
       }
@@ -65,5 +68,15 @@ describe('Android topic content splitting', () => {
     } finally {
       vi.doUnmock('./localHtml');
     }
+  });
+
+  it('detects standalone playable video blocks for native rendering', () => {
+    expect(forumVideoBlockFromHtml('<forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>')).toEqual({
+      src: 'https://yaohuo.me/uploads/demo.mp4'
+    });
+  });
+
+  it('does not treat mixed content as a standalone video block', () => {
+    expect(forumVideoBlockFromHtml('<p>before</p><forum-video src="https://yaohuo.me/uploads/demo.mp4"></forum-video>')).toBeNull();
   });
 });

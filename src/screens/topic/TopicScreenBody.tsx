@@ -27,10 +27,11 @@ import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
-import { splitTopicContentHtml } from '../../topicContentSplit';
+import { forumVideoBlockFromHtml, splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
 import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
+import { ForumContentVideo } from '../../components/ForumContentVideo';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
@@ -46,7 +47,9 @@ import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
 import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
 
-type TopicListContentItem = { type: 'content'; key: string; html: string };
+type TopicListContentItem =
+  | { type: 'content'; key: string; html: string }
+  | { type: 'contentVideo'; key: string; src: string };
 export type TopicListItem =
   | TopicListContentItem
   | { type: 'accessNotice'; key: string; label: string; detail: string }
@@ -361,11 +364,12 @@ export const TopicScreen = memo(function TopicScreen({
           label: topicAccessRequirementText,
           detail: topicAccessRequirementDetail
         }]
-        : splitTopicContentHtml(topicContentHtml).map((html, index) => ({
-          type: 'content',
-          key: `topic-content-${index}-${stableTextHash(html)}`,
-          html
-        }))
+        : splitTopicContentHtml(topicContentHtml).map((html, index) => {
+          const video = forumVideoBlockFromHtml(html);
+          return video
+            ? { type: 'contentVideo', key: `topic-video-${index}-${stableTextHash(video.src)}`, src: video.src }
+            : { type: 'content', key: `topic-content-${index}-${stableTextHash(html)}`, html };
+        })
       : []
   ), [topic, topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicShowsAccessNotice]);
   const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
@@ -569,6 +573,16 @@ export const TopicScreen = memo(function TopicScreen({
               html={listItem.html}
               topicImageDeriver={topicImageDeriver}
             />
+          </View>
+        </View>
+      );
+    }
+
+    if (listItem.type === 'contentVideo') {
+      return renderTopicListItemFrame(
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <View style={styles.articleBody}>
+            <ForumContentVideo src={listItem.src} theme={theme} />
           </View>
         </View>
       );

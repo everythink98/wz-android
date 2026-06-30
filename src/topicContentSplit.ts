@@ -1,6 +1,32 @@
-import { parseHtml } from './localHtml';
+import { FORUM_VIDEO_TAG, parseHtml } from './localHtml';
 
-const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'iframe', 'forum-video', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'iframe', FORUM_VIDEO_TAG, 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+function nodeTagName(node: unknown) {
+  const record = node as { rawTagName?: unknown; tagName?: unknown };
+  return String(record.rawTagName || record.tagName || '').toLowerCase();
+}
+
+export function forumVideoBlockFromHtml(html: string | undefined) {
+  const clean = (html || '').trim();
+  if (!clean) {
+    return null;
+  }
+  try {
+    const body = parseHtml(`<body>${clean}</body>`).querySelector('body');
+    const nodes = (body?.childNodes || []).filter((node) => node.toString().trim());
+    if (nodes.length !== 1 || nodeTagName(nodes[0]) !== FORUM_VIDEO_TAG) {
+      return null;
+    }
+    const node = nodes[0] as unknown as { getAttribute?: (name: string) => string | undefined };
+    const src = typeof node.getAttribute === 'function'
+      ? node.getAttribute('src') || ''
+      : '';
+    return src ? { src } : null;
+  } catch {
+    return null;
+  }
+}
 
 function fallbackTopLevelBlocks(clean: string) {
   const blocks: string[] = [];

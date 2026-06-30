@@ -18,6 +18,24 @@ vi.mock('react-native-webview', () => ({
   WebView: 'WebView'
 }));
 
+vi.mock('expo', () => ({
+  useEvent: vi.fn((_player, _eventName, initialValue) => initialValue)
+}));
+
+vi.mock('expo-video', () => ({
+  VideoView: 'VideoView',
+  useVideoPlayer: vi.fn(() => ({
+    pause: vi.fn(),
+    play: vi.fn(),
+    playing: false
+  }))
+}));
+
+vi.mock('lucide-react-native', () => ({
+  Maximize2: 'Maximize2',
+  Play: 'Play'
+}));
+
 vi.mock('react-native-render-html', () => ({
   getNativePropsForTNode: vi.fn(() => ({})),
   useIMGElementProps: vi.fn(),

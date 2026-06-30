@@ -33,6 +33,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "expo-status-bar": "~3.0.9",
+    "expo-video": "~3.0.16",
     "fast-xml-parser": "^5.8.0",
     "lucide-react-native": "^1.16.0",
     "markdown-it": "^14.2.0",
