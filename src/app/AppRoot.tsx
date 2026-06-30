@@ -425,7 +425,7 @@ export function AppRoot() {
     topicImageDeriver,
     topicReplies
   });
-  const topicHtmlParts = useMemo(() => [
+  const getTopicHtmlParts = useCallback(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map(replyHtmlWithSignature),
     ...Object.values(loadedQuotedReplies).map(replyHtmlWithSignature)
@@ -439,7 +439,7 @@ export function AppRoot() {
     showNextImage,
     showPreviousImage
   } = useImagePreviewController({
-    htmlParts: topicHtmlParts,
+    htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls,
     notify,
     topicImageDeriver

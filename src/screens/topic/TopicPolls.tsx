@@ -1,4 +1,5 @@
 import { Pressable, Text, View } from 'react-native';
+import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '../../types';
 import { pollParticipationLabel, pollTotalVotes } from '../../topicPollDisplay';
@@ -65,6 +66,7 @@ export function TopicPolls({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
 }) {
+  const { getMappingKey } = useMappingHelper();
   if (!polls.length) {
     return null;
   }
@@ -111,7 +113,7 @@ export function TopicPolls({
                   : selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
         return (
-          <View key={pollKey} style={[styles.pollBlock, embeddedInArticle && index === 0 && styles.pollBlockFirstInArticle]}>
+          <View key={getMappingKey(pollKey, index)} style={[styles.pollBlock, embeddedInArticle && index === 0 && styles.pollBlockFirstInArticle]}>
             <View style={styles.pollHeader}>
               <Text style={styles.pollTitle}>{poll.title || '投票'}</Text>
             </View>
@@ -129,7 +131,7 @@ export function TopicPolls({
                   : '';
                 return (
                   <Pressable
-                    key={option.id}
+                    key={getMappingKey(option.id, optionIndex)}
                     accessibilityRole={poll.multiple ? 'checkbox' : 'radio'}
                     accessibilityState={{ checked: selected, disabled: pollOptionDisabled }}
                     android_ripple={androidRipple(theme.primarySoft)}
@@ -164,8 +166,8 @@ export function TopicPolls({
                     <Text style={styles.pollParticipationText}>{pollParticipation}</Text>
                   </View>
                 ) : null}
-                {pollMetaItems.map((item) => (
-                  <Text key={item} style={styles.pollMetaPill}>{item}</Text>
+                {pollMetaItems.map((item, index) => (
+                  <Text key={getMappingKey(item, index)} style={styles.pollMetaPill}>{item}</Text>
                 ))}
                 <Text style={styles.pollStatePill}>{pollStatus}</Text>
               </View>

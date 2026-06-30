@@ -73,12 +73,13 @@ export function useReaderDataController({
 
   const persistReaderData = useCallback((next: ReaderData, previous?: ReaderData) => {
     readerDataRef.current = next;
+    const nextJson = JSON.stringify(next);
     const saveTask = saveQueueRef.current
       .catch(() => undefined)
-      .then(() => saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current))
+      .then(() => saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson))
       .then((saved) => {
         lastPersistedReaderDataRef.current = saved;
-        lastPersistedReaderDataJsonRef.current = JSON.stringify(saved);
+        lastPersistedReaderDataJsonRef.current = nextJson;
         setReaderData((latest) => {
           if (latest !== next) {
             return latest;

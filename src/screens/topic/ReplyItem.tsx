@@ -1,5 +1,6 @@
 import { memo, useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import { Drumstick, MessageCircle, ThumbsDown, ThumbsUp } from 'lucide-react-native';
 import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
@@ -141,6 +142,7 @@ export function ReplyItem({
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
 }) {
+  const { getMappingKey } = useMappingHelper();
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
   const replyContentWidth = Math.max(220, contentWidth - 42);
@@ -193,7 +195,7 @@ export function ReplyItem({
       <View style={styles.replyContentArea}>
         {quotedFloors.length ? (
           <View style={styles.quoteStack}>
-            {quotedFloors.map((quotedFloor) => {
+            {quotedFloors.map((quotedFloor, index) => {
               const key = `${replyFloor}:${quotedFloor}`;
               const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
               const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];
@@ -209,7 +211,7 @@ export function ReplyItem({
               const expanded = Boolean(expandedQuotes[key]);
               const loading = Boolean(loadingQuotedFloors[key]);
               return (
-                <View key={key} style={styles.quoteBox}>
+                <View key={getMappingKey(key, index)} style={styles.quoteBox}>
                   <View style={styles.quoteHeader}>
                     <Pressable
                       accessibilityRole="button"
@@ -317,15 +319,15 @@ export function ReplyItem({
         ) : null}
         {source === 'linuxdo' && linuxDoReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
-            {linuxDoReplyReactionStats.map((stat) => (
-              <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
+            {linuxDoReplyReactionStats.map((stat, index) => (
+              <LinuxDoReactionPill compact key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
             ))}
           </View>
         ) : null}
         {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
-            {nodeSeekReplyReactionStats.map((stat) => (
-              <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+            {nodeSeekReplyReactionStats.map((stat, index) => (
+              <NodeSeekStatPill key={getMappingKey(stat.label, index)} label={stat.label} value={stat.value} styles={styles} />
             ))}
           </View>
         ) : null}

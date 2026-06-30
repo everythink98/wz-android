@@ -18,6 +18,10 @@ vi.mock('react-native-webview', () => ({
   WebView: 'WebView'
 }));
 
+vi.mock('expo-image', () => ({
+  Image: 'ExpoImage'
+}));
+
 vi.mock('expo', () => ({
   useEvent: vi.fn((_player, _eventName, initialValue) => initialValue)
 }));

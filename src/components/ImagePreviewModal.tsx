@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { ActivityIndicator, Image as RNImage, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
@@ -61,9 +61,9 @@ export function ImagePreviewModal({
       }
     };
     if (headers) {
-      Image.getSizeWithHeaders(activeUri, headers, onSuccess, onFailure);
+      RNImage.getSizeWithHeaders(activeUri, headers, onSuccess, onFailure);
     } else {
-      Image.getSize(activeUri, onSuccess, onFailure);
+      RNImage.getSize(activeUri, onSuccess, onFailure);
     }
     return () => {
       canceled = true;
@@ -91,7 +91,7 @@ export function ImagePreviewModal({
   const hasMany = previewCount > 1;
 
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible transparent animationType="none" onRequestClose={onClose}>
       <GestureHandlerRootView style={styles.imagePreviewOverlay}>
         <View style={styles.imagePreviewTopBar}>
           <Text style={styles.imagePreviewCount}>{activeIndex + 1} / {previewCount}</Text>
@@ -111,11 +111,11 @@ export function ImagePreviewModal({
             maxScale={imagePreviewMaxScale}
             extendGestures
           >
-            <Image
+            <ExpoImage
+              contentFit="contain"
+              recyclingKey={activeUri}
               source={imageSourceFromUrl(activeUri)}
               style={[styles.imagePreviewImage, imagePreviewSize]}
-              resizeMode="contain"
-              resizeMethod="none"
               onLoadStart={() => {
                 setImagePreviewLoading(true);
                 setImagePreviewFailed(false);

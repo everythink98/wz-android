@@ -140,6 +140,10 @@ export function createReplyTextIndex(replies: Reply[]) {
   return new Map(replies.map((reply) => [reply, stripHtml(reply.contentHtml).toLowerCase()]));
 }
 
+export function createReplyTextIndexForQuery(replies: Reply[], query: string) {
+  return uniqueTerms(query).length > 0 ? createReplyTextIndex(replies) : undefined;
+}
+
 export function filterRepliesByQuery(replies: Reply[], query: string, textIndex?: Map<Reply, string>) {
   const terms = uniqueTerms(query);
   if (terms.length === 0) {

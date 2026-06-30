@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createReplyTextIndex, filterRepliesByQuery } from '../androidFeatureHelpers';
+import { createReplyTextIndexForQuery, filterRepliesByQuery } from '../androidFeatureHelpers';
 import type { ReplyFilter, ReplyTarget } from '../appTypes';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../topicDerivedData';
 import type { Reply, TopicDetail } from '../types';
@@ -34,7 +34,10 @@ export function useTopicUiStateController({
   const [quoteStateVersion, setQuoteStateVersion] = useState(0);
 
   topicRepliesRef.current = topicReplies;
-  const replyTextIndex = useMemo(() => createReplyTextIndex(topicReplies), [topicReplies]);
+  const replyTextIndex = useMemo(
+    () => createReplyTextIndexForQuery(topicReplies, debouncedCommentQuery),
+    [debouncedCommentQuery, topicReplies]
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedCommentQuery(commentQuery), 180);

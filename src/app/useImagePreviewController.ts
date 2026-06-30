@@ -13,13 +13,19 @@ function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
 }
 
+type HtmlPartsSource = string[] | (() => string[]);
+
+function htmlPartsFromSource(source: HtmlPartsSource) {
+  return typeof source === 'function' ? source() : source;
+}
+
 export function useImagePreviewController({
   htmlParts,
   inlineSizedImageUrls,
   notify,
   topicImageDeriver
 }: {
-  htmlParts: string[];
+  htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
   notify: (message: string) => void;
   topicImageDeriver: TopicImageDeriver;
@@ -32,7 +38,7 @@ export function useImagePreviewController({
     return (tappedUrl: string) => {
       if (!catalog) {
         catalog = createImagePreviewCatalog(
-          htmlParts.map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
+          htmlPartsFromSource(htmlParts).map((html) => topicImageDeriver.markInlineSizedImages(html, inlineSizedImageUrls))
         );
       }
       return imagePreviewListFromCatalog(catalog, tappedUrl);

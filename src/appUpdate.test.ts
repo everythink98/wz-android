@@ -11,12 +11,14 @@ import {
   formatAppUpdateDownloadProgress,
   installVerifiedApk
 } from './appUpdate';
+import appConfig from '../app.json';
 
 const apkSha256 = 'a'.repeat(64);
 const signerSha256 = 'b'.repeat(64);
-const newerVersion = '1.3.36';
+const [major, minor, patch] = appConfig.expo.version.split('.').map(Number);
+const newerVersion = `${major}.${minor}.${patch + 1}`;
 const newerTag = `v${newerVersion}`;
-const newerVersionCode = 40;
+const newerVersionCode = appConfig.expo.android.versionCode + 1;
 
 function releaseAssetUrl(tagName: string, assetName: string) {
   return `https://github.com/everythink98/wz-android/releases/download/${tagName}/${assetName}`;

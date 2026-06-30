@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { Image as ExpoImage } from 'expo-image';
 import { WebView } from 'react-native-webview';
 import {
   getNativePropsForTNode,
@@ -258,15 +259,16 @@ export function useHtmlRenderingController({
       const showImageLoading = shouldShowPreviewImageLoading(imageState.type, nativeImageLoaded);
       const content = imageState.type === 'success' ? (
         <View style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
-          <Image
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={src}
             source={imageState.source}
-            style={[{ resizeMode: 'contain' as const }, imageState.dimensions, imageState.imageStyle, nativeImageLoaded ? null : { opacity: 0 }]}
-            resizeMethod="none"
+            style={[imageState.dimensions, imageState.imageStyle, nativeImageLoaded ? null : { opacity: 0 }]}
             onLoadStart={() => setNativeImageLoadState({ src, loaded: false })}
             onLoadEnd={() => setNativeImageLoadState({ src, loaded: true })}
             onError={(event) => {
               setNativeImageLoadState({ src, loaded: true });
-              imageState.onError(event.nativeEvent.error as unknown as Error);
+              imageState.onError(new Error(event.error));
             }}
           />
           {showImageLoading ? (

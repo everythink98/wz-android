@@ -11,6 +11,6 @@ export const TOPIC_LIST_PERFORMANCE_PROPS = {
 };
 
 export const TOPIC_DETAIL_LIST_PERFORMANCE_PROPS = {
-  drawDistance: DEFAULT_DRAW_DISTANCE,
-  maxItemsInRecyclePool: 80
+  drawDistance: 720,
+  maxItemsInRecyclePool: 40
 };

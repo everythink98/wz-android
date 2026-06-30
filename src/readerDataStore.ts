@@ -30,8 +30,8 @@ export async function loadReaderData() {
   return sanitizeReaderData(parsed);
 }
 
-export async function saveCleanReaderData(clean: ReaderData, previousJson?: string | null) {
-  const json = JSON.stringify(clean);
+export async function saveCleanReaderData(clean: ReaderData, previousJson?: string | null, cleanJson = JSON.stringify(clean)) {
+  const json = cleanJson;
   assertBackupJsonSize(json);
   if (json !== previousJson) {
     await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, json);
