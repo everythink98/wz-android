@@ -1,5 +1,6 @@
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Keyboard,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -47,7 +48,7 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposer } from './ReplyComposer';
 import { TopicMenu } from './TopicMenu';
-import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
+import { getReplyKey, isAccessNoticeHtml, readableTopicError, replyComposerHasNoReplyAfter, replyComposerListIndex, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
 
 type TopicListContentItem =
   | { type: 'content'; key: string; html: string }
@@ -304,6 +305,9 @@ export const TopicScreen = memo(function TopicScreen({
   }, [detailTopicStateKey, optimisticActions]);
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const autoLoadRepliesArmedRef = useRef(false);
+  const replyComposerFocusedRef = useRef(false);
+  const replyComposerScrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [replyComposerKeyboardHeight, setReplyComposerKeyboardHeight] = useState(0);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -444,6 +448,84 @@ export const TopicScreen = memo(function TopicScreen({
     }
     return items;
   }, [canShowReplies, canWrite, replyComposerOpen, replyEditTarget, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
+  const scrollReplyComposerIntoView = useCallback(() => {
+    const index = replyComposerListIndex(topicListItems);
+    if (index === null) {
+      return;
+    }
+    if (replyComposerHasNoReplyAfter(topicListItems)) {
+      topicScrollRef.current?.scrollToEnd({ animated: true });
+      return;
+    }
+    const scroll = topicScrollRef.current?.scrollToIndex({
+      index,
+      animated: true,
+      viewPosition: 0
+    });
+    void scroll?.catch(() => undefined);
+  }, [topicListItems, topicScrollRef]);
+  const clearReplyComposerScrollTimers = useCallback(() => {
+    replyComposerScrollTimersRef.current.forEach((timer) => clearTimeout(timer));
+    replyComposerScrollTimersRef.current = [];
+  }, []);
+  const queueReplyComposerScroll = useCallback((delayMs: number) => {
+    const timer = setTimeout(() => {
+      replyComposerScrollTimersRef.current = replyComposerScrollTimersRef.current.filter((item) => item !== timer);
+      const keyboardHeight = Keyboard.metrics()?.height || 0;
+      if (replyComposerFocusedRef.current && keyboardHeight > 0) {
+        setReplyComposerKeyboardHeight(keyboardHeight);
+      }
+      scrollReplyComposerIntoView();
+    }, delayMs);
+    replyComposerScrollTimersRef.current.push(timer);
+  }, [scrollReplyComposerIntoView]);
+  const keepReplyComposerVisible = useCallback((keyboardHeight = 0) => {
+    clearReplyComposerScrollTimers();
+    if (keyboardHeight > 0) {
+      setReplyComposerKeyboardHeight(keyboardHeight);
+    }
+    scrollReplyComposerIntoView();
+    queueReplyComposerScroll(120);
+    queueReplyComposerScroll(320);
+  }, [clearReplyComposerScrollTimers, queueReplyComposerScroll, scrollReplyComposerIntoView]);
+  const handleReplyComposerFocus = useCallback(() => {
+    replyComposerFocusedRef.current = true;
+    keepReplyComposerVisible(Keyboard.metrics()?.height || 0);
+  }, [keepReplyComposerVisible]);
+  const handleReplyComposerBlur = useCallback(() => {
+    clearReplyComposerScrollTimers();
+    replyComposerFocusedRef.current = false;
+    setReplyComposerKeyboardHeight(0);
+  }, [clearReplyComposerScrollTimers]);
+  useEffect(() => {
+    if (!replyComposerOpen) {
+      clearReplyComposerScrollTimers();
+      replyComposerFocusedRef.current = false;
+      setReplyComposerKeyboardHeight(0);
+      return undefined;
+    }
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      if (replyComposerFocusedRef.current) {
+        keepReplyComposerVisible(event.endCoordinates.height);
+      }
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      clearReplyComposerScrollTimers();
+      setReplyComposerKeyboardHeight(0);
+    });
+    return () => {
+      clearReplyComposerScrollTimers();
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [clearReplyComposerScrollTimers, keepReplyComposerVisible, replyComposerOpen]);
+  useEffect(() => {
+    if (replyComposerKeyboardHeight <= 0 || !replyComposerFocusedRef.current) {
+      return undefined;
+    }
+    const timer = setTimeout(scrollReplyComposerIntoView, 80);
+    return () => clearTimeout(timer);
+  }, [replyComposerKeyboardHeight, scrollReplyComposerIntoView]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -725,6 +807,8 @@ export const TopicScreen = memo(function TopicScreen({
           theme={theme}
           topicColumnStyle={topicColumnStyle}
           onReplyComposerOpenChange={onReplyComposerOpenChange}
+          onReplyComposerBlur={handleReplyComposerBlur}
+          onReplyComposerFocus={handleReplyComposerFocus}
           onReplyContentChange={onReplyContentChange}
           onSubmitReply={onSubmitReply}
           onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
@@ -789,6 +873,8 @@ export const TopicScreen = memo(function TopicScreen({
     isOptimisticActionPending,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
+    handleReplyComposerBlur,
+    handleReplyComposerFocus,
     linuxDoEmojiUrls,
     newReplyFloorStart,
     onCommentQueryChange,
@@ -934,7 +1020,7 @@ export const TopicScreen = memo(function TopicScreen({
           data={topicListItems}
           keyExtractor={topicListItemKey}
           getItemType={topicListItemType}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           onMomentumScrollEnd={onTopicScroll}
           onScrollEndDrag={onTopicScroll}
           onEndReachedThreshold={0.55}
@@ -944,12 +1030,17 @@ export const TopicScreen = memo(function TopicScreen({
           extraData={listExtraData}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
-          ListFooterComponent={canShowReplies && replyHasMore ? (
-            <View style={styles.topicListItemFrame}>
-              <View style={[styles.topicFooter, topicColumnStyle]}>
-                <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
-              </View>
-            </View>
+          ListFooterComponent={canShowReplies && (replyHasMore || replyComposerKeyboardHeight > 0) ? (
+            <>
+              {replyHasMore ? (
+                <View style={styles.topicListItemFrame}>
+                  <View style={[styles.topicFooter, topicColumnStyle]}>
+                    <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
+                  </View>
+                </View>
+              ) : null}
+              {replyComposerKeyboardHeight > 0 ? <View style={{ height: replyComposerKeyboardHeight }} /> : null}
+            </>
           ) : null}
           renderItem={renderReplyItem}
         />

@@ -1,10 +1,11 @@
-import { useState } from 'react';
-import { ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Keyboard, ScrollView, Text, TextInput, View } from 'react-native';
 import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
 import { createStyles, type ReaderTheme } from '../../theme';
 import { AppButton } from '../../components/AppControls';
 import type { Source } from '../../types';
 import { applyReplyComposerFormat, replyComposerFormatActions, type ReplyComposerFormatAction } from './replyComposerFormatting';
+import { replyComposerSelectionIndexFromPress } from './replyComposerSelection';
 
 export function ReplyComposer({
   actionBusy,
@@ -17,6 +18,8 @@ export function ReplyComposer({
   topicColumnStyle,
   onReplyComposerOpenChange,
   onReplyContentChange,
+  onReplyComposerBlur,
+  onReplyComposerFocus,
   onSubmitReply,
   onUploadReplyImage
 }: {
@@ -30,10 +33,16 @@ export function ReplyComposer({
   topicColumnStyle: { width: number };
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
+  onReplyComposerBlur?: () => void;
+  onReplyComposerFocus?: () => void;
   onSubmitReply: () => void;
   onUploadReplyImage?: () => void;
 }) {
+  const inputRef = useRef<TextInput>(null);
+  const inputFocusedRef = useRef(false);
+  const inputWidthRef = useRef(0);
   const [selection, setSelection] = useState({ start: replyContent.length, end: replyContent.length });
+  const selectionRef = useRef(selection);
   const formatActions = replyComposerFormatActions(source);
   const replyTargetAuthor = replyTarget?.author?.trim().replace(/^@+/, '');
   const replyTargetTitle = replyTarget
@@ -48,7 +57,54 @@ export function ReplyComposer({
       onUploadReplyImage();
       return;
     }
-    onReplyContentChange(applyReplyComposerFormat({ action, content: replyContent, selection, source }));
+    onReplyContentChange(applyReplyComposerFormat({ action, content: replyContent, selection: selectionRef.current, source }));
+  };
+  useEffect(() => {
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      if (inputFocusedRef.current) {
+        inputRef.current?.blur();
+      }
+    });
+    return () => {
+      hideSubscription.remove();
+    };
+  }, []);
+
+  const handleFocus = () => {
+    inputFocusedRef.current = true;
+    onReplyComposerFocus?.();
+  };
+  const handleBlur = () => {
+    inputFocusedRef.current = false;
+    onReplyComposerBlur?.();
+  };
+  const updateSelection = (nextSelection: { start: number; end: number }) => {
+    if (selectionRef.current.start === nextSelection.start && selectionRef.current.end === nextSelection.end) {
+      return;
+    }
+    selectionRef.current = nextSelection;
+    setSelection(nextSelection);
+  };
+  useEffect(() => {
+    const nextSelection = {
+      start: Math.min(selectionRef.current.start, replyContent.length),
+      end: Math.min(selectionRef.current.end, replyContent.length)
+    };
+    updateSelection(nextSelection);
+  }, [replyContent.length]);
+  const moveSelectionToPress = (locationX: number, locationY: number) => {
+    const index = replyComposerSelectionIndexFromPress({
+      content: replyContent,
+      inputWidth: inputWidthRef.current,
+      locationX,
+      locationY
+    });
+    const nextSelection = { start: index, end: index };
+    updateSelection(nextSelection);
+    inputRef.current?.focus();
+    requestAnimationFrame(() => {
+      inputRef.current?.setNativeProps({ selection: nextSelection });
+    });
   };
 
   return (
@@ -62,10 +118,22 @@ export function ReplyComposer({
         </ScrollView>
       ) : null}
       <TextInput
+        ref={inputRef}
         style={[styles.input, styles.replyInput]}
         value={replyContent}
+        selection={selection}
+        onBlur={handleBlur}
         onChangeText={onReplyContentChange}
-        onSelectionChange={(event) => setSelection(event.nativeEvent.selection)}
+        onFocus={handleFocus}
+        onLayout={(event) => {
+          inputWidthRef.current = event.nativeEvent.layout.width;
+        }}
+        onPressIn={(event) => {
+          moveSelectionToPress(event.nativeEvent.locationX, event.nativeEvent.locationY);
+        }}
+        onSelectionChange={(event) => {
+          updateSelection(event.nativeEvent.selection);
+        }}
         placeholder={placeholder}
         placeholderTextColor={theme.muted}
         multiline
