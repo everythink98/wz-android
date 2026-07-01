@@ -83,6 +83,25 @@ export function buildLinuxDoDeleteReplyRequest({
   };
 }
 
+export function buildLinuxDoEditReplyRequest({
+  postId,
+  content
+}: {
+  postId: string | number;
+  content: string;
+}): LinuxDoActionRequest {
+  return {
+    path: `/posts/${cleanPositiveInteger(postId, '回复 id')}.json`,
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      'post[raw]': cleanRequiredText(content, '请输入回复内容')
+    }).toString()
+  };
+}
+
 export function linuxDoImageUrlFromUploadResponse(data: unknown) {
   const record = data && typeof data === 'object' ? data as Record<string, unknown> : {};
   const markdown = typeof record.markdown === 'string' ? record.markdown : '';

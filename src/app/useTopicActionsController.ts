@@ -23,6 +23,7 @@ import {
 import {
   buildLinuxDoBookmarkRequest,
   buildLinuxDoDeleteReplyRequest,
+  buildLinuxDoEditReplyRequest,
   buildLinuxDoImageUploadRequest,
   buildLinuxDoLikeRequest,
   buildLinuxDoPollVoteRequest,
@@ -47,6 +48,8 @@ import {
 } from '../topicActionState';
 import type { Reply, Topic, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
+import { isSameReply, removeReply } from '../feedLogic';
+import type { TopicRepliesRefreshOptions } from '../appTypes';
 import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
 import {
   DEFAULT_NODESEEK_ANDROID_USER_AGENT,
@@ -150,16 +153,6 @@ function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
   return `delete-reply:${topicKeyValue}:${reply.commentId ?? reply.deletePath ?? reply.floor ?? 'reply'}`;
 }
 
-function isDeletedReply(candidate: Reply, deleted: Reply) {
-  if (candidate.commentId && deleted.commentId && candidate.commentId === deleted.commentId) {
-    return true;
-  }
-  if (candidate.deletePath && deleted.deletePath && candidate.deletePath === deleted.deletePath) {
-    return true;
-  }
-  return false;
-}
-
 async function loadNodeSeekActionAccess() {
   const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
   if (savedAccess) {
@@ -215,7 +208,7 @@ export function useTopicActionsController({
   ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   notify: (message: string) => void;
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
-  refreshTopicReplies: (options?: { silent?: boolean; afterSubmit?: boolean }) => Promise<unknown>;
+  refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
   replyContent: string;
   replyEditTarget: ReplyEditTarget | null;
   replyTarget: ReplyTarget | null;
@@ -581,18 +574,24 @@ export function useTopicActionsController({
       return;
     }
     if (replyEditTarget) {
-      if (!isNodeSeekActionTopic(detail)) {
+      if (!isNodeSeekActionTopic(detail) && !isLinuxDoActionTopic(detail)) {
         notify('当前来源暂不支持编辑回复');
         return;
       }
       const actionKey = topicEditReplyActionKey(requestTopicKey, replyEditTarget.commentId);
       await runSingleNonIdempotentTopicAction(actionKey, async () => {
         const requestOwner = startTopicActionRequest(actionKey);
-        const submitted = await runNodeSeekRequest(
-          (access) => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: access?.csrfToken || '' }),
-          '回复已更新',
-          { owner: requestOwner }
-        );
+        const submitted = isNodeSeekActionTopic(detail)
+          ? await runNodeSeekRequest(
+            (access) => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: access?.csrfToken || '' }),
+            '回复已更新',
+            { owner: requestOwner }
+          )
+          : await runLinuxDoRequest(
+            () => buildLinuxDoEditReplyRequest({ postId: replyEditTarget.commentId, content: replyContent }),
+            '回复已更新',
+            { owner: requestOwner }
+          );
         if (submitted) {
           if (!isCurrentTopicActionRequest(requestOwner)) {
             return;
@@ -601,7 +600,7 @@ export function useTopicActionsController({
           setReplyComposerOpen(false);
           setReplyTarget(null);
           setReplyEditTarget(null);
-          await refreshTopicReplies({ silent: true, afterSubmit: true });
+          await refreshTopicReplies({ silent: true, afterSubmit: true, targetReply: replyEditTarget });
         }
       });
       return;
@@ -722,10 +721,16 @@ export function useTopicActionsController({
       if (!deleted || !isCurrentTopicActionRequest(requestOwner)) {
         return;
       }
-      setTopicReplies((current) => current.filter((item) => !isDeletedReply(item, reply)));
-      await refreshTopicReplies({ silent: true, afterSubmit: true });
+      if ((replyEditTarget && isSameReply(reply, replyEditTarget)) || (replyTarget && isSameReply(reply, replyTarget))) {
+        setReplyComposerOpen(false);
+        setReplyContent('');
+        setReplyTarget(null);
+        setReplyEditTarget(null);
+      }
+      setTopicReplies((current) => removeReply(current, reply));
+      await refreshTopicReplies({ silent: true, afterSubmit: true, targetReply: reply, excludeReply: reply });
     });
-  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setTopicReplies, startTopicActionRequest, topicDetail]);
+  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyEditTarget, replyTarget, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyTarget, setTopicReplies, startTopicActionRequest, topicDetail]);
 
   const deleteReply = useCallback((reply: Reply) => {
     if (!reply.canDelete) {

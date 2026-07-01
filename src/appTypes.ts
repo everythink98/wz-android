@@ -25,6 +25,15 @@ export interface ReplyEditTarget {
   contentMarkdown: string;
 }
 
+export type ReplyRefreshTarget = Pick<Reply, 'commentId' | 'floor' | 'deletePath'>;
+
+export interface TopicRepliesRefreshOptions {
+  silent?: boolean;
+  afterSubmit?: boolean;
+  targetReply?: ReplyRefreshTarget | null;
+  excludeReply?: ReplyRefreshTarget | null;
+}
+
 export type TopicSnapshot = {
   key?: string;
   selectedTopic: Topic | null;

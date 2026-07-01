@@ -424,6 +424,13 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 6,
       paddingVertical: 1
     },
+    replyComposerActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      justifyContent: 'flex-end'
+    },
     searchRow: {
       alignItems: 'center',
       flexDirection: 'row',

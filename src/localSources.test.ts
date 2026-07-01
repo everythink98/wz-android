@@ -1417,7 +1417,20 @@ describe('Android local sources', () => {
   });
 
   it('maps linux.do logged-in post state onto topic and reply actions', async () => {
-    const fetcher = vi.fn(async () => json({
+    const fetcher = vi.fn(async (url) => {
+      if (String(url).includes('/posts/1002.json')) {
+        return json({
+          id: 1002,
+          post_number: 2,
+          username: 'bob',
+          cooked: '<p>reply</p>',
+          raw: 'reply raw',
+          created_at: '2026-05-20T00:01:00.000Z',
+          can_edit: true,
+          can_delete: true
+        });
+      }
+      return json({
       id: 900,
       title: 'linux.do logged in topic',
       slug: 'linux-do-logged-in-topic',
@@ -1444,13 +1457,15 @@ describe('Android local sources', () => {
             username: 'bob',
             cooked: '<p>reply</p>',
             created_at: '2026-05-20T00:01:00.000Z',
+            can_edit: true,
             like_count: 1,
             can_delete: true,
             actions_summary: [{ id: 2, acted: false, can_act: true }]
           }
         ]
       }
-    }));
+    });
+    });
 
     const topic = await getTopic({ source: 'linuxdo', id: '900', fetcher });
 
@@ -1467,7 +1482,9 @@ describe('Android local sources', () => {
       liked: false,
       likeCount: 1,
       canLike: true,
-      canDelete: true
+      canDelete: true,
+      canEdit: true,
+      contentMarkdown: 'reply raw'
     });
   });
 

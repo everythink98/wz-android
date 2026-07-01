@@ -58,6 +58,18 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(44);
   });
 
+  it('keeps reply composer actions grouped at the bottom edge', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.replyComposerActions).toMatchObject({
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'flex-end'
+    });
+  });
+
   it('keeps reply references readable without turning them into badges', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);

@@ -253,14 +253,39 @@ export function replyKey(reply: Reply) {
   return `body:${reply.author}:${reply.createdAt}:${reply.contentHtml.slice(0, 80)}`;
 }
 
+export type ReplyIdentity = Pick<Reply, 'commentId' | 'floor' | 'deletePath'>;
+
+export function isSameReply(reply: Reply, target?: ReplyIdentity | null) {
+  if (!target) {
+    return false;
+  }
+  if (typeof target.commentId === 'number' && reply.commentId === target.commentId) {
+    return true;
+  }
+  if (target.deletePath && reply.deletePath && reply.deletePath === target.deletePath) {
+    return true;
+  }
+  return typeof target.floor === 'number' && reply.floor === target.floor;
+}
+
+export function removeReply(replies: Reply[], target?: ReplyIdentity | null) {
+  return target ? replies.filter((reply) => !isSameReply(reply, target)) : replies;
+}
+
 export function mergeReplies(current: Reply[], incoming: Reply[]) {
-  const seen = new Set(current.map((reply) => replyKey(reply)));
   const next = [...current];
+  const indexes = new Map<string, number>();
+  next.forEach((reply, index) => {
+    indexes.set(replyKey(reply), index);
+  });
   for (const reply of incoming) {
     const key = replyKey(reply);
-    if (!seen.has(key)) {
-      seen.add(key);
+    const index = indexes.get(key);
+    if (index === undefined) {
+      indexes.set(key, next.length);
       next.push(reply);
+    } else {
+      next[index] = reply;
     }
   }
   return next;

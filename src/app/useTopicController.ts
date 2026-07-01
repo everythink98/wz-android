@@ -12,7 +12,7 @@ import {
   updateFavoriteTopic,
   type ReaderData
 } from '../readerData';
-import { mergeReplies } from '../feedLogic';
+import { isSameReply, mergeReplies, removeReply } from '../feedLogic';
 import {
   errorMessage,
   finishAbortableRequest,
@@ -33,7 +33,7 @@ import type { CredentialClearOptions, CredentialLoadOptions } from './sessionCon
 import { authHintForSource } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
-import type { ReplyEditTarget, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
+import type { ReplyEditTarget, ReplyFilter, ReplyRefreshTarget, ReplyTarget, Screen, TopicRepliesRefreshOptions, TopicSnapshot } from '../appTypes';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -42,6 +42,11 @@ type MutableRef<T> = { current: T };
 
 function replyPageVisitKey(page: number | null | undefined, offset?: number | null) {
   return `${page ?? ''}:${offset ?? ''}`;
+}
+
+function replyTargetIndex(replies: Reply[], target?: ReplyRefreshTarget | null) {
+  const index = target ? replies.findIndex((reply) => isSameReply(reply, target)) : -1;
+  return index >= 0 ? index : undefined;
 }
 
 export function useTopicController({
@@ -403,7 +408,12 @@ export function useTopicController({
     topicSnapshot
   ]);
 
-  const refreshTopicReplies = useCallback(async ({ silent = false, afterSubmit = false }: { silent?: boolean; afterSubmit?: boolean } = {}) => {
+  const refreshTopicReplies = useCallback(async ({
+    silent = false,
+    afterSubmit = false,
+    targetReply,
+    excludeReply
+  }: TopicRepliesRefreshOptions = {}) => {
     const detail = topicDetail || selectedTopic;
     if (!detail) {
       return false;
@@ -444,7 +454,8 @@ export function useTopicController({
         source: detail.source,
         afterSubmit,
         expectedReplyCount,
-        replyNextPage
+        replyNextPage,
+        targetReplyIndex: replyTargetIndex(topicReplies, targetReply)
       });
       const data = detail.source === 'yaohuo'
         ? await getYaohuoReplies({
@@ -469,7 +480,8 @@ export function useTopicController({
       if (!isCurrentRepliesRequest()) {
         return false;
       }
-      setTopicReplies((current) => afterSubmit ? mergeReplies(current, data.items) : mergeReplies(data.items, current));
+      const refreshedItems = removeReply(data.items, excludeReply);
+      setTopicReplies((current) => mergeReplies(current, refreshedItems));
       if (!afterSubmit) {
         const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
         visitedPages.add(replyPageVisitKey(targetPage, targetOffset));
@@ -481,7 +493,7 @@ export function useTopicController({
         setReplyNextOffset(canLoadNext ? data.nextOffset ?? null : null);
       }
       if (!silent) {
-        notify(`评论已更新${data.items.length ? `，读取 ${data.items.length} 条` : ''}`);
+        notify(`评论已更新${refreshedItems.length ? `，读取 ${refreshedItems.length} 条` : ''}`);
       }
       return true;
     } catch (error) {
@@ -543,7 +555,7 @@ export function useTopicController({
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicDetail,
-    topicReplies.length
+    topicReplies
   ]);
 
   const loadMoreReplies = useCallback(async () => {

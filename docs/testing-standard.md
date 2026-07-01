@@ -4,7 +4,7 @@
 
 测试必须证明“功能没有被改坏”，不是证明 App 能打开。常规改动至少执行自动测试和 `npm run typecheck`；涉及页面流程、登录态、真实来源结果或交互时，还必须做模拟器验收。
 
-当前自动测试是 `Vitest + jsdom`，共有 81 个测试文件、763 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
+当前自动测试是 `Vitest + jsdom`，共有 81 个测试文件、767 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
 
 ## 判断原则
 
@@ -15,6 +15,8 @@
 - 只打开 App、看首页显示、截图留存，都不算完整测试。
 - 优化代码前先看 `docs/emulator-baseline.md`；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异。
 - 登录和验证网页必须从 App 的 `更多 -> 账号与验证` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
+- “全面测试”默认不授权真实发布、回复、编辑、删除、点赞、投票或收藏切换；这些写操作只用自动测试、请求构造、权限显示和只读入口检查覆盖。
+- 确实需要真实写操作验收时，必须先得到用户明确同意；临时内容必须中文、贴合原帖主题，完成后删除并刷新确认。
 
 ## 有用测试标准
 
@@ -32,7 +34,7 @@
 | 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/yaohuoApi.test.ts` |
 | 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；楼层引用和图片预览可用；返回后上一层详情状态保留 | `src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts` |
 | 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
-| 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；测试只删除本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
+| 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
 | 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、分页游标正确；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupFiles.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
@@ -140,7 +142,7 @@ npm run typecheck
 
 ## 回复删除验收
 
-改回复、楼层回复、写操作、权限解析或删除按钮时，必须执行。只删除本次测试新发的临时回复，不删除已有历史内容。
+改回复、楼层回复、写操作、权限解析或删除按钮时，必须执行。默认不在真实站点新发回复或删除回复；删除成功后的列表变化由自动测试固定。用户明确同意真实写操作验收时，只删除本次测试新发的临时回复，不删除已有历史内容。
 
 ### 自动测试
 
@@ -161,10 +163,10 @@ npm run typecheck
 在不卸载、不清数据、不清 Cookie 的前提下执行：
 
 1. 确认 NodeSeek、linux.do、妖火均为可写登录态；如 NodeSeek 触发 Cloudflare，先在 App 内完成验证，无法自动完成时停止并交给用户。
-2. 每个站点找一个回复较多且允许回复的主题，发表一条明确为测试用途的临时回复；如当前改动涉及图片上传，回复内容必须带一张测试图。
-3. 新回复出现后，确认只有这条自己的回复显示 `删除`，其他人的回复不显示。
-4. 点击 `删除` 后必须出现确认框；取消不会删除，再次点击并确认后才发请求。
-5. 删除成功后，当前回复列表立即不再显示这条回复；刷新原帖后仍不显示。
+2. 默认只检查已有页面上的删除入口是否只出现在原站允许的回复上；不得为了验收主动发布临时回复。
+3. 可以点击 `删除` 打开确认框，但必须点取消；确认框取消后列表不能变化。
+4. 删除请求、删除后列表立即消失、刷新后不残留，默认通过自动测试覆盖。
+5. 只有用户明确同意真实写操作验收时，才新发中文且贴合主题的临时回复，再确认删除后刷新检查。
 6. 回复框在失败、取消和删除后仍可点击、可编辑，不需要收起再展开。
 7. 结束前检查 `ReactNativeJS`、`AndroidRuntime` 没有红屏、未处理异常或崩溃。
 
@@ -180,7 +182,7 @@ npm run typecheck
 | 关注用户 | 关注数、用户页、用户主题列表、返回 | 取消关注 |
 | 账号与验证 | 三站状态；从 App 内打开登录 / 验证页；确认包名仍为 `com.wz.reader` | 清除登录、退出登录、手工改 Cookie |
 | 回复编辑 / 图片上传 | 三站回复框、失败后可继续编辑、格式按钮、图片上传插入草稿、NodeImage 授权和缓存 | 真实发送回复、清除 NodeImage Key |
-| 回复删除 | 三站新发临时回复、删除入口、确认框、删除后消失、刷新后仍消失 | 删除旧回复、删除他人回复、清数据制造状态 |
+| 回复删除 | 删除入口、权限显示、确认框取消、自动测试覆盖删除后消失 | 真实新发回复、真实删除回复、删除旧回复、删除他人回复、清数据制造状态 |
 | 测试工具 | 只在开发版可见；正式版不可见；临时匿名开关独立于账号区；说明“不删除 Cookie” | 清数据、退出登录、清 Cookie |
 | 更多页 | 版本、检查更新、个人中心当前账号识别、linux.do 等级、备份入口、外观入口 | 导出、导入、安装更新、切换外观 |
 

@@ -129,4 +129,26 @@ describe('Android feature helpers', () => {
       offset: 60
     });
   });
+
+  it('refreshes changed replies from the page that currently contains them', () => {
+    expect(replyRefreshTarget({
+      source: 'linuxdo',
+      afterSubmit: true,
+      expectedReplyCount: 91,
+      targetReplyIndex: 35
+    })).toEqual({
+      page: 2,
+      offset: 30
+    });
+
+    expect(replyRefreshTarget({
+      source: 'yaohuo',
+      afterSubmit: true,
+      expectedReplyCount: 91,
+      targetReplyIndex: 35
+    })).toEqual({
+      page: 2,
+      offset: 0
+    });
+  });
 });

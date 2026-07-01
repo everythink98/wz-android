@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildLinuxDoBookmarkRequest,
   buildLinuxDoDeleteReplyRequest,
+  buildLinuxDoEditReplyRequest,
   buildLinuxDoLikeRequest,
   buildLinuxDoPollVoteRequest,
   buildLinuxDoReplyRequest
@@ -50,6 +51,22 @@ describe('linux.do action requests', () => {
       body: undefined
     });
     expect(() => buildLinuxDoDeleteReplyRequest({ postId: 'bad' })).toThrow('回复 id 不正确');
+  });
+
+  it('builds edit requests for own Discourse replies', () => {
+    const request = buildLinuxDoEditReplyRequest({
+      postId: '1002',
+      content: '  edited linux.do  '
+    });
+
+    expect(request).toMatchObject({
+      path: '/posts/1002.json',
+      method: 'PUT',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' }
+    });
+    expect(String(request.body)).toBe('post%5Braw%5D=edited+linux.do');
+    expect(() => buildLinuxDoEditReplyRequest({ postId: 'bad', content: 'ok' })).toThrow('回复 id 不正确');
+    expect(() => buildLinuxDoEditReplyRequest({ postId: '1002', content: '   ' })).toThrow('请输入回复内容');
   });
 
   it('builds bookmark and unbookmark requests for topics', () => {

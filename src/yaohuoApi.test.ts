@@ -825,6 +825,7 @@ describe('Android direct yaohuo API', () => {
           <span class="dinglouwenzi">[<span class="floornumber0" title="原1732楼">顶楼</span>]</span>
           <span class="remoney">[<b>得金<span class="rewardnumber">666</span></b>]</span>
           [<a class="replyicon" href="/bbs/book_re.aspx?siteid=1000&amp;classid=204&amp;page=1&amp;reply=1732&amp;id=1478784&amp;touserid=30878">回</a>]
+          [<a href="/bbs/book_re_del.aspx?action=godel&amp;reid=32656658&amp;id=1478784&amp;siteid=1000&amp;classid=204">删</a>]
           <span class="retext"><img src="face/淡定.gif" class="ubbimg" />红包可能不一样</span><br>
           <span class="renick"><a href="/bbs/userinfo.aspx?touserid=30878">妖友998</a></span>
           <span class="retime">11-06 08:14</span>
@@ -836,8 +837,10 @@ describe('Android direct yaohuo API', () => {
     expect(result.items[0]).toMatchObject({
       floor: 1732,
       author: '妖友998',
-      authorId: '30878'
+      authorId: '30878',
+      canDelete: true
     });
+    expect(result.items[0]).not.toHaveProperty('canEdit');
     expect(result.items[0].contentHtml).toContain('得金');
     expect(result.items[0].contentHtml).toContain('666');
     expect(result.items[0].contentHtml).toContain('红包可能不一样');

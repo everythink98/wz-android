@@ -70,8 +70,10 @@ export function ReplyComposer({
         placeholderTextColor={theme.muted}
         multiline
       />
-      {replyTarget || replyEditTarget ? <AppButton label={replyEditTarget ? '取消编辑' : '取消楼层回复'} variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
-      <AppButton label={submitLabel} variant="primary" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
+      <View style={styles.replyComposerActions}>
+        {replyTarget || replyEditTarget ? <AppButton label={replyEditTarget ? '取消编辑' : '取消楼层回复'} variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
+        <AppButton label={submitLabel} variant="primary" styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
+      </View>
     </View>
   );
 }

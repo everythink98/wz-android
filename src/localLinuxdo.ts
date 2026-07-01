@@ -438,6 +438,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
   const polls = normalizeDiscoursePolls(raw);
   const authorLevelLabel = linuxDoLevelLabel(raw);
+  const contentMarkdown = typeof raw.raw === 'string' ? raw.raw : '';
   return {
     author: String(raw.username || ''),
     authorId: String(raw.username || '') || undefined,
@@ -452,7 +453,9 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
     ...(liked !== undefined ? { liked } : {}),
     ...(canLike !== undefined ? { canLike } : {}),
+    ...(raw.can_edit === true ? { canEdit: true } : {}),
     ...(typeof raw.can_delete === 'boolean' ? { canDelete: raw.can_delete } : {}),
+    ...(contentMarkdown ? { contentMarkdown } : {}),
     ...(targetAuthor ? { replyTargetAuthor: targetAuthor } : {}),
     ...(raw.accepted_answer === true ? { acceptedAnswer: true } : {}),
     ...(raw.wiki === true ? { wiki: true } : {}),
@@ -467,6 +470,37 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     ...(polls ? { polls } : {}),
     ...(positiveNumber(raw.bookmark_id) ? { bookmarkId: positiveNumber(raw.bookmark_id), bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {})
   };
+}
+
+function removeReplyEdit(reply: Reply) {
+  if (!reply.canEdit && !reply.contentMarkdown) {
+    return reply;
+  }
+  const next = { ...reply };
+  delete next.canEdit;
+  delete next.contentMarkdown;
+  return next;
+}
+
+async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOptions) {
+  if (!replies.some((reply) => reply.canEdit && reply.commentId && !reply.contentMarkdown)) {
+    return replies;
+  }
+  return Promise.all(replies.map(async (reply) => {
+    if (!reply.canEdit || reply.contentMarkdown || !reply.commentId) {
+      return reply;
+    }
+    try {
+      const data = await fetchLinuxDoJson<Record<string, unknown>>(`/posts/${reply.commentId}.json`, undefined, options);
+      if (data.can_edit === false) {
+        return removeReplyEdit(reply);
+      }
+      const contentMarkdown = typeof data.raw === 'string' ? data.raw : '';
+      return contentMarkdown.trim() ? { ...reply, contentMarkdown } : removeReplyEdit(reply);
+    } catch {
+      return removeReplyEdit(reply);
+    }
+  }));
 }
 
 async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string) {
@@ -667,7 +701,10 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   }
   const replyLimit = options.replyLimit || 30;
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const replies = replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[];
+  const replies = await hydrateEditableReplyContent(
+    replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[],
+    options
+  );
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
   const replyHasMore = totalPosts > replies.length + 1;
   const polls = normalizeDiscoursePolls(firstPost);
@@ -723,8 +760,12 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   }
   const posts = await fetchPosts(id, postIds, options);
   const hasMore = stream.length > start + limit;
+  const items = await hydrateEditableReplyContent(
+    posts.map((post, index) => normalizePost(post, index, id, previousReplyCount + index + 2)).filter(Boolean) as Reply[],
+    options
+  );
   return {
-    items: posts.map((post, index) => normalizePost(post, index, id, previousReplyCount + index + 2)).filter(Boolean) as Reply[],
+    items,
     hasMore,
     nextPage: hasMore ? page + 1 : null,
     nextOffset: hasMore ? previousReplyCount + postIds.length : null

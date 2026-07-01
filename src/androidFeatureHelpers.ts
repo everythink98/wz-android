@@ -163,19 +163,33 @@ function replyOffsetForExpectedCount(count: number) {
   return (replyPageForExpectedCount(count) - 1) * REPLY_PAGE_SIZE;
 }
 
+function replyPageForIndex(index: number) {
+  return Math.max(1, Math.floor(index / REPLY_PAGE_SIZE) + 1);
+}
+
 export function replyRefreshTarget({
   source,
   afterSubmit,
   expectedReplyCount,
-  replyNextPage
+  replyNextPage,
+  targetReplyIndex
 }: {
   source: Source;
   afterSubmit: boolean;
   expectedReplyCount: number;
   replyNextPage?: number | null;
+  targetReplyIndex?: number;
 }) {
   if (!afterSubmit) {
     return { page: 1, offset: 0 };
+  }
+  if (typeof targetReplyIndex === 'number' && targetReplyIndex >= 0) {
+    const page = replyPageForIndex(targetReplyIndex);
+    const offset = source === 'yaohuo' ? 0 : (page - 1) * REPLY_PAGE_SIZE;
+    if (source === 'nodeseek' && replyNextPage === 1) {
+      return { page: 1, offset };
+    }
+    return { page, offset };
   }
   const offset = source === 'yaohuo' ? 0 : replyOffsetForExpectedCount(expectedReplyCount);
   if (source === 'nodeseek' && replyNextPage === 1) {

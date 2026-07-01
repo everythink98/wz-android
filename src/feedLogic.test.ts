@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateTime } from './appUtils';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, shouldFetchAggregatedBaseFeed, shouldReuseFeedStateForRequest } from './feedLogic';
+import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, removeReply, shouldFetchAggregatedBaseFeed, shouldReuseFeedStateForRequest } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -27,7 +27,7 @@ describe('Android feed logic helpers', () => {
     expect(applyFeedFilter([topic, readTopic, favoriteTopic], data, 'favorite')).toEqual([favoriteTopic]);
   });
 
-  it('deduplicates topics and replies by stable keys', () => {
+  it('deduplicates topics and replaces stale replies by stable keys', () => {
     const replies: Reply[] = [
       { floor: 1, author: 'a', createdAt: '2026-05-20T00:00:00.000Z', contentHtml: '<p>one</p>' },
       { floor: 1, author: 'a', createdAt: '2026-05-20T00:01:00.000Z', contentHtml: '<p>duplicate</p>' },
@@ -35,8 +35,21 @@ describe('Android feed logic helpers', () => {
     ];
 
     expect(mergeTopics([topic], [{ ...topic }, { ...topic, id: '2' }])).toHaveLength(2);
-    expect(mergeReplies([replies[0]], replies.slice(1))).toEqual([replies[0], replies[2]]);
+    expect(mergeReplies([replies[0]], replies.slice(1))).toEqual([replies[1], replies[2]]);
     expect(dateTime('bad-date')).toBe(0);
+  });
+
+  it('keeps a deleted reply out of refresh merges', () => {
+    const deleted: Reply = { commentId: 2, floor: 2, author: 'b', createdAt: '2026-05-20T00:02:00.000Z', contentHtml: '<p>deleted</p>' };
+    const kept: Reply = { commentId: 3, floor: 3, author: 'c', createdAt: '2026-05-20T00:03:00.000Z', contentHtml: '<p>kept</p>' };
+    const refreshedDeleted: Reply = { ...deleted, contentHtml: '<p>stale deleted</p>' };
+    const refreshedKept: Reply = { ...kept, contentHtml: '<p>fresh kept</p>' };
+
+    expect(mergeReplies(
+      removeReply([deleted, kept], deleted),
+      removeReply([refreshedDeleted, refreshedKept], deleted)
+    )).toEqual([refreshedKept]);
+    expect(removeReply([deleted, kept], { floor: 2 })).toEqual([kept]);
   });
 
   it('fills missing access requirements when merging duplicate topics', () => {
