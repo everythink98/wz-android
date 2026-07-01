@@ -8,6 +8,10 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const bridgeMessageLimit = 900000;
   const challengePattern = /just a moment|请稍候|正在进行安全验证|安全服务防护恶意自动程序|cf-turnstile|challenge-platform/i;
   const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || document.body?.textContent || document.documentElement?.textContent || "").trim().slice(0, limit);
+  const jsonText = () => {
+    const text = pageText();
+    return /^\\s*[{[]/.test(text) ? text : "";
+  };
   const isChallengePage = () => {
     const challengeText = [document.title || "", pageText(3000)].join(" ");
     return challengePattern.test(challengeText) || Boolean(document.querySelector(".cf-turnstile, [name='cf-turnstile-response'], script[src*='challenge-platform']"));
@@ -28,15 +32,95 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const hasNodeSeekSearchResultLinks = () => /\\/search\\/?$/i.test(location.pathname || "")
     && Array.from(document.querySelectorAll('a[href*="post-"]')).some((link) => /nodeseek\\.com|post-\\d+-\\d+/i.test(link.href || ""));
   const isNodeSeekPostPage = () => /\\/post-\\d+-\\d+\\/?$/i.test(location.pathname || "");
+  const base64Json = (value) => {
+    const json = JSON.stringify(value);
+    if (typeof TextEncoder === "function") {
+      const bytes = new TextEncoder().encode(json);
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 8192) {
+        binary += String.fromCharCode(...bytes.slice(index, index + 8192));
+      }
+      return btoa(binary);
+    }
+    return btoa(unescape(encodeURIComponent(json)));
+  };
+  const windowConfigPostDataHtml = () => {
+    const config = window.__config__;
+    if (!config || typeof config !== "object" || !config.postData) {
+      return "";
+    }
+    const clonePostData = (value) => {
+      try {
+        return JSON.parse(JSON.stringify(value));
+      } catch {
+        return value;
+      }
+    };
+    const childMarkup = (element) => Array.from(element?.childNodes || []).map((node) => {
+      if (node.nodeType === 3) {
+        return node.textContent || "";
+      }
+      return node.outerHTML || node.textContent || "";
+    }).join("").trim();
+    const renderedRows = () => Array.from(document.querySelectorAll(".content-item, .comment-item, .comment-list > li, .comments > li, [id^='comment-']")).map((row) => {
+      const content = row.querySelector(".post-content, .comment-content, .reply-content, .content");
+      if (!content) {
+        return null;
+      }
+      const rowId = row.getAttribute("data-comment-id") || (String(row.id || "").match(/comment[-_]?(\\d+)/i) || [])[1] || "";
+      const floorText = row.getAttribute("id") || row.querySelector(".floor-link, .floor, .no")?.textContent || "";
+      const floorIndex = Number((String(floorText).match(/#?(\\d+)/) || [])[1] || 0);
+      const signature = row.querySelector(".signature, .post-signature, .content-signature");
+      return {
+        commentId: String(rowId).trim(),
+        floorIndex,
+        content: childMarkup(content),
+        signature: signature ? childMarkup(signature) : ""
+      };
+    }).filter(Boolean);
+    const renderedRowForComment = (rows, comment, index) => {
+      const commentId = String(comment?.commentId || "").trim();
+      const floorIndex = Number(comment?.floorIndex || comment?.floor || 0);
+      return (commentId && rows.find((row) => row.commentId === commentId))
+        || (floorIndex && rows.find((row) => row.floorIndex === floorIndex))
+        || rows[index];
+    };
+    const postData = clonePostData(config.postData);
+    if (postData && typeof postData === "object" && Array.isArray(postData.comments)) {
+      const rows = renderedRows();
+      postData.comments.forEach((comment, index) => {
+        if (!comment || typeof comment !== "object") {
+          return;
+        }
+        const row = renderedRowForComment(rows, comment, index);
+        if (row?.content) {
+          comment.content = row.content;
+        }
+        if (row?.signature && !comment.signature) {
+          comment.signature = row.signature;
+        }
+      });
+    }
+    const payload = {
+      postData
+    };
+    if (config.user) {
+      payload.user = config.user;
+    }
+    if (config.allCategory) {
+      payload.allCategory = config.allCategory;
+    }
+    return '<html><body><script id="temp-script" type="application/json">' + base64Json(payload) + "</script></body></html>";
+  };
   const embeddedPostDataHtml = () => {
     if (!isNodeSeekPostPage()) {
       return "";
     }
     const script = document.querySelector("#temp-script");
-    if (!script || !(script.textContent || "").trim()) {
-      return "";
+    if (script && (script.textContent || "").trim()) {
+      return "<html><body>" + script.outerHTML + "</body></html>";
     }
-    return "<html><body>" + script.outerHTML + "</body></html>";
+    return windowConfigPostDataHtml();
   };
   const hasPendingVotePanel = () => {
     const visibleMasks = Array.from(document.querySelectorAll(".embed-vote .form-mask")).some((element) => {
@@ -87,6 +171,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   };
   const postResult = () => {
     const challenge = isChallengePage();
+    const json = jsonText();
     const compactHtml = challenge ? "" : embeddedPostDataHtml();
     postBridgeMessage({
       type: 'nodeseek-browser-fetch',
@@ -94,7 +179,7 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
       url: location.href,
       title: document.title || "",
       challenge,
-      html: challenge ? "" : (compactHtml || (document.documentElement ? document.documentElement.outerHTML : "")),
+      html: challenge ? "" : (json || compactHtml || (document.documentElement ? document.documentElement.outerHTML : "")),
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
     });
@@ -105,6 +190,10 @@ export const NODESEEK_BROWSER_FETCH_SCRIPT = `
   const deadline = Date.now() + 15000;
   const waitForReadablePage = () => {
     if (isInteractiveChallengePage()) {
+      postResult();
+      return;
+    }
+    if (!isChallengePage() && jsonText()) {
       postResult();
       return;
     }
@@ -208,6 +297,7 @@ export function useHiddenBrowserFetchController({
     userAgent?: string;
     challenge?: boolean;
     error?: string;
+    httpErrorStatus?: number;
   }) => void;
   completeNodeSeekBrowserFetch: (data: {
     type?: string;
@@ -231,6 +321,7 @@ export function useHiddenBrowserFetchController({
         userAgent?: string;
         challenge?: boolean;
         error?: string;
+        httpErrorStatus?: number;
       };
       if (data.type === 'nodeseek-browser-fetch') {
         completeNodeSeekBrowserFetch(data);

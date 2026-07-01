@@ -33,7 +33,7 @@ import type { CredentialClearOptions, CredentialLoadOptions } from './sessionCon
 import { authHintForSource } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
-import type { ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, Screen, TopicSnapshot } from '../appTypes';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -80,6 +80,7 @@ export function useTopicController({
   setLoadingQuotedFloors,
   setReplyComposerOpen,
   setReplyContent,
+  setReplyEditTarget,
   setReplyFilter,
   setReplyHasMore,
   setReplyNextOffset,
@@ -140,6 +141,7 @@ export function useTopicController({
   setLoadingQuotedFloors: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
   setReplyComposerOpen: Dispatch<SetStateAction<boolean>>;
   setReplyContent: Dispatch<SetStateAction<string>>;
+  setReplyEditTarget: Dispatch<SetStateAction<ReplyEditTarget | null>>;
   setReplyFilter: Dispatch<SetStateAction<ReplyFilter>>;
   setReplyHasMore: Dispatch<SetStateAction<boolean>>;
   setReplyNextOffset: Dispatch<SetStateAction<number | null>>;
@@ -206,6 +208,7 @@ export function useTopicController({
         replyContent: session.replyContent,
         replyComposerOpen: session.replyComposerOpen,
         replyTarget: session.replyTarget,
+        replyEditTarget: session.replyEditTarget,
         expandedQuotes: session.expandedQuotes,
         loadedQuotedReplies: session.loadedQuotedReplies,
         loadingQuotedFloors: session.loadingQuotedFloors,
@@ -267,6 +270,7 @@ export function useTopicController({
     setReplyContent('');
     setReplyComposerOpen(false);
     setReplyTarget(null);
+    setReplyEditTarget(null);
     setReplyFilter('all');
     resetQuoteState();
     if (!reopenExistingTopicScreen) {
@@ -377,6 +381,7 @@ export function useTopicController({
     setLoadingMoreReplies,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyEditTarget,
     setReplyFilter,
     setReplyHasMore,
     setReplyNextOffset,

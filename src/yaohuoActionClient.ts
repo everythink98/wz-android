@@ -23,6 +23,7 @@ const YAOHUO_ACTION_HEADERS = {
   'user-agent': YAOHUO_ANDROID_USER_AGENT
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
+const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
   const error = new Error(
@@ -61,30 +62,54 @@ function assertYaohuoActionSuccess(message: string) {
   }
 }
 
-export async function runYaohuoAction({
+function deleteConfirmationPath(html: string) {
+  const link = parseHtml(html).querySelectorAll('a[href]').find((item) => {
+    const href = item.getAttribute('href') || '';
+    return /book_re_del\.aspx/i.test(href) && /确定删除|确认删除/.test(elementText(item));
+  });
+  const href = link?.getAttribute('href');
+  if (!href) {
+    return '';
+  }
+  try {
+    const url = new URL(href.replace(/&amp;/gi, '&'), YAOHUO_BASE_URL);
+    const host = url.hostname.toLowerCase();
+    if ((host !== 'yaohuo.me' && host !== 'www.yaohuo.me')
+      || !YAOHUO_REPLY_DELETE_PATH_PATTERN.test(url.pathname)
+      || url.searchParams.get('action')?.toLowerCase() !== 'godel'
+      || !url.searchParams.get('reid')
+      || !url.searchParams.get('id')) {
+      return '';
+    }
+    url.protocol = 'https:';
+    url.hostname = 'yaohuo.me';
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return '';
+  }
+}
+
+async function fetchYaohuoActionHtml({
   cookieHeader,
   request,
-  fetcher = fetch,
+  path,
+  fetcher,
   signal,
   timeoutMs
 }: {
   cookieHeader: string;
   request: YaohuoActionRequest;
-  fetcher?: Fetcher;
+  path: string;
+  fetcher: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
-  const cleanCookie = cookieHeader.trim();
-  if (!cleanCookie) {
-    throw yaohuoLoginRequiredError('expired');
-  }
-
-  const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}${request.path}`, {
+  const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}${path}`, {
     method: request.method,
     headers: {
       ...YAOHUO_ACTION_HEADERS,
       ...request.headers,
-      cookie: cleanCookie
+      cookie: cookieHeader
     },
     body: request.method === 'POST' ? request.body : undefined
   }, {
@@ -103,6 +128,49 @@ export async function runYaohuoAction({
   }
   if (!response.ok) {
     throw new Error(`妖火请求失败：HTTP ${response.status}`);
+  }
+  return html;
+}
+
+export async function runYaohuoAction({
+  cookieHeader,
+  request,
+  fetcher = fetch,
+  signal,
+  timeoutMs
+}: {
+  cookieHeader: string;
+  request: YaohuoActionRequest;
+  fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}) {
+  const cleanCookie = cookieHeader.trim();
+  if (!cleanCookie) {
+    throw yaohuoLoginRequiredError('expired');
+  }
+
+  let html = await fetchYaohuoActionHtml({
+    cookieHeader: cleanCookie,
+    request,
+    fetcher,
+    path: request.path,
+    signal,
+    timeoutMs
+  });
+
+  if (request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(new URL(request.path, YAOHUO_BASE_URL).pathname)) {
+    const confirmationPath = deleteConfirmationPath(html);
+    if (confirmationPath) {
+      html = await fetchYaohuoActionHtml({
+        cookieHeader: cleanCookie,
+        request,
+        fetcher,
+        path: confirmationPath,
+        signal,
+        timeoutMs
+      });
+    }
   }
 
   const message = actionMessage(html);

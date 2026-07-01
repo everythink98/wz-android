@@ -70,11 +70,16 @@ export interface Reply {
   dislikeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+  canLike?: boolean;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  deletePath?: string;
   disliked?: boolean;
   isOp?: boolean;
   hot?: boolean;
   pinned?: boolean;
   signatureHtml?: string;
+  contentMarkdown?: string;
   bookmarkId?: number;
   bookmarked?: boolean;
   replyTargetAuthor?: string;
@@ -125,6 +130,7 @@ export interface TopicPoll {
 export interface TopicDetail extends Topic {
   contentHtml: string;
   replies: Reply[];
+  currentUser?: UserProfile;
   polls?: TopicPoll[];
   replyHasMore?: boolean;
   replyNextPage?: number | null;
@@ -135,6 +141,7 @@ export interface TopicDetail extends Topic {
   dislikeCount?: number;
   upvoted?: boolean;
   liked?: boolean;
+  canLike?: boolean;
   disliked?: boolean;
   bookmarkId?: number;
   bookmarked?: boolean;

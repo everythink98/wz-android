@@ -31,15 +31,6 @@ export function isNodeSeekBrowserFetchUrl(input: string) {
   return isNodeSeekRequestUrl(input) || isNodeSeekGoogleSearchUrl(input);
 }
 
-function isNodeSeekSearchUrl(input: string) {
-  try {
-    const url = new URL(input);
-    return isNodeSeekRequestUrl(input) && url.pathname.replace(/\/+$/, '') === '/search';
-  } catch {
-    return false;
-  }
-}
-
 function isNodeSeekPostUrl(input: string) {
   try {
     const url = new URL(input);
@@ -87,9 +78,6 @@ export function createNodeSeekWebViewFallbackFetcher({
 }): Fetcher {
   return async (input, init) => {
     const url = String(input);
-    if (isNodeSeekSearchUrl(url)) {
-      return webViewFetcher(url, init);
-    }
     if (!isNodeSeekRequestUrl(url)) {
       return defaultFetcher(input, init);
     }

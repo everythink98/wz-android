@@ -2,7 +2,7 @@ import { useCallback, type MutableRefObject } from 'react';
 import type { Reply, Topic, TopicDetail } from '../types';
 import { createEmptyTopicSession, snapshotFromTopicSession, topicSessionFromSnapshot } from '../topicSessionState';
 import { topicKey } from '../readerData';
-import type { ReplyFilter, ReplyTarget, TopicSnapshot } from '../appTypes';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '../appTypes';
 
 export function useTopicNavigationController({
   commentQuery,
@@ -14,6 +14,7 @@ export function useTopicNavigationController({
   loadingQuotedFloorsRef,
   replyComposerOpen,
   replyContent,
+  replyEditTarget,
   replyFilter,
   replyHasMore,
   replyNextOffset,
@@ -28,6 +29,7 @@ export function useTopicNavigationController({
   setQuoteStateVersion,
   setReplyComposerOpen,
   setReplyContent,
+  setReplyEditTarget,
   setReplyFilter,
   setReplyHasMore,
   setReplyNextOffset,
@@ -54,6 +56,7 @@ export function useTopicNavigationController({
   loadingQuotedFloorsRef: MutableRefObject<Record<string, boolean>>;
   replyComposerOpen: boolean;
   replyContent: string;
+  replyEditTarget: ReplyEditTarget | null;
   replyFilter: ReplyFilter;
   replyHasMore: boolean;
   replyNextOffset: number | null;
@@ -68,6 +71,7 @@ export function useTopicNavigationController({
   setQuoteStateVersion: (updater: (current: number) => number) => void;
   setReplyComposerOpen: (value: boolean) => void;
   setReplyContent: (value: string) => void;
+  setReplyEditTarget: (value: ReplyEditTarget | null) => void;
   setReplyFilter: (value: ReplyFilter) => void;
   setReplyHasMore: (value: boolean) => void;
   setReplyNextOffset: (value: number | null) => void;
@@ -102,6 +106,7 @@ export function useTopicNavigationController({
       replyContent,
       replyComposerOpen,
       replyTarget,
+      replyEditTarget,
       expandedQuotes: expandedQuotesRef.current,
       loadedQuotedReplies: loadedQuotedRepliesRef.current,
       loadingQuotedFloors: {},
@@ -116,7 +121,7 @@ export function useTopicNavigationController({
       replyCount: 0
     });
     return snapshotFromTopicSession(session);
-  }, [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, topicScrollYRef, unreadReplyCount]);
+  }, [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyEditTarget, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, topicScrollYRef, unreadReplyCount]);
 
   const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
     const session = topicSessionFromSnapshot(snapshot);
@@ -133,6 +138,7 @@ export function useTopicNavigationController({
     setReplyContent(session.replyContent);
     setReplyComposerOpen(session.replyComposerOpen);
     setReplyTarget(session.replyTarget);
+    setReplyEditTarget(session.replyEditTarget);
     expandedQuotesRef.current = session.expandedQuotes;
     loadedQuotedRepliesRef.current = session.loadedQuotedReplies;
     loadingQuotedFloorsRef.current = {};
@@ -147,7 +153,7 @@ export function useTopicNavigationController({
     const restoredTopic = session.topicDetail || session.selectedTopic;
     invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);
     currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
-  }, [currentTopicKeyRef, expandedQuotesRef, invalidateTopicActionRequests, loadedQuotedRepliesRef, loadingMoreRepliesRef, loadingQuotedFloorsRef, setCommentQuery, setExpandedQuotes, setLoadedQuotedReplies, setLoadingMoreReplies, setLoadingQuotedFloors, setQuoteStateVersion, setReplyComposerOpen, setReplyContent, setReplyFilter, setReplyHasMore, setReplyNextOffset, setReplyNextPage, setReplyTarget, setSelectedTopic, setTopicBusy, setTopicDetail, setTopicError, setTopicReplies, setUnreadReplyCount, topicScrollYRef]);
+  }, [currentTopicKeyRef, expandedQuotesRef, invalidateTopicActionRequests, loadedQuotedRepliesRef, loadingMoreRepliesRef, loadingQuotedFloorsRef, setCommentQuery, setExpandedQuotes, setLoadedQuotedReplies, setLoadingMoreReplies, setLoadingQuotedFloors, setQuoteStateVersion, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyFilter, setReplyHasMore, setReplyNextOffset, setReplyNextPage, setReplyTarget, setSelectedTopic, setTopicBusy, setTopicDetail, setTopicError, setTopicReplies, setUnreadReplyCount, topicScrollYRef]);
 
   return {
     restoreTopicSnapshot,

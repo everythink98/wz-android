@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildLinuxDoBookmarkRequest,
+  buildLinuxDoDeleteReplyRequest,
   buildLinuxDoLikeRequest,
   buildLinuxDoPollVoteRequest,
   buildLinuxDoReplyRequest
@@ -41,6 +42,16 @@ describe('linux.do action requests', () => {
     });
   });
 
+  it('builds delete requests for own Discourse replies', () => {
+    expect(buildLinuxDoDeleteReplyRequest({ postId: '1002' })).toEqual({
+      path: '/posts/1002.json',
+      method: 'DELETE',
+      headers: {},
+      body: undefined
+    });
+    expect(() => buildLinuxDoDeleteReplyRequest({ postId: 'bad' })).toThrow('回复 id 不正确');
+  });
+
   it('builds bookmark and unbookmark requests for topics', () => {
     expect(buildLinuxDoBookmarkRequest({
       bookmarkableId: '42',
@@ -72,7 +83,7 @@ describe('linux.do action requests', () => {
       pollName: 'poll',
       optionIds: ['a1', 'b2']
     });
-    const params = new URLSearchParams(request.body || '');
+    const params = new URLSearchParams(String(request.body || ''));
 
     expect(request).toMatchObject({
       path: '/polls/vote',

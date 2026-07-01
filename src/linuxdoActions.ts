@@ -1,8 +1,10 @@
+import { appendFileToFormData, type NormalizedReplyImageAsset } from './replyImageUpload';
+
 export interface LinuxDoActionRequest {
   path: string;
   method: 'POST' | 'DELETE' | 'PUT';
   headers: Record<string, string>;
-  body?: string;
+  body?: BodyInit;
 }
 
 function cleanPositiveInteger(value: string | number, name: string) {
@@ -49,6 +51,50 @@ export function buildLinuxDoReplyRequest({
     },
     body: params.toString()
   };
+}
+
+export function buildLinuxDoImageUploadRequest({
+  file
+}: {
+  file: NormalizedReplyImageAsset;
+}): LinuxDoActionRequest {
+  const body = new FormData();
+  body.append('type', 'composer');
+  body.append('synchronous', 'true');
+  appendFileToFormData(body, 'file', file);
+  return {
+    path: '/uploads.json',
+    method: 'POST',
+    headers: {},
+    body
+  };
+}
+
+export function buildLinuxDoDeleteReplyRequest({
+  postId
+}: {
+  postId: string | number;
+}): LinuxDoActionRequest {
+  return {
+    path: `/posts/${cleanPositiveInteger(postId, '回复 id')}.json`,
+    method: 'DELETE',
+    headers: {},
+    body: undefined
+  };
+}
+
+export function linuxDoImageUrlFromUploadResponse(data: unknown) {
+  const record = data && typeof data === 'object' ? data as Record<string, unknown> : {};
+  const markdown = typeof record.markdown === 'string' ? record.markdown : '';
+  const markdownUrl = markdown.match(/\]\(([^)]+)\)/)?.[1];
+  const rawUrl = String(markdownUrl || record.short_url || record.url || '').trim();
+  if (!rawUrl) {
+    throw new Error('linux.do 上传返回缺少图片地址');
+  }
+  if (rawUrl.startsWith('//')) {
+    return `https:${rawUrl}`;
+  }
+  return rawUrl.startsWith('/') ? `https://linux.do${rawUrl}` : rawUrl;
 }
 
 export function buildLinuxDoLikeRequest({

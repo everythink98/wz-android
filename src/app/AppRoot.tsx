@@ -18,7 +18,7 @@ import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekCookies';
 import type { TopicRecord } from '../readerData';
 import { useReaderDataController } from './useReaderDataController';
@@ -43,6 +43,7 @@ import { useTopicActionsController } from './useTopicActionsController';
 import { takeNodeSeekVerificationRetry } from './sessionControllerHelpers';
 import {
   hasPendingOptimisticTopicAction,
+  markCurrentNodeSeekOwnRepliesUnlikable,
   shouldInvalidateTopicActionsOnScreenChange,
   topicSnapshotForUserReturn
 } from './topicActionControllerHelpers';
@@ -83,6 +84,10 @@ import {
   type DevAnonymousOverrides,
   type SessionSite
 } from '../siteSessionState';
+import { clearNodeImageApiKey, loadNodeImageApiKey, saveNodeImageApiKey } from '../nodeimageCredentials';
+import { nodeImageApiKeyFromResponse } from '../replyImageUpload';
+import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '../appUrls';
+import type { NodeImageAuthPayload } from '../loginWebViewScripts';
 
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
@@ -90,6 +95,7 @@ type UserReturnTopic = {
   backStack: TopicSnapshot[];
 };
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
+const NODEIMAGE_LOGIN_HOSTS = ['nodeimage.com', 'nodeseek.com', 'challenges.cloudflare.com'];
 const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
 
@@ -100,11 +106,14 @@ function sortedRecords(records: Record<string, TopicRecord>) {
 
 export function AppRoot() {
   const webViewRef = useRef<WebView>(null);
+  const nodeImageAuthWebViewRef = useRef<WebView>(null);
   const yaohuoWebViewRef = useRef<WebView>(null);
   const linuxDoWebViewRef = useRef<WebView>(null);
   const nodeSeekBrowserWebViewRef = useRef<WebView>(null);
   const linuxDoBrowserWebViewRef = useRef<WebView>(null);
   const nodeSeekLoginPanelRequestRef = useRef(0);
+  const nodeImageAuthResolverRef = useRef<((apiKey: string | null) => void) | null>(null);
+  const nodeImageAuthPromiseRef = useRef<Promise<string | null> | null>(null);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
   const topicRequestIdRef = useRef(0);
@@ -176,6 +185,13 @@ export function AppRoot() {
   const [actionBusy, setActionBusy] = useState(false);
   const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+  const [nodeImageApiKeySaved, setNodeImageApiKeySaved] = useState(false);
+  const [nodeImageApiKeyBusy, setNodeImageApiKeyBusy] = useState(false);
+  const [showNodeImageAuthPanel, setShowNodeImageAuthPanel] = useState(false);
+  const [nodeImageAuthUrl, setNodeImageAuthUrl] = useState(NODEIMAGE_AUTH_URL);
+  const [nodeImageAuthPayload, setNodeImageAuthPayload] = useState<NodeImageAuthPayload | null>(null);
+  const [loadingNodeImageAuthPage, setLoadingNodeImageAuthPage] = useState(false);
+  const [nodeImageAuthError, setNodeImageAuthError] = useState('');
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
     startOwnedRequest(topicActionRequestOwnerRef, `topic-action-context:${nextTopicKey || 'none'}`);
@@ -216,6 +232,138 @@ export function AppRoot() {
     readerDataRef
   });
   const { updateSettings } = useReaderSettingsController({ commitReaderData });
+  useEffect(() => {
+    let active = true;
+    loadNodeImageApiKey()
+      .then((apiKey) => {
+        if (active) {
+          setNodeImageApiKeySaved(Boolean(apiKey));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+  const saveNodeImageApiKeyInput = useCallback(async (value: string) => {
+    if (nodeImageApiKeyBusy) {
+      return;
+    }
+    setNodeImageApiKeyBusy(true);
+    try {
+      await saveNodeImageApiKey(value);
+      setNodeImageApiKeySaved(true);
+      notify('NodeImage API Key 已保存');
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setNodeImageApiKeyBusy(false);
+    }
+  }, [nodeImageApiKeyBusy, notify]);
+  const clearNodeImageApiKeyInput = useCallback(async () => {
+    if (nodeImageApiKeyBusy) {
+      return;
+    }
+    setNodeImageApiKeyBusy(true);
+    try {
+      await clearNodeImageApiKey();
+      setNodeImageApiKeySaved(false);
+      notify('NodeImage API Key 已清除');
+    } catch (error) {
+      notify(errorMessage(error));
+    } finally {
+      setNodeImageApiKeyBusy(false);
+    }
+  }, [nodeImageApiKeyBusy, notify]);
+  const finishNodeImageAuth = useCallback((apiKey: string | null) => {
+    nodeImageAuthWebViewRef.current?.stopLoading();
+    setShowNodeImageAuthPanel(false);
+    setNodeImageAuthPayload(null);
+    setLoadingNodeImageAuthPage(false);
+    if (apiKey) {
+      setNodeImageAuthError('');
+    }
+    const resolve = nodeImageAuthResolverRef.current;
+    nodeImageAuthResolverRef.current = null;
+    nodeImageAuthPromiseRef.current = null;
+    resolve?.(apiKey);
+  }, []);
+  const closeNodeImageAuthPanel = useCallback(() => {
+    finishNodeImageAuth(null);
+  }, [finishNodeImageAuth]);
+  const openNodeImageAuthPanel = useCallback(() => {
+    if (nodeImageAuthPromiseRef.current) {
+      return nodeImageAuthPromiseRef.current;
+    }
+    setNodeImageAuthUrl(NODEIMAGE_AUTH_URL);
+    setNodeImageAuthPayload(null);
+    setNodeImageAuthError('');
+    setLoadingNodeImageAuthPage(true);
+    setShowNodeImageAuthPanel(true);
+    const promise = new Promise<string | null>((resolve) => {
+      nodeImageAuthResolverRef.current = resolve;
+    });
+    nodeImageAuthPromiseRef.current = promise;
+    return promise;
+  }, []);
+  const ensureNodeImageApiKey = useCallback(async (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => {
+    if (!options?.forceRefresh) {
+      const apiKey = await loadNodeImageApiKey();
+      if (apiKey) {
+        setNodeImageApiKeySaved(true);
+        return apiKey;
+      }
+    }
+    const apiKey = await openNodeImageAuthPanel();
+    if (!apiKey && options?.clearOnCancel) {
+      await clearNodeImageApiKey();
+      setNodeImageApiKeySaved(false);
+    }
+    return apiKey;
+  }, [openNodeImageAuthPanel]);
+  const authorizeNodeImageApiKey = useCallback(() => {
+    void ensureNodeImageApiKey({ forceRefresh: true });
+  }, [ensureNodeImageApiKey]);
+  const handleNodeImageAuthMessage = useCallback((event: WebViewMessageEvent) => {
+    void (async () => {
+      try {
+        const data = JSON.parse(event.nativeEvent.data) as Record<string, unknown>;
+        if (data.type !== 'nodeimage-api-key') {
+          if (data.type === 'nodeimage-auth-data') {
+            const payload = {
+              data: data.data,
+              wtf: data.wtf,
+              sign: data.sign
+            };
+            if (payload.data == null || !payload.wtf || !payload.sign) {
+              setNodeImageAuthError('NodeSeek 授权返回缺少必要信息。');
+              return;
+            }
+            setNodeImageAuthPayload(payload);
+            setNodeImageAuthError('');
+            setLoadingNodeImageAuthPage(true);
+            setNodeImageAuthUrl(NODEIMAGE_URL);
+            return;
+          }
+          if (data.type === 'nodeimage-auth-error') {
+            setNodeImageAuthError(String(data.error || 'NodeSeek 授权失败'));
+          }
+          return;
+        }
+        const apiKey = nodeImageApiKeyFromResponse(data);
+        if (!apiKey) {
+          setNodeImageAuthError(String(data.error || '需要完成 NodeSeek 授权后才能自动获取 NodeImage Key。'));
+          return;
+        }
+        await saveNodeImageApiKey(apiKey);
+        setNodeImageApiKeySaved(true);
+        notify('NodeImage API Key 已保存');
+        finishNodeImageAuth(apiKey);
+      } catch (error) {
+        setNodeImageAuthError(errorMessage(error));
+      }
+    })();
+  }, [finishNodeImageAuth, notify]);
   const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
   const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
   const [topicError, setTopicError] = useState('');
@@ -391,6 +539,7 @@ export function AppRoot() {
     abortQuotedReplyRequests,
     commentQuery,
     debouncedCommentQuery,
+    editReply,
     expandedQuotesRef,
     filteredReplies,
     loadedQuotedReplies,
@@ -400,6 +549,7 @@ export function AppRoot() {
     quotedReplyAbortRefs,
     replyComposerOpen,
     replyContent,
+    replyEditTarget,
     replyFilter,
     replyTarget,
     replyToFloor,
@@ -411,6 +561,7 @@ export function AppRoot() {
     setQuoteStateVersion,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyEditTarget,
     setReplyFilter,
     setReplyTarget,
     toggleReplyComposer,
@@ -425,6 +576,26 @@ export function AppRoot() {
     topicImageDeriver,
     topicReplies
   });
+  const nodeSeekCurrentUserForTopicActions = siteSessionViewModels.nodeseek.currentUser || (topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined);
+  const displayReplies = useMemo(
+    () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, webLoginUserId),
+    [filteredReplies, nodeSeekCurrentUserForTopicActions, webLoginUserId]
+  );
+  useEffect(() => {
+    const currentUser = topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined;
+    const userId = Number(currentUser?.id);
+    if (!currentUser || !Number.isInteger(userId) || userId <= 0) {
+      return;
+    }
+    setWebLoginUserId(userId);
+    updateNodeSeekSession({
+      type: 'cookie-loaded',
+      hasVerification: true,
+      loggedIn: true,
+      currentUser,
+      at: new Date().toISOString()
+    });
+  }, [topicDetail?.currentUser, topicDetail?.source, updateNodeSeekSession]);
   const getTopicHtmlParts = useCallback(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map(replyHtmlWithSignature),
@@ -457,6 +628,9 @@ export function AppRoot() {
   const handleNodeSeekLoginNavigation = useCallback((request: LoginNavigationRequest) => (
     handleLoginNavigation(request, NODESEEK_LOGIN_HOSTS)
   ), [handleLoginNavigation]);
+  const handleNodeImageAuthNavigation = useCallback((request: LoginNavigationRequest) => (
+    handleLoginNavigation(request, NODEIMAGE_LOGIN_HOSTS)
+  ), [handleLoginNavigation]);
   const handleYaohuoLoginNavigation = useCallback((request: LoginNavigationRequest) => (
     handleLoginNavigation(request, YAOHUO_LOGIN_HOSTS)
   ), [handleLoginNavigation]);
@@ -467,6 +641,10 @@ export function AppRoot() {
     topicAbortRef.current?.abort();
     repliesAbortRef.current?.abort();
     actionAbortRef.current?.abortAll();
+    const resolveNodeImageAuth = nodeImageAuthResolverRef.current;
+    nodeImageAuthResolverRef.current = null;
+    nodeImageAuthPromiseRef.current = null;
+    resolveNodeImageAuth?.(null);
     cancelDeferredNavigationTask();
   }, [cancelDeferredNavigationTask]);
   const topicStateIndex = useMemo(() => createTopicListItemStateIndex(readerData), [
@@ -637,10 +815,11 @@ export function AppRoot() {
 
   const closeMorePanels = useCallback(() => {
     changeNodeSeekLoginPanel(false);
+    closeNodeImageAuthPanel();
     closeYaohuoLoginPanel();
     closeLinuxDoPanel();
     setShowSettingsPanel(false);
-  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel]);
+  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
 
   const {
     activeFeedState,
@@ -809,6 +988,7 @@ export function AppRoot() {
     loadingQuotedFloorsRef,
     replyComposerOpen,
     replyContent,
+    replyEditTarget,
     replyFilter,
     replyHasMore,
     replyNextOffset,
@@ -823,6 +1003,7 @@ export function AppRoot() {
     setQuoteStateVersion,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyEditTarget,
     setReplyFilter,
     setReplyHasMore,
     setReplyNextOffset,
@@ -938,6 +1119,7 @@ export function AppRoot() {
     setLoadingQuotedFloors: updateLoadingQuotedFloors,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyEditTarget,
     setReplyFilter,
     setReplyHasMore,
     setReplyNextOffset,
@@ -988,9 +1170,11 @@ export function AppRoot() {
     canUseYaohuoActions,
     checkIn,
     collectOnNodeSeekSite,
+    deleteReply,
     favoriteOnYaohuoSite,
     interact,
     submitReply,
+    uploadReplyImage,
     votePoll
   } = useTopicActionsController({
     actionAbortRef,
@@ -1000,10 +1184,12 @@ export function AppRoot() {
     linuxDoWebViewUserAgentRef,
     loadYaohuoCookieForSource,
     nodeSeekWebViewUserAgentRef,
+    ensureNodeImageApiKey,
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
     replyContent,
+    replyEditTarget,
     replyTarget,
     resetLinuxDoLevelState,
     selectedTopic,
@@ -1011,6 +1197,7 @@ export function AppRoot() {
     setOptimisticTopicActions,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyEditTarget,
     setReplyTarget,
     setTopicDetail,
     setTopicReplies,
@@ -1138,6 +1325,10 @@ export function AppRoot() {
         changeNodeSeekLoginPanel(false);
         return true;
       }
+      if (showNodeImageAuthPanel) {
+        closeNodeImageAuthPanel();
+        return true;
+      }
       if (showYaohuoLoginPanel) {
         closeYaohuoLoginPanel();
         return true;
@@ -1151,8 +1342,7 @@ export function AppRoot() {
         return true;
       }
       if (shouldCloseReplyComposerOnBack(screen, replyComposerOpen)) {
-        setReplyComposerOpen(false);
-        setReplyTarget(null);
+        toggleReplyComposer(false);
         return true;
       }
       if (screen === 'topic') {
@@ -1174,6 +1364,7 @@ export function AppRoot() {
     closeImagePreview,
     changeScreen,
     changeNodeSeekLoginPanel,
+    closeNodeImageAuthPanel,
     closeYaohuoLoginPanel,
     goBackFromTopic,
     goBackFromUser,
@@ -1181,10 +1372,12 @@ export function AppRoot() {
     screen,
     closeLinuxDoPanel,
     showLoginPanel,
+    showNodeImageAuthPanel,
     showLinuxDoPanel,
     showYaohuoLoginPanel,
     replyComposerOpen,
-    showSettingsPanel
+    showSettingsPanel,
+    toggleReplyComposer
   ]);
 
   const syncNavigationToScreen = useCallback((nextScreen: Screen) => {
@@ -1366,6 +1559,8 @@ export function AppRoot() {
       linuxDoLevelError,
       linuxDoLevelProfile,
       nodeSeekWebViewUserAgent,
+      nodeImageApiKeyBusy,
+      nodeImageApiKeySaved,
       settings: readerData.settings,
       showLoginPanel,
       showYaohuoLoginPanel,
@@ -1389,6 +1584,9 @@ export function AppRoot() {
       onCheckIn: checkIn,
       onCheckLogin: checkLogin,
       onRememberNodeSeekCookies: rememberVisibleNodeSeekCookiesAndRetrySearch,
+      onAuthorizeNodeImageApiKey: authorizeNodeImageApiKey,
+      onSaveNodeImageApiKey: saveNodeImageApiKeyInput,
+      onClearNodeImageApiKey: clearNodeImageApiKeyInput,
       onCheckYaohuoLogin: checkYaohuoCookie,
       onRefreshLinuxDoLevel: refreshLinuxDoLevel,
       onClearLogin: clearLogin,
@@ -1423,6 +1621,7 @@ export function AppRoot() {
     checking,
     clearLogin,
     clearYaohuoLogin,
+    authorizeNodeImageApiKey,
     devAnonymousOverrides,
     downloadAppUpdate,
     exportBackupFile,
@@ -1437,11 +1636,15 @@ export function AppRoot() {
     loadingYaohuoLoginPage,
     loginState,
     nodeSeekWebViewUserAgent,
+    nodeImageApiKeyBusy,
+    nodeImageApiKeySaved,
     openUser,
     readerData.settings,
     refreshAccountStatus,
     refreshLinuxDoLevel,
     rememberVisibleNodeSeekCookiesAndRetrySearch,
+    saveNodeImageApiKeyInput,
+    clearNodeImageApiKeyInput,
     showLinuxDoPanel,
     showLoginPanel,
     showSettingsPanel,
@@ -1480,10 +1683,11 @@ export function AppRoot() {
       topicFavorite,
       replyComposerOpen,
       replyContent,
+      replyEditTarget,
       replyFilter,
       replyTarget,
       replyHasMore,
-      replies: filteredReplies,
+      replies: displayReplies,
       selectedTopic,
       sourceReplies: topicReplies,
       styles,
@@ -1496,6 +1700,8 @@ export function AppRoot() {
       onBack: goBackFromTopic,
       onCommentQueryChange: setCommentQuery,
       optimisticActions: optimisticTopicActions,
+      onDeleteReply: deleteReply,
+      onEditReply: editReply,
       onInteract: interact,
       onLinuxDoBookmark: bookmarkOnLinuxDoSite,
       onNodeSeekCollection: collectOnNodeSeekSite,
@@ -1514,6 +1720,7 @@ export function AppRoot() {
       onVerifyLinuxDo: verifyLinuxDoFromTopic,
       onVerifyNodeSeek: verifyNodeSeekFromTopic,
       onSubmitReply: submitReply,
+      onUploadReplyImage: uploadReplyImage,
       onTopicScroll: handleTopicScroll,
       onToggleQuotedFloor: toggleQuotedFloor,
       onToggleFavorite: toggleTopicFavorite,
@@ -1526,11 +1733,13 @@ export function AppRoot() {
     canUseYaohuoActions,
     collectOnNodeSeekSite,
     commentQuery,
+    deleteReply,
+    editReply,
     contentWidth,
     debouncedCommentQuery,
     expandedQuotesRef,
     favoriteOnYaohuoSite,
-    filteredReplies,
+    displayReplies,
     goBackFromTopic,
     handleTopicScroll,
     htmlBaseStyle,
@@ -1554,6 +1763,7 @@ export function AppRoot() {
     refreshWholeTopic,
     replyComposerOpen,
     replyContent,
+    replyEditTarget,
     replyFilter,
     replyHasMore,
     replyTarget,
@@ -1576,6 +1786,7 @@ export function AppRoot() {
     unreadReplyCount,
     verifyNodeSeekFromTopic,
     verifyLinuxDoFromTopic,
+    uploadReplyImage,
     votePoll
   ]);
 
@@ -1676,6 +1887,8 @@ export function AppRoot() {
               closeImagePreview={closeImagePreview}
               handleLinuxDoMessage={handleLinuxDoMessage}
               handleLinuxDoNavigation={handleLinuxDoNavigation}
+              handleNodeImageAuthMessage={handleNodeImageAuthMessage}
+              handleNodeImageAuthNavigation={handleNodeImageAuthNavigation}
               imagePreview={imagePreview}
               linuxDoSession={siteSessionViewModels.linuxdo}
               linuxDoWebViewError={linuxDoWebViewError}
@@ -1683,18 +1896,28 @@ export function AppRoot() {
               linuxDoWebViewRef={linuxDoWebViewRef}
               linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
               loadingLinuxDoPage={loadingLinuxDoPage}
+              loadingNodeImageAuthPage={loadingNodeImageAuthPage}
               mountLinuxDoWebView={mountLinuxDoWebView}
+              nodeImageAuthError={nodeImageAuthError}
+              nodeImageAuthPayload={nodeImageAuthPayload}
+              nodeImageAuthUrl={nodeImageAuthUrl}
+              nodeImageAuthWebViewRef={nodeImageAuthWebViewRef}
+              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
               resetLinuxDoWebView={resetLinuxDoWebView}
               savePreviewImage={savePreviewImage}
               selectPreviewImage={selectPreviewImage}
               setLinuxDoWebViewErrorForSession={setLinuxDoWebViewErrorForSession}
               setLoadingLinuxDoPageForSession={setLoadingLinuxDoPageForSession}
+              setLoadingNodeImageAuthPage={setLoadingNodeImageAuthPage}
+              setNodeImageAuthError={setNodeImageAuthError}
               showLinuxDoPanel={showLinuxDoPanel}
+              showNodeImageAuthPanel={showNodeImageAuthPanel}
               showNextImage={showNextImage}
               showPreviousImage={showPreviousImage}
               styles={styles}
               theme={theme}
               changeLinuxDoPanel={changeLinuxDoPanel}
+              closeNodeImageAuthPanel={closeNodeImageAuthPanel}
             />
             <AppNavigator
               moreHasBadge={Boolean(appUpdateInfo)}

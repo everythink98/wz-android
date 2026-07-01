@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
+  buildNodeSeekEditReplyRequest,
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
@@ -21,6 +22,7 @@ describe('NodeSeek action request builders', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        referer: 'https://www.nodeseek.com/post-723704-1',
         'csrf-token': 'fixed-csrf-token'
       },
       body: JSON.stringify({
@@ -37,6 +39,20 @@ describe('NodeSeek action request builders', () => {
       content: '   ',
       csrfToken: 'fixed-csrf-token'
     })).toThrow('请输入回复内容');
+  });
+
+  it('rejects NodeSeek content writes without a real csrf token', () => {
+    expect(() => buildNodeSeekReplyRequest({
+      postId: '723704',
+      content: '谢谢分享',
+      csrfToken: ' '
+    })).toThrow('NodeSeek token 缺失，请重新检测登录');
+
+    expect(() => buildNodeSeekEditReplyRequest({
+      commentId: '812345',
+      content: '更新后的内容',
+      csrfToken: ''
+    })).toThrow('NodeSeek token 缺失，请重新检测登录');
   });
 
   it('prefixes NodeSeek floor replies with the original floor reference', () => {
@@ -90,6 +106,26 @@ describe('NodeSeek action request builders', () => {
       body: JSON.stringify({
         commentId: 812345,
         action: 'add'
+      })
+    });
+  });
+
+  it('builds an edit request for an own NodeSeek comment', () => {
+    expect(buildNodeSeekEditReplyRequest({
+      commentId: '812345',
+      content: '  更新后的内容  ',
+      csrfToken: 'fixed-csrf-token'
+    })).toEqual({
+      path: '/api/content/edit-comment',
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'csrf-token': 'fixed-csrf-token'
+      },
+      body: JSON.stringify({
+        commentId: 812345,
+        content: '更新后的内容',
+        mode: 'edit-comment'
       })
     });
   });

@@ -21,7 +21,7 @@ import {
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
-import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyFilter, ReplyTarget } from '../../appTypes';
+import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
@@ -39,6 +39,8 @@ import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForMessage } from '../../siteSessionPrompts';
 import { getLinuxDoEmojiUrls } from '../../localLinuxdo';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
+import { canUseLinuxDoLike } from '../../linuxdoPermissions';
+import { replyImageUploadSupported } from '../../replyImageUpload';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
@@ -163,6 +165,7 @@ export const TopicScreen = memo(function TopicScreen({
   quoteStateVersion,
   replyComposerOpen,
   replyContent,
+  replyEditTarget,
   replyFilter,
   replyTarget,
   replyHasMore,
@@ -180,6 +183,8 @@ export const TopicScreen = memo(function TopicScreen({
   onBack,
   onCommentQueryChange,
   optimisticActions,
+  onDeleteReply,
+  onEditReply,
   onInteract,
   onLinuxDoBookmark,
   onNodeSeekCollection,
@@ -198,6 +203,7 @@ export const TopicScreen = memo(function TopicScreen({
   onVerifyLinuxDo,
   onVerifyNodeSeek,
   onSubmitReply,
+  onUploadReplyImage,
   onTopicScroll,
   onToggleQuotedFloor,
   onToggleFavorite,
@@ -225,6 +231,7 @@ export const TopicScreen = memo(function TopicScreen({
   quoteStateVersion: number;
   replyComposerOpen: boolean;
   replyContent: string;
+  replyEditTarget: ReplyEditTarget | null;
   replyFilter: ReplyFilter;
   replyTarget: ReplyTarget | null;
   replyHasMore: boolean;
@@ -242,6 +249,8 @@ export const TopicScreen = memo(function TopicScreen({
   onBack: () => void;
   onCommentQueryChange: (value: string) => void;
   optimisticActions: Record<string, OptimisticActionState>;
+  onDeleteReply: (reply: Reply) => void;
+  onEditReply: (reply: Reply) => void;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onLinuxDoBookmark: () => void;
   onNodeSeekCollection: () => void;
@@ -260,6 +269,7 @@ export const TopicScreen = memo(function TopicScreen({
   onVerifyLinuxDo: () => void;
   onVerifyNodeSeek: () => void;
   onSubmitReply: () => void;
+  onUploadReplyImage: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
   onToggleFavorite: (topic: Topic) => void;
@@ -274,6 +284,15 @@ export const TopicScreen = memo(function TopicScreen({
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
+  const replyTargetKey = replyTarget ? `${replyTarget.floor}:${replyTarget.author}` : '';
+  const replyEditTargetKey = replyEditTarget ? `${replyEditTarget.commentId}:${replyEditTarget.floor || ''}` : '';
+  const listExtraData = useMemo(() => ({
+    actionBusy,
+    quoteStateVersion,
+    replyContent,
+    replyEditTargetKey,
+    replyTargetKey
+  }), [actionBusy, quoteStateVersion, replyContent, replyEditTargetKey, replyTargetKey]);
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
@@ -403,17 +422,18 @@ export const TopicScreen = memo(function TopicScreen({
     }
     if (canShowReplies && !topicShowsAccessNotice) {
       items.push({ type: 'replyControls', key: 'reply-controls' });
-      const targetReplyVisible = replyTarget ? replyItems.some((entry) => entry.type === 'reply' && entry.replyFloor === replyTarget.floor) : false;
-      if (canWrite && replyComposerOpen && !replyTarget) {
+      const composerTargetFloor = replyEditTarget?.floor ?? replyTarget?.floor;
+      const targetReplyVisible = composerTargetFloor ? replyItems.some((entry) => entry.type === 'reply' && entry.replyFloor === composerTargetFloor) : false;
+      if (canWrite && replyComposerOpen && !composerTargetFloor) {
         items.push({ type: 'replyComposer', key: 'reply-composer' });
       }
-      if (canWrite && replyComposerOpen && replyTarget && !targetReplyVisible) {
-        items.push({ type: 'replyComposer', key: `reply-composer-hidden-target-${replyTarget.floor}`, replyFloor: replyTarget.floor });
+      if (canWrite && replyComposerOpen && composerTargetFloor && !targetReplyVisible) {
+        items.push({ type: 'replyComposer', key: `reply-composer-hidden-target-${composerTargetFloor}`, replyFloor: composerTargetFloor });
       }
       if (replyItems.length) {
         replyItems.forEach((entry) => {
           items.push(entry);
-          const isTargetReply = replyTarget && entry.type === 'reply' && entry.replyFloor === replyTarget.floor;
+          const isTargetReply = composerTargetFloor && entry.type === 'reply' && entry.replyFloor === composerTargetFloor;
           if (canWrite && replyComposerOpen && isTargetReply) {
             items.push({ type: 'replyComposer', key: `reply-composer-${entry.replyFloor}`, replyFloor: entry.replyFloor });
           }
@@ -423,7 +443,7 @@ export const TopicScreen = memo(function TopicScreen({
       }
     }
     return items;
-  }, [canShowReplies, canWrite, replyComposerOpen, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
+  }, [canShowReplies, canWrite, replyComposerOpen, replyEditTarget, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -685,7 +705,7 @@ export const TopicScreen = memo(function TopicScreen({
           ) : null}
           {canWriteLinuxDo ? (
             <View style={styles.topicPrimaryActions}>
-              <DetailActionButton active={Boolean(topic?.liked)} accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              {canUseLinuxDoLike(topic) ? <DetailActionButton active={Boolean(topic?.liked)} accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
               <DetailActionButton active={Boolean(topic?.bookmarked)} accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
             </View>
           ) : null}
@@ -698,13 +718,16 @@ export const TopicScreen = memo(function TopicScreen({
         <ReplyComposer
           actionBusy={actionBusy}
           replyContent={replyContent}
+          replyEditTarget={replyEditTarget}
           replyTarget={replyTarget}
+          source={topic?.source}
           styles={styles}
           theme={theme}
           topicColumnStyle={topicColumnStyle}
           onReplyComposerOpenChange={onReplyComposerOpenChange}
           onReplyContentChange={onReplyContentChange}
           onSubmitReply={onSubmitReply}
+          onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
         />
       );
     }
@@ -740,6 +763,8 @@ export const TopicScreen = memo(function TopicScreen({
           theme={theme}
           topicAuthor={item?.author}
           onInteract={onInteract}
+          onDeleteReply={onDeleteReply}
+          onEditReply={onEditReply}
           onVotePoll={onVotePoll}
           onReplyToFloor={onReplyToFloor}
           onToggleQuotedFloor={onToggleQuotedFloor}
@@ -767,6 +792,8 @@ export const TopicScreen = memo(function TopicScreen({
     linuxDoEmojiUrls,
     newReplyFloorStart,
     onCommentQueryChange,
+    onDeleteReply,
+    onEditReply,
     onInteract,
     onLinuxDoBookmark,
     onNodeSeekCollection,
@@ -775,6 +802,7 @@ export const TopicScreen = memo(function TopicScreen({
     onReplyFilterChange,
     onReplyToFloor,
     onSubmitReply,
+    onUploadReplyImage,
     onToggleQuotedFloor,
     onOpenUser,
     onYaohuoFavorite,
@@ -786,6 +814,7 @@ export const TopicScreen = memo(function TopicScreen({
     replyComposerOpen,
     replyHighlightQuery,
     replyContent,
+    replyEditTarget,
     replyFilter,
     replyTarget,
     repliesByFloor,
@@ -912,7 +941,7 @@ export const TopicScreen = memo(function TopicScreen({
           onEndReached={handleReplyEndReached}
           onScrollBeginDrag={armReplyAutoLoad}
           onMomentumScrollBegin={armReplyAutoLoad}
-          extraData={quoteStateVersion}
+          extraData={listExtraData}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
           ListFooterComponent={canShowReplies && replyHasMore ? (

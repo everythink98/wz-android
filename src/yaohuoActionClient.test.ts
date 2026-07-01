@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runYaohuoAction } from './yaohuoActionClient';
-import { buildYaohuoFavoriteRequest, buildYaohuoReplyRequest } from './yaohuoActions';
+import { buildYaohuoDeleteReplyRequest, buildYaohuoFavoriteRequest, buildYaohuoReplyRequest } from './yaohuoActions';
 
 function htmlResponse(body: string, status = 200, url = 'https://yaohuo.me/bbs/book_re.aspx') {
   const response = new Response(body, {
@@ -61,6 +61,37 @@ describe('runYaohuoAction', () => {
       body: undefined,
       signal: expect.any(AbortSignal)
     }));
+  });
+
+  it('follows yaohuo reply delete confirmation links before reporting success', async () => {
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.includes('action=go&')) {
+        return htmlResponse(`
+          <html>
+            <body>
+              论坛回复 删除操作 删除自己回帖扣2倍币和经验
+              <a href="/bbs/book_re_del.aspx?action=godel&amp;reid=32656658&amp;id=1560268&amp;siteid=1000&amp;classid=177&amp;lpage=&amp;page=1&amp;ot=&amp;token=fixed-token">确定删除！</a>
+            </body>
+          </html>
+        `, 200, url);
+      }
+      return htmlResponse('<div class="tip">删除成功</div>', 200, url);
+    });
+
+    const result = await runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoDeleteReplyRequest({
+        deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&page=1&reid=32656658&id=1560268'
+      }),
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re_del.aspx?action=godel&reid=32656658&id=1560268&siteid=1000&classid=177&lpage=&page=1&ot=&token=fixed-token', expect.objectContaining({
+      method: 'GET',
+      body: undefined
+    }));
+    expect(result.message).toBe('删除成功');
   });
 
   it('does not report long full pages without a tip as submitted', async () => {

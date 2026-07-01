@@ -1,7 +1,7 @@
 import type { Screen } from '../appTypes';
 import type { TopicSnapshot } from '../appTypes';
 import type { OptimisticActionState } from '../topicActionState';
-import type { Source, Topic, TopicDetail, TopicPoll } from '../types';
+import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 
 type TopicActionTopic = Topic | TopicDetail;
 
@@ -33,6 +33,10 @@ export function canVotePollOnTopic(topic: TopicActionTopic | null): topic is Top
 
 export function topicReplyActionKey(topicKey: string) {
   return `reply:${topicKey}`;
+}
+
+export function topicEditReplyActionKey(topicKey: string, commentId: string | number) {
+  return `edit-reply:${topicKey}:${commentId}`;
 }
 
 export function yaohuoFavoriteActionKey(topicKey: string) {
@@ -77,6 +81,44 @@ export function topicSnapshotForUserReturn(snapshot: TopicSnapshot, hasPendingOp
     loadingQuotedFloors: {},
     scrollY: 0
   };
+}
+
+export function markCurrentNodeSeekOwnRepliesUnlikable(replies: Reply[], currentUser: UserProfile | undefined, currentUserId?: number | null) {
+  const cleanCurrentUserId = positiveId(currentUserId) || (currentUser?.source === 'nodeseek' ? String(currentUser.id || '').trim() : '');
+  if (!cleanCurrentUserId) {
+    return replies;
+  }
+  let changed = false;
+  const next = replies.map((reply) => {
+    if (!isCurrentNodeSeekReply(reply, currentUser, cleanCurrentUserId)) {
+      return reply;
+    }
+    const canEdit = Boolean(reply.commentId && reply.contentMarkdown);
+    if (reply.canLike === false && reply.canEdit === canEdit) {
+      return reply;
+    }
+    changed = true;
+    if (canEdit) {
+      return { ...reply, canEdit: true, canLike: false };
+    }
+    const nextReply = { ...reply };
+    delete nextReply.canEdit;
+    return { ...nextReply, canLike: false };
+  });
+  return changed ? next : replies;
+}
+
+function isCurrentNodeSeekReply(reply: Reply, currentUser: UserProfile | undefined, currentUserId: string) {
+  if (currentUser && currentUser.source !== 'nodeseek') {
+    return false;
+  }
+  const replyAuthorId = String(reply.authorId || '').trim();
+  return Boolean(replyAuthorId && currentUserId && replyAuthorId === currentUserId);
+}
+
+function positiveId(value: unknown) {
+  const number = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(number) && number > 0 ? String(number) : '';
 }
 
 function isActionSource(source: Source | undefined, supportedSources: Source[]) {

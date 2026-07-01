@@ -32,6 +32,8 @@ export const MoreScreen = memo(function MoreScreen({
   linuxDoLevelBusy,
   linuxDoLevelError,
   linuxDoLevelProfile,
+  nodeImageApiKeyBusy,
+  nodeImageApiKeySaved,
   nodeSeekWebViewUserAgent,
   settings,
   showLoginPanel,
@@ -56,6 +58,9 @@ export const MoreScreen = memo(function MoreScreen({
   onCheckIn,
   onCheckLogin,
   onRememberNodeSeekCookies,
+  onAuthorizeNodeImageApiKey,
+  onSaveNodeImageApiKey,
+  onClearNodeImageApiKey,
   onCheckYaohuoLogin,
   onRefreshLinuxDoLevel,
   onClearLogin,
@@ -86,6 +91,8 @@ export const MoreScreen = memo(function MoreScreen({
   linuxDoLevelBusy: boolean;
   linuxDoLevelError: string;
   linuxDoLevelProfile: LinuxDoLevelProfile | null;
+  nodeImageApiKeyBusy: boolean;
+  nodeImageApiKeySaved: boolean;
   nodeSeekWebViewUserAgent: string;
   settings: ReaderSettings;
   showLoginPanel: boolean;
@@ -110,6 +117,9 @@ export const MoreScreen = memo(function MoreScreen({
   onCheckIn: () => void;
   onCheckLogin: () => void;
   onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
+  onAuthorizeNodeImageApiKey: () => void;
+  onSaveNodeImageApiKey: (value: string) => void;
+  onClearNodeImageApiKey: () => void;
   onCheckYaohuoLogin: () => void;
   onRefreshLinuxDoLevel: () => void;
   onClearLogin: () => void;
@@ -259,6 +269,8 @@ export const MoreScreen = memo(function MoreScreen({
         <NodeSeekLoginPanel
           checking={checking}
           nodeSeekSession={nodeSeekSession}
+          nodeImageApiKeyBusy={nodeImageApiKeyBusy}
+          nodeImageApiKeySaved={nodeImageApiKeySaved}
           accountExpanded={accountExpanded}
           loginState={loginState}
           loadingLoginPage={loadingLoginPage}
@@ -269,6 +281,9 @@ export const MoreScreen = memo(function MoreScreen({
           webViewRef={webViewRef}
           onCheckIn={onCheckIn}
           onCheckLogin={onCheckLogin}
+          onAuthorizeNodeImageApiKey={onAuthorizeNodeImageApiKey}
+          onSaveNodeImageApiKey={onSaveNodeImageApiKey}
+          onClearNodeImageApiKey={onClearNodeImageApiKey}
           onClearLogin={onClearLogin}
           onHandleLoginMessage={onHandleLoginMessage}
           handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}

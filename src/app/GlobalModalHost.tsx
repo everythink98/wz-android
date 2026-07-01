@@ -1,11 +1,15 @@
-import type { RefObject } from 'react';
+import { useMemo, type RefObject } from 'react';
+import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { ImagePreviewModal } from '../components/ImagePreviewModal';
+import { AppButton } from '../components/AppControls';
+import { LoginWebViewModal } from '../components/LoginWebViewModal';
 import type { ImagePreviewList } from '../htmlImages';
 import type { LoginNavigationRequest } from '../appTypes';
 import { MemoizedLinuxDoVerifyModal } from './LinuxDoVerifyModal';
 import type { SiteSessionViewModel } from '../siteSessionState';
 import type { createStyles, ReaderTheme } from '../theme';
+import { nodeImageApiKeyProbeScript, type NodeImageAuthPayload } from '../loginWebViewScripts';
 
 export function GlobalModalHost({
   checking,
@@ -19,18 +23,30 @@ export function GlobalModalHost({
   linuxDoWebViewRef,
   linuxDoWebViewUserAgent,
   loadingLinuxDoPage,
+  loadingNodeImageAuthPage,
   mountLinuxDoWebView,
+  nodeImageAuthError,
+  nodeImageAuthPayload,
+  nodeImageAuthUrl,
+  nodeImageAuthWebViewRef,
+  nodeSeekWebViewUserAgent,
   resetLinuxDoWebView,
   checkLinuxDoCookie,
   clearLinuxDoCookie,
+  handleNodeImageAuthMessage,
+  handleNodeImageAuthNavigation,
   setLinuxDoWebViewErrorForSession,
   setLoadingLinuxDoPageForSession,
+  setLoadingNodeImageAuthPage,
+  setNodeImageAuthError,
+  showNodeImageAuthPanel,
   showLinuxDoPanel,
   showNextImage,
   showPreviousImage,
   savePreviewImage,
   selectPreviewImage,
   changeLinuxDoPanel,
+  closeNodeImageAuthPanel,
   styles,
   theme
 }: {
@@ -45,21 +61,37 @@ export function GlobalModalHost({
   linuxDoWebViewRef: RefObject<WebView | null>;
   linuxDoWebViewUserAgent: string;
   loadingLinuxDoPage: boolean;
+  loadingNodeImageAuthPage: boolean;
   mountLinuxDoWebView: boolean;
+  nodeImageAuthError: string;
+  nodeImageAuthPayload: NodeImageAuthPayload | null;
+  nodeImageAuthUrl: string;
+  nodeImageAuthWebViewRef: RefObject<WebView | null>;
+  nodeSeekWebViewUserAgent: string;
   resetLinuxDoWebView: () => void;
   checkLinuxDoCookie: () => void;
   clearLinuxDoCookie: () => void;
+  handleNodeImageAuthMessage: (event: WebViewMessageEvent) => void;
+  handleNodeImageAuthNavigation: (request: LoginNavigationRequest) => boolean;
   setLinuxDoWebViewErrorForSession: (value: string, webViewKey?: number) => void;
   setLoadingLinuxDoPageForSession: (value: boolean, webViewKey?: number) => void;
+  setLoadingNodeImageAuthPage: (value: boolean) => void;
+  setNodeImageAuthError: (value: string) => void;
+  showNodeImageAuthPanel: boolean;
   showLinuxDoPanel: boolean;
   showNextImage: () => void;
   showPreviousImage: () => void;
   savePreviewImage: () => void;
   selectPreviewImage: (index: number) => void;
   changeLinuxDoPanel: (value: boolean) => void;
+  closeNodeImageAuthPanel: () => void;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
 }) {
+  const nodeImageProbeScript = useMemo(() => (
+    nodeImageApiKeyProbeScript(nodeImageAuthPayload)
+  ), [nodeImageAuthPayload]);
+
   return (
     <>
       <MemoizedLinuxDoVerifyModal
@@ -83,6 +115,57 @@ export function GlobalModalHost({
         onSetLoadingLinuxDoPage={setLoadingLinuxDoPageForSession}
         onShowLinuxDoPanelChange={changeLinuxDoPanel}
       />
+      <LoginWebViewModal
+        visible={showNodeImageAuthPanel}
+        title="NodeImage 授权"
+        subtitle="通过 NodeSeek 授权后自动保存 Key"
+        loading={loadingNodeImageAuthPage}
+        loadingText="正在打开 NodeImage..."
+        error={nodeImageAuthError}
+        styles={styles}
+        theme={theme}
+        onClose={closeNodeImageAuthPanel}
+        actions={(
+          <View style={styles.actions}>
+            <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={() => nodeImageAuthWebViewRef.current?.reload()} />
+          </View>
+        )}
+      >
+        {showNodeImageAuthPanel ? (
+          <WebView
+            ref={nodeImageAuthWebViewRef}
+            source={{ uri: nodeImageAuthUrl }}
+            javaScriptCanOpenWindowsAutomatically={false}
+            sharedCookiesEnabled
+            thirdPartyCookiesEnabled
+            setSupportMultipleWindows={false}
+            userAgent={nodeSeekWebViewUserAgent}
+            injectedJavaScript={nodeImageProbeScript}
+            onLoadStart={() => {
+              setNodeImageAuthError('');
+              setLoadingNodeImageAuthPage(true);
+            }}
+            onLoadEnd={(event) => {
+              setLoadingNodeImageAuthPage(false);
+              if ('code' in event.nativeEvent) {
+                return;
+              }
+              nodeImageAuthWebViewRef.current?.injectJavaScript(nodeImageProbeScript);
+            }}
+            onMessage={handleNodeImageAuthMessage}
+            onError={(event) => {
+              setLoadingNodeImageAuthPage(false);
+              setNodeImageAuthError(`NodeImage 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
+            }}
+            renderError={() => <View style={styles.webViewErrorPlaceholder} />}
+            onRenderProcessGone={() => {
+              setLoadingNodeImageAuthPage(false);
+              setNodeImageAuthError('NodeImage 授权页面已停止，请刷新页面重试。');
+            }}
+            onShouldStartLoadWithRequest={handleNodeImageAuthNavigation}
+          />
+        ) : null}
+      </LoginWebViewModal>
       <ImagePreviewModal
         preview={imagePreview}
         styles={styles}

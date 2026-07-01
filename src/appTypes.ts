@@ -19,6 +19,12 @@ export interface ReplyTarget {
   commentId?: number;
 }
 
+export interface ReplyEditTarget {
+  commentId: number;
+  floor?: number;
+  contentMarkdown: string;
+}
+
 export type TopicSnapshot = {
   key?: string;
   selectedTopic: Topic | null;
@@ -34,6 +40,7 @@ export type TopicSnapshot = {
   replyContent: string;
   replyComposerOpen: boolean;
   replyTarget: ReplyTarget | null;
+  replyEditTarget: ReplyEditTarget | null;
   expandedQuotes: Record<string, boolean>;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;

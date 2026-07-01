@@ -7,7 +7,9 @@ import {
   canStoreNodeSeekCookieHeader,
   mergeNodeSeekCookies,
   nodeSeekBrowserCookieHeaderForPersistence,
+  nodeSeekCsrfTokenFromHtml,
   nodeSeekLoginCookieNames,
+  nodeSeekUserIdFromCookies,
   nodeSeekAccessRecord,
   NODESEEK_ACCESS_STORAGE_KEY,
   NODESEEK_COOKIE_STORAGE_KEY,
@@ -40,7 +42,8 @@ import {
 } from '../linuxdoCookieBridge';
 import { clearCookieUrls } from '../cookieCleanup';
 import { NODESEEK_URL, YAOHUO_URL } from '../appUrls';
-import type { FeedSource, Source } from '../types';
+import { getNodeSeekCurrentUserProfile } from '../localNodeseek';
+import type { FeedSource, Source, UserProfile } from '../types';
 import type { Fetcher } from '../request';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
@@ -92,8 +95,14 @@ async function readNodeSeekAccessFromStore() {
   return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
 }
 
-async function writeNodeSeekAccessToStore(cookieHeader: string, userAgent?: string, userId?: number | null) {
-  await SecureStore.setItemAsync(NODESEEK_ACCESS_STORAGE_KEY, JSON.stringify(nodeSeekAccessRecord(cookieHeader, userAgent, userId)));
+async function writeNodeSeekAccessToStore(cookieHeader: string, userAgent?: string, userId?: number | null, csrfToken?: string | null) {
+  const savedAccess = userId === undefined || csrfToken === undefined ? await readNodeSeekAccessFromStore() : null;
+  await SecureStore.setItemAsync(NODESEEK_ACCESS_STORAGE_KEY, JSON.stringify(nodeSeekAccessRecord(
+    cookieHeader,
+    userAgent,
+    userId === undefined ? savedAccess?.userId : userId,
+    csrfToken === undefined ? savedAccess?.csrfToken : csrfToken
+  )));
   await SecureStore.deleteItemAsync(NODESEEK_COOKIE_STORAGE_KEY).catch(() => undefined);
   await SecureStore.deleteItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY).catch(() => undefined);
 }
@@ -290,7 +299,7 @@ export function useSessionController({
 
   const saveNodeSeekCookieHeader = useCallback(async (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    { verifiedByPage = false, isCurrent = () => true, generation, resetCurrentUser = false, userId }: { verifiedByPage?: boolean; isCurrent?: () => boolean; generation?: number; resetCurrentUser?: boolean; userId?: number | null } = {}
+    { verifiedByPage = false, isCurrent = () => true, generation, resetCurrentUser = false, userId, csrfToken }: { verifiedByPage?: boolean; isCurrent?: () => boolean; generation?: number; resetCurrentUser?: boolean; userId?: number | null; csrfToken?: string | null } = {}
   ) => {
     const summary = summarizeNodeSeekCookies(cookies);
     const cookieHeader = buildCookieHeader(cookies);
@@ -300,9 +309,20 @@ export function useSessionController({
         return '';
       }
       if (canStoreNodeSeekCookieHeader(cookies, verifiedByPage) && cookieHeader) {
-        await writeNodeSeekAccessToStore(cookieHeader, nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT, userId);
+        const cookieUserId = nodeSeekUserIdFromCookies(cookies);
+        const effectiveUserId = userId === undefined ? summary.loggedIn ? cookieUserId : null : userId;
+        const effectiveCsrfToken = csrfToken === undefined ? summary.loggedIn ? undefined : null : csrfToken;
+        await writeNodeSeekAccessToStore(
+          cookieHeader,
+          nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+          effectiveUserId,
+          effectiveCsrfToken
+        );
         if (!stillCurrent()) {
           return '';
+        }
+        if (effectiveUserId !== undefined) {
+          setWebLoginUserId(effectiveUserId || null);
         }
         updateNodeSeekSession({
           type: 'cookie-loaded',
@@ -329,31 +349,6 @@ export function useSessionController({
     return saved || '';
   }, [nodeSeekWebViewUserAgentRef, updateNodeSeekSession]);
 
-  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source, options?: CredentialLoadOptions) => {
-    if (source !== 'all' && source !== 'nodeseek') {
-      return undefined;
-    }
-    const generation = nodeSeekCredentialGateRef.current.generation;
-    options?.captureGeneration?.(generation);
-    const cookies = await readNodeSeekCookiesFromStores();
-    const savedAccess = await readNodeSeekAccessFromStore();
-    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedAccess?.cookieHeader || ''), cookies), { generation });
-    if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
-      return undefined;
-    }
-    if (webViewCookieHeader) {
-      return webViewCookieHeader;
-    }
-    if (savedAccess?.cookieHeader) {
-      const savedCookies = parseNodeSeekDocumentCookie(savedAccess.cookieHeader);
-      const summary = summarizeNodeSeekCookies(savedCookies);
-      updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, canStoreNodeSeekCookieHeader(savedCookies), summary.loggedIn));
-      return savedAccess.cookieHeader;
-    }
-    updateNodeSeekSession({ type: 'cleared' });
-    return undefined;
-  }, [saveNodeSeekCookieHeader, updateNodeSeekSession]);
-
   const startNextNodeSeekBrowserFetch = useCallback(() => {
     startNextBrowserFetchRequest({
       currentRef: nodeSeekBrowserFetchCurrentRef,
@@ -378,16 +373,16 @@ export function useSessionController({
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, nodeSeekBrowserWebViewRef, setNodeSeekBrowserFetchRequest, startNextNodeSeekBrowserFetch]);
   rejectNodeSeekBrowserFetchRef.current = rejectNodeSeekBrowserFetch;
 
-  const nodeSeekFetchWithWebView: Fetcher = useCallback((input, init) => {
+  const nodeSeekFetchWithWebView: Fetcher = useCallback(async (input, init) => {
     const url = String(input);
     if (!isNodeSeekRequestUrl(url)) {
       return fetch(input, init);
     }
+    const cookie = requestHeaderValue(init?.headers, 'cookie');
+    const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
     return new Promise<Response>((resolve, reject) => {
       let request: PendingNodeSeekBrowserFetchRequest;
       const id = ++nodeSeekBrowserFetchIdRef.current;
-      const cookie = requestHeaderValue(init?.headers, 'cookie');
-      const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
       request = {
         id,
         url,
@@ -426,6 +421,7 @@ export function useSessionController({
     userAgent?: string;
     challenge?: boolean;
     error?: string;
+    httpErrorStatus?: number;
   }) => {
     const current = nodeSeekBrowserFetchCurrentRef.current;
     if (!current || data.id !== current.id) {
@@ -454,7 +450,7 @@ export function useSessionController({
       nodeSeekWebViewCookieHeaderRef.current = cookieHeaderForPersistence;
     }
     const settled = settleBrowserFetchRequestOnce(current, () => {
-      current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), current.httpErrorStatus));
+      current.resolve(nodeSeekBrowserResponse(data.html || '', Boolean(data.challenge), data.httpErrorStatus || current.httpErrorStatus));
     });
     if (!settled) {
       return;
@@ -465,7 +461,10 @@ export function useSessionController({
       void runBestEffortTask(async () => {
         await CookieManager.flush();
         const nativeCookies = await readNodeSeekCookiesFromStores();
-        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(cookieHeaderForPersistence)), { generation });
+        await saveNodeSeekCookieHeader(mergeNodeSeekCookies(nativeCookies, parseNodeSeekDocumentCookie(cookieHeaderForPersistence)), {
+          generation,
+          csrfToken: nodeSeekCsrfTokenFromHtml(data.html || '')
+        });
       }, NODESEEK_COOKIE_PERSIST_TIMEOUT_MS);
     }
   }, [
@@ -566,6 +565,98 @@ export function useSessionController({
     defaultFetcher: nodeSeekFetchWithWebViewFallback,
     webViewFetcher: linuxDoFetchWithWebView
   }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]);
+
+  const restoreNodeSeekIdentityForAccess = useCallback(async ({
+    cookieHeader,
+    cookieSummary,
+    generation,
+    knownUserId,
+    userAgent
+  }: {
+    cookieHeader: string;
+    cookieSummary: string[];
+    generation: number;
+    knownUserId?: number;
+    userAgent?: string;
+  }) => {
+    if (!cookieHeader || !isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
+      return;
+    }
+    let currentUser: UserProfile;
+    try {
+      currentUser = await getNodeSeekCurrentUserProfile({
+        fetcher: fetch,
+        nodeSeekCookie: cookieHeader,
+        nodeSeekUserAgent: userAgent || nodeSeekWebViewUserAgentRef.current,
+        timeoutMs: NODESEEK_BROWSER_FETCH_TIMEOUT_MS
+      });
+    } catch {
+      if (knownUserId) {
+        await writeNodeSeekAccessToStore(cookieHeader, userAgent || nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT, knownUserId);
+      }
+      if (isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
+        setWebLoginUserId(knownUserId || null);
+      }
+      return;
+    }
+    const userId = Number(currentUser.id);
+    if (!Number.isInteger(userId) || userId <= 0 || !isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
+      return;
+    }
+    await writeNodeSeekAccessToStore(cookieHeader, userAgent || nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT, userId);
+    if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
+      return;
+    }
+    setWebLoginUserId(userId);
+    updateNodeSeekSession({
+      type: 'cookie-loaded',
+      cookieSummary,
+      hasVerification: true,
+      loggedIn: true,
+      currentUser,
+      at: new Date().toISOString()
+    });
+  }, [nodeSeekWebViewUserAgentRef, setWebLoginUserId, updateNodeSeekSession]);
+
+  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source, options?: CredentialLoadOptions) => {
+    if (source !== 'all' && source !== 'nodeseek') {
+      return undefined;
+    }
+    const generation = nodeSeekCredentialGateRef.current.generation;
+    options?.captureGeneration?.(generation);
+    const cookies = await readNodeSeekCookiesFromStores();
+    const savedAccess = await readNodeSeekAccessFromStore();
+    const webViewCookieHeader = await saveNodeSeekCookieHeader(mergeNodeSeekCookies(parseNodeSeekDocumentCookie(savedAccess?.cookieHeader || ''), cookies), { generation });
+    if (!isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation)) {
+      return undefined;
+    }
+    if (webViewCookieHeader) {
+      const summary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(webViewCookieHeader));
+      await restoreNodeSeekIdentityForAccess({
+        cookieHeader: webViewCookieHeader,
+        cookieSummary: summary.names,
+        generation,
+        knownUserId: savedAccess?.userId,
+        userAgent: savedAccess?.userAgent || nodeSeekWebViewUserAgentRef.current
+      });
+      return isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation) ? webViewCookieHeader : undefined;
+    }
+    if (savedAccess?.cookieHeader) {
+      const savedCookies = parseNodeSeekDocumentCookie(savedAccess.cookieHeader);
+      const summary = summarizeNodeSeekCookies(savedCookies);
+      updateNodeSeekSession(siteEventWithCookieFacts('nodeseek', summary.names, canStoreNodeSeekCookieHeader(savedCookies), summary.loggedIn));
+      await restoreNodeSeekIdentityForAccess({
+        cookieHeader: savedAccess.cookieHeader,
+        cookieSummary: summary.names,
+        generation,
+        knownUserId: savedAccess.userId,
+        userAgent: savedAccess.userAgent || nodeSeekWebViewUserAgentRef.current
+      });
+      return isCredentialWriteCurrent(nodeSeekCredentialGateRef.current, generation) ? savedAccess.cookieHeader : undefined;
+    }
+    updateNodeSeekSession({ type: 'cleared' });
+    return undefined;
+  }, [nodeSeekWebViewUserAgentRef, restoreNodeSeekIdentityForAccess, saveNodeSeekCookieHeader, updateNodeSeekSession]);
 
   const completeLinuxDoBrowserFetch = useCallback(async (data: {
     id?: number;
@@ -762,7 +853,7 @@ export function useSessionController({
       if (!canStoreNodeSeekCookieHeader(verificationCookies) || !verificationHeader) {
         return null;
       }
-      await writeNodeSeekAccessToStore(verificationHeader, access?.userAgent || nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+      await writeNodeSeekAccessToStore(verificationHeader, access?.userAgent || nodeSeekWebViewUserAgentRef.current || DEFAULT_NODESEEK_ANDROID_USER_AGENT, null, null);
       return {
         header: verificationHeader,
         summary: summarizeNodeSeekCookies(verificationCookies)

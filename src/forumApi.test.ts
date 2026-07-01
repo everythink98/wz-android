@@ -258,30 +258,51 @@ describe('Android local forum facade', () => {
     });
   });
 
-  it('reads the current NodeSeek account near the sign-out link instead of random author links', async () => {
+  it('reads the current NodeSeek account from embedded page config', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      user: {
+        member_id: 48872,
+        member_name: '凡想世界',
+        avatar: '/avatar/48872.png'
+      }
+    })).toString('base64');
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
         return new Response('{}');
       }
       if (input === 'https://www.nodeseek.com/') {
-        return new Response(`
-          <a href="/space/1">帖子作者</a>
-          <a href="/space/54874"></a>
-          <a href="/space/54874">凡想世界</a>
-          <a href="/setting"></a>
-          <a href="/api/account/signOut"></a>
-          <a href="/space/54874#discussions">主题帖 0</a>
-        `);
+        return new Response(`<script id="temp-script">${payload}</script>`);
       }
       throw new Error(`unexpected ${input}`);
     });
 
     await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).resolves.toMatchObject({
       source: 'nodeseek',
-      id: '54874',
+      id: '48872',
       username: '凡想世界',
       topics: []
     });
+  });
+
+  it('does not read the current NodeSeek account from sign-out-adjacent post author links', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
+        return new Response('{}');
+      }
+      if (input === 'https://www.nodeseek.com/') {
+        return new Response(`
+          <a href="/space/4706">帖子作者</a>
+          <a href="/setting"></a>
+          <a href="/api/account/signOut"></a>
+        `);
+      }
+      if (input === 'https://www.nodeseek.com/setting') {
+        return new Response('<main>设置页面</main>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' })).rejects.toThrow('无法读取当前 NodeSeek 用户身份');
   });
 
   it('reads the current yaohuo account name from the signed-in user topic list when the profile only exposes an id', async () => {

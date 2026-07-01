@@ -47,6 +47,35 @@ function markdownToHtml(markdown: unknown) {
   return sanitizeContentHtml(md.render(String(markdown || '')), BASE_URL);
 }
 
+function hasHtmlTag(value: string) {
+  return /<\/?[a-z][\s\S]*>/i.test(value);
+}
+
+function nodeSeekDisplayHtml(content: unknown, markdown: unknown) {
+  const renderedHtml = typeof content === 'string' ? content.trim() : '';
+  if (renderedHtml && hasHtmlTag(renderedHtml)) {
+    return sanitizeContentHtml(renderedHtml, BASE_URL);
+  }
+  const markdownText = typeof markdown === 'string' ? markdown.trim() : '';
+  if (markdownText && hasHtmlTag(markdownText)) {
+    return sanitizeContentHtml(markdownText, BASE_URL);
+  }
+  return markdownToHtml(markdownText || renderedHtml);
+}
+
+function nodeSeekEditableMarkdown(markdown: unknown) {
+  const raw = typeof markdown === 'string' ? markdown : '';
+  return raw.trim() && !hasHtmlTag(raw) ? raw : '';
+}
+
+function nodeSeekSignatureHtml(signature: unknown) {
+  const raw = String(signature || '').trim();
+  if (!raw) {
+    return undefined;
+  }
+  return hasHtmlTag(raw) ? sanitizeContentHtml(raw, BASE_URL) : markdownToHtml(raw);
+}
+
 function parseViewCount(value: unknown) {
   const match = String(value || '').replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(万|千|w|k|m)?/i);
   if (!match) {
@@ -438,7 +467,17 @@ function extractNodeSeekEmbeddedData(html: string) {
   for (const candidate of embeddedCandidates(html)) {
     try {
       const parsed = JSON.parse(Buffer.from(candidate, 'base64').toString('utf8'));
-      if (isRecord(parsed) && (parsed.postData || parsed.rotateTopics || parsed.topicList || parsed.allCategory || parsed.posts)) {
+      if (isRecord(parsed) && (
+        parsed.user
+        || parsed.currentUser
+        || parsed.current_user
+        || parsed.account
+        || parsed.postData
+        || parsed.rotateTopics
+        || parsed.topicList
+        || parsed.allCategory
+        || parsed.posts
+      )) {
         return parsed;
       }
     } catch {
@@ -834,9 +873,9 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
     const authorId = nodeSeekEmbeddedUserId(poster);
     const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
     const authorLevelLabel = nodeSeekRoleLabel(poster);
-    const signatureHtml = String(comment.signature || '').trim()
-      ? markdownToHtml(comment.signature)
-      : undefined;
+    const rawMarkdown = typeof comment.markdown === 'string' ? comment.markdown : '';
+    const contentMarkdown = nodeSeekEditableMarkdown(rawMarkdown);
+    const signatureHtml = nodeSeekSignatureHtml(comment.signature);
     const floorIndex = optionalInteger(comment.floorIndex ?? comment.floor);
     return {
       author: String(poster.name || ''),
@@ -844,7 +883,8 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
       authorId: authorId || undefined,
       authorUrl,
       ...(authorLevelLabel ? { authorLevelLabel } : {}),
-      contentHtml: markdownToHtml(comment.markdown),
+      contentHtml: nodeSeekDisplayHtml(comment.content, rawMarkdown),
+      ...(contentMarkdown ? { contentMarkdown } : {}),
       createdAt: toIsoString(isRecord(comment.time) ? comment.time.createdDate : comment.createdDate),
       floor: floorIndex ?? floorOffset + start + index + 1,
       commentId: optionalInteger(comment.commentId),
@@ -854,6 +894,7 @@ function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffs
       upvoted: optionalBoolean(comment.upvoted),
       liked: optionalBoolean(comment.liked),
       disliked: optionalBoolean(comment.disliked),
+      ...(poster.isMe === true ? { canEdit: true, canLike: false } : {}),
       isOp: poster.isOp === true || String(poster.info || '').trim() === '楼主' || undefined,
       hot: comment.hot === true || undefined,
       pinned: comment.pined === true || comment.pinned === true || undefined,
@@ -908,8 +949,8 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     lastReplyAt,
     replyCount: allReplies.length,
     viewCount: parseViewCount(data.views),
-    excerpt: textExcerpt(first.markdown),
-    contentHtml: markdownToHtml(first.markdown),
+    excerpt: textExcerpt(first.content || first.markdown),
+    contentHtml: nodeSeekDisplayHtml(first.content, first.markdown),
     commentId: optionalInteger(first.commentId),
     upvoteCount: optionalInteger(first.upvoteCount),
     likeCount: optionalInteger(first.likeCount),
@@ -1192,12 +1233,17 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const html = await fetchTopicHtml(id, 1, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
+  const currentUser = embedded ? findNodeSeekCurrentUser(embedded) : null;
   if (postData) {
     const comments = arrayField(postData.comments);
     const first = isRecord(comments[0]) ? comments[0] : {};
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
     const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], options));
-    return withNodeSeekReplyPagination(polls ? { ...topic, polls } : topic, html, id, 1);
+    return withNodeSeekReplyPagination({
+      ...topic,
+      ...(polls ? { polls } : {}),
+      ...(currentUser ? { currentUser } : {})
+    }, html, id, 1);
   }
   const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
   if (rendered) {
@@ -1205,7 +1251,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       rendered.polls,
       await readNodeSeekPollsFromVoteLinks([rendered.contentHtml, html], options)
     );
-    return withNodeSeekReplyPagination(polls ? { ...rendered, polls } : rendered, html, id, 1);
+    return withNodeSeekReplyPagination({
+      ...rendered,
+      ...(polls ? { polls } : {}),
+      ...(currentUser ? { currentUser } : {})
+    }, html, id, 1);
   }
   throw new Error('NodeSeek 主题解析失败');
 }
@@ -1350,19 +1400,13 @@ function parseNodeSeekCurrentUserHtml(html: string) {
   const root = parseHtml(html);
   const text = elementText(root);
   const uid = text.match(/UID\s*[:：]\s*(\d+)/i)?.[1] || '';
-  const links = root.querySelectorAll('a[href]');
+  const explicitUserLink = root.querySelector('a.Username[href*="/space/"]') || root.querySelector('.Username a[href*="/space/"]');
+  const explicitUserId = explicitUserLink?.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] || '';
   const spaceLinks = root.querySelectorAll('a[href*="/space/"]').filter((link) => /\/space\/\d+/i.test(link.getAttribute('href') || ''));
-  const signOutIndex = links.findIndex((link) => /\/api\/account\/signOut/i.test(link.getAttribute('href') || ''));
-  const accountLinks = signOutIndex >= 0 ? links.slice(Math.max(0, signOutIndex - 8), signOutIndex) : [];
   const spaceLink = uid
     ? spaceLinks.find((link) => link.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] === uid)
-    : [...accountLinks].reverse().find((link) => /\/space\/\d+/i.test(link.getAttribute('href') || '') && elementText(link))
-    || spaceLinks.find((link) => {
-      const parent = nodeSeekParentElement(link);
-      const context = elementText(parent || link);
-      return /退出|设置|通知|消息|我的|账号|个人|sign\s*out|setting|notification|account/i.test(context);
-    });
-  const id = uid || spaceLink?.getAttribute('href')?.match(/\/space\/(\d+)/i)?.[1] || '';
+    : explicitUserLink;
+  const id = uid || explicitUserId;
   if (!id) {
     return null;
   }

@@ -1,3 +1,5 @@
+import { Buffer } from 'buffer';
+
 export interface NativeCookie {
   name?: string;
   value?: string;
@@ -8,6 +10,7 @@ export type NodeSeekAccessRecord = {
   cookieHeader: string;
   userAgent?: string;
   userId?: number;
+  csrfToken?: string;
   savedAt: string;
   source: 'webview';
 };
@@ -33,6 +36,7 @@ export const DEFAULT_NODESEEK_ANDROID_USER_AGENT = sanitizeNodeSeekUserAgent(
 export const nodeSeekLoginCookieNames = ['session', 'connect.sid', 'sid'] as const;
 const loginCookieNames = new Set<string>(nodeSeekLoginCookieNames);
 const clearanceCookiePattern = /^cf_clearance$/i;
+const pjwtCookiePattern = /^pjwt$/i;
 
 function isNodeSeekLoginCookieName(name: string) {
   return loginCookieNames.has(name.toLowerCase());
@@ -152,15 +156,52 @@ function positiveInteger(value: unknown) {
   return Number.isInteger(number) && number > 0 ? number : undefined;
 }
 
-export function nodeSeekAccessRecord(cookieHeader: string, userAgent?: string, userId?: number | null): NodeSeekAccessRecord {
+function cleanString(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function decodeNodeSeekPjwtPayload(token: string) {
+  const firstPart = token.split('.')[0] || '';
+  if (!firstPart) {
+    return null;
+  }
+  try {
+    const padded = firstPart.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - firstPart.length % 4) % 4);
+    const parsed = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+export function nodeSeekUserIdFromCookies(cookies: Record<string, NativeCookie>) {
+  const pjwt = Object.entries(cookies).find(([key, cookie]) => (
+    pjwtCookiePattern.test(cookie.name || key)
+    && isNodeSeekDomain(cookie.domain)
+    && cookie.value
+  ))?.[1]?.value;
+  const payload = decodeNodeSeekPjwtPayload(String(pjwt || ''));
+  return positiveInteger(payload?.id ?? payload?.uid ?? payload?.userId ?? payload?.user_id ?? payload?.member_id);
+}
+
+export function nodeSeekCsrfTokenFromHtml(html: string) {
+  const source = String(html || '');
+  const meta = source.match(/<meta\b(?=[^>]*\bname=["']csrf-token["'])(?=[^>]*\bcontent=["']([^"']+)["'])[^>]*>/i)
+    || source.match(/<meta\b(?=[^>]*\bcontent=["']([^"']+)["'])(?=[^>]*\bname=["']csrf-token["'])[^>]*>/i);
+  return cleanString(meta?.[1]);
+}
+
+export function nodeSeekAccessRecord(cookieHeader: string, userAgent?: string, userId?: number | null, csrfToken?: string | null): NodeSeekAccessRecord {
   const cleanUserAgent = sanitizeNodeSeekUserAgent(userAgent);
   const cleanUserId = positiveInteger(userId);
+  const cleanCsrfToken = cleanString(csrfToken);
   return {
     cookieHeader,
     savedAt: new Date().toISOString(),
     source: 'webview',
     ...(cleanUserAgent ? { userAgent: cleanUserAgent } : {}),
-    ...(cleanUserId ? { userId: cleanUserId } : {})
+    ...(cleanUserId ? { userId: cleanUserId } : {}),
+    ...(cleanCsrfToken ? { csrfToken: cleanCsrfToken } : {})
   };
 }
 
@@ -178,7 +219,8 @@ export function parseNodeSeekAccessRecord(raw?: string | null): NodeSeekAccessRe
       savedAt: typeof parsed.savedAt === 'string' && parsed.savedAt ? parsed.savedAt : new Date(0).toISOString(),
       source: 'webview',
       ...(parsed.userAgent ? { userAgent: sanitizeNodeSeekUserAgent(parsed.userAgent) } : {}),
-      ...(positiveInteger(parsed.userId) ? { userId: positiveInteger(parsed.userId) } : {})
+      ...(positiveInteger(parsed.userId) ? { userId: positiveInteger(parsed.userId) } : {}),
+      ...(cleanString(parsed.csrfToken) ? { csrfToken: cleanString(parsed.csrfToken) } : {})
     };
   } catch {
     return null;

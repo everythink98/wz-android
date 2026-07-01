@@ -22,6 +22,7 @@ import {
   nextYaohuoPageFromHtml as nextPageFromHtml,
   yaohuoUserUrl as userUrl
 } from './localYaohuoHelpers';
+import { normalizeYaohuoReplyDeletePath } from './yaohuoActions';
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
@@ -703,6 +704,33 @@ function yaohuoReplyContentHtml(row: HTMLElement, rawHtml: string, authorHtml: s
   return contentOnly;
 }
 
+function yaohuoReplyDeletePath(row: HTMLElement, url?: string) {
+  const deleteLink = row.querySelectorAll('a[href]').find((link) => {
+    const href = String(link.getAttribute('href') || '');
+    return /book_re_del\.aspx/i.test(href) || String(link.getAttribute('class') || '').split(/\s+/).includes('delete-myfloor');
+  });
+  const href = deleteLink?.getAttribute('href');
+  if (!href) {
+    return '';
+  }
+  try {
+    return normalizeYaohuoReplyDeletePath(new URL(href.replace(/&amp;/gi, '&'), url || BASE_URL).toString());
+  } catch {
+    return '';
+  }
+}
+
+function yaohuoReplyDeleteId(deletePath: string) {
+  if (!deletePath) {
+    return undefined;
+  }
+  try {
+    return parsePositiveInteger(new URL(deletePath, BASE_URL).searchParams.get('reid'));
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url }: { page?: number; limit?: number; url?: string } = {}): RepliesResponse {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);
@@ -712,6 +740,8 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
     const rawHtml = row.innerHTML;
     const text = elementText(row);
     const floor = parseReplyFloor(row, text, floorOffset + index + 1);
+    const deletePath = yaohuoReplyDeletePath(row, url);
+    const deleteId = yaohuoReplyDeleteId(deletePath);
     const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
     const actionLink = row.querySelector('a[href*="book_re.aspx"][href*="reply="], a[href*="book_re.aspx"][href*="touserid="]');
     const author = elementText(authorLink);
@@ -728,7 +758,9 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
       ...(authorId ? { authorUrl: userUrl(authorId) } : {}),
       contentHtml: sanitizeContentHtml(contentOnly, url || `${BASE_URL}/bbs/book_re.aspx`),
       createdAt,
-      floor
+      floor,
+      ...(deleteId ? { commentId: deleteId } : {}),
+      ...(deletePath ? { canDelete: true, deletePath } : {})
     };
   }).slice(0, limit);
   const nextPage = nextPageFromHtml(html, page, items.length, limit);

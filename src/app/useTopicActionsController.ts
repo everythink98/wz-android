@@ -1,8 +1,11 @@
 import { useCallback, useMemo, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { Alert } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
 import * as SecureStore from 'expo-secure-store';
 import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
+  buildNodeSeekEditReplyRequest,
   buildNodeSeekInteractionRequest,
   buildNodeSeekReplyRequest,
   buildNodeSeekVoteRequest,
@@ -11,6 +14,7 @@ import {
 } from '../nodeseekActions';
 import {
   buildYaohuoFavoriteRequest,
+  buildYaohuoDeleteReplyRequest,
   buildYaohuoReplyRequest,
   buildYaohuoVoteRequest,
   extractYaohuoSid,
@@ -18,9 +22,12 @@ import {
 } from '../yaohuoActions';
 import {
   buildLinuxDoBookmarkRequest,
+  buildLinuxDoDeleteReplyRequest,
+  buildLinuxDoImageUploadRequest,
   buildLinuxDoLikeRequest,
   buildLinuxDoPollVoteRequest,
   buildLinuxDoReplyRequest,
+  linuxDoImageUrlFromUploadResponse,
   type LinuxDoActionRequest
 } from '../linuxdoActions';
 import { runLinuxDoAction } from '../linuxdoActionClient';
@@ -47,7 +54,8 @@ import {
   NODESEEK_COOKIE_STORAGE_KEY,
   NODESEEK_USER_AGENT_STORAGE_KEY,
   nodeSeekAccessRecord,
-  parseNodeSeekAccessRecord
+  parseNodeSeekAccessRecord,
+  type NodeSeekAccessRecord
 } from '../nodeseekCookies';
 import type { RequestOwner } from '../requestOwnership';
 import {
@@ -68,9 +76,19 @@ import {
   type TopicActionRunMap
 } from '../topicActionRequestOwners';
 import { errorMessage, isCanceledRequest } from '../appUtils';
+import { canUseLinuxDoLike } from '../linuxdoPermissions';
+import {
+  appendReplyImageMarkup,
+  normalizeReplyImageAsset,
+  replyImageMarkupForSource,
+  replyImageUploadSupported,
+  type NormalizedReplyImageAsset,
+  uploadNodeSeekReplyImageWithApiKey,
+  uploadYaohuoReplyImage
+} from '../replyImageUpload';
 import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
-import type { ReplyTarget } from '../appTypes';
+import type { ReplyEditTarget, ReplyTarget } from '../appTypes';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import {
   beginOptimisticTopicAction,
@@ -88,6 +106,7 @@ import {
   isNodeSeekActionTopic,
   isYaohuoActionTopic,
   nodeSeekAttendanceActionKey,
+  topicEditReplyActionKey,
   topicPollVoteActionKey,
   topicReplyActionKey,
   yaohuoFavoriteActionKey,
@@ -126,6 +145,21 @@ function optimisticOwnerKey(requestOwner: TopicActionRequestOwner) {
 function actionMessage(message: string, restoreOnFailure?: boolean) {
   return restoreOnFailure ? `${message}，已恢复原状态。` : message;
 }
+
+function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
+  return `delete-reply:${topicKeyValue}:${reply.commentId ?? reply.deletePath ?? reply.floor ?? 'reply'}`;
+}
+
+function isDeletedReply(candidate: Reply, deleted: Reply) {
+  if (candidate.commentId && deleted.commentId && candidate.commentId === deleted.commentId) {
+    return true;
+  }
+  if (candidate.deletePath && deleted.deletePath && candidate.deletePath === deleted.deletePath) {
+    return true;
+  }
+  return false;
+}
+
 async function loadNodeSeekActionAccess() {
   const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
   if (savedAccess) {
@@ -146,10 +180,12 @@ export function useTopicActionsController({
   linuxDoWebViewUserAgentRef,
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
+  ensureNodeImageApiKey,
   notify,
   optimisticTopicActionsRef,
   refreshTopicReplies,
   replyContent,
+  replyEditTarget,
   replyTarget,
   resetLinuxDoLevelState,
   selectedTopic,
@@ -157,6 +193,7 @@ export function useTopicActionsController({
   setOptimisticTopicActions,
   setReplyComposerOpen,
   setReplyContent,
+  setReplyEditTarget,
   setReplyTarget,
   setTopicDetail,
   setTopicReplies,
@@ -175,10 +212,12 @@ export function useTopicActionsController({
   linuxDoWebViewUserAgentRef: Ref<string>;
   loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
+  ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   notify: (message: string) => void;
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
   refreshTopicReplies: (options?: { silent?: boolean; afterSubmit?: boolean }) => Promise<unknown>;
   replyContent: string;
+  replyEditTarget: ReplyEditTarget | null;
   replyTarget: ReplyTarget | null;
   resetLinuxDoLevelState: () => void;
   selectedTopic: Topic | null;
@@ -186,6 +225,7 @@ export function useTopicActionsController({
   setOptimisticTopicActions: Dispatch<SetStateAction<Record<string, OptimisticActionState>>>;
   setReplyComposerOpen: Dispatch<SetStateAction<boolean>>;
   setReplyContent: Dispatch<SetStateAction<string>>;
+  setReplyEditTarget: Dispatch<SetStateAction<ReplyEditTarget | null>>;
   setReplyTarget: Dispatch<SetStateAction<ReplyTarget | null>>;
   setTopicDetail: Dispatch<SetStateAction<TopicDetail | null>>;
   setTopicReplies: Dispatch<SetStateAction<Reply[]>>;
@@ -275,7 +315,7 @@ export function useTopicActionsController({
   ), [notify]);
 
   const runNodeSeekRequest = useCallback(async (
-    requestFactory: () => NodeSeekActionRequest,
+    requestFactory: (access: NodeSeekAccessRecord | null) => NodeSeekActionRequest,
     success: string,
     options: ActionRunOptions = {}
   ) => {
@@ -299,7 +339,7 @@ export function useTopicActionsController({
       }
       await runNodeSeekAction({
         cookieHeader: access?.cookieHeader || '',
-        request: requestFactory(),
+        request: requestFactory(access),
         signal: run.controller.signal,
         userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
@@ -540,6 +580,32 @@ export function useTopicActionsController({
       notify('请输入回复内容');
       return;
     }
+    if (replyEditTarget) {
+      if (!isNodeSeekActionTopic(detail)) {
+        notify('当前来源暂不支持编辑回复');
+        return;
+      }
+      const actionKey = topicEditReplyActionKey(requestTopicKey, replyEditTarget.commentId);
+      await runSingleNonIdempotentTopicAction(actionKey, async () => {
+        const requestOwner = startTopicActionRequest(actionKey);
+        const submitted = await runNodeSeekRequest(
+          (access) => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: access?.csrfToken || '' }),
+          '回复已更新',
+          { owner: requestOwner }
+        );
+        if (submitted) {
+          if (!isCurrentTopicActionRequest(requestOwner)) {
+            return;
+          }
+          setReplyContent('');
+          setReplyComposerOpen(false);
+          setReplyTarget(null);
+          setReplyEditTarget(null);
+          await refreshTopicReplies({ silent: true, afterSubmit: true });
+        }
+      });
+      return;
+    }
     const actionKey = topicReplyActionKey(requestTopicKey);
     await runSingleNonIdempotentTopicAction(actionKey, async () => {
       const requestOwner = startTopicActionRequest(actionKey);
@@ -567,6 +633,7 @@ export function useTopicActionsController({
           setReplyContent('');
           setReplyComposerOpen(false);
           setReplyTarget(null);
+          setReplyEditTarget(null);
           await refreshTopicReplies({ silent: true, afterSubmit: true });
         }
         return;
@@ -588,12 +655,13 @@ export function useTopicActionsController({
           setReplyContent('');
           setReplyComposerOpen(false);
           setReplyTarget(null);
+          setReplyEditTarget(null);
           await refreshTopicReplies({ silent: true, afterSubmit: true });
         }
         return;
       }
       const submitted = await runNodeSeekRequest(
-        () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
+        (access) => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget, csrfToken: access?.csrfToken || '' }),
         '回复已提交',
         { owner: requestOwner }
       );
@@ -604,10 +672,172 @@ export function useTopicActionsController({
         setReplyContent('');
         setReplyComposerOpen(false);
         setReplyTarget(null);
+        setReplyEditTarget(null);
         await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
     });
-  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyTarget, startTopicActionRequest, topicDetail]);
+  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyEditTarget, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyTarget, startTopicActionRequest, topicDetail]);
+
+  const deleteReplyConfirmed = useCallback(async (reply: Reply) => {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!detail) {
+      return;
+    }
+    if (!reply.canDelete) {
+      notify('当前回复不能删除');
+      return;
+    }
+    const requestTopicKey = topicKey(detail);
+    const actionKey = topicDeleteReplyActionKey(requestTopicKey, reply);
+    await runSingleNonIdempotentTopicAction(actionKey, async () => {
+      const requestOwner = startTopicActionRequest(actionKey);
+      let deleted: unknown = false;
+      if (isYaohuoActionTopic(detail)) {
+        if (!reply.deletePath) {
+          notify('当前回复缺少删除链接，刷新主题后再试。');
+          return;
+        }
+        deleted = await runYaohuoRequest(
+          (cookieHeader) => buildYaohuoDeleteReplyRequest({
+            deletePath: reply.deletePath || '',
+            sid: extractYaohuoSid(cookieHeader)
+          }),
+          '回复已删除',
+          { owner: requestOwner }
+        );
+      } else if (isLinuxDoActionTopic(detail)) {
+        if (!reply.commentId) {
+          notify('当前回复缺少评论 id，刷新主题后再试。');
+          return;
+        }
+        deleted = await runLinuxDoRequest(
+          () => buildLinuxDoDeleteReplyRequest({ postId: reply.commentId || 0 }),
+          '回复已删除',
+          { owner: requestOwner }
+        );
+      } else if (isNodeSeekActionTopic(detail)) {
+        notify('NodeSeek 原站没有删除评论入口');
+        return;
+      }
+      if (!deleted || !isCurrentTopicActionRequest(requestOwner)) {
+        return;
+      }
+      setTopicReplies((current) => current.filter((item) => !isDeletedReply(item, reply)));
+      await refreshTopicReplies({ silent: true, afterSubmit: true });
+    });
+  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setTopicReplies, startTopicActionRequest, topicDetail]);
+
+  const deleteReply = useCallback((reply: Reply) => {
+    if (!reply.canDelete) {
+      notify('当前回复不能删除');
+      return;
+    }
+    Alert.alert('删除回复', '确认删除这条回复？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '删除',
+        style: 'destructive',
+        onPress: () => {
+          void deleteReplyConfirmed(reply);
+        }
+      }
+    ]);
+  }, [deleteReplyConfirmed, notify]);
+
+  const uploadReplyImage = useCallback(async () => {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    if (!detail || !canSubmitReplyToTopic(detail)) {
+      return;
+    }
+    if (!replyImageUploadSupported(detail.source)) {
+      notify('当前来源暂不支持上传图片');
+      return;
+    }
+
+    const actionKey = `${topicReplyActionKey(topicKey(detail))}:image`;
+    await runSingleNonIdempotentTopicAction(actionKey, async () => {
+      const requestOwner = startTopicActionRequest(actionKey);
+      let nodeSeekApiKey: string | null = null;
+      if (isNodeSeekActionTopic(detail)) {
+        nodeSeekApiKey = await ensureNodeImageApiKey();
+        if (!nodeSeekApiKey || !isCurrentTopicActionRequest(requestOwner)) {
+          return;
+        }
+      }
+      let file: NormalizedReplyImageAsset;
+      try {
+        const result = await DocumentPicker.getDocumentAsync({
+          type: 'image/*',
+          copyToCacheDirectory: true,
+          multiple: false
+        });
+        if (result.canceled || !result.assets?.[0]) {
+          return;
+        }
+        file = normalizeReplyImageAsset(result.assets[0]);
+      } catch (error) {
+        notify(errorMessage(error));
+        return;
+      }
+      if (!isCurrentTopicActionRequest(requestOwner)) {
+        return;
+      }
+      try {
+        let imageUrl = '';
+        if (isLinuxDoActionTopic(detail)) {
+          const result = await runLinuxDoRequest(
+            () => buildLinuxDoImageUploadRequest({ file }),
+            '',
+            { owner: requestOwner, key: actionKey, notifySuccess: false }
+          );
+          if (!result || !isCurrentTopicActionRequest(requestOwner)) {
+            return;
+          }
+          imageUrl = linuxDoImageUrlFromUploadResponse(result);
+        } else if (isYaohuoActionTopic(detail)) {
+          const run = startActionRun(actionKey, true);
+          try {
+            imageUrl = await uploadYaohuoReplyImage({
+              file,
+              signal: run.controller.signal
+            });
+          } finally {
+            finishActionRun(run, true);
+          }
+          if (!isCurrentTopicActionRequest(requestOwner)) {
+            return;
+          }
+        } else if (isNodeSeekActionTopic(detail)) {
+          const run = startActionRun(actionKey, true);
+          try {
+            imageUrl = await uploadNodeSeekReplyImageWithApiKey({
+              ensureApiKey: (options) => options?.forceRefresh
+                ? ensureNodeImageApiKey({ forceRefresh: true, clearOnCancel: true })
+                : Promise.resolve(nodeSeekApiKey),
+              file,
+              signal: run.controller.signal
+            });
+          } finally {
+            finishActionRun(run, true);
+          }
+          if (!isCurrentTopicActionRequest(requestOwner)) {
+            return;
+          }
+        }
+
+        if (!imageUrl) {
+          return;
+        }
+        const markup = replyImageMarkupForSource(detail.source, imageUrl, file.name);
+        setReplyContent((current) => appendReplyImageMarkup(current, markup));
+        notify('图片已插入');
+      } catch (error) {
+        if (!isCanceledRequest(error) && isCurrentTopicActionRequest(requestOwner)) {
+          notify(errorMessage(error));
+        }
+      }
+    });
+  }, [ensureNodeImageApiKey, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, setReplyContent, startActionRun, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const actionKey = nodeSeekAttendanceActionKey();
@@ -637,7 +867,11 @@ export function useTopicActionsController({
       const target = [
         topicDetail,
         ...topicReplies
-      ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean } | undefined);
+      ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean; canLike?: boolean } | undefined);
+      if (!canUseLinuxDoLike(target)) {
+        notify('不能给自己的帖子点赞');
+        return;
+      }
       startOptimisticTopicAction({
         key: actionKey,
         requestOwner,
@@ -864,9 +1098,11 @@ export function useTopicActionsController({
     canUseYaohuoActions,
     checkIn,
     collectOnNodeSeekSite,
+    deleteReply,
     favoriteOnYaohuoSite,
     interact,
     submitReply,
+    uploadReplyImage,
     votePoll
   };
 }

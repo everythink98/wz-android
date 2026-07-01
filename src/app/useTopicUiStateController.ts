@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createReplyTextIndexForQuery, filterRepliesByQuery } from '../androidFeatureHelpers';
-import type { ReplyFilter, ReplyTarget } from '../appTypes';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget } from '../appTypes';
 import { filterRepliesWithImages, type InlineSizedImageUrlMap, type TopicImageDeriver } from '../topicDerivedData';
 import type { Reply, TopicDetail } from '../types';
+
+export function replyContentAfterComposerClose(content: string, replyEditTarget: ReplyEditTarget | null) {
+  return replyEditTarget ? '' : content;
+}
 
 export function useTopicUiStateController({
   inlineSizedImageUrls,
@@ -25,6 +29,7 @@ export function useTopicUiStateController({
   const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
+  const [replyEditTarget, setReplyEditTarget] = useState<ReplyEditTarget | null>(null);
   const [expandedQuotes, setExpandedQuotes] = useState<Record<string, boolean>>({});
   const [loadedQuotedReplies, setLoadedQuotedReplies] = useState<Record<number, Reply>>({});
   const [loadingQuotedFloors, setLoadingQuotedFloors] = useState<Record<string, boolean>>({});
@@ -95,10 +100,17 @@ export function useTopicUiStateController({
 
   const toggleReplyComposer = useCallback((open: boolean) => {
     setReplyComposerOpen(open);
-    if (!open) {
+    if (open) {
       setReplyTarget(null);
+      setReplyEditTarget(null);
+      return;
     }
-  }, []);
+    if (!open) {
+      setReplyContent((current) => replyContentAfterComposerClose(current, replyEditTarget));
+      setReplyTarget(null);
+      setReplyEditTarget(null);
+    }
+  }, [replyEditTarget]);
 
   const replyToFloor = useCallback((reply: Reply) => {
     if (!reply.floor) {
@@ -111,6 +123,30 @@ export function useTopicUiStateController({
       authorId: reply.authorId,
       commentId: reply.commentId
     });
+    setReplyEditTarget(null);
+    setReplyComposerOpen(true);
+  }, [notify]);
+
+  const editReply = useCallback((reply: Reply) => {
+    if (!reply.commentId) {
+      notify('当前回复缺少评论 id，刷新主题后再试。');
+      return;
+    }
+    if (!reply.canEdit) {
+      notify('当前回复不能编辑');
+      return;
+    }
+    if (!reply.contentMarkdown) {
+      notify('当前回复缺少原文，刷新主题后再试。');
+      return;
+    }
+    setReplyTarget(null);
+    setReplyEditTarget({
+      commentId: reply.commentId,
+      floor: reply.floor,
+      contentMarkdown: reply.contentMarkdown
+    });
+    setReplyContent(reply.contentMarkdown);
     setReplyComposerOpen(true);
   }, [notify]);
 
@@ -118,6 +154,7 @@ export function useTopicUiStateController({
     abortQuotedReplyRequests,
     commentQuery,
     debouncedCommentQuery,
+    editReply,
     expandedQuotes,
     expandedQuotesRef,
     filteredReplies,
@@ -129,6 +166,7 @@ export function useTopicUiStateController({
     quotedReplyAbortRefs,
     replyComposerOpen,
     replyContent,
+    replyEditTarget,
     replyFilter,
     replyTarget,
     replyToFloor,
@@ -140,6 +178,7 @@ export function useTopicUiStateController({
     setQuoteStateVersion,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyEditTarget,
     setReplyFilter,
     setReplyTarget,
     toggleReplyComposer,

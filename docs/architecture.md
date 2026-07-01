@@ -49,6 +49,14 @@
 - `src/screens/topic/topicScreenHelpers.ts` 承载详情页纯辅助逻辑，例如回复 key、状态徽标和权限提示识别。
 - `src/screens/topic/ReplyItem.tsx`、`ReplyComposer.tsx`、`TopicActionBar.tsx`、`TopicContentBlock.tsx`、`TopicMenu.tsx`、`TopicPolls.tsx` 分别承载详情页局部 UI。
 
+## 回复写操作
+
+- `src/app/useTopicActionsController.ts` 负责回复、楼层回复、编辑、删除、图片上传和互动请求。
+- NodeSeek 编辑自己的回复使用原站真实评论 id 和真实 token；没有 token 时拒绝发送，不使用随机值。
+- NodeSeek 图片上传通过 NodeImage；App 可从 NodeImage 授权页获取并缓存当前用户自己的 API Key，也保留手动粘贴备用入口。
+- linux.do 图片上传走原站 `/uploads.json`；妖火图片上传走图床并插入 UBB 图片标签。
+- 删除回复只在来源解析出明确权限时显示：linux.do 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。
+
 ## 收藏页
 
 - `src/screens/LibraryScreen.tsx` 承载收藏、历史和关注用户页展示。

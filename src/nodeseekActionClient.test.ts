@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runNodeSeekAction } from './nodeseekActionClient';
-import { buildNodeSeekAttendanceRequest } from './nodeseekActions';
+import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from './nodeseekActions';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -59,6 +59,29 @@ describe('runNodeSeekAction', () => {
       headers: expect.objectContaining({
         'user-agent': userAgent
       })
+    }));
+  });
+
+  it('sends content write requests with the request csrf-token header and no preflight', async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ success: true }));
+
+    await runNodeSeekAction({
+      cookieHeader: 'session=abc',
+      request: buildNodeSeekReplyRequest({ postId: 801061, content: '测试回复', csrfToken: 'fixed-csrf-token' }),
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/content/new-comment', expect.objectContaining({
+      headers: expect.objectContaining({
+        'csrf-token': 'fixed-csrf-token',
+        'x-csrf-challenge': 'simple-token'
+      })
+    }));
+    const calls = fetcher.mock.calls as unknown as Array<[unknown, RequestInit?]>;
+    const init = calls[0]?.[1];
+    expect(init?.headers).not.toEqual(expect.objectContaining({
+      'X-CSRF-Token': expect.any(String)
     }));
   });
 

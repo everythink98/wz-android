@@ -85,7 +85,7 @@ export function useAccountController({
   resetLinuxDoWebView: () => void;
   saveNodeSeekCookieHeader: (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
-    options?: { verifiedByPage?: boolean; isCurrent?: () => boolean; resetCurrentUser?: boolean; userId?: number | null }
+    options?: { verifiedByPage?: boolean; isCurrent?: () => boolean; resetCurrentUser?: boolean; userId?: number | null; csrfToken?: string | null }
   ) => Promise<string>;
   saveYaohuoCookieHeader: (cookieHeader: string, options?: { isCurrent?: () => boolean; generation?: number }) => Promise<boolean>;
   setChecking: Dispatch<SetStateAction<boolean>>;
@@ -104,12 +104,14 @@ export function useAccountController({
   yaohuoWebViewRef: Ref<WebView | null>;
 }) {
   const nodeSeekWebLoginUserIdRef = useRef<number | null>(null);
+  const nodeSeekWebLoginCsrfTokenRef = useRef('');
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const data = JSON.parse(event.nativeEvent.data) as {
         type?: string;
         loggedIn?: boolean;
         userId?: number | null;
+        csrfToken?: string;
         userAgent?: string;
         cookie?: string;
       };
@@ -123,12 +125,21 @@ export function useAccountController({
       if (data.type === 'nodeseek-login' && typeof data.cookie === 'string') {
         nodeSeekWebViewCookieHeaderRef.current = data.cookie;
       }
-      if (data.type === 'nodeseek-login' && data.loggedIn && Number.isInteger(data.userId)) {
-        nodeSeekWebLoginUserIdRef.current = data.userId || null;
+      if (data.type === 'nodeseek-login' && typeof data.csrfToken === 'string') {
+        nodeSeekWebLoginCsrfTokenRef.current = data.csrfToken.trim();
+      }
+      if (data.type === 'nodeseek-login' && data.loggedIn) {
         webLoginDetectedRef.current = true;
-        setWebLoginUserId(data.userId || null);
+        if (Number.isInteger(data.userId)) {
+          nodeSeekWebLoginUserIdRef.current = data.userId || null;
+          setWebLoginUserId(data.userId || null);
+        } else {
+          nodeSeekWebLoginUserIdRef.current = null;
+          setWebLoginUserId(null);
+        }
       } else if (data.type === 'nodeseek-login' && data.loggedIn === false) {
         nodeSeekWebLoginUserIdRef.current = null;
+        nodeSeekWebLoginCsrfTokenRef.current = '';
         webLoginDetectedRef.current = false;
         updateNodeSeekSession({ type: 'login-expired', message: 'NodeSeek 登录已失效' });
         setWebLoginUserId(null);
@@ -139,6 +150,7 @@ export function useAccountController({
   }, [
     nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
+    nodeSeekWebLoginCsrfTokenRef,
     nodeSeekWebLoginUserIdRef,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
@@ -147,9 +159,12 @@ export function useAccountController({
   ]);
 
   const probeLoginPage = useCallback(async () => {
+    nodeSeekWebLoginUserIdRef.current = null;
+    nodeSeekWebLoginCsrfTokenRef.current = '';
+    webLoginDetectedRef.current = false;
     webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
     await new Promise((resolve) => setTimeout(resolve, 250));
-  }, [webViewRef]);
+  }, [webLoginDetectedRef, webViewRef]);
 
   const readCurrentNodeSeekCookies = useCallback(async () => {
     await probeLoginPage();
@@ -169,7 +184,8 @@ export function useAccountController({
       verifiedByPage: webLoginDetectedRef.current,
       isCurrent,
       resetCurrentUser: true,
-      userId: nodeSeekWebLoginUserIdRef.current
+      userId: nodeSeekWebLoginUserIdRef.current,
+      csrfToken: nodeSeekWebLoginCsrfTokenRef.current || undefined
     });
     if (cookieHeader) {
       if (!isCurrent()) {

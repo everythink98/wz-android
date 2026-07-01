@@ -1,7 +1,7 @@
 import { type RefObject, useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { CheckCircle, LogIn } from 'lucide-react-native';
+import { CheckCircle, Image as ImageIcon, LogIn } from 'lucide-react-native';
 import type { ReaderSettings } from '../../readerData';
 import type { LoginNavigationRequest } from '../../appTypes';
 import { NODESEEK_URL, YAOHUO_URL } from '../../appUrls';
@@ -40,6 +40,8 @@ export function NodeSeekLoginPanel({
   accountExpanded,
   checking,
   nodeSeekSession,
+  nodeImageApiKeyBusy,
+  nodeImageApiKeySaved,
   loginState,
   loadingLoginPage,
   nodeSeekWebViewUserAgent,
@@ -49,6 +51,9 @@ export function NodeSeekLoginPanel({
   webViewRef,
   onCheckIn,
   onCheckLogin,
+  onAuthorizeNodeImageApiKey,
+  onSaveNodeImageApiKey,
+  onClearNodeImageApiKey,
   onClearLogin,
   onHandleLoginMessage,
   handleNodeSeekLoginNavigation,
@@ -59,6 +64,8 @@ export function NodeSeekLoginPanel({
   accountExpanded: boolean;
   checking: boolean;
   nodeSeekSession: SiteSessionViewModel;
+  nodeImageApiKeyBusy: boolean;
+  nodeImageApiKeySaved: boolean;
   loginState: string;
   loadingLoginPage: boolean;
   nodeSeekWebViewUserAgent: string;
@@ -68,6 +75,9 @@ export function NodeSeekLoginPanel({
   webViewRef: RefObject<WebView | null>;
   onCheckIn: () => void;
   onCheckLogin: () => void;
+  onAuthorizeNodeImageApiKey: () => void;
+  onSaveNodeImageApiKey: (value: string) => void;
+  onClearNodeImageApiKey: () => void;
   onClearLogin: () => void;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
@@ -78,6 +88,9 @@ export function NodeSeekLoginPanel({
   const [webViewError, setWebViewError] = useState('');
   const [webViewKey, setWebViewKey] = useState(0);
   const [webViewNeedsRemount, setWebViewNeedsRemount] = useState(false);
+  const [showNodeImagePanel, setShowNodeImagePanel] = useState(false);
+  const [showManualNodeImageKey, setShowManualNodeImageKey] = useState(false);
+  const [nodeImageApiKeyDraft, setNodeImageApiKeyDraft] = useState('');
 
   useEffect(() => {
     if (!showLoginPanel) {
@@ -101,6 +114,66 @@ export function NodeSeekLoginPanel({
     <>
       <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
       {nodeSeekSession.canWrite ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
+      <MenuButton
+        icon={ImageIcon}
+        label="NodeImage API Key"
+        value={nodeImageApiKeySaved ? '已保存，NodeSeek 图片上传可用' : '未保存，NodeSeek 图片上传不可用'}
+        expanded={showNodeImagePanel}
+        styles={styles}
+        theme={theme}
+        onPress={() => setShowNodeImagePanel((value) => !value)}
+      />
+      {showNodeImagePanel ? (
+        <View style={styles.stack}>
+          <Text style={styles.meta}>通过 NodeSeek 授权自动保存；手动粘贴只作备用。</Text>
+          <View style={styles.actions}>
+            <AppButton
+              label="自动授权 / 重新授权"
+              styles={styles}
+              disabled={nodeImageApiKeyBusy}
+              onPress={onAuthorizeNodeImageApiKey}
+            />
+            <AppButton
+              label="清除 Key"
+              variant="ghost"
+              styles={styles}
+              disabled={nodeImageApiKeyBusy || !nodeImageApiKeySaved}
+              onPress={onClearNodeImageApiKey}
+            />
+            <AppButton
+              label={showManualNodeImageKey ? '收起手动备用' : '手动粘贴备用'}
+              variant="ghost"
+              styles={styles}
+              onPress={() => setShowManualNodeImageKey((value) => !value)}
+            />
+          </View>
+          {showManualNodeImageKey ? (
+            <>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                placeholder="NodeImage API Key"
+                placeholderTextColor={theme.muted}
+                secureTextEntry
+                style={styles.input}
+                value={nodeImageApiKeyDraft}
+                onChangeText={setNodeImageApiKeyDraft}
+              />
+              <View style={styles.actions}>
+                <AppButton
+                  label={nodeImageApiKeyBusy ? '保存中' : '保存 Key'}
+                  styles={styles}
+                  disabled={nodeImageApiKeyBusy || !nodeImageApiKeyDraft.trim()}
+                  onPress={() => {
+                    onSaveNodeImageApiKey(nodeImageApiKeyDraft);
+                    setNodeImageApiKeyDraft('');
+                  }}
+                />
+              </View>
+            </>
+          ) : null}
+        </View>
+      ) : null}
       <LoginWebViewModal
         visible={showLoginPanel}
         title="NodeSeek 登录 / 验证"

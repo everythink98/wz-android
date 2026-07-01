@@ -4,7 +4,7 @@
 
 测试必须证明“功能没有被改坏”，不是证明 App 能打开。常规改动至少执行自动测试和 `npm run typecheck`；涉及页面流程、登录态、真实来源结果或交互时，还必须做模拟器验收。
 
-当前自动测试是 `Vitest + jsdom`，共有 71 个测试文件、664 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
+当前自动测试是 `Vitest + jsdom`，共有 81 个测试文件、763 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
 
 ## 判断原则
 
@@ -31,6 +31,8 @@
 | 首页 / 分类 / 分页 | 四站来源按当前支持范围返回；分类不串站；分页不重复、不漏掉下一页；聚合首页保留来源平衡 | `src/feedLogic.test.ts`、`src/feedCategoryRail.test.ts`、`src/forumApi.test.ts`、`src/localSources.test.ts` |
 | 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/yaohuoApi.test.ts` |
 | 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；楼层引用和图片预览可用；返回后上一层详情状态保留 | `src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts` |
+| 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
+| 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；测试只删除本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
 | 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、分页游标正确；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupFiles.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
@@ -102,6 +104,70 @@ NodeSeek 单源搜索有两种通过状态：
 
 当前可对照的模拟器结果见 `docs/emulator-baseline.md`。
 
+## 回复图片上传验收
+
+改回复、楼层回复、格式工具栏、图片上传、NodeImage 授权或写操作锁时，必须执行。
+
+### 自动测试
+
+```powershell
+npm test -- src/app/topicActionHelpers.test.ts src/app/topicActionControllerHelpers.test.ts src/app/useTopicUiStateController.test.ts src/replyImageUpload.test.ts src/linuxdoUpload.test.ts src/loginWebViewScripts.test.ts src/nodeimageAuthWebViewScripts.test.ts src/nodeseekActions.test.ts src/nodeseekCookies.test.ts src/nodeseekBrowserFetchScript.test.ts src/screens/topic/replyComposerFormatting.test.ts
+npm run typecheck
+```
+
+通过标准：
+
+- 发送失败或上传失败后，同一个回复框还能继续点击和编辑。
+- NodeSeek 图片上传使用用户自己的 NodeImage Key；无 Key 时自动打开 App 内授权页；已有 Key 时不重复授权；401 / 403 后只刷新一次 Key 再重试。
+- NodeSeek 回复 / 编辑必须使用登录页或详情页保存的真实 token；没有 token 时拒绝发送并提示重新检测登录，不允许随机 token。
+- NodeSeek 自己的回复只有同时有评论 id 和原始正文时才显示编辑；只隐藏自己的点赞 / 鸡腿 / 反对，不展示点了会失败的编辑入口。
+- 取消编辑或系统返回关闭编辑框后，编辑正文不能残留成普通回复草稿。
+- NodeSeek 详情必须保留原站渲染后的 at、楼层链接、表情 / sticker 和签名显示，不得因为编辑源数据回退成纯文本。
+- NodeSeek 楼层回复的草稿请求包含 `@用户` 和楼层链接；测试只构造请求，不发送真实回复。
+- linux.do 上传走 `/uploads.json` 且保留 FormData；妖火上传走图床后插入 `[img]...[/img]`。
+
+### 模拟器验收
+
+在不卸载、不清数据、不清 Cookie 的前提下执行：
+
+1. `更多 -> 账号与验证` 确认 NodeSeek、linux.do、妖火是可写登录态；NodeImage 显示已保存或可自动授权。
+2. NodeSeek 无 Key 或强制重新授权时，点击图片按钮应打开 App 内 NodeImage 授权页；授权成功后关闭弹层并显示已保存。
+3. force-stop 后重新打开 App，再进 NodeSeek 回复框点图片，已有 Key 时应直接打开文件选择器，不再弹授权。
+4. NodeSeek、linux.do、妖火各选一张小图上传；上传成功后确认草稿中分别出现 Markdown 图片、Markdown / `upload://` 图片、UBB 图片。
+5. 上传后模拟构造回复内容即可，不点击真实发送；需要发送真实回复时必须先得到用户明确同意。
+6. 人为制造或遇到发送失败后，回复框必须仍可点击、可改文字、可再次点发送；不允许靠收起再展开恢复。
+7. 结束前清空草稿或收起回复框，检查 `ReactNativeJS`、`AndroidRuntime` 没有红屏、未处理异常或崩溃。
+
+## 回复删除验收
+
+改回复、楼层回复、写操作、权限解析或删除按钮时，必须执行。只删除本次测试新发的临时回复，不删除已有历史内容。
+
+### 自动测试
+
+```powershell
+npm test -- src/nodeseekActions.test.ts src/linuxdoActions.test.ts src/yaohuoActions.test.ts src/localSources.test.ts src/localYaohuo.test.ts
+npm run typecheck
+```
+
+通过标准：
+
+- linux.do 只读取 Discourse `can_delete`，删除请求为 `DELETE /posts/{id}.json`。
+- 妖火只读取原站回复里的 `Book_re_del.aspx` 删除链接，普通回复没有删除入口。
+- NodeSeek 只读取原站数据中的可删字段或删除入口，不靠作者名推断。
+- 删除请求缺少评论 id、删除链接或必要参数时必须拒绝。
+
+### 模拟器验收
+
+在不卸载、不清数据、不清 Cookie 的前提下执行：
+
+1. 确认 NodeSeek、linux.do、妖火均为可写登录态；如 NodeSeek 触发 Cloudflare，先在 App 内完成验证，无法自动完成时停止并交给用户。
+2. 每个站点找一个回复较多且允许回复的主题，发表一条明确为测试用途的临时回复；如当前改动涉及图片上传，回复内容必须带一张测试图。
+3. 新回复出现后，确认只有这条自己的回复显示 `删除`，其他人的回复不显示。
+4. 点击 `删除` 后必须出现确认框；取消不会删除，再次点击并确认后才发请求。
+5. 删除成功后，当前回复列表立即不再显示这条回复；刷新原帖后仍不显示。
+6. 回复框在失败、取消和删除后仍可点击、可编辑，不需要收起再展开。
+7. 结束前检查 `ReactNativeJS`、`AndroidRuntime` 没有红屏、未处理异常或崩溃。
+
 ## 模拟器验收清单
 
 | 区域 | 必查 | 不默认点击 |
@@ -113,6 +179,8 @@ NodeSeek 单源搜索有两种通过状态：
 | 历史 | 历史数、最近阅读、已读状态 | 删除、清空历史 |
 | 关注用户 | 关注数、用户页、用户主题列表、返回 | 取消关注 |
 | 账号与验证 | 三站状态；从 App 内打开登录 / 验证页；确认包名仍为 `com.wz.reader` | 清除登录、退出登录、手工改 Cookie |
+| 回复编辑 / 图片上传 | 三站回复框、失败后可继续编辑、格式按钮、图片上传插入草稿、NodeImage 授权和缓存 | 真实发送回复、清除 NodeImage Key |
+| 回复删除 | 三站新发临时回复、删除入口、确认框、删除后消失、刷新后仍消失 | 删除旧回复、删除他人回复、清数据制造状态 |
 | 测试工具 | 只在开发版可见；正式版不可见；临时匿名开关独立于账号区；说明“不删除 Cookie” | 清数据、退出登录、清 Cookie |
 | 更多页 | 版本、检查更新、个人中心当前账号识别、linux.do 等级、备份入口、外观入口 | 导出、导入、安装更新、切换外观 |
 
@@ -123,6 +191,8 @@ NodeSeek 单源搜索有两种通过状态：
 | 来源解析、搜索、详情、用户页 | 对应来源测试、`src/forumApi.test.ts`、`src/localSources.test.ts`、`npm run typecheck`、模拟器验收 |
 | App controller、请求归属、取消请求 | 对应 controller helper 测试、`src/requestOwnership.test.ts`、`npm run typecheck`、模拟器验收 |
 | 登录、验证、Cookie、写操作 | 相关 cookie / action / session 测试、`src/appSecurity.test.ts`、`npm run typecheck`、模拟器验收 |
+| 回复编辑、楼层回复、图片上传、NodeImage Key | 回复图片上传验收、相关 action / WebView script 测试、`npm run typecheck`、模拟器验收 |
+| 回复删除、删除权限、评论 id / 删除链接解析 | 回复删除验收、相关 action / 来源解析测试、`npm run typecheck`、模拟器验收 |
 | 收藏、历史、备份 / 恢复 | reader data / backup 测试、`src/appSecurity.test.ts`、`npm run typecheck` |
 | UI 样式、主题 | 只保留事故级 UI helper 测试、`src/theme.test.ts`、`npm run typecheck`、模拟器验收 |
 | 发布、安装、自更新 | `npm run release:android` |

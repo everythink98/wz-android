@@ -5,6 +5,9 @@ import {
   hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
   nodeSeekBrowserCookieHeaderForPersistence,
+  nodeSeekAccessRecord,
+  nodeSeekCsrfTokenFromHtml,
+  nodeSeekUserIdFromCookies,
   parseNodeSeekDocumentCookie,
   parseNodeSeekAccessRecord,
   removeNodeSeekLoginCookies,
@@ -115,6 +118,25 @@ describe('NodeSeek cookie helpers', () => {
     expect(buildCookieHeader(cookies)).toBe('');
   });
 
+  it('reads the current user id from NodeSeek pjwt without persisting pjwt as an action cookie', () => {
+    const payload = Buffer.from(JSON.stringify({ id: 54874, name: '凡想世界' }), 'utf8').toString('base64url');
+    const cookies: Record<string, NativeCookie> = {
+      pjwt: {
+        name: 'pjwt',
+        value: `${payload}.signature`,
+        domain: 'www.nodeseek.com'
+      },
+      session: {
+        name: 'session',
+        value: 'abc',
+        domain: 'www.nodeseek.com'
+      }
+    };
+
+    expect(nodeSeekUserIdFromCookies(cookies)).toBe(54874);
+    expect(buildCookieHeader(cookies)).toBe('session=abc');
+  });
+
   it('allows storing Cloudflare clearance cookies from NodeSeek verification', () => {
     const cookies: Record<string, NativeCookie> = {
       cf_clearance: {
@@ -204,14 +226,34 @@ describe('NodeSeek cookie helpers', () => {
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
       userId: 48872,
+      csrfToken: ' page-csrf ',
       savedAt: '2026-06-21T00:00:00.000Z',
       source: 'webview'
     }))).toEqual({
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36',
       userId: 48872,
+      csrfToken: 'page-csrf',
       savedAt: '2026-06-21T00:00:00.000Z',
       source: 'webview'
     });
+  });
+
+  it('stores a NodeSeek access csrf token separately from cookies', () => {
+    expect(nodeSeekAccessRecord(
+      'session=abc',
+      'Mozilla/5.0',
+      48872,
+      ' page-csrf '
+    )).toMatchObject({
+      cookieHeader: 'session=abc',
+      userId: 48872,
+      csrfToken: 'page-csrf'
+    });
+  });
+
+  it('reads NodeSeek csrf token from rendered page html', () => {
+    expect(nodeSeekCsrfTokenFromHtml('<html><head><meta name="csrf-token" content="page-csrf"></head></html>')).toBe('page-csrf');
+    expect(nodeSeekCsrfTokenFromHtml('<meta content="next-csrf" name="csrf-token">')).toBe('next-csrf');
   });
 });

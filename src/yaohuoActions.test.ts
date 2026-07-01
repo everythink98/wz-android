@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildYaohuoDeleteReplyRequest,
   buildYaohuoFavoriteRequest,
   buildYaohuoReplyRequest,
   buildYaohuoVoteRequest,
@@ -79,6 +80,34 @@ describe('yaohuo action request builders', () => {
       path: '/bbs/book_view_toVote.aspx?siteid=1000&classid=177&vid=55&vid=56&vpage=1&lpage=2&id=123',
       method: 'GET'
     });
+  });
+
+  it('builds a yaohuo own-reply delete request from the original delete link', () => {
+    const request = buildYaohuoDeleteReplyRequest({
+      deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&lpage=1&page=1&reid=17080475&id=798458',
+      sid: 'abc123'
+    });
+
+    expect(request.method).toBe('GET');
+    expect(request.headers).toEqual({});
+    expect(request.path.startsWith('/bbs/Book_re_del.aspx?')).toBe(true);
+    const params = new URLSearchParams(request.path.split('?')[1] || '');
+    expect(params.get('action')).toBe('go');
+    expect(params.get('siteid')).toBe('1000');
+    expect(params.get('classid')).toBe('177');
+    expect(params.get('reid')).toBe('17080475');
+    expect(params.get('id')).toBe('798458');
+    expect(params.get('sid')).toBe('abc123');
+  });
+
+  it('rejects yaohuo reply delete links outside yaohuo or without required ids', () => {
+    expect(() => buildYaohuoDeleteReplyRequest({
+      deletePath: 'https://evil.example/bbs/Book_re_del.aspx?action=go&classid=177&reid=17080475&id=798458'
+    })).toThrow('妖火删除链接不正确');
+
+    expect(() => buildYaohuoDeleteReplyRequest({
+      deletePath: '/bbs/Book_re_del.aspx?action=go&classid=177&id=798458'
+    })).toThrow('回复 id 不正确');
   });
 
   it('rejects empty reply content and invalid ids', () => {

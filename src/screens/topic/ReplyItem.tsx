@@ -2,12 +2,13 @@ import { memo, useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
-import { Drumstick, MessageCircle, ThumbsDown, ThumbsUp } from 'lucide-react-native';
+import { Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
 import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import { highlightHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
+import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
 import { AppButton } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
@@ -85,6 +86,15 @@ export function LinuxDoReactionPill({
   );
 }
 
+function NodeSeekActionPlaceholder({ styles }: { styles: ReturnType<typeof createStyles> }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.detailActionButton, styles.replyDetailActionButton, styles.replyCompactActionButton, { opacity: 0 }]}
+    />
+  );
+}
+
 export function ReplyItem({
   actionBusy,
   canWrite,
@@ -109,6 +119,8 @@ export function ReplyItem({
   topicBaseUrl,
   topicImageDeriver,
   onInteract,
+  onDeleteReply,
+  onEditReply,
   onOpenUser,
   onReplyToFloor,
   onVotePoll,
@@ -137,6 +149,8 @@ export function ReplyItem({
   topicBaseUrl?: string;
   topicImageDeriver: TopicImageDeriver;
   onInteract: (type: InteractionType, commentId?: number) => void;
+  onDeleteReply: (reply: Reply) => void;
+  onEditReply: (reply: Reply) => void;
   onOpenUser: (user: UserProfile) => void;
   onReplyToFloor: (reply: Reply) => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
@@ -149,6 +163,7 @@ export function ReplyItem({
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
+  const canUseNodeSeekInteractions = reply.canLike !== false;
   const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply, linuxDoEmojiUrls) : [];
   const replyTargetUser = source && reply.replyTargetAuthor ? {
     source,
@@ -334,20 +349,22 @@ export function ReplyItem({
         {canWrite && source === 'nodeseek' ? (
           <View style={styles.replyActionRow}>
             <DetailActionButton alignStart compact accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart compact active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} />
-            <DetailActionButton alignStart compact active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
-            <DetailActionButton alignStart compact active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} />
+            {reply.canEdit ? <DetailActionButton alignStart compact accessibilityLabel="编辑回复" icon={Pencil} label="编辑" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onEditReply(reply)} /> : canUseNodeSeekInteractions ? <DetailActionButton alignStart compact active={Boolean(reply.upvoted)} accessibilityLabel={reply.upvoted ? '已点赞' : '点赞'} count={reply.upvoteCount} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', reply.commentId)} /> : <NodeSeekActionPlaceholder styles={styles} />}
+            {canUseNodeSeekInteractions ? <DetailActionButton alignStart compact active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '已加鸡腿' : '加鸡腿'} count={reply.likeCount} icon={Drumstick} label="鸡腿" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : <NodeSeekActionPlaceholder styles={styles} />}
+            {canUseNodeSeekInteractions ? <DetailActionButton alignStart compact active={Boolean(reply.disliked)} accessibilityLabel={reply.disliked ? '已反对' : '反对'} count={reply.dislikeCount} icon={ThumbsDown} label="反对" pending={isActionPending(reply.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', reply.commentId)} /> : <NodeSeekActionPlaceholder styles={styles} />}
           </View>
         ) : null}
         {canWrite && source === 'yaohuo' ? (
           <View style={styles.replyActionRow}>
             <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+            {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
           </View>
         ) : null}
         {canWrite && source === 'linuxdo' ? (
           <View style={styles.replyActionRow}>
             <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
-            <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} />
+            {canUseLinuxDoLike(reply) ? <DetailActionButton alignStart active={Boolean(reply.liked)} accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : null}
+            {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
           </View>
         ) : null}
       </View>
@@ -364,6 +381,8 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || inlineSizedImageSignatureForReply(previous.reply, previous.inlineSizedImageUrls) !== inlineSizedImageSignatureForReply(next.reply, next.inlineSizedImageUrls)
     || previous.isNew !== next.isNew
     || previous.linuxDoEmojiUrls !== next.linuxDoEmojiUrls
+    || previous.onDeleteReply !== next.onDeleteReply
+    || previous.onEditReply !== next.onEditReply
     || previous.onInteract !== next.onInteract
     || previous.onOpenUser !== next.onOpenUser
     || previous.onReplyToFloor !== next.onReplyToFloor

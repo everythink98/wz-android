@@ -1,6 +1,6 @@
 import { topicKey } from './readerData';
 import type { Reply, Topic, TopicDetail } from './types';
-import type { ReplyFilter, ReplyTarget, TopicSnapshot } from './appTypes';
+import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from './appTypes';
 
 export type TopicSession = {
   key: string;
@@ -17,6 +17,7 @@ export type TopicSession = {
   replyContent: string;
   replyComposerOpen: boolean;
   replyTarget: ReplyTarget | null;
+  replyEditTarget: ReplyEditTarget | null;
   expandedQuotes: Record<string, boolean>;
   loadedQuotedReplies: Record<number, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
@@ -58,6 +59,7 @@ export function createEmptyTopicSession(topic: Topic): TopicSession {
     replyContent: '',
     replyComposerOpen: false,
     replyTarget: null,
+    replyEditTarget: null,
     expandedQuotes: {},
     loadedQuotedReplies: {},
     loadingQuotedFloors: {},
@@ -88,6 +90,7 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
     replyContent: session.replyContent,
     replyComposerOpen: session.replyComposerOpen,
     replyTarget: session.replyTarget,
+    replyEditTarget: session.replyEditTarget,
     expandedQuotes: session.expandedQuotes,
     loadedQuotedReplies: session.loadedQuotedReplies,
     loadingQuotedFloors: {},
@@ -112,6 +115,7 @@ export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession 
     replyContent: snapshot.replyContent,
     replyComposerOpen: snapshot.replyComposerOpen,
     replyTarget: snapshot.replyTarget,
+    replyEditTarget: snapshot.replyEditTarget || null,
     expandedQuotes: snapshot.expandedQuotes,
     loadedQuotedReplies: snapshot.loadedQuotedReplies,
     loadingQuotedFloors: {},

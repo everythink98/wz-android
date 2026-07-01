@@ -296,6 +296,14 @@ function likedFromActionsSummary(value: unknown) {
   return isRecord(likeAction) ? Boolean(likeAction.acted) : undefined;
 }
 
+function canLikeFromActionsSummary(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const likeAction = value.find((item) => isRecord(item) && Number(item.id) === 2);
+  return isRecord(likeAction) && typeof likeAction.can_act === 'boolean' ? likeAction.can_act : undefined;
+}
+
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
 }
@@ -415,10 +423,14 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   if (!isRecord(raw)) {
     return null;
   }
+  if (raw.deleted_at || raw.user_deleted === true) {
+    return null;
+  }
   const contentHtml = sanitizeContentHtml(raw.cooked || '', BASE_URL);
   const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
   const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
   const liked = likedFromActionsSummary(raw.actions_summary);
+  const canLike = canLikeFromActionsSummary(raw.actions_summary);
   const reactions = reactionSummary(raw.reactions);
   const rawBoostCount = boostCountFromPost(raw);
   const targetAuthor = replyTargetAuthor(raw.reply_to_user);
@@ -439,6 +451,8 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     ...(positiveNumber(raw.id) ? { commentId: positiveNumber(raw.id) } : {}),
     ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
     ...(liked !== undefined ? { liked } : {}),
+    ...(canLike !== undefined ? { canLike } : {}),
+    ...(typeof raw.can_delete === 'boolean' ? { canDelete: raw.can_delete } : {}),
     ...(targetAuthor ? { replyTargetAuthor: targetAuthor } : {}),
     ...(raw.accepted_answer === true ? { acceptedAnswer: true } : {}),
     ...(raw.wiki === true ? { wiki: true } : {}),
@@ -671,6 +685,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
     ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
     ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
+    ...(isRecord(firstPost) && canLikeFromActionsSummary(firstPost.actions_summary) !== undefined ? { canLike: canLikeFromActionsSummary(firstPost.actions_summary) } : {}),
     ...(polls ? { polls } : {}),
     ...(firstPostReactions ? { reactionSummary: firstPostReactions } : {}),
     ...(firstPostBoostCount ? { boostCount: firstPostBoostCount } : {}),

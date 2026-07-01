@@ -37,7 +37,9 @@ function runLinuxDoBrowserFetchScript(url: string, html: string) {
 describe('hidden browser fetch scripts', () => {
   afterEach(() => {
     document.body.innerHTML = '';
+    delete (window as typeof window & { __config__?: unknown }).__config__;
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('returns rendered NodeSeek search pages even when they have no post list items', () => {
@@ -155,6 +157,22 @@ describe('hidden browser fetch scripts', () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it('returns raw NodeSeek JSON bodies for browser-fetched API pages', () => {
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/session/csrf', `
+      <pre>{"csrf":"dynamic-token"}</pre>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'nodeseek-browser-fetch',
+      id: 7,
+      challenge: false,
+      html: '{"csrf":"dynamic-token"}'
+    });
+    expect(stop).toHaveBeenCalled();
+  });
+
   it('returns the real NodeSeek private-post notice without waiting for timeout', () => {
     const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777282-1', `
       <section id="nsk-frame">
@@ -211,6 +229,60 @@ describe('hidden browser fetch scripts', () => {
     });
     expect(payload.html).toContain('id="temp-script"');
     expect(payload.html.length).toBeLessThan(1000);
+    expect(stop).toHaveBeenCalled();
+  });
+
+  it('returns NodeSeek window config post data when the rendered page has no temp script', () => {
+    Object.defineProperty(window, '__config__', {
+      configurable: true,
+      value: {
+        postData: {
+          postId: 777286,
+          comments: [{
+            commentId: 10990421,
+            floorIndex: 9,
+            markdown: '原始 **Markdown**',
+            poster: { uid: 54874, isMe: true }
+          }, {
+            commentId: 10990422,
+            floorIndex: 10,
+            content: '@KWEOO #6 最新版没找到',
+            poster: { uid: 1 }
+          }]
+        }
+      }
+    });
+    const { postMessage, stop } = runNodeSeekBrowserFetchScript('/post-777286-1', `
+      <main>
+        <div id="9" data-comment-id="10990421" class="content-item">
+          <article class="post-content"><p>渲染后的 Markdown</p></article>
+          <div class="signature"><a href="/space/54874">个人签名</a></div>
+        </div>
+        <div id="10" data-comment-id="10990422" class="content-item">
+          <article class="post-content">
+            <p><a href="/member?t=KWEOO">@KWEOO</a> <a href="/post-777286-1#6">#6</a> 最新版没找到</p>
+          </article>
+        </div>
+      </main>
+    `);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload.html).toContain('id="temp-script"');
+    const encoded = payload.html.match(/<script[^>]*id="temp-script"[^>]*>([\s\S]*?)<\/script>/)?.[1] || '';
+    const data = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    expect(data.postData.comments[0]).toMatchObject({
+      commentId: 10990421,
+      floorIndex: 9,
+      markdown: '原始 **Markdown**',
+      content: '<p>渲染后的 Markdown</p>',
+      signature: '<a href="/space/54874">个人签名</a>',
+      poster: { uid: 54874, isMe: true }
+    });
+    expect(data.postData.comments[1]).toMatchObject({
+      commentId: 10990422,
+      content: '<p><a href="/member?t=KWEOO">@KWEOO</a> <a href="/post-777286-1#6">#6</a> 最新版没找到</p>'
+    });
     expect(stop).toHaveBeenCalled();
   });
 

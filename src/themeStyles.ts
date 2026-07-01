@@ -418,6 +418,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       minHeight: 92,
       textAlignVertical: 'top'
     },
+    replyFormatToolbar: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 6,
+      paddingVertical: 1
+    },
     searchRow: {
       alignItems: 'center',
       flexDirection: 'row',

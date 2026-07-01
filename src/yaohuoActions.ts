@@ -1,3 +1,5 @@
+import { YAOHUO_BASE_URL } from './localYaohuoHelpers';
+
 export interface YaohuoActionRequest {
   path: string;
   method: 'GET' | 'POST';
@@ -34,6 +36,35 @@ function appendIfPresent(params: URLSearchParams, key: string, value?: string | 
   if (text) {
     params.set(key, text);
   }
+}
+
+function yaohuoDeleteUrl(deletePath: string) {
+  const text = String(deletePath || '').trim().replace(/&amp;/gi, '&');
+  let url: URL;
+  try {
+    url = new URL(text, YAOHUO_BASE_URL);
+  } catch {
+    throw new Error('妖火删除链接不正确');
+  }
+  const host = url.hostname.toLowerCase();
+  if (!['http:', 'https:'].includes(url.protocol)
+    || url.username
+    || url.password
+    || (host !== 'yaohuo.me' && host !== 'www.yaohuo.me')
+    || !/^\/bbs\/book_re_del\.aspx$/i.test(url.pathname)) {
+    throw new Error('妖火删除链接不正确');
+  }
+  cleanPositiveInteger(url.searchParams.get('reid') || '', '回复 id');
+  cleanPositiveInteger(url.searchParams.get('id') || '', '帖子 id');
+  cleanPositiveInteger(url.searchParams.get('classid') || '', '分区 id');
+  url.protocol = 'https:';
+  url.hostname = 'yaohuo.me';
+  return url;
+}
+
+export function normalizeYaohuoReplyDeletePath(deletePath: string) {
+  const url = yaohuoDeleteUrl(deletePath);
+  return `${url.pathname}${url.search}`;
 }
 
 export function extractYaohuoSid(cookieHeader: string) {
@@ -84,6 +115,22 @@ export function buildYaohuoReplyRequest({
       'content-type': 'application/x-www-form-urlencoded'
     },
     body: params.toString()
+  };
+}
+
+export function buildYaohuoDeleteReplyRequest({
+  deletePath,
+  sid
+}: {
+  deletePath: string;
+  sid?: string;
+}): YaohuoActionRequest {
+  const url = yaohuoDeleteUrl(deletePath);
+  appendIfPresent(url.searchParams, 'sid', sid);
+  return {
+    path: `${url.pathname}${url.search}`,
+    method: 'GET',
+    headers: {}
   };
 }
 

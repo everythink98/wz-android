@@ -178,6 +178,11 @@ describe('Android local sources', () => {
 
   it('keeps NodeSeek detail reply metadata from embedded comments', async () => {
     const payload = Buffer.from(JSON.stringify({
+      user: {
+        member_id: 48872,
+        member_name: '凡想世界',
+        avatar: '/avatar/48872.png'
+      },
       postData: {
         postId: 204,
         title: 'NodeSeek detail metadata',
@@ -205,7 +210,7 @@ describe('Android local sources', () => {
             floorIndex: 15,
             hot: true,
             pined: true,
-            poster: { name: 'bob', uid: 42, avatar: '/avatar/42.png', profile: '/space/42', roles: [{ name: 'active', display_text: '活跃' }] },
+            poster: { name: 'bob', uid: 42, isMe: true, avatar: '/avatar/42.png', profile: '/space/42', roles: [{ name: 'active', display_text: '活跃' }] },
             markdown: '热门回复',
             signature: '签名 **内容**',
             time: { createdDate: '2026-05-20T00:15:00.000Z' },
@@ -237,6 +242,12 @@ describe('Android local sources', () => {
     });
     expect(topic.authorId).toBe('9891');
     expect(topic.authorLevelLabel).toBe('管理');
+    expect(topic.currentUser).toMatchObject({
+      source: 'nodeseek',
+      id: '48872',
+      username: '凡想世界',
+      url: 'https://www.nodeseek.com/space/48872'
+    });
     expect(topic.replies[0]).toMatchObject({
       author: 'bob',
       authorId: '42',
@@ -248,8 +259,12 @@ describe('Android local sources', () => {
       upvoteCount: 0,
       likeCount: 2,
       dislikeCount: 1,
-      disliked: true
+      disliked: true,
+      canLike: false,
+      canEdit: true,
+      contentMarkdown: '热门回复'
     });
+    expect(topic.replies[0]).not.toHaveProperty('canDelete');
     expect(topic.replies[0]).toHaveProperty('signatureHtml', expect.stringContaining('<strong>内容</strong>'));
     expect(topic.replies[1]).toMatchObject({
       author: 'alice',
@@ -257,6 +272,94 @@ describe('Android local sources', () => {
       floor: 1,
       isOp: true
     });
+  });
+
+  it('uses rendered NodeSeek html for display and markdown only for editing', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 205,
+        title: 'NodeSeek rendered content',
+        op: { uid: 9891, name: 'alice' },
+        category: 'daily',
+        categoryWord: '日常',
+        comments: [
+          {
+            commentId: 20,
+            poster: { name: 'alice', uid: 9891, isOp: true },
+            markdown: '[Markdown 正文](/markdown-post-1)',
+            content: '<p><a href="/post-1">正文链接</a></p>',
+            time: { createdDate: '2026-05-20T00:00:00.000Z' }
+          },
+          {
+            commentId: 21,
+            poster: { name: 'bob', uid: 42, isMe: true },
+            markdown: '[Markdown 回复](/markdown-post-2)',
+            content: '<p><a href="/post-2">回复链接</a></p>',
+            signature: '<p><a href="/space/42">个人签名</a></p>',
+            time: { createdDate: '2026-05-20T00:01:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const topic = await getNodeSeekTopic('205', { fetcher });
+
+    expect(topic.contentHtml).toContain('<a href="https://www.nodeseek.com/post-1">正文链接</a>');
+    expect(topic.contentHtml).not.toContain('Markdown 正文');
+    expect(topic.contentHtml).not.toContain('&lt;p');
+    expect(topic.replies[0]).toMatchObject({
+      contentMarkdown: '[Markdown 回复](/markdown-post-2)',
+      signatureHtml: expect.stringContaining('<a href="https://www.nodeseek.com/space/42">个人签名</a>')
+    });
+    expect(topic.replies[0].contentHtml).toContain('<a href="https://www.nodeseek.com/post-2">回复链接</a>');
+    expect(topic.replies[0].contentHtml).not.toContain('Markdown 回复');
+    expect(topic.replies[0].contentHtml).not.toContain('&lt;p');
+    expect(topic.replies[0].signatureHtml).not.toContain('&lt;p');
+  });
+
+  it('does not escape rendered NodeSeek html even when it arrives in markdown fields', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 206,
+        title: 'NodeSeek html markdown fields',
+        op: { uid: 9891, name: 'alice' },
+        comments: [
+          {
+            commentId: 30,
+            poster: { name: 'alice', uid: 9891 },
+            markdown: '<p><a href="/post-1">正文链接</a></p>',
+            time: { createdDate: '2026-05-20T00:00:00.000Z' }
+          },
+          {
+            commentId: 31,
+            poster: { name: 'bob', uid: 42, isMe: true },
+            markdown: '<p><a href="/post-2">回复链接</a></p>',
+            time: { createdDate: '2026-05-20T00:01:00.000Z' }
+          },
+          {
+            commentId: 32,
+            poster: { name: 'carol', uid: 43 },
+            content: 'plain rendered fallback',
+            markdown: '![xhj032](https://www.nodeseek.com/static/image/smiley/xhj032.png)\n\n[@电动面包](https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85) [#4](https://www.nodeseek.com/post-793572-1#4) 后续正文',
+            time: { createdDate: '2026-05-20T00:02:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const topic = await getNodeSeekTopic('206', { fetcher });
+
+    expect(topic.contentHtml).toContain('<a href="https://www.nodeseek.com/post-1">正文链接</a>');
+    expect(topic.contentHtml).not.toContain('&lt;p');
+    expect(topic.replies[0].contentHtml).toContain('<a href="https://www.nodeseek.com/post-2">回复链接</a>');
+    expect(topic.replies[0].contentHtml).not.toContain('&lt;p');
+    expect(topic.replies[0]).not.toHaveProperty('contentMarkdown');
+    expect(topic.replies[1].contentHtml).toContain('src="https://www.nodeseek.com/static/image/smiley/xhj032.png"');
+    expect(topic.replies[1].contentHtml).toContain('<a href="https://www.nodeseek.com/member?t=%E7%94%B5%E5%8A%A8%E9%9D%A2%E5%8C%85">@电动面包</a>');
+    expect(topic.replies[1].contentHtml).toContain('<a href="https://www.nodeseek.com/post-793572-1#4">#4</a>');
+    expect(topic.replies[1].contentHtml).not.toContain('plain rendered fallback');
   });
 
   it('reads linux.do author trust levels from list and topic post data', async () => {
@@ -1333,7 +1436,7 @@ describe('Android local sources', () => {
             cooked: '<p>topic</p>',
             created_at: '2026-05-20T00:00:00.000Z',
             like_count: 3,
-            actions_summary: [{ id: 2, acted: true }]
+            actions_summary: [{ id: 2, acted: true, can_act: false }]
           },
           {
             id: 1002,
@@ -1342,7 +1445,8 @@ describe('Android local sources', () => {
             cooked: '<p>reply</p>',
             created_at: '2026-05-20T00:01:00.000Z',
             like_count: 1,
-            actions_summary: [{ id: 2, acted: false }]
+            can_delete: true,
+            actions_summary: [{ id: 2, acted: false, can_act: true }]
           }
         ]
       }
@@ -1354,13 +1458,63 @@ describe('Android local sources', () => {
       commentId: 1001,
       liked: true,
       likeCount: 3,
+      canLike: false,
       bookmarked: true,
       bookmarkId: 700
     });
     expect(topic.replies[0]).toMatchObject({
       commentId: 1002,
       liked: false,
-      likeCount: 1
+      likeCount: 1,
+      canLike: true,
+      canDelete: true
+    });
+  });
+
+  it('omits linux.do replies that the original site marks as deleted', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 901,
+      title: 'linux.do deleted reply topic',
+      slug: 'linux-do-deleted-reply-topic',
+      created_at: '2026-05-20T00:00:00.000Z',
+      posts_count: 3,
+      views: 10,
+      post_stream: {
+        stream: [2001, 2002, 2003],
+        posts: [
+          {
+            id: 2001,
+            post_number: 1,
+            username: 'alice',
+            cooked: '<p>topic</p>',
+            created_at: '2026-05-20T00:00:00.000Z'
+          },
+          {
+            id: 2002,
+            post_number: 2,
+            username: 'bob',
+            cooked: '<p>visible reply</p>',
+            created_at: '2026-05-20T00:01:00.000Z'
+          },
+          {
+            id: 2003,
+            post_number: 3,
+            username: 'everythink',
+            cooked: '<p>(帖子已被作者删除)</p>',
+            created_at: '2026-05-20T00:02:00.000Z',
+            deleted_at: '2026-05-20T00:03:00.000Z',
+            user_deleted: true
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '901', fetcher });
+
+    expect(topic.replies).toHaveLength(1);
+    expect(topic.replies[0]).toMatchObject({
+      commentId: 2002,
+      contentHtml: expect.stringContaining('visible reply')
     });
   });
 
@@ -2069,8 +2223,7 @@ describe('Android local sources', () => {
     }
   });
 
-  it('reads every NodeSeek search page through the WebView fallback', async () => {
-    const normalFetcher = vi.fn(async () => html('<main>NodeSeek search for post</main><ul class="post-list"></ul>'));
+  it('uses direct fetch for readable NodeSeek search pages', async () => {
     const webViewFetcher = vi.fn(async (input: string) => {
       const query = new URL(input).searchParams.get('q') || '';
       const id = query.toLowerCase() === 'ai' ? '809' : '810';
@@ -2078,6 +2231,18 @@ describe('Android local sources', () => {
         <ul class="post-list">
           <li class="post-list-item">
             <div class="post-title"><a href="/post-${id}-1">${query} WebView search result</a></div>
+            <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+          </li>
+        </ul>
+      `);
+    });
+    const normalFetcher = vi.fn(async (input: string) => {
+      const query = new URL(input).searchParams.get('q') || '';
+      const id = query.toLowerCase() === 'ai' ? '809' : '810';
+      return html(`
+        <ul class="post-list">
+          <li class="post-list-item">
+            <div class="post-title"><a href="/post-${id}-1">${query} direct search result</a></div>
             <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
           </li>
         </ul>
@@ -2093,11 +2258,38 @@ describe('Android local sources', () => {
 
     expect(aiSearch.items.map((item) => item.id)).toEqual(['809']);
     expect(codexSearch.items.map((item) => item.id)).toEqual(['810']);
-    expect(normalFetcher).not.toHaveBeenCalled();
-    expect(webViewFetcher).toHaveBeenCalledTimes(2);
+    expect(normalFetcher).toHaveBeenCalledTimes(2);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+    const normalCalls = normalFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(normalCalls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=ai');
+    expect(normalCalls[1]?.[0]).toBe('https://www.nodeseek.com/search?q=codex');
+  });
+
+  it('uses the NodeSeek WebView fallback for search only after Cloudflare', async () => {
+    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => html(`
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-811-1">cf WebView search result</a></div>
+          <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+        </li>
+      </ul>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const result = await searchTopics({ source: 'nodeseek', query: 'cf', fetcher });
+
+    expect(result.items.map((item) => item.id)).toEqual(['811']);
+    expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
-    expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=ai');
-    expect(webViewCalls[1]?.[0]).toBe('https://www.nodeseek.com/search?q=codex');
+    expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/search?q=cf');
   });
 
   it('reads rendered NodeSeek WebView rows without picking footer post links', async () => {

@@ -24,24 +24,23 @@ function cleanPositiveInteger(value: string | number, name: string) {
   return number;
 }
 
-function randomToken(length = 16) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let index = 0; index < length; index += 1) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+function cleanCsrfToken(value: string) {
+  const token = String(value || '').trim();
+  if (!token) {
+    throw new Error('NodeSeek token 缺失，请重新检测登录');
   }
-  return result;
+  return token;
 }
 
 export function buildNodeSeekReplyRequest({
   postId,
   content,
-  csrfToken = randomToken(),
+  csrfToken,
   replyTarget
 }: {
   postId: string | number;
   content: string;
-  csrfToken?: string;
+  csrfToken: string;
   replyTarget?: {
     floor?: string | number;
     author?: string;
@@ -52,6 +51,7 @@ export function buildNodeSeekReplyRequest({
     throw new Error('请输入回复内容');
   }
   const cleanPostId = cleanPositiveInteger(postId, '帖子 id');
+  const cleanCsrf = cleanCsrfToken(csrfToken);
   const targetFloor = replyTarget?.floor ? cleanPositiveInteger(replyTarget.floor, '楼层') : undefined;
   const targetAuthor = String(replyTarget?.author || '').trim();
   const finalContent = targetFloor
@@ -63,12 +63,42 @@ export function buildNodeSeekReplyRequest({
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'csrf-token': csrfToken
+      referer: `https://www.nodeseek.com/post-${cleanPostId}-1`,
+      'csrf-token': cleanCsrf
     },
     body: JSON.stringify({
       content: finalContent,
       mode: 'new-comment',
       postId: cleanPostId
+    })
+  };
+}
+
+export function buildNodeSeekEditReplyRequest({
+  commentId,
+  content,
+  csrfToken
+}: {
+  commentId: string | number;
+  content: string;
+  csrfToken: string;
+}): NodeSeekActionRequest {
+  const cleanContent = content.trim();
+  if (!cleanContent) {
+    throw new Error('请输入回复内容');
+  }
+  const cleanCsrf = cleanCsrfToken(csrfToken);
+  return {
+    path: '/api/content/edit-comment',
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'csrf-token': cleanCsrf
+    },
+    body: JSON.stringify({
+      commentId: cleanPositiveInteger(commentId, '评论 id'),
+      content: cleanContent,
+      mode: 'edit-comment'
     })
   };
 }

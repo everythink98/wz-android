@@ -30,7 +30,11 @@
 - 来源统一入口在 `src/sources/sourceGateway.ts`；App 层使用不带 `Direct` 的 gateway 方法，`Direct` 命名只保留在妖火来源实现和 gateway 转发测试里。
 - `forumApi.ts`、`yaohuoApi.ts` 和站点 action client 仍存在，但作为 gateway 后面的实现。
 - 首页、搜索、详情、回复、用户页和详情互动都通过 `sourceGateway` 进入来源层。
+- 详情页支持三站回复框格式工具栏和图片上传；NodeSeek / linux.do 插入 Markdown 图片，妖火插入 `[img]...[/img]`。
+- NodeSeek 支持编辑自己的回复；请求必须使用 App 内登录态取得的真实 token。
+- linux.do 和妖火仅在原站数据明确允许时显示删除自己的回复；NodeSeek 当前不显示删除回复入口。
 - More 页账号区在 `src/screens/MoreScreen.tsx`、`src/screens/more/MorePanels.tsx` 和 `src/screens/more/LinuxDoLevelPanel.tsx`，账号逻辑在 `src/app/useAccountController.ts`。
+- More 页提供 NodeImage API Key 状态、自动授权获取和手动粘贴备用入口。
 - `src/theme.ts` 是兼容 facade，主题核心在 `src/themeCore.ts`，`createStyles` 在 `src/themeStyles.ts`，样式分组在 `src/themeParts.ts`。
 - `src/screens/TopicScreen.tsx` 是兼容 facade，详情页主体在 `src/screens/topic/TopicScreenBody.tsx`，纯辅助逻辑在 `src/screens/topic/topicScreenHelpers.ts`。
 - 收藏页展示在 `src/screens/LibraryScreen.tsx`，列表模型在 `src/screens/library/libraryScreenItems.ts`。
@@ -43,5 +47,6 @@
 2. App 壳：`App.tsx`、`src/app/AppRoot.tsx`、`src/app/AppNavigator.tsx`、`src/app/useDeferredNavigationTask.ts`。
 3. App 运行逻辑：`src/app/useFeedController.ts`、`src/app/useSearchController.ts`、`src/app/useTopicController.ts`、`src/app/useTopicActionsController.ts`、`src/app/useUserController.ts`、`src/app/useAccountController.ts`。
 4. 详情页 UI：`src/screens/TopicScreen.tsx`、`src/screens/topic/TopicScreenBody.tsx`、`src/screens/topic/topicScreenHelpers.ts` 和 `src/screens/topic/` 下的局部组件。
-5. 收藏页 UI：`src/screens/LibraryScreen.tsx` 和 `src/screens/library/libraryScreenItems.ts`。
-6. 样式：`src/theme.ts`、`src/themeCore.ts`、`src/themeStyles.ts`、`src/themeParts.ts`。
+5. 回复上传 / 授权：`src/replyImageUpload.ts`、`src/nodeimageCredentials.ts`、`src/loginWebViewScripts.ts`、`src/linuxdoActions.ts`、`src/yaohuoActionClient.ts`。
+6. 收藏页 UI：`src/screens/LibraryScreen.tsx` 和 `src/screens/library/libraryScreenItems.ts`。
+7. 样式：`src/theme.ts`、`src/themeCore.ts`、`src/themeStyles.ts`、`src/themeParts.ts`。
