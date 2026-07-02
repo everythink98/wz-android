@@ -23,6 +23,8 @@ export interface ReaderTheme {
   favorite: string;
 }
 
+export const LINK_COLOR = '#1677FF';
+
 export function androidRipple(color: string, borderless = false) {
   return { color, borderless };
 }

@@ -1,10 +1,9 @@
 import { StyleSheet } from 'react-native';
 import type { HtmlAllowedStyles, HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlTagsStyles } from './appTypes';
 import type { ReaderSettings } from './readerData';
-import { alphaColor, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from './theme';
+import { alphaColor, fontFamilyValue, lineHeightMultiplier, LINK_COLOR, type ReaderTheme } from './theme';
 
 export const HTML_ALLOWED_INLINE_STYLES: HtmlAllowedStyles = ['color', 'fontWeight', 'fontStyle', 'textAlign', 'textDecorationLine'];
-const SYSTEM_LINK_COLOR = '#0000EE';
 
 export function buildHtmlRenderingStyles({
   settings,
@@ -45,7 +44,7 @@ export function buildHtmlRenderingStyles({
     h5: heading(15, 22, '600', 12, 5),
     h6: heading(14, 21, '600', 10, 4),
     a: {
-      color: SYSTEM_LINK_COLOR
+      color: LINK_COLOR
     },
     img: {
       borderRadius: 10,
@@ -123,11 +122,11 @@ export function buildHtmlRenderingStyles({
   };
   const htmlClassesStyles: HtmlClassesStyles = {
     'forum-user-mention': {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.2 : 0.14),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.38 : 0.28),
+      backgroundColor: alphaColor(LINK_COLOR, theme.dark ? 0.2 : 0.12),
+      borderColor: alphaColor(LINK_COLOR, theme.dark ? 0.38 : 0.26),
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
-      color: theme.primary,
+      color: LINK_COLOR,
       fontWeight: '700',
       paddingHorizontal: 5,
       paddingVertical: 1,

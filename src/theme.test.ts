@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StyleSheet } from 'react-native';
 import { type ReaderSettings } from './readerData';
-import { createStyles, createTheme } from './theme';
+import { createStyles, createTheme, LINK_COLOR } from './theme';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -91,8 +91,10 @@ describe('Android reader theme safety rails', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800);
 
-    expect(styles.htmlMentionLink.color).toBe(theme.primary);
-    expect(styles.htmlFloorLink.color).toBe(theme.muted);
+    expect(styles.htmlMentionLink.color).toBe(LINK_COLOR);
+    expect(styles.htmlReplyReferenceMentionText.color).toBe(LINK_COLOR);
+    expect(styles.replyTargetText.color).toBe(LINK_COLOR);
+    expect(styles.htmlFloorLink.color).toBe(LINK_COLOR);
     expect('backgroundColor' in styles.htmlReplyReferenceRow).toBe(false);
     expect('borderWidth' in styles.htmlReplyReferenceRow).toBe(false);
     expect(styles.htmlReplyReferenceRow.alignSelf).toBe('stretch');

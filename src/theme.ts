@@ -6,6 +6,7 @@ export {
   createTheme,
   fontFamilyValue,
   lineHeightMultiplier,
+  LINK_COLOR,
   replyContextBadgeStyle,
   sourceBadgeColorStyle,
   topicStatusBadgeColorStyle,

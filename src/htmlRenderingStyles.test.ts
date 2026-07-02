@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as htmlRenderingStyles from './htmlRenderingStyles';
 import type { ReaderSettings } from './readerData';
-import { createTheme } from './theme';
+import { createTheme, LINK_COLOR } from './theme';
 
 vi.mock('react-native', () => ({
   StyleSheet: {
@@ -23,8 +23,8 @@ describe('Android HTML rendering styles', () => {
     const theme = createTheme(settings);
     const { htmlClassesStyles, htmlTagsStyles } = htmlRenderingStyles.buildHtmlRenderingStyles({ settings, theme });
 
-    expect(htmlTagsStyles.a?.color).toBe('#0000EE');
-    expect(htmlClassesStyles['forum-user-mention'].color).toBe(theme.primary);
+    expect(htmlTagsStyles.a?.color).toBe(LINK_COLOR);
+    expect(htmlClassesStyles['forum-user-mention'].color).toBe(LINK_COLOR);
     expect(htmlClassesStyles['forum-user-mention'].backgroundColor).toBeTruthy();
     expect(htmlClassesStyles['forum-user-mention'].textDecorationLine).toBe('none');
   });

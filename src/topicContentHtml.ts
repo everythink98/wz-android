@@ -32,6 +32,7 @@ function hrefAttribute(attributes: string) {
 
 function isForumUserMentionHref(href: string) {
   return /^(?:https?:\/\/(?:www\.)?v2ex\.com)?\/member\/[^/?#"'<>]+/i.test(href)
+    || /^(?:https?:\/\/(?:www\.)?linux\.do)?\/u\/[^?#"'<>]+/i.test(href)
     || /^(?:https?:\/\/(?:www\.)?yaohuo\.me)?\/(?:bbs\/)?userinfo\.aspx\?[^"'<>]*\b(?:touserid|userid)=\d+/i.test(href);
 }
 

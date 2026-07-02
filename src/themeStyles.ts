@@ -1,7 +1,7 @@
 import { StyleSheet, StatusBar as NativeStatusBar } from 'react-native';
 import { type ReaderSettings } from './readerData';
 import { createNavigationStyles, createPanelStyles, createTopicStyles } from './themeParts';
-import { alphaColor, fontFamilyValue, type ReaderTheme } from './themeCore';
+import { alphaColor, fontFamilyValue, LINK_COLOR, type ReaderTheme } from './themeCore';
 
 export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
   const fontScale = settings.fontScale;
@@ -2299,29 +2299,29 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyTargetPill: {
       alignSelf: 'flex-start',
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.12 : 0.06),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.28 : 0.16),
+      backgroundColor: alphaColor(LINK_COLOR, theme.dark ? 0.14 : 0.06),
+      borderColor: alphaColor(LINK_COLOR, theme.dark ? 0.3 : 0.16),
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 5
     },
     replyTargetText: {
-      color: theme.primary,
+      color: LINK_COLOR,
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '600',
       lineHeight: 16
     },
     htmlMentionLink: {
-      color: theme.primary,
+      color: LINK_COLOR,
       fontFamily: appFontFamily,
       fontSize: Math.round(15 * fontScale),
       fontWeight: '600',
       lineHeight: Math.round(24 * fontScale)
     },
     htmlFloorLink: {
-      color: theme.muted,
+      color: LINK_COLOR,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * fontScale),
       fontWeight: '600',
@@ -2345,7 +2345,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       textAlignVertical: 'center'
     },
     htmlReplyReferenceMentionText: {
-      color: theme.primary,
+      color: LINK_COLOR,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * fontScale),
       fontWeight: '600',
