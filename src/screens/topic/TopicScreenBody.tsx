@@ -841,7 +841,7 @@ export const TopicScreen = memo(function TopicScreen({
         <MemoizedReplyItem
           actionBusy={actionBusy}
           canWrite={canWrite}
-          contentWidth={Math.max(240, contentWidth - 28)}
+          contentWidth={contentWidth}
           expandedQuotes={expandedQuotesRef.current}
           isActionPending={isOptimisticActionPending}
           inlineSizedImageUrls={inlineSizedImageUrls}

@@ -2295,7 +2295,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     replyContentArea: {
       gap: 10,
       paddingLeft: 42,
-      paddingRight: 28
+      paddingRight: 0
     },
     replyTargetPill: {
       alignSelf: 'flex-start',
