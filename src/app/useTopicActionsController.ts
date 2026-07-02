@@ -178,6 +178,7 @@ export function useTopicActionsController({
   optimisticTopicActionsRef,
   refreshTopicReplies,
   replyContent,
+  replyFace,
   replyEditTarget,
   replyTarget,
   resetLinuxDoLevelState,
@@ -186,6 +187,7 @@ export function useTopicActionsController({
   setOptimisticTopicActions,
   setReplyComposerOpen,
   setReplyContent,
+  setReplyFace,
   setReplyEditTarget,
   setReplyTarget,
   setTopicDetail,
@@ -210,6 +212,7 @@ export function useTopicActionsController({
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
   refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
   replyContent: string;
+  replyFace: string;
   replyEditTarget: ReplyEditTarget | null;
   replyTarget: ReplyTarget | null;
   resetLinuxDoLevelState: () => void;
@@ -218,6 +221,7 @@ export function useTopicActionsController({
   setOptimisticTopicActions: Dispatch<SetStateAction<Record<string, OptimisticActionState>>>;
   setReplyComposerOpen: Dispatch<SetStateAction<boolean>>;
   setReplyContent: Dispatch<SetStateAction<string>>;
+  setReplyFace: Dispatch<SetStateAction<string>>;
   setReplyEditTarget: Dispatch<SetStateAction<ReplyEditTarget | null>>;
   setReplyTarget: Dispatch<SetStateAction<ReplyTarget | null>>;
   setTopicDetail: Dispatch<SetStateAction<TopicDetail | null>>;
@@ -597,6 +601,7 @@ export function useTopicActionsController({
             return;
           }
           setReplyContent('');
+          setReplyFace('');
           setReplyComposerOpen(false);
           setReplyTarget(null);
           setReplyEditTarget(null);
@@ -618,6 +623,7 @@ export function useTopicActionsController({
             topicId: detail.id,
             classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
             content: replyContent,
+            face: replyFace,
             sid: extractYaohuoSid(cookieHeader),
             replyFloor: replyTarget?.floor,
             toUserId: replyTarget?.authorId
@@ -630,6 +636,7 @@ export function useTopicActionsController({
             return;
           }
           setReplyContent('');
+          setReplyFace('');
           setReplyComposerOpen(false);
           setReplyTarget(null);
           setReplyEditTarget(null);
@@ -652,6 +659,7 @@ export function useTopicActionsController({
             return;
           }
           setReplyContent('');
+          setReplyFace('');
           setReplyComposerOpen(false);
           setReplyTarget(null);
           setReplyEditTarget(null);
@@ -669,13 +677,14 @@ export function useTopicActionsController({
           return;
         }
         setReplyContent('');
+        setReplyFace('');
         setReplyComposerOpen(false);
         setReplyTarget(null);
         setReplyEditTarget(null);
         await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
     });
-  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyEditTarget, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyTarget, startTopicActionRequest, topicDetail]);
+  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyEditTarget, replyFace, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyFace, setReplyTarget, startTopicActionRequest, topicDetail]);
 
   const deleteReplyConfirmed = useCallback(async (reply: Reply) => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);

@@ -68,6 +68,7 @@ describe('topic session state', () => {
     const session: TopicSession = {
       ...createEmptyTopicSession(topic('3')),
       replyContent: '待回复',
+      replyFace: '淡定.gif',
       scrollY: 120
     };
     const restored = topicSessionFromSnapshot(snapshotFromTopicSession(session));
@@ -75,6 +76,7 @@ describe('topic session state', () => {
     expect(restored).toMatchObject({
       key: 'nodeseek:3',
       replyContent: '待回复',
+      replyFace: '淡定.gif',
       scrollY: 120
     });
   });

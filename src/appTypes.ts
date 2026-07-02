@@ -47,6 +47,7 @@ export type TopicSnapshot = {
   commentQuery: string;
   replyFilter: ReplyFilter;
   replyContent: string;
+  replyFace?: string;
   replyComposerOpen: boolean;
   replyTarget: ReplyTarget | null;
   replyEditTarget: ReplyEditTarget | null;

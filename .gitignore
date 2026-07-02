@@ -6,6 +6,8 @@ android/
 AGENTS.md
 memory/
 .idea/
+tmp/*
+代码审查报告-*.md
 tmp-*
 android-index-*.bundle
 android-rkstorage*.sqlite*

@@ -549,6 +549,7 @@ export function AppRoot() {
     quotedReplyAbortRefs,
     replyComposerOpen,
     replyContent,
+    replyFace,
     replyEditTarget,
     replyFilter,
     replyTarget,
@@ -561,6 +562,7 @@ export function AppRoot() {
     setQuoteStateVersion,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyFace,
     setReplyEditTarget,
     setReplyFilter,
     setReplyTarget,
@@ -988,6 +990,7 @@ export function AppRoot() {
     loadingQuotedFloorsRef,
     replyComposerOpen,
     replyContent,
+    replyFace,
     replyEditTarget,
     replyFilter,
     replyHasMore,
@@ -1003,6 +1006,7 @@ export function AppRoot() {
     setQuoteStateVersion,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyFace,
     setReplyEditTarget,
     setReplyFilter,
     setReplyHasMore,
@@ -1119,6 +1123,7 @@ export function AppRoot() {
     setLoadingQuotedFloors: updateLoadingQuotedFloors,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyFace,
     setReplyEditTarget,
     setReplyFilter,
     setReplyHasMore,
@@ -1189,6 +1194,7 @@ export function AppRoot() {
     optimisticTopicActionsRef,
     refreshTopicReplies,
     replyContent,
+    replyFace,
     replyEditTarget,
     replyTarget,
     resetLinuxDoLevelState,
@@ -1197,6 +1203,7 @@ export function AppRoot() {
     setOptimisticTopicActions,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyFace,
     setReplyEditTarget,
     setReplyTarget,
     setTopicDetail,
@@ -1683,6 +1690,7 @@ export function AppRoot() {
       topicFavorite,
       replyComposerOpen,
       replyContent,
+      replyFace,
       replyEditTarget,
       replyFilter,
       replyTarget,
@@ -1713,6 +1721,7 @@ export function AppRoot() {
       onOpenReadingSettings: openReadingSettingsFromTopic,
       onReplyComposerOpenChange: toggleReplyComposer,
       onReplyContentChange: setReplyContent,
+      onReplyFaceChange: setReplyFace,
       onReplyFilterChange: setReplyFilter,
       onReplyToFloor: replyToFloor,
       onRefreshTopic: refreshTopicReplies,
@@ -1763,11 +1772,13 @@ export function AppRoot() {
     refreshWholeTopic,
     replyComposerOpen,
     replyContent,
+    replyFace,
     replyEditTarget,
     replyFilter,
     replyHasMore,
     replyTarget,
     replyToFloor,
+    setReplyFace,
     selectedTopic,
     shareTopic,
     styles,
@@ -1856,7 +1867,7 @@ export function AppRoot() {
     <GestureHandlerRootView style={styles.screen}>
       <SafeAreaProvider>
         <KeyboardAvoidingView style={styles.screen}>
-          <SafeAreaView edges={['left', 'right', 'bottom']} style={styles.screen}>
+          <SafeAreaView edges={['left', 'right']} style={styles.screen}>
             <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
             <View pointerEvents="none" style={styles.statusBarScrim} />
             <HiddenBrowserHost

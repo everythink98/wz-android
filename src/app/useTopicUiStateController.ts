@@ -25,6 +25,7 @@ export function useTopicUiStateController({
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const [replyContent, setReplyContent] = useState('');
+  const [replyFace, setReplyFace] = useState('');
   const [commentQuery, setCommentQuery] = useState('');
   const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
@@ -103,10 +104,12 @@ export function useTopicUiStateController({
     if (open) {
       setReplyTarget(null);
       setReplyEditTarget(null);
+      setReplyFace('');
       return;
     }
     if (!open) {
       setReplyContent((current) => replyContentAfterComposerClose(current, replyEditTarget));
+      setReplyFace('');
       setReplyTarget(null);
       setReplyEditTarget(null);
     }
@@ -124,6 +127,7 @@ export function useTopicUiStateController({
       commentId: reply.commentId
     });
     setReplyEditTarget(null);
+    setReplyFace('');
     setReplyComposerOpen(true);
   }, [notify]);
 
@@ -141,6 +145,7 @@ export function useTopicUiStateController({
       return;
     }
     setReplyTarget(null);
+    setReplyFace('');
     setReplyEditTarget({
       commentId: reply.commentId,
       floor: reply.floor,
@@ -166,6 +171,7 @@ export function useTopicUiStateController({
     quotedReplyAbortRefs,
     replyComposerOpen,
     replyContent,
+    replyFace,
     replyEditTarget,
     replyFilter,
     replyTarget,
@@ -178,6 +184,7 @@ export function useTopicUiStateController({
     setQuoteStateVersion,
     setReplyComposerOpen,
     setReplyContent,
+    setReplyFace,
     setReplyEditTarget,
     setReplyFilter,
     setReplyTarget,

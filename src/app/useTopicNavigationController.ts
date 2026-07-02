@@ -14,6 +14,7 @@ export function useTopicNavigationController({
   loadingQuotedFloorsRef,
   replyComposerOpen,
   replyContent,
+  replyFace,
   replyEditTarget,
   replyFilter,
   replyHasMore,
@@ -29,6 +30,7 @@ export function useTopicNavigationController({
   setQuoteStateVersion,
   setReplyComposerOpen,
   setReplyContent,
+  setReplyFace,
   setReplyEditTarget,
   setReplyFilter,
   setReplyHasMore,
@@ -56,6 +58,7 @@ export function useTopicNavigationController({
   loadingQuotedFloorsRef: MutableRefObject<Record<string, boolean>>;
   replyComposerOpen: boolean;
   replyContent: string;
+  replyFace: string;
   replyEditTarget: ReplyEditTarget | null;
   replyFilter: ReplyFilter;
   replyHasMore: boolean;
@@ -71,6 +74,7 @@ export function useTopicNavigationController({
   setQuoteStateVersion: (updater: (current: number) => number) => void;
   setReplyComposerOpen: (value: boolean) => void;
   setReplyContent: (value: string) => void;
+  setReplyFace: (value: string) => void;
   setReplyEditTarget: (value: ReplyEditTarget | null) => void;
   setReplyFilter: (value: ReplyFilter) => void;
   setReplyHasMore: (value: boolean) => void;
@@ -104,6 +108,7 @@ export function useTopicNavigationController({
       commentQuery,
       replyFilter,
       replyContent,
+      replyFace,
       replyComposerOpen,
       replyTarget,
       replyEditTarget,
@@ -121,7 +126,7 @@ export function useTopicNavigationController({
       replyCount: 0
     });
     return snapshotFromTopicSession(session);
-  }, [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyEditTarget, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, topicScrollYRef, unreadReplyCount]);
+  }, [commentQuery, expandedQuotesRef, loadedQuotedRepliesRef, replyComposerOpen, replyContent, replyEditTarget, replyFace, replyFilter, replyHasMore, replyNextOffset, replyNextPage, replyTarget, selectedTopic, topicDetail, topicError, topicReplies, topicScrollYRef, unreadReplyCount]);
 
   const restoreTopicSnapshot = useCallback((snapshot: TopicSnapshot) => {
     const session = topicSessionFromSnapshot(snapshot);
@@ -136,6 +141,7 @@ export function useTopicNavigationController({
     setCommentQuery(session.commentQuery);
     setReplyFilter(session.replyFilter);
     setReplyContent(session.replyContent);
+    setReplyFace(session.replyFace);
     setReplyComposerOpen(session.replyComposerOpen);
     setReplyTarget(session.replyTarget);
     setReplyEditTarget(session.replyEditTarget);
@@ -153,7 +159,7 @@ export function useTopicNavigationController({
     const restoredTopic = session.topicDetail || session.selectedTopic;
     invalidateTopicActionRequests(restoredTopic ? topicKey(restoredTopic) : null);
     currentTopicKeyRef.current = restoredTopic ? topicKey(restoredTopic) : null;
-  }, [currentTopicKeyRef, expandedQuotesRef, invalidateTopicActionRequests, loadedQuotedRepliesRef, loadingMoreRepliesRef, loadingQuotedFloorsRef, setCommentQuery, setExpandedQuotes, setLoadedQuotedReplies, setLoadingMoreReplies, setLoadingQuotedFloors, setQuoteStateVersion, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyFilter, setReplyHasMore, setReplyNextOffset, setReplyNextPage, setReplyTarget, setSelectedTopic, setTopicBusy, setTopicDetail, setTopicError, setTopicReplies, setUnreadReplyCount, topicScrollYRef]);
+  }, [currentTopicKeyRef, expandedQuotesRef, invalidateTopicActionRequests, loadedQuotedRepliesRef, loadingMoreRepliesRef, loadingQuotedFloorsRef, setCommentQuery, setExpandedQuotes, setLoadedQuotedReplies, setLoadingMoreReplies, setLoadingQuotedFloors, setQuoteStateVersion, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyFace, setReplyFilter, setReplyHasMore, setReplyNextOffset, setReplyNextPage, setReplyTarget, setSelectedTopic, setTopicBusy, setTopicDetail, setTopicError, setTopicReplies, setUnreadReplyCount, topicScrollYRef]);
 
   return {
     restoreTopicSnapshot,

@@ -166,6 +166,7 @@ export const TopicScreen = memo(function TopicScreen({
   quoteStateVersion,
   replyComposerOpen,
   replyContent,
+  replyFace,
   replyEditTarget,
   replyFilter,
   replyTarget,
@@ -197,6 +198,7 @@ export const TopicScreen = memo(function TopicScreen({
   onOpenReadingSettings,
   onReplyComposerOpenChange,
   onReplyContentChange,
+  onReplyFaceChange,
   onReplyFilterChange,
   onReplyToFloor,
   onRefreshTopic,
@@ -232,6 +234,7 @@ export const TopicScreen = memo(function TopicScreen({
   quoteStateVersion: number;
   replyComposerOpen: boolean;
   replyContent: string;
+  replyFace: string;
   replyEditTarget: ReplyEditTarget | null;
   replyFilter: ReplyFilter;
   replyTarget: ReplyTarget | null;
@@ -263,6 +266,7 @@ export const TopicScreen = memo(function TopicScreen({
   onOpenReadingSettings: () => void;
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
+  onReplyFaceChange: (value: string) => void;
   onReplyFilterChange: (filter: ReplyFilter) => void;
   onReplyToFloor: (reply: Reply) => void;
   onRefreshTopic: () => void;
@@ -291,9 +295,10 @@ export const TopicScreen = memo(function TopicScreen({
     actionBusy,
     quoteStateVersion,
     replyContent,
+    replyFace,
     replyEditTargetKey,
     replyTargetKey
-  }), [actionBusy, quoteStateVersion, replyContent, replyEditTargetKey, replyTargetKey]);
+  }), [actionBusy, quoteStateVersion, replyContent, replyEditTargetKey, replyFace, replyTargetKey]);
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
@@ -448,19 +453,19 @@ export const TopicScreen = memo(function TopicScreen({
     }
     return items;
   }, [canShowReplies, canWrite, replyComposerOpen, replyEditTarget, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
-  const scrollReplyComposerIntoView = useCallback(() => {
+  const scrollReplyComposerIntoView = useCallback((keyboardAware = false) => {
     const index = replyComposerListIndex(topicListItems);
     if (index === null) {
       return;
     }
-    if (replyComposerHasNoReplyAfter(topicListItems)) {
+    if (!keyboardAware && replyComposerHasNoReplyAfter(topicListItems)) {
       topicScrollRef.current?.scrollToEnd({ animated: true });
       return;
     }
     const scroll = topicScrollRef.current?.scrollToIndex({
       index,
       animated: true,
-      viewPosition: 0
+      viewPosition: keyboardAware ? 0.04 : 0
     });
     void scroll?.catch(() => undefined);
   }, [topicListItems, topicScrollRef]);
@@ -475,7 +480,7 @@ export const TopicScreen = memo(function TopicScreen({
       if (replyComposerFocusedRef.current && keyboardHeight > 0) {
         setReplyComposerKeyboardHeight(keyboardHeight);
       }
-      scrollReplyComposerIntoView();
+      scrollReplyComposerIntoView(replyComposerFocusedRef.current || keyboardHeight > 0);
     }, delayMs);
     replyComposerScrollTimersRef.current.push(timer);
   }, [scrollReplyComposerIntoView]);
@@ -484,7 +489,7 @@ export const TopicScreen = memo(function TopicScreen({
     if (keyboardHeight > 0) {
       setReplyComposerKeyboardHeight(keyboardHeight);
     }
-    scrollReplyComposerIntoView();
+    scrollReplyComposerIntoView(keyboardHeight > 0 || replyComposerFocusedRef.current);
     queueReplyComposerScroll(120);
     queueReplyComposerScroll(320);
   }, [clearReplyComposerScrollTimers, queueReplyComposerScroll, scrollReplyComposerIntoView]);
@@ -497,6 +502,9 @@ export const TopicScreen = memo(function TopicScreen({
     replyComposerFocusedRef.current = false;
     setReplyComposerKeyboardHeight(0);
   }, [clearReplyComposerScrollTimers]);
+  const handleReplyAccessoryOpen = useCallback(() => {
+    keepReplyComposerVisible(0);
+  }, [keepReplyComposerVisible]);
   useEffect(() => {
     if (!replyComposerOpen) {
       clearReplyComposerScrollTimers();
@@ -523,9 +531,9 @@ export const TopicScreen = memo(function TopicScreen({
     if (replyComposerKeyboardHeight <= 0 || !replyComposerFocusedRef.current) {
       return undefined;
     }
-    const timer = setTimeout(scrollReplyComposerIntoView, 80);
+    const timer = setTimeout(() => scrollReplyComposerIntoView(true), 80);
     return () => clearTimeout(timer);
-  }, [replyComposerKeyboardHeight, scrollReplyComposerIntoView]);
+  }, [replyComposerKeyboardHeight, replyContent, scrollReplyComposerIntoView]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -799,7 +807,9 @@ export const TopicScreen = memo(function TopicScreen({
       return renderTopicListItemFrame(
         <ReplyComposer
           actionBusy={actionBusy}
+          linuxDoEmojiUrls={linuxDoEmojiUrls}
           replyContent={replyContent}
+          replyFace={replyFace}
           replyEditTarget={replyEditTarget}
           replyTarget={replyTarget}
           source={topic?.source}
@@ -807,9 +817,11 @@ export const TopicScreen = memo(function TopicScreen({
           theme={theme}
           topicColumnStyle={topicColumnStyle}
           onReplyComposerOpenChange={onReplyComposerOpenChange}
+          onReplyAccessoryOpen={handleReplyAccessoryOpen}
           onReplyComposerBlur={handleReplyComposerBlur}
           onReplyComposerFocus={handleReplyComposerFocus}
           onReplyContentChange={onReplyContentChange}
+          onReplyFaceChange={onReplyFaceChange}
           onSubmitReply={onSubmitReply}
           onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
         />
@@ -873,6 +885,7 @@ export const TopicScreen = memo(function TopicScreen({
     isOptimisticActionPending,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
+    handleReplyAccessoryOpen,
     handleReplyComposerBlur,
     handleReplyComposerFocus,
     linuxDoEmojiUrls,
@@ -885,6 +898,7 @@ export const TopicScreen = memo(function TopicScreen({
     onNodeSeekCollection,
     onReplyComposerOpenChange,
     onReplyContentChange,
+    onReplyFaceChange,
     onReplyFilterChange,
     onReplyToFloor,
     onSubmitReply,
@@ -900,6 +914,7 @@ export const TopicScreen = memo(function TopicScreen({
     replyComposerOpen,
     replyHighlightQuery,
     replyContent,
+    replyFace,
     replyEditTarget,
     replyFilter,
     replyTarget,

@@ -11,10 +11,8 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
       borderTopWidth: StyleSheet.hairlineWidth,
       backgroundColor: theme.surface,
       elevation: 0,
-      paddingBottom: 8,
       paddingHorizontal: 10,
-      paddingTop: 4,
-      height: 64
+      paddingTop: 4
     },
     navItem: {
       flex: 1,

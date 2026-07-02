@@ -101,4 +101,12 @@ describe('Android reader theme safety rails', () => {
       backgroundColor: 'transparent'
     });
   });
+
+  it('lets the bottom tab navigator own bottom safe-area spacing', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800);
+
+    expect('height' in styles.nav).toBe(false);
+    expect('paddingBottom' in styles.nav).toBe(false);
+  });
 });

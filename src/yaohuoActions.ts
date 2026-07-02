@@ -80,6 +80,7 @@ export function buildYaohuoReplyRequest({
   topicId,
   classId,
   content,
+  face,
   replyFloor,
   toUserId,
   sid
@@ -87,12 +88,13 @@ export function buildYaohuoReplyRequest({
   topicId: string | number;
   classId: string | number;
   content: string;
+  face?: string;
   replyFloor?: string | number;
   toUserId?: string | number;
   sid?: string;
 }): YaohuoActionRequest {
   const params = new URLSearchParams({
-    face: '',
+    face: String(face ?? '').trim(),
     sendmsg: '0',
     content: normalizeYaohuoContent(content),
     action: 'add',

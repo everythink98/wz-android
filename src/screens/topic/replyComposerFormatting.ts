@@ -1,6 +1,17 @@
 import type { Source } from '../../types';
 
 export type ReplyComposerFormatAction = 'bold' | 'italic' | 'heading' | 'link' | 'image' | 'quote' | 'code' | 'list';
+export type ReplyComposerAccessory = 'nodeseek-sticker' | 'linuxdo-emoji' | 'yaohuo-face';
+
+type ReplyComposerToolbarItem =
+  | { type: 'format'; action: ReplyComposerFormatAction; label: string }
+  | { type: 'accessory'; accessory: ReplyComposerAccessory; label: string };
+
+const REPLY_COMPOSER_ACCESSORIES: Partial<Record<Source, ReplyComposerAccessory>> = {
+  nodeseek: 'nodeseek-sticker',
+  linuxdo: 'linuxdo-emoji',
+  yaohuo: 'yaohuo-face'
+};
 
 type Selection = {
   start: number;
@@ -16,7 +27,7 @@ function selectedText(content: string, selection?: Selection) {
   return content.slice(start, end);
 }
 
-function replaceSelection(content: string, selection: Selection | undefined, value: string) {
+export function replaceReplyComposerSelection(content: string, selection: Selection | undefined, value: string) {
   if (!selection) {
     return `${content}${content && !content.endsWith('\n') ? '\n' : ''}${value}`;
   }
@@ -85,10 +96,10 @@ export function applyReplyComposerFormat({
 }) {
   const text = selectedText(content, selection);
   const formatted = source === 'yaohuo' ? ubbValue(action, text) : markdownValue(action, text);
-  return replaceSelection(content, selection, formatted);
+  return replaceReplyComposerSelection(content, selection, formatted);
 }
 
-export function replyComposerFormatActions(source?: Source): Array<{ action: ReplyComposerFormatAction; label: string }> {
+function replyComposerFormatActions(source?: Source): Array<{ action: ReplyComposerFormatAction; label: string }> {
   if (source !== 'nodeseek' && source !== 'linuxdo' && source !== 'yaohuo') {
     return [];
   }
@@ -101,5 +112,17 @@ export function replyComposerFormatActions(source?: Source): Array<{ action: Rep
     { action: 'quote', label: '引用' },
     { action: 'code', label: '代码' },
     { action: 'list', label: '列表' }
+  ];
+}
+
+export function replyComposerToolbarItems(source?: Source): ReplyComposerToolbarItem[] {
+  const formatActions = replyComposerFormatActions(source);
+  if (!formatActions.length) {
+    return [];
+  }
+  const accessory = source ? REPLY_COMPOSER_ACCESSORIES[source] : undefined;
+  return [
+    ...formatActions.map((item) => ({ type: 'format' as const, ...item })),
+    ...(accessory ? [{ type: 'accessory' as const, accessory, label: '表情' }] : [])
   ];
 }

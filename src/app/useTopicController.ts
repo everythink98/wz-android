@@ -85,6 +85,7 @@ export function useTopicController({
   setLoadingQuotedFloors,
   setReplyComposerOpen,
   setReplyContent,
+  setReplyFace,
   setReplyEditTarget,
   setReplyFilter,
   setReplyHasMore,
@@ -146,6 +147,7 @@ export function useTopicController({
   setLoadingQuotedFloors: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
   setReplyComposerOpen: Dispatch<SetStateAction<boolean>>;
   setReplyContent: Dispatch<SetStateAction<string>>;
+  setReplyFace: Dispatch<SetStateAction<string>>;
   setReplyEditTarget: Dispatch<SetStateAction<ReplyEditTarget | null>>;
   setReplyFilter: Dispatch<SetStateAction<ReplyFilter>>;
   setReplyHasMore: Dispatch<SetStateAction<boolean>>;
@@ -211,6 +213,7 @@ export function useTopicController({
         commentQuery: session.commentQuery,
         replyFilter: session.replyFilter,
         replyContent: session.replyContent,
+        replyFace: session.replyFace,
         replyComposerOpen: session.replyComposerOpen,
         replyTarget: session.replyTarget,
         replyEditTarget: session.replyEditTarget,
@@ -273,6 +276,7 @@ export function useTopicController({
     setReplyNextOffset(null);
     setLoadingMoreReplies(false);
     setReplyContent('');
+    setReplyFace('');
     setReplyComposerOpen(false);
     setReplyTarget(null);
     setReplyEditTarget(null);
@@ -387,6 +391,7 @@ export function useTopicController({
     setReplyComposerOpen,
     setReplyContent,
     setReplyEditTarget,
+    setReplyFace,
     setReplyFilter,
     setReplyHasMore,
     setReplyNextOffset,

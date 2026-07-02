@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { applyReplyComposerFormat, replyComposerFormatActions } from './replyComposerFormatting';
+import {
+  applyReplyComposerFormat,
+  replyComposerToolbarItems,
+  replaceReplyComposerSelection
+} from './replyComposerFormatting';
 
 describe('reply composer formatting', () => {
   it('inserts Markdown formatting for NodeSeek and linux.do replies', () => {
@@ -35,8 +39,21 @@ describe('reply composer formatting', () => {
   });
 
   it('shows heading only for Markdown reply sources', () => {
-    expect(replyComposerFormatActions('linuxdo').map((item) => item.action)).toContain('heading');
-    expect(replyComposerFormatActions('nodeseek').map((item) => item.action)).toContain('heading');
-    expect(replyComposerFormatActions('yaohuo').map((item) => item.action)).not.toContain('heading');
+    expect(replyComposerToolbarItems('linuxdo').map((item) => item.type === 'format' ? item.action : item.accessory)).toContain('heading');
+    expect(replyComposerToolbarItems('nodeseek').map((item) => item.type === 'format' ? item.action : item.accessory)).toContain('heading');
+    expect(replyComposerToolbarItems('yaohuo').map((item) => item.type === 'format' ? item.action : item.accessory)).not.toContain('heading');
+  });
+
+  it('puts the per-site expression entry in the scrollable toolbar', () => {
+    expect(replyComposerToolbarItems('nodeseek').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('nodeseek-sticker');
+    expect(replyComposerToolbarItems('linuxdo').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('linuxdo-emoji');
+    expect(replyComposerToolbarItems('yaohuo').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('yaohuo-face');
+    expect(replyComposerToolbarItems('v2ex')).toEqual([]);
+  });
+
+  it('inserts NodeSeek and linux.do expression codes into reply text', () => {
+    expect(replaceReplyComposerSelection('hello', { start: 5, end: 5 }, ':ac01:')).toBe('hello:ac01:');
+
+    expect(replaceReplyComposerSelection('hi there', { start: 3, end: 8 }, ':grinning_face:')).toBe('hi :grinning_face:');
   });
 });

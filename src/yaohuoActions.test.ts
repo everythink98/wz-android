@@ -59,6 +59,18 @@ describe('yaohuo action request builders', () => {
     expect(params.get('g')).toBe('发表回复');
   });
 
+  it('keeps yaohuo face as a separate reply field', () => {
+    const params = bodyParams(buildYaohuoReplyRequest({
+      topicId: '123',
+      classId: '177',
+      content: '正文',
+      face: '淡定.gif'
+    }).body);
+
+    expect(params.get('content')).toBe('正文');
+    expect(params.get('face')).toBe('淡定.gif');
+  });
+
   it('builds original favorite and vote requests', () => {
     expect(buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' })).toMatchObject({
       path: '/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=123',

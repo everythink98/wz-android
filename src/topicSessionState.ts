@@ -15,6 +15,7 @@ export type TopicSession = {
   commentQuery: string;
   replyFilter: ReplyFilter;
   replyContent: string;
+  replyFace: string;
   replyComposerOpen: boolean;
   replyTarget: ReplyTarget | null;
   replyEditTarget: ReplyEditTarget | null;
@@ -57,6 +58,7 @@ export function createEmptyTopicSession(topic: Topic): TopicSession {
     commentQuery: '',
     replyFilter: 'all',
     replyContent: '',
+    replyFace: '',
     replyComposerOpen: false,
     replyTarget: null,
     replyEditTarget: null,
@@ -88,6 +90,7 @@ export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {
     commentQuery: session.commentQuery,
     replyFilter: session.replyFilter,
     replyContent: session.replyContent,
+    replyFace: session.replyFace,
     replyComposerOpen: session.replyComposerOpen,
     replyTarget: session.replyTarget,
     replyEditTarget: session.replyEditTarget,
@@ -113,6 +116,7 @@ export function topicSessionFromSnapshot(snapshot: TopicSnapshot): TopicSession 
     commentQuery: snapshot.commentQuery,
     replyFilter: snapshot.replyFilter,
     replyContent: snapshot.replyContent,
+    replyFace: snapshot.replyFace || '',
     replyComposerOpen: snapshot.replyComposerOpen,
     replyTarget: snapshot.replyTarget,
     replyEditTarget: snapshot.replyEditTarget || null,
