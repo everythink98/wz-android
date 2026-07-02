@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { WebView } from 'react-native-webview';
 import {
   getNativePropsForTNode,
@@ -35,6 +36,31 @@ import { ForumContentVideo } from '../components/ForumContentVideo';
 
 export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
   return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
+}
+
+function ForumVideoStickerVideo({ fallbackSrc, src, style }: { fallbackSrc: string; src: string; style: StyleProp<ViewStyle> }) {
+  const [firstFrameRendered, setFirstFrameRendered] = useState(false);
+  const player = useVideoPlayer({ uri: src }, (player) => {
+    player.keepScreenOnWhilePlaying = false;
+    player.loop = true;
+    player.muted = true;
+    player.play();
+  });
+  return (
+    <View pointerEvents="none" style={style}>
+      {fallbackSrc && !firstFrameRendered ? <Image source={imageSourceFromUrl(fallbackSrc)} style={StyleSheet.absoluteFillObject} /> : null}
+      <VideoView
+        allowsVideoFrameAnalysis={false}
+        contentFit="contain"
+        nativeControls={false}
+        onFirstFrameRender={() => setFirstFrameRendered(true)}
+        player={player}
+        style={embedStyles.stickerVideo}
+        surfaceType="textureView"
+        useExoShutter={false}
+      />
+    </View>
+  );
 }
 
 export function useHtmlRenderingController({
@@ -182,19 +208,7 @@ export function useHtmlRenderingController({
       if (!src) {
         return fallbackSrc ? <Image source={imageSourceFromUrl(fallbackSrc)} style={[styles.inlineForumImage, size]} /> : null;
       }
-      return (
-        <View pointerEvents="none" style={[styles.inlineForumImage, size, embedStyles.stickerVideoFrame]}>
-          <WebView
-            allowsInlineMediaPlayback
-            javaScriptEnabled={false}
-            mediaPlaybackRequiresUserAction={false}
-            originWhitelist={['*']}
-            scrollEnabled={false}
-            source={{ html: forumVideoStickerHtml(src, fallbackSrc) }}
-            style={embedStyles.stickerWebView}
-          />
-        </View>
-      );
+      return <ForumVideoStickerVideo fallbackSrc={fallbackSrc} src={src} style={[styles.inlineForumImage, size, embedStyles.stickerVideoFrame]} />;
     };
     const ForumVideoRenderer: CustomBlockRenderer = (props) => {
       const attributes = props.tnode.attributes || {};
@@ -392,7 +406,7 @@ const embedStyles = StyleSheet.create({
   stickerVideoFrame: {
     overflow: 'hidden'
   },
-  stickerWebView: {
+  stickerVideo: {
     backgroundColor: 'transparent',
     flex: 1
   },
@@ -409,16 +423,3 @@ const embedStyles = StyleSheet.create({
     flex: 1
   }
 });
-
-function escapeHtmlAttribute(value: string) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function forumVideoStickerHtml(src: string, fallbackSrc: string) {
-  const poster = fallbackSrc ? ` poster="${escapeHtmlAttribute(fallbackSrc)}"` : '';
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;overflow:hidden;}video,img{width:100%;height:100%;object-fit:contain;display:block;background:transparent;}</style></head><body><video autoplay loop muted playsinline webkit-playsinline${poster}><source src="${escapeHtmlAttribute(src)}"></video></body></html>`;
-}

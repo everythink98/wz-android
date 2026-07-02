@@ -60,6 +60,16 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('verifyExpectedReleaseSigner(signerSha256);');
   });
 
+  it('keeps release minify and resource shrinking enabled by default', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const plugin = readProjectFile('plugins', 'withAndroidReleaseDefaults.js');
+
+    expect(app.expo.plugins).toContain('./plugins/withAndroidReleaseDefaults');
+    expect(plugin).toContain('withGradleProperties');
+    expect(plugin).toContain("'android.enableMinifyInReleaseBuilds': 'true'");
+    expect(plugin).toContain("'android.enableShrinkResourcesInReleaseBuilds': 'true'");
+  });
+
   it('keeps APK inspection available before opening the Android installer', () => {
     const plugin = readProjectFile('plugins', 'withApkInstaller.js');
 
@@ -76,6 +86,21 @@ describe('Android release packaging guards', () => {
     expect(mediaPlugin?.[1]?.granularPermissions).toEqual(['photo']);
     expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_AUDIO');
     expect(app.expo.android.blockedPermissions).toContain('android.permission.READ_MEDIA_VIDEO');
+  });
+
+  it('keeps SecureStore and expo-video native config plugins enabled', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+
+    expect(app.expo.plugins).toContain('expo-secure-store');
+    expect(app.expo.plugins).toContain('expo-video');
+  });
+
+  it('pins react-native-render-html to the reviewed version', () => {
+    const pkg = JSON.parse(readProjectFile('package.json'));
+    const lock = JSON.parse(readProjectFile('package-lock.json'));
+
+    expect(pkg.dependencies['react-native-render-html']).toBe('6.3.4');
+    expect(lock.packages[''].dependencies['react-native-render-html']).toBe('6.3.4');
   });
 
   it('keeps TSX tests discoverable when UI tests are added', () => {
