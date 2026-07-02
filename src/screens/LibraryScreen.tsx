@@ -73,14 +73,14 @@ function LibraryIconAction({
 }: {
   icon: LucideIcon;
   label: string;
-  tone?: 'primary' | 'danger';
+  tone?: 'primary' | 'danger' | 'favorite';
   filled?: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onPress: () => void;
 }) {
   const Icon = icon;
-  const color = tone === 'danger' ? theme.danger : theme.primary;
+  const color = tone === 'danger' ? theme.danger : tone === 'favorite' ? theme.favorite : theme.primary;
   return (
     <Pressable
       hitSlop={TOUCH_HIT_SLOP}
@@ -169,7 +169,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   }, [onClearHistory]);
   const renderTopicTrailingAction = useCallback((topic: Topic) => {
     if (libraryTab === 'favorites') {
-      return <LibraryIconAction filled icon={Star} label="取消收藏" styles={styles} theme={theme} onPress={() => confirmRemoveFavorite(topic)} />;
+      return <LibraryIconAction filled icon={Star} label="取消收藏" tone="favorite" styles={styles} theme={theme} onPress={() => confirmRemoveFavorite(topic)} />;
     }
     if (libraryTab === 'history') {
       return <LibraryIconAction icon={Trash2} label="删除" tone="danger" styles={styles} theme={theme} onPress={() => onRemove(topic)} />;
@@ -181,10 +181,11 @@ export const LibraryScreen = memo(function LibraryScreen({
       return <Text style={[styles.librarySectionTitle, item.first && styles.libraryFirstSectionTitle]}>{item.label}</Text>;
     }
     const record = item.record;
+    const readerState = getTopicListItemStateFromIndex(topicStateIndex, record.topic);
     return (
       <View style={styles.libraryItem}>
         <MemoizedTopicCard
-          readerState={getTopicListItemStateFromIndex(topicStateIndex, record.topic)}
+          readerState={libraryTab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
           styles={styles}
           theme={theme}
           renderTrailingAction={renderTopicTrailingAction}
@@ -193,7 +194,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         />
       </View>
     );
-  }, [onOpenTopic, renderTopicTrailingAction, styles, theme, topicStateIndex]);
+  }, [libraryTab, onOpenTopic, renderTopicTrailingAction, styles, theme, topicStateIndex]);
   const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
     <View style={styles.libraryUserRow}>
       <Pressable accessibilityRole="button" style={[styles.menuButton, styles.libraryUserButton]} onPress={() => onOpenUser(item.user)}>

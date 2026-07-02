@@ -26,11 +26,12 @@ export function TabBarIcon({
   theme: ReaderTheme;
 }) {
   const Icon = icon;
+  const color = focused ? theme.primary : theme.muted;
   return (
     <View style={styles.navItem}>
-      <View style={[styles.navIconPill, focused && styles.navIconPillActive]}>
+      <View style={styles.navIconPill}>
         <View style={styles.navIconWrap}>
-          <Icon size={21} color={focused ? theme.primary : theme.muted} strokeWidth={focused ? 2.1 : 1.7} />
+          <Icon size={21} color={color} strokeWidth={focused ? 2.1 : 1.7} />
           {showBadge ? <View style={styles.navBadge} /> : null}
         </View>
       </View>

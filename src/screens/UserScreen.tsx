@@ -163,7 +163,7 @@ export const UserScreen = memo(function UserScreen({
         <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
         <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(user.source)} · {user.displayName || user.username}</Text>
         <View style={styles.topicTopActions}>
-          {followTarget ? <IconButton iconOnly ghost icon={Star} label={followed ? '已关注' : '关注'} active={followed} styles={styles} theme={theme} onPress={() => onToggleFollow(followTarget)} /> : null}
+          {followTarget ? <IconButton iconOnly ghost icon={Star} label={followed ? '已关注' : '关注'} active={followed} activeColor={theme.favorite} styles={styles} theme={theme} onPress={() => onToggleFollow(followTarget)} /> : null}
           <IconButton iconOnly ghost icon={RefreshCw} label="刷新" styles={styles} theme={theme} onPress={onRefresh} />
           {user.url ? <IconButton iconOnly ghost icon={ExternalLink} label="原站" styles={styles} theme={theme} onPress={() => onOpenOriginal(user.url)} /> : null}
         </View>

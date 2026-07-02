@@ -46,6 +46,23 @@ describe('Android reader theme safety rails', () => {
     expect(styles.userContentInner.paddingBottom).toBe(styles.contentInner.paddingBottom);
   });
 
+  it('uses a black primary color on the white light theme without flattening status colors', () => {
+    const theme = createTheme(settings);
+
+    expect(theme.background).toBe('#ffffff');
+    expect(theme.surface).toBe('#ffffff');
+    expect(theme.surface2).toBe('#f4f4f5');
+    expect(theme.line).toBe('#e5e7eb');
+    expect(theme.ink).toBe('#18181b');
+    expect(theme.muted).toBe('#71717a');
+    expect(theme.primary).toBe('#111111');
+    expect(theme.primaryStrong).toBe('#000000');
+    expect(theme.primarySoft).toBe('rgba(17, 17, 17, 0.08)');
+    expect(theme.onPrimary).toBe('#ffffff');
+    expect(theme.success).toBe('#2f6a54');
+    expect(theme.favorite).toBe('#facc15');
+  });
+
   it('keeps reply action buttons tappable without forcing a wrapped row', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
@@ -108,5 +125,14 @@ describe('Android reader theme safety rails', () => {
 
     expect('height' in styles.nav).toBe(false);
     expect('paddingBottom' in styles.nav).toBe(false);
+  });
+
+  it('keeps selected bottom navigation black without a capsule background', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown> | undefined>;
+
+    expect(styles.navIconPill?.backgroundColor).toBeUndefined();
+    expect(styles.navIconPillActive).toBeUndefined();
+    expect(styles.navTextActive?.color).toBe(theme.primary);
   });
 });

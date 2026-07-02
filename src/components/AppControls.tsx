@@ -216,6 +216,7 @@ export function FloatingIconButton({
 
 export function IconButton({
   active = false,
+  activeColor,
   compact = false,
   disabled = false,
   ghost = false,
@@ -228,6 +229,7 @@ export function IconButton({
   onPress
 }: {
   active?: boolean;
+  activeColor?: string;
   compact?: boolean;
   disabled?: boolean;
   ghost?: boolean;
@@ -241,6 +243,7 @@ export function IconButton({
 }) {
   const Icon = icon;
   const iconSize = tiny ? 15 : iconOnly ? 14 : compact ? 14 : 17;
+  const color = active ? activeColor || theme.primary : theme.ink;
   return (
     <Pressable
       hitSlop={TOUCH_HIT_SLOP}
@@ -252,7 +255,7 @@ export function IconButton({
       disabled={disabled}
       onPress={() => pressWithFeedback(onPress)}
     >
-      <Icon size={iconSize} color={active ? theme.primary : theme.ink} fill={active ? theme.primary : 'none'} strokeWidth={1.8} />
+      <Icon size={iconSize} color={color} fill={active ? color : 'none'} strokeWidth={1.8} />
       {iconOnly ? null : <Text numberOfLines={1} style={[styles.buttonText, compact && styles.buttonTextCompact, tiny && styles.buttonTextTiny, active && styles.buttonTextActive]}>{label}</Text>}
     </Pressable>
   );

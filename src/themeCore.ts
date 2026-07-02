@@ -20,6 +20,7 @@ export interface ReaderTheme {
   danger: string;
   warning: string;
   success: string;
+  favorite: string;
 }
 
 export function androidRipple(color: string, borderless = false) {
@@ -150,7 +151,9 @@ export function sourceBadgeColorStyle(source: Source, theme: ReaderTheme): TextS
 
 export function createTheme(settings: ReaderSettings): ReaderTheme {
   const dark = settings.theme === 'dark';
-  const palette = { light: '#2f6a54', dark: '#7cc9a4', lightOn: '#f6fbf8', darkOn: '#0c1410' };
+  const palette = { light: '#111111', dark: '#7cc9a4', lightOn: '#ffffff', darkOn: '#0c1410' };
+  const success = { light: '#2f6a54', dark: palette.dark };
+  const favorite = { light: '#facc15', dark: '#fde047' };
   if (dark) {
     return {
       dark: true,
@@ -169,26 +172,28 @@ export function createTheme(settings: ReaderSettings): ReaderTheme {
       onOverlay: '#f4f6f5',
       danger: '#d98a7e',
       warning: '#d8b06a',
-      success: palette.dark
+      success: success.dark,
+      favorite: favorite.dark
     };
   }
   return {
     dark: false,
     background: '#ffffff',
     surface: '#ffffff',
-    surface2: '#eef1ec',
-    line: '#e3e7df',
-    lineStrong: '#d2d8cb',
-    ink: '#1c2420',
-    muted: '#69706a',
+    surface2: '#f4f4f5',
+    line: '#e5e7eb',
+    lineStrong: '#d4d4d8',
+    ink: '#18181b',
+    muted: '#71717a',
     primary: palette.light,
-    primaryStrong: '#255a46',
+    primaryStrong: '#000000',
     primarySoft: alphaColor(palette.light, 0.08),
     mist: alphaColor(palette.light, 0.08),
     onPrimary: palette.lightOn,
     onOverlay: '#ffffff',
     danger: '#b3503f',
     warning: '#9a6b2e',
-    success: palette.light
+    success: success.light,
+    favorite: favorite.light
   };
 }

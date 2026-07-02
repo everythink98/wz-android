@@ -33,9 +33,6 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
       borderRadius: 999,
       paddingHorizontal: 16
     },
-    navIconPillActive: {
-      backgroundColor: theme.primarySoft
-    },
     navItemIndicator: {
       width: 18,
       height: 2,
