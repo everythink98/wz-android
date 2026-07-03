@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, Text, View } from 'react-native';
-import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
+import { BottomSheetFlatList, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Image as ExpoImage } from 'expo-image';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
@@ -220,10 +220,34 @@ export function ReplyComposer({
       );
     }
     if (activeAccessory === 'linuxdo-emoji') {
+      const renderLinuxDoEmojiItem = ({ item }: { item: ReplyComposerInsertExpression }) => (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={item.label}
+          disabled={actionBusy}
+          style={[styles.replyLinuxDoEmojiItem, actionBusy && styles.buttonDisabled]}
+          onPress={() => insertExpression(item)}
+        >
+          {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={item.imageUrl} source={imageSourceFromUrl(item.imageUrl)} style={styles.replyExpressionPreview} /> : null}
+          <Text numberOfLines={1} style={styles.replyLinuxDoEmojiItemText}>{item.label}</Text>
+        </Pressable>
+      );
       return (
-        <GestureScrollView key={replyComposerExpressionGridKey(activeAccessory)} nestedScrollEnabled style={styles.replyExpressionPanel} contentContainerStyle={styles.replyExpressionGrid} keyboardShouldPersistTaps="handled">
-          {linuxDoEmojiItems.map((item) => renderExpressionChip(item))}
-        </GestureScrollView>
+        <BottomSheetFlatList
+          key={replyComposerExpressionGridKey(activeAccessory)}
+          data={linuxDoEmojiItems}
+          keyExtractor={(item) => item.code}
+          renderItem={renderLinuxDoEmojiItem}
+          nestedScrollEnabled
+          numColumns={2}
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+          style={styles.replyLinuxDoEmojiList}
+          contentContainerStyle={styles.replyLinuxDoEmojiListContent}
+          columnWrapperStyle={styles.replyLinuxDoEmojiRow}
+        />
       );
     }
     return (

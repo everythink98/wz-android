@@ -53,6 +53,13 @@ describe('reply composer formatting', () => {
     expect(replyComposerToolbarItems('v2ex')).toEqual([]);
   });
 
+  it('puts expression entries first for sources that support them', () => {
+    expect(replyComposerToolbarItems('nodeseek')[0]).toMatchObject({ type: 'accessory', accessory: 'nodeseek-sticker', label: '表情' });
+    expect(replyComposerToolbarItems('linuxdo')[0]).toMatchObject({ type: 'accessory', accessory: 'linuxdo-emoji', label: '表情' });
+    expect(replyComposerToolbarItems('yaohuo')[0]).toMatchObject({ type: 'accessory', accessory: 'yaohuo-face', label: '表情' });
+    expect(replyComposerToolbarItems('v2ex')).toEqual([]);
+  });
+
   it('inserts NodeSeek and linux.do expression codes into reply text', () => {
     expect(replaceReplyComposerSelection('hello', { start: 5, end: 5 }, ':ac01:')).toBe('hello:ac01:');
 

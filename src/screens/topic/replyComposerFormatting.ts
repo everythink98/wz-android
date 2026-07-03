@@ -130,7 +130,7 @@ export function replyComposerToolbarItems(source?: Source): ReplyComposerToolbar
   }
   const accessory = source ? REPLY_COMPOSER_ACCESSORIES[source] : undefined;
   return [
-    ...formatActions.map((item) => ({ type: 'format' as const, ...item })),
-    ...(accessory ? [{ type: 'accessory' as const, accessory, label: '表情' }] : [])
+    ...(accessory ? [{ type: 'accessory' as const, accessory, label: '表情' }] : []),
+    ...formatActions.map((item) => ({ type: 'format' as const, ...item }))
   ];
 }

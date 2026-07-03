@@ -508,6 +508,43 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '500',
       maxWidth: 96
     },
+    replyLinuxDoEmojiList: {
+      maxHeight: 238,
+      borderColor: replyNeutralBorder,
+      borderRadius: radiusSm,
+      borderWidth: StyleSheet.hairlineWidth,
+      overflow: 'hidden',
+      backgroundColor: replyNeutralSurface
+    },
+    replyLinuxDoEmojiListContent: {
+      padding: 10,
+      paddingBottom: 2
+    },
+    replyLinuxDoEmojiRow: {
+      gap: 8,
+      marginBottom: 8
+    },
+    replyLinuxDoEmojiItem: {
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'flex-start',
+      flexDirection: 'row',
+      flex: 1,
+      gap: 6,
+      borderColor: replyNeutralBorder,
+      borderRadius: radiusSm,
+      borderWidth: StyleSheet.hairlineWidth,
+      backgroundColor: theme.surface,
+      paddingHorizontal: 10,
+      paddingVertical: 8
+    },
+    replyLinuxDoEmojiItemText: {
+      color: theme.ink,
+      flex: 1,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500'
+    },
     replyStickerCategoryRail: {
       alignItems: 'center',
       borderBottomColor: replyNeutralBorder,
