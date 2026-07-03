@@ -5,7 +5,7 @@ import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
 import { LINUXDO_BROWSER_FETCH_SCRIPT, NODESEEK_BROWSER_FETCH_SCRIPT } from './useHiddenBrowserFetchController';
 import type { LinuxDoBrowserFetchRequest, NodeSeekBrowserFetchRequest } from './useSessionController';
 import type { createStyles } from '../theme';
-import { isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
+import { isLinuxDoBrowserFetchUrl } from '../linuxdoFetchFallback';
 import { isNodeSeekBrowserFetchUrl } from '../nodeseekFetchFallback';
 
 type HiddenBrowserState = {
@@ -56,7 +56,7 @@ export function HiddenBrowserHost({
   }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
   const handleLinuxDoBrowserNavigation = useCallback((request: { url?: string }) => {
     const url = request.url || '';
-    if (!url || isLinuxDoRequestUrl(url)) {
+    if (!url || isLinuxDoBrowserFetchUrl(url)) {
       return true;
     }
     if (linuxDoBrowserFetchRequest) {
@@ -146,7 +146,7 @@ export function HiddenBrowserHost({
               if (!shouldHandleBrowserHttpError(
                 linuxDoBrowserFetchRequest.url,
                 event.nativeEvent.url,
-                isLinuxDoRequestUrl
+                isLinuxDoBrowserFetchUrl
               )) {
                 return;
               }

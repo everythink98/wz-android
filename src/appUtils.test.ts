@@ -6,7 +6,6 @@ import {
   isLinuxDoCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
-  linuxDoExternalSearchItems,
   parseForumTopicLink,
   parseForumUserLink,
   sourceLabel,
@@ -83,15 +82,6 @@ describe('Android app utils', () => {
 
     expect(isLinuxDoCloudflareError(cloudflare)).toBe(true);
     expect(isLinuxDoCloudflareError(ordinary)).toBe(false);
-  });
-
-  it('builds linux.do external search shortcuts like the mobile web search page', () => {
-    expect(linuxDoExternalSearchItems('  gpt plus  ')).toEqual([
-      { label: 'Google', url: 'https://www.google.com/search?q=site%3Alinux.do%20gpt%20plus' },
-      { label: 'Bing', url: 'https://www.bing.com/search?q=site%3Alinux.do%20gpt%20plus' },
-      { label: 'DuckDuckGo', url: 'https://duckduckgo.com/?q=site%3Alinux.do%20gpt%20plus' }
-    ]);
-    expect(linuxDoExternalSearchItems('')).toEqual([]);
   });
 
   it('recognizes four-site topic links that should stay inside the app', () => {

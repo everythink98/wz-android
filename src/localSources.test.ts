@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
@@ -96,7 +96,25 @@ function html(value: string) {
   });
 }
 
+function mockStoredLinuxDoLoginAccess(cookieHeader = 'cf_clearance=clearance; _t=login; _forum_session=session') {
+  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key: string) => (
+    key === 'linuxdo-clearance'
+      ? JSON.stringify({
+        cookieHeader,
+        savedAt: '2026-05-26T00:00:00.000Z',
+        source: 'webview',
+        userAgent: 'LinuxDo WebView UA'
+      })
+      : null
+  ));
+}
+
 describe('Android local sources', () => {
+  beforeEach(() => {
+    vi.mocked(SecureStore.getItemAsync).mockReset();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+  });
+
   it('reads NodeSeek feed, categories, topic, replies, and search without project server endpoints', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/post-101-2')) {
@@ -1719,7 +1737,7 @@ describe('Android local sources', () => {
       return html('<ul class="post-list"><li><a href="/post-101-1">latest only</a></li></ul>');
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items).toHaveLength(1);
     expect(search.items[0]).toMatchObject({
@@ -1760,7 +1778,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items.map((item) => item.id)).toEqual(['606']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -1783,7 +1801,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'AI', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'AI', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items.map((item) => item.id)).toEqual(['808']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -1809,19 +1827,20 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: '安卓手机免', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items.map((item) => item.id)).toEqual(['701', '702']);
   });
 
   it('keeps NodeSeek search usable when anonymous search falls back to Google results', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('/search?') && input.includes('q=codex')) {
+      const url = new URL(input);
+      if (url.hostname === 'www.google.com' && url.searchParams.get('q') === 'site:nodeseek.com codex') {
         return html(`
           <html>
             <head><title>site:nodeseek.com codex - Google Search</title></head>
             <body>
-              <a href="https://www.nodeseek.com/post-861593-1">claude code 好用 还是 codex 好用 。我小白想试下水</a>
+              <a href="https://www.nodeseek.com/post-861593-1"><span>https://www.nodeseek.com</span><h3>claude code 好用 还是 codex 好用 。我小白想试下水</h3></a>
               <a href="/url?q=https%3A%2F%2Fwww.nodeseek.com%2Fpost-861594-1&amp;sa=U">Codex 镜像讨论</a>
             </body>
           </html>
@@ -1848,6 +1867,61 @@ describe('Android local sources', () => {
     expect(isNodeSeekBrowserFetchUrl('https://example.com/search?q=site%3Anodeseek.com+codex')).toBe(false);
   });
 
+  it('loads more NodeSeek Google fallback search pages by Google start offset', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.google.com' && !url.searchParams.has('start')) {
+        return html(`
+          <html>
+            <head><title>site:nodeseek.com codex - Google Search</title></head>
+            <body>
+              <a href="https://www.nodeseek.com/post-861593-1">NodeSeek first page codex</a>
+              <a rel="next" href="/search?q=site%3Anodeseek.com+codex&start=10">Next</a>
+            </body>
+          </html>
+        `);
+      }
+      if (url.hostname === 'www.google.com' && url.searchParams.get('start') === '10') {
+        return html(`
+          <html>
+            <head><title>site:nodeseek.com codex - Google Search</title></head>
+            <body>
+              <a href="https://www.nodeseek.com/post-861594-1">NodeSeek second page codex</a>
+              <a rel="next" href="/search?q=site%3Anodeseek.com+codex&start=20">Next</a>
+            </body>
+          </html>
+        `);
+      }
+      if (url.hostname === 'www.google.com' && url.searchParams.get('start') === '20') {
+        return html(`
+          <html>
+            <head><title>site:nodeseek.com codex - Google Search</title></head>
+            <body>
+              <a href="https://www.nodeseek.com/post-861595-1">NodeSeek third page codex</a>
+            </body>
+          </html>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const first = await searchTopics({ source: 'nodeseek', query: 'codex', limit: 1, fetcher });
+    const second = await searchTopics({ source: 'nodeseek', query: 'codex', page: first.nextPage ?? 2, limit: 1, fetcher });
+    const third = await searchTopics({ source: 'nodeseek', query: 'codex', page: second.nextPage ?? 3, limit: 1, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['861593']);
+    expect(first.nextPage).toBe(2);
+    expect(second.items.map((item) => item.id)).toEqual(['861594']);
+    expect(second.nextPage).toBe(3);
+    expect(third.items.map((item) => item.id)).toEqual(['861595']);
+    expect(third.hasMore).toBe(false);
+    const googleStarts = fetcher.mock.calls
+      .map((call) => new URL(String(call[0])))
+      .filter((url) => url.hostname === 'www.google.com')
+      .map((url) => url.searchParams.get('start'));
+    expect(googleStarts).toEqual([null, '10', '20']);
+  });
+
   it('keeps empty NodeSeek site search results empty instead of filtering the latest feed', async () => {
     const latestPayload = Buffer.from(JSON.stringify({
       rotateTopics: [{
@@ -1865,7 +1939,7 @@ describe('Android local sources', () => {
       return html(`<script>${latestPayload}</script>`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'xyz', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'xyz', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items).toEqual([]);
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
@@ -1890,7 +1964,7 @@ describe('Android local sources', () => {
       <div class="empty-state">没有找到相关内容</div>
     `));
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items).toEqual([]);
   });
@@ -1903,7 +1977,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    await expect(searchTopics({ source: 'nodeseek', query: 'retry', fetcher })).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
+    await expect(searchTopics({ source: 'nodeseek', query: 'retry', fetcher, nodeSeekCookie: 'session=login' })).rejects.toThrow('NodeSeek 搜索页结果没有加载完成，请重试');
   });
 
   it('surfaces NodeSeek site search failures instead of filtering the latest feed', async () => {
@@ -1923,7 +1997,7 @@ describe('Android local sources', () => {
       return html(`<script>${latestPayload}</script>`);
     });
 
-    await expect(searchTopics({ source: 'nodeseek', query: 'failure', fetcher })).rejects.toThrow('NodeSeek search failed');
+    await expect(searchTopics({ source: 'nodeseek', query: 'failure', fetcher, nodeSeekCookie: 'session=login' })).rejects.toThrow('NodeSeek search failed');
     const callUrls = fetcher.mock.calls.map((call) => call[0]);
     expect(callUrls).toContain('https://www.nodeseek.com/search?q=failure');
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
@@ -1953,7 +2027,7 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items.map((item) => item.id)).toEqual(['202']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -1984,8 +2058,8 @@ describe('Android local sources', () => {
       `);
     });
 
-    const first = await searchTopics({ source: 'nodeseek', query: 'GPT', limit: 1, fetcher });
-    const second = await searchTopics({ source: 'nodeseek', query: 'GPT', page: first.nextPage ?? 2, limit: 1, fetcher });
+    const first = await searchTopics({ source: 'nodeseek', query: 'GPT', limit: 1, fetcher, nodeSeekCookie: 'session=login' });
+    const second = await searchTopics({ source: 'nodeseek', query: 'GPT', page: first.nextPage ?? 2, limit: 1, fetcher, nodeSeekCookie: 'session=login' });
 
     expect(first.items.map((item) => item.id)).toEqual(['202']);
     expect(first.hasMore).toBe(true);
@@ -2021,12 +2095,96 @@ describe('Android local sources', () => {
       </ul>
     `));
 
-    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', page: 2, limit: 2, fetcher });
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', page: 2, limit: 2, fetcher, nodeSeekCookie: 'session=login' });
 
     expect(search.items.map((item) => item.id)).toEqual(['199', '198']);
   });
 
+  it('uses Google results for anonymous linux.do search inside the app', async () => {
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
+      const url = new URL(input);
+      expect(url.hostname).toBe('www.google.com');
+      expect(url.pathname).toBe('/search');
+      expect(url.searchParams.get('q')).toBe('site:linux.do codex');
+      expect(JSON.stringify(init?.headers || {})).not.toContain('Cookie');
+      return html(`
+          <html>
+            <head><title>site:linux.do codex - Google Search</title></head>
+            <body>
+            <a href="https://linux.do/t/topic/1424130"><span>https://linux.do</span><h3>Codex CLI 讨论</h3></a>
+            <a href="/url?q=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577485&amp;sa=U">Codex 镜像讨论</a>
+            <a href="/url?url=https%3A%2F%2Flinux.do%2Ft%2Ftopic%2F1577486&amp;sa=U">Codex 另一条讨论</a>
+            <a href="https://linux.do/about">linux.do about</a>
+            <a href="https://example.com/t/topic/999">外站结果</a>
+          </body>
+        </html>
+      `);
+    });
+
+    const search = await searchTopics({ source: 'linuxdo', query: 'codex', fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['1424130', '1577485', '1577486']);
+    expect(search.items[0]).toMatchObject({
+      source: 'linuxdo',
+      title: 'Codex CLI 讨论',
+      url: 'https://linux.do/t/1424130'
+    });
+    expect(fetcher.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('https://linux.do/search');
+  });
+
+  it('loads more anonymous linux.do Google search pages by Google start offset', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.hostname === 'www.google.com' && !url.searchParams.has('start')) {
+        return html(`
+          <html>
+            <head><title>site:linux.do codex - Google Search</title></head>
+            <body>
+              <a href="https://linux.do/t/topic/1424130">linux.do first page codex</a>
+              <a rel="next" href="/search?q=site%3Alinux.do+codex&start=10">Next</a>
+            </body>
+          </html>
+        `);
+      }
+      if (url.hostname === 'www.google.com' && url.searchParams.get('start') === '10') {
+        return html(`
+          <html>
+            <head><title>site:linux.do codex - Google Search</title></head>
+            <body>
+              <a href="https://linux.do/t/topic/1577485">linux.do second page codex</a>
+              <a rel="next" href="/search?q=site%3Alinux.do+codex&start=20">Next</a>
+            </body>
+          </html>
+        `);
+      }
+      if (url.hostname === 'www.google.com' && url.searchParams.get('start') === '20') {
+        return html(`
+          <html>
+            <head><title>site:linux.do codex - Google Search</title></head>
+            <body>
+              <a href="https://linux.do/t/topic/1577486">linux.do third page codex</a>
+            </body>
+          </html>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const first = await searchTopics({ source: 'linuxdo', query: 'codex', limit: 1, fetcher });
+    const second = await searchTopics({ source: 'linuxdo', query: 'codex', page: first.nextPage ?? 2, limit: 1, fetcher });
+    const third = await searchTopics({ source: 'linuxdo', query: 'codex', page: second.nextPage ?? 3, limit: 1, fetcher });
+
+    expect(first.items.map((item) => item.id)).toEqual(['1424130']);
+    expect(first.nextPage).toBe(2);
+    expect(second.items.map((item) => item.id)).toEqual(['1577485']);
+    expect(second.nextPage).toBe(3);
+    expect(third.items.map((item) => item.id)).toEqual(['1577486']);
+    expect(third.hasMore).toBe(false);
+    expect(fetcher.mock.calls.map((call) => new URL(String(call[0])).searchParams.get('start'))).toEqual([null, '10', '20']);
+  });
+
   it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/session/csrf.json')) {
         return json({ csrf: 'csrf-token' });
@@ -2046,6 +2204,7 @@ describe('Android local sources', () => {
   });
 
   it('passes linux.do search pages through and exposes more results', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       expect(url.pathname).toBe('/search');
@@ -2078,6 +2237,7 @@ describe('Android local sources', () => {
   });
 
   it('keeps official linux.do search results even when they do not contain the full query text', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
@@ -2115,6 +2275,7 @@ describe('Android local sources', () => {
   });
 
   it('matches the official linux.do search request from the logged-in page', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       if (url.pathname === '/session/csrf.json') {
@@ -2157,6 +2318,7 @@ describe('Android local sources', () => {
   });
 
   it('maps linux.do search result category ids through site categories', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
@@ -2195,6 +2357,7 @@ describe('Android local sources', () => {
   });
 
   it('keeps linux.do search results in the official relevance order', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
@@ -2534,8 +2697,8 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const aiSearch = await searchTopics({ source: 'nodeseek', query: 'ai', fetcher });
-    const codexSearch = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher });
+    const aiSearch = await searchTopics({ source: 'nodeseek', query: 'ai', fetcher, nodeSeekCookie: 'session=login' });
+    const codexSearch = await searchTopics({ source: 'nodeseek', query: 'codex', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(aiSearch.items.map((item) => item.id)).toEqual(['809']);
     expect(codexSearch.items.map((item) => item.id)).toEqual(['810']);
@@ -2566,7 +2729,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const result = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher });
+    const result = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(result.items).toEqual([]);
     expect(webViewFetcher).not.toHaveBeenCalled();
@@ -2587,7 +2750,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const result = await searchTopics({ source: 'nodeseek', query: 'soft', fetcher });
+    const result = await searchTopics({ source: 'nodeseek', query: 'soft', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(result.items.map((item) => item.id)).toEqual(['743018']);
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
@@ -2611,7 +2774,7 @@ describe('Android local sources', () => {
       webViewFetcher
     });
 
-    const result = await searchTopics({ source: 'nodeseek', query: 'cf', fetcher });
+    const result = await searchTopics({ source: 'nodeseek', query: 'cf', fetcher, nodeSeekCookie: 'session=login' });
 
     expect(result.items.map((item) => item.id)).toEqual(['811']);
     expect(normalFetcher).toHaveBeenCalledTimes(1);
@@ -3623,7 +3786,10 @@ describe('Android local sources', () => {
   });
 
   it('passes linux.do site filters through Discourse search syntax', async () => {
-    const fetcher = vi.fn(async () => json({ topics: [], posts: [] }));
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async (input: string) => (
+      input.includes('/session/csrf.json') ? json({ csrf: 'csrf-token' }) : json({ topics: [], posts: [] })
+    ));
 
     await searchTopics({
       source: 'linuxdo',
@@ -3641,7 +3807,7 @@ describe('Android local sources', () => {
       fetcher
     });
 
-    const url = new URL((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0] || '');
+    const url = new URL((fetcher.mock.calls as unknown as Array<[string]>).find((call) => new URL(call[0]).pathname === '/search')?.[0] || '');
     expect(url.searchParams.get('q')).toBe('AI in:title category:dev tags:人工智能 @alice order:latest');
   });
 
@@ -3656,7 +3822,8 @@ describe('Android local sources', () => {
         category: 'tech',
         sort: 'postTime'
       },
-      fetcher
+      fetcher,
+      nodeSeekCookie: 'session=login'
     });
 
     expect(fetcher.mock.calls.length).toBeGreaterThan(0);

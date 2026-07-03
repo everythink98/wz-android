@@ -4,6 +4,7 @@ import {
   accessRequirementFromObject,
   accessRequirementFromText,
   decodeHtml,
+  elementText,
   isRecord,
   parseHtml,
   sanitizeContentHtml,
@@ -13,6 +14,7 @@ import {
   toIsoString
 } from './localHtml';
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   linuxDoAccessSummary,
@@ -831,10 +833,87 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
   };
 }
 
+function linuxDoTopicIdFromUrl(value: string) {
+  try {
+    const url = new URL(value, BASE_URL);
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== 'https:' || (host !== 'linux.do' && !host.endsWith('.linux.do'))) {
+      return null;
+    }
+    return url.pathname.match(/^\/t\/(?:[^/]+\/)?(\d+)(?:\/|$)/i)?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+function parseLinuxDoGoogleSearchTopics(html: string) {
+  const root = parseHtml(html);
+  const seen = new Set<string>();
+  const now = new Date().toISOString();
+  const items: Topic[] = [];
+  for (const link of root.querySelectorAll('a[href]')) {
+    const target = googleResultTargetUrl(link.getAttribute('href') || '');
+    const id = linuxDoTopicIdFromUrl(target);
+    const title = elementText(link.querySelector('h3')) || elementText(link);
+    if (!id || !title || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    const row = link.parentNode as { text?: string } | null;
+    const text = String(row?.text || link.text || '');
+    items.push({
+      source: 'linuxdo',
+      id,
+      title,
+      author: '',
+      url: `${BASE_URL}/t/${id}`,
+      createdAt: now,
+      lastReplyAt: now,
+      replyCount: 0,
+      excerpt: textExcerpt(text.replace(title, ' '))
+    });
+  }
+  return items;
+}
+
+async function fetchLinuxDoGoogleSearchText(query: string, page: number, options: LinuxDoOptions = {}) {
+  const response = await fetchWithTimeout(googleSiteSearchUrl('linux.do', query, page), {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
+      'User-Agent': DEFAULT_LINUXDO_ANDROID_USER_AGENT
+    }
+  }, options);
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return text;
+}
+
+async function searchLinuxDoGoogle(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
+  const cleanQuery = query.trim();
+  const page = options.page || 1;
+  if (!cleanQuery) {
+    return { items: [], errors: {}, hasMore: false, nextPage: null };
+  }
+  const html = await fetchLinuxDoGoogleSearchText(cleanQuery, page, options);
+  const nextPage = hasGoogleSiteSearchNextPage(html, 'linux.do', page + 1) ? page + 1 : null;
+  return {
+    items: parseLinuxDoGoogleSearchTopics(html).slice(0, options.limit || 30),
+    errors: {},
+    hasMore: Boolean(nextPage),
+    nextPage
+  };
+}
+
 export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
   const limit = options.limit || 30;
   const page = options.page || 1;
   const cleanQuery = query.trim();
+  const access = await loadLinuxDoAccess();
+  if (!linuxDoAccessSummary(access).loggedIn) {
+    return searchLinuxDoGoogle(cleanQuery, options);
+  }
   const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;
   const csrfToken = await linuxDoCsrfToken(options);
   const start = Math.max(0, (page - 1) * limit);

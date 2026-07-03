@@ -1,4 +1,5 @@
 import type { Fetcher } from './request';
+import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
 
 const NODESEEK_POST_DIRECT_FETCH_TIMEOUT_MS = 8000;
@@ -17,15 +18,7 @@ export function isNodeSeekRequestUrl(input: string) {
 }
 
 function isNodeSeekGoogleSearchUrl(input: string) {
-  try {
-    const url = new URL(input);
-    const host = url.hostname.toLowerCase();
-    return (host === 'google.com' || host.endsWith('.google.com'))
-      && url.pathname.replace(/\/+$/, '') === '/search'
-      && (url.searchParams.get('q') || '').toLowerCase().includes('nodeseek.com');
-  } catch {
-    return false;
-  }
+  return isGoogleSiteSearchUrl(input, 'nodeseek.com');
 }
 
 export function isNodeSeekBrowserFetchUrl(input: string) {
@@ -71,6 +64,9 @@ export function createNodeSeekWebViewFallbackFetcher({
 }): Fetcher {
   return async (input, init) => {
     const url = String(input);
+    if (isNodeSeekGoogleSearchUrl(url)) {
+      return webViewFetcher(url, init);
+    }
     if (!isNodeSeekRequestUrl(url)) {
       return defaultFetcher(input, init);
     }

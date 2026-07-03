@@ -240,6 +240,17 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
     const text = pageText();
     return /^\\s*[{[]/.test(text) ? text : "";
   };
+  const isGoogleSearchPage = () => /\\/search\\/?$/i.test(location.pathname || "")
+    && (/(^|\\.)google\\./i.test(location.hostname || "") || /site(?::|%3A)linux\\.do/i.test(location.href || ""));
+  const hasLinuxDoSearchResultLinks = () => isGoogleSearchPage()
+    && Array.from(document.querySelectorAll('a[href]')).some((link) => {
+      const href = link.href || "";
+      try {
+        return /(^https?:\\/\\/([^/]+\\.)?linux\\.do\\/t\\/)|(^\\/t\\/)|linux\\.do\\/t\\//i.test(decodeURIComponent(href));
+      } catch {
+        return /linux\\.do\\/t\\//i.test(href);
+      }
+    });
   const postBridgeMessage = (payload) => {
     const message = JSON.stringify(payload);
     if (message.length <= bridgeMessageLimit) {
@@ -273,7 +284,7 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
   };
   const deadline = Date.now() + 8000;
   const waitForReadablePage = () => {
-    if (isInteractiveChallengePage() || (!isChallengePage() && jsonText()) || Date.now() >= deadline) {
+    if (isInteractiveChallengePage() || (!isChallengePage() && (jsonText() || hasLinuxDoSearchResultLinks())) || Date.now() >= deadline) {
       postResult();
       return;
     }

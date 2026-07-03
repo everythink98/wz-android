@@ -46,7 +46,7 @@ import { getNodeSeekCurrentUserProfile } from '../localNodeseek';
 import type { FeedSource, Source, UserProfile } from '../types';
 import type { Fetcher } from '../request';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
-import { createLinuxDoWebViewFallbackFetcher, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
+import { createLinuxDoWebViewFallbackFetcher, isLinuxDoBrowserFetchUrl, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
 import { errorMessage } from '../appUtils';
 import {
   createSiteSessionViewModels,
@@ -519,7 +519,7 @@ export function useSessionController({
 
   const linuxDoFetchWithWebView: Fetcher = useCallback((input, init) => {
     const url = String(input);
-    if (!isLinuxDoRequestUrl(url)) {
+    if (!isLinuxDoBrowserFetchUrl(url)) {
       return fetch(input, init);
     }
     return new Promise<Response>((resolve, reject) => {
@@ -672,10 +672,11 @@ export function useSessionController({
     if (!current || data.id !== current.id) {
       return;
     }
-    if (!data.url || !isLinuxDoRequestUrl(data.url)) {
+    if (!data.url || !isLinuxDoBrowserFetchUrl(data.url)) {
       rejectLinuxDoBrowserFetch(current, 'linux.do 页面跳转到外部地址，已停止读取');
       return;
     }
+    const isLinuxDoPage = isLinuxDoRequestUrl(data.url);
     if (data.error) {
       rejectLinuxDoBrowserFetch(current, data.error);
       return;
@@ -684,11 +685,11 @@ export function useSessionController({
     linuxDoBrowserFetchCurrentRef.current = null;
     setLinuxDoBrowserFetchRequest(null);
     const userAgent = sanitizeLinuxDoUserAgent(data.userAgent);
-    if (userAgent) {
+    if (isLinuxDoPage && userAgent) {
       linuxDoWebViewUserAgentRef.current = userAgent;
       setLinuxDoWebViewUserAgent(userAgent);
     }
-    if (typeof data.cookie === 'string') {
+    if (isLinuxDoPage && typeof data.cookie === 'string') {
       linuxDoWebViewCookieHeaderRef.current = data.cookie;
       setLinuxDoWebViewCookieHeader(data.cookie);
     }
@@ -699,7 +700,7 @@ export function useSessionController({
       return;
     }
     startNextLinuxDoBrowserFetch();
-    if (!data.challenge && typeof data.cookie === 'string') {
+    if (!data.challenge && isLinuxDoPage && typeof data.cookie === 'string') {
       const generation = current.credentialGeneration ?? currentLinuxDoAccessGeneration();
       void runBestEffortTask(async () => {
         await CookieManager.flush();

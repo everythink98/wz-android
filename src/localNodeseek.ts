@@ -1,7 +1,8 @@
 import MarkdownIt from 'markdown-it';
 import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
-import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
+import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
+import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
 import type { Category, FeedResponse, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
@@ -32,7 +33,6 @@ import {
 } from './localNodeseekHelpers';
 
 const BASE_URL = NODESEEK_BASE_URL;
-const MAX_NODESEEK_SEARCH_PAGES = 5;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
@@ -551,8 +551,11 @@ function parseHtmlTopics(html: string) {
     const link = row.querySelector('.post-title a[href*="post-"]') || row.querySelector('a[href*="post-"]');
     const href = link?.getAttribute('href') || '';
     const id = href.match(/post-(\d+)/)?.[1];
-    const title = elementText(link);
-    if (!id || !title) {
+    if (!link || !id) {
+      continue;
+    }
+    const title = elementText(link.querySelector('h3')) || elementText(link);
+    if (!title) {
       continue;
     }
     const authorLink = row.querySelector('.info-author a[href*="/space/"]');
@@ -593,7 +596,7 @@ function parseHtmlTopics(html: string) {
     }
     const href = link.getAttribute('href') || '';
     const id = href.match(/post-(\d+)/)?.[1];
-    const title = elementText(link);
+    const title = elementText(link.querySelector('h3')) || elementText(link);
     if (!id || !title || seen.has(id)) {
       continue;
     }
@@ -716,6 +719,24 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
   if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
     return text;
   }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return text;
+}
+
+function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
+  return hasNodeSeekLoginCookie(parseNodeSeekDocumentCookie(options.nodeSeekCookie || ''));
+}
+
+async function fetchNodeSeekGoogleSearchText(query: string, page: number, options: NodeSeekOptions = {}) {
+  const response = await fetchWithTimeout(googleSiteSearchUrl('nodeseek.com', query, page), {
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
+      'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
+    }
+  }, options);
+  const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -1497,12 +1518,17 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   let items: Topic[] = [];
   let nextPage: number | null = null;
   try {
-    const html = await fetchNodeSeekText(searchPath(trimmedQuery, page, options.filter), options);
+    const useGoogleSearch = !hasLoggedInNodeSeekCookie(options);
+    const html = useGoogleSearch
+      ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, options)
+      : await fetchNodeSeekText(searchPath(trimmedQuery, page, options.filter), options);
     items = parseNodeSeekSearchTopics(html);
     if (isIncompleteNodeSeekSearchPage(html, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
     }
-    nextPage = page < MAX_NODESEEK_SEARCH_PAGES && nextSearchPath(html, page + 1) ? page + 1 : null;
+    nextPage = useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com')
+      ? hasGoogleSiteSearchNextPage(html, 'nodeseek.com', page + 1) ? page + 1 : null
+      : nextSearchPath(html, page + 1) ? page + 1 : null;
   } catch (error) {
     if (isNodeSeekCloudflareError(error)) {
       throw error;

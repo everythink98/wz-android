@@ -60,7 +60,7 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
     return notice('linux.do 已登录。', 'neutral');
   }
   if (session.status === 'verified') {
-    return notice('已通过访问验证，登录后可互动。', 'neutral');
+    return notice(surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可互动。', 'neutral');
   }
   if (session.status === 'verification-required' || session.status === 'verifying') {
     return notice('linux.do 需要完成验证后继续。', 'warning');
@@ -68,7 +68,7 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
   if (session.status === 'expired') {
     return notice('linux.do 登录已失效，请重新登录。', 'danger');
   }
-  return notice('匿名可阅读，登录后才能互动。', 'neutral');
+  return notice(surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '匿名可阅读，登录后才能互动。', 'neutral');
 }
 
 export function authHintForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface) {

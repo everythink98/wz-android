@@ -53,19 +53,6 @@ export function accessRequirementSpecificity(requirement?: AccessRequirement) {
   return 1;
 }
 
-export function linuxDoExternalSearchItems(query: string) {
-  const trimmed = query.trim();
-  if (!trimmed) {
-    return [];
-  }
-  const encoded = encodeURIComponent(`site:linux.do ${trimmed}`);
-  return [
-    { label: 'Google', url: `https://www.google.com/search?q=${encoded}` },
-    { label: 'Bing', url: `https://www.bing.com/search?q=${encoded}` },
-    { label: 'DuckDuckGo', url: `https://duckduckgo.com/?q=${encoded}` }
-  ];
-}
-
 const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
   '177': '妖火茶馆',
   '213': '悬赏问答',

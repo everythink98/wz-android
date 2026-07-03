@@ -4,7 +4,7 @@ import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flas
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, FeedSource, Source, Topic } from '../types';
 import { topicKey } from '../readerData';
-import { linuxDoExternalSearchItems, sourceLabel } from '../appUtils';
+import { sourceLabel } from '../appUtils';
 import { feedSourceItems } from '../feedCategoryRail';
 import {
   buildSearchListItems,
@@ -432,7 +432,6 @@ export const SearchScreen = memo(function SearchScreen({
   scrollToTopSignal,
   styles,
   theme,
-  onOpenExternalUrl,
   onOpenTopic,
   onLoadMoreSearchSource,
   onRemoveRecentSearch,
@@ -455,7 +454,6 @@ export const SearchScreen = memo(function SearchScreen({
   scrollToTopSignal: number;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  onOpenExternalUrl: (url: string) => void;
   onOpenTopic: (topic: Topic) => void;
   onLoadMoreSearchSource: (source: Source, page: number) => void;
   onRemoveRecentSearch: (query: string) => void;
@@ -515,11 +513,6 @@ export const SearchScreen = memo(function SearchScreen({
   const hasInputValue = query.length > 0;
   const hasSearchTerm = searchTerm.length > 0;
   const hasSubmittedQuery = hasSearchTerm && submittedQuery === searchTerm;
-  const linuxDoExternalItems = useMemo(() => (
-    hasSubmittedQuery && (searchSource === 'all' || searchSource === 'linuxdo')
-      ? linuxDoExternalSearchItems(searchTerm)
-      : []
-  ), [hasSubmittedQuery, searchSource, searchTerm]);
   const showSearchGroups = hasSubmittedQuery && visibleSearchGroups.length > 0;
   const showIdleRecentSearches = !hasInputValue && recentSearches.length > 0;
   const searchFilterEntrySummary = searchSource !== 'all'
@@ -708,16 +701,6 @@ export const SearchScreen = memo(function SearchScreen({
           </View>
         </View>
       ) : null}
-      {linuxDoExternalItems.length ? (
-        <View style={styles.stack}>
-          <Text style={styles.meta}>linux.do 老帖</Text>
-          <View style={styles.actions}>
-            {linuxDoExternalItems.map((item) => (
-              <AppButton key={item.url} compact label={item.label} styles={styles} onPress={() => onOpenExternalUrl(item.url)} />
-            ))}
-          </View>
-        </View>
-      ) : null}
     </View>
   ), [
     busy,
@@ -725,8 +708,6 @@ export const SearchScreen = memo(function SearchScreen({
     hasInputValue,
     hasSearchTerm,
     hasSubmittedQuery,
-    linuxDoExternalItems,
-    onOpenExternalUrl,
     onQueryChange,
     onRemoveRecentSearch,
     onSearch,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
@@ -21,6 +21,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { getCategories, getCurrentUserProfile, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
+import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{ postId: 1, titleText: 'NodeSeek', titleLink: '/post-1-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T00:00:00.000Z' } }],
@@ -28,6 +29,24 @@ const nodeSeekPayload = Buffer.from(JSON.stringify({
 })).toString('base64');
 
 describe('Android local forum facade', () => {
+  beforeEach(() => {
+    vi.mocked(SecureStore.getItemAsync).mockReset();
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+  });
+
+  function mockStoredLinuxDoLoginAccess() {
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key: string) => (
+      key === 'linuxdo-clearance'
+        ? JSON.stringify({
+          cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+          savedAt: '2026-05-26T00:00:00.000Z',
+          source: 'webview',
+          userAgent: 'LinuxDo WebView UA'
+        })
+        : null
+    ));
+  }
+
   it('routes feed and categories to public source sites, not the project server', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
@@ -900,6 +919,7 @@ describe('Android local forum facade', () => {
   });
 
   it('orders all-source Android search by time without using the project search endpoint', async () => {
+    mockStoredLinuxDoLoginAccess();
     const manyNodeSeekTopics = Buffer.from(JSON.stringify({
       rotateTopics: Array.from({ length: 4 }, (_, index) => ({
         postId: 100 + index,
@@ -912,6 +932,9 @@ describe('Android local forum facade', () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
         return new Response(`<script>${manyNodeSeekTopics}</script>`);
+      }
+      if (input.includes('linux.do/session/csrf.json')) {
+        return new Response(JSON.stringify({ csrf: 'csrf-token' }));
       }
       if (input.includes('linux.do/search?')) {
         return new Response(JSON.stringify({
@@ -949,6 +972,7 @@ describe('Android local forum facade', () => {
   });
 
   it('orders all-source Android search by topic creation time newest first', async () => {
+    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
         return new Response(`<script>${Buffer.from(JSON.stringify({
@@ -960,6 +984,9 @@ describe('Android local forum facade', () => {
             time: { createdDate: '2026-05-19T00:00:00.000Z' }
           }]
         })).toString('base64')}</script>`);
+      }
+      if (input.includes('linux.do/session/csrf.json')) {
+        return new Response(JSON.stringify({ csrf: 'csrf-token' }));
       }
       if (input.includes('linux.do/search?')) {
         return new Response(JSON.stringify({

@@ -1,4 +1,5 @@
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import type { Fetcher } from './request';
 
 export function isLinuxDoRequestUrl(input: string) {
@@ -14,6 +15,14 @@ export function isLinuxDoRequestUrl(input: string) {
   }
 }
 
+export function isLinuxDoGoogleSearchUrl(input: string) {
+  return isGoogleSiteSearchUrl(input, 'linux.do');
+}
+
+export function isLinuxDoBrowserFetchUrl(input: string) {
+  return isLinuxDoRequestUrl(input) || isLinuxDoGoogleSearchUrl(input);
+}
+
 export function createLinuxDoWebViewFallbackFetcher({
   defaultFetcher = fetch,
   webViewFetcher
@@ -23,6 +32,9 @@ export function createLinuxDoWebViewFallbackFetcher({
 }): Fetcher {
   return async (input, init) => {
     const url = String(input);
+    if (isLinuxDoGoogleSearchUrl(url)) {
+      return webViewFetcher(url, init);
+    }
     const response = await defaultFetcher(input, init);
     if (!isLinuxDoRequestUrl(url)) {
       return response;

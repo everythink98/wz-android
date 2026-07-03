@@ -30,7 +30,7 @@ describe('site session prompts', () => {
       tone: 'neutral'
     });
     expect(authNoticeForSource('linuxdo', sessions, 'search')).toEqual({
-      message: '匿名可阅读，登录后才能互动。',
+      message: '未登录搜索使用 Google，结果可能不完整。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('yaohuo', sessions, 'search')).toEqual({
@@ -64,7 +64,7 @@ describe('site session prompts', () => {
 
     expect(searchSessionNoticeItems('all', sessions)).toEqual([
       { source: 'nodeseek', label: 'NodeSeek', notice: { message: '已登录搜索。', tone: 'neutral' } },
-      { source: 'linuxdo', label: 'linux.do', notice: { message: '匿名可阅读，登录后才能互动。', tone: 'neutral' } },
+      { source: 'linuxdo', label: 'linux.do', notice: { message: '未登录搜索使用 Google，结果可能不完整。', tone: 'neutral' } },
       { source: 'yaohuo', label: '妖火', notice: { message: '妖火登录已失效，请重新登录。', tone: 'danger' } }
     ]);
     expect(searchSessionNoticeItems('nodeseek', sessions)).toEqual([
