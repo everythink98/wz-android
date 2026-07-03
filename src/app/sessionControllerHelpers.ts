@@ -236,7 +236,8 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   queueRef,
   setActiveRequest,
   startNext,
-  webViewRef
+  webViewRef,
+  skipStopLoading = false
 }: {
   request: T;
   message: string;
@@ -245,6 +246,7 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   setActiveRequest: (request: BrowserFetchRequestView | null) => void;
   startNext: () => void;
   webViewRef?: WebViewStopRef;
+  skipStopLoading?: boolean;
 }) {
   if (request.settled) {
     return;
@@ -254,7 +256,9 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
     queueRef.current.splice(queuedIndex, 1);
   }
   if (currentRef.current?.id === request.id) {
-    webViewRef?.current?.stopLoading();
+    if (!skipStopLoading) {
+      webViewRef?.current?.stopLoading();
+    }
     currentRef.current = null;
     setActiveRequest(null);
   }

@@ -32,7 +32,7 @@ export function HiddenBrowserHost({
   styles
 }: {
   failLinuxDoBrowserFetchById: (requestId: number, message: string) => void;
-  failNodeSeekBrowserFetchById: (requestId: number, message: string) => void;
+  failNodeSeekBrowserFetchById: (requestId: number, message: string, options?: { skipStopLoading?: boolean }) => void;
   handleLinuxDoBrowserFetchMessage: (event: WebViewMessageEvent) => void;
   handleNodeSeekBrowserFetchMessage: (event: WebViewMessageEvent) => void;
   linuxDoBrowserWebViewRef: RefObject<WebView | null>;
@@ -109,7 +109,7 @@ export function HiddenBrowserHost({
               failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, `NodeSeek 页面返回错误 ${event.nativeEvent.statusCode}`);
             }}
             onRenderProcessGone={() => {
-              failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止');
+              failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', { skipStopLoading: true });
             }}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />

@@ -1,4 +1,5 @@
 import type { Fetcher } from './request';
+import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
 
 const NODESEEK_POST_DIRECT_FETCH_TIMEOUT_MS = 8000;
 
@@ -38,14 +39,6 @@ function isNodeSeekPostUrl(input: string) {
   } catch {
     return false;
   }
-}
-
-function isNodeSeekCloudflareResponse(response: Response, bodyText: string) {
-  return response.headers.get('cf-mitigated') === 'challenge'
-    || /cf-turnstile|challenge-platform/i.test(bodyText)
-    || /<title>\s*(?:just a moment|请稍候)/i.test(bodyText)
-    || /正在进行安全验证|安全服务防护恶意自动程序/i.test(bodyText)
-    || (response.status === 403 && /just a moment|cloudflare|请稍候/i.test(bodyText));
 }
 
 async function fetchNodeSeekPostDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
@@ -93,7 +86,7 @@ export function createNodeSeekWebViewFallbackFetcher({
       throw error;
     }
     const text = await response.clone().text();
-    if (isNodeSeekCloudflareResponse(response, text)) {
+    if (isNodeSeekChallengeResponse(response, text, url)) {
       return webViewFetcher(url, init);
     }
     return response;

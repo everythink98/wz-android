@@ -1,10 +1,9 @@
 import MarkdownIt from 'markdown-it';
-import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 import type { NodeSeekSearchFilter } from './searchFilters';
-import type { Category, FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
+import type { Category, FeedResponse, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -19,6 +18,8 @@ import {
 } from './localHtml';
 import {
   NODESEEK_BASE_URL,
+  extractNodeSeekEmbeddedData,
+  isNodeSeekChallengeResponse,
   nextNodeSeekListPage,
   nextNodeSeekPostPage,
   isNodeSeekHost,
@@ -37,6 +38,7 @@ const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
 interface NodeSeekOptions {
   fetcher?: Fetcher;
+  nocache?: boolean;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   signal?: AbortSignal;
@@ -457,36 +459,6 @@ function isInsideFooter(node: ReturnType<ReturnType<typeof parseHtml>['querySele
   return false;
 }
 
-function embeddedCandidates(html: string) {
-  const scriptContents = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
-  const dataAttributes = [...html.matchAll(/\sdata-[\w:-]+=["']([^"']*eyJ[A-Za-z0-9+/=]{40,}[^"']*)["']/g)].map((match) => match[1]);
-  return [...scriptContents, ...dataAttributes].flatMap((content) => content.match(/eyJ[A-Za-z0-9+/=]{40,}/g) || []);
-}
-
-function extractNodeSeekEmbeddedData(html: string) {
-  for (const candidate of embeddedCandidates(html)) {
-    try {
-      const parsed = JSON.parse(Buffer.from(candidate, 'base64').toString('utf8'));
-      if (isRecord(parsed) && (
-        parsed.user
-        || parsed.currentUser
-        || parsed.current_user
-        || parsed.account
-        || parsed.postData
-        || parsed.rotateTopics
-        || parsed.topicList
-        || parsed.allCategory
-        || parsed.posts
-      )) {
-        return parsed;
-      }
-    } catch {
-      // Continue scanning unrelated base64 strings.
-    }
-  }
-  return null;
-}
-
 function arrayField(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
@@ -647,11 +619,12 @@ function parseHtmlTopics(html: string) {
 
 function parseNodeSeekSearchTopics(html: string) {
   const embedded = extractNodeSeekEmbeddedData(html);
+  const renderedItems = parseHtmlTopics(html);
+  const root = parseHtml(html);
+  const hasSearchSurface = Boolean(root.querySelector('form[action*="/search"], input[name="q"], .post-list, .empty-state, .notice, .alert'));
   const seen = new Set<string>();
-  return [
-    ...(embedded ? embeddedTopics(embedded) : []),
-    ...parseHtmlTopics(html)
-  ].filter((topic) => {
+  const items = renderedItems.length || hasSearchSurface ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
+  return items.filter((topic) => {
     if (!topic.id || seen.has(topic.id)) {
       return false;
     }
@@ -708,14 +681,6 @@ function parseHtmlCategories(html: string) {
   }));
 }
 
-function isNodeSeekCloudflareResponse(response: Response, html: string) {
-  return response.headers.get('cf-mitigated') === 'challenge'
-    || /cf-turnstile|challenge-platform/i.test(html)
-    || /<title>\s*(?:just a moment|请稍候)/i.test(html)
-    || /正在进行安全验证|安全服务防护恶意自动程序/i.test(html)
-    || (response.status === 403 && /just a moment|cloudflare|请稍候/i.test(html));
-}
-
 function nodeSeekCloudflareError() {
   return Object.assign(new Error(NODESEEK_CLOUDFLARE_MESSAGE), {
     source: 'nodeseek',
@@ -737,11 +702,15 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
   if (cookie) {
     headers.cookie = cookie;
   }
+  if (options.nocache) {
+    headers['Cache-Control'] = 'no-cache';
+    headers.Pragma = 'no-cache';
+  }
   const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
     headers
   }, options);
   const text = await response.text();
-  if (isNodeSeekCloudflareResponse(response, text)) {
+  if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
     throw nodeSeekCloudflareError();
   }
   if (!response.ok && (response.status === 403 || response.status === 404) && accessRequirementFromText(text)) {
@@ -840,7 +809,8 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
   const limit = options.limit || 30;
   const html = await fetchNodeSeekText(listPath(page, options.category), options);
   const embedded = extractNodeSeekEmbeddedData(html);
-  const items = embedded ? embeddedTopics(embedded) : parseHtmlTopics(html);
+  const renderedItems = parseHtmlTopics(html);
+  const items = renderedItems.length ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
   const filtered = options.category
     ? items.filter((item) => !item.categoryId || item.categoryId === options.category || item.category === options.category)
     : items;
@@ -966,6 +936,70 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     replyHasMore: allReplies.length > replyLimit,
     replyNextPage: allReplies.length > replyLimit ? 1 : null,
     replyNextOffset: allReplies.length > replyLimit ? replies.length : null
+  };
+}
+
+function mergeRenderedNodeSeekReply(rendered: Reply, embedded?: Reply): Reply {
+  if (!embedded) {
+    return rendered;
+  }
+  return {
+    ...embedded,
+    ...rendered,
+    author: rendered.author || embedded.author,
+    contentHtml: rendered.contentHtml || embedded.contentHtml,
+    createdAt: rendered.createdAt || embedded.createdAt,
+    commentId: rendered.commentId ?? embedded.commentId,
+    upvoteCount: rendered.upvoteCount ?? embedded.upvoteCount,
+    likeCount: rendered.likeCount ?? embedded.likeCount,
+    dislikeCount: rendered.dislikeCount ?? embedded.dislikeCount,
+    upvoted: rendered.upvoted ?? embedded.upvoted,
+    liked: rendered.liked ?? embedded.liked,
+    disliked: rendered.disliked ?? embedded.disliked,
+    canEdit: embedded.canEdit ?? rendered.canEdit,
+    canLike: embedded.canLike ?? rendered.canLike,
+    canDelete: embedded.canDelete ?? rendered.canDelete,
+    deletePath: embedded.deletePath ?? rendered.deletePath,
+    contentMarkdown: embedded.contentMarkdown ?? rendered.contentMarkdown
+  };
+}
+
+function matchingEmbeddedNodeSeekReply(reply: Reply, embeddedReplies: Reply[]) {
+  return embeddedReplies.find((item) => (
+    (reply.commentId && item.commentId === reply.commentId)
+    || (reply.floor && item.floor === reply.floor)
+  ));
+}
+
+function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: TopicDetail): TopicDetail {
+  if (!embedded) {
+    return rendered;
+  }
+  const replies = rendered.replies.length
+    ? rendered.replies.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies)))
+    : embedded.replies;
+  return {
+    ...embedded,
+    ...rendered,
+    title: rendered.title || embedded.title,
+    author: rendered.author || embedded.author,
+    contentHtml: rendered.contentHtml || embedded.contentHtml,
+    createdAt: rendered.createdAt || embedded.createdAt,
+    commentId: rendered.commentId ?? embedded.commentId,
+    upvoteCount: rendered.upvoteCount ?? embedded.upvoteCount,
+    likeCount: rendered.likeCount ?? embedded.likeCount,
+    dislikeCount: rendered.dislikeCount ?? embedded.dislikeCount,
+    upvoted: rendered.upvoted ?? embedded.upvoted,
+    liked: rendered.liked ?? embedded.liked,
+    disliked: rendered.disliked ?? embedded.disliked,
+    collectionCount: rendered.collectionCount ?? embedded.collectionCount,
+    collected: rendered.collected ?? embedded.collected,
+    locked: rendered.locked ?? embedded.locked,
+    replyCount: rendered.replies.length ? rendered.replyCount : embedded.replyCount,
+    replies,
+    replyHasMore: rendered.replies.length ? rendered.replyHasMore : embedded.replyHasMore,
+    replyNextPage: rendered.replies.length ? rendered.replyNextPage : embedded.replyNextPage,
+    replyNextOffset: rendered.replies.length ? rendered.replyNextOffset : embedded.replyNextOffset
   };
 }
 
@@ -1222,7 +1256,7 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
   const html = await fetchTopicHtml(id, page, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  const rendered = postData ? null : parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER);
+  const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER);
   if (!postData && !rendered) {
     throw new Error('NodeSeek 主题解析失败');
   }
@@ -1234,6 +1268,20 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const currentUser = embedded ? findNodeSeekCurrentUser(embedded) : null;
+  const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
+  if (rendered) {
+    const embeddedTopic = postData ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30) : undefined;
+    const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
+    const polls = mergeNodeSeekPolls(
+      topic.polls,
+      await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], options)
+    );
+    return withNodeSeekReplyPagination({
+      ...topic,
+      ...(polls ? { polls } : {}),
+      ...(currentUser ? { currentUser } : {})
+    }, html, id, 1);
+  }
   if (postData) {
     const comments = arrayField(postData.comments);
     const first = isRecord(comments[0]) ? comments[0] : {};
@@ -1241,18 +1289,6 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], options));
     return withNodeSeekReplyPagination({
       ...topic,
-      ...(polls ? { polls } : {}),
-      ...(currentUser ? { currentUser } : {})
-    }, html, id, 1);
-  }
-  const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
-  if (rendered) {
-    const polls = mergeNodeSeekPolls(
-      rendered.polls,
-      await readNodeSeekPollsFromVoteLinks([rendered.contentHtml, html], options)
-    );
-    return withNodeSeekReplyPagination({
-      ...rendered,
       ...(polls ? { polls } : {}),
       ...(currentUser ? { currentUser } : {})
     }, html, id, 1);
@@ -1270,7 +1306,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
   const { html, postData, rendered } = await fetchTopicPageData(id, page, options);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? options.offset as number : 0;
-  if (rendered) {
+  if (rendered && (rendered.replies.length || !postData)) {
     const source = page <= 1 ? rendered.replies : rendered.replies.map((reply, index) => ({
       ...reply,
       floor: reply.floor ?? (hasOffset ? offset + index + 1 : ((page - 1) * limit) + index + 1)

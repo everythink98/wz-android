@@ -718,6 +718,109 @@ describe('Android local sources', () => {
     expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
   });
 
+  it('prefers rendered NodeSeek topic content over stale embedded postData while keeping edit metadata', async () => {
+    const stalePayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723705,
+        title: 'stale embedded title',
+        comments: [
+          { commentId: 100, poster: { name: 'alice' }, content: '<p>stale body</p>', markdown: 'stale body' },
+          { commentId: 101, poster: { name: 'bob', isMe: true }, content: '<p>stale reply</p>', markdown: 'editable reply markdown' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${stalePayload}</script>
+      <a class="post-title" href="/post-723705-1">Rendered topic title</a>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-05-22T15:55:11.000Z"></time>
+        <article class="post-content"><p>fresh rendered body</p></article>
+      </div>
+      <li id="1" data-comment-id="101" class="content-item">
+        <div class="author-info"><a href="/space/2" class="author-name">bob</a></div>
+        <time datetime="2026-05-22T15:59:06.000Z"></time>
+        <article class="post-content"><p>fresh rendered reply</p></article>
+      </li>
+    `));
+
+    const topic = await getNodeSeekTopic('723705', { fetcher });
+
+    expect(topic.title).toBe('Rendered topic title');
+    expect(topic.contentHtml).toContain('fresh rendered body');
+    expect(topic.contentHtml).not.toContain('stale body');
+    expect(topic.replies[0]).toMatchObject({
+      commentId: 101,
+      contentHtml: expect.stringContaining('fresh rendered reply'),
+      contentMarkdown: 'editable reply markdown',
+      canEdit: true
+    });
+  });
+
+  it('keeps embedded NodeSeek replies when only the topic body is rendered', async () => {
+    const embeddedPayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723707,
+        title: 'embedded title',
+        comments: [
+          { commentId: 100, poster: { name: 'alice' }, content: '<p>embedded body</p>', markdown: 'embedded body' },
+          { commentId: 101, poster: { name: 'bob' }, content: '<p>embedded reply</p>', markdown: 'embedded reply markdown' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${embeddedPayload}</script>
+      <a class="post-title" href="/post-723707-1">Rendered topic body</a>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-05-22T15:55:11.000Z"></time>
+        <article class="post-content"><p>fresh rendered body</p></article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('723707', { fetcher });
+    const replies = await getNodeSeekReplies('723707', { fetcher, page: 1, offset: 0, limit: 30 });
+
+    expect(topic.contentHtml).toContain('fresh rendered body');
+    expect(topic.replies.map((item) => item.author)).toEqual(['bob']);
+    expect(replies.items.map((item) => item.author)).toEqual(['bob']);
+  });
+
+  it('prefers rendered NodeSeek replies over stale embedded postData when refreshing replies', async () => {
+    const stalePayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723706,
+        title: 'NodeSeek topic',
+        comments: [
+          { commentId: 100, poster: { name: 'alice' }, markdown: '正文' },
+          { commentId: 101, poster: { name: 'old reply' }, markdown: '旧回复' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${stalePayload}</script>
+      <a class="post-title" href="/post-723706-1">Rendered replies</a>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-05-22T15:55:11.000Z"></time>
+        <article class="post-content"><p>正文</p></article>
+      </div>
+      <li id="1" data-comment-id="102" class="content-item">
+        <div class="author-info"><a href="/space/2" class="author-name">new reply</a></div>
+        <time datetime="2026-05-22T15:59:06.000Z"></time>
+        <article class="post-content"><p>新回复</p></article>
+      </li>
+    `));
+
+    const replies = await getNodeSeekReplies('723706', { fetcher, page: 1, offset: 0, limit: 30 });
+
+    expect(replies.items.map((item) => item.author)).toEqual(['new reply']);
+    expect(replies.items[0]).toMatchObject({
+      commentId: 102,
+      contentHtml: expect.stringContaining('新回复')
+    });
+  });
+
   it('uses the linux.do reply offset as the fallback floor on later reply pages', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/posts.json')) {
@@ -1770,6 +1873,28 @@ describe('Android local sources', () => {
     expect(callUrls).not.toContain('https://www.nodeseek.com/');
   });
 
+  it('keeps empty NodeSeek search pages empty when they include stale embedded shell topics', async () => {
+    const stalePayload = Buffer.from(JSON.stringify({
+      rotateTopics: [{
+        postId: 305,
+        titleText: 'stale shell result',
+        titleLink: '/post-305-1',
+        op: { name: 'alice' },
+        time: { createdDate: '2026-05-21T00:00:00.000Z' }
+      }]
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${stalePayload}</script>
+      <form action="/search"><input name="q" value="missing" /></form>
+      <ul class="post-list"></ul>
+      <div class="empty-state">没有找到相关内容</div>
+    `));
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher });
+
+    expect(search.items).toEqual([]);
+  });
+
   it('surfaces incomplete NodeSeek search pages as a retryable failure', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/search?') && input.includes('q=retry')) {
@@ -1867,6 +1992,38 @@ describe('Android local sources', () => {
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['203']);
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.nodeseek.com/search?q=GPT&page=2');
+  });
+
+  it('prefers rendered NodeSeek search rows over stale embedded shell topics', async () => {
+    const staleEmbeddedPayload = Buffer.from(JSON.stringify({
+      rotateTopics: [
+        { postId: 201, titleText: 'stale search page one', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T02:00:00.000Z' } },
+        { postId: 200, titleText: 'stale search page one older', titleLink: '/post-200-1', op: { name: 'bob' }, time: { createdDate: '2026-05-20T01:00:00.000Z' } }
+      ]
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${staleEmbeddedPayload}</script>
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-199-1">Rendered search page two newer</a></div>
+          <div class="post-info">
+            <a href="/space/1" class="info-author">carol</a>
+            <time datetime="2026-05-19T02:00:00.000Z"></time>
+          </div>
+        </li>
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-198-1">Rendered search page two older</a></div>
+          <div class="post-info">
+            <a href="/space/2" class="info-author">dave</a>
+            <time datetime="2026-05-19T01:00:00.000Z"></time>
+          </div>
+        </li>
+      </ul>
+    `));
+
+    const search = await searchTopics({ source: 'nodeseek', query: 'GPT', page: 2, limit: 2, fetcher });
+
+    expect(search.items.map((item) => item.id)).toEqual(['199', '198']);
   });
 
   it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
@@ -2136,6 +2293,23 @@ describe('Android local sources', () => {
     }));
   });
 
+  it('sends no-cache headers when refreshing the NodeSeek Android feed', async () => {
+    const fetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
+
+    await getFeed({
+      source: 'nodeseek',
+      fetcher,
+      nocache: true
+    });
+
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=postTime', expect.objectContaining({
+      headers: expect.objectContaining({
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache'
+      })
+    }));
+  });
+
   it('reports NodeSeek Cloudflare HTML as a verification requirement', async () => {
     const fetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
       status: 403,
@@ -2178,6 +2352,96 @@ describe('Android local sources', () => {
 
     expect(topic.title).toBe('NodeSeek normal detail');
     expect(normalFetcher).toHaveBeenCalledTimes(1);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('uses normal fetch for readable NodeSeek lists that include challenge scripts', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743013-1">NodeSeek direct list row</a></div>
+          <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+        </li>
+      </ul>
+    `));
+    const webViewFetcher = vi.fn(async () => html(`
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743014-1">NodeSeek WebView list row</a></div>
+          <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+        </li>
+      </ul>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const result = await getFeed({ source: 'nodeseek', fetcher });
+
+    expect(result.items.map((item) => item.title)).toEqual(['NodeSeek direct list row']);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('uses normal fetch for readable NodeSeek details that include challenge scripts', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <div class="cf-turnstile"></div>
+      <a class="post-title" href="/post-743015-1">NodeSeek direct detail</a>
+      <div class="content-item">
+        <article class="post-content"><p>直接正文</p></article>
+      </div>
+    `));
+    const webViewFetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743015-1">NodeSeek WebView detail</a>
+      <div class="content-item">
+        <article class="post-content"><p>兜底正文</p></article>
+      </div>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743015', fetcher });
+
+    expect(topic.title).toBe('NodeSeek direct detail');
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('uses normal fetch for readable embedded NodeSeek details that include challenge scripts', async () => {
+    const directPayload = Buffer.from(JSON.stringify({
+      postData: {
+        title: 'NodeSeek direct embedded detail',
+        op: { name: 'alice' },
+        comments: [
+          {
+            commentId: 1,
+            poster: { name: 'alice' },
+            markdown: '直接嵌入正文',
+            time: { createdDate: '2026-05-21T00:00:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const normalFetcher = vi.fn(async () => html(`
+      <script>${directPayload}</script>
+      <div class="cf-turnstile"></div>
+    `));
+    const webViewFetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743016-1">NodeSeek WebView embedded detail</a>
+      <div class="content-item">
+        <article class="post-content"><p>兜底正文</p></article>
+      </div>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const topic = await getTopic({ source: 'nodeseek', id: '743016', fetcher });
+
+    expect(topic.title).toBe('NodeSeek direct embedded detail');
     expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
@@ -2282,6 +2546,53 @@ describe('Android local sources', () => {
     expect(normalCalls[1]?.[0]).toBe('https://www.nodeseek.com/search?q=codex');
   });
 
+  it('uses direct fetch for empty NodeSeek search pages that include challenge scripts', async () => {
+    const normalFetcher = vi.fn(async () => html(`
+      <script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>
+      <form action="/search"><input name="q" value="missing"></form>
+      <div class="post-list"></div>
+      <div class="empty-state">没有找到相关内容</div>
+    `));
+    const webViewFetcher = vi.fn(async () => html(`
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743017-1">NodeSeek WebView search row</a></div>
+          <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+        </li>
+      </ul>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const result = await searchTopics({ source: 'nodeseek', query: 'missing', fetcher });
+
+    expect(result.items).toEqual([]);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('uses the NodeSeek WebView fallback when soft challenge markers have no readable content', async () => {
+    const normalFetcher = vi.fn(async () => html('<html><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script></html>'));
+    const webViewFetcher = vi.fn(async () => html(`
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-743018-1">soft challenge WebView search result</a></div>
+          <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+        </li>
+      </ul>
+    `));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const result = await searchTopics({ source: 'nodeseek', query: 'soft', fetcher });
+
+    expect(result.items.map((item) => item.id)).toEqual(['743018']);
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the NodeSeek WebView fallback for search only after Cloudflare', async () => {
     const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
       status: 403,
@@ -2369,6 +2680,38 @@ describe('Android local sources', () => {
     const feed = await getFeed({ source: 'nodeseek', limit: 2, fetcher });
 
     expect(feed.items.map((item) => item.id)).toEqual(['201', '200']);
+  });
+
+  it('prefers rendered NodeSeek list rows over stale embedded shell topics', async () => {
+    const staleEmbeddedPayload = Buffer.from(JSON.stringify({
+      rotateTopics: [
+        { postId: 201, titleText: 'stale page one', titleLink: '/post-201-1', op: { name: 'alice' }, time: { createdDate: '2026-05-20T02:00:00.000Z' } },
+        { postId: 200, titleText: 'stale page one older', titleLink: '/post-200-1', op: { name: 'bob' }, time: { createdDate: '2026-05-20T01:00:00.000Z' } }
+      ]
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${staleEmbeddedPayload}</script>
+      <ul class="post-list">
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-199-1">Rendered page two newer</a></div>
+          <div class="post-info">
+            <a href="/space/1" class="info-author">carol</a>
+            <time datetime="2026-05-19T02:00:00.000Z"></time>
+          </div>
+        </li>
+        <li class="post-list-item">
+          <div class="post-title"><a href="/post-198-1">Rendered page two older</a></div>
+          <div class="post-info">
+            <a href="/space/2" class="info-author">dave</a>
+            <time datetime="2026-05-19T01:00:00.000Z"></time>
+          </div>
+        </li>
+      </ul>
+    `));
+
+    const feed = await getFeed({ source: 'nodeseek', page: 2, limit: 2, fetcher });
+
+    expect(feed.items.map((item) => item.id)).toEqual(['199', '198']);
   });
 
   it('reads rendered NodeSeek category links when embedded category data is absent', async () => {

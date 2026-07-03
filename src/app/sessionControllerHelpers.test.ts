@@ -269,6 +269,37 @@ describe('session controller helpers', () => {
     expect(startNext).toHaveBeenCalledTimes(1);
   });
 
+  it('can reject an active browser fetch request without stopping a gone WebView renderer', () => {
+    const active = {
+      id: 1,
+      url: 'https://www.nodeseek.com/post-1-1',
+      reject: vi.fn()
+    };
+    const currentRef = { current: active };
+    const queueRef = { current: [] };
+    const setActiveRequest = vi.fn();
+    const startNext = vi.fn();
+    const webViewRef = { current: { stopLoading: vi.fn() } };
+
+    rejectBrowserFetchRequest({
+      request: active,
+      message: 'NodeSeek 页面读取进程已停止',
+      currentRef,
+      queueRef,
+      setActiveRequest,
+      startNext,
+      webViewRef,
+      skipStopLoading: true
+    });
+
+    expect(webViewRef.current.stopLoading).not.toHaveBeenCalled();
+    expect(currentRef.current).toBeNull();
+    expect(active.reject).toHaveBeenCalledTimes(1);
+    expect(active.reject).toHaveBeenCalledWith(new Error('NodeSeek 页面读取进程已停止'));
+    expect(setActiveRequest).toHaveBeenCalledWith(null);
+    expect(startNext).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps only the latest queued browser fetch request', () => {
     const first = {
       id: 1,

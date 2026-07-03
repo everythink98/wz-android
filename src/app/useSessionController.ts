@@ -360,7 +360,7 @@ export function useSessionController({
     });
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetchRef, setNodeSeekBrowserFetchRequest]);
 
-  const rejectNodeSeekBrowserFetch = useCallback((request: PendingNodeSeekBrowserFetchRequest, message: string) => {
+  const rejectNodeSeekBrowserFetch = useCallback((request: PendingNodeSeekBrowserFetchRequest, message: string, options: { skipStopLoading?: boolean } = {}) => {
     rejectBrowserFetchRequest({
       request,
       message,
@@ -368,7 +368,8 @@ export function useSessionController({
       queueRef: nodeSeekBrowserFetchQueueRef,
       setActiveRequest: setNodeSeekBrowserFetchRequest,
       startNext: startNextNodeSeekBrowserFetch,
-      webViewRef: nodeSeekBrowserWebViewRef
+      webViewRef: nodeSeekBrowserWebViewRef,
+      skipStopLoading: options.skipStopLoading
     });
   }, [nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, nodeSeekBrowserWebViewRef, setNodeSeekBrowserFetchRequest, startNextNodeSeekBrowserFetch]);
   rejectNodeSeekBrowserFetchRef.current = rejectNodeSeekBrowserFetch;
@@ -479,10 +480,10 @@ export function useSessionController({
     startNextNodeSeekBrowserFetch
   ]);
 
-  const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string) => {
+  const failNodeSeekBrowserFetchById = useCallback((requestId: number, message: string, options: { skipStopLoading?: boolean } = {}) => {
     const current = nodeSeekBrowserFetchCurrentRef.current;
     if (current?.id === requestId) {
-      rejectNodeSeekBrowserFetch(current, message);
+      rejectNodeSeekBrowserFetch(current, message, options);
     }
   }, [nodeSeekBrowserFetchCurrentRef, rejectNodeSeekBrowserFetch]);
 
