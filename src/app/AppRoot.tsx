@@ -1868,9 +1868,9 @@ export function AppRoot() {
       <SafeAreaProvider>
         <KeyboardAvoidingView style={styles.screen}>
           <SafeAreaView edges={['left', 'right']} style={styles.screen}>
-            <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
-            <View pointerEvents="none" style={styles.statusBarScrim} />
-            <HiddenBrowserHost
+              <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
+              <View pointerEvents="none" style={[styles.statusBarScrim, screen === 'topic' && replyComposerOpen && styles.statusBarScrimBelowOverlay]} />
+              <HiddenBrowserHost
               failLinuxDoBrowserFetchById={failLinuxDoBrowserFetchById}
               failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
               handleLinuxDoBrowserFetchMessage={handleLinuxDoBrowserFetchMessage}
@@ -1891,7 +1891,7 @@ export function AppRoot() {
               onLinuxDoHttpErrorStatus={markLinuxDoBrowserFetchHttpError}
               onNodeSeekHttpErrorStatus={markNodeSeekBrowserFetchHttpError}
             />
-            <GlobalModalHost
+              <GlobalModalHost
               checking={checking}
               checkLinuxDoCookie={checkLinuxDoCookie}
               clearLinuxDoCookie={clearLinuxDoCookie}
@@ -1930,7 +1930,7 @@ export function AppRoot() {
               changeLinuxDoPanel={changeLinuxDoPanel}
               closeNodeImageAuthPanel={closeNodeImageAuthPanel}
             />
-            <AppNavigator
+              <AppNavigator
               moreHasBadge={Boolean(appUpdateInfo)}
               navigationTheme={navigationTheme}
               renderFeedTab={renderFeedTab}
@@ -1945,7 +1945,7 @@ export function AppRoot() {
               onTabPress={handleMainTabPress}
               onTopicClosing={flushDeferredNavigationTask}
               onUserClosing={flushDeferredNavigationTask}
-            />
+              />
           </SafeAreaView>
         </KeyboardAvoidingView>
       </SafeAreaProvider>

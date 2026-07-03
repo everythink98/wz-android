@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyReplyComposerFormat,
+  replyComposerExpressionGridKey,
+  replyComposerKeepsAccessoryOpenAfterExpressionInsert,
   replyComposerToolbarItems,
   replaceReplyComposerSelection
 } from './replyComposerFormatting';
@@ -55,5 +57,16 @@ describe('reply composer formatting', () => {
     expect(replaceReplyComposerSelection('hello', { start: 5, end: 5 }, ':ac01:')).toBe('hello:ac01:');
 
     expect(replaceReplyComposerSelection('hi there', { start: 3, end: 8 }, ':grinning_face:')).toBe('hi :grinning_face:');
+  });
+
+  it('keeps heavy expression panels open after inserting inline expressions', () => {
+    expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('nodeseek-sticker')).toBe(true);
+    expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('linuxdo-emoji')).toBe(true);
+    expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('yaohuo-face')).toBe(false);
+  });
+
+  it('separates NodeSeek sticker grid scroll state by category', () => {
+    expect(replyComposerExpressionGridKey('nodeseek-sticker', 'AC娘')).not.toBe(replyComposerExpressionGridKey('nodeseek-sticker', 'Fluent'));
+    expect(replyComposerExpressionGridKey('linuxdo-emoji')).toBe('linuxdo-emoji');
   });
 });

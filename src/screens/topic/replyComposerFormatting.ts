@@ -36,6 +36,14 @@ export function replaceReplyComposerSelection(content: string, selection: Select
   return `${content.slice(0, start)}${value}${content.slice(end)}`;
 }
 
+export function replyComposerKeepsAccessoryOpenAfterExpressionInsert(accessory: ReplyComposerAccessory) {
+  return accessory === 'nodeseek-sticker' || accessory === 'linuxdo-emoji';
+}
+
+export function replyComposerExpressionGridKey(accessory: ReplyComposerAccessory, categoryLabel = '') {
+  return categoryLabel ? `${accessory}:${categoryLabel}` : accessory;
+}
+
 function linePrefix(text: string, prefix: string, fallback: string) {
   const value = text || fallback;
   return value.split('\n').map((line) => `${prefix}${line}`).join('\n');

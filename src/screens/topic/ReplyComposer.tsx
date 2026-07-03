@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, Pressable, Text, View } from 'react-native';
+import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Image as ExpoImage } from 'expo-image';
 import { ScrollView as GestureScrollView } from 'react-native-gesture-handler';
 import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
@@ -10,6 +11,8 @@ import type { LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { imageSourceFromUrl } from '../../htmlImages';
 import {
   applyReplyComposerFormat,
+  replyComposerExpressionGridKey,
+  replyComposerKeepsAccessoryOpenAfterExpressionInsert,
   replyComposerToolbarItems,
   replaceReplyComposerSelection,
   type ReplyComposerAccessory,
@@ -22,6 +25,12 @@ import {
   type ReplyComposerInsertExpression
 } from './replyComposerExpressionCatalogs';
 
+type ReplyComposerInputHandle = {
+  blur: () => void;
+  focus: () => void;
+  setNativeProps: (props: { selection?: { start: number; end: number } }) => void;
+};
+
 export function ReplyComposer({
   actionBusy,
   linuxDoEmojiUrls = {},
@@ -32,13 +41,10 @@ export function ReplyComposer({
   source,
   styles,
   theme,
-  topicColumnStyle,
+  focusSignal,
   onReplyComposerOpenChange,
-  onReplyAccessoryOpen,
   onReplyContentChange,
   onReplyFaceChange,
-  onReplyComposerBlur,
-  onReplyComposerFocus,
   onSubmitReply,
   onUploadReplyImage
 }: {
@@ -51,22 +57,21 @@ export function ReplyComposer({
   source?: Source;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  topicColumnStyle: { width: number };
+  focusSignal?: number;
   onReplyComposerOpenChange: (open: boolean) => void;
-  onReplyAccessoryOpen?: () => void;
   onReplyContentChange: (value: string) => void;
   onReplyFaceChange: (value: string) => void;
-  onReplyComposerBlur?: () => void;
-  onReplyComposerFocus?: () => void;
   onSubmitReply: () => void;
   onUploadReplyImage?: () => void;
 }) {
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<ReplyComposerInputHandle | null>(null);
   const inputFocusedRef = useRef(false);
   const [selection, setSelection] = useState({ start: replyContent.length, end: replyContent.length });
   const [activeAccessory, setActiveAccessory] = useState<ReplyComposerAccessory | null>(null);
   const [activeNodeSeekStickerCategory, setActiveNodeSeekStickerCategory] = useState(NODESEEK_STICKER_CATEGORIES[0]?.label || '');
   const selectionRef = useRef(selection);
+  const replyContentRef = useRef(replyContent);
+  replyContentRef.current = replyContent;
   const toolbarItems = replyComposerToolbarItems(source);
   const linuxDoEmojiItems = useMemo(() => linuxDoEmojiCatalogFromUrlMap(linuxDoEmojiUrls), [linuxDoEmojiUrls]);
   const selectedFaceLabel = YAOHUO_FACE_ITEMS.find((item) => item.value === replyFace)?.label;
@@ -78,25 +83,36 @@ export function ReplyComposer({
       : '回复';
   const placeholder = replyEditTarget ? '编辑回复内容' : replyTarget ? '输入楼层回复内容' : '输入回复内容';
   const submitLabel = replyEditTarget ? '保存编辑' : '发送回复';
-  const moveCursorAfterInsert = (value: string) => {
-    const start = Math.max(0, Math.min(selectionRef.current.start, replyContent.length));
-    const nextSelection = { start: start + value.length, end: start + value.length };
-    updateSelection(nextSelection);
+  const updateSelection = useCallback((nextSelection: { start: number; end: number }) => {
+    if (selectionRef.current.start === nextSelection.start && selectionRef.current.end === nextSelection.end) {
+      return;
+    }
+    selectionRef.current = nextSelection;
+    setSelection(nextSelection);
+  }, []);
+  const focusInputAtSelection = useCallback((nextSelection?: { start: number; end: number }) => {
     requestAnimationFrame(() => {
       inputRef.current?.focus();
-      inputRef.current?.setNativeProps({ selection: nextSelection });
+      if (nextSelection) {
+        inputRef.current?.setNativeProps({ selection: nextSelection });
+      }
     });
-  };
+  }, []);
   const refocusInputAfterToolbarAction = () => {
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      onReplyComposerFocus?.();
-    });
+    focusInputAtSelection();
   };
-  const insertText = (value: string) => {
-    onReplyContentChange(replaceReplyComposerSelection(replyContent, selectionRef.current, value));
-    moveCursorAfterInsert(value);
-  };
+  const insertText = useCallback((value: string, focusAfterInsert: boolean) => {
+    const content = replyContentRef.current;
+    const start = Math.max(0, Math.min(selectionRef.current.start, content.length));
+    const nextSelection = { start: start + value.length, end: start + value.length };
+    const nextContent = replaceReplyComposerSelection(content, selectionRef.current, value);
+    replyContentRef.current = nextContent;
+    onReplyContentChange(nextContent);
+    updateSelection(nextSelection);
+    if (focusAfterInsert) {
+      focusInputAtSelection(nextSelection);
+    }
+  }, [focusInputAtSelection, onReplyContentChange, updateSelection]);
   const applyFormat = (action: ReplyComposerFormatAction) => {
     setActiveAccessory(null);
     if (action === 'image' && onUploadReplyImage) {
@@ -120,18 +136,9 @@ export function ReplyComposer({
   const handleFocus = () => {
     inputFocusedRef.current = true;
     setActiveAccessory(null);
-    onReplyComposerFocus?.();
   };
   const handleBlur = () => {
     inputFocusedRef.current = false;
-    onReplyComposerBlur?.();
-  };
-  const updateSelection = (nextSelection: { start: number; end: number }) => {
-    if (selectionRef.current.start === nextSelection.start && selectionRef.current.end === nextSelection.end) {
-      return;
-    }
-    selectionRef.current = nextSelection;
-    setSelection(nextSelection);
   };
   useEffect(() => {
     const nextSelection = {
@@ -139,7 +146,14 @@ export function ReplyComposer({
       end: Math.min(selectionRef.current.end, replyContent.length)
     };
     updateSelection(nextSelection);
-  }, [replyContent.length]);
+  }, [replyContent.length, updateSelection]);
+  useEffect(() => {
+    if (!focusSignal) {
+      return;
+    }
+    setActiveAccessory(null);
+    focusInputAtSelection();
+  }, [focusInputAtSelection, focusSignal]);
 
   const toggleAccessory = (accessory: ReplyComposerAccessory) => {
     const shouldOpen = activeAccessory !== accessory;
@@ -147,30 +161,16 @@ export function ReplyComposer({
       inputFocusedRef.current = false;
       inputRef.current?.blur();
       Keyboard.dismiss();
-      onReplyComposerBlur?.();
     }
     setActiveAccessory(shouldOpen ? accessory : null);
-    if (shouldOpen) {
-      requestAnimationFrame(() => onReplyAccessoryOpen?.());
+  };
+  const insertExpression = useCallback((item: ReplyComposerInsertExpression) => {
+    const keepOpen = activeAccessory ? replyComposerKeepsAccessoryOpenAfterExpressionInsert(activeAccessory) : false;
+    insertText(item.code, !keepOpen);
+    if (!keepOpen) {
+      setActiveAccessory(null);
     }
-  };
-  const insertExpression = (item: ReplyComposerInsertExpression) => {
-    insertText(item.code);
-    setActiveAccessory(null);
-  };
-  const renderExpressionChip = (item: ReplyComposerInsertExpression, sticker = false) => (
-    <Pressable
-      key={item.code}
-      accessibilityRole="button"
-      accessibilityLabel={item.label}
-      disabled={actionBusy}
-      style={[sticker ? styles.replyStickerChip : styles.replyExpressionChip, actionBusy && styles.buttonDisabled]}
-      onPress={() => insertExpression(item)}
-    >
-      {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={item.imageUrl} source={imageSourceFromUrl(item.imageUrl)} style={sticker ? styles.replyStickerPreview : styles.replyExpressionPreview} /> : null}
-      {sticker ? null : <Text numberOfLines={1} style={styles.replyExpressionChipText}>{item.label}</Text>}
-    </Pressable>
-  );
+  }, [activeAccessory, insertText]);
   const renderToolbarItem = (item: ReturnType<typeof replyComposerToolbarItems>[number]) => {
     const active = item.type === 'accessory' && activeAccessory === item.accessory;
     const onPress = item.type === 'format'
@@ -178,10 +178,23 @@ export function ReplyComposer({
       : () => toggleAccessory(item.accessory);
     return <AppButton key={item.type === 'format' ? item.action : item.accessory} compact label={item.label} variant={active ? 'primary' : 'ghost'} styles={styles} disabled={actionBusy} onPress={onPress} />;
   };
-  const renderAccessoryPanel = () => {
+  const accessoryPanel = useMemo(() => {
     if (!activeAccessory) {
       return null;
     }
+    const renderExpressionChip = (item: ReplyComposerInsertExpression, sticker = false) => (
+      <Pressable
+        key={item.code}
+        accessibilityRole="button"
+        accessibilityLabel={item.label}
+        disabled={actionBusy}
+        style={[sticker ? styles.replyStickerChip : styles.replyExpressionChip, actionBusy && styles.buttonDisabled]}
+        onPress={() => insertExpression(item)}
+      >
+        {item.imageUrl ? <ExpoImage contentFit="contain" recyclingKey={item.imageUrl} source={imageSourceFromUrl(item.imageUrl)} style={sticker ? styles.replyStickerPreview : styles.replyExpressionPreview} /> : null}
+        {sticker ? null : <Text numberOfLines={1} style={styles.replyExpressionChipText}>{item.label}</Text>}
+      </Pressable>
+    );
     if (activeAccessory === 'nodeseek-sticker') {
       const activeCategory = NODESEEK_STICKER_CATEGORIES.find((category) => category.label === activeNodeSeekStickerCategory) || NODESEEK_STICKER_CATEGORIES[0];
       return (
@@ -200,7 +213,7 @@ export function ReplyComposer({
               </Pressable>
             ))}
           </GestureScrollView>
-          <GestureScrollView nestedScrollEnabled style={styles.replyStickerGridScroll} contentContainerStyle={styles.replyExpressionGrid} keyboardShouldPersistTaps="handled">
+          <GestureScrollView key={replyComposerExpressionGridKey(activeAccessory, activeCategory.label)} nestedScrollEnabled style={styles.replyStickerGridScroll} contentContainerStyle={styles.replyExpressionGrid} keyboardShouldPersistTaps="handled">
             {activeCategory.items.map((item) => renderExpressionChip(item, true))}
           </GestureScrollView>
         </View>
@@ -208,7 +221,7 @@ export function ReplyComposer({
     }
     if (activeAccessory === 'linuxdo-emoji') {
       return (
-        <GestureScrollView nestedScrollEnabled style={styles.replyExpressionPanel} contentContainerStyle={styles.replyExpressionGrid} keyboardShouldPersistTaps="handled">
+        <GestureScrollView key={replyComposerExpressionGridKey(activeAccessory)} nestedScrollEnabled style={styles.replyExpressionPanel} contentContainerStyle={styles.replyExpressionGrid} keyboardShouldPersistTaps="handled">
           {linuxDoEmojiItems.map((item) => renderExpressionChip(item))}
         </GestureScrollView>
       );
@@ -232,10 +245,10 @@ export function ReplyComposer({
         ))}
       </GestureScrollView>
     );
-  };
+  }, [actionBusy, activeAccessory, activeNodeSeekStickerCategory, insertExpression, linuxDoEmojiItems, onReplyFaceChange, replyFace, styles]);
 
   return (
-    <View style={[styles.replyBox, topicColumnStyle]}>
+    <View style={[styles.replyBox, styles.replyComposerSheetBox]}>
       <Text style={styles.panelTitle}>{replyTargetTitle}</Text>
       {toolbarItems.length ? (
         <GestureScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.replyFormatToolbarScroll} contentContainerStyle={styles.replyFormatToolbar} keyboardShouldPersistTaps="handled">
@@ -243,9 +256,11 @@ export function ReplyComposer({
         </GestureScrollView>
       ) : null}
       {replyFace && selectedFaceLabel ? <Text style={styles.replyExpressionSelected}>表情：{selectedFaceLabel}</Text> : null}
-      {renderAccessoryPanel()}
-      <TextInput
-        ref={inputRef}
+      {accessoryPanel}
+      <BottomSheetTextInput
+        ref={(node) => {
+          inputRef.current = node ? node as ReplyComposerInputHandle : null;
+        }}
         style={[styles.input, styles.replyInput]}
         value={replyContent}
         selection={selection}
@@ -261,7 +276,7 @@ export function ReplyComposer({
         scrollEnabled
       />
       <View style={styles.replyComposerActions}>
-        {replyTarget || replyEditTarget ? <AppButton label={replyEditTarget ? '取消编辑' : '取消楼层回复'} variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} /> : null}
+        <AppButton label={replyEditTarget ? '取消编辑' : replyTarget ? '取消楼层回复' : '收起回复'} variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} />
         <AppButton label={submitLabel} variant={replyContent.trim() ? 'primary' : 'default'} styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
       </View>
     </View>

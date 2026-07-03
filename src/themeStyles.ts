@@ -38,11 +38,18 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       zIndex: 20,
       elevation: 0
     },
+    statusBarScrimBelowOverlay: {
+      zIndex: 0,
+      elevation: 0
+    },
     content: {
       flex: 1
     },
     topicContent: {
       backgroundColor: theme.surface
+    },
+    topicScreenRoot: {
+      flex: 1
     },
     contentInner: {
       gap: 10,
@@ -2162,6 +2169,30 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderRadius: radiusMd,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
+    },
+    replyComposerSheetBox: {
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderRadius: 0,
+      borderWidth: 0,
+      paddingTop: 14,
+      paddingRight: 16,
+      paddingBottom: 0,
+      paddingLeft: 16
+    },
+    replyComposerBottomSheetBackground: {
+      backgroundColor: theme.surface,
+      borderTopLeftRadius: radiusLg,
+      borderTopRightRadius: radiusLg
+    },
+    replyComposerBottomSheetContainer: {
+      zIndex: 30,
+      elevation: 30
+    },
+    replyComposerBottomSheetContent: {
+      alignItems: 'stretch',
+      paddingHorizontal: 0,
+      paddingTop: 0
     },
     replyHeader: {
       width: '100%',

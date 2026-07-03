@@ -1,6 +1,5 @@
 import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Keyboard,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
@@ -46,9 +45,9 @@ import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
-import { ReplyComposer } from './ReplyComposer';
+import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
-import { getReplyKey, isAccessNoticeHtml, readableTopicError, replyComposerHasNoReplyAfter, replyComposerListIndex, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
+import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
 
 type TopicListContentItem =
   | { type: 'content'; key: string; html: string }
@@ -59,7 +58,6 @@ export type TopicListItem =
   | { type: 'topicPolls'; key: string }
   | { type: 'topicActions'; key: string }
   | { type: 'replyControls'; key: string }
-  | { type: 'replyComposer'; key: string; replyFloor?: number }
   | { type: 'emptyReplies'; key: string }
   | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
 
@@ -289,16 +287,11 @@ export const TopicScreen = memo(function TopicScreen({
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
-  const replyTargetKey = replyTarget ? `${replyTarget.floor}:${replyTarget.author}` : '';
-  const replyEditTargetKey = replyEditTarget ? `${replyEditTarget.commentId}:${replyEditTarget.floor || ''}` : '';
   const listExtraData = useMemo(() => ({
     actionBusy,
     quoteStateVersion,
-    replyContent,
-    replyFace,
-    replyEditTargetKey,
-    replyTargetKey
-  }), [actionBusy, quoteStateVersion, replyContent, replyEditTargetKey, replyFace, replyTargetKey]);
+    replyComposerOpen
+  }), [actionBusy, quoteStateVersion, replyComposerOpen]);
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
@@ -310,9 +303,6 @@ export const TopicScreen = memo(function TopicScreen({
   }, [detailTopicStateKey, optimisticActions]);
   const [topicMenuOpen, setTopicMenuOpen] = useState(false);
   const autoLoadRepliesArmedRef = useRef(false);
-  const replyComposerFocusedRef = useRef(false);
-  const replyComposerScrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const [replyComposerKeyboardHeight, setReplyComposerKeyboardHeight] = useState(0);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
     sourceReplies.forEach((reply) => {
@@ -431,109 +421,16 @@ export const TopicScreen = memo(function TopicScreen({
     }
     if (canShowReplies && !topicShowsAccessNotice) {
       items.push({ type: 'replyControls', key: 'reply-controls' });
-      const composerTargetFloor = replyEditTarget?.floor ?? replyTarget?.floor;
-      const targetReplyVisible = composerTargetFloor ? replyItems.some((entry) => entry.type === 'reply' && entry.replyFloor === composerTargetFloor) : false;
-      if (canWrite && replyComposerOpen && !composerTargetFloor) {
-        items.push({ type: 'replyComposer', key: 'reply-composer' });
-      }
-      if (canWrite && replyComposerOpen && composerTargetFloor && !targetReplyVisible) {
-        items.push({ type: 'replyComposer', key: `reply-composer-hidden-target-${composerTargetFloor}`, replyFloor: composerTargetFloor });
-      }
       if (replyItems.length) {
         replyItems.forEach((entry) => {
           items.push(entry);
-          const isTargetReply = composerTargetFloor && entry.type === 'reply' && entry.replyFloor === composerTargetFloor;
-          if (canWrite && replyComposerOpen && isTargetReply) {
-            items.push({ type: 'replyComposer', key: `reply-composer-${entry.replyFloor}`, replyFloor: entry.replyFloor });
-          }
         });
       } else {
         items.push({ type: 'emptyReplies', key: 'empty-replies' });
       }
     }
     return items;
-  }, [canShowReplies, canWrite, replyComposerOpen, replyEditTarget, replyItems, replyTarget, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
-  const scrollReplyComposerIntoView = useCallback((keyboardAware = false) => {
-    const index = replyComposerListIndex(topicListItems);
-    if (index === null) {
-      return;
-    }
-    if (!keyboardAware && replyComposerHasNoReplyAfter(topicListItems)) {
-      topicScrollRef.current?.scrollToEnd({ animated: true });
-      return;
-    }
-    const scroll = topicScrollRef.current?.scrollToIndex({
-      index,
-      animated: true,
-      viewPosition: keyboardAware ? 0.04 : 0
-    });
-    void scroll?.catch(() => undefined);
-  }, [topicListItems, topicScrollRef]);
-  const clearReplyComposerScrollTimers = useCallback(() => {
-    replyComposerScrollTimersRef.current.forEach((timer) => clearTimeout(timer));
-    replyComposerScrollTimersRef.current = [];
-  }, []);
-  const queueReplyComposerScroll = useCallback((delayMs: number) => {
-    const timer = setTimeout(() => {
-      replyComposerScrollTimersRef.current = replyComposerScrollTimersRef.current.filter((item) => item !== timer);
-      const keyboardHeight = Keyboard.metrics()?.height || 0;
-      if (replyComposerFocusedRef.current && keyboardHeight > 0) {
-        setReplyComposerKeyboardHeight(keyboardHeight);
-      }
-      scrollReplyComposerIntoView(replyComposerFocusedRef.current || keyboardHeight > 0);
-    }, delayMs);
-    replyComposerScrollTimersRef.current.push(timer);
-  }, [scrollReplyComposerIntoView]);
-  const keepReplyComposerVisible = useCallback((keyboardHeight = 0) => {
-    clearReplyComposerScrollTimers();
-    if (keyboardHeight > 0) {
-      setReplyComposerKeyboardHeight(keyboardHeight);
-    }
-    scrollReplyComposerIntoView(keyboardHeight > 0 || replyComposerFocusedRef.current);
-    queueReplyComposerScroll(120);
-    queueReplyComposerScroll(320);
-  }, [clearReplyComposerScrollTimers, queueReplyComposerScroll, scrollReplyComposerIntoView]);
-  const handleReplyComposerFocus = useCallback(() => {
-    replyComposerFocusedRef.current = true;
-    keepReplyComposerVisible(Keyboard.metrics()?.height || 0);
-  }, [keepReplyComposerVisible]);
-  const handleReplyComposerBlur = useCallback(() => {
-    clearReplyComposerScrollTimers();
-    replyComposerFocusedRef.current = false;
-    setReplyComposerKeyboardHeight(0);
-  }, [clearReplyComposerScrollTimers]);
-  const handleReplyAccessoryOpen = useCallback(() => {
-    keepReplyComposerVisible(0);
-  }, [keepReplyComposerVisible]);
-  useEffect(() => {
-    if (!replyComposerOpen) {
-      clearReplyComposerScrollTimers();
-      replyComposerFocusedRef.current = false;
-      setReplyComposerKeyboardHeight(0);
-      return undefined;
-    }
-    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
-      if (replyComposerFocusedRef.current) {
-        keepReplyComposerVisible(event.endCoordinates.height);
-      }
-    });
-    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
-      clearReplyComposerScrollTimers();
-      setReplyComposerKeyboardHeight(0);
-    });
-    return () => {
-      clearReplyComposerScrollTimers();
-      showSubscription.remove();
-      hideSubscription.remove();
-    };
-  }, [clearReplyComposerScrollTimers, keepReplyComposerVisible, replyComposerOpen]);
-  useEffect(() => {
-    if (replyComposerKeyboardHeight <= 0 || !replyComposerFocusedRef.current) {
-      return undefined;
-    }
-    const timer = setTimeout(() => scrollReplyComposerIntoView(true), 80);
-    return () => clearTimeout(timer);
-  }, [replyComposerKeyboardHeight, replyContent, scrollReplyComposerIntoView]);
+  }, [canShowReplies, replyItems, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -803,31 +700,6 @@ export const TopicScreen = memo(function TopicScreen({
       );
     }
 
-    if (listItem.type === 'replyComposer') {
-      return renderTopicListItemFrame(
-        <ReplyComposer
-          actionBusy={actionBusy}
-          linuxDoEmojiUrls={linuxDoEmojiUrls}
-          replyContent={replyContent}
-          replyFace={replyFace}
-          replyEditTarget={replyEditTarget}
-          replyTarget={replyTarget}
-          source={topic?.source}
-          styles={styles}
-          theme={theme}
-          topicColumnStyle={topicColumnStyle}
-          onReplyComposerOpenChange={onReplyComposerOpenChange}
-          onReplyAccessoryOpen={handleReplyAccessoryOpen}
-          onReplyComposerBlur={handleReplyComposerBlur}
-          onReplyComposerFocus={handleReplyComposerFocus}
-          onReplyContentChange={onReplyContentChange}
-          onReplyFaceChange={onReplyFaceChange}
-          onSubmitReply={onSubmitReply}
-          onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
-        />
-      );
-    }
-
     if (listItem.type === 'emptyReplies') {
       return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -885,9 +757,6 @@ export const TopicScreen = memo(function TopicScreen({
     isOptimisticActionPending,
     loadedQuotedRepliesRef,
     loadingQuotedFloorsRef,
-    handleReplyAccessoryOpen,
-    handleReplyComposerBlur,
-    handleReplyComposerFocus,
     linuxDoEmojiUrls,
     newReplyFloorStart,
     onCommentQueryChange,
@@ -897,12 +766,8 @@ export const TopicScreen = memo(function TopicScreen({
     onLinuxDoBookmark,
     onNodeSeekCollection,
     onReplyComposerOpenChange,
-    onReplyContentChange,
-    onReplyFaceChange,
     onReplyFilterChange,
     onReplyToFloor,
-    onSubmitReply,
-    onUploadReplyImage,
     onToggleQuotedFloor,
     onOpenUser,
     onYaohuoFavorite,
@@ -913,11 +778,7 @@ export const TopicScreen = memo(function TopicScreen({
     itemSource,
     replyComposerOpen,
     replyHighlightQuery,
-    replyContent,
-    replyFace,
-    replyEditTarget,
     replyFilter,
-    replyTarget,
     repliesByFloor,
     replies.length,
     styles,
@@ -1020,6 +881,7 @@ export const TopicScreen = memo(function TopicScreen({
         enableExperimentalGhostLinesPrevention
         enableExperimentalMarginCollapsing
       >
+        <View style={styles.topicScreenRoot}>
         <View style={styles.topicTopBar}>
           <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
           <Text style={styles.topicTopHint} numberOfLines={1}>{sourceLabel(item.source)}{item.category ? ` · ${item.category}` : ''}</Text>
@@ -1045,17 +907,12 @@ export const TopicScreen = memo(function TopicScreen({
           extraData={listExtraData}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
-          ListFooterComponent={canShowReplies && (replyHasMore || replyComposerKeyboardHeight > 0) ? (
-            <>
-              {replyHasMore ? (
-                <View style={styles.topicListItemFrame}>
-                  <View style={[styles.topicFooter, topicColumnStyle]}>
-                    <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
-                  </View>
-                </View>
-              ) : null}
-              {replyComposerKeyboardHeight > 0 ? <View style={{ height: replyComposerKeyboardHeight }} /> : null}
-            </>
+          ListFooterComponent={canShowReplies && replyHasMore ? (
+            <View style={styles.topicListItemFrame}>
+              <View style={[styles.topicFooter, topicColumnStyle]}>
+                <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
+              </View>
+            </View>
           ) : null}
           renderItem={renderReplyItem}
         />
@@ -1072,6 +929,24 @@ export const TopicScreen = memo(function TopicScreen({
           topicUrl={item.url}
           visible={topicMenuOpen}
         />
+        <ReplyComposerSheet
+          actionBusy={actionBusy}
+          linuxDoEmojiUrls={linuxDoEmojiUrls}
+          replyContent={replyContent}
+          replyFace={replyFace}
+          replyEditTarget={replyEditTarget}
+          replyTarget={replyTarget}
+          source={topic?.source}
+          styles={styles}
+          theme={theme}
+          visible={Boolean(canWrite && replyComposerOpen)}
+          onReplyComposerOpenChange={onReplyComposerOpenChange}
+          onReplyContentChange={onReplyContentChange}
+          onReplyFaceChange={onReplyFaceChange}
+          onSubmitReply={onSubmitReply}
+          onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
+        />
+        </View>
       </RenderHTMLConfigProvider>
     </TRenderEngineProvider>
   );

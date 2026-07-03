@@ -29,19 +29,6 @@ function getReplyKey(reply: Reply) {
   return `reply-${stableTextHash(seed || JSON.stringify(reply))}`;
 }
 
-export function replyComposerListIndex(items: readonly { type: string }[]) {
-  const index = items.findIndex((item) => item.type === 'replyComposer');
-  return index >= 0 ? index : null;
-}
-
-export function replyComposerHasNoReplyAfter(items: readonly { type: string }[]) {
-  const index = replyComposerListIndex(items);
-  if (index === null) {
-    return false;
-  }
-  return !items.slice(index + 1).some((item) => item.type === 'reply');
-}
-
 export function topicStatusBadges(item: Pick<Topic, 'acceptedAnswerFloor' | 'archived' | 'closed' | 'pinned' | 'slowModeSeconds' | 'solved'>) {
   const badges: { label: string; tone: 'success' | 'accent' | 'danger' | 'neutral' | 'warning' }[] = [];
   if (item.solved) {
