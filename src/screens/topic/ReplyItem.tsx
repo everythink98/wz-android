@@ -1,16 +1,17 @@
-import { memo, useMemo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { memo, useCallback, useMemo } from 'react';
+import { Pressable, Text, ToastAndroid, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
+import * as Clipboard from 'expo-clipboard';
 import { Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
 import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
-import { highlightHtml } from '../../androidFeatureHelpers';
+import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
-import { AppButton } from '../../components/AppControls';
+import { AppButton, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
 import { userFromReply } from '../../userNavigation';
 import type { InteractionType, TopicActionStateKind } from '../../topicActionState';
@@ -173,6 +174,25 @@ export function ReplyItem({
     url: '',
     topics: []
   } : null;
+  const copyReplyTextToClipboard = useCallback(() => {
+    const htmlParts = quotedFloors.flatMap((quotedFloor) => {
+      const key = `${replyFloor}:${quotedFloor}`;
+      if (!expandedQuotes[key]) {
+        return [];
+      }
+      const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
+      return quotedReply?.contentHtml ? [quotedReply.contentHtml] : [];
+    });
+    htmlParts.push(reply.contentHtml);
+    const replyCopyText = stripHtml(htmlParts.join('\n\n'));
+    if (!replyCopyText) {
+      return;
+    }
+    triggerPressFeedback();
+    void Clipboard.setStringAsync(replyCopyText)
+      .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
+      .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
+  }, [expandedQuotes, loadedQuotedReplies, quotedFloors, repliesByFloor, reply.contentHtml, replyFloor]);
   return (
     <View style={styles.replyCard}>
       <Pressable
@@ -269,13 +289,15 @@ export function ReplyItem({
                         <Avatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
                         <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
                       </Pressable>
-                      <MemoizedTopicContentBlock
-                        baseUrl={topicBaseUrl}
-                        contentWidth={Math.max(220, replyContentWidth - 24)}
-                        inlineSizedImageUrls={inlineSizedImageUrls}
-                        html={quotedReply.contentHtml}
-                        topicImageDeriver={topicImageDeriver}
-                      />
+                      <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
+                        <MemoizedTopicContentBlock
+                          baseUrl={topicBaseUrl}
+                          contentWidth={Math.max(220, replyContentWidth - 24)}
+                          inlineSizedImageUrls={inlineSizedImageUrls}
+                          html={quotedReply.contentHtml}
+                          topicImageDeriver={topicImageDeriver}
+                        />
+                      </Pressable>
                     </View>
                   ) : null}
                 </View>
@@ -297,7 +319,7 @@ export function ReplyItem({
             <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
           </Pressable>
         ) : null}
-        <View style={styles.replyBody}>
+        <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
           <MemoizedTopicContentBlock
             baseUrl={topicBaseUrl}
             contentWidth={replyContentWidth}
@@ -305,7 +327,7 @@ export function ReplyItem({
             html={highlightedHtml}
             topicImageDeriver={topicImageDeriver}
           />
-        </View>
+        </Pressable>
         <TopicPolls
           actionBusy={actionBusy}
           canWritePollSource={Boolean(canWrite && source === 'linuxdo')}

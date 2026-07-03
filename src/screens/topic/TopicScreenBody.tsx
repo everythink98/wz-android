@@ -47,19 +47,13 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
-import { getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges } from './topicScreenHelpers';
+import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
 
-type TopicListContentItem =
+type TopicContentItem =
   | { type: 'content'; key: string; html: string }
-  | { type: 'contentVideo'; key: string; src: string };
-export type TopicListItem =
-  | TopicListContentItem
-  | { type: 'accessNotice'; key: string; label: string; detail: string }
-  | { type: 'topicPolls'; key: string }
-  | { type: 'topicActions'; key: string }
-  | { type: 'replyControls'; key: string }
-  | { type: 'emptyReplies'; key: string }
-  | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
+  | { type: 'contentVideo'; key: string; src: string }
+  | { type: 'accessNotice'; key: string; label: string; detail: string };
+export type { TopicListItem };
 
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
 const HTML_CUSTOM_ELEMENT_MODELS = {
@@ -373,7 +367,7 @@ export const TopicScreen = memo(function TopicScreen({
   const topicAccessRequirementText = topic?.accessRequirement ? forumAccessRequirementText(topic.accessRequirement) : '';
   const topicAccessRequirementDetail = topic?.accessRequirement?.detail || '当前账号暂无权限查看这个帖子';
   const topicShowsAccessNotice = Boolean(topic && isAccessNoticeHtml(topicContentHtml, topic.accessRequirement));
-  const topicContentItems = useMemo<TopicListItem[]>(() => (
+  const topicContentItems = useMemo<TopicContentItem[]>(() => (
     topic
       ? topicShowsAccessNotice
         ? [{
@@ -409,28 +403,11 @@ export const TopicScreen = memo(function TopicScreen({
     || (topic.source === 'linuxdo' && (canWriteLinuxDo || linuxDoReactionStats(topic).length > 0))
     || (topic.source === 'yaohuo' && canWriteYaohuo)
   ));
-  const topicListItems = useMemo<TopicListItem[]>(() => {
-    const items = [...topicContentItems];
-    if (topic && !topicShowsAccessNotice) {
-      if (topicPolls.length) {
-        items.push({ type: 'topicPolls', key: 'topic-polls' });
-      }
-    }
-    if (topicHasPostActions) {
-      items.push({ type: 'topicActions', key: 'topic-actions' });
-    }
-    if (canShowReplies && !topicShowsAccessNotice) {
-      items.push({ type: 'replyControls', key: 'reply-controls' });
-      if (replyItems.length) {
-        replyItems.forEach((entry) => {
-          items.push(entry);
-        });
-      } else {
-        items.push({ type: 'emptyReplies', key: 'empty-replies' });
-      }
-    }
-    return items;
-  }, [canShowReplies, replyItems, topic, topicContentItems, topicHasPostActions, topicPolls.length, topicShowsAccessNotice]);
+  const replyListItems = useMemo(() => buildReplyListItems({
+    canShowReplies,
+    replyItems,
+    topicShowsAccessNotice
+  }), [canShowReplies, replyItems, topicShowsAccessNotice]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -553,23 +530,24 @@ export const TopicScreen = memo(function TopicScreen({
     };
     return { ...htmlRenderers, aside: QuoteAsideRenderer, details: DetailsRenderer, summary: SummaryRenderer, table: TableRenderer };
   }, [htmlRenderers, styles, theme.ink, theme.primary, theme.primarySoft]);
-  const renderTopicListItemFrame = useCallback((children: ReactNode) => (
-    <View style={styles.topicListItemFrame}>{children}</View>
+  const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string) => (
+    <View key={key} style={styles.topicListItemFrame}>{children}</View>
   ), [styles]);
-  const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
-    if (listItem.type === 'accessNotice') {
+  function renderTopicContentItem(contentItem: TopicContentItem) {
+    if (contentItem.type === 'accessNotice') {
       return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.topicAccessNotice}>
-            {listItem.label ? <Text style={styles.topicAccessBadge}>{listItem.label}</Text> : null}
+            {contentItem.label ? <Text style={styles.topicAccessBadge}>{contentItem.label}</Text> : null}
             <Text style={styles.topicAccessNoticeTitle}>暂无权限</Text>
-            <Text style={styles.topicAccessNoticeDetail}>{listItem.detail}</Text>
+            <Text style={styles.topicAccessNoticeDetail}>{contentItem.detail}</Text>
           </View>
-        </View>
+        </View>,
+        contentItem.key
       );
     }
 
-    if (listItem.type === 'content') {
+    if (contentItem.type === 'content') {
       return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
@@ -577,24 +555,26 @@ export const TopicScreen = memo(function TopicScreen({
               baseUrl={topicBaseUrl}
               contentWidth={contentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
-              html={listItem.html}
+              html={contentItem.html}
               topicImageDeriver={topicImageDeriver}
             />
           </View>
-        </View>
+        </View>,
+        contentItem.key
       );
     }
 
-    if (listItem.type === 'contentVideo') {
-      return renderTopicListItemFrame(
-        <View style={[styles.replyListItem, topicColumnStyle]}>
-          <View style={styles.articleBody}>
-            <ForumContentVideo src={listItem.src} theme={theme} />
-          </View>
+    return renderTopicListItemFrame(
+      <View style={[styles.replyListItem, topicColumnStyle]}>
+        <View style={styles.articleBody}>
+          <ForumContentVideo src={contentItem.src} theme={theme} />
         </View>
-      );
-    }
+      </View>,
+      contentItem.key
+    );
+  }
 
+  const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
     if (listItem.type === 'replyControls') {
       return renderTopicListItemFrame(
         <View style={[styles.replyHeader, topicColumnStyle]}>
@@ -632,70 +612,6 @@ export const TopicScreen = memo(function TopicScreen({
             />
             {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
           </View>
-        </View>
-      );
-    }
-
-    if (listItem.type === 'topicPolls') {
-      return renderTopicListItemFrame(
-        <View style={[styles.replyListItem, topicColumnStyle]}>
-          <View style={styles.articleBody}>
-            <TopicPolls
-              actionBusy={actionBusy}
-              canWritePollSource={canWriteTopicPollSource}
-              embeddedInArticle
-              keyPrefix="topic"
-              onTogglePollSelection={togglePollSelection}
-              onVotePoll={onVotePoll}
-              pollSelections={pollSelections}
-              polls={topicPolls}
-              source={topic?.source}
-              styles={styles}
-              theme={theme}
-            />
-          </View>
-        </View>
-      );
-    }
-
-    if (listItem.type === 'topicActions') {
-      const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
-      const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic, linuxDoEmojiUrls) : [];
-      return renderTopicListItemFrame(
-        <View style={[styles.topicPostActionArea, topicColumnStyle]}>
-          {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
-            <View style={styles.topicStatRail}>
-              {topicReactionStats.map((stat) => (
-                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
-              ))}
-            </View>
-          ) : null}
-          {canWriteNodeSeek ? (
-            <View style={styles.topicPrimaryActions}>
-              <DetailActionButton active={Boolean(topic?.upvoted)} tone="success" accessibilityLabel={topic?.upvoted ? '已点赞' : '点赞'} count={topic?.upvoteCount} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
-              <DetailActionButton active={Boolean(topic?.liked)} tone="warning" accessibilityLabel={topic?.liked ? '已加鸡腿' : '加鸡腿'} count={topic?.likeCount} icon={Drumstick} label="鸡腿" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
-              <DetailActionButton active={Boolean(topic?.disliked)} tone="danger" accessibilityLabel={topic?.disliked ? '已反对' : '反对'} count={topic?.dislikeCount} icon={ThumbsDown} label="反对" pending={isOptimisticActionPending(topic?.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', topic?.commentId)} />
-              <DetailActionButton active={Boolean(topic?.collected)} tone="favorite" accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'} count={topic?.collectionCount} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'collection')} styles={styles} theme={theme} disabled={actionBusy} onPress={onNodeSeekCollection} />
-            </View>
-          ) : null}
-          {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
-            <View style={styles.topicStatRail}>
-              {linuxDoTopicReactionStats.map((stat) => (
-                <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
-              ))}
-            </View>
-          ) : null}
-          {canWriteYaohuo ? (
-            <View style={styles.topicPrimaryActions}>
-              <DetailActionButton accessibilityLabel="原站收藏" icon={BookMarked} label="收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
-            </View>
-          ) : null}
-          {canWriteLinuxDo ? (
-            <View style={styles.topicPrimaryActions}>
-              {canUseLinuxDoLike(topic) ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
-              <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
-            </View>
-          ) : null}
         </View>
       );
     }
@@ -746,9 +662,6 @@ export const TopicScreen = memo(function TopicScreen({
   }, [
     actionBusy,
     canWrite,
-    canWriteLinuxDo,
-    canWriteNodeSeek,
-    canWriteYaohuo,
     commentQuery,
     contentWidth,
     expandedQuotesRef,
@@ -763,17 +676,13 @@ export const TopicScreen = memo(function TopicScreen({
     onDeleteReply,
     onEditReply,
     onInteract,
-    onLinuxDoBookmark,
-    onNodeSeekCollection,
     onReplyComposerOpenChange,
     onReplyFilterChange,
     onReplyToFloor,
     onToggleQuotedFloor,
     onOpenUser,
-    onYaohuoFavorite,
     onVotePoll,
     pollSelections,
-    quoteStateVersion,
     renderTopicListItemFrame,
     itemSource,
     replyComposerOpen,
@@ -784,7 +693,6 @@ export const TopicScreen = memo(function TopicScreen({
     styles,
     theme,
     togglePollSelection,
-    topic,
     topicBaseUrl,
     topicColumnStyle
   ]);
@@ -807,6 +715,8 @@ export const TopicScreen = memo(function TopicScreen({
     : topicAuthNotice?.tone === 'warning'
       ? styles.authNoticeTextWarning
       : styles.authNoticeTextNeutral;
+  const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
+  const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic, linuxDoEmojiUrls) : [];
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
@@ -868,6 +778,65 @@ export const TopicScreen = memo(function TopicScreen({
         ) : null}
         {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
       </View>
+      {topicContentItems.map(renderTopicContentItem)}
+      {topic && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <View style={styles.articleBody}>
+            <TopicPolls
+              actionBusy={actionBusy}
+              canWritePollSource={canWriteTopicPollSource}
+              embeddedInArticle
+              keyPrefix="topic"
+              onTogglePollSelection={togglePollSelection}
+              onVotePoll={onVotePoll}
+              pollSelections={pollSelections}
+              polls={topicPolls}
+              source={topic.source}
+              styles={styles}
+              theme={theme}
+            />
+          </View>
+        </View>,
+        'topic-polls'
+      ) : null}
+      {topicHasPostActions ? renderTopicListItemFrame(
+        <View style={[styles.topicPostActionArea, topicColumnStyle]}>
+          {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
+            <View style={styles.topicStatRail}>
+              {topicReactionStats.map((stat) => (
+                <NodeSeekStatPill key={stat.label} label={stat.label} value={stat.value} styles={styles} />
+              ))}
+            </View>
+          ) : null}
+          {canWriteNodeSeek ? (
+            <View style={styles.topicPrimaryActions}>
+              <DetailActionButton active={Boolean(topic?.upvoted)} tone="success" accessibilityLabel={topic?.upvoted ? '已点赞' : '点赞'} count={topic?.upvoteCount} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'upvote')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('upvote', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.liked)} tone="warning" accessibilityLabel={topic?.liked ? '已加鸡腿' : '加鸡腿'} count={topic?.likeCount} icon={Drumstick} label="鸡腿" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.disliked)} tone="danger" accessibilityLabel={topic?.disliked ? '已反对' : '反对'} count={topic?.dislikeCount} icon={ThumbsDown} label="反对" pending={isOptimisticActionPending(topic?.commentId, 'dislike')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('dislike', topic?.commentId)} />
+              <DetailActionButton active={Boolean(topic?.collected)} tone="favorite" accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'} count={topic?.collectionCount} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'collection')} styles={styles} theme={theme} disabled={actionBusy} onPress={onNodeSeekCollection} />
+            </View>
+          ) : null}
+          {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
+            <View style={styles.topicStatRail}>
+              {linuxDoTopicReactionStats.map((stat) => (
+                <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
+              ))}
+            </View>
+          ) : null}
+          {canWriteYaohuo ? (
+            <View style={styles.topicPrimaryActions}>
+              <DetailActionButton accessibilityLabel="原站收藏" icon={BookMarked} label="收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
+            </View>
+          ) : null}
+          {canWriteLinuxDo ? (
+            <View style={styles.topicPrimaryActions}>
+              {canUseLinuxDoLike(topic) ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
+              <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
+            </View>
+          ) : null}
+        </View>,
+        'topic-actions'
+      ) : null}
     </View>
   );
 
@@ -894,7 +863,7 @@ export const TopicScreen = memo(function TopicScreen({
           ref={topicScrollRef}
           style={[styles.content, styles.topicContent]}
           contentContainerStyle={styles.topicContentInner}
-          data={topicListItems}
+          data={replyListItems}
           keyExtractor={topicListItemKey}
           getItemType={topicListItemType}
           keyboardShouldPersistTaps="always"

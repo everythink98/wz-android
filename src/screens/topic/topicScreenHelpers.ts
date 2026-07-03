@@ -1,6 +1,11 @@
 import type { AccessRequirement, Reply, Topic } from '../../types';
 import { accessRequirementFromNoticeText, textContentFromHtml } from '../../localHtml';
 
+export type TopicListItem =
+  | { type: 'replyControls'; key: string }
+  | { type: 'emptyReplies'; key: string }
+  | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
+
 function stableTextHash(value: string) {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -68,6 +73,24 @@ export function isAccessNoticeHtml(html: string, accessRequirement?: AccessRequi
   }
   const text = textContentFromHtml(html);
   return !text || Boolean(accessRequirementFromNoticeText(text));
+}
+
+export function buildReplyListItems({
+  canShowReplies,
+  replyItems,
+  topicShowsAccessNotice
+}: {
+  canShowReplies: boolean;
+  replyItems: TopicListItem[];
+  topicShowsAccessNotice: boolean;
+}): TopicListItem[] {
+  if (!canShowReplies || topicShowsAccessNotice) {
+    return [];
+  }
+  return [
+    { type: 'replyControls', key: 'reply-controls' },
+    ...(replyItems.length ? replyItems : [{ type: 'emptyReplies', key: 'empty-replies' } as TopicListItem])
+  ];
 }
 
 export {

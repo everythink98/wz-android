@@ -8,7 +8,8 @@ import {
   highlightHtml,
   highlightTextParts,
   libraryCategoryFilterItems,
-  replyRefreshTarget
+  replyRefreshTarget,
+  stripHtml
 } from './androidFeatureHelpers';
 import type { Category, Reply, Topic } from './types';
 import type { TopicRecord } from './readerData';
@@ -52,6 +53,10 @@ describe('Android feature helpers', () => {
 
   it('highlights html text without touching tags', () => {
     expect(highlightHtml('<p>Hello <strong>VPS</strong></p>', 'vps hello')).toBe('<p><mark>Hello</mark> <strong><mark>VPS</mark></strong></p>');
+  });
+
+  it('copies rendered reply text without html while keeping visible line breaks', () => {
+    expect(stripHtml('<p>Hello <a href="https://example.com">link</a></p><ul><li>One</li><li>Two</li></ul><pre><code>const x = 1;\n\nconsole.log(x);</code></pre><p><img src="x.png"><img alt="图示" src="y.png"></p>')).toBe('Hello link\nOne\nTwo\nconst x = 1;\n\nconsole.log(x);\n图示');
   });
 
   it('filters library records and groups them by recency', () => {

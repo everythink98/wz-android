@@ -1,5 +1,6 @@
 import type { Category, FeedSource, Reply, Source } from './types';
 import type { TopicRecord } from './readerData';
+import { decodeHtml } from './localHtml';
 
 export interface HighlightPart {
   text: string;
@@ -76,17 +77,23 @@ export function highlightHtml(html: string, query: string) {
 }
 
 export function stripHtml(html: string | undefined) {
-  return (html || '')
+  const preLineBreakToken = '\0WZ_PRE_NL\0';
+  return decodeHtml((html || '')
+    .replace(/<pre\b[^>]*>[\s\S]*?<\/pre>/gi, (block) => block.replace(/\n/g, preLineBreakToken))
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<img\b([^>]*)>/gi, (_match, attributes: string) => {
+      const label = attributes.match(/\b(?:alt|title)=(["'])(.*?)\1/i)?.[2] || '';
+      return label ? ` ${label} ` : ' ';
+    })
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(/<li\b[^>]*>/gi, '\n')
+    .replace(/<\/(?:p|div|blockquote|pre|ul|ol|tr|h[1-6])>/gi, '\n')
+    .replace(/<[^>]*>/g, ''))
+    .replace(/[ \t\f\v]+\n/g, '\n')
+    .replace(/\n[ \t\f\v]+/g, '\n')
+    .replace(/\n{2,}/g, '\n')
+    .replaceAll(preLineBreakToken, '\n')
     .trim();
 }
 
