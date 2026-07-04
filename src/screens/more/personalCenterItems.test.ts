@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { createPersonalCenterItems, needsPersonalCenterIdentityRefresh } from './personalCenterItems';
+import { createPersonalCenterItems } from './personalCenterItems';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../../siteSessionState';
 
 describe('personal center items', () => {
@@ -50,26 +52,17 @@ describe('personal center items', () => {
       value: '未登录',
       canOpen: false
     });
-    expect(needsPersonalCenterIdentityRefresh(sessions)).toBe(true);
   });
 
-  it('does not refresh identity when logged-in sessions already have current users', () => {
-    const sessions = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'logged-in',
-        cookieSummary: ['session'],
-        isVerifying: false,
-        currentUser: {
-          source: 'nodeseek',
-          id: '48872',
-          username: '我是ikun',
-          url: 'https://www.nodeseek.com/space/48872',
-          topics: []
-        }
-      }
-    }));
+  it('keeps manual account refresh inside personal center without More-screen auto refresh', () => {
+    const source = readFileSync(path.join(process.cwd(), 'src/screens/MoreScreen.tsx'), 'utf8');
+    const personalCenterIndex = source.indexOf('title="个人中心"');
+    const refreshIndex = source.indexOf('刷新账号状态');
+    const accountIndex = source.indexOf('title="账号与验证"');
 
-    expect(needsPersonalCenterIdentityRefresh(sessions)).toBe(false);
+    expect(personalCenterIndex).toBeGreaterThan(-1);
+    expect(refreshIndex).toBeGreaterThan(personalCenterIndex);
+    expect(refreshIndex).toBeLessThan(accountIndex);
+    expect(source).not.toContain('needsPersonalCenterIdentityRefresh');
   });
 });

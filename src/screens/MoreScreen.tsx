@@ -1,4 +1,4 @@
-import { memo, type RefObject, useEffect, useRef, useState } from 'react';
+import { memo, type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, DatabaseBackup, LogIn, Settings, User, Wrench } from 'lucide-react-native';
@@ -18,7 +18,7 @@ import {
   NodeSeekLoginPanel,
   YaohuoLoginPanel
 } from './more/MorePanels';
-import { createPersonalCenterItems, needsPersonalCenterIdentityRefresh } from './more/personalCenterItems';
+import { createPersonalCenterItems } from './more/personalCenterItems';
 export const MoreScreen = memo(function MoreScreen({
   checking,
   appUpdateBusy,
@@ -110,7 +110,7 @@ export const MoreScreen = memo(function MoreScreen({
   sessionViewModels: SiteSessionViewModels;
   devAnonymousAvailable: boolean;
   devAnonymousOverrides: DevAnonymousOverrides;
-  onRefreshAccountStatus: () => void;
+  onRefreshAccountStatus: (options?: { silent?: boolean }) => void;
   onOpenUser: (user: UserProfile) => void;
   onCheckAppUpdate: () => void;
   onDownloadAppUpdate: () => void;
@@ -146,10 +146,8 @@ export const MoreScreen = memo(function MoreScreen({
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
-  const personalCenterAutoRefreshRequestedRef = useRef(false);
   const personalCenterItems = createPersonalCenterItems(sessionViewModels);
   const personalCenterReadyCount = personalCenterItems.filter((item) => item.canOpen).length;
-  const personalCenterNeedsRefresh = needsPersonalCenterIdentityRefresh(sessionViewModels);
   const updateNotes = appUpdateInfo?.notes.trim();
   const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
   const appUpdateProgressWidth = appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null ? `${appUpdateDownloadProgress.percent}%` as `${number}%` : null;
@@ -168,17 +166,6 @@ export const MoreScreen = memo(function MoreScreen({
       onRefreshLinuxDoLevel();
     }
   }, [levelExpanded, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoSession.canWrite, onRefreshLinuxDoLevel]);
-  useEffect(() => {
-    if (!personalCenterNeedsRefresh) {
-      personalCenterAutoRefreshRequestedRef.current = false;
-      return;
-    }
-    if (statusBusy || personalCenterAutoRefreshRequestedRef.current) {
-      return;
-    }
-    personalCenterAutoRefreshRequestedRef.current = true;
-    onRefreshAccountStatus();
-  }, [onRefreshAccountStatus, personalCenterNeedsRefresh, statusBusy]);
   const levelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
     : linuxDoLevelBusy
@@ -255,6 +242,9 @@ export const MoreScreen = memo(function MoreScreen({
             }}
           />
         ))}
+        <View style={styles.stack}>
+          <AppButton label={statusBusy ? '刷新中' : '刷新账号状态'} styles={styles} disabled={statusBusy} onPress={() => onRefreshAccountStatus()} />
+        </View>
       </ExpandablePanel>
       <ExpandablePanel
         quiet
@@ -315,9 +305,6 @@ export const MoreScreen = memo(function MoreScreen({
           theme={theme}
           onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}
         />
-        <View style={styles.stack}>
-          <AppButton label={statusBusy ? '刷新中' : '刷新账号状态'} styles={styles} disabled={statusBusy} onPress={onRefreshAccountStatus} />
-        </View>
         <MenuButton icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
         {levelExpanded ? (
           <LinuxDoLevelPanel

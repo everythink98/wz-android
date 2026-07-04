@@ -26,10 +26,3 @@ export function createPersonalCenterItems(sessionViewModels: SiteSessionViewMode
     };
   });
 }
-
-export function needsPersonalCenterIdentityRefresh(sessionViewModels: SiteSessionViewModels) {
-  return personalCenterSources.some((source) => {
-    const session = sessionViewModels[source];
-    return session.isLoggedIn && !session.currentUser;
-  });
-}

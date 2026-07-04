@@ -11,7 +11,10 @@ type WebViewStopRef = { current: { stopLoading: () => void } | null };
 export type NodeSeekVerificationRetry<TopicLike> =
   | { type: 'search'; retry: () => void }
   | { type: 'topic'; topic: TopicLike };
-export type CredentialLoadOptions = { captureGeneration?: (generation: number) => void };
+export type CredentialLoadOptions = {
+  captureGeneration?: (generation: number) => void;
+  captureNodeSeekUserId?: (userId: number | null) => void;
+};
 export type CredentialClearOptions = { generation?: number; force?: boolean };
 export type CredentialWriteGate = {
   generation: number;

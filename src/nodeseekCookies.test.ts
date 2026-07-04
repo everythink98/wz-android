@@ -6,6 +6,7 @@ import {
   mergeNodeSeekCookies,
   nodeSeekBrowserCookieHeaderForPersistence,
   nodeSeekAccessRecord,
+  nodeSeekCredentialUserId,
   nodeSeekCsrfTokenFromHtml,
   nodeSeekUserIdFromCookies,
   parseNodeSeekDocumentCookie,
@@ -135,6 +136,24 @@ describe('NodeSeek cookie helpers', () => {
 
     expect(nodeSeekUserIdFromCookies(cookies)).toBe(54874);
     expect(buildCookieHeader(cookies)).toBe('session=abc');
+  });
+
+  it('does not use a saved NodeSeek id when current login cookies do not expose an id', () => {
+    const savedPayload = Buffer.from(JSON.stringify({ id: 15105 }), 'utf8').toString('base64url');
+
+    expect(nodeSeekCredentialUserId(
+      { session: { name: 'session', value: 'current', domain: 'www.nodeseek.com' } },
+      { pjwt: { name: 'pjwt', value: `${savedPayload}.signature`, domain: 'www.nodeseek.com' } },
+      15105
+    )).toBeNull();
+  });
+
+  it('uses the saved NodeSeek id only when there is no current login cookie', () => {
+    expect(nodeSeekCredentialUserId(
+      {},
+      { session: { name: 'session', value: 'saved', domain: 'www.nodeseek.com' } },
+      15105
+    )).toBe(15105);
   });
 
   it('allows storing Cloudflare clearance cookies from NodeSeek verification', () => {

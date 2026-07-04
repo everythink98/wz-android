@@ -184,6 +184,13 @@ export function nodeSeekUserIdFromCookies(cookies: Record<string, NativeCookie>)
   return positiveInteger(payload?.id ?? payload?.uid ?? payload?.userId ?? payload?.user_id ?? payload?.member_id);
 }
 
+export function nodeSeekCredentialUserId(currentCookies: Record<string, NativeCookie>, savedCookies: Record<string, NativeCookie>, savedUserId?: number | null) {
+  if (hasNodeSeekLoginCookie(currentCookies)) {
+    return nodeSeekUserIdFromCookies(currentCookies) || null;
+  }
+  return nodeSeekUserIdFromCookies(savedCookies) || positiveInteger(savedUserId) || null;
+}
+
 export function nodeSeekCsrfTokenFromHtml(html: string) {
   const source = String(html || '');
   const meta = source.match(/<meta\b(?=[^>]*\bname=["']csrf-token["'])(?=[^>]*\bcontent=["']([^"']+)["'])[^>]*>/i)

@@ -26,12 +26,13 @@ import { safeFileName } from '../backupFiles';
 import { readBackupFileText } from '../backupImportFile';
 import { runBackupOperation } from '../backupOperation';
 import type { ScopedSiteSessionEvent } from '../siteSessionState';
-import type { CredentialClearOptions } from './sessionControllerHelpers';
+import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import type { FeedSource, Source } from '../types';
 import type { Fetcher } from '../request';
 import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
+type RefreshAccountStatusOptions = { silent?: boolean };
 
 export function useBackupStatusController({
   clearYaohuoLoginState,
@@ -39,12 +40,12 @@ export function useBackupStatusController({
   linuxDoUserAgentRef,
   loadNodeSeekCookieForSource,
   fetcher,
-  nodeSeekUserId,
   nodeSeekUserAgentRef,
   notify,
   readerDataRef,
   replaceReaderData,
   resetLinuxDoLevelState,
+  saveNodeSeekCookieHeader,
   dispatchSiteSessionEvent,
   waitForReaderDataSave
 }: {
@@ -52,14 +53,17 @@ export function useBackupStatusController({
   currentYaohuoCredentialGeneration: () => number;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
   linuxDoUserAgentRef: { current: string };
-  loadNodeSeekCookieForSource: (source: FeedSource | Source) => Promise<string | undefined>;
+  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   fetcher: Fetcher;
-  nodeSeekUserId?: number | null;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   readerDataRef: { current: ReaderData };
   replaceReaderData: (nextValue: ReaderData) => Promise<void>;
   resetLinuxDoLevelState: () => void;
+  saveNodeSeekCookieHeader: (
+    cookies: Record<string, { name?: string; value?: string; domain?: string }>,
+    options?: { generation?: number; userId?: number | null }
+  ) => Promise<string>;
   waitForReaderDataSave: () => Promise<void>;
 }) {
   const backupBusyRef = useRef(false);
@@ -132,7 +136,7 @@ export function useBackupStatusController({
     });
   }, [notify, readerDataRef, replaceReaderData]);
 
-  const refreshAccountStatus = useCallback(async () => {
+  const refreshAccountStatus = useCallback(async (options: RefreshAccountStatusOptions = {}) => {
     if (statusBusyRef.current) {
       return;
     }
@@ -143,7 +147,12 @@ export function useBackupStatusController({
       const yaohuoGeneration = currentYaohuoCredentialGeneration();
       const linuxDoGeneration = currentLinuxDoAccessGeneration();
       const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek');
+      let nodeSeekGeneration: number | undefined;
+      let nodeSeekCredentialUserId: number | null = null;
+      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek', {
+        captureGeneration: (generation) => { nodeSeekGeneration = generation; },
+        captureNodeSeekUserId: (userId) => { nodeSeekCredentialUserId = userId; }
+      });
       const nodeSeekSummary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(nodeSeekCookie || ''));
       let linuxDoAccess = await loadLinuxDoAccess();
       let access = linuxDoAccessSummary(linuxDoAccess);
@@ -160,7 +169,7 @@ export function useBackupStatusController({
           source: 'nodeseek',
           fetcher,
           nodeSeekCookie,
-          nodeSeekUserId,
+          nodeSeekUserId: nodeSeekCredentialUserId,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           signal: controller.signal
         })
@@ -178,11 +187,19 @@ export function useBackupStatusController({
         ? checkYaohuoLogin({ yaohuoCookie, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
       const yaohuoCurrentUserPromise = yaohuoCookie
-        ? getCurrentUserProfile({
-          source: 'yaohuo',
-          fetcher,
-          yaohuoCookie,
-          signal: controller.signal
+        ? yaohuoStatusPromise.then((check) => {
+          if (check.ok && !check.loginRequired && 'currentUser' in check && check.currentUser) {
+            return check.currentUser;
+          }
+          if (!check.ok || check.loginRequired) {
+            return null;
+          }
+          return getCurrentUserProfile({
+            source: 'yaohuo',
+            fetcher,
+            yaohuoCookie,
+            signal: controller.signal
+          });
         })
         : Promise.resolve(null);
       const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck] = await Promise.allSettled([
@@ -229,15 +246,23 @@ export function useBackupStatusController({
         }
       }
       const checkedAt = new Date().toISOString();
+      const nodeSeekCurrentUser = nodeSeekCurrentUserCheck.status === 'fulfilled' ? nodeSeekCurrentUserCheck.value : null;
       dispatchSiteSessionEvent({
         site: 'nodeseek',
         type: 'cookie-loaded',
         cookieSummary: nodeSeekSummary.names,
         hasVerification: nodeSeekSummary.count > 0,
         loggedIn: nodeSeekSummary.loggedIn,
-        currentUser: nodeSeekCurrentUserCheck.status === 'fulfilled' ? nodeSeekCurrentUserCheck.value : null,
+        currentUser: nodeSeekCurrentUser,
         at: checkedAt
       });
+      const nodeSeekCurrentUserId = Number(nodeSeekCurrentUser?.id);
+      if (nodeSeekCookie && Number.isInteger(nodeSeekCurrentUserId) && nodeSeekCurrentUserId > 0) {
+        await saveNodeSeekCookieHeader(parseNodeSeekDocumentCookie(nodeSeekCookie), {
+          generation: nodeSeekGeneration,
+          userId: nodeSeekCurrentUserId
+        });
+      }
       if (yaohuoCheck.status === 'rejected') {
         failedSites.push('妖火');
         dispatchSiteSessionEvent({
@@ -282,9 +307,11 @@ export function useBackupStatusController({
         });
       }
       const uniqueFailedSites = Array.from(new Set(failedSites));
-      notify(uniqueFailedSites.length ? `账号状态部分刷新失败：${uniqueFailedSites.join('、')}` : '账号状态已刷新');
+      if (!options.silent) {
+        notify(uniqueFailedSites.length ? `账号状态部分刷新失败：${uniqueFailedSites.join('、')}` : '账号状态已刷新');
+      }
     } catch (error) {
-      if (!controller.signal.aborted && !isCanceledRequest(error)) {
+      if (!options.silent && !controller.signal.aborted && !isCanceledRequest(error)) {
         notify(errorMessage(error));
       }
     } finally {
@@ -300,10 +327,10 @@ export function useBackupStatusController({
     fetcher,
     linuxDoUserAgentRef,
     loadNodeSeekCookieForSource,
-    nodeSeekUserId,
     nodeSeekUserAgentRef,
     notify,
-    resetLinuxDoLevelState
+    resetLinuxDoLevelState,
+    saveNodeSeekCookieHeader
   ]);
 
   const abortBackupStatusRequests = useCallback(() => {

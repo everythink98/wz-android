@@ -193,6 +193,7 @@ export function AppRoot() {
   const [loadingNodeImageAuthPage, setLoadingNodeImageAuthPage] = useState(false);
   const [nodeImageAuthError, setNodeImageAuthError] = useState('');
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
+  const accountStatusInitialRefreshRef = useRef(false);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
     startOwnedRequest(topicActionRequestOwnerRef, `topic-action-context:${nextTopicKey || 'none'}`);
     actionAbortRef.current?.abort();
@@ -894,14 +895,21 @@ export function AppRoot() {
     fetcher: forumFetchWithWebViewFallback,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
-    nodeSeekUserId: webLoginUserId,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     readerDataRef,
     replaceReaderData,
     resetLinuxDoLevelState,
+    saveNodeSeekCookieHeader,
     waitForReaderDataSave
   });
+  useEffect(() => {
+    if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
+      return;
+    }
+    accountStatusInitialRefreshRef.current = true;
+    void refreshAccountStatus({ silent: true });
+  }, [readerDataLoaded, refreshAccountStatus]);
   const {
     appUpdateBusy,
     appUpdateDownloading,

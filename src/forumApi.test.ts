@@ -255,6 +255,32 @@ describe('Android local forum facade', () => {
     });
   });
 
+  it('does not read the fallback NodeSeek id when the current account endpoint succeeds', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '当前账号', member_id: 48872 } }));
+      }
+      if (input === 'https://www.nodeseek.com/api/account/getInfo/15105?readme=1') {
+        throw new Error('stale fallback id should not be requested');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=ok',
+      nodeSeekUserId: 15105
+    })).resolves.toMatchObject({
+      source: 'nodeseek',
+      id: '48872',
+      username: '当前账号',
+      topics: []
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('reads the current NodeSeek account from settings when the home page has no user link', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {

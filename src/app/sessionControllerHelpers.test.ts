@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   advanceCredentialWriteGeneration,
@@ -389,5 +391,22 @@ describe('session controller helpers', () => {
       'https://www.nodeseek.com/assets/missing.png',
       isAllowed
     )).toBe(false);
+  });
+
+  it('does not read the current NodeSeek profile while loading credentials', () => {
+    const source = readFileSync(path.join(process.cwd(), 'src/app/useSessionController.ts'), 'utf8');
+
+    expect(source).not.toContain('getNodeSeekCurrentUserProfile');
+    expect(source).not.toContain('restoreNodeSeekIdentityForAccess');
+  });
+
+  it('starts account refresh silently without using stale NodeSeek page state', () => {
+    const appRootSource = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
+    const refreshSource = readFileSync(path.join(process.cwd(), 'src/app/useBackupStatusController.ts'), 'utf8');
+
+    expect(appRootSource).toContain('refreshAccountStatus({ silent: true })');
+    expect(appRootSource).not.toContain('nodeSeekUserId: webLoginUserId');
+    expect(refreshSource).toContain('captureNodeSeekUserId');
+    expect(refreshSource).toContain('nodeSeekUserId: nodeSeekCredentialUserId');
   });
 });
