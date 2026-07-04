@@ -126,7 +126,6 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
-  deadlineMs?: number;
   httpErrorStatus?: number;
   credentialGeneration?: number;
   settled?: boolean;
@@ -145,7 +144,6 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
-  deadlineMs?: number;
   httpErrorStatus?: number;
   credentialGeneration?: number;
   settled?: boolean;
@@ -392,8 +390,7 @@ export function useSessionController({
         resolve,
         reject,
         credentialGeneration: nodeSeekCredentialGateRef.current.generation,
-        abortSignal: init?.signal || undefined,
-        deadlineMs: Date.now() + NODESEEK_BROWSER_FETCH_TIMEOUT_MS
+        abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
         rejectNodeSeekBrowserFetch(request, '请求已取消');
@@ -535,8 +532,7 @@ export function useSessionController({
         resolve,
         reject,
         credentialGeneration: currentLinuxDoAccessGeneration(),
-        abortSignal: init?.signal || undefined,
-        deadlineMs: Date.now() + LINUXDO_BROWSER_FETCH_TIMEOUT_MS
+        abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
         rejectLinuxDoBrowserFetch(request, '请求已取消');

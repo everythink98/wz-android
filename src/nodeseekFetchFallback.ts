@@ -2,7 +2,7 @@ import type { Fetcher } from './request';
 import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
 
-const NODESEEK_POST_DIRECT_FETCH_TIMEOUT_MS = 8000;
+const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 
 export function isNodeSeekRequestUrl(input: string) {
   try {
@@ -25,28 +25,26 @@ export function isNodeSeekBrowserFetchUrl(input: string) {
   return isNodeSeekRequestUrl(input) || isNodeSeekGoogleSearchUrl(input);
 }
 
-function isNodeSeekPostUrl(input: string) {
-  try {
-    const url = new URL(input);
-    return isNodeSeekRequestUrl(input) && /^\/post-\d+-\d+\/?$/i.test(url.pathname);
-  } catch {
-    return false;
-  }
-}
-
-async function fetchNodeSeekPostDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
+async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, init?: RequestInit) {
   const controller = new AbortController();
   const parentSignal = init?.signal;
   const abortFromParent = () => controller.abort();
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let timeoutPromise: Promise<never> | undefined;
   if (parentSignal?.aborted) {
     controller.abort();
   } else {
     parentSignal?.addEventListener('abort', abortFromParent, { once: true });
-    timeout = setTimeout(() => controller.abort(), NODESEEK_POST_DIRECT_FETCH_TIMEOUT_MS);
+    timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error('NodeSeek direct fetch timeout'));
+      }, NODESEEK_DIRECT_FETCH_TIMEOUT_MS);
+    });
   }
   try {
-    return await defaultFetcher(input, { ...init, signal: controller.signal });
+    const fetchPromise = defaultFetcher(input, { ...init, signal: controller.signal });
+    return await (timeoutPromise ? Promise.race([fetchPromise, timeoutPromise]) : fetchPromise);
   } finally {
     if (timeout) {
       clearTimeout(timeout);
@@ -72,11 +70,9 @@ export function createNodeSeekWebViewFallbackFetcher({
     }
     let response: Response;
     try {
-      response = isNodeSeekPostUrl(url)
-        ? await fetchNodeSeekPostDirectly(defaultFetcher, url, init)
-        : await defaultFetcher(input, init);
+      response = await fetchNodeSeekDirectly(defaultFetcher, url, init);
     } catch (error) {
-      if (isNodeSeekPostUrl(url) && !init?.signal?.aborted) {
+      if (!init?.signal?.aborted) {
         return webViewFetcher(url, init);
       }
       throw error;

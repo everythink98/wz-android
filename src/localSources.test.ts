@@ -2848,6 +2848,38 @@ describe('Android local sources', () => {
     }
   });
 
+  it('retries NodeSeek feed through the WebView fallback when normal fetch stalls', async () => {
+    vi.useFakeTimers();
+    try {
+      const normalFetcher = vi.fn(() => new Promise<Response>(() => undefined));
+      const webViewFetcher = vi.fn(async () => html(`
+        <ul class="post-list">
+          <li class="post-list-item">
+            <div class="post-title"><a href="/post-743018-1">NodeSeek slow fallback list row</a></div>
+            <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+          </li>
+        </ul>
+      `));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const feedPromise = getFeed({ source: 'nodeseek', fetcher });
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      const feed = await feedPromise;
+
+      expect(feed.items.map((item) => item.title)).toEqual(['NodeSeek slow fallback list row']);
+      expect(normalFetcher).toHaveBeenCalledTimes(1);
+      const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+      expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/?sortBy=postTime');
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('uses direct fetch for readable NodeSeek search pages', async () => {
     const webViewFetcher = vi.fn(async (input: string) => {
       const query = new URL(input).searchParams.get('q') || '';

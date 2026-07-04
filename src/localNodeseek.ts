@@ -34,6 +34,7 @@ import {
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
+const NODESEEK_READ_TIMEOUT_MS = 30000;
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
 interface NodeSeekOptions {
@@ -723,6 +724,7 @@ function isNodeSeekCloudflareError(error: unknown) {
 }
 
 async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
+  const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
   const cookie = options.nodeSeekCookie?.trim();
   const headers: HeadersInit = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
@@ -738,7 +740,7 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
   }
   const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
     headers
-  }, options);
+  }, requestOptions);
   const text = await response.text();
   if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
     throw nodeSeekCloudflareError();
@@ -757,12 +759,13 @@ function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
 }
 
 async function fetchNodeSeekGoogleSearchText(query: string, page: number, options: NodeSeekOptions = {}) {
+  const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
   const response = await fetchWithTimeout(googleSiteSearchUrl('nodeseek.com', query, page), {
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
       'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
     }
-  }, options);
+  }, requestOptions);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);

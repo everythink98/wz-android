@@ -203,40 +203,49 @@ describe('session controller helpers', () => {
     });
   });
 
-  it('expires queued browser fetch requests by their original deadline', () => {
-    const expired = {
-      id: 1,
-      url: 'https://www.nodeseek.com/post-1-1',
-      deadlineMs: Date.now() - 1,
-      reject: vi.fn()
-    };
-    const active = {
-      id: 2,
-      url: 'https://www.nodeseek.com/post-2-1',
-      deadlineMs: Date.now() + 1000,
-      reject: vi.fn()
-    };
-    const currentRef = { current: null };
-    const queueRef = { current: [expired, active] };
-    const setActiveRequest = vi.fn();
+  it('starts browser fetch timeout after a queued request becomes active', async () => {
+    vi.useFakeTimers();
+    try {
+      const queued = {
+        id: 1,
+        url: 'https://www.nodeseek.com/post-1-1',
+        deadlineMs: Date.now() - 1,
+        reject: vi.fn()
+      };
+      const currentRef = { current: null };
+      const queueRef = { current: [queued] };
+      const setActiveRequest = vi.fn();
+      const rejectCurrent = vi.fn((request: typeof queued, message: string) => {
+        request.reject(new Error(message));
+      });
 
-    startNextBrowserFetchRequest({
-      currentRef,
-      queueRef,
-      setActiveRequest,
-      timeoutMs: 15000,
-      timeoutMessage: 'timeout',
-      rejectCurrent: vi.fn()
-    });
+      startNextBrowserFetchRequest({
+        currentRef,
+        queueRef,
+        setActiveRequest,
+        timeoutMs: 15000,
+        timeoutMessage: 'timeout',
+        rejectCurrent
+      });
 
-    expect(expired.reject).toHaveBeenCalledWith(new Error('timeout'));
-    expect(currentRef.current).toBe(active);
-    expect(setActiveRequest).toHaveBeenLastCalledWith({
-      id: 2,
-      url: 'https://www.nodeseek.com/post-2-1',
-      cookie: undefined,
-      userAgent: undefined
-    });
+      expect(currentRef.current).toBe(queued);
+      expect(queued.reject).not.toHaveBeenCalled();
+      expect(setActiveRequest).toHaveBeenCalledWith({
+        id: 1,
+        url: 'https://www.nodeseek.com/post-1-1',
+        cookie: undefined,
+        userAgent: undefined
+      });
+
+      await vi.advanceTimersByTimeAsync(14_999);
+      expect(rejectCurrent).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(rejectCurrent).toHaveBeenCalledWith(queued, 'timeout');
+      expect(queued.reject).toHaveBeenCalledWith(new Error('timeout'));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects a queued browser fetch request without touching the active request', () => {

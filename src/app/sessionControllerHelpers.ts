@@ -3,7 +3,6 @@ export type BrowserFetchRequestCleanupTarget = {
   abortSignal?: AbortSignal;
   abortHandler?: () => void;
   settled?: boolean;
-  deadlineMs?: number;
 };
 
 type MutableRef<T> = { current: T };
@@ -209,24 +208,9 @@ export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>
     break;
   }
   if (next) {
-    const timeoutDelay = typeof next.deadlineMs === 'number'
-      ? Math.min(timeoutMs, next.deadlineMs - Date.now())
-      : timeoutMs;
-    if (timeoutDelay <= 0) {
-      settleBrowserFetchRequestOnce(next, () => next.reject(new Error(timeoutMessage)));
-      startNextBrowserFetchRequest({
-        currentRef,
-        queueRef,
-        setActiveRequest,
-        timeoutMs,
-        timeoutMessage,
-        rejectCurrent
-      });
-      return;
-    }
     next.timeout = setTimeout(() => {
       rejectCurrent(next, timeoutMessage);
-    }, timeoutDelay);
+    }, timeoutMs);
   }
   currentRef.current = next;
   setActiveRequest(next ? browserFetchRequestView(next) : null);
