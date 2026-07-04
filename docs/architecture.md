@@ -16,7 +16,7 @@
 | `src/forumApi.ts`、`src/yaohuoApi.ts`、站点 action client | 当前来源实现，位于 `sourceGateway` 后面 |
 | `src/screens/` | 首页、搜索、收藏、更多、用户页和详情页导出入口 |
 | `src/screens/topic/` | 详情页主体、详情页 helper 和详情页局部组件 |
-| `src/screens/more/` | More 页账号、备份、外观、状态检查等局部面板 |
+| `src/screens/more/` | More 页个人中心、账号与验证、备份、外观、状态检查等局部面板 |
 | `src/screens/library/` | 收藏页列表模型与列表 key helper |
 | `src/components/` | 通用控件、主题卡片、图片预览和底部导航 |
 | `src/theme.ts` | 主题兼容入口，继续保持原导出 |
@@ -35,11 +35,14 @@
 - `forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
 - 新增 App 调用方应优先使用 `sourceGateway`，不要在 `src/app/*Controller.ts` 里新增对旧来源文件或站点 action client 的直接调用。
 
-## 账号区
+## 个人中心与账号
 
-- More 页账号与验证区由 `src/screens/MoreScreen.tsx`、`src/screens/more/MorePanels.tsx` 和 `src/screens/more/LinuxDoLevelPanel.tsx` 承载。
-- `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录态检查、Cookie 保存 / 清理和 linux.do 等级读取。
-- NodeSeek 签到、linux.do 等级、妖火登录检查都通过账号区入口触发。
+- More 页 `个人中心` 由 `src/screens/MoreScreen.tsx` 承载，`src/screens/more/personalCenterItems.ts` 从三站会话状态的 `currentUser` 生成主页入口。
+- `刷新账号状态` 按钮位于 `个人中心`；`账号与验证` 只保留登录、验证、清除登录、NodeImage 和 linux.do 等级相关入口。
+- `src/app/useBackupStatusController.ts` 负责 `refreshAccountStatus`；`src/app/AppRoot.tsx` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
+- `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录 / 验证页检测、Cookie 保存 / 清理和 linux.do 等级读取。
+- `src/app/useSessionController.ts` 只负责加载 Cookie 和会话事实；NodeSeek Cookie 加载只返回本次凭据里的 userId，不顺带读取个人资料。
+- NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。
 - linux.do 验证弹层由 `src/app/LinuxDoVerifyModal.tsx` 和全局 modal host 承载。
 
 ## 详情页

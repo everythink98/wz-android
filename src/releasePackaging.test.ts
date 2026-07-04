@@ -60,6 +60,12 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('verifyExpectedReleaseSigner(signerSha256);');
   });
 
+  it('does not print apksigner certificate output after a successful check', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+
+    expect(releaseScript).toMatch(/if \(result\.status !== 0\) \{\s+if \(result\.stdout\) \{/);
+  });
+
   it('keeps release minify and resource shrinking enabled by default', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withAndroidReleaseDefaults.js');

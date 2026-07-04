@@ -33,7 +33,10 @@
 - 详情页支持三站回复框格式工具栏和图片上传；NodeSeek / linux.do 插入 Markdown 图片，妖火插入 `[img]...[/img]`。
 - NodeSeek 支持编辑自己的回复；请求必须使用 App 内登录态取得的真实 token。
 - linux.do 和妖火仅在原站数据明确允许时显示删除自己的回复；NodeSeek 当前不显示删除回复入口。
-- More 页账号区在 `src/screens/MoreScreen.tsx`、`src/screens/more/MorePanels.tsx` 和 `src/screens/more/LinuxDoLevelPanel.tsx`，账号逻辑在 `src/app/useAccountController.ts`。
+- More 页 `个人中心` 在 `src/screens/MoreScreen.tsx` 和 `src/screens/more/personalCenterItems.ts`，展示三站会话里的当前账号主页，并提供 `刷新账号状态`。
+- `账号与验证` 在 `src/screens/more/MorePanels.tsx` 和 `src/screens/more/LinuxDoLevelPanel.tsx`，只保留登录、验证、清除登录、NodeImage 和 linux.do 等级相关入口。
+- 账号状态刷新在 `src/app/useBackupStatusController.ts`；`src/app/AppRoot.tsx` 会在本机资料加载完成后静默刷新一次，进入 More 页本身不再自动刷新。
+- NodeSeek Cookie 加载不读取个人资料，只返回 Cookie 和本次凭据里的 userId；当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底。
 - More 页提供 NodeImage API Key 状态、自动授权获取和手动粘贴备用入口。
 - `src/theme.ts` 是兼容 facade，主题核心在 `src/themeCore.ts`，`createStyles` 在 `src/themeStyles.ts`，样式分组在 `src/themeParts.ts`。
 - `src/screens/TopicScreen.tsx` 是兼容 facade，详情页主体在 `src/screens/topic/TopicScreenBody.tsx`，纯辅助逻辑在 `src/screens/topic/topicScreenHelpers.ts`。
@@ -45,7 +48,7 @@
 
 1. 来源能力：`src/sources/sourceGateway.ts`、`src/forumApi.ts`、`src/yaohuoApi.ts`、站点 action client。
 2. App 壳：`App.tsx`、`src/app/AppRoot.tsx`、`src/app/AppNavigator.tsx`、`src/app/useDeferredNavigationTask.ts`。
-3. App 运行逻辑：`src/app/useFeedController.ts`、`src/app/useSearchController.ts`、`src/app/useTopicController.ts`、`src/app/useTopicActionsController.ts`、`src/app/useUserController.ts`、`src/app/useAccountController.ts`。
+3. App 运行逻辑：`src/app/useFeedController.ts`、`src/app/useSearchController.ts`、`src/app/useTopicController.ts`、`src/app/useTopicActionsController.ts`、`src/app/useUserController.ts`、`src/app/useAccountController.ts`、`src/app/useBackupStatusController.ts`。
 4. 详情页 UI：`src/screens/TopicScreen.tsx`、`src/screens/topic/TopicScreenBody.tsx`、`src/screens/topic/topicScreenHelpers.ts` 和 `src/screens/topic/` 下的局部组件。
 5. 回复上传 / 授权：`src/replyImageUpload.ts`、`src/nodeimageCredentials.ts`、`src/loginWebViewScripts.ts`、`src/linuxdoActions.ts`、`src/yaohuoActionClient.ts`。
 6. 收藏页 UI：`src/screens/LibraryScreen.tsx` 和 `src/screens/library/libraryScreenItems.ts`。

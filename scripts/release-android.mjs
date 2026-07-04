@@ -60,17 +60,17 @@ function runCapture(command, args, options = {}) {
     ...options
   });
 
-  if (result.stdout) {
-    process.stdout.write(result.stdout);
-  }
-  if (result.stderr) {
-    process.stderr.write(result.stderr);
-  }
   if (result.error) {
     console.error(`命令启动失败：${command} ${args.join(' ')}\n${result.error.message}`);
     process.exit(1);
   }
   if (result.status !== 0) {
+    if (result.stdout) {
+      process.stdout.write(result.stdout);
+    }
+    if (result.stderr) {
+      process.stderr.write(result.stderr);
+    }
     process.exit(result.status ?? 1);
   }
   return `${result.stdout || ''}${result.stderr || ''}`;
