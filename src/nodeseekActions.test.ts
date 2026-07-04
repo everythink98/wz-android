@@ -41,18 +41,21 @@ describe('NodeSeek action request builders', () => {
     })).toThrow('请输入回复内容');
   });
 
-  it('rejects NodeSeek content writes without a real csrf token', () => {
-    expect(() => buildNodeSeekReplyRequest({
+  it('generates a NodeSeek content request token when none is saved', () => {
+    const replyRequest = buildNodeSeekReplyRequest({
       postId: '723704',
       content: '谢谢分享',
       csrfToken: ' '
-    })).toThrow('NodeSeek token 缺失，请重新检测登录');
+    });
 
-    expect(() => buildNodeSeekEditReplyRequest({
+    const editRequest = buildNodeSeekEditReplyRequest({
       commentId: '812345',
       content: '更新后的内容',
       csrfToken: ''
-    })).toThrow('NodeSeek token 缺失，请重新检测登录');
+    });
+
+    expect(replyRequest.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
+    expect(editRequest.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
   });
 
   it('prefixes NodeSeek floor replies with the original floor reference', () => {

@@ -57,8 +57,7 @@ import {
   NODESEEK_COOKIE_STORAGE_KEY,
   NODESEEK_USER_AGENT_STORAGE_KEY,
   nodeSeekAccessRecord,
-  parseNodeSeekAccessRecord,
-  type NodeSeekAccessRecord
+  parseNodeSeekAccessRecord
 } from '../nodeseekCookies';
 import type { RequestOwner } from '../requestOwnership';
 import {
@@ -312,7 +311,7 @@ export function useTopicActionsController({
   ), [notify]);
 
   const runNodeSeekRequest = useCallback(async (
-    requestFactory: (access: NodeSeekAccessRecord | null) => NodeSeekActionRequest,
+    requestFactory: () => NodeSeekActionRequest,
     success: string,
     options: ActionRunOptions = {}
   ) => {
@@ -336,7 +335,7 @@ export function useTopicActionsController({
       }
       await runNodeSeekAction({
         cookieHeader: access?.cookieHeader || '',
-        request: requestFactory(access),
+        request: requestFactory(),
         signal: run.controller.signal,
         userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
@@ -587,7 +586,7 @@ export function useTopicActionsController({
         const requestOwner = startTopicActionRequest(actionKey);
         const submitted = isNodeSeekActionTopic(detail)
           ? await runNodeSeekRequest(
-            (access) => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: access?.csrfToken || '' }),
+            () => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: '' }),
             '回复已更新',
             { owner: requestOwner }
           )
@@ -668,7 +667,7 @@ export function useTopicActionsController({
         return;
       }
       const submitted = await runNodeSeekRequest(
-        (access) => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget, csrfToken: access?.csrfToken || '' }),
+        () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget, csrfToken: '' }),
         '回复已提交',
         { owner: requestOwner }
       );

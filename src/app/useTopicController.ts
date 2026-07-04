@@ -23,7 +23,7 @@ import {
   isYaohuoLoginRequiredError,
   startAbortableRequest
 } from '../appUtils';
-import { REPLY_PAGE_SIZE, replyRefreshTarget } from '../androidFeatureHelpers';
+import { REPLY_PAGE_SIZE, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
 import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapshot } from '../topicSessionState';
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
@@ -455,11 +455,13 @@ export function useTopicController({
       }
       controller = startAbortableRequest(repliesAbortRef);
       const expectedReplyCount = Math.max(detail.replyCount || 0, topicReplies.length) + 1;
-      const { page: targetPage, offset: targetOffset } = replyRefreshTarget({
+      const { page: targetPage, offset: targetOffset, limit: targetLimit } = replyRefreshTarget({
         source: detail.source,
         afterSubmit,
         expectedReplyCount,
         replyNextPage,
+        replyNextOffset,
+        loadedReplyCount: topicReplies.length,
         targetReplyIndex: replyTargetIndex(topicReplies, targetReply)
       });
       const data = detail.source === 'yaohuo'
@@ -467,7 +469,7 @@ export function useTopicController({
           id: detail.id,
           categoryId: detail.categoryId,
           page: targetPage,
-          limit: REPLY_PAGE_SIZE,
+          limit: targetLimit ?? REPLY_PAGE_SIZE,
           yaohuoCookie,
           signal: controller.signal
         })
@@ -475,11 +477,12 @@ export function useTopicController({
           source: detail.source,
           id: detail.id,
           page: targetPage,
-          limit: REPLY_PAGE_SIZE,
+          limit: targetLimit ?? REPLY_PAGE_SIZE,
           offset: targetOffset,
           fetcher,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+          fillPages: !afterSubmit && detail.source === 'nodeseek',
           signal: controller.signal
         });
       if (!isCurrentRepliesRequest()) {
@@ -549,6 +552,7 @@ export function useTopicController({
     openTopic,
     repliesAbortRef,
     repliesRequestIdRef,
+    replyNextOffset,
     replyNextPage,
     selectedTopic,
     sessionViewModels,
@@ -594,12 +598,17 @@ export function useTopicController({
         return;
       }
       controller = startAbortableRequest(repliesAbortRef);
+      const limit = replyLoadMoreLimit({
+        source: detail.source,
+        replyNextPage,
+        replyNextOffset
+      });
       const data = detail.source === 'yaohuo'
         ? await getYaohuoReplies({
           id: detail.id,
           categoryId: detail.categoryId,
           page: replyNextPage,
-          limit: 30,
+          limit,
           yaohuoCookie,
           signal: controller.signal
         })
@@ -607,7 +616,7 @@ export function useTopicController({
           source: detail.source,
           id: detail.id,
           page: replyNextPage,
-          limit: 30,
+          limit,
           offset: replyNextOffset,
           fetcher,
           nodeSeekCookie,

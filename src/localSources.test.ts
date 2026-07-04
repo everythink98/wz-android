@@ -736,6 +736,88 @@ describe('Android local sources', () => {
     expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
   });
 
+  it('does not fill normal NodeSeek replies from following origin pages', async () => {
+    const pageOnePayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          { poster: { name: 'alice' }, markdown: '正文' },
+          ...Array.from({ length: 10 }, (_, index) => ({
+            poster: { name: `reply ${index + 1}` },
+            markdown: `回复 ${index + 1}`
+          }))
+        ]
+      }
+    })).toString('base64');
+    const pageTwoPayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          { poster: { name: 'reply 11' }, markdown: '回复 11' },
+          { poster: { name: 'reply 12' }, markdown: '回复 12' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/post-723704-2')) {
+        return html(`<script>${pageTwoPayload}</script>`);
+      }
+      return html(`<script>${pageOnePayload}</script><a href="/post-723704-2">2</a>`);
+    });
+
+    const replies = await getNodeSeekReplies('723704', { fetcher, page: 1, offset: 0, limit: 30 });
+
+    expect(replies.items.map((item) => item.author)).toEqual(Array.from({ length: 10 }, (_, index) => `reply ${index + 1}`));
+    expect(replies.hasMore).toBe(true);
+    expect(replies.nextPage).toBe(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('fills NodeSeek replies from following origin pages only when requested', async () => {
+    const pageOnePayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          { poster: { name: 'alice' }, markdown: '正文' },
+          ...Array.from({ length: 10 }, (_, index) => ({
+            poster: { name: `reply ${index + 1}` },
+            markdown: `回复 ${index + 1}`
+          }))
+        ]
+      }
+    })).toString('base64');
+    const pageTwoPayload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          { poster: { name: 'reply 11' }, markdown: '回复 11' },
+          { poster: { name: 'reply 12' }, markdown: '回复 12' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/post-723704-2')) {
+        return html(`<script>${pageTwoPayload}</script>`);
+      }
+      return html(`<script>${pageOnePayload}</script><a href="/post-723704-2">2</a>`);
+    });
+
+    const replies = await getNodeSeekReplies('723704', { fetcher, page: 1, offset: 0, limit: 30, fillPages: true });
+
+    expect(replies.items.map((item) => item.author)).toEqual([
+      ...Array.from({ length: 10 }, (_, index) => `reply ${index + 1}`),
+      'reply 11',
+      'reply 12'
+    ]);
+    expect(replies.items.at(-1)).toMatchObject({ floor: 12, contentHtml: expect.stringContaining('回复 12') });
+    expect(replies.hasMore).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('prefers rendered NodeSeek topic content over stale embedded postData while keeping edit metadata', async () => {
     const stalePayload = Buffer.from(JSON.stringify({
       postData: {
@@ -836,6 +918,59 @@ describe('Android local sources', () => {
     expect(replies.items[0]).toMatchObject({
       commentId: 102,
       contentHtml: expect.stringContaining('新回复')
+    });
+    expect(replies.items[0]).not.toHaveProperty('contentMarkdown');
+  });
+
+  it('keeps NodeSeek edit metadata when refreshing rendered replies', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 806638,
+        title: 'NodeSeek reply refresh metadata',
+        comments: [
+          {
+            commentId: 100,
+            floorIndex: 0,
+            poster: { name: 'gijia', uid: 18478, profile: '/space/18478' },
+            markdown: '论坛邮箱！',
+            time: { createdDate: '2026-07-04T06:06:00.000Z' }
+          },
+          {
+            commentId: 812345,
+            floorIndex: 12,
+            poster: { name: '凡想世界', uid: 54874, isMe: true, profile: '/space/54874' },
+            markdown: 'Bd',
+            time: { createdDate: '2026-07-04T06:34:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${payload}</script>
+      <a class="post-title" href="/post-806638-1">NodeSeek reply refresh metadata</a>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/18478" class="author-name">gijia</a></div>
+        <time datetime="2026-07-04T06:06:00.000Z"></time>
+        <article class="post-content"><p>论坛邮箱！</p></article>
+      </div>
+      <div id="12" data-comment-id="812345" class="content-item">
+        <div class="author-info"><a href="/space/54874" class="author-name">凡想世界</a></div>
+        <time datetime="2026-07-04T06:34:00.000Z"></time>
+        <article class="post-content"><p>Bd</p></article>
+      </div>
+    `));
+
+    const replies = await getNodeSeekReplies('806638', { fetcher, page: 1, offset: 0, limit: 30 });
+
+    expect(replies.items[0]).toMatchObject({
+      author: '凡想世界',
+      authorId: '54874',
+      commentId: 812345,
+      floor: 12,
+      contentHtml: expect.stringContaining('Bd'),
+      contentMarkdown: 'Bd',
+      canEdit: true,
+      canLike: false
     });
   });
 
@@ -2631,6 +2766,52 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
+  });
+
+  it('keeps NodeSeek edit metadata when replies use the WebView fallback', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 806638,
+        comments: [
+          {
+            commentId: 100,
+            floorIndex: 0,
+            poster: { name: 'gijia', uid: 18478 },
+            markdown: '论坛邮箱！',
+            time: { createdDate: '2026-07-04T06:06:00.000Z' }
+          },
+          {
+            commentId: 812345,
+            floorIndex: 12,
+            poster: { name: '凡想世界', uid: 54874, isMe: true },
+            markdown: 'Bd',
+            time: { createdDate: '2026-07-04T06:34:00.000Z' }
+          }
+        ]
+      }
+    })).toString('base64');
+    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => html(`<script id="temp-script" type="application/json">${payload}</script>`));
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const replies = await getNodeSeekReplies('806638', { fetcher, page: 1, offset: 0, limit: 30 });
+
+    expect(replies.items[0]).toMatchObject({
+      author: '凡想世界',
+      authorId: '54874',
+      commentId: 812345,
+      floor: 12,
+      contentMarkdown: 'Bd',
+      canEdit: true,
+      canLike: false
+    });
+    expect(webViewFetcher).toHaveBeenCalledTimes(1);
   });
 
   it('retries NodeSeek topic details through the WebView fallback when normal fetch stalls', async () => {

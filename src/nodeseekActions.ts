@@ -7,6 +7,8 @@ export interface NodeSeekActionRequest {
 
 type NodeSeekInteractionType = 'upvote' | 'like' | 'dislike';
 
+const NODESEEK_CONTENT_TOKEN_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
 export function nodeSeekInteractionRemovalMessage(type: NodeSeekInteractionType) {
   const labels: Record<NodeSeekInteractionType, string> = {
     upvote: '点赞',
@@ -24,12 +26,17 @@ function cleanPositiveInteger(value: string | number, name: string) {
   return number;
 }
 
-function cleanCsrfToken(value: string) {
-  const token = String(value || '').trim();
-  if (!token) {
-    throw new Error('NodeSeek token 缺失，请重新检测登录');
+function randomNodeSeekContentToken() {
+  let token = '';
+  for (let index = 0; index < 16; index += 1) {
+    token += NODESEEK_CONTENT_TOKEN_CHARS.charAt(Math.floor(Math.random() * NODESEEK_CONTENT_TOKEN_CHARS.length));
   }
   return token;
+}
+
+function cleanCsrfToken(value: string) {
+  const token = String(value || '').trim();
+  return token || randomNodeSeekContentToken();
 }
 
 export function buildNodeSeekReplyRequest({

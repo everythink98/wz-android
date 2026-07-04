@@ -987,8 +987,9 @@ function mergeRenderedNodeSeekReply(rendered: Reply, embedded?: Reply): Reply {
 
 function matchingEmbeddedNodeSeekReply(reply: Reply, embeddedReplies: Reply[]) {
   return embeddedReplies.find((item) => (
-    (reply.commentId && item.commentId === reply.commentId)
-    || (reply.floor && item.floor === reply.floor)
+    reply.commentId && item.commentId
+      ? item.commentId === reply.commentId
+      : Boolean(reply.floor && item.floor === reply.floor)
   ));
 }
 
@@ -1317,32 +1318,64 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   throw new Error('NodeSeek 主题解析失败');
 }
 
-export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & {
+type NodeSeekRepliesOptions = NodeSeekOptions & {
   page?: number;
   limit?: number;
   offset?: number | null;
-}): Promise<RepliesResponse> {
+  fillPages?: boolean;
+};
+
+async function fillNodeSeekRepliesLimit(id: string, options: NodeSeekRepliesOptions, result: RepliesResponse, limit: number): Promise<RepliesResponse> {
+  if (result.items.length >= limit || !result.hasMore || !result.nextPage) {
+    return result;
+  }
+  const page = options.page || 1;
+  const offset = typeof options.offset === 'number' ? options.offset : null;
+  if (result.nextPage === page && result.nextOffset === offset) {
+    return result;
+  }
+  const extra = await getNodeSeekReplies(id, {
+    ...options,
+    page: result.nextPage,
+    offset: result.nextOffset,
+    limit: limit - result.items.length
+  });
+  return {
+    ...extra,
+    items: [...result.items, ...extra.items]
+  };
+}
+
+export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOptions): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
   const { html, postData, rendered } = await fetchTopicPageData(id, page, options);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? options.offset as number : 0;
+  const floorOffset = hasOffset ? offset : ((page - 1) * limit);
   if (rendered && (rendered.replies.length || !postData)) {
-    const source = page <= 1 ? rendered.replies : rendered.replies.map((reply, index) => ({
+    const renderedSource = page <= 1 ? rendered.replies : rendered.replies.map((reply, index) => ({
       ...reply,
-      floor: reply.floor ?? (hasOffset ? offset + index + 1 : ((page - 1) * limit) + index + 1)
+      floor: reply.floor ?? floorOffset + index + 1
     }));
+    const embeddedReplies = postData
+      ? normalizeReplies(arrayField(postData.comments), { skipFirst: page <= 1, floorOffset: page <= 1 ? 0 : floorOffset })
+      : [];
+    const source = embeddedReplies.length
+      ? renderedSource.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embeddedReplies)))
+      : renderedSource;
     const items = page <= 1 ? source.slice(offset, offset + limit) : source;
     const consumed = offset + items.length;
     const hasPageRemainder = page <= 1 && consumed < source.length;
     const nextPage = nextNodeSeekPostPage(html, id, page);
     const hasMore = hasPageRemainder || Boolean(nextPage);
-    return {
+    const result = {
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? page : nextPage || page + 1) : null,
       nextOffset: hasMore ? consumed : null
     };
+    return options.fillPages ? fillNodeSeekRepliesLimit(id, options, result, limit) : result;
   }
   if (!postData) {
     throw new Error('NodeSeek 主题解析失败');
@@ -1355,23 +1388,24 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekOptions & 
     const hasPageRemainder = consumed < allReplies.length;
     const nextPage = nextNodeSeekPostPage(html, id, 1);
     const hasMore = hasPageRemainder || Boolean(nextPage);
-    return {
+    const result = {
       items,
       hasMore,
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
       nextOffset: hasMore ? consumed : null
     };
+    return options.fillPages ? fillNodeSeekRepliesLimit(id, options, result, limit) : result;
   }
-  const floorOffset = hasOffset ? offset : ((page - 1) * limit);
   const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
   const nextPage = nextNodeSeekPostPage(html, id, page);
   const hasMore = Boolean(nextPage);
-  return {
+  const result = {
     items,
     hasMore,
     nextPage: nextPage || null,
     nextOffset: hasMore ? floorOffset + items.length : null
   };
+  return options.fillPages ? fillNodeSeekRepliesLimit(id, options, result, limit) : result;
 }
 
 export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {

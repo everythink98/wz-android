@@ -313,6 +313,7 @@ export function getReplies({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  fillPages,
   signal,
   timeoutMs
 }: {
@@ -324,10 +325,11 @@ export function getReplies({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  fillPages?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
   return pickSource<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),

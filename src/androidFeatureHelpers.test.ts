@@ -8,6 +8,7 @@ import {
   highlightHtml,
   highlightTextParts,
   libraryCategoryFilterItems,
+  replyLoadMoreLimit,
   replyRefreshTarget,
   stripHtml
 } from './androidFeatureHelpers';
@@ -155,5 +156,80 @@ describe('Android feature helpers', () => {
       page: 2,
       offset: 0
     });
+  });
+
+  it('refreshes changed NodeSeek replies from the inferred origin page window', () => {
+    expect(replyRefreshTarget({
+      source: 'nodeseek',
+      afterSubmit: true,
+      expectedReplyCount: 21,
+      replyNextPage: 2,
+      replyNextOffset: 10,
+      targetReplyIndex: 17
+    })).toEqual({
+      page: 2,
+      offset: 10,
+      limit: 10
+    });
+  });
+
+  it('refreshes new NodeSeek replies from the inferred tail window', () => {
+    expect(replyRefreshTarget({
+      source: 'nodeseek',
+      afterSubmit: true,
+      expectedReplyCount: 21,
+      replyNextPage: 2,
+      replyNextOffset: 10
+    })).toEqual({
+      page: 3,
+      offset: 20,
+      limit: 10
+    });
+  });
+
+  it('refreshes the currently loaded NodeSeek replies on manual refresh', () => {
+    expect(replyRefreshTarget({
+      source: 'nodeseek',
+      afterSubmit: false,
+      expectedReplyCount: 0,
+      loadedReplyCount: 45
+    })).toEqual({
+      page: 1,
+      offset: 0,
+      limit: 45
+    });
+  });
+
+  it('refreshes only one loaded NodeSeek origin page on manual refresh', () => {
+    expect(replyRefreshTarget({
+      source: 'nodeseek',
+      afterSubmit: false,
+      expectedReplyCount: 0,
+      loadedReplyCount: 10
+    })).toEqual({
+      page: 1,
+      offset: 0,
+      limit: 10
+    });
+  });
+
+  it('loads only the next NodeSeek origin reply page when the origin page size is known', () => {
+    expect(replyLoadMoreLimit({
+      source: 'nodeseek',
+      replyNextPage: 2,
+      replyNextOffset: 10
+    })).toBe(10);
+
+    expect(replyLoadMoreLimit({
+      source: 'nodeseek',
+      replyNextPage: 1,
+      replyNextOffset: 30
+    })).toBe(30);
+
+    expect(replyLoadMoreLimit({
+      source: 'linuxdo',
+      replyNextPage: 2,
+      replyNextOffset: 30
+    })).toBe(30);
   });
 });
