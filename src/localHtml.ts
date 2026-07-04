@@ -5,6 +5,7 @@ import type { AccessRequirement } from './types';
 
 export const FORUM_VIDEO_TAG = 'forum-video';
 export const FORUM_VIDEO_STICKER_TAG = 'forum-video-sticker';
+export const FORUM_LINK_CARD_TAG = 'forum-link-card';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -102,9 +103,9 @@ export function hasRenderableHtmlContent(value: unknown) {
     return true;
   }
   try {
-    return Boolean(parseHtml(value).querySelector('img, iframe, video, forum-video, forum-video-sticker'));
+    return Boolean(parseHtml(value).querySelector(`img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}`));
   } catch {
-    return /<(?:img|iframe|video|forum-video|forum-video-sticker)\b/i.test(String(value || ''));
+    return new RegExp(`<(?:img|iframe|video|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG})\\b`, 'i').test(String(value || ''));
   }
 }
 
@@ -215,6 +216,50 @@ function escapeHtmlAttribute(value: string) {
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+}
+
+function oneboxText(node: HTMLElement | null | undefined, maxLength: number) {
+  const text = textContentFromHtml(node?.innerHTML || node?.text || '');
+  return text.length > maxLength ? text.slice(0, maxLength).trim() : text;
+}
+
+function firstClassedImage(node: HTMLElement, className: string) {
+  return node.querySelectorAll('img').find((image) => classTokens(image.getAttribute('class')).includes(className));
+}
+
+function fallbackHost(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return value;
+  }
+}
+
+function sanitizeDiscourseOneboxes(root: HTMLElement, baseUrl: string) {
+  root.querySelectorAll('aside').forEach((node) => {
+    if (!classTokens(node.getAttribute('class')).includes('onebox')) {
+      return;
+    }
+    const links = node.querySelectorAll('a');
+    const sourceLink = node.querySelector('header a') || links[0];
+    const titleLink = node.querySelector('h3 a') || links[1] || sourceLink;
+    const rawHref = node.getAttribute('data-onebox-src') || titleLink?.getAttribute('href') || sourceLink?.getAttribute('href') || '';
+    const href = sanitizedUrlAttribute('href', rawHref, baseUrl);
+    if (!href) {
+      node.remove();
+      return;
+    }
+    const site = oneboxText(sourceLink, 80) || fallbackHost(href);
+    const title = oneboxText(titleLink, 160) || site;
+    const description = oneboxText(node.querySelector('article p') || node.querySelector('p'), 220);
+    const thumbnail = firstClassedImage(node, 'thumbnail');
+    const siteIcon = firstClassedImage(node, 'site-icon');
+    const imageSrc = thumbnail ? sanitizedUrlAttribute('src', thumbnail.getAttribute('src') || '', baseUrl) || '' : '';
+    const iconSrc = siteIcon ? sanitizedUrlAttribute('src', siteIcon.getAttribute('src') || '', baseUrl) || '' : '';
+    node.replaceWith(
+      `<${FORUM_LINK_CARD_TAG} href="${escapeHtmlAttribute(href)}" site="${escapeHtmlAttribute(site)}" title="${escapeHtmlAttribute(title)}" description="${escapeHtmlAttribute(description)}" image-src="${escapeHtmlAttribute(imageSrc)}" icon-src="${escapeHtmlAttribute(iconSrc)}"></${FORUM_LINK_CARD_TAG}>`
+    );
+  });
 }
 
 function sanitizeIframes(root: HTMLElement, baseUrl: string) {
@@ -355,6 +400,7 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   sanitizePlayableVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);
   sanitizeNsVideoImages(root, baseUrl);
+  sanitizeDiscourseOneboxes(root, baseUrl);
   removeForumImageMetadata(root);
   root.querySelectorAll('*').forEach((node) => {
     const tagName = safeTagName(node);
@@ -375,7 +421,7 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
         }
         continue;
       }
-      if (lower === 'href' || lower === 'src' || lower === 'data-fallback-src') {
+      if (lower === 'href' || lower === 'src' || lower === 'data-fallback-src' || lower === 'image-src' || lower === 'icon-src') {
         const next = tagName === FORUM_VIDEO_TAG && lower === 'src'
           ? sanitizedHttpMediaUrl(value, baseUrl)
           : sanitizedUrlAttribute(lower === 'href' ? 'href' : 'src', value, baseUrl);

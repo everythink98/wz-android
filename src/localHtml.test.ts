@@ -197,6 +197,33 @@ describe('Android local HTML helpers', () => {
     expect(result).not.toContain('image1244×152 8.4 KB');
   });
 
+  it('turns Discourse oneboxes into safe link cards', () => {
+    const result = sanitizeContentHtml(`
+      <aside class="onebox allowlistedgeneric" data-onebox-src="https://bincheck.io/zh" onclick="alert(1)">
+        <header class="source">
+          <img src="https://cdn3.ldstatic.com/original/site.svg" class="site-icon" alt="">
+          <a href="https://bincheck.io/zh" target="_blank">bincheck.io</a>
+        </header>
+        <article class="onebox-body">
+          <div class="aspect-image"><img src="https://cdn3.ldstatic.com/optimized/thumb.png" class="thumbnail" alt=""></div>
+          <h3><a href="https://bincheck.io/zh">检查、验证和验证 BIN - 银行识别号 - BIN Check</a></h3>
+          <p>免费在线 BIN/IIN 检查器以验证和验证银行识别号的信息</p>
+        </article>
+      </aside>
+    `, 'https://linux.do');
+
+    expect(result).toContain('<forum-link-card');
+    expect(result).toContain('href="https://bincheck.io/zh"');
+    expect(result).toContain('site="bincheck.io"');
+    expect(result).toContain('title="检查、验证和验证 BIN - 银行识别号 - BIN Check"');
+    expect(result).toContain('description="免费在线 BIN/IIN 检查器以验证和验证银行识别号的信息"');
+    expect(result).toContain('image-src="https://cdn3.ldstatic.com/optimized/thumb.png"');
+    expect(result).toContain('icon-src="https://cdn3.ldstatic.com/original/site.svg"');
+    expect(result).not.toContain('<aside');
+    expect(result).not.toContain('<img');
+    expect(result).not.toContain('onclick');
+  });
+
   it('decodes apostrophe entities', () => {
     expect(decodeHtml('A&apos;B')).toBe("A'B");
   });

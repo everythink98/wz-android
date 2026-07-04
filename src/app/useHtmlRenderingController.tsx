@@ -26,12 +26,12 @@ import {
 } from '../htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
-import { fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
+import { androidRipple, fontFamilyValue, lineHeightMultiplier, type ReaderTheme } from '../theme';
 import type { Topic, TopicDetail, UserProfile } from '../types';
 import type { HtmlRenderers, HtmlRenderersProps } from '../appTypes';
 import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
-import { FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
+import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
 
 export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
@@ -234,6 +234,44 @@ export function useHtmlRenderingController({
         </View>
       );
     };
+    const LinkCardRenderer: CustomBlockRenderer = (props) => {
+      const attributes = props.tnode.attributes || {};
+      const href = attributes.href || '';
+      const site = attributes.site || '';
+      const title = attributes.title || site || href;
+      const description = attributes.description || '';
+      const imageSrc = attributes['image-src'] || '';
+      const iconSrc = attributes['icon-src'] || '';
+      if (!href) {
+        return null;
+      }
+      return (
+        <Pressable
+          accessibilityLabel={title}
+          accessibilityRole="link"
+          android_ripple={androidRipple(theme.mist)}
+          style={[embedStyles.linkCard, { backgroundColor: theme.surface, borderColor: theme.line }]}
+          onPress={(event) => {
+            event.stopPropagation?.();
+            openHtmlLink(href, event);
+          }}
+        >
+          {site || iconSrc ? (
+            <View style={embedStyles.linkCardHeader}>
+              {iconSrc ? <ExpoImage contentFit="contain" source={imageSourceFromUrl(iconSrc)} style={embedStyles.linkCardIcon} /> : null}
+              {site ? <Text numberOfLines={1} style={[embedStyles.linkCardSite, { color: theme.muted }]}>{site}</Text> : null}
+            </View>
+          ) : null}
+          <View style={embedStyles.linkCardBody}>
+            {imageSrc ? <ExpoImage contentFit="cover" source={imageSourceFromUrl(imageSrc)} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
+            <View style={embedStyles.linkCardText}>
+              <Text numberOfLines={3} style={[embedStyles.linkCardTitle, { color: theme.primaryStrong }]}>{title}</Text>
+              {description ? <Text numberOfLines={3} style={[embedStyles.linkCardDescription, { color: theme.ink }]}>{description}</Text> : null}
+            </View>
+          </View>
+        </Pressable>
+      );
+    };
     const IframeRenderer: CustomBlockRenderer = (props) => {
       const src = props.tnode.attributes.src || '';
       const embed = nsEmbedFromUrl(src);
@@ -331,6 +369,7 @@ export function useHtmlRenderingController({
       a: ReplyReferenceLinkRenderer,
       [FORUM_STICKER_ROW_TAG]: ForumStickerRowRenderer,
       [FORUM_STICKER_TAG]: ForumStickerRenderer,
+      [FORUM_LINK_CARD_TAG]: LinkCardRenderer,
       [FORUM_VIDEO_TAG]: ForumVideoRenderer,
       [FORUM_VIDEO_STICKER_TAG]: ForumVideoStickerRenderer,
       iframe: IframeRenderer,
@@ -352,8 +391,13 @@ export function useHtmlRenderingController({
     styles.htmlReplyReferenceSeparator,
     styles.inlineForumImage,
     styles.inlineForumImageText,
+    theme.ink,
     theme.line,
+    theme.mist,
+    theme.muted,
     theme.primary,
+    theme.primaryStrong,
+    theme.surface,
     theme.surface2
   ]);
 
@@ -409,6 +453,53 @@ const embedStyles = StyleSheet.create({
   stickerVideo: {
     backgroundColor: 'transparent',
     flex: 1
+  },
+  linkCard: {
+    alignSelf: 'stretch',
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 12,
+    marginTop: 8,
+    overflow: 'hidden',
+    padding: 10
+  },
+  linkCardHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    marginBottom: 8
+  },
+  linkCardIcon: {
+    height: 18,
+    marginRight: 7,
+    width: 18
+  },
+  linkCardSite: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600'
+  },
+  linkCardBody: {
+    flexDirection: 'row'
+  },
+  linkCardThumbnail: {
+    borderRadius: 4,
+    height: 58,
+    marginRight: 10,
+    width: 92
+  },
+  linkCardText: {
+    flex: 1,
+    minWidth: 0
+  },
+  linkCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 22
+  },
+  linkCardDescription: {
+    fontSize: 14,
+    lineHeight: 21,
+    marginTop: 6
   },
   videoFrame: {
     alignSelf: 'stretch',

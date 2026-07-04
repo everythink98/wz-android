@@ -1,6 +1,6 @@
-import { FORUM_VIDEO_TAG, parseHtml } from './localHtml';
+import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_TAG, parseHtml } from './localHtml';
 
-const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'iframe', FORUM_VIDEO_TAG, 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+const FALLBACK_BLOCK_TAGS = new Set(['p', 'div', 'blockquote', 'pre', 'ul', 'ol', 'li', 'table', 'details', 'summary', 'iframe', FORUM_VIDEO_TAG, FORUM_LINK_CARD_TAG, 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
 
 function nodeTagName(node: unknown) {
   const record = node as { rawTagName?: unknown; tagName?: unknown };

@@ -481,7 +481,10 @@ function flowImagesInMixedContainer(
 ) {
   const images = directOnly ? directChildImages(container) : (container.querySelectorAll?.('img') || []);
   const flowableImages = images.filter((image) => shouldFlowImage(image.attributes));
-  if (!flowableImages.length || !paragraphHasTextOutsideImages(container.innerHTML || '')) {
+  if (!flowableImages.length) {
+    return;
+  }
+  if (!paragraphHasTextOutsideImages(container.innerHTML || '') && !flowableImages.every((image) => isInlineForumImageAttributes(image.attributes))) {
     return;
   }
   flowableImages.forEach((image) => {

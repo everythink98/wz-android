@@ -220,6 +220,22 @@ describe('Android HTML image preview helpers', () => {
     expect(flowInlineImagesInMixedParagraphs(html)).not.toContain('<img class="emoji"');
   });
 
+  it('renders standalone V2EX emoji through the inline image path', () => {
+    const html = '<p><img src="https://www.v2ex.com/static/img/emoji/smile.png" alt=":smile:" width="20" height="20"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image');
+    expect(result).not.toContain('<img');
+  });
+
+  it('renders standalone linux.do emoji through the inline image path', () => {
+    const html = '<p><img class="emoji" src="https://linux.do/images/emoji/twemoji/grinning_face.png" alt=":grinning_face:" width="20" height="20"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image class="emoji"');
+    expect(result).not.toContain('<img class="emoji"');
+  });
+
   it('renders xhj sticker images in mixed paragraphs through the inline image path', () => {
     const html = '<p>前两天刚买的bugnet，买早了<img alt="xhj032" src="https://cdn.example.com/xhj032.png"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
