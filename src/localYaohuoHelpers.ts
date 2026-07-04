@@ -107,6 +107,11 @@ function isYaohuoUserTopicListUrl(url: URL, userId: string) {
     && queryValue(url, 'key') === userId;
 }
 
+function isYaohuoUserReplyListUrl(url: URL, userId: string) {
+  return /\/bbs\/book_re_my\.aspx$/i.test(url.pathname)
+    && queryValue(url, 'touserid') === userId;
+}
+
 export function yaohuoUserProfileTopicListUrl(html: string, userId: string, currentUrl = YAOHUO_BASE_URL) {
   const root = parseHtml(html);
   const href = root.querySelectorAll('a[href]').find((link) => {
@@ -121,6 +126,28 @@ export function yaohuoUserProfileTopicListUrl(html: string, userId: string, curr
   try {
     const parsed = new URL(nextUrl);
     if (!isYaohuoUserTopicListUrl(parsed, userId)) {
+      return '';
+    }
+    return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+export function yaohuoUserProfileReplyListUrl(html: string, userId: string, currentUrl = YAOHUO_BASE_URL) {
+  const root = parseHtml(html);
+  const href = root.querySelectorAll('a[href]').find((link) => {
+    const text = elementText(link);
+    const rawHref = link.getAttribute('href') || '';
+    return /回帖|回复/.test(text) && /book_re_my\.aspx/i.test(rawHref);
+  })?.getAttribute('href') || '';
+  const nextUrl = absoluteUrl(href, currentUrl);
+  if (!nextUrl) {
+    return '';
+  }
+  try {
+    const parsed = new URL(nextUrl);
+    if (!isYaohuoUserReplyListUrl(parsed, userId)) {
       return '';
     }
     return parsed.toString();
@@ -147,6 +174,23 @@ export function yaohuoTopicListNextPageUrl(html: string, currentUrl: string, pag
     const parsed = new URL(currentUrl);
     parsed.searchParams.set('page', String(nextPage));
     return parsed.toString();
+  } catch {
+    return '';
+  }
+}
+
+export function yaohuoReplyListNextPageUrl(html: string, currentUrl: string, itemCount: number) {
+  if (!itemCount) {
+    return '';
+  }
+  const root = parseHtml(html);
+  const href = root.querySelectorAll('a[href]').find((link) => /^(下一页|下页)$/.test(elementText(link)))?.getAttribute('href') || '';
+  const linkedUrl = absoluteUrl(href, currentUrl);
+  if (!linkedUrl) {
+    return '';
+  }
+  try {
+    return requireYaohuoRequestUrl(linkedUrl, currentUrl);
   } catch {
     return '';
   }

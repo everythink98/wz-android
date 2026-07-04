@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseYaohuoRepliesHtml } from './localYaohuo';
+import { parseYaohuoRepliesHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 
 describe('yaohuo reply parsing', () => {
   it('marks only replies with the original own-delete link as deletable', () => {
@@ -37,5 +37,67 @@ describe('yaohuo reply parsing', () => {
     });
     expect(replies.items[1].canDelete).toBeUndefined();
     expect(replies.items[1].deletePath).toBeUndefined();
+  });
+
+  it('does not duplicate user reply rows when the page wraps replies in outer divs', () => {
+    const replies = parseYaohuoUserRepliesHtml(`
+      <div>
+        <div>火友 (7) #71 妖火回复内容。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+      </div>
+      <div>
+        <div>火友 (7) #70 另一条回复。 2026-05-19 09:10 <a href="/bbs-66.html">查看</a></div>
+      </div>
+    `, { id: '7', username: '火友' });
+
+    expect(replies).toHaveLength(2);
+    expect(replies.map((reply) => reply.id)).toEqual([
+      '66:71:2026-05-20T02:30:00.000Z',
+      '66:70:2026-05-19T01:10:00.000Z'
+    ]);
+  });
+
+  it('ignores outer containers that wrap multiple user reply rows', () => {
+    const replies = parseYaohuoUserRepliesHtml(`
+      <div>
+        <div>火友 (7) #71 妖火回复内容。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+        <div>火友 (7) #70 另一条回复。 2026-05-19 09:10 <a href="/bbs-66.html">查看</a></div>
+      </div>
+    `, { id: '7', username: '火友' });
+
+    expect(replies).toHaveLength(2);
+    expect(replies.map((reply) => reply.floor)).toEqual([71, 70]);
+    expect(replies[0].excerpt).toBe('妖火回复内容。');
+    expect(replies[1].excerpt).toBe('另一条回复。');
+  });
+
+  it('drops link-only duplicate blocks for the same topic and reply time', () => {
+    const replies = parseYaohuoUserRepliesHtml(`
+      <div>火友 (7) #71 阿根廷没问题。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+      <div>火友 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+    `, { id: '7', username: '火友' });
+
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      floor: 71,
+      excerpt: '阿根廷没问题。'
+    });
+  });
+
+  it('keeps yaohuo user topic and reply display times identical to the source text', () => {
+    const profile = parseYaohuoUserProfileHtml(`
+      <div class="content">昵称:火友<br/>贴子(1).回复(1)</div>
+      <div class="listdata"><a href="/bbs-66.html?classid=177">妖火主题</a>/火友/阅1/2026-05-20 10:30</div>
+    `, { id: '7', username: '火友' });
+    const replies = parseYaohuoUserRepliesHtml(`
+      <div>火友 (7) #71 阿根廷没问题。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+    `, { id: '7', username: '火友' });
+
+    expect(profile.topics[0]).toMatchObject({
+      displayTimeText: '2026-05-20 10:30'
+    });
+    expect(replies[0]).toMatchObject({
+      createdAt: '2026-05-20T02:30:00.000Z',
+      displayTimeText: '2026-05-20 10:30'
+    });
   });
 });

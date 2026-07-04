@@ -63,6 +63,15 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 8,
       paddingBottom: 96
     },
+    userProfileHeader: {
+      gap: 16,
+      padding: 16,
+      paddingTop: 8,
+      paddingBottom: 10,
+      backgroundColor: theme.background,
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
     libraryContentInner: {
       gap: 0,
       padding: 16,

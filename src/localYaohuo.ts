@@ -1,5 +1,5 @@
 import type { HTMLElement } from 'node-html-parser';
-import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
+import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   absoluteUrl,
   accessRequirementFromText,
@@ -70,10 +70,12 @@ function currentYaohuoClock(): YaohuoClock {
 
 function parseYaohuoDate(value: unknown, now = currentYaohuoClock()) {
   const text = String(value || '').trim();
-  const full = text.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/);
-  const partial = text.match(/(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/);
+  const full = yaohuoFullDateText(text);
+  const partial = yaohuoPartialDateText(text);
   const relative = parseYaohuoRelativeDate(text, now);
-  const parts = full ? full.slice(1) : partial ? [String(now.year), ...partial.slice(1)] : null;
+  const fullParts = full.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/)?.slice(1);
+  const partialParts = partial.match(/(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/)?.slice(1);
+  const parts = fullParts || (partialParts ? [String(now.year), ...partialParts] : null);
   if (relative) {
     return relative;
   }
@@ -86,6 +88,25 @@ function parseYaohuoDate(value: unknown, now = currentYaohuoClock()) {
   }
   const date = beijingDateToIso(year, month, day, hour, minute);
   return date || '';
+}
+
+function yaohuoFullDateText(text: string) {
+  return text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] || '';
+}
+
+function yaohuoPartialDateText(text: string) {
+  if (yaohuoFullDateText(text)) {
+    return '';
+  }
+  return text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0] || '';
+}
+
+function yaohuoRelativeDateText(text: string) {
+  return text.match(/(?:刚刚|刚才|\d{1,4}\s*(?:分钟|小时|天)前|(?:今天|昨天|前天)\s*(?:(?:午夜|凌晨|上午|中午|下午|晚上)\s*)?\d{1,2}:\d{1,2}|(?:今天|昨天|前天)\s*(?:午夜|凌晨|上午|中午|下午|晚上))/)?.[0] || '';
+}
+
+function yaohuoDisplayTimeText(text: string) {
+  return yaohuoFullDateText(text) || yaohuoPartialDateText(text) || yaohuoRelativeDateText(text);
 }
 
 function beijingDateToIso(year: number, month: number, day: number, hour: number, minute: number) {
@@ -141,10 +162,6 @@ function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
     return 0;
   }
   return hour;
-}
-
-function isYaohuoPeriodOnlyTime(text: string) {
-  return /^(?:(?:今天|昨天|前天)\s*)?(?:午夜|凌晨|上午|中午|下午|晚上)$/.test(text);
 }
 
 function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
@@ -255,8 +272,8 @@ function parseListItem(
     || text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
     || '';
-  const displayTimeText = rightText && isYaohuoPeriodOnlyTime(rightText) ? rightText : '';
-  const parsedCreatedAt = displayTimeText ? '' : parseYaohuoDate(timeText || text, now);
+  const displayTimeText = timeText;
+  const parsedCreatedAt = parseYaohuoDate(timeText || text, now);
   const createdAt = parsedCreatedAt || fallbackCreatedAt;
   const author = text.replace(title, '').split('/').map((part) => part.trim().replace(/^\d+\.\s*/, '')).find((part) => (
     part && !/^\d+$/.test(part) && !/阅\s*\d+/.test(part) && !/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/.test(part)
@@ -795,9 +812,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     }
     seen.add(topicId);
     const text = elementText(row);
-    const timeText = text.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-      || text.match(/\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{1,2}/)?.[0]
-      || '';
+    const timeText = yaohuoDisplayTimeText(text);
     const createdAt = parseYaohuoDate(timeText || text) || new Date().toISOString();
     return [{
       source: 'yaohuo' as const,
@@ -811,6 +826,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
       url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
       createdAt,
       lastReplyAt: createdAt,
+      ...(timeText ? { displayTimeText: timeText } : {}),
       replyCount: 0,
       ...(levelLabel ? { authorLevelLabel: levelLabel } : {})
     }];
@@ -825,6 +841,73 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     ...stats,
     topics: sortTopicsByCreatedAt(topics).slice(0, 30)
   };
+}
+
+export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: { id: string; username?: string; url?: string }): UserReplyActivity[] {
+  ensureYaohuoHtmlLoggedIn(html, url);
+  const root = parseHtml(html);
+  const author = username || id;
+  const seen = new Set<string>();
+  const seenTopicDates = new Set<string>();
+  const replyRows = root.querySelectorAll('div.listdata, div.line1, div.line2');
+  const rows = replyRows.length ? replyRows : root.querySelectorAll('div');
+  return rows
+    .map((row, index) => {
+      const viewLinks = row.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]');
+      if (viewLinks.length !== 1) {
+        return null;
+      }
+      const viewLink = viewLinks[0];
+      const { id: topicId, classId, url: topicUrl } = extractTopicParts(viewLink?.getAttribute('href'));
+      if (!topicId) {
+        return null;
+      }
+      const text = elementText(row);
+      const dateText = yaohuoDisplayTimeText(text);
+      const floor = parsePositiveInteger(text.match(/#\s*(\d+)/)?.[1]);
+      const createdAt = parseYaohuoDate(dateText || text);
+      const topicTitle = /^查看$/.test(elementText(viewLink)) ? '查看原帖' : elementText(viewLink) || '查看原帖';
+      let excerpt = text
+        .replace(dateText, ' ')
+        .replace(new RegExp(`^\\s*${author.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'i'), ' ')
+        .replace(new RegExp(`\\(${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, 'g'), ' ')
+        .replace(/#\s*\d+/g, ' ')
+        .replace(/查看/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      excerpt = textExcerpt(excerpt);
+      const replyIdentity = floor || createdAt
+        ? [topicId, floor || '', createdAt || ''].join(':')
+        : excerpt
+          ? `${topicId}:${excerpt}`
+          : `${topicId}:row:${index}`;
+      const topicDateIdentity = createdAt ? `${topicId}:${createdAt}` : '';
+      if (seen.has(replyIdentity) || (!floor && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
+        return null;
+      }
+      seen.add(replyIdentity);
+      if (topicDateIdentity) {
+        seenTopicDates.add(topicDateIdentity);
+      }
+      return {
+        source: 'yaohuo' as const,
+        id: replyIdentity,
+        topicId,
+        topicTitle,
+        topicUrl: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
+        url: topicUrl || `${BASE_URL}/bbs-${topicId}.html`,
+        author,
+        authorId: id,
+        authorUrl: userUrl(id),
+        categoryId: classId,
+        category: classId ? categoryNames.get(classId) : undefined,
+        ...(createdAt ? { createdAt } : {}),
+        ...(dateText ? { displayTimeText: dateText } : {}),
+        ...(floor ? { floor } : {}),
+        ...(excerpt ? { excerpt } : {})
+      };
+    })
+    .filter(Boolean) as UserReplyActivity[];
 }
 
 export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProfile | null {

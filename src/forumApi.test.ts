@@ -128,13 +128,13 @@ describe('Android local forum facade', () => {
   it('routes user profile reads to each public source site', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
-        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, readme: 'bio', rank: 6 } }));
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872, readme: 'bio', rank: 6, avatar: '/avatar/48872.png' } }));
       }
       if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
-        return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0 }] }));
+        return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0, tag_name: 'daily', tag_cn_text: '日常', text: 'NodeSeek topic excerpt' }] }));
       }
       if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=1')) {
-        return new Response(JSON.stringify({ success: true, comments: [{ post_id: 101, floor_id: 2, text: 'NodeSeek reply' }] }));
+        return new Response(JSON.stringify({ success: true, comments: [{ post_id: 101, title: 'NodeSeek topic', floor_id: 2, text: 'NodeSeek reply' }] }));
       }
       if (input.includes('linux.do/u/alice/summary.json')) {
         return new Response(JSON.stringify({
@@ -147,14 +147,37 @@ describe('Android local forum facade', () => {
           topics: [{ id: 42, title: 'linux topic', slug: 'linux-topic', created_at: '2026-05-20T00:00:00.000Z', posts_count: 1 }]
         }));
       }
+      if (input.includes('linux.do/user_actions.json') && input.includes('username=alice') && input.includes('filter=5')) {
+        return new Response(JSON.stringify({
+          user_actions: [{
+            excerpt: 'linux reply excerpt',
+            created_at: '2026-05-20T01:00:00.000Z',
+            slug: 'linux-topic',
+            topic_id: 42,
+            post_number: 3,
+            post_id: 1003,
+            title: 'linux topic',
+            category_id: 1
+          }]
+        }));
+      }
       if (input.includes('v2ex.com/api/members/show.json')) {
         return new Response(JSON.stringify({ id: 9, username: 'neo', avatar_large: '//cdn.v2ex.com/avatar.png', tagline: 'hello', pro: 1 }));
       }
-      if (input.includes('v2ex.com/member/neo')) {
+      if (input.includes('v2ex.com/member/neo/topics')) {
         return new Response('<div class="cell item"><a class="topic-link" href="/t/121">V2EX topic</a><a class="node" href="/go/create">分享创造</a><span title="2026-05-20 10:00:00"></span></div>');
       }
+      if (input.includes('v2ex.com/member/neo/replies')) {
+        return new Response(`
+          <div class="cell ps_container"><a href="?p=1">1</a><a href="?p=2">2</a></div>
+          <div class="dock_area">5 月 20 日回复了 alice 创建的主题 › 分享创造 › <a href="/t/121#reply4">V2EX topic</a></div>
+        `);
+      }
       if (input.includes('yaohuo.me')) {
-        return new Response('<div class="content">昵称:火友<br/>1万妖晶2级等级7年注册时长<br/>发帖:3<br/>回帖:9</div><a href="/bbs-66.html">妖火主题</a>');
+        if (input.includes('book_re_my.aspx')) {
+          return new Response('<div>火友 (7) #2 妖火回复内容。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div><a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2">下一页</a>');
+        }
+        return new Response('<div class="content">昵称:火友<br/>1万妖晶2级等级7年注册时长<br/>发帖:3<br/>回帖:9 <a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7">回复(9)</a></div><div class="listdata"><a href="/bbs-66.html?classid=177">妖火主题</a>/火友/阅1/2026-05-20 10:30</div>');
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -174,6 +197,163 @@ describe('Android local forum facade', () => {
     expect(v2ex.levelLabel).toBe('Pro');
     expect(yaohuo.levelLabel).toBe('2级');
     expect(yaohuo.topics[0].authorLevelLabel).toBe('2级');
+    expect(nodeseek.topics[0]).toMatchObject({
+      source: 'nodeseek',
+      id: '101',
+      title: 'NodeSeek topic',
+      author: '我是ikun',
+      authorId: '48872',
+      authorAvatar: 'https://www.nodeseek.com/avatar/48872.png',
+      authorUrl: 'https://www.nodeseek.com/space/48872',
+      categoryId: 'daily',
+      category: '日常',
+      url: 'https://www.nodeseek.com/post-101-1',
+      replyCount: 0,
+      excerpt: 'NodeSeek topic excerpt'
+    });
+    expect(linuxdo.topics[0]).toMatchObject({
+      source: 'linuxdo',
+      id: '42',
+      title: 'linux topic',
+      author: 'alice',
+      authorId: 'alice',
+      authorAvatar: 'https://linux.do/user_avatar/linux.do/alice/96/1_2.png',
+      authorUrl: 'https://linux.do/u/alice',
+      url: 'https://linux.do/t/linux-topic/42',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      replyCount: 0
+    });
+    expect(v2ex.topics[0]).toMatchObject({
+      source: 'v2ex',
+      id: '121',
+      title: 'V2EX topic',
+      author: 'neo',
+      authorId: 'neo',
+      authorAvatar: 'https://cdn.v2ex.com/avatar.png',
+      authorUrl: 'https://www.v2ex.com/member/neo',
+      category: '分享创造',
+      url: 'https://www.v2ex.com/t/121',
+      createdAt: '2026-05-20T02:00:00.000Z',
+      replyCount: 0
+    });
+    expect(yaohuo.topics[0]).toMatchObject({
+      source: 'yaohuo',
+      id: '66',
+      title: '妖火主题',
+      author: '火友',
+      authorId: '7',
+      authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      categoryId: '177',
+      category: '妖火茶馆',
+      url: 'https://yaohuo.me/bbs-66.html?classid=177',
+      createdAt: '2026-05-20T02:30:00.000Z',
+      displayTimeText: '2026-05-20 10:30',
+      replyCount: 0
+    });
+    expect(nodeseek.replies?.[0]).toMatchObject({
+      source: 'nodeseek',
+      id: '101:2:NodeSeek reply',
+      topicId: '101',
+      topicTitle: 'NodeSeek topic',
+      topicUrl: 'https://www.nodeseek.com/post-101-1',
+      url: 'https://www.nodeseek.com/post-101-1',
+      author: '我是ikun',
+      authorId: '48872',
+      authorAvatar: 'https://www.nodeseek.com/avatar/48872.png',
+      authorUrl: 'https://www.nodeseek.com/space/48872',
+      floor: 2,
+      excerpt: 'NodeSeek reply'
+    });
+    expect(linuxdo.replies?.[0]).toMatchObject({
+      source: 'linuxdo',
+      id: '1003',
+      topicId: '42',
+      topicTitle: 'linux topic',
+      topicUrl: 'https://linux.do/t/linux-topic/42',
+      url: 'https://linux.do/t/linux-topic/42/3',
+      author: 'alice',
+      authorId: 'alice',
+      authorAvatar: 'https://linux.do/user_avatar/linux.do/alice/96/1_2.png',
+      authorUrl: 'https://linux.do/u/alice',
+      categoryId: '1',
+      floor: 3,
+      excerpt: 'linux reply excerpt',
+      createdAt: '2026-05-20T01:00:00.000Z'
+    });
+    expect(v2ex.replies?.[0]).toMatchObject({
+      source: 'v2ex',
+      id: '121:4',
+      topicId: '121',
+      topicTitle: 'V2EX topic',
+      topicUrl: 'https://www.v2ex.com/t/121',
+      url: 'https://www.v2ex.com/t/121#reply4',
+      author: 'neo',
+      authorId: 'neo',
+      authorUrl: 'https://www.v2ex.com/member/neo',
+      category: '分享创造',
+      floor: 4,
+      createdAt: '2026-05-20T00:00:00.000Z',
+      displayTimeText: '5 月 20 日'
+    });
+    expect(yaohuo.replies?.[0]).toMatchObject({
+      source: 'yaohuo',
+      id: '66:2:2026-05-20T02:30:00.000Z',
+      topicId: '66',
+      topicTitle: '查看原帖',
+      topicUrl: 'https://yaohuo.me/bbs-66.html',
+      url: 'https://yaohuo.me/bbs-66.html',
+      author: '火友',
+      authorId: '7',
+      authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      floor: 2,
+      excerpt: '妖火回复内容。',
+      createdAt: '2026-05-20T02:30:00.000Z',
+      displayTimeText: '2026-05-20 10:30'
+    });
+    expect(yaohuo.nextRepliesCursor).toContain('page=2');
+  });
+
+  it('loads user replies from each source reply cursor', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=2')) {
+        return new Response(JSON.stringify({ success: true, comments: [{ post_id: 102, title: 'NodeSeek next', floor_id: 5, text: 'next reply' }] }));
+      }
+      if (input.includes('linux.do/u/alice/summary.json')) {
+        return new Response(JSON.stringify({ user_summary: { user: { username: 'alice' } } }));
+      }
+      if (input.includes('linux.do/user_actions.json') && input.includes('offset=30')) {
+        return new Response(JSON.stringify({ user_actions: [{ excerpt: 'linux next', created_at: '2026-05-21T01:00:00.000Z', slug: 'next', topic_id: 43, post_number: 4, post_id: 1004, title: 'linux next' }] }));
+      }
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ username: 'neo' }));
+      }
+      if (input.includes('v2ex.com/member/neo/replies?p=2')) {
+        return new Response('<div class="dock_area">2 分钟前回复了 bob 创建的主题 › 问与答 › <a href="/t/122#reply8">V2EX next</a></div>');
+      }
+      if (input.includes('yaohuo.me/bbs/book_re_my.aspx') && input.includes('page=2')) {
+        return new Response('<div>火友 (7) #3 妖火下一页。 2026-05-21 10:30 <a href="/bbs-67.html">查看</a></div>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    await expect(getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', cursor: '2', cursorType: 'replies', fetcher })).resolves.toMatchObject({
+      replies: [{ topicId: '102', floor: 5 }],
+      nextRepliesCursor: '3'
+    });
+    await expect(getUserProfile({ source: 'linuxdo', id: 'alice', username: 'alice', cursor: '30', cursorType: 'replies', fetcher })).resolves.toMatchObject({
+      replies: [{ topicId: '43', floor: 4 }],
+      nextRepliesCursor: '60'
+    });
+    await expect(getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })).resolves.toMatchObject({
+      replies: [{ topicId: '122', floor: 8, author: 'neo', authorId: 'neo', authorUrl: 'https://www.v2ex.com/member/neo', displayTimeText: '2 分钟前' }]
+    });
+    await expect(getUserProfile({ source: 'yaohuo', id: '7', username: '火友', cursor: 'https://yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2', cursorType: 'replies', fetcher, yaohuoCookie: 'sid=ok' })).resolves.toMatchObject({
+      replies: [{ topicId: '67', floor: 3 }],
+      hasMoreReplies: false
+    });
   });
 
   it('reads current logged-in users for account status without V2EX', async () => {
@@ -358,11 +538,17 @@ describe('Android local forum facade', () => {
       if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=45245&siteid=1000') {
         return new Response(`
           <div class="content">用户:45245人气值1空间人气1今日人气留言板</div>
-          <div class="content"><a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub">贴子(1)</a></div>
+          <div class="content">
+            <a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub">贴子(1)</a>
+            <a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=45245">回复(1)</a>
+          </div>
         `);
       }
       if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub') {
         return new Response('<div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=177&id=1">主题</a>/流金岁月/阅1/2026-05-20 10:00</div>');
+      }
+      if (input === 'https://yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=45245') {
+        return new Response('<div>45245 #71 阿根廷没问题。 2026-07-03 13:45 <a href="/bbs-66.html">查看</a></div>');
       }
       throw new Error(`unexpected ${input}`);
     });
@@ -372,7 +558,14 @@ describe('Android local forum facade', () => {
       id: '45245',
       username: '流金岁月',
       displayName: '流金岁月',
-      topics: []
+      topics: [],
+      replies: [{
+        author: '流金岁月',
+        authorId: '45245',
+        floor: 71,
+        excerpt: '阿根廷没问题。',
+        displayTimeText: '2026-07-03 13:45'
+      }]
     });
   });
 
@@ -507,6 +700,9 @@ describe('Android local forum facade', () => {
           <a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2">下一页</a>
         `);
       }
+      if (input === 'https://yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7') {
+        return new Response('');
+      }
       throw new Error(`unexpected ${input}`);
     });
 
@@ -517,7 +713,7 @@ describe('Android local forum facade', () => {
       hasMoreTopics: true,
       nextTopicsCursor: 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
     });
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it('keeps yaohuo user profile names out of activity text and reads the real post list', async () => {
@@ -649,7 +845,7 @@ describe('Android local forum facade', () => {
       if (input.includes('v2ex.com/api/members/show.json')) {
         return new Response(JSON.stringify({ id: 683966, username: 'haonanaaaaaa', avatar_large: 'https://cdn.v2ex.com/avatar.png' }));
       }
-      if (input === 'https://www.v2ex.com/member/haonanaaaaaa') {
+      if (input === 'https://www.v2ex.com/member/haonanaaaaaa/topics') {
         return new Response(`
           <div class="cell item">
             <span class="item_title"><a href="/t/1214608#reply177" class="topic-link">大家都用的什么代理软件</a></span>
@@ -677,7 +873,7 @@ describe('Android local forum facade', () => {
         return new Response(JSON.stringify({ id: 683966, username: 'haonanaaaaaa', avatar_large: 'https://cdn.v2ex.com/avatar.png' }));
       }
       if (input === 'https://www.v2ex.com/member/haonanaaaaaa') {
-        return new Response('<h1>haonanaaaaaa</h1><a href="/member/haonanaaaaaa/topics">More topics by haonanaaaaaa</a>');
+        return new Response('<h1>haonanaaaaaa</h1>');
       }
       if (input === 'https://www.v2ex.com/member/haonanaaaaaa/topics') {
         return new Response('<h1>haonanaaaaaa</h1>');
@@ -747,7 +943,7 @@ describe('Android local forum facade', () => {
       if (input.includes('v2ex.com/api/members/show.json')) {
         return new Response(JSON.stringify({ id: 9, username: 'neo' }));
       }
-      if (input === 'https://www.v2ex.com/member/neo') {
+      if (input === 'https://www.v2ex.com/member/neo/topics') {
         return new Response(`
           <div class="cell item">
             <span class="item_title"><a class="topic-link" href="/t/121#reply4">V2EX older</a></span>
@@ -788,6 +984,9 @@ describe('Android local forum facade', () => {
       if (input.includes('nodeseek.com/api/content/list-discussions?uid=48872&page=1')) {
         return new Response(JSON.stringify({ success: true, discussions: [{ post_id: 101, title: 'NodeSeek topic', rank: 0 }] }));
       }
+      if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, comments: [] }));
+      }
       throw new Error(`unexpected ${input}`);
     });
 
@@ -800,7 +999,7 @@ describe('Android local forum facade', () => {
     expect(nodeseek.topics[0].createdAt).toBe('');
     expect(nodeseek.topics[0].lastReplyAt).toBe('');
     expect(calls).not.toContain('nodeseek.com/post-101-1');
-    expect(calls).not.toContain('list-comments');
+    expect(calls).toContain('list-comments');
   });
 
   it('reads NodeSeek user profile JSON when hidden WebView wraps it in an HTML document', async () => {
@@ -847,6 +1046,9 @@ describe('Android local forum facade', () => {
           }]
         }));
       }
+      if (input.includes('nodeseek.com/api/content/list-comments?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, comments: [] }));
+      }
       throw new Error(`unexpected ${input}`);
     });
 
@@ -859,7 +1061,7 @@ describe('Android local forum facade', () => {
       lastReplyAt: '2026-05-22T16:06:25.000Z'
     });
     expect(calls).not.toContain('nodeseek.com/post-101-1');
-    expect(calls).not.toContain('list-comments');
+    expect(calls).toContain('list-comments');
   });
 
   it('keeps untimed NodeSeek user profile posts in their original list order', async () => {

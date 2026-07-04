@@ -96,6 +96,25 @@ export interface Reply {
   polls?: TopicPoll[];
 }
 
+export interface UserReplyActivity {
+  source: Source;
+  id: string;
+  topicId: string;
+  topicTitle: string;
+  topicUrl: string;
+  url: string;
+  categoryId?: string;
+  category?: string;
+  author?: string;
+  authorId?: string;
+  authorAvatar?: string;
+  authorUrl?: string;
+  createdAt?: string;
+  displayTimeText?: string;
+  floor?: number;
+  excerpt?: string;
+}
+
 export interface Category {
   source: Source;
   id: string;
@@ -168,6 +187,9 @@ export interface UserProfile {
   topics: Topic[];
   hasMoreTopics?: boolean;
   nextTopicsCursor?: string | null;
+  replies?: UserReplyActivity[];
+  hasMoreReplies?: boolean;
+  nextRepliesCursor?: string | null;
 }
 
 export interface FeedResponse {

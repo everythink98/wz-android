@@ -4,7 +4,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
-import type { Category, FeedResponse, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
+import type { Category, FeedResponse, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -41,6 +41,8 @@ interface NodeSeekOptions {
   nocache?: boolean;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  cursor?: string | null;
+  cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -525,6 +527,31 @@ function sortNodeSeekUserTopics(topics: Topic[]) {
       return left.index - right.index;
     })
     .map((item) => item.topic);
+}
+
+function normalizeNodeSeekUserReply(raw: Record<string, unknown>, username: string, userId: string, avatar?: string): UserReplyActivity | null {
+  const topicId = String(raw.post_id || raw.postId || raw.id || '').trim();
+  const topicTitle = String(raw.title || raw.titleText || '').trim();
+  if (!topicId || !topicTitle) {
+    return null;
+  }
+  const floor = parsePositiveInteger(raw.floor_id || raw.floor || raw.rank);
+  const excerpt = textExcerpt(raw.text || raw.content || raw.markdown || raw.comment || '');
+  const topicUrl = safeNodeSeekTopicUrl(topicId, raw.url || `/post-${topicId}-1`);
+  return {
+    source: 'nodeseek',
+    id: `${topicId}:${floor || 0}:${excerpt}`,
+    topicId,
+    topicTitle,
+    topicUrl,
+    url: topicUrl,
+    author: username,
+    authorId: userId,
+    authorUrl: nodeSeekSpaceUrl(userId),
+    ...(avatar ? { authorAvatar: avatar } : {}),
+    ...(floor ? { floor } : {}),
+    ...(excerpt ? { excerpt } : {})
+  };
 }
 
 function embeddedTopics(data: Record<string, unknown>) {
@@ -1420,8 +1447,14 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   const bio = String(user.bio || user.readme || '').trim() || undefined;
   const joinedAt = toIsoString(user.created_at || user.createdAt || user.createdDate);
   const levelLabel = nodeSeekLevelLabel(user);
-  const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=1`, options);
-  const discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
+  const cursorPage = parsePositiveInteger(options.cursor) || 1;
+  const wantsTopics = options.cursorType !== 'replies';
+  const wantsReplies = options.cursorType !== 'topics';
+  let discussions: unknown[] = [];
+  if (wantsTopics) {
+    const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, options);
+    discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
+  }
   const topics = discussions.filter(isRecord).map((discussion) => {
     const topicId = String(discussion.post_id || discussion.postId || discussion.id || '').trim();
     const title = String(discussion.title || discussion.titleText || '').trim();
@@ -1430,6 +1463,9 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     }
     const createdAt = nodeSeekCreatedAt(discussion);
     const accessRequirement = accessRequirementFromObject(discussion);
+    const categoryId = String(discussion.category_id || discussion.categoryId || discussion.tag_id || discussion.tagId || discussion.tag_name || '').trim() || undefined;
+    const category = String(discussion.category_name || discussion.categoryName || discussion.tag_cn_text || discussion.tagName || '').trim() || undefined;
+    const excerpt = textExcerpt(discussion.text || discussion.content || discussion.markdown || discussion.excerpt || '');
     return {
       source: 'nodeseek' as const,
       id: topicId,
@@ -1441,12 +1477,24 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
       url: safeNodeSeekTopicUrl(topicId, `/post-${topicId}-1`),
       createdAt,
       lastReplyAt: createdAt,
+      ...(categoryId ? { categoryId } : {}),
+      ...(category ? { category } : {}),
       replyCount: parsePositiveInteger(discussion.comments || discussion.commentCount || discussion.nComment),
       viewCount: parseViewCount(discussion.views || discussion.viewCount),
+      ...(excerpt ? { excerpt } : {}),
       ...(accessRequirement ? { accessRequirement } : {})
     };
   }) as Array<Topic | null>;
   const visibleTopics = sortNodeSeekUserTopics(topics.filter(Boolean) as Topic[]);
+  let replies: UserReplyActivity[] = [];
+  if (wantsReplies) {
+    const readReplies = async () => {
+      const commentData = await fetchNodeSeekJson(`/api/content/list-comments?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, options);
+      const comments = isRecord(commentData) && Array.isArray(commentData.comments) ? commentData.comments : [];
+      return comments.filter(isRecord).map((comment) => normalizeNodeSeekUserReply(comment, username, userId, avatar)).filter(Boolean) as UserReplyActivity[];
+    };
+    replies = options.cursorType === 'replies' ? await readReplies() : await readReplies().catch(() => []);
+  }
   return {
     source: 'nodeseek',
     id: userId,
@@ -1460,7 +1508,12 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     postCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
     replyCount: parsePositiveInteger(user.nComment) || undefined,
     ...(levelLabel ? { levelLabel } : {}),
-    topics: visibleTopics
+    topics: visibleTopics,
+    hasMoreTopics: wantsTopics && visibleTopics.length > 0,
+    nextTopicsCursor: wantsTopics && visibleTopics.length > 0 ? String(cursorPage + 1) : null,
+    replies,
+    hasMoreReplies: wantsReplies && replies.length > 0,
+    nextRepliesCursor: wantsReplies && replies.length > 0 ? String(cursorPage + 1) : null
   };
 }
 

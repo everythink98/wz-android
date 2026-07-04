@@ -231,7 +231,7 @@ describe('Android direct yaohuo API', () => {
         limit: 30
       });
 
-      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T17:00:00.000Z');
+      expect(result.items.find((item) => item.id === '1539321')?.createdAt).toBe('2026-05-24T16:00:00.000Z');
       expect(result.items.find((item) => item.id === '1539321')?.displayTimeText).toBe('今天 午夜');
       expect(result.items.find((item) => item.id === '1539322')?.createdAt).toBe('2026-05-25T15:50:00.000Z');
       expect(result.items.find((item) => item.id === '1539323')?.createdAt).toBe('2026-05-23T16:05:00.000Z');
@@ -241,7 +241,7 @@ describe('Android direct yaohuo API', () => {
     }
   });
 
-  it('does not derive midnight from yaohuo period-only list times', () => {
+  it('uses yaohuo period-only list times as official display text and Beijing time', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T07:30:00+08:00'));
     try {
@@ -252,8 +252,8 @@ describe('Android direct yaohuo API', () => {
         limit: 30
       });
 
-      expect(result.items[0].createdAt).toBe('2026-05-24T23:30:00.000Z');
-      expect(result.items[0].lastReplyAt).toBe('2026-05-24T23:30:00.000Z');
+      expect(result.items[0].createdAt).toBe('2026-05-24T16:00:00.000Z');
+      expect(result.items[0].lastReplyAt).toBe('2026-05-24T16:00:00.000Z');
       expect(result.items[0].displayTimeText).toBe('今天 午夜');
     } finally {
       vi.useRealTimers();
@@ -279,7 +279,7 @@ describe('Android direct yaohuo API', () => {
         '2026-05-24T18:30:00.000Z',
         '2026-05-23T01:30:00.000Z'
       ]);
-      expect(result.items.map((item) => item.displayTimeText)).toEqual([undefined, undefined, undefined]);
+      expect(result.items.map((item) => item.displayTimeText)).toEqual(['20分钟前', '7小时前', '2天前']);
     } finally {
       vi.useRealTimers();
     }

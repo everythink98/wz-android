@@ -49,6 +49,7 @@ function sameTopicCardTopic(left: Topic, right: Topic) {
     && left.category === right.category
     && left.createdAt === right.createdAt
     && left.lastReplyAt === right.lastReplyAt
+    && left.displayTimeText === right.displayTimeText
     && left.replyCount === right.replyCount
     && left.viewCount === right.viewCount
     && left.excerpt === right.excerpt

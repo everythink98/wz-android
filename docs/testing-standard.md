@@ -4,7 +4,7 @@
 
 测试必须证明“功能没有被改坏”，不是证明 App 能打开。常规改动至少执行自动测试和 `npm run typecheck`；涉及页面流程、登录态、真实来源结果或交互时，还必须做模拟器验收。
 
-当前自动测试是 `Vitest + jsdom`，共有 84 个测试文件、824 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
+当前自动测试是 `Vitest + jsdom`，共有 86 个测试文件、834 个用例。它们主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有 Android 真机/模拟器自动测试，也没有覆盖率基线。
 
 ## 判断原则
 
@@ -36,7 +36,7 @@
 | 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
 | 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
-| 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、分页游标正确；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/userNavigation.test.ts` |
+| 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、回复列表、分页游标正确；主题和回复的来源、分类、标题、作者、时间、楼层、摘要按原站支持范围显示；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/localYaohuo.test.ts`、`src/yaohuoApi.test.ts`、`src/screens/user/userScreenItems.test.ts`、`src/components/TopicCard.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupFiles.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
 | 登录 / 验证 / Cookie | Cookie 只保存在本机；检查登录态不泄露敏感值；Cloudflare / 验证状态用结构化状态判断；不能靠显示文字当流程条件；页面提示必须区分未登录、登录失效、需要验证和普通失败 | `src/siteSessionState.test.ts`、`src/nodeseekCookies.test.ts`、`src/nodeseekCookieBridge.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/sourceErrors.test.ts`、`src/appSecurity.test.ts` |
 | 更多页 / 外观 / 更新 | 个人中心从会话 `currentUser` 显示当前账号主页；`刷新账号状态` 位于个人中心；进入 More 页不自动刷新；冷启动静默刷新不阻塞首页；账号与验证不显示 Cookie 名称且只保留登录、验证、清除登录、NodeImage 和 linux.do 等级入口；开发版测试工具独立于账号区；备份、状态检查、外观设置和更新检查不互相占用错误状态；更新按钮只在有新版时提示 | `src/moreAccountStatus.test.ts`、`src/screens/more/personalCenterItems.test.ts`、`src/siteSessionState.test.ts`、`src/nodeseekCookies.test.ts`、`src/theme.test.ts`、`src/appUpdate.test.ts`、`src/androidBestPracticeBoundaries.test.ts` |
@@ -105,6 +105,34 @@ NodeSeek 单源搜索有两种通过状态：
 - 未登录 / 仅验证：允许读取 `google.com/search` 中限定 `nodeseek.com` 的结果，结果仍必须显示为 NodeSeek 来源，并可打开详情；不能为了制造该状态清除 App 数据，自动化测试必须覆盖这个路径。
 
 当前可对照的模拟器结果见 `docs/emulator-baseline.md`。
+
+## 用户主页验收
+
+改 NodeSeek、linux.do、V2EX、妖火的用户资料、主题、回复、分页、用户页 tab 或用户页列表渲染时，必须执行。
+
+### 自动测试
+
+```powershell
+npm test -- src/forumApi.test.ts src/localYaohuo.test.ts src/yaohuoApi.test.ts src/components/TopicCard.test.ts src/screens/user/userScreenItems.test.ts
+npm run typecheck
+```
+
+通过标准：
+
+- 四站主题和回复的来源、标题、链接、作者、头像、分类、时间、楼层、摘要、分页游标按原站支持范围显示；原站没有的字段不得伪造。
+- 妖火主题和回复时间必须保留原站文本，不得把历史日期统一显示成“几分钟前”。
+- 用户名和用户 ID 不混用；妖火只拿到数字 ID 时，要用原站可确认的昵称修正展示。
+- 用户资料不放进虚拟列表；列表 key 不重复；主题和回复 tab 切换后不串数据。
+
+### 模拟器验收
+
+在不卸载、不清数据、不清 Cookie 的前提下执行：
+
+1. 从 App 内登录态入口打开 NodeSeek、linux.do、妖火当前账号主页；V2EX 用 App 内真实主题作者进入用户主页。
+2. 四站分别检查 `主题` 和 `回复` tab；记录首屏可见字段，至少包含来源、分类、标题、作者、时间、回复数或楼层、摘要。
+3. 有 `加载更多主题` 或 `加载更多回复` 时点一次，确认不会重复首屏、不会串到另一个 tab。
+4. 打开一条用户主题或回复对应的原帖，再返回用户主页，确认 tab、列表和用户资料仍正确。
+5. 结束前检查 `ReactNativeJS`、`AndroidRuntime` 没有红屏、未处理异常或崩溃。
 
 ## 回复图片上传验收
 

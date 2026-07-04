@@ -1,7 +1,7 @@
 import { getLinuxDoCategories, getLinuxDoCurrentUserProfile, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml } from './localYaohuo';
-import { requireYaohuoRequestUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
+import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
+import { requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
@@ -367,6 +367,7 @@ export function getUserProfile({
   nodeSeekUserAgent,
   yaohuoCookie,
   cursor,
+  cursorType,
   signal,
   timeoutMs
 }: {
@@ -378,14 +379,15 @@ export function getUserProfile({
   nodeSeekUserAgent?: string;
   yaohuoCookie?: string;
   cursor?: string | null;
+  cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<UserProfile> {
-  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, cursor, cursorType, signal, timeoutMs };
   return pickSource(source, {
     nodeseek: () => getNodeSeekUserProfile(id || username || '', options),
-    linuxdo: () => getLinuxDoUserProfile(id, username || id, { fetcher, signal, timeoutMs }),
-    v2ex: () => getV2exUserProfile(id, username || id, { fetcher, signal, timeoutMs }),
+    linuxdo: () => getLinuxDoUserProfile(id, username || id, { fetcher, cursor, cursorType, signal, timeoutMs }),
+    v2ex: () => getV2exUserProfile(id, username || id, { fetcher, cursor, cursorType, signal, timeoutMs }),
     yaohuo: async () => {
       if (!yaohuoCookie) {
         throw new Error('请先登录妖火');
@@ -435,6 +437,19 @@ export function getUserProfile({
           nextUrl: yaohuoTopicListNextPageUrl(page.html, page.url, pageNumber, result.items.length, 30)
         };
       };
+      const readReplyPage = async (pageUrl: string, authorFallback?: string) => {
+        const page = await readHtml(pageUrl);
+        const replies = parseYaohuoUserRepliesHtml(page.html, {
+          id: targetId,
+          username: authorFallback || username || targetId,
+          url: page.url
+        });
+        return {
+          ...page,
+          replies,
+          nextUrl: yaohuoReplyListNextPageUrl(page.html, page.url, replies.length)
+        };
+      };
       const seen = new Set<string>();
       const topics: Topic[] = [];
       const addTopics = (items: Topic[], authorFallback?: string) => {
@@ -447,6 +462,22 @@ export function getUserProfile({
       };
 
       if (cursor) {
+        if (cursorType === 'replies') {
+          const replyPage = await readReplyPage(cursor, username || targetId);
+          return {
+            source: 'yaohuo',
+            id: targetId,
+            username: username || targetId,
+            displayName: username || targetId,
+            url,
+            topics: [],
+            hasMoreTopics: false,
+            nextTopicsCursor: null,
+            replies: replyPage.replies,
+            hasMoreReplies: Boolean(replyPage.nextUrl),
+            nextRepliesCursor: replyPage.nextUrl || null
+          };
+        }
         const topicPage = await readTopicPage(cursor);
         addTopics(topicPage.result.items, username || targetId);
         return {
@@ -457,18 +488,28 @@ export function getUserProfile({
           url,
           topics: sortTopicsByCreatedAt(topics).slice(0, 30),
           hasMoreTopics: Boolean(topicPage.nextUrl),
-          nextTopicsCursor: topicPage.nextUrl || null
+          nextTopicsCursor: topicPage.nextUrl || null,
+          replies: [],
+          hasMoreReplies: false,
+          nextRepliesCursor: null
         };
       }
 
       const firstPage = await readProfilePage(url);
       const authorFallback = firstPage.profile.displayName || firstPage.profile.username || targetId;
+      const firstReplyUrl = yaohuoUserProfileReplyListUrl(firstPage.html, targetId, firstPage.url);
+      const firstReplyPage = firstReplyUrl
+        ? await readReplyPage(firstReplyUrl, authorFallback).catch(() => ({ replies: [], nextUrl: '' }))
+        : { replies: [], nextUrl: '' };
       let nextUrl = yaohuoUserProfileTopicListUrl(firstPage.html, targetId, firstPage.url);
       if (!nextUrl) {
         return {
           ...firstPage.profile,
           hasMoreTopics: false,
-          nextTopicsCursor: null
+          nextTopicsCursor: null,
+          replies: firstReplyPage.replies,
+          hasMoreReplies: Boolean(firstReplyPage.nextUrl),
+          nextRepliesCursor: firstReplyPage.nextUrl || null
         };
       }
 
@@ -487,11 +528,20 @@ export function getUserProfile({
       const profile = topicAuthor && firstPage.profile.displayName === targetId
         ? { ...firstPage.profile, username: topicAuthor, displayName: topicAuthor }
         : firstPage.profile;
+      const replyAuthor = profile.displayName || profile.username || targetId;
+      const replies = firstReplyPage.replies.map((reply) => (
+        reply.author === targetId && replyAuthor !== targetId
+          ? { ...reply, author: replyAuthor }
+          : reply
+      ));
       return {
         ...profile,
         topics: visibleTopics,
         hasMoreTopics: Boolean(nextUrl),
-        nextTopicsCursor: nextUrl || null
+        nextTopicsCursor: nextUrl || null,
+        replies,
+        hasMoreReplies: Boolean(firstReplyPage.nextUrl),
+        nextRepliesCursor: firstReplyPage.nextUrl || null
       };
     }
   });

@@ -2,7 +2,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import type { SearchSort } from './feedLogic';
 import { searchTimeRangeStartEpoch, type V2exSearchFilter } from './searchFilters';
 import { XMLParser } from 'fast-xml-parser';
-import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile } from './types';
+import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile, UserReplyActivity } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -41,6 +41,8 @@ const atomParser = new XMLParser({
 });
 
 interface V2exOptions {
+  cursor?: string | null;
+  cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -584,6 +586,75 @@ function parseV2exMemberTopics(html: string, username: string, avatar?: string) 
     })) as Topic[];
 }
 
+function v2exMemberActivityDate(text: string) {
+  const match = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  if (!match) {
+    return '';
+  }
+  const year = new Date().getFullYear();
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const date = new Date(Date.UTC(year, month - 1, day, 0, 0, 0));
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function v2exMemberActivityDisplayTime(text: string) {
+  return text.match(/^\s*(.+?)\s*回复了/)?.[1]?.trim() || '';
+}
+
+function nextV2exMemberPageCursor(html: string, page: number) {
+  const root = parseHtml(html);
+  const pages = root.querySelectorAll('a[href*="?p="], a[href*="&p="]')
+    .map((link) => parsePositiveInteger(link.getAttribute('href')))
+    .filter((value) => value > page);
+  return pages.length ? String(Math.min(...pages)) : null;
+}
+
+function parseV2exMemberReplies(html: string, username: string, avatar: string | undefined, page: number) {
+  const root = parseHtml(html);
+  const items = root.querySelectorAll('.dock_area')
+    .map((element) => {
+      const topicLink = element.querySelector('a[href*="/t/"]');
+      const href = topicLink?.getAttribute('href') || '';
+      const topicId = href.match(/\/t\/(\d+)/)?.[1] || '';
+      const topicTitle = elementText(topicLink);
+      if (!topicId || !topicTitle) {
+        return null;
+      }
+      const text = elementText(element);
+      const categoryLink = element.querySelector('a[href^="/go/"]');
+      const categoryId = nodeIdFromHref(categoryLink?.getAttribute('href'));
+      const parts = text.split('›').map((part) => part.trim()).filter(Boolean);
+      const category = elementText(categoryLink) || (parts.length >= 2 ? parts[parts.length - 2] : undefined);
+      const floor = parsePositiveInteger(href.match(/#reply(\d+)/)?.[1]);
+      const createdAt = v2exMemberActivityDate(text);
+      const topicUrl = safeTopicUrl(topicId, href.split('#')[0]);
+      const displayTimeText = v2exMemberActivityDisplayTime(text);
+      return {
+        source: 'v2ex' as const,
+        id: `${topicId}:${floor || 0}`,
+        topicId,
+        topicTitle,
+        topicUrl,
+        url: safeTopicUrl(topicId, href),
+        author: username,
+        authorId: username,
+        authorUrl: memberUrl(username),
+        categoryId,
+        category,
+        ...(avatar ? { authorAvatar: avatar } : {}),
+        ...(createdAt ? { createdAt } : {}),
+        ...(displayTimeText ? { displayTimeText } : {}),
+        ...(floor ? { floor } : {})
+      };
+    })
+    .filter(Boolean) as UserReplyActivity[];
+  return {
+    items,
+    nextCursor: nextV2exMemberPageCursor(html, page)
+  };
+}
+
 function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
   const data = atomParser.parse(xml);
   const entries = isRecord(data) && isRecord(data.feed)
@@ -631,9 +702,19 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
     .filter(Boolean) as Topic[];
 }
 
-async function fetchV2exMemberTopics(username: string, options: V2exOptions) {
-  const html = await fetchText(`${memberUrl(username)}/topics`, options).catch(() => '');
-  return html ? parseV2exMemberTopics(html, username).slice(0, 30) : [];
+async function fetchV2exMemberTopics(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
+  const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
+  const html = await fetchText(`${memberUrl(username)}/topics${pageQuery}`, options).catch(() => '');
+  return html ? {
+    items: parseV2exMemberTopics(html, username, avatar).slice(0, 30),
+    nextCursor: nextV2exMemberPageCursor(html, page)
+  } : { items: [], nextCursor: null };
+}
+
+async function fetchV2exMemberReplies(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
+  const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
+  const html = await fetchText(`${memberUrl(username)}/replies${pageQuery}`, options);
+  return parseV2exMemberReplies(html, username, avatar, page);
 }
 
 async function fetchV2exMemberFeedTopics(username: string, avatar: string | undefined, options: V2exOptions) {
@@ -646,22 +727,29 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   if (!key) {
     throw new Error('V2EX 用户信息不完整');
   }
-  const [memberData, memberHtml] = await Promise.all([
-    fetchJson<Record<string, unknown>>(`${BASE_URL}/api/members/show.json?username=${encodeURIComponent(key)}`, options),
-    fetchText(memberUrl(key), options).catch(() => '')
-  ]);
+  const cursorType = options.cursorType;
+  const wantsTopics = cursorType !== 'replies';
+  const wantsReplies = cursorType !== 'topics';
+  const page = parsePositiveInteger(options.cursor) || 1;
+  const memberData = await fetchJson<Record<string, unknown>>(`${BASE_URL}/api/members/show.json?username=${encodeURIComponent(key)}`, options);
   if (isRecord(memberData) && memberData.status === 'notfound') {
     throw new Error('V2EX 用户不存在');
   }
   const resolvedUsername = String(memberData.username || key);
   const avatar = absoluteUrl(memberData.avatar_large || memberData.avatar_normal || memberData.avatar_mini, BASE_URL);
   const levelLabel = v2exMemberLevelLabel(memberData);
-  const topics = memberHtml ? parseV2exMemberTopics(memberHtml, resolvedUsername, avatar) : [];
-  const topicsPageTopics = topics.length ? topics : await fetchV2exMemberTopics(resolvedUsername, options);
-  const feedTopics = topicsPageTopics.length ? topicsPageTopics : await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options);
+  const topicsPage = wantsTopics ? await fetchV2exMemberTopics(resolvedUsername, avatar, options, page) : { items: [], nextCursor: null };
+  const feedTopics = wantsTopics && !topicsPage.items.length && !options.cursor
+    ? await fetchV2exMemberFeedTopics(resolvedUsername, avatar, options)
+    : topicsPage.items;
   const profileTopics = sortTopicsByCreatedAt(feedTopics).slice(0, 30).map((topic) => (
     levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || levelLabel } : topic
   ));
+  const replyResult = wantsReplies
+    ? options.cursorType === 'replies'
+      ? await fetchV2exMemberReplies(resolvedUsername, avatar, options, page)
+      : await fetchV2exMemberReplies(resolvedUsername, avatar, options, page).catch(() => ({ items: [], nextCursor: null }))
+    : { items: [], nextCursor: null };
   return {
     source: 'v2ex',
     id: resolvedUsername,
@@ -673,7 +761,13 @@ export async function getV2exUserProfile(id: string, username: string, options: 
     bio: typeof memberData.tagline === 'string' ? memberData.tagline : undefined,
     topics: profileTopics,
     topicCount: profileTopics.length || undefined,
-    postCount: profileTopics.length || undefined
+    postCount: profileTopics.length || undefined,
+    hasMoreTopics: Boolean(topicsPage.nextCursor),
+    nextTopicsCursor: topicsPage.nextCursor,
+    replies: replyResult.items,
+    replyCount: replyResult.items.length || undefined,
+    hasMoreReplies: Boolean(replyResult.nextCursor),
+    nextRepliesCursor: replyResult.nextCursor
   };
 }
 

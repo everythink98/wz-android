@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile } from './types';
+import type { CategoriesResponse, FeedResponse, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
@@ -7,6 +7,7 @@ import {
   elementText,
   isRecord,
   parseHtml,
+  parsePositiveInteger,
   sanitizeContentHtml,
   sortTopicsByCreatedAt,
   textContentFromHtml,
@@ -40,6 +41,8 @@ let csrfTokenCache: string | null = null;
 let emojiUrlCache: LinuxDoEmojiUrlMap | null = null;
 
 interface LinuxDoOptions {
+  cursor?: string | null;
+  cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -181,6 +184,44 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     ...(slowModeSeconds ? { slowModeSeconds } : {}),
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
+  };
+}
+
+function normalizeUserActionReply(
+  raw: unknown,
+  categoryMap: Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>,
+  author: string,
+  authorData?: Record<string, unknown>
+): UserReplyActivity | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const topicId = normalizeTopicId(raw.topic_id || raw.topicId);
+  const topicTitle = decodeHtml(raw.title || raw.topic_title || raw.unicode_title || '');
+  if (!topicId || !topicTitle) {
+    return null;
+  }
+  const floor = Number(raw.post_number || raw.postNumber || 0) || undefined;
+  const postId = String(raw.post_id || raw.id || '').trim();
+  const slug = String(raw.slug || topicId);
+  const category = raw.category_id ? categoryMap.get(String(raw.category_id)) : undefined;
+  const url = `${BASE_URL}/t/${slug}/${topicId}${floor ? `/${floor}` : ''}`;
+  return {
+    source: 'linuxdo',
+    id: postId || `${topicId}:${floor || 0}`,
+    topicId,
+    topicTitle,
+    topicUrl: `${BASE_URL}/t/${slug}/${topicId}`,
+    url,
+    author,
+    authorId: author || undefined,
+    authorAvatar: avatarUrl(authorData?.avatar_template),
+    authorUrl: author ? userUrl(author) : undefined,
+    categoryId: raw.category_id ? String(raw.category_id) : undefined,
+    category: category?.name,
+    createdAt: toIsoString(raw.created_at || raw.createdAt) || undefined,
+    ...(floor ? { floor } : {}),
+    excerpt: textExcerpt(raw.excerpt || raw.content || raw.markdown || '')
   };
 }
 
@@ -955,6 +996,10 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   if (!name) {
     throw new Error('linux.do 用户信息不完整');
   }
+  const cursorType = options.cursorType;
+  const wantsTopics = cursorType !== 'replies';
+  const wantsReplies = cursorType !== 'topics';
+  const replyOffset = parsePositiveInteger(options.cursor);
   const data = await fetchLinuxDoJson<Record<string, unknown>>(`/u/${encodeURIComponent(name)}/summary.json`, undefined, options);
   const summary = isRecord(data.user_summary) ? data.user_summary : {};
   const summaryUser = isRecord(summary.user) ? summary.user : {};
@@ -969,10 +1014,23 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   const displayName = typeof user.name === 'string' ? user.name : resolvedUsername;
   const avatar = avatarUrl(user.avatar_template);
   const levelLabel = linuxDoLevelLabel(user);
-  const rawTopics = Array.isArray(data.topics) ? data.topics : [];
-  const categoryMap = await categoryMapForTopics(data, rawTopics, categoryMapFromData(data), options);
+  const rawTopics = wantsTopics && Array.isArray(data.topics) ? data.topics : [];
+  let rawUserActions: unknown[] = [];
+  if (wantsReplies) {
+    const readUserActions = async () => {
+      const actionData = await fetchLinuxDoJson<Record<string, unknown>>('/user_actions.json', {
+        offset: replyOffset,
+        username: resolvedUsername,
+        filter: 5
+      }, options);
+      return Array.isArray(actionData.user_actions) ? actionData.user_actions : [];
+    };
+    rawUserActions = cursorType === 'replies' ? await readUserActions() : await readUserActions().catch(() => []);
+  }
+  const categoryMap = await categoryMapForTopics(data, [...rawTopics, ...rawUserActions], categoryMapFromData(data), options);
   const topics = rawTopics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[];
   const visibleTopics = sortTopicsByCreatedAt(topics);
+  const replies = rawUserActions.map((action) => normalizeUserActionReply(action, categoryMap, resolvedUsername, user)).filter(Boolean) as UserReplyActivity[];
   return {
     source: 'linuxdo',
     id: resolvedUsername,
@@ -985,7 +1043,12 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     replyCount: Number(summary.reply_count || 0) || undefined,
     postCount: Number(summary.post_count || 0) || undefined,
     ...(levelLabel ? { levelLabel } : {}),
-    topics: visibleTopics
+    topics: visibleTopics,
+    hasMoreTopics: false,
+    nextTopicsCursor: null,
+    replies,
+    hasMoreReplies: wantsReplies && replies.length > 0,
+    nextRepliesCursor: wantsReplies && replies.length > 0 ? String(replyOffset + LIST_PAGE_SIZE) : null
   };
 }
 

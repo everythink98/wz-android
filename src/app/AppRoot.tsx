@@ -1062,12 +1062,14 @@ export function AppRoot() {
   const {
     currentUserFollowed,
     followedUserRecords,
+    loadMoreUserReplies,
     loadMoreUserTopics,
     openUser,
     selectedUser,
     userBusy,
     userError,
-    userLoadingMore,
+    userLoadingMoreReplies,
+    userLoadingMoreTopics,
     userProfile
   } = useUserController({
     clearYaohuoLoginState,
@@ -1816,8 +1818,10 @@ export function AppRoot() {
       styles,
       theme,
       topicStateIndex,
-      loadingMoreTopics: userLoadingMore,
+      loadingMoreReplies: userLoadingMoreReplies,
+      loadingMoreTopics: userLoadingMoreTopics,
       onBack: goBackFromUser,
+      onLoadMoreReplies: loadMoreUserReplies,
       onLoadMoreTopics: loadMoreUserTopics,
       onOpenOriginal: openExternalUrl,
       onOpenTopic: openTopic,
@@ -1826,6 +1830,7 @@ export function AppRoot() {
   }), [
     currentUserFollowed,
     goBackFromUser,
+    loadMoreUserReplies,
     loadMoreUserTopics,
     openExternalUrl,
     openTopic,
@@ -1837,7 +1842,8 @@ export function AppRoot() {
     topicStateIndex,
     userBusy,
     userError,
-    userLoadingMore,
+    userLoadingMoreReplies,
+    userLoadingMoreTopics,
     userProfile
   ]);
 

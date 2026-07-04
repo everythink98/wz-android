@@ -22,8 +22,21 @@ import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { authHintForSource } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
-import type { FeedSource, Source, UserProfile } from '../types';
+import type { FeedSource, Source, UserProfile, UserReplyActivity } from '../types';
 import type { Screen } from '../appTypes';
+
+function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
+  const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
+  const merged = [...existing];
+  for (const reply of incoming) {
+    const key = `${reply.source}:${reply.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(reply);
+    }
+  }
+  return merged;
+}
 
 export function useUserController({
   clearYaohuoLoginState,
@@ -57,12 +70,15 @@ export function useUserController({
   const userRequestIdRef = useRef(0);
   const userRequestOwnerRef = useRef(createRequestOwner('user'));
   const userAbortRef = useRef<AbortController | null>(null);
-  const userLoadingMoreCursorRef = useRef<string | null>(null);
+  const userLoadingMoreTopicCursorRef = useRef<string | null>(null);
+  const userLoadingMoreReplyCursorRef = useRef<string | null>(null);
   const userVisitedTopicCursorsRef = useRef<Set<string>>(new Set());
+  const userVisitedReplyCursorsRef = useRef<Set<string>>(new Set());
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userBusy, setUserBusy] = useState(false);
-  const [userLoadingMore, setUserLoadingMore] = useState(false);
+  const [userLoadingMoreTopics, setUserLoadingMoreTopics] = useState(false);
+  const [userLoadingMoreReplies, setUserLoadingMoreReplies] = useState(false);
   const [userError, setUserError] = useState('');
 
   const followedUserRecords = useMemo<FollowedUserRecord[]>(
@@ -75,9 +91,12 @@ export function useUserController({
     userRequestIdRef.current += 1;
     userAbortRef.current?.abort();
     setUserBusy(false);
-    setUserLoadingMore(false);
-    userLoadingMoreCursorRef.current = null;
+    setUserLoadingMoreTopics(false);
+    setUserLoadingMoreReplies(false);
+    userLoadingMoreTopicCursorRef.current = null;
+    userLoadingMoreReplyCursorRef.current = null;
     userVisitedTopicCursorsRef.current = new Set();
+    userVisitedReplyCursorsRef.current = new Set();
   }, []);
 
   useEffect(() => {
@@ -108,9 +127,12 @@ export function useUserController({
     setUserProfile(null);
     setUserError('');
     setUserBusy(true);
-    setUserLoadingMore(false);
-    userLoadingMoreCursorRef.current = null;
+    setUserLoadingMoreTopics(false);
+    setUserLoadingMoreReplies(false);
+    userLoadingMoreTopicCursorRef.current = null;
+    userLoadingMoreReplyCursorRef.current = null;
     userVisitedTopicCursorsRef.current = new Set();
+    userVisitedReplyCursorsRef.current = new Set();
     const controller = startAbortableRequest(userAbortRef);
     let yaohuoGeneration: number | undefined;
     try {
@@ -172,7 +194,8 @@ export function useUserController({
     } finally {
       if (isCurrentUserRequest()) {
         setUserBusy(false);
-        setUserLoadingMore(false);
+        setUserLoadingMoreTopics(false);
+        setUserLoadingMoreReplies(false);
       }
       finishAbortableRequest(userAbortRef, controller);
     }
@@ -192,15 +215,15 @@ export function useUserController({
 
   const loadMoreUserTopics = useCallback(async () => {
     const current = userProfile;
-    if (!current?.hasMoreTopics || !current.nextTopicsCursor || userBusy || userLoadingMore || userLoadingMoreCursorRef.current === current.nextTopicsCursor) {
+    if (!current?.hasMoreTopics || !current.nextTopicsCursor || userBusy || userLoadingMoreTopics || userLoadingMoreTopicCursorRef.current === current.nextTopicsCursor) {
       return;
     }
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more:${current.nextTopicsCursor}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     const controller = startAbortableRequest(userAbortRef);
-    userLoadingMoreCursorRef.current = current.nextTopicsCursor;
-    setUserLoadingMore(true);
+    userLoadingMoreTopicCursorRef.current = current.nextTopicsCursor;
+    setUserLoadingMoreTopics(true);
     setUserError('');
     let yaohuoGeneration: number | undefined;
     try {
@@ -226,6 +249,7 @@ export function useUserController({
         nodeSeekUserAgent: nodeSeekUserAgentRef.current,
         yaohuoCookie,
         cursor: current.nextTopicsCursor,
+        cursorType: 'topics',
         signal: controller.signal
       });
       if (!isCurrentUserRequest()) {
@@ -271,8 +295,8 @@ export function useUserController({
       }
     } finally {
       if (isCurrentUserRequest()) {
-        setUserLoadingMore(false);
-        userLoadingMoreCursorRef.current = null;
+        setUserLoadingMoreTopics(false);
+        userLoadingMoreTopicCursorRef.current = null;
       }
       finishAbortableRequest(userAbortRef, controller);
     }
@@ -288,19 +312,124 @@ export function useUserController({
     showNodeSeekVerification,
     showYaohuoLogin,
     userBusy,
-    userLoadingMore,
+    userLoadingMoreTopics,
+    userProfile
+  ]);
+
+  const loadMoreUserReplies = useCallback(async () => {
+    const current = userProfile;
+    if (!current?.hasMoreReplies || !current.nextRepliesCursor || userBusy || userLoadingMoreReplies || userLoadingMoreReplyCursorRef.current === current.nextRepliesCursor) {
+      return;
+    }
+    const requestId = ++userRequestIdRef.current;
+    const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more-replies:${current.nextRepliesCursor}`);
+    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const controller = startAbortableRequest(userAbortRef);
+    userLoadingMoreReplyCursorRef.current = current.nextRepliesCursor;
+    setUserLoadingMoreReplies(true);
+    setUserError('');
+    let yaohuoGeneration: number | undefined;
+    try {
+      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
+        loadYaohuoCookieForSource(current.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
+        loadNodeSeekCookieForSource(current.source)
+      ]);
+      if (!isCurrentUserRequest()) {
+        return;
+      }
+      if (current.source === 'yaohuo' && !yaohuoCookie) {
+        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
+        showYaohuoLogin(message);
+        setUserError(message);
+        return;
+      }
+      const nextProfile = await getUserProfile({
+        source: current.source,
+        id: current.id,
+        username: current.username,
+        fetcher,
+        nodeSeekCookie,
+        nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+        yaohuoCookie,
+        cursor: current.nextRepliesCursor,
+        cursorType: 'replies',
+        signal: controller.signal
+      });
+      if (!isCurrentUserRequest()) {
+        return;
+      }
+      setUserProfile((previous) => {
+        if (!previous || previous.source !== current.source || previous.id !== current.id) {
+          return previous;
+        }
+        const mergedReplies = mergeUserReplies(previous.replies || [], nextProfile.replies || []);
+        userVisitedReplyCursorsRef.current.add(current.nextRepliesCursor || '');
+        const canLoadNext = Boolean(nextProfile.hasMoreReplies && nextProfile.nextRepliesCursor && !userVisitedReplyCursorsRef.current.has(nextProfile.nextRepliesCursor));
+        return {
+          ...previous,
+          replies: mergedReplies,
+          hasMoreReplies: canLoadNext,
+          nextRepliesCursor: canLoadNext ? nextProfile.nextRepliesCursor : null
+        };
+      });
+      notify('用户回复已加载更多');
+    } catch (error) {
+      if (isCurrentUserRequest() && !isCanceledRequest(error)) {
+        const message = errorMessage(error);
+        setUserError(message);
+        if (isLinuxDoCloudflareError(error)) {
+          showLinuxDoVerification(message);
+          return;
+        }
+        if (isNodeSeekCloudflareError(error)) {
+          showNodeSeekVerification(message);
+          return;
+        }
+        if (isYaohuoLoginRequiredError(error)) {
+          if (isYaohuoLoginExpiredError(error)) {
+            await clearYaohuoLoginState({ generation: yaohuoGeneration });
+            showYaohuoLogin('妖火登录已失效，请重新登录。');
+          } else {
+            showYaohuoLogin(message);
+          }
+          return;
+        }
+        notify(message);
+      }
+    } finally {
+      if (isCurrentUserRequest()) {
+        setUserLoadingMoreReplies(false);
+        userLoadingMoreReplyCursorRef.current = null;
+      }
+      finishAbortableRequest(userAbortRef, controller);
+    }
+  }, [
+    clearYaohuoLoginState,
+    fetcher,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    nodeSeekUserAgentRef,
+    notify,
+    sessionViewModels,
+    showLinuxDoVerification,
+    showNodeSeekVerification,
+    showYaohuoLogin,
+    userBusy,
+    userLoadingMoreReplies,
     userProfile
   ]);
 
   return {
     currentUserFollowed,
     followedUserRecords,
+    loadMoreUserReplies,
     loadMoreUserTopics,
     openUser,
     selectedUser,
     userBusy,
     userError,
-    userLoadingMore,
+    userLoadingMoreReplies,
+    userLoadingMoreTopics,
     userProfile
   };
 }
