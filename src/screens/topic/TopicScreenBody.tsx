@@ -24,7 +24,7 @@ import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../ty
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
-import { FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
+import { FORUM_INLINE_MEDIA_LINE_TAG, FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
 import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { forumVideoBlockFromHtml, splitTopicContentHtml } from '../../topicContentSplit';
@@ -75,6 +75,11 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
   }),
   [FORUM_STICKER_ROW_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_STICKER_ROW_TAG,
+    contentModel: HTMLContentModel.mixed,
+    isOpaque: false
+  }),
+  [FORUM_INLINE_MEDIA_LINE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_INLINE_MEDIA_LINE_TAG,
     contentModel: HTMLContentModel.mixed,
     isOpaque: false
   }),

@@ -7,6 +7,7 @@ import { WebView } from 'react-native-webview';
 import {
   getNativePropsForTNode,
   TChildrenRenderer,
+  useContentWidth,
   useIMGElementProps,
   useIMGElementState,
   type CustomBlockRenderer,
@@ -19,6 +20,7 @@ import {
   imageRequestHeadersForUrl,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
+  FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
   FORUM_STICKER_TAG,
   INLINE_FORUM_IMAGE_TAG,
@@ -278,7 +280,8 @@ export function useHtmlRenderingController({
       const attributes = props.tnode.attributes || {};
       const src = attributes.src || '';
       const fallbackSrc = attributes['data-fallback-src'] || '';
-      const size = inlineForumImageDisplaySize(attributes, settings.fontScale);
+      const contentWidth = useContentWidth();
+      const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
       if (!src) {
         return fallbackSrc ? <Image source={imageSourceFromUrl(fallbackSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} /> : null;
       }
@@ -308,7 +311,8 @@ export function useHtmlRenderingController({
     const ForumStickerRenderer: CustomMixedRenderer = (props) => {
       const attributes = props.tnode.attributes || {};
       const src = attributes.src || '';
-      const size = inlineForumImageDisplaySize(attributes, settings.fontScale);
+      const contentWidth = useContentWidth();
+      const size = inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth);
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
@@ -317,6 +321,13 @@ export function useHtmlRenderingController({
     const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
       return (
         <View style={embedStyles.stickerRow}>
+          <TChildrenRenderer tchildren={props.tnode.children} />
+        </View>
+      );
+    };
+    const ForumInlineMediaLineRenderer: CustomBlockRenderer = (props) => {
+      return (
+        <View style={embedStyles.inlineMediaLine}>
           <TChildrenRenderer tchildren={props.tnode.children} />
         </View>
       );
@@ -369,6 +380,7 @@ export function useHtmlRenderingController({
     };
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
       const [nativeImageLoadState, setNativeImageLoadState] = useState({ src: '', loaded: false });
+      const contentWidth = useContentWidth();
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
       const nativeImageLoaded = nativeImageLoadState.src === src && nativeImageLoadState.loaded;
@@ -382,7 +394,7 @@ export function useHtmlRenderingController({
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
       if (isInlineForumImage(props.tnode.attributes)) {
-        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
       const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
@@ -440,6 +452,7 @@ export function useHtmlRenderingController({
       );
     };
     const InlineForumImageRenderer: CustomMixedRenderer = (props) => {
+      const contentWidth = useContentWidth();
       const attributes = ((props.tnode as unknown as { attributes?: Record<string, string | undefined> }).attributes || {});
       const src = attributes.src || '';
       const label = attributes.alt || attributes.title || '';
@@ -448,12 +461,13 @@ export function useHtmlRenderingController({
       }
       const isInlineImage = isInlineForumImage(attributes);
       if (isInlineImage) {
-        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
     return {
       a: ReplyReferenceLinkRenderer,
+      [FORUM_INLINE_MEDIA_LINE_TAG]: ForumInlineMediaLineRenderer,
       [FORUM_STICKER_ROW_TAG]: ForumStickerRowRenderer,
       [FORUM_STICKER_TAG]: ForumStickerRenderer,
       [FORUM_LINK_CARD_TAG]: LinkCardRenderer,
@@ -528,13 +542,19 @@ export function useHtmlRenderingController({
 }
 
 const embedStyles = StyleSheet.create({
+  inlineMediaLine: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap'
+  },
   stickerRow: {
     alignItems: 'center',
     alignSelf: 'flex-start',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: 6,
-    marginTop: 4
+    marginBottom: 10,
+    marginTop: 8,
+    rowGap: 6
   },
   stickerVideoFrame: {
     overflow: 'hidden'
