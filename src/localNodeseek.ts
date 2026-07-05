@@ -471,12 +471,24 @@ function nodeSeekCreatedAt(raw: Record<string, unknown>) {
   return toIsoString(raw.created_at || raw.createdAt || raw.createdDate || time.created_at || time.createdAt || time.createdDate || raw.time);
 }
 
-function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>) {
-  const explicitReplyCount = raw.replyCount ?? raw.replies ?? raw.reply_count;
-  if (explicitReplyCount !== undefined && explicitReplyCount !== null && explicitReplyCount !== '') {
-    return parsePositiveInteger(explicitReplyCount);
+function nodeSeekReplyCountValue(value: unknown) {
+  if (value === undefined || value === null || value === '' || Array.isArray(value)) {
+    return undefined;
   }
-  return Math.max(parsePositiveInteger(raw.comments ?? raw.commentCount ?? raw.comment_count) - 1, 0);
+  return parsePositiveInteger(value);
+}
+
+function nodeSeekEmbeddedReplyCount(raw: Record<string, unknown>, fallback = 0) {
+  const explicitReplyCount = nodeSeekReplyCountValue(raw.replyCount)
+    ?? nodeSeekReplyCountValue(raw.replies)
+    ?? nodeSeekReplyCountValue(raw.reply_count);
+  if (explicitReplyCount !== undefined) {
+    return explicitReplyCount;
+  }
+  const totalComments = nodeSeekReplyCountValue(raw.comments)
+    ?? nodeSeekReplyCountValue(raw.commentCount)
+    ?? nodeSeekReplyCountValue(raw.comment_count);
+  return totalComments !== undefined ? Math.max(totalComments - 1, 0) : fallback;
 }
 
 function normalizeTopic(raw: Record<string, unknown>): Topic | null {
@@ -943,6 +955,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
       : undefined;
   const allReplies = normalizeReplies(comments, { skipFirst: true });
   const replies = allReplies.slice(0, replyLimit);
+  const replyCount = nodeSeekEmbeddedReplyCount(data, allReplies.length);
   const createdAt = toIsoString(isRecord(first.time) ? first.time.createdDate : data.createdDate) || new Date().toISOString();
   const lastComment = comments.at(-1);
   let lastCommentDate: unknown;
@@ -968,7 +981,7 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
     url,
     createdAt,
     lastReplyAt,
-    replyCount: allReplies.length,
+    replyCount,
     viewCount: parseViewCount(data.views),
     excerpt: textExcerpt(first.content || first.markdown),
     contentHtml: nodeSeekDisplayHtml(first.content, first.markdown),

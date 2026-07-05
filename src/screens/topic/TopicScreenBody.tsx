@@ -291,6 +291,7 @@ export const TopicScreen = memo(function TopicScreen({
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
   const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
+  const replyTotalCount = item?.replyCount ?? replies.length;
   const listExtraData = useMemo(() => ({
     actionBusy,
     quoteStateVersion,
@@ -589,7 +590,7 @@ export const TopicScreen = memo(function TopicScreen({
       return renderTopicListItemFrame(
         <View style={[styles.replyHeader, topicColumnStyle]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{replies.length} 条</Text></Text>
+            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{replyTotalCount} 条</Text></Text>
             {canWrite ? (
               <AppButton
                 label={replyComposerOpen ? '收起回复' : '写回复'}
@@ -699,7 +700,7 @@ export const TopicScreen = memo(function TopicScreen({
     replyHighlightQuery,
     replyFilter,
     repliesByFloor,
-    replies.length,
+    replyTotalCount,
     styles,
     theme,
     togglePollSelection,

@@ -292,6 +292,63 @@ describe('Android local sources', () => {
     });
   });
 
+  it('uses NodeSeek embedded replyCount when the first page only has 10 replies', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 207,
+        title: 'NodeSeek embedded reply count',
+        op: { name: 'alice' },
+        replyCount: 12,
+        comments: [
+          {
+            commentId: 1,
+            poster: { name: 'alice' },
+            markdown: '正文',
+            time: { createdDate: '2026-05-20T00:00:00.000Z' }
+          },
+          ...Array.from({ length: 10 }, (_, index) => ({
+            commentId: index + 2,
+            floorIndex: index + 1,
+            poster: { name: `user-${index + 1}` },
+            markdown: `回复 ${index + 1}`,
+            time: { createdDate: '2026-05-20T00:01:00.000Z' }
+          }))
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`<script>${payload}</script>`));
+
+    const topic = await getNodeSeekTopic('207', { fetcher });
+
+    expect(topic.replies).toHaveLength(10);
+    expect(topic.replyCount).toBe(12);
+  });
+
+  it('does not use NodeSeek rendered pager page numbers as replyCount', async () => {
+    const replies = Array.from({ length: 10 }, (_, index) => `
+      <li id="${index + 1}" data-comment-id="${index + 2}" class="content-item">
+        <div class="author-info"><a href="/space/${index + 2}" class="author-name">user-${index + 1}</a></div>
+        <time datetime="2026-05-20T00:01:00.000Z"></time>
+        <article class="post-content"><p>回复 ${index + 1}</p></article>
+      </li>
+    `).join('');
+    const fetcher = vi.fn(async () => html(`
+      <h1>NodeSeek rendered reply count</h1>
+      <div class="nsk-pager post-top-pager">12</div>
+      <div id="0" data-comment-id="1" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-05-20T00:00:00.000Z"></time>
+        <article class="post-content"><p>正文</p></article>
+      </div>
+      <ul>${replies}</ul>
+    `));
+
+    const topic = await getNodeSeekTopic('208', { fetcher });
+
+    expect(topic.replies).toHaveLength(10);
+    expect(topic.replyCount).toBe(10);
+  });
+
   it('uses rendered NodeSeek html for display and markdown only for editing', async () => {
     const payload = Buffer.from(JSON.stringify({
       postData: {

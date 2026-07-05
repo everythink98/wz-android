@@ -57,22 +57,27 @@ export function topicWithAuthorFallback<T extends Topic | TopicDetail>(topic: T 
     categoryId: fallback.categoryId || topic.categoryId,
     category: fallback.category || topic.category
   } : {};
+  const replyCountFields = topic.source === 'nodeseek' && fallback.replyCount > topic.replyCount
+    ? { replyCount: fallback.replyCount }
+    : {};
   if (topic.source !== 'nodeseek') {
     const hasFallbackFields = Object.keys(fallbackTopicFields).length > 0;
     return Object.keys(accessRequirementFields).length || hasFallbackFields
       ? { ...topic, ...accessRequirementFields, ...fallbackTopicFields }
       : topic;
   }
+  const hasReplyCountFields = Object.keys(replyCountFields).length > 0;
   const fallbackAuthorId = nodeSeekAuthorId(fallback.authorId, fallback.authorUrl);
   if (topic.authorId && !hasRestrictedPlaceholder) {
-    return Object.keys(accessRequirementFields).length ? { ...topic, ...accessRequirementFields } : topic;
+    return Object.keys(accessRequirementFields).length || hasReplyCountFields ? { ...topic, ...accessRequirementFields, ...replyCountFields } : topic;
   }
   const authorId = topic.authorId || fallbackAuthorId;
   if (!authorId && !hasRestrictedPlaceholder) {
-    return Object.keys(accessRequirementFields).length ? { ...topic, ...accessRequirementFields } : topic;
+    return Object.keys(accessRequirementFields).length || hasReplyCountFields ? { ...topic, ...accessRequirementFields, ...replyCountFields } : topic;
   }
   return {
     ...topic,
+    ...replyCountFields,
     ...accessRequirementFields,
     ...fallbackTopicFields,
     author: hasRestrictedPlaceholder ? fallback.author || topic.author : topic.author || fallback.author,
