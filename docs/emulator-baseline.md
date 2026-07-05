@@ -19,6 +19,15 @@
 
 当前 `codex` 的 NodeSeek 结果来自已登录状态下的站内搜索；未登录时 NodeSeek 可能跳到 Google 搜索页，该路径作为兼容标准和自动化测试覆盖，不等同于本次模拟器结果。
 
+## 2026-07-05 1.3.43 发布打包
+
+| 项 | 当前结果 |
+| --- | --- |
+| 环境 | 版本 `1.3.43`；App `com.wz.reader`；Android arm64-v8a release APK |
+| 数据处理 | 未卸载、未清数据、未清 Cookie、未退出登录、未清除登录 |
+| 自动测试 | `npm test` 通过：86 个测试文件、851 个用例；`npm run check:unused` 和 `npm run release:android` 通过 |
+| 发布产物 | GitHub Release `v1.3.43` 已创建；arm64-v8a APK 已上传；APK SHA-256 为 `62025e5e2797517ed06a4233132339f65d7868c87534ec95accb2d99e873e648` |
+
 ## 2026-07-04 1.3.42 发布打包
 
 | 项 | 当前结果 |
