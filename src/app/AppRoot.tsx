@@ -185,6 +185,7 @@ export function AppRoot() {
   const [actionBusy, setActionBusy] = useState(false);
   const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
+  const [nodeSeekMediaCookieHeader, setNodeSeekMediaCookieHeader] = useState('');
   const [nodeImageApiKeySaved, setNodeImageApiKeySaved] = useState(false);
   const [nodeImageApiKeyBusy, setNodeImageApiKeyBusy] = useState(false);
   const [showNodeImageAuthPanel, setShowNodeImageAuthPanel] = useState(false);
@@ -421,8 +422,8 @@ export function AppRoot() {
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
 
   const {
-    clearNodeSeekLoginCookiesOnly,
-    clearNodeSeekLoginState,
+    clearNodeSeekLoginCookiesOnly: clearStoredNodeSeekLoginCookiesOnly,
+    clearNodeSeekLoginState: clearStoredNodeSeekLoginState,
     clearYaohuoLoginState,
     completeLinuxDoBrowserFetch,
     completeNodeSeekBrowserFetch,
@@ -483,12 +484,35 @@ export function AppRoot() {
       [site]: !current[site]
     }));
   }, []);
-  const loadNodeSeekCookieForSource = useCallback((source: FeedSource | Source, options?: Parameters<typeof loadStoredNodeSeekCookieForSource>[1]) => {
+  const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source, options?: Parameters<typeof loadStoredNodeSeekCookieForSource>[1]) => {
+    const isNodeSeekSource = source === 'all' || source === 'nodeseek';
     if (__DEV__ && isDevAnonymousSource(source, 'nodeseek', devAnonymousOverrides)) {
-      return Promise.resolve(undefined);
+      if (isNodeSeekSource) {
+        setNodeSeekMediaCookieHeader('');
+      }
+      return undefined;
     }
-    return loadStoredNodeSeekCookieForSource(source, options);
+    const cookieHeader = await loadStoredNodeSeekCookieForSource(source, options);
+    if (isNodeSeekSource) {
+      if (cookieHeader) {
+        nodeSeekWebViewCookieHeaderRef.current = cookieHeader;
+      }
+      setNodeSeekMediaCookieHeader((current) => current === cookieHeader ? current : cookieHeader || '');
+    }
+    return cookieHeader;
   }, [devAnonymousOverrides.nodeseek, loadStoredNodeSeekCookieForSource]);
+  const clearNodeSeekLoginState = useCallback(async () => {
+    setNodeSeekMediaCookieHeader('');
+    await clearStoredNodeSeekLoginState();
+  }, [clearStoredNodeSeekLoginState]);
+  const clearNodeSeekLoginCookiesOnly = useCallback(async (options?: Parameters<typeof clearStoredNodeSeekLoginCookiesOnly>[0]) => {
+    setNodeSeekMediaCookieHeader('');
+    await clearStoredNodeSeekLoginCookiesOnly(options);
+    const cookieHeader = nodeSeekWebViewCookieHeaderRef.current;
+    if (cookieHeader) {
+      setNodeSeekMediaCookieHeader(cookieHeader);
+    }
+  }, [clearStoredNodeSeekLoginCookiesOnly]);
   const loadYaohuoCookieForSource = useCallback((source: FeedSource | Source, options?: Parameters<typeof loadStoredYaohuoCookieForSource>[1]) => {
     if (__DEV__ && isDevAnonymousSource(source, 'yaohuo', devAnonymousOverrides)) {
       return Promise.resolve(undefined);
@@ -529,6 +553,8 @@ export function AppRoot() {
     onOpenImagePreview: openImagePreviewFromRenderer,
     onOpenTopic: openTopicFromHtml,
     onOpenUser: openUserFromHtml,
+    nodeSeekMediaCookieHeader,
+    nodeSeekMediaUserAgent: nodeSeekWebViewUserAgent,
     selectedTopic,
     settings: readerData.settings,
     styles,
@@ -599,6 +625,13 @@ export function AppRoot() {
       at: new Date().toISOString()
     });
   }, [topicDetail?.currentUser, topicDetail?.source, updateNodeSeekSession]);
+  useEffect(() => {
+    if (topicDetail?.source !== 'nodeseek') {
+      return;
+    }
+    const cookieHeader = nodeSeekWebViewCookieHeaderRef.current;
+    setNodeSeekMediaCookieHeader((current) => current === cookieHeader ? current : cookieHeader);
+  }, [topicDetail?.id, topicDetail?.source]);
   const getTopicHtmlParts = useCallback(() => [
     topicDetail?.contentHtml || '',
     ...topicReplies.map(replyHtmlWithSignature),

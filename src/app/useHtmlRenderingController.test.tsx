@@ -46,7 +46,7 @@ vi.mock('react-native-render-html', () => ({
   useIMGElementState: vi.fn()
 }));
 
-import { shouldShowPreviewImageLoading } from './useHtmlRenderingController';
+import { shouldShowPreviewImageLoading, shouldShowVideoStickerLoading } from './useHtmlRenderingController';
 
 describe('HTML topic image loading state', () => {
   it('keeps loading visible after dimensions are ready until the native image finishes loading', () => {
@@ -57,5 +57,12 @@ describe('HTML topic image loading state', () => {
   it('shows loading while dimensions are unresolved but not after an image error', () => {
     expect(shouldShowPreviewImageLoading('loading', false)).toBe(true);
     expect(shouldShowPreviewImageLoading('error', false)).toBe(false);
+  });
+
+  it('keeps video sticker loading visible until the first rendered frame', () => {
+    expect(shouldShowVideoStickerLoading(false, false, 'idle')).toBe(true);
+    expect(shouldShowVideoStickerLoading(false, false, 'readyToPlay')).toBe(true);
+    expect(shouldShowVideoStickerLoading(true, false, 'readyToPlay')).toBe(false);
+    expect(shouldShowVideoStickerLoading(false, true, 'error')).toBe(false);
   });
 });

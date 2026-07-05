@@ -125,6 +125,18 @@ describe('Android HTML image preview helpers', () => {
     });
   });
 
+  it('does not send NodeSeek login cookies to public static sticker media', () => {
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/static/image/sticker/emoji/00.webm', 'uid=1')).toEqual({
+      Accept: 'image/avif,image/webp,image/*,*/*;q=0.8',
+      Referer: 'https://www.nodeseek.com',
+      'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36'
+    });
+  });
+
+  it('keeps NodeSeek cookies for media URLs that may require login', () => {
+    expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBe('uid=1');
+  });
+
   it('builds a de-duplicated preview list and keeps tapped image position', () => {
     const result = imagePreviewListFromCatalog(createImagePreviewCatalog([
         '<img src="https://cdn.example.com/a.jpg">',
@@ -225,6 +237,7 @@ describe('Android HTML image preview helpers', () => {
     const result = flowInlineImagesInMixedParagraphs(html);
 
     expect(result).toContain('<forum-inline-image');
+    expect(result).not.toContain('<forum-sticker-row>');
     expect(result).not.toContain('<img');
   });
 
@@ -233,7 +246,24 @@ describe('Android HTML image preview helpers', () => {
     const result = flowInlineImagesInMixedParagraphs(html);
 
     expect(result).toContain('<forum-inline-image class="emoji"');
+    expect(result).not.toContain('<forum-sticker-row>');
     expect(result).not.toContain('<img class="emoji"');
+  });
+
+  it('renders Yaohuo face images through the inline image path', () => {
+    const html = '<p>红包可能不一样 <img src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg"');
+    expect(result).not.toContain('<img src="https://yaohuo.me/bbs/face/淡定.gif"');
+  });
+
+  it('does not treat standalone Yaohuo face images as sticker rows', () => {
+    const html = '<p><img src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg"');
+    expect(result).not.toContain('<forum-sticker-row>');
   });
 
   it('renders xhj sticker images in mixed paragraphs through the inline image path', () => {
@@ -245,68 +275,128 @@ describe('Android HTML image preview helpers', () => {
     expect(extractImageUrlsFromHtml(html)).toEqual([]);
   });
 
-  it('renders large NodeSeek xhj stickers in a sticker row instead of a text line', () => {
+  it('keeps NodeSeek xhj stickers inline when the source line has text', () => {
     const html = '<p>rt<br>有什么特别之处吗 <img alt="xhj032" title="xhj032" width="120" height="99" src="https://www.nodeseek.com/static/image/smiley/xhj032.png"><br><img alt="photo" src="https://www.nodeseek.com/api/attachments/123"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('<forum-sticker-row>');
-    expect(result).toContain('<forum-sticker alt="xhj032"');
+    expect(result).not.toContain('<forum-sticker-row>');
+    expect(result).toContain('<forum-inline-image alt="xhj032"');
     expect(result).not.toContain('<img alt="xhj032"');
     expect(extractImageUrlsFromHtml(html)).toEqual(['https://www.nodeseek.com/api/attachments/123']);
   });
 
-  it('renders NodeSeek sticker class images with adjacent text in a sticker row', () => {
+  it('keeps NodeSeek sticker class images inline when the source line has text', () => {
     const html = '<p><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" loading="lazy" alt="ac01"> 拉段了吗</p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('<forum-sticker-row>');
-    expect(result).toContain('<forum-sticker class="sticker"');
+    expect(result).not.toContain('<forum-sticker-row>');
+    expect(result).toContain('<forum-inline-image class="sticker"');
     expect(result).toContain('拉段了吗');
-    expect(result).not.toContain('<forum-inline-image');
   });
 
-  it('preserves text before a line break when a later line contains a NodeSeek sticker', () => {
+  it('preserves text before a line break when a later text line contains a NodeSeek sticker', () => {
     const html = '<p>rt,刚坠机，我只是带上自己的ip段<br>ipv6顶一会儿 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('<p>rt,刚坠机，我只是带上自己的ip段</p>');
-    expect(result).toContain('<forum-sticker-row>ipv6顶一会儿 <forum-sticker class="sticker"');
-    expect(result).not.toContain('<forum-inline-image');
+    expect(result).not.toContain('<forum-sticker-row>');
+    expect(result).toContain('rt,刚坠机，我只是带上自己的ip段');
+    expect(result).toContain('ipv6顶一会儿 <forum-inline-image class="sticker"');
+  });
+
+  it('renders media-only NodeSeek sticker source lines as one sticker row', () => {
+    const html = '<p>正文<br><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/02.png" alt="ac02"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<p>正文</p>');
+    expect(result).toContain('<forum-sticker-row><forum-sticker class="sticker"');
+    expect(result.match(/<forum-sticker/g)).toHaveLength(3);
+    expect(result.match(/<forum-sticker-row>/g)).toHaveLength(1);
+  });
+
+  it('keeps adjacent sticker videos in one source line', () => {
+    const html = '<p>正文<br><forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" alt="emoji00" width="100" height="100"></forum-video-sticker>  <forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" alt="emoji00" width="100" height="100"></forum-video-sticker></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<p>正文</p>');
+    expect(result).toContain('<forum-sticker-row><forum-video-sticker class="sticker"');
+    expect(result).toContain('data-forum-sticker-row="true"');
+    expect(result.match(/<forum-sticker-row>/g)).toHaveLength(1);
+  });
+
+  it('keeps text-mixed sticker videos in their source line', () => {
+    const html = '<p>hhhhhhh <forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" alt="emoji00" width="100" height="100"></forum-video-sticker></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('hhhhhhh <forum-sticker src="https://www.nodeseek.com/static/image/sticker/emoji/00.png"');
+    expect(result).toContain('emoji00</forum-sticker>');
+    expect(result).not.toContain('<forum-video-sticker');
+    expect(result).not.toContain('<forum-sticker-row>');
   });
 
   it('uses a readable inline size for xhj sticker images without explicit dimensions', () => {
     expect(inlineForumImageDisplaySize({
       alt: 'xhj032',
       src: 'https://cdn.example.com/xhj032.png'
-    })).toEqual({ width: 24, height: 24 });
+    })).toEqual({ width: 48, height: 48 });
   });
 
-  it('uses NodeSeek sticker class size when source omits dimensions', () => {
+  it('uses app inline sticker size when source omits dimensions', () => {
     expect(inlineForumImageDisplaySize({
       class: 'sticker',
       alt: 'ac01',
       src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png'
-    })).toEqual({ width: 104, height: 90 });
+    })).toEqual({ width: 48, height: 48 });
   });
 
-  it('keeps NodeSeek sticker class size when source declares tiny dimensions', () => {
+  it('keeps inline sticker source dimensions when they are already readable', () => {
     expect(inlineForumImageDisplaySize({
       class: 'sticker',
       alt: 'ac01',
       src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png',
       width: '30',
       height: '26'
-    })).toEqual({ width: 104, height: 90 });
+    })).toEqual({ width: 30, height: 26 });
   });
 
-  it('caps NodeSeek xhj sticker source dimensions instead of shrinking them to emoji size', () => {
+  it('caps inline NodeSeek xhj sticker source dimensions without treating them as emoji', () => {
     expect(inlineForumImageDisplaySize({
       alt: 'xhj032',
       title: 'xhj032',
       src: 'https://cdn.example.com/xhj032.png',
       width: '120',
       height: '99'
-    })).toEqual({ width: 104, height: 86 });
+    })).toEqual({ width: 64, height: 53 });
+  });
+
+  it('keeps standalone sticker rows at default sticker size when source omits dimensions', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'sticker',
+      alt: 'ac01',
+      src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png',
+      'data-forum-sticker-row': 'true'
+    })).toEqual({ width: 48, height: 48 });
+  });
+
+  it('keeps small standalone sticker row source dimensions instead of enlarging them', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'sticker',
+      alt: 'ac01',
+      src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png',
+      width: '30',
+      height: '26',
+      'data-forum-sticker-row': 'true'
+    })).toEqual({ width: 30, height: 26 });
+  });
+
+  it('allows standalone sticker rows to be larger when source dimensions say so', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'sticker',
+      alt: 'ac01',
+      src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png',
+      width: '120',
+      height: '99',
+      'data-forum-sticker-row': 'true'
+    })).toEqual({ width: 100, height: 83 });
   });
 
   it('caps generic forum emoji near text size when source dimensions are large', () => {

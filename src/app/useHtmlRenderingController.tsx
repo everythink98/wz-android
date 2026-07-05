@@ -1,7 +1,8 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { useEvent } from 'expo';
 import { Image as ExpoImage } from 'expo-image';
-import { VideoView, useVideoPlayer } from 'expo-video';
+import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
 import { WebView } from 'react-native-webview';
 import {
   getNativePropsForTNode,
@@ -15,6 +16,7 @@ import type { ReaderSettings } from '../readerData';
 import { createTopicImageDeriver } from '../topicDerivedData';
 import {
   imageSourceFromUrl,
+  imageRequestHeadersForUrl,
   inlineForumImageAlignmentStyle,
   inlineForumImageDisplaySize,
   FORUM_STICKER_ROW_TAG,
@@ -38,27 +40,95 @@ export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'succe
   return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
 }
 
-function ForumVideoStickerVideo({ fallbackSrc, src, style }: { fallbackSrc: string; src: string; style: StyleProp<ViewStyle> }) {
+function isVideoStickerUrl(url: string) {
+  return /\.(?:webm|mp4|mov)(?:[?#].*)?$/i.test(url);
+}
+
+function videoStickerRequestHeaders(url: string, cookieHeader?: string, userAgent?: string): Record<string, string> | undefined {
+  const headers = imageRequestHeadersForUrl(url, cookieHeader, userAgent);
+  return headers ? {
+    ...headers,
+    Accept: 'video/webm,video/mp4,video/*,*/*;q=0.8'
+  } : undefined;
+}
+
+export function shouldShowVideoStickerLoading(firstFrameRendered: boolean, loadFailed: boolean, status: VideoPlayerStatus) {
+  return !loadFailed && (status === 'loading' || (status !== 'error' && !firstFrameRendered));
+}
+
+function ForumVideoStickerVideo({
+  fallbackSrc,
+  headers,
+  loadingColor,
+  src,
+  videoStyle
+}: {
+  fallbackSrc: string;
+  headers?: Record<string, string>;
+  loadingColor: string;
+  src: string;
+  videoStyle: StyleProp<ViewStyle>;
+}) {
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
-  const player = useVideoPlayer({ uri: src }, (player) => {
-    player.keepScreenOnWhilePlaying = false;
-    player.loop = true;
-    player.muted = true;
-    player.play();
+  const headerAccept = headers?.Accept || '';
+  const headerCookie = headers?.Cookie || '';
+  const headerReferer = headers?.Referer || '';
+  const headerUserAgent = headers?.['User-Agent'] || '';
+  const hasHeaders = Boolean(headers);
+  const source = useMemo<VideoSource>(() => ({
+    uri: src,
+    ...(hasHeaders ? {
+      headers: {
+        ...(headerAccept ? { Accept: headerAccept } : {}),
+        ...(headerCookie ? { Cookie: headerCookie } : {}),
+        ...(headerReferer ? { Referer: headerReferer } : {}),
+        ...(headerUserAgent ? { 'User-Agent': headerUserAgent } : {})
+      }
+    } : {}),
+    contentType: 'progressive'
+  }), [hasHeaders, headerAccept, headerCookie, headerReferer, headerUserAgent, src]);
+  const player = useVideoPlayer(source, (nextPlayer) => {
+    nextPlayer.loop = true;
+    nextPlayer.muted = true;
+    nextPlayer.keepScreenOnWhilePlaying = false;
+    nextPlayer.play();
   });
+  const status = useEvent(player, 'statusChange', { status: player.status }).status;
+  useEffect(() => {
+    setFirstFrameRendered(false);
+  }, [headerAccept, headerCookie, headerReferer, headerUserAgent, src]);
+  const loadFailed = status === 'error';
+  const showLoading = shouldShowVideoStickerLoading(firstFrameRendered, loadFailed, status);
+  const showFallback = fallbackSrc && (!firstFrameRendered || loadFailed);
   return (
-    <View pointerEvents="none" style={style}>
-      {fallbackSrc && !firstFrameRendered ? <Image source={imageSourceFromUrl(fallbackSrc)} style={StyleSheet.absoluteFillObject} /> : null}
-      <VideoView
-        allowsVideoFrameAnalysis={false}
-        contentFit="contain"
-        nativeControls={false}
-        onFirstFrameRender={() => setFirstFrameRendered(true)}
-        player={player}
-        style={embedStyles.stickerVideo}
-        surfaceType="textureView"
-        useExoShutter={false}
-      />
+    <View pointerEvents="none" style={videoStyle}>
+      {!loadFailed ? (
+        <VideoView
+          allowsVideoFrameAnalysis={false}
+          contentFit="contain"
+          fullscreenOptions={{ enable: false }}
+          nativeControls={false}
+          onFirstFrameRender={() => {
+            setFirstFrameRendered(true);
+          }}
+          player={player}
+          style={embedStyles.stickerVideoFill}
+          surfaceType="textureView"
+          useExoShutter={false}
+        />
+      ) : null}
+      {showFallback ? (
+        <Image
+          resizeMode="contain"
+          source={imageSourceFromUrl(fallbackSrc, undefined, headers?.Cookie, headers?.['User-Agent'])}
+          style={embedStyles.stickerVideoFallback}
+        />
+      ) : null}
+      {showLoading ? (
+        <View style={embedStyles.stickerVideoLoading}>
+          <ActivityIndicator color={loadingColor} size="small" />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -68,6 +138,8 @@ export function useHtmlRenderingController({
   onOpenImagePreview,
   onOpenTopic,
   onOpenUser,
+  nodeSeekMediaCookieHeader,
+  nodeSeekMediaUserAgent,
   selectedTopic,
   settings,
   styles,
@@ -79,6 +151,8 @@ export function useHtmlRenderingController({
   onOpenImagePreview: (url: string) => void;
   onOpenTopic: (topic: Topic) => void | Promise<void>;
   onOpenUser: (user: UserProfile) => void | Promise<void>;
+  nodeSeekMediaUserAgent?: string;
+  nodeSeekMediaCookieHeader?: string;
   selectedTopic: Topic | null;
   settings: ReaderSettings;
   styles: {
@@ -206,9 +280,22 @@ export function useHtmlRenderingController({
       const fallbackSrc = attributes['data-fallback-src'] || '';
       const size = inlineForumImageDisplaySize(attributes, settings.fontScale);
       if (!src) {
-        return fallbackSrc ? <Image source={imageSourceFromUrl(fallbackSrc)} style={[styles.inlineForumImage, size]} /> : null;
+        return fallbackSrc ? <Image source={imageSourceFromUrl(fallbackSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} /> : null;
       }
-      return <ForumVideoStickerVideo fallbackSrc={fallbackSrc} src={src} style={[styles.inlineForumImage, size, embedStyles.stickerVideoFrame]} />;
+      if (!isVideoStickerUrl(src)) {
+        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} />;
+      }
+      const headers = videoStickerRequestHeaders(src, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
+      return (
+        <ForumVideoStickerVideo
+          key={`${src}:${headers?.Cookie ? 'auth' : 'anonymous'}`}
+          fallbackSrc={fallbackSrc}
+          headers={headers}
+          loadingColor={theme.primary}
+          src={src}
+          videoStyle={[size, embedStyles.inlineVideoSticker, embedStyles.stickerVideoFrame]}
+        />
+      );
     };
     const ForumVideoRenderer: CustomBlockRenderer = (props) => {
       const attributes = props.tnode.attributes || {};
@@ -225,7 +312,7 @@ export function useHtmlRenderingController({
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{attributes.alt || attributes.title || ''}</Text>;
       }
-      return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, size]} />;
+      return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, size]} />;
     };
     const ForumStickerRowRenderer: CustomBlockRenderer = (props) => {
       return (
@@ -258,12 +345,12 @@ export function useHtmlRenderingController({
         >
           {site || iconSrc ? (
             <View style={embedStyles.linkCardHeader}>
-              {iconSrc ? <ExpoImage contentFit="contain" source={imageSourceFromUrl(iconSrc)} style={embedStyles.linkCardIcon} /> : null}
+              {iconSrc ? <ExpoImage contentFit="contain" source={imageSourceFromUrl(iconSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={embedStyles.linkCardIcon} /> : null}
               {site ? <Text numberOfLines={1} style={[embedStyles.linkCardSite, { color: theme.muted }]}>{site}</Text> : null}
             </View>
           ) : null}
           <View style={embedStyles.linkCardBody}>
-            {imageSrc ? <ExpoImage contentFit="cover" source={imageSourceFromUrl(imageSrc)} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
+            {imageSrc ? <ExpoImage contentFit="cover" source={imageSourceFromUrl(imageSrc, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[embedStyles.linkCardThumbnail, { backgroundColor: theme.surface2 }]} /> : null}
             <View style={embedStyles.linkCardText}>
               <Text numberOfLines={3} style={[embedStyles.linkCardTitle, { color: theme.primaryStrong }]}>{title}</Text>
               {description ? <Text numberOfLines={3} style={[embedStyles.linkCardDescription, { color: theme.ink }]}>{description}</Text> : null}
@@ -285,7 +372,7 @@ export function useHtmlRenderingController({
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
       const nativeImageLoaded = nativeImageLoadState.src === src && nativeImageLoadState.loaded;
-      const imageSource = imageSourceFromUrl(src, imageProps.source);
+      const imageSource = imageSourceFromUrl(src, imageProps.source, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
       const imageState = useIMGElementState({
         ...imageProps,
         source: imageSource,
@@ -295,7 +382,7 @@ export function useHtmlRenderingController({
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
       if (isInlineForumImage(props.tnode.attributes)) {
-        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
       const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
@@ -361,7 +448,7 @@ export function useHtmlRenderingController({
       }
       const isInlineImage = isInlineForumImage(attributes);
       if (isInlineImage) {
-        return <Image source={imageSourceFromUrl(src)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
+        return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(attributes, settings.fontScale), inlineForumImageAlignmentStyle(attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
       return <Text style={styles.inlineForumImageText}>{label || src}</Text>;
     };
@@ -379,6 +466,8 @@ export function useHtmlRenderingController({
     };
   }, [
     htmlBaseStyle.lineHeight,
+    nodeSeekMediaCookieHeader,
+    nodeSeekMediaUserAgent,
     onOpenImagePreview,
     openHtmlLink,
     settings.fontScale,
@@ -450,9 +539,20 @@ const embedStyles = StyleSheet.create({
   stickerVideoFrame: {
     overflow: 'hidden'
   },
-  stickerVideo: {
+  inlineVideoSticker: {
     backgroundColor: 'transparent',
-    flex: 1
+    marginHorizontal: 2
+  },
+  stickerVideoFill: {
+    ...StyleSheet.absoluteFillObject
+  },
+  stickerVideoFallback: {
+    ...StyleSheet.absoluteFillObject
+  },
+  stickerVideoLoading: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   linkCard: {
     alignSelf: 'stretch',
