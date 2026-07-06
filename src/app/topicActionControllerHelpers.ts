@@ -1,5 +1,5 @@
-import type { Screen } from '../appTypes';
-import type { TopicSnapshot } from '../appTypes';
+import type { ReplyEditTarget, Screen, TopicSnapshot } from '../appTypes';
+import { nodeSeekMarkdownToHtml } from '../localNodeseek';
 import type { OptimisticActionState } from '../topicActionState';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 
@@ -81,6 +81,27 @@ export function topicSnapshotForUserReturn(snapshot: TopicSnapshot, hasPendingOp
     loadingQuotedFloors: {},
     scrollY: 0
   };
+}
+
+export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>) {
+  const contentMarkdown = edit.contentMarkdown.trim();
+  if (!contentMarkdown) {
+    return replies;
+  }
+  let changed = false;
+  const contentHtml = nodeSeekMarkdownToHtml(contentMarkdown);
+  const next = replies.map((reply) => {
+    if (reply.commentId !== edit.commentId) {
+      return reply;
+    }
+    changed = true;
+    return {
+      ...reply,
+      contentHtml,
+      contentMarkdown
+    };
+  });
+  return changed ? next : replies;
 }
 
 export function markCurrentNodeSeekOwnRepliesUnlikable(replies: Reply[], currentUser: UserProfile | undefined, currentUserId?: number | null) {

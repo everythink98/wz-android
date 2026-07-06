@@ -48,7 +48,7 @@ interface NodeSeekOptions {
   timeoutMs?: number;
 }
 
-function markdownToHtml(markdown: unknown) {
+export function nodeSeekMarkdownToHtml(markdown: unknown) {
   return sanitizeContentHtml(md.render(String(markdown || '')), BASE_URL);
 }
 
@@ -65,7 +65,7 @@ function nodeSeekDisplayHtml(content: unknown, markdown: unknown) {
   if (markdownText && hasHtmlTag(markdownText)) {
     return sanitizeContentHtml(markdownText, BASE_URL);
   }
-  return markdownToHtml(markdownText || renderedHtml);
+  return nodeSeekMarkdownToHtml(markdownText || renderedHtml);
 }
 
 function nodeSeekEditableMarkdown(markdown: unknown) {
@@ -78,7 +78,7 @@ function nodeSeekSignatureHtml(signature: unknown) {
   if (!raw) {
     return undefined;
   }
-  return hasHtmlTag(raw) ? sanitizeContentHtml(raw, BASE_URL) : markdownToHtml(raw);
+  return hasHtmlTag(raw) ? sanitizeContentHtml(raw, BASE_URL) : nodeSeekMarkdownToHtml(raw);
 }
 
 function parseViewCount(value: unknown) {

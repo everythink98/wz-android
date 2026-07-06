@@ -65,6 +65,31 @@ describe('Android local forum facade', () => {
     expect(calls).not.toMatch(/127\.0\.0\.1:3000|10\.0\.2\.2|\/api\/feed|\/api\/categories/);
   });
 
+  it('passes no-cache through NodeSeek topic and reply reads', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 101,
+        title: 'NodeSeek topic',
+        comments: [
+          { commentId: 100, poster: { name: 'alice' }, markdown: '正文' },
+          { commentId: 101, poster: { name: 'bob' }, markdown: '回复' }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => new Response(`<script>${payload}</script>`));
+
+    await getTopic({ source: 'nodeseek', id: '101', fetcher, nocache: true });
+    await getReplies({ source: 'nodeseek', id: '101', page: 1, fetcher, nocache: true });
+
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    for (const [, init] of calls) {
+      expect(init?.headers).toMatchObject({
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache'
+      });
+    }
+  });
+
   it('keeps single quoted-floor reads on linux.do public JSON endpoints', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/t/42.json')) {

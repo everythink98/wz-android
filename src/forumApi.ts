@@ -285,6 +285,7 @@ export async function getCategories({
 export function getTopic({
   source,
   id,
+  nocache = false,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -293,13 +294,14 @@ export function getTopic({
 }: {
   source: Source;
   id: string;
+  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
-  const options = { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   return pickSource(source, {
     nodeseek: () => getNodeSeekTopic(id, options),
     linuxdo: () => getLinuxDoTopic(id, options),
@@ -313,6 +315,7 @@ export function getReplies({
   page,
   limit = 20,
   offset,
+  nocache = false,
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
@@ -325,6 +328,7 @@ export function getReplies({
   page: number;
   limit?: number;
   offset?: number | null;
+  nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
@@ -332,7 +336,7 @@ export function getReplies({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const options = { page, limit, offset, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
+  const options = { page, limit, offset, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
   return pickSource<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),

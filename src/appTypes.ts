@@ -30,6 +30,8 @@ export type ReplyRefreshTarget = Pick<Reply, 'commentId' | 'floor' | 'deletePath
 export interface TopicRepliesRefreshOptions {
   silent?: boolean;
   afterSubmit?: boolean;
+  nocache?: boolean;
+  editedReplyContent?: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>;
   targetReply?: ReplyRefreshTarget | null;
   excludeReply?: ReplyRefreshTarget | null;
 }

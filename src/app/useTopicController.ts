@@ -28,6 +28,7 @@ import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapsh
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
+import { applyEditedReplyContent } from './topicActionControllerHelpers';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { authHintForSource } from '../siteSessionPrompts';
@@ -307,6 +308,7 @@ export function useTopicController({
         : await getTopic({
           source: topic.source,
           id: topic.id,
+          nocache,
           fetcher,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
@@ -416,6 +418,8 @@ export function useTopicController({
   const refreshTopicReplies = useCallback(async ({
     silent = false,
     afterSubmit = false,
+    nocache = !silent || afterSubmit,
+    editedReplyContent,
     targetReply,
     excludeReply
   }: TopicRepliesRefreshOptions = {}) => {
@@ -479,6 +483,7 @@ export function useTopicController({
           page: targetPage,
           limit: targetLimit ?? REPLY_PAGE_SIZE,
           offset: targetOffset,
+          nocache,
           fetcher,
           nodeSeekCookie,
           nodeSeekUserAgent: nodeSeekUserAgentRef.current,
@@ -489,10 +494,19 @@ export function useTopicController({
         return false;
       }
       const refreshedItems = removeReply(data.items, excludeReply);
+      const refreshedHasEditedContent = editedReplyContent
+        ? refreshedItems.some((reply) => (
+          reply.commentId === editedReplyContent.commentId
+          && reply.contentMarkdown?.trim() === editedReplyContent.contentMarkdown.trim()
+        ))
+        : false;
       const mergedReplies = mergeReplies(topicRepliesRef.current, refreshedItems);
-      setTopicReplies(mergedReplies);
+      const displayedReplies = editedReplyContent && !refreshedHasEditedContent
+        ? applyEditedReplyContent(mergedReplies, editedReplyContent)
+        : mergedReplies;
+      setTopicReplies(displayedReplies);
       if (afterSubmit && !targetReply && !excludeReply) {
-        const replyCount = replyCountAfterNewReplySubmit(detail.replyCount || 0, mergedReplies.length);
+        const replyCount = replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length);
         setTopicDetail((current) => current && topicKey(current) === requestTopicKey && replyCount > current.replyCount ? { ...current, replyCount } : current);
         setSelectedTopic((current) => current && topicKey(current) === requestTopicKey && replyCount > current.replyCount ? { ...current, replyCount } : current);
       }

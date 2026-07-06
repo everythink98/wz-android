@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   hasPendingOptimisticTopicAction,
+  applyEditedReplyContent,
   isTopicScopedActionKey,
   markCurrentNodeSeekOwnRepliesUnlikable,
   nodeSeekAttendanceActionKey,
@@ -169,6 +170,39 @@ describe('topic action controller helpers', () => {
       url: 'https://www.nodeseek.com/space/48872',
       topics: []
     })).toBe(replies);
+  });
+
+  it('updates only the edited reply content locally', () => {
+    const replies: Reply[] = [
+      {
+        author: '凡想世界',
+        authorId: '48872',
+        commentId: 9,
+        contentMarkdown: '旧回复',
+        contentHtml: '<p>旧回复</p>',
+        createdAt: '2026-01-01T00:00:00.000Z'
+      },
+      {
+        author: 'someone',
+        commentId: 10,
+        contentHtml: '<p>其他回复</p>',
+        createdAt: '2026-01-01T00:01:00.000Z'
+      }
+    ];
+
+    const updated = applyEditedReplyContent(replies, {
+      commentId: 9,
+      contentMarkdown: '新回复 **重点**'
+    });
+
+    expect(updated[0]).toMatchObject({
+      author: '凡想世界',
+      authorId: '48872',
+      commentId: 9,
+      contentMarkdown: '新回复 **重点**'
+    });
+    expect(updated[0].contentHtml).toContain('<strong>重点</strong>');
+    expect(updated[1]).toBe(replies[1]);
   });
 
   it('uses the saved NodeSeek login user id when the current user profile is not loaded', () => {

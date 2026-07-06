@@ -100,6 +100,7 @@ import {
   runOptimisticActionQueue as runOptimisticActionQueueHelper
 } from './topicActionHelpers';
 import {
+  applyEditedReplyContent,
   canSubmitReplyToTopic,
   canVotePollOnTopic,
   currentTopicActionTopic,
@@ -599,12 +600,23 @@ export function useTopicActionsController({
           if (!isCurrentTopicActionRequest(requestOwner)) {
             return;
           }
+          const editedReplyContent = {
+            commentId: replyEditTarget.commentId,
+            contentMarkdown: replyContent
+          };
+          setTopicReplies((current) => applyEditedReplyContent(current, editedReplyContent));
           setReplyContent('');
           setReplyFace('');
           setReplyComposerOpen(false);
           setReplyTarget(null);
           setReplyEditTarget(null);
-          await refreshTopicReplies({ silent: true, afterSubmit: true, targetReply: replyEditTarget });
+          await refreshTopicReplies({
+            silent: true,
+            afterSubmit: true,
+            nocache: true,
+            targetReply: replyEditTarget,
+            editedReplyContent
+          });
         }
       });
       return;
