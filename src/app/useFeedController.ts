@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCategories, getFeed, getYaohuoFeed } from '../sources/sourceGateway';
-import { defaultLinuxDoFeedFilter, shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
+import { defaultFeedFilters, shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
   applyFeedFilter,
   feedRequestKey,
@@ -27,7 +27,7 @@ import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '..
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
-import type { Category, FeedResponse, FeedSource, LinuxDoFeedFilter, Source, SourceErrors, Topic } from '../types';
+import type { Category, FeedFilterState, FeedSource, FeedResponse, LinuxDoFeedFilter, Source, SourceFeedFilter, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
   baseFeedRetryPending?: boolean;
@@ -60,6 +60,22 @@ function createFeedStates(): Record<FeedSource, FeedSourceState> {
     nodeseek: createFeedSourceState(),
     yaohuo: createFeedSourceState()
   };
+}
+
+function feedFilterForRequest(source: FeedSource, category: string, filters: FeedFilterState): SourceFeedFilter | undefined {
+  if (!shouldUseFeedFilter(source, category)) {
+    return undefined;
+  }
+  if (source === 'linuxdo') {
+    return filters.linuxdo;
+  }
+  if (source === 'nodeseek') {
+    return filters.nodeseek;
+  }
+  if (source === 'v2ex') {
+    return filters.v2ex;
+  }
+  return undefined;
 }
 
 export function shouldWaitForReaderDataBeforeFeed(source: FeedSource, readingFilter: ReadingFilter) {
@@ -118,7 +134,7 @@ export function useFeedController({
   }
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
-  const [linuxDoFeedFilter, setLinuxDoFeedFilter] = useState<LinuxDoFeedFilter>(defaultLinuxDoFeedFilter);
+  const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const [categories, setCategories] = useState<Category[]>([]);
 
   const activeFeedState = feedStates[feedSource];
@@ -182,7 +198,7 @@ export function useFeedController({
     reset = false,
     source = feedSource,
     category = categoryFilter,
-    linuxDoFilter,
+    feedFilter,
     nocache = false,
     clearItems = reset && !nocache,
     successMessage
@@ -192,7 +208,7 @@ export function useFeedController({
     reset?: boolean;
     source?: FeedSource;
     category?: string;
-    linuxDoFilter?: LinuxDoFeedFilter;
+    feedFilter?: SourceFeedFilter;
     nocache?: boolean;
     clearItems?: boolean;
     successMessage?: string;
@@ -202,8 +218,8 @@ export function useFeedController({
     }
     const requestSource = source;
     const requestBaseState = feedStatesRef.current[requestSource];
-    const requestLinuxDoFilter = requestSource === 'linuxdo' ? linuxDoFilter || linuxDoFeedFilter : undefined;
-    const requestKey = feedRequestKey(requestSource, category, requestLinuxDoFilter);
+    const requestFeedFilter = feedFilter ?? feedFilterForRequest(requestSource, category, feedFilters);
+    const requestKey = feedRequestKey(requestSource, category, requestFeedFilter);
     feedLoadingRef.current = true;
     const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
@@ -294,8 +310,9 @@ export function useFeedController({
             page,
             cursor,
             limit: 30,
-            category: category || undefined,
-            nocache,
+          category: category || undefined,
+          feedFilter: requestFeedFilter,
+          nocache,
             fetcher,
             nodeSeekCookie,
             nodeSeekUserAgent: nodeSeekUserAgentRef.current,
@@ -364,7 +381,8 @@ export function useFeedController({
           cursor,
           limit: 30,
           category: category || undefined,
-          linuxDoFilter: requestLinuxDoFilter,
+          feedFilter: requestFeedFilter,
+          linuxDoFilter: requestSource === 'linuxdo' ? requestFeedFilter as LinuxDoFeedFilter | undefined : undefined,
           nocache,
           fetcher,
           nodeSeekCookie,
@@ -457,9 +475,9 @@ export function useFeedController({
   }, [
     categoryFilter,
     clearYaohuoLoginState,
+    feedFilters,
     feedSource,
     fetcher,
-    linuxDoFeedFilter,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     markFeedLoadMoreFailed,
@@ -479,13 +497,13 @@ export function useFeedController({
     if (!readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter)) {
       return;
     }
-    const requestLinuxDoFilter = feedSource === 'linuxdo' ? linuxDoFeedFilter : undefined;
-    const requestKey = feedRequestKey(feedSource, categoryFilter, requestLinuxDoFilter);
+    const requestFeedFilter = feedFilterForRequest(feedSource, categoryFilter, feedFilters);
+    const requestKey = feedRequestKey(feedSource, categoryFilter, requestFeedFilter);
     if (shouldReuseFeedStateForRequest(feedStatesRef.current[feedSource], requestKey)) {
       return;
     }
-    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, linuxDoFilter: requestLinuxDoFilter, nocache: true, clearItems: true });
-  }, [categoryFilter, feedSource, linuxDoFeedFilter, readerDataLoaded, readingFilter]);
+    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, feedFilter: requestFeedFilter, nocache: true, clearItems: true });
+  }, [categoryFilter, feedFilters, feedSource, readerDataLoaded, readingFilter]);
 
   useEffect(() => {
     void loadCategories();
@@ -511,6 +529,21 @@ export function useFeedController({
     setCategoryFilter('');
   }, []);
 
+  const setFeedFilter = useCallback((filter: SourceFeedFilter) => {
+    setFeedFilters((current) => {
+      if (feedSource === 'linuxdo') {
+        return { ...current, linuxdo: filter as LinuxDoFeedFilter };
+      }
+      if (feedSource === 'nodeseek') {
+        return { ...current, nodeseek: filter as FeedFilterState['nodeseek'] };
+      }
+      if (feedSource === 'v2ex') {
+        return { ...current, v2ex: filter as FeedFilterState['v2ex'] };
+      }
+      return current;
+    });
+  }, [feedSource]);
+
   const abortFeedRequests = useCallback(() => {
     feedAbortRef.current?.abort();
     categoriesAbortRef.current?.abort();
@@ -526,13 +559,13 @@ export function useFeedController({
     changeFeedSource,
     feedAllowsRemotePagination,
     feedBusy,
+    feedFilter: feedFilterForRequest(feedSource, categoryFilter, feedFilters),
     feedSource,
-    linuxDoFeedFilter,
     loadFeed,
     readingFilter,
     refreshFeed,
     setCategoryFilter,
-    setLinuxDoFeedFilter,
+    setFeedFilter,
     setReadingFilter,
     shownFeedItems
   };

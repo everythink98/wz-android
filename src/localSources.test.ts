@@ -2729,6 +2729,18 @@ describe('Android local sources', () => {
     }));
   });
 
+  it('reads the NodeSeek feed by latest replies when requested', async () => {
+    const fetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
+
+    await getFeed({
+      source: 'nodeseek',
+      feedFilter: 'replyTime',
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/?sortBy=replyTime', expect.any(Object));
+  });
+
   it('sends no-cache headers when refreshing the NodeSeek Android feed', async () => {
     const fetcher = vi.fn(async () => html(`<script>${nodeSeekPayload}</script>`));
 
@@ -3720,6 +3732,66 @@ describe('Android local sources', () => {
       replyCount: 2,
       lastReplyAt: '2026-05-29T00:30:00.000Z'
     });
+  });
+
+  it('reads the V2EX latest feed from the origin recent page', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/recent?p=1') {
+        return html(`
+          <div class="cell">
+            <span class="item_title"><a class="topic-link" href="/t/821#reply0">V2EX recent topic</a></span>
+            <span class="topic_info">
+              <a class="node" href="/go/qna">问与答</a> &nbsp;•&nbsp;
+              <a href="/member/alice">alice</a> &nbsp;•&nbsp;
+              <span title="2026-05-29 09:30:00">Just Now</span>
+            </span>
+          </div>
+          <a href="/recent?p=2">下一页</a>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const feed = await getFeed({ source: 'v2ex', feedFilter: 'latest', limit: 1, fetcher });
+
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual(['https://www.v2ex.com/recent?p=1']);
+    expect(feed.items[0]).toMatchObject({
+      id: '821',
+      title: 'V2EX recent topic'
+    });
+    expect(feed.hasMore).toBe(true);
+    expect(feed.nextPage).toBe(2);
+  });
+
+  it('reads the V2EX hot feed as a finite origin tab', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://www.v2ex.com/?tab=hot') {
+        return html(`
+          <div class="cell item">
+            <span class="item_title"><a class="topic-link" href="/t/822#reply8">V2EX hot topic</a></span>
+            <span class="topic_info">
+              <a class="node" href="/go/qna">问与答</a> &nbsp;•&nbsp;
+              <strong><a href="/member/alice">alice</a></strong> &nbsp;•&nbsp;
+              <span title="2026-05-29 10:30:00 +08:00">Just Now</span>
+            </span>
+            <td width="70" align="right"><a href="/t/822#reply8" class="count_livid">8</a></td>
+          </div>
+          <a href="/recent">更多新主题</a>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const feed = await getFeed({ source: 'v2ex', feedFilter: 'hot', limit: 1, fetcher });
+
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual(['https://www.v2ex.com/?tab=hot']);
+    expect(feed.items[0]).toMatchObject({
+      id: '822',
+      title: 'V2EX hot topic',
+      replyCount: 8
+    });
+    expect(feed.hasMore).toBe(false);
+    expect(feed.nextPage).toBeNull();
   });
 
   it('ignores malformed V2EX node links without dropping the topic', async () => {

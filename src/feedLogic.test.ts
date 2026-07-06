@@ -232,6 +232,10 @@ describe('Android feed logic helpers', () => {
     const linuxDoNewAll = feedRequestKey('linuxdo', '', 'new-all');
     const linuxDoNewTopics = feedRequestKey('linuxdo', '', 'new-topics');
     const linuxDoNewReplies = feedRequestKey('linuxdo', '', 'new-replies');
+    const nodeSeekNewTopics = feedRequestKey('nodeseek', '', 'postTime');
+    const nodeSeekNewReplies = feedRequestKey('nodeseek', '', 'replyTime');
+    const v2exAll = feedRequestKey('v2ex', '', 'all');
+    const v2exHot = feedRequestKey('v2ex', '', 'hot');
 
     expect(shouldReuseFeedStateForRequest({
       items: [topic],
@@ -258,6 +262,14 @@ describe('Android feed logic helpers', () => {
       items: [topic],
       requestKey: linuxDoNewTopics
     }, linuxDoNewReplies)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: nodeSeekNewTopics
+    }, nodeSeekNewReplies)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: v2exAll
+    }, v2exHot)).toBe(false);
   });
 
   it('stops feed pagination when a load-more response does not advance', () => {

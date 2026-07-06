@@ -4,7 +4,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
-import type { Category, FeedResponse, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
+import type { Category, FeedResponse, NodeSeekFeedFilter, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -857,20 +857,22 @@ function nextSearchPath(html: string, fallbackPage: number) {
   }
 }
 
-function listPath(page: number, category?: string) {
+function listPath(page: number, category?: string, feedFilter: NodeSeekFeedFilter = 'postTime') {
   const prefix = category ? `/categories/${encodeURIComponent(category)}` : '';
   const path = page > 1 ? `${prefix}/page-${page}` : `${prefix || '/'}`;
-  return `${path}?sortBy=postTime`;
+  return `${path}?sortBy=${feedFilter}`;
 }
 
 export async function getNodeSeekFeed(options: NodeSeekOptions & {
   page?: number;
   limit?: number;
   category?: string;
+  feedFilter?: NodeSeekFeedFilter;
 } = {}): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const html = await fetchNodeSeekText(listPath(page, options.category), options);
+  const feedFilter = options.category ? 'postTime' : options.feedFilter || 'postTime';
+  const html = await fetchNodeSeekText(listPath(page, options.category, feedFilter), options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const renderedItems = parseHtmlTopics(html);
   const items = renderedItems.length ? renderedItems : (embedded ? embeddedTopics(embedded) : []);

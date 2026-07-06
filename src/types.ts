@@ -1,6 +1,15 @@
 export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo';
 export type FeedSource = Source | 'all';
 export type LinuxDoFeedFilter = 'latest' | 'hot' | 'new-all' | 'new-topics' | 'new-replies';
+export type NodeSeekFeedFilter = 'postTime' | 'replyTime';
+export type V2exFeedFilter = 'all' | 'latest' | 'hot';
+export type FeedFilterSource = 'linuxdo' | 'nodeseek' | 'v2ex';
+export type SourceFeedFilter = LinuxDoFeedFilter | NodeSeekFeedFilter | V2exFeedFilter;
+export type FeedFilterState = {
+  linuxdo: LinuxDoFeedFilter;
+  nodeseek: NodeSeekFeedFilter;
+  v2ex: V2exFeedFilter;
+};
 export type SourceErrorKind = 'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
 
 export type SourceErrorInfo = string | {

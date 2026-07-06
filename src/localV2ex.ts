@@ -2,7 +2,7 @@ import { fetchWithTimeout, type Fetcher } from './request';
 import type { SearchSort } from './feedLogic';
 import { searchTimeRangeStartEpoch, type V2exSearchFilter } from './searchFilters';
 import { XMLParser } from 'fast-xml-parser';
-import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile, UserReplyActivity } from './types';
+import type { CategoriesResponse, FeedResponse, Reply, SearchResponse, Topic, TopicDetail, UserProfile, UserReplyActivity, V2exFeedFilter } from './types';
 import {
   absoluteUrl,
   accessRequirementFromObject,
@@ -460,10 +460,26 @@ export async function getV2exFeed(options: V2exOptions & {
   page?: number;
   limit?: number;
   category?: string;
+  feedFilter?: V2exFeedFilter;
   nocache?: boolean;
 } = {}): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
+  const feedFilter = options.category ? 'all' : options.feedFilter || 'all';
+  if (!options.category && feedFilter === 'hot') {
+    const html = await fetchText(`${BASE_URL}/?tab=hot`, options);
+    return { items: parseV2exAllTabPage(html, limit).items, errors: {}, hasMore: false, nextPage: null };
+  }
+  if (!options.category && feedFilter === 'latest') {
+    const html = await fetchText(`${BASE_URL}/recent?p=${page}`, options);
+    const pageResult = parseV2exListPage(html, page, '/recent');
+    return {
+      items: pageResult.items.slice(0, limit),
+      errors: {},
+      hasMore: pageResult.hasMore,
+      nextPage: pageResult.hasMore ? page + 1 : null
+    };
+  }
   if (!options.category && page === 1) {
     const html = await fetchText(`${BASE_URL}/?tab=all`, options);
     return { ...parseV2exAllTabPage(html, limit), errors: {} };

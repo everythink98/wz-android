@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedCategoryItems, feedLinuxDoFilterItems, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './feedCategoryRail';
+import { feedCategoryItems, feedFilterItems, feedFilterLabel, feedLinuxDoFilterItems, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseFeedFilter, shouldUseReadingFilter } from './feedCategoryRail';
 import type { Category } from './types';
 
 const categories: Category[] = [
@@ -27,6 +27,28 @@ describe('Android feed category rail', () => {
       { value: 'new-topics', label: '新·话题' },
       { value: 'new-replies', label: '新·回复' }
     ]);
+  });
+
+  it('shows only real list filters for sources that support them', () => {
+    expect(shouldUseFeedFilter('nodeseek', '')).toBe(true);
+    expect(shouldUseFeedFilter('nodeseek', 'daily')).toBe(false);
+    expect(feedFilterItems('nodeseek')).toEqual([
+      { value: 'postTime', label: '新帖子' },
+      { value: 'replyTime', label: '新评论' }
+    ]);
+    expect(feedFilterLabel('nodeseek', 'replyTime')).toBe('新评论');
+
+    expect(shouldUseFeedFilter('v2ex', '')).toBe(true);
+    expect(shouldUseFeedFilter('v2ex', 'qna')).toBe(false);
+    expect(feedFilterItems('v2ex')).toEqual([
+      { value: 'all', label: '全部' },
+      { value: 'latest', label: '最新' },
+      { value: 'hot', label: '最热' }
+    ]);
+    expect(feedFilterLabel('v2ex', 'hot')).toBe('最热');
+
+    expect(shouldUseFeedFilter('yaohuo', '')).toBe(false);
+    expect(feedFilterItems('yaohuo')).toEqual([]);
   });
 
   it('shows real source categories for a single source feed', () => {

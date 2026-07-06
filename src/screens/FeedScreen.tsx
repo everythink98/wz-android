@@ -3,9 +3,9 @@ import { Modal, Pressable, RefreshControl, Text, View, type NativeScrollEvent, t
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { TabView } from 'react-native-tab-view';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
-import type { Category, FeedSource, LinuxDoFeedFilter, Topic } from '../types';
+import type { Category, FeedSource, SourceFeedFilter, Topic } from '../types';
 import { topicKey } from '../readerData';
-import { feedCategoryItems, feedReadingFilterItems, feedSourceItems, linuxDoFeedFilterLabel, shouldUseReadingFilter } from '../feedCategoryRail';
+import { feedCategoryItems, feedFilterLabel, feedFilterMenuGroups, feedReadingFilterItems, feedSourceItems, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
 import type { ReadingFilter } from '../feedLogic';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
@@ -16,25 +16,6 @@ import { FEED_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 
 const AUTO_LOAD_SCROLL_STEP = 80;
 const FEED_PAGER_ROUTES = feedSourceItems.map((item) => ({ key: item.value, title: item.label }));
-const LINUXDO_FILTER_MENU_GROUPS: Array<{
-  title?: string;
-  items: Array<{ value: LinuxDoFeedFilter; label: string }>;
-}> = [
-  {
-    items: [
-      { value: 'latest', label: '最新' },
-      { value: 'hot', label: '热门' }
-    ]
-  },
-  {
-    title: '新',
-    items: [
-      { value: 'new-all', label: '所有' },
-      { value: 'new-topics', label: '话题' },
-      { value: 'new-replies', label: '回复' }
-    ]
-  }
-];
 function renderEmptyTabBar() {
   return null;
 }
@@ -46,8 +27,8 @@ export const FeedScreen = memo(function FeedScreen({
   feedHasMore,
   feedItems,
   feedPage,
+  feedFilter,
   feedSource,
-  linuxDoFeedFilter,
   loadMoreFailureSignal,
   loadingMore,
   topicStateIndex,
@@ -57,8 +38,8 @@ export const FeedScreen = memo(function FeedScreen({
   styles,
   theme,
   onCategoryChange,
+  onFeedFilterChange,
   onFeedSourceChange,
-  onLinuxDoFeedFilterChange,
   onLoadMore,
   onOpenTopic,
   onReadingFilterChange,
@@ -70,8 +51,8 @@ export const FeedScreen = memo(function FeedScreen({
   feedHasMore: boolean;
   feedItems: Topic[];
   feedPage: number;
+  feedFilter?: SourceFeedFilter;
   feedSource: FeedSource;
-  linuxDoFeedFilter: LinuxDoFeedFilter;
   loadMoreFailureSignal: number;
   loadingMore: boolean;
   topicStateIndex: TopicListItemStateIndex;
@@ -81,8 +62,8 @@ export const FeedScreen = memo(function FeedScreen({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onCategoryChange: (categoryId: string) => void;
+  onFeedFilterChange: (filter: SourceFeedFilter) => void;
   onFeedSourceChange: (source: FeedSource) => void;
-  onLinuxDoFeedFilterChange: (filter: LinuxDoFeedFilter) => void;
   onLoadMore: () => void;
   onOpenTopic: (topic: Topic) => void;
   onReadingFilterChange: (filter: ReadingFilter) => void;
@@ -99,7 +80,11 @@ export const FeedScreen = memo(function FeedScreen({
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const secondaryRailResetKey = feedSource;
   const feedNavigationState = useMemo(() => ({ index: pagerIndex, routes: FEED_PAGER_ROUTES }), [pagerIndex]);
-  const activeLinuxDoFilterLabel = linuxDoFeedFilterLabel(linuxDoFeedFilter);
+  const showFeedFilter = shouldUseFeedFilter(feedSource, categoryFilter);
+  const activeFeedFilterLabel = feedFilterLabel(feedSource, feedFilter);
+  const activeFeedFilterMenuGroups = showFeedFilter && (feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'v2ex')
+    ? feedFilterMenuGroups[feedSource]
+    : [];
 
   const requestFeedLoadMore = useCallback((source: 'button' | 'scroll' = 'button', offsetY = 0) => {
     if (!feedHasMore || busy || loadingMore) {
@@ -177,13 +162,13 @@ export const FeedScreen = memo(function FeedScreen({
     autoLoadPausedAfterFailureRef.current = false;
     pendingScrollTopRef.current = true;
     scrollFeedToTop(false);
-  }, [categoryFilter, feedSource, linuxDoFeedFilter, readingFilter, scrollFeedToTop]);
+  }, [categoryFilter, feedFilter, feedSource, readingFilter, scrollFeedToTop]);
 
   useEffect(() => {
-    if (feedSource !== 'linuxdo') {
+    if (!showFeedFilter) {
       setFilterMenuOpen(false);
     }
-  }, [feedSource]);
+  }, [showFeedFilter]);
 
   useEffect(() => {
     if (scrollToTopSignal > 0) {
@@ -211,20 +196,20 @@ export const FeedScreen = memo(function FeedScreen({
   const changeReadingFilter = useCallback((value: string) => {
     onReadingFilterChange(value as ReadingFilter);
   }, [onReadingFilterChange]);
-  const toggleLinuxDoFilterMenu = useCallback(() => {
+  const toggleFeedFilterMenu = useCallback(() => {
     triggerPressFeedback();
     setFilterMenuOpen((current) => !current);
   }, []);
-  const closeLinuxDoFilterMenu = useCallback(() => {
+  const closeFeedFilterMenu = useCallback(() => {
     setFilterMenuOpen(false);
   }, []);
-  const changeLinuxDoFilter = useCallback((value: LinuxDoFeedFilter) => {
+  const changeFeedFilter = useCallback((value: SourceFeedFilter) => {
     triggerPressFeedback();
     setFilterMenuOpen(false);
-    if (value !== linuxDoFeedFilter) {
-      onLinuxDoFeedFilterChange(value);
+    if (value !== feedFilter) {
+      onFeedFilterChange(value);
     }
-  }, [linuxDoFeedFilter, onLinuxDoFeedFilterChange]);
+  }, [feedFilter, onFeedFilterChange]);
   const scrollFeedToTopPress = useCallback(() => {
     scrollFeedToTop();
   }, [scrollFeedToTop]);
@@ -243,8 +228,8 @@ export const FeedScreen = memo(function FeedScreen({
     () => feedCategoryItems(categories, feedSource),
     [categories, feedSource]
   );
-  const renderLinuxDoFilterItem = useCallback((item: { value: LinuxDoFeedFilter; label: string }, last: boolean) => {
-    const active = item.value === linuxDoFeedFilter;
+  const renderFeedFilterItem = useCallback((item: { value: SourceFeedFilter; label: string }, last: boolean) => {
+    const active = item.value === feedFilter;
     return (
       <Pressable
         key={item.value}
@@ -252,23 +237,23 @@ export const FeedScreen = memo(function FeedScreen({
         accessibilityState={{ selected: active }}
         hitSlop={TOUCH_HIT_SLOP}
         style={[styles.topicMenuItem, styles.linuxDoFilterMenuItem, active && styles.linuxDoFilterMenuItemActive, last && styles.topicMenuItemLast]}
-        onPress={() => changeLinuxDoFilter(item.value)}
+        onPress={() => changeFeedFilter(item.value)}
       >
         <Text style={[styles.topicMenuItemText, styles.linuxDoFilterMenuItemText, active && styles.linuxDoFilterMenuItemTextActive]}>{item.label}</Text>
       </Pressable>
     );
-  }, [changeLinuxDoFilter, linuxDoFeedFilter, styles]);
-  const linuxDoFilterMenu = filterMenuOpen ? (
-    <Modal transparent animationType="fade" visible={filterMenuOpen} onRequestClose={closeLinuxDoFilterMenu}>
+  }, [changeFeedFilter, feedFilter, styles]);
+  const feedFilterMenu = filterMenuOpen ? (
+    <Modal transparent animationType="fade" visible={filterMenuOpen} onRequestClose={closeFeedFilterMenu}>
       <View style={styles.topicMenuLayer}>
-        <Pressable accessibilityRole="button" accessibilityLabel="关闭 linux.do 筛选菜单" style={styles.topicMenuDismissLayer} onPress={closeLinuxDoFilterMenu} />
+        <Pressable accessibilityRole="button" accessibilityLabel="关闭列表筛选菜单" style={styles.topicMenuDismissLayer} onPress={closeFeedFilterMenu} />
         <View style={styles.linuxDoFilterMenu}>
-          {LINUXDO_FILTER_MENU_GROUPS.map((group, groupIndex) => (
+          {activeFeedFilterMenuGroups.map((group, groupIndex) => (
             <View key={group.title || `group-${groupIndex}`}>
               {group.title ? <Text style={styles.linuxDoFilterMenuSectionText}>{group.title}</Text> : null}
-              {group.items.map((item, itemIndex) => renderLinuxDoFilterItem(
+              {group.items.map((item, itemIndex) => renderFeedFilterItem(
                 item,
-                groupIndex === LINUXDO_FILTER_MENU_GROUPS.length - 1 && itemIndex === group.items.length - 1
+                groupIndex === activeFeedFilterMenuGroups.length - 1 && itemIndex === group.items.length - 1
               ))}
             </View>
           ))}
@@ -364,7 +349,7 @@ export const FeedScreen = memo(function FeedScreen({
             styles={styles}
             onChange={changeReadingFilter}
           />
-        ) : feedSource === 'linuxdo' ? (
+        ) : showFeedFilter ? (
           <View style={styles.feedSecondaryRow}>
             <View style={styles.feedCategoryRailSlot}>
               <PillRail
@@ -378,13 +363,13 @@ export const FeedScreen = memo(function FeedScreen({
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="linux.do 列表筛选"
+              accessibilityLabel="列表筛选"
               accessibilityState={{ expanded: filterMenuOpen }}
               hitSlop={TOUCH_HIT_SLOP}
               style={({ pressed }) => [styles.linuxDoFilterButton, pressed && styles.linuxDoFilterButtonPressed]}
-              onPress={toggleLinuxDoFilterMenu}
+              onPress={toggleFeedFilterMenu}
             >
-              <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>{activeLinuxDoFilterLabel}</Text>
+              <Text style={styles.linuxDoFilterButtonText} numberOfLines={1}>{activeFeedFilterLabel}</Text>
               <ChevronDown size={14} color={theme.primary} strokeWidth={1.8} />
             </Pressable>
           </View>
@@ -399,7 +384,7 @@ export const FeedScreen = memo(function FeedScreen({
           />
         )}
       </View>
-      {linuxDoFilterMenu}
+      {feedFilterMenu}
       <TabView
         style={styles.feedPager}
         navigationState={feedNavigationState}

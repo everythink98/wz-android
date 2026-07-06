@@ -12,13 +12,16 @@ import type {
   FeedResponse,
   FeedSource,
   LinuxDoFeedFilter,
+  NodeSeekFeedFilter,
   Reply,
   RepliesResponse,
   SearchResponse,
   Source,
   SourceErrors,
+  SourceFeedFilter,
   Topic,
   TopicDetail,
+  V2exFeedFilter,
   UserProfile
 } from './types';
 import { fetchWithTimeout, type Fetcher } from './request';
@@ -154,6 +157,7 @@ export async function getFeed({
   limit = 20,
   cursor,
   category,
+  feedFilter,
   linuxDoFilter,
   nocache = false,
   fetcher,
@@ -167,6 +171,7 @@ export async function getFeed({
   limit?: number;
   cursor?: string;
   category?: string;
+  feedFilter?: SourceFeedFilter;
   linuxDoFilter?: LinuxDoFeedFilter;
   nocache?: boolean;
   fetcher?: Fetcher;
@@ -175,7 +180,7 @@ export async function getFeed({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, category, linuxDoFilter, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { page, limit, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
@@ -234,10 +239,13 @@ export async function getFeed({
       nextCursor
     };
   }
+  const effectiveLinuxDoFilter = source === 'linuxdo'
+    ? (feedFilter as LinuxDoFeedFilter | undefined) || linuxDoFilter
+    : linuxDoFilter;
   return pickSource(source, {
-    nodeseek: () => getNodeSeekFeed(options),
-    linuxdo: () => getLinuxDoFeed(options),
-    v2ex: () => getV2exFeed(options)
+    nodeseek: () => getNodeSeekFeed({ ...options, feedFilter: feedFilter as NodeSeekFeedFilter | undefined }),
+    linuxdo: () => getLinuxDoFeed({ ...options, linuxDoFilter: effectiveLinuxDoFilter }),
+    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined })
   });
 }
 

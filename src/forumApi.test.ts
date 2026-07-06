@@ -57,11 +57,12 @@ describe('Android local forum facade', () => {
       });
     });
 
-    await getFeed({ source: 'nodeseek', page: 2, category: 'tech', fetcher });
+    await getFeed({ source: 'nodeseek', page: 2, category: 'tech', feedFilter: 'replyTime', fetcher });
     await getCategories({ source: 'all', fetcher });
 
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
     expect(calls).toContain('https://www.nodeseek.com/categories/tech/page-2?sortBy=postTime');
+    expect(calls).not.toContain('https://www.nodeseek.com/categories/tech/page-2?sortBy=replyTime');
     expect(calls).not.toMatch(/127\.0\.0\.1:3000|10\.0\.2\.2|\/api\/feed|\/api\/categories/);
   });
 
