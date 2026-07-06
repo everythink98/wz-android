@@ -347,6 +347,10 @@ function canLikeFromActionsSummary(value: unknown) {
   return isRecord(likeAction) && typeof likeAction.can_act === 'boolean' ? likeAction.can_act : undefined;
 }
 
+function canLikeFromPost(value: Record<string, unknown>) {
+  return value.yours === true ? false : canLikeFromActionsSummary(value.actions_summary);
+}
+
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
 }
@@ -473,7 +477,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
   const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
   const liked = likedFromActionsSummary(raw.actions_summary);
-  const canLike = canLikeFromActionsSummary(raw.actions_summary);
+  const canLike = canLikeFromPost(raw);
   const reactions = reactionSummary(raw.reactions);
   const rawBoostCount = boostCountFromPost(raw);
   const targetAuthor = replyTargetAuthor(raw.reply_to_user);
@@ -765,7 +769,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
     ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
     ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
-    ...(isRecord(firstPost) && canLikeFromActionsSummary(firstPost.actions_summary) !== undefined ? { canLike: canLikeFromActionsSummary(firstPost.actions_summary) } : {}),
+    ...(isRecord(firstPost) && canLikeFromPost(firstPost) !== undefined ? { canLike: canLikeFromPost(firstPost) } : {}),
     ...(polls ? { polls } : {}),
     ...(firstPostReactions ? { reactionSummary: firstPostReactions } : {}),
     ...(firstPostBoostCount ? { boostCount: firstPostBoostCount } : {}),

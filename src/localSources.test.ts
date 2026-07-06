@@ -1801,6 +1801,54 @@ describe('Android local sources', () => {
     });
   });
 
+  it('marks own linux.do posts unlikable while keeping other posts likable', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 902,
+      title: 'linux.do own post like permissions',
+      slug: 'linux-do-own-post-like-permissions',
+      created_at: '2026-05-20T00:00:00.000Z',
+      posts_count: 3,
+      views: 10,
+      post_stream: {
+        stream: [2101, 2102, 2103],
+        posts: [
+          {
+            id: 2101,
+            post_number: 1,
+            username: 'everythink',
+            cooked: '<p>topic</p>',
+            created_at: '2026-05-20T00:00:00.000Z',
+            yours: true,
+            actions_summary: [{ id: 2, acted: false, can_act: true }]
+          },
+          {
+            id: 2102,
+            post_number: 2,
+            username: 'everythink',
+            cooked: '<p>own reply</p>',
+            created_at: '2026-05-20T00:01:00.000Z',
+            yours: true,
+            actions_summary: [{ id: 2, acted: false, can_act: true }]
+          },
+          {
+            id: 2103,
+            post_number: 3,
+            username: 'alice',
+            cooked: '<p>other reply</p>',
+            created_at: '2026-05-20T00:02:00.000Z',
+            actions_summary: [{ id: 2, acted: false, can_act: true }]
+          }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '902', fetcher });
+
+    expect(topic).toMatchObject({ commentId: 2101, canLike: false });
+    expect(topic.replies[0]).toMatchObject({ commentId: 2102, canLike: false });
+    expect(topic.replies[1]).toMatchObject({ commentId: 2103, canLike: true });
+  });
+
   it('omits linux.do replies that the original site marks as deleted', async () => {
     const fetcher = vi.fn(async () => json({
       id: 901,
