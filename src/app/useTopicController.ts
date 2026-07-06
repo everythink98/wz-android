@@ -23,7 +23,7 @@ import {
   isYaohuoLoginRequiredError,
   startAbortableRequest
 } from '../appUtils';
-import { REPLY_PAGE_SIZE, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
+import { REPLY_PAGE_SIZE, replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
 import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapshot } from '../topicSessionState';
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
@@ -489,7 +489,13 @@ export function useTopicController({
         return false;
       }
       const refreshedItems = removeReply(data.items, excludeReply);
-      setTopicReplies((current) => mergeReplies(current, refreshedItems));
+      const mergedReplies = mergeReplies(topicRepliesRef.current, refreshedItems);
+      setTopicReplies(mergedReplies);
+      if (afterSubmit && !targetReply && !excludeReply) {
+        const replyCount = replyCountAfterNewReplySubmit(detail.replyCount || 0, mergedReplies.length);
+        setTopicDetail((current) => current && topicKey(current) === requestTopicKey && replyCount > current.replyCount ? { ...current, replyCount } : current);
+        setSelectedTopic((current) => current && topicKey(current) === requestTopicKey && replyCount > current.replyCount ? { ...current, replyCount } : current);
+      }
       if (!afterSubmit) {
         const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
         visitedPages.add(replyPageVisitKey(targetPage, targetOffset));
@@ -560,11 +566,14 @@ export function useTopicController({
     setReplyHasMore,
     setReplyNextOffset,
     setReplyNextPage,
+    setSelectedTopic,
     setTopicReplies,
+    setTopicDetail,
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicDetail,
-    topicReplies
+    topicReplies,
+    topicRepliesRef
   ]);
 
   const loadMoreReplies = useCallback(async () => {

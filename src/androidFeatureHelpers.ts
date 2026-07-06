@@ -199,6 +199,10 @@ export function replyLoadMoreLimit({
     : REPLY_PAGE_SIZE;
 }
 
+export function replyCountAfterNewReplySubmit(currentReplyCount: number, loadedReplyCount: number) {
+  return Math.max(currentReplyCount + 1, loadedReplyCount);
+}
+
 export function replyRefreshTarget({
   source,
   afterSubmit,
