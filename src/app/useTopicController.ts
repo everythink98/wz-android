@@ -28,7 +28,7 @@ import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapsh
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
-import { applyEditedReplyContent } from './topicActionControllerHelpers';
+import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './topicActionControllerHelpers';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { authHintForSource } from '../siteSessionPrompts';
@@ -494,14 +494,8 @@ export function useTopicController({
         return false;
       }
       const refreshedItems = removeReply(data.items, excludeReply);
-      const refreshedHasEditedContent = editedReplyContent
-        ? refreshedItems.some((reply) => (
-          reply.commentId === editedReplyContent.commentId
-          && reply.contentMarkdown?.trim() === editedReplyContent.contentMarkdown.trim()
-        ))
-        : false;
       const mergedReplies = mergeReplies(topicRepliesRef.current, refreshedItems);
-      const displayedReplies = editedReplyContent && !refreshedHasEditedContent
+      const displayedReplies = shouldApplyEditedReplyFallback(refreshedItems, editedReplyContent)
         ? applyEditedReplyContent(mergedReplies, editedReplyContent)
         : mergedReplies;
       setTopicReplies(displayedReplies);

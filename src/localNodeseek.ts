@@ -1,4 +1,3 @@
-import MarkdownIt from 'markdown-it';
 import type { HTMLElement } from 'node-html-parser';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
@@ -31,11 +30,11 @@ import {
   safeNodeSeekTopicUrl,
   withNodeSeekReplyPagination
 } from './localNodeseekHelpers';
+import { nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
 const NODESEEK_READ_TIMEOUT_MS = 30000;
-const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
 interface NodeSeekOptions {
   fetcher?: Fetcher;
@@ -46,10 +45,6 @@ interface NodeSeekOptions {
   cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
   timeoutMs?: number;
-}
-
-export function nodeSeekMarkdownToHtml(markdown: unknown) {
-  return sanitizeContentHtml(md.render(String(markdown || '')), BASE_URL);
 }
 
 function hasHtmlTag(value: string) {

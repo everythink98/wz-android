@@ -69,10 +69,6 @@ export const feedFilterMenuGroups: Record<FeedFilterSource, Array<{ title?: stri
   v2ex: [{ items: feedV2exFilterItems }]
 };
 
-export function linuxDoFeedFilterLabel(value: LinuxDoFeedFilter) {
-  return feedLinuxDoFilterItems.find((item) => item.value === value)?.label || feedLinuxDoFilterItems[0].label;
-}
-
 export function feedFilterItems(source: FeedSource): Array<{ value: SourceFeedFilter; label: string }> {
   if (source === 'linuxdo') {
     return feedLinuxDoFilterItems;

@@ -73,6 +73,7 @@ export function linuxDoFeedPath(filter: LinuxDoFeedFilter = 'latest') {
 
 export function linuxDoFeedParams(page: number, category?: string, filter: LinuxDoFeedFilter = 'latest') {
   return {
+    ...(filter === 'latest' ? { order: 'created', ascending: 'false' } : {}),
     ...(page > 1 ? { page: page - 1 } : {}),
     ...(category ? { category: /^\d+$/.test(category) ? Number(category) : category } : {}),
     ...(filter === 'new-topics' ? { subset: 'topics' } : {}),

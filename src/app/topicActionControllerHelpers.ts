@@ -1,5 +1,5 @@
 import type { ReplyEditTarget, Screen, TopicSnapshot } from '../appTypes';
-import { nodeSeekMarkdownToHtml } from '../localNodeseek';
+import { nodeSeekMarkdownToHtml } from '../nodeSeekMarkdown';
 import type { OptimisticActionState } from '../topicActionState';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 
@@ -102,6 +102,13 @@ export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTa
     };
   });
   return changed ? next : replies;
+}
+
+export function shouldApplyEditedReplyFallback(
+  replies: Reply[],
+  edit?: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>
+): edit is Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'> {
+  return Boolean(edit?.contentMarkdown.trim()) && !replies.some((reply) => reply.commentId === edit?.commentId);
 }
 
 export function markCurrentNodeSeekOwnRepliesUnlikable(replies: Reply[], currentUser: UserProfile | undefined, currentUserId?: number | null) {

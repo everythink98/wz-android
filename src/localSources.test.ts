@@ -1428,6 +1428,19 @@ describe('Android local sources', () => {
     expect(topic.replies[0].boostCount).toBe(5);
   });
 
+  it('requests linux.do latest feed by creation time', async () => {
+    const fetcher = vi.fn(async () => json({
+      topic_list: {
+        topics: []
+      },
+      users: []
+    }));
+
+    await getFeed({ source: 'linuxdo', limit: 2, fetcher });
+
+    expect((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]).toBe('https://linux.do/latest.json?order=created&ascending=false');
+  });
+
   it('stops linux.do feed pagination when an empty page still advertises more topics', async () => {
     const fetcher = vi.fn(async (_input: string) => {
       if (fetcher.mock.calls.length > 1) {
@@ -1446,16 +1459,15 @@ describe('Android local sources', () => {
 
     expect(feed).toMatchObject({ items: [], hasMore: false, nextPage: null });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0][0]).toBe('https://linux.do/latest.json');
   });
 
   it('requests linux.do feed filters with category scoped to the same list', async () => {
     const cases = [
-      { filter: 'latest', path: '/latest.json', subset: null },
-      { filter: 'hot', path: '/hot.json', subset: null },
-      { filter: 'new-all', path: '/new.json', subset: null },
-      { filter: 'new-topics', path: '/new.json', subset: 'topics' },
-      { filter: 'new-replies', path: '/new.json', subset: 'replies' }
+      { filter: 'latest', path: '/latest.json', subset: null, order: 'created', ascending: 'false' },
+      { filter: 'hot', path: '/hot.json', subset: null, order: null, ascending: null },
+      { filter: 'new-all', path: '/new.json', subset: null, order: null, ascending: null },
+      { filter: 'new-topics', path: '/new.json', subset: 'topics', order: null, ascending: null },
+      { filter: 'new-replies', path: '/new.json', subset: 'replies', order: null, ascending: null }
     ] as const;
     const fetcher = vi.fn(async () => json({
       topic_list: {
@@ -1480,6 +1492,8 @@ describe('Android local sources', () => {
     urls.forEach((url, index) => {
       expect(url.searchParams.get('category')).toBe('11');
       expect(url.searchParams.get('subset')).toBe(cases[index].subset);
+      expect(url.searchParams.get('order')).toBe(cases[index].order ?? null);
+      expect(url.searchParams.get('ascending')).toBe(cases[index].ascending ?? null);
     });
   });
 
