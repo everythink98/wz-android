@@ -26,7 +26,7 @@
 | 环境 | 版本 `1.3.45`；App `com.wz.reader`；Android arm64-v8a release APK |
 | 数据处理 | 未卸载、未清数据、未清 Cookie、未退出登录、未清除登录 |
 | 自动测试 | `npm test` 通过：87 个测试文件、856 个用例；`npm run check:unused` 和 `npm run release:android` 通过 |
-| 发布产物 | GitHub Release `v1.3.45` 已创建；arm64-v8a APK 已上传；APK SHA-256 为 `73c2629a169837e57b2e54765afc114fb375ae37128063651356e5f2377ce2f4` |
+| 发布产物 | GitHub Release `v1.3.45` 已创建；arm64-v8a APK 和 `release-manifest.json` 已上传；APK SHA-256 为 `73c2629a169837e57b2e54765afc114fb375ae37128063651356e5f2377ce2f4` |
 
 ## 2026-07-05 1.3.44 发布打包
 

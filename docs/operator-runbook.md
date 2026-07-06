@@ -23,6 +23,7 @@ npm run release:android
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
 - release 脚本生成 APK 后会校验签名，并打印 APK SHA-256；发布说明只记录 APK SHA-256，不记录签名 SHA-256。
+- GitHub Release 必须同时上传 `app-arm64-v8a-release.apk` 和 `release-manifest.json`；App 更新检查依赖 `release-manifest.json`。
 - 首页、搜索、详情、回复、用户页和详情互动不应直接 import `forumApi`、`yaohuoApi`、`local*` 来源文件或站点 action client，应通过 `src/sources/sourceGateway.ts`。
 - `App.tsx` 应保持入口职责，不承载 WebView、Cookie、来源读取和业务回调。
 - `src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是兼容入口，不应重新塞回大段实现。
