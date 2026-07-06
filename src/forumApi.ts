@@ -11,6 +11,7 @@ import type {
   Category,
   FeedResponse,
   FeedSource,
+  LinuxDoFeedFilter,
   Reply,
   RepliesResponse,
   SearchResponse,
@@ -153,6 +154,7 @@ export async function getFeed({
   limit = 20,
   cursor,
   category,
+  linuxDoFilter,
   nocache = false,
   fetcher,
   nodeSeekCookie,
@@ -165,6 +167,7 @@ export async function getFeed({
   limit?: number;
   cursor?: string;
   category?: string;
+  linuxDoFilter?: LinuxDoFeedFilter;
   nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
@@ -172,7 +175,7 @@ export async function getFeed({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { page, limit, category, linuxDoFilter, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);

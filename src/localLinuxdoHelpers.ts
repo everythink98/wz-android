@@ -1,13 +1,16 @@
-import type { Topic } from './types';
+import type { LinuxDoFeedFilter, Topic } from './types';
 import { absoluteUrl, isRecord } from './localHtml';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
 
 export const LINUXDO_BASE_URL = 'https://linux.do';
 export const LINUXDO_UNCATEGORIZED_CATEGORY_NAME = '未分类';
 
-const NEWEST_TOPIC_PARAMS = {
-  order: 'created',
-  ascending: 'false'
+const LINUXDO_FEED_PATHS: Record<LinuxDoFeedFilter, string> = {
+  latest: '/latest.json',
+  hot: '/hot.json',
+  'new-all': '/new.json',
+  'new-topics': '/new.json',
+  'new-replies': '/new.json'
 };
 
 export function normalizeLinuxDoTopicId(value: unknown) {
@@ -64,10 +67,15 @@ export function preferredLinuxDoAccessRequirement(
   return topicRequirement;
 }
 
-export function linuxDoLatestParams(page: number, category?: string) {
+export function linuxDoFeedPath(filter: LinuxDoFeedFilter = 'latest') {
+  return LINUXDO_FEED_PATHS[filter] || LINUXDO_FEED_PATHS.latest;
+}
+
+export function linuxDoFeedParams(page: number, category?: string, filter: LinuxDoFeedFilter = 'latest') {
   return {
-    ...NEWEST_TOPIC_PARAMS,
     ...(page > 1 ? { page: page - 1 } : {}),
-    ...(category ? { category: /^\d+$/.test(category) ? Number(category) : category } : {})
+    ...(category ? { category: /^\d+$/.test(category) ? Number(category) : category } : {}),
+    ...(filter === 'new-topics' ? { subset: 'topics' } : {}),
+    ...(filter === 'new-replies' ? { subset: 'replies' } : {})
   };
 }

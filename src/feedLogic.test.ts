@@ -229,6 +229,9 @@ describe('Android feed logic helpers', () => {
   it('reuses a feed state only for the same source and category with cached items', () => {
     const linuxDoAll = feedRequestKey('linuxdo', '');
     const linuxDoCategory = feedRequestKey('linuxdo', '开发调优');
+    const linuxDoNewAll = feedRequestKey('linuxdo', '', 'new-all');
+    const linuxDoNewTopics = feedRequestKey('linuxdo', '', 'new-topics');
+    const linuxDoNewReplies = feedRequestKey('linuxdo', '', 'new-replies');
 
     expect(shouldReuseFeedStateForRequest({
       items: [topic],
@@ -247,6 +250,14 @@ describe('Android feed logic helpers', () => {
       refreshing: true,
       requestKey: linuxDoAll
     }, linuxDoAll)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: linuxDoNewAll
+    }, linuxDoNewTopics)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: linuxDoNewTopics
+    }, linuxDoNewReplies)).toBe(false);
   });
 
   it('stops feed pagination when a load-more response does not advance', () => {

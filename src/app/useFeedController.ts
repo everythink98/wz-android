@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCategories, getFeed, getYaohuoFeed } from '../sources/sourceGateway';
-import { shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
+import { defaultLinuxDoFeedFilter, shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
   applyFeedFilter,
   feedRequestKey,
@@ -27,7 +27,7 @@ import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '..
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
-import type { Category, FeedResponse, FeedSource, Source, SourceErrors, Topic } from '../types';
+import type { Category, FeedResponse, FeedSource, LinuxDoFeedFilter, Source, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
   baseFeedRetryPending?: boolean;
@@ -118,6 +118,7 @@ export function useFeedController({
   }
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [linuxDoFeedFilter, setLinuxDoFeedFilter] = useState<LinuxDoFeedFilter>(defaultLinuxDoFeedFilter);
   const [categories, setCategories] = useState<Category[]>([]);
 
   const activeFeedState = feedStates[feedSource];
@@ -181,6 +182,7 @@ export function useFeedController({
     reset = false,
     source = feedSource,
     category = categoryFilter,
+    linuxDoFilter,
     nocache = false,
     clearItems = reset && !nocache,
     successMessage
@@ -190,6 +192,7 @@ export function useFeedController({
     reset?: boolean;
     source?: FeedSource;
     category?: string;
+    linuxDoFilter?: LinuxDoFeedFilter;
     nocache?: boolean;
     clearItems?: boolean;
     successMessage?: string;
@@ -199,7 +202,8 @@ export function useFeedController({
     }
     const requestSource = source;
     const requestBaseState = feedStatesRef.current[requestSource];
-    const requestKey = feedRequestKey(requestSource, category);
+    const requestLinuxDoFilter = requestSource === 'linuxdo' ? linuxDoFilter || linuxDoFeedFilter : undefined;
+    const requestKey = feedRequestKey(requestSource, category, requestLinuxDoFilter);
     feedLoadingRef.current = true;
     const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
@@ -360,6 +364,7 @@ export function useFeedController({
           cursor,
           limit: 30,
           category: category || undefined,
+          linuxDoFilter: requestLinuxDoFilter,
           nocache,
           fetcher,
           nodeSeekCookie,
@@ -454,6 +459,7 @@ export function useFeedController({
     clearYaohuoLoginState,
     feedSource,
     fetcher,
+    linuxDoFeedFilter,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     markFeedLoadMoreFailed,
@@ -473,12 +479,13 @@ export function useFeedController({
     if (!readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter)) {
       return;
     }
-    const requestKey = feedRequestKey(feedSource, categoryFilter);
+    const requestLinuxDoFilter = feedSource === 'linuxdo' ? linuxDoFeedFilter : undefined;
+    const requestKey = feedRequestKey(feedSource, categoryFilter, requestLinuxDoFilter);
     if (shouldReuseFeedStateForRequest(feedStatesRef.current[feedSource], requestKey)) {
       return;
     }
-    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, nocache: true, clearItems: true });
-  }, [categoryFilter, feedSource, readerDataLoaded, readingFilter]);
+    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, linuxDoFilter: requestLinuxDoFilter, nocache: true, clearItems: true });
+  }, [categoryFilter, feedSource, linuxDoFeedFilter, readerDataLoaded, readingFilter]);
 
   useEffect(() => {
     void loadCategories();
@@ -520,10 +527,12 @@ export function useFeedController({
     feedAllowsRemotePagination,
     feedBusy,
     feedSource,
+    linuxDoFeedFilter,
     loadFeed,
     readingFilter,
     refreshFeed,
     setCategoryFilter,
+    setLinuxDoFeedFilter,
     setReadingFilter,
     shownFeedItems
   };

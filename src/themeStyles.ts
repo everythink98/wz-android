@@ -149,6 +149,81 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       zIndex: 3,
       elevation: 0
     },
+    feedSecondaryRow: {
+      minHeight: 36,
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 8
+    },
+    feedCategoryRailSlot: {
+      flex: 1,
+      minWidth: 0
+    },
+    linuxDoFilterButton: {
+      minWidth: 62,
+      maxWidth: 96,
+      minHeight: 34,
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 0,
+      justifyContent: 'center',
+      gap: 2,
+      backgroundColor: 'transparent',
+      borderColor: 'transparent',
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      paddingHorizontal: 6,
+      paddingVertical: 3
+    },
+    linuxDoFilterButtonPressed: {
+      backgroundColor: theme.mist
+    },
+    linuxDoFilterButtonText: {
+      flexShrink: 1,
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    linuxDoFilterMenu: {
+      position: 'absolute',
+      top: (NativeStatusBar.currentHeight ?? 0) + 96,
+      right: 16,
+      minWidth: 132,
+      overflow: 'hidden',
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      elevation: 3
+    },
+    linuxDoFilterMenuSectionText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 0,
+      paddingHorizontal: 12,
+      paddingTop: 6,
+      paddingBottom: 2
+    },
+    linuxDoFilterMenuItem: {
+      minHeight: 38,
+      paddingVertical: 6
+    },
+    linuxDoFilterMenuItemText: {
+      fontSize: 13,
+      includeFontPadding: false,
+      lineHeight: 18
+    },
+    linuxDoFilterMenuItemActive: {
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.06)
+    },
+    linuxDoFilterMenuItemTextActive: {
+      color: theme.primary
+    },
     feedPager: {
       flex: 1
     },

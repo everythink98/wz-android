@@ -1,4 +1,4 @@
-import type { Category, FeedSource, Source } from './types';
+import type { Category, FeedSource, LinuxDoFeedFilter, Source } from './types';
 import type { ReadingFilter } from './feedLogic';
 
 export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
@@ -19,6 +19,20 @@ export const feedReadingFilterItems = [
   { value: 'read', label: '已读' },
   { value: 'favorite', label: '收藏' }
 ];
+
+export const defaultLinuxDoFeedFilter: LinuxDoFeedFilter = 'latest';
+
+export const feedLinuxDoFilterItems: Array<{ value: LinuxDoFeedFilter; label: string }> = [
+  { value: 'latest', label: '最新' },
+  { value: 'hot', label: '热门' },
+  { value: 'new-all', label: '新·所有' },
+  { value: 'new-topics', label: '新·话题' },
+  { value: 'new-replies', label: '新·回复' }
+];
+
+export function linuxDoFeedFilterLabel(value: LinuxDoFeedFilter) {
+  return feedLinuxDoFilterItems.find((item) => item.value === value)?.label || feedLinuxDoFilterItems[0].label;
+}
 
 export function shouldUseReadingFilter(source: FeedSource) {
   return source === 'all';

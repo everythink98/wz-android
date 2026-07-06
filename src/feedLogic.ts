@@ -1,5 +1,5 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
-import type { Category, FeedResponse, FeedSource, Reply, Topic } from './types';
+import type { Category, FeedResponse, FeedSource, LinuxDoFeedFilter, Reply, Topic } from './types';
 import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './appUtils';
 
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
@@ -46,8 +46,9 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
   return items;
 }
 
-export function feedRequestKey(source: FeedSource, category = '') {
-  return `${source}:${category.trim()}`;
+export function feedRequestKey(source: FeedSource, category = '', linuxDoFilter?: LinuxDoFeedFilter) {
+  const base = `${source}:${category.trim()}`;
+  return source === 'linuxdo' && linuxDoFilter ? `${base}:${linuxDoFilter}` : base;
 }
 
 export function shouldReuseFeedStateForRequest(

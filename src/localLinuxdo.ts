@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
+import type { CategoriesResponse, FeedResponse, LinuxDoFeedFilter, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
@@ -26,7 +26,8 @@ import {
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
   isLinuxDoUncategorizedCategory as isUncategorizedCategory,
   linuxDoAvatarUrl as avatarUrl,
-  linuxDoLatestParams as latestParams,
+  linuxDoFeedParams,
+  linuxDoFeedPath,
   linuxDoUserUrl as userUrl,
   normalizeLinuxDoTopicId as normalizeTopicId,
   preferredLinuxDoAccessRequirement
@@ -654,9 +655,11 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   page?: number;
   limit?: number;
   category?: string;
+  linuxDoFilter?: LinuxDoFeedFilter;
 } = {}): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
+  const linuxDoFilter = options.linuxDoFilter || 'latest';
   const start = (page - 1) * limit;
   const firstListPage = Math.floor(start / LIST_PAGE_SIZE) + 1;
   const firstOffset = start % LIST_PAGE_SIZE;
@@ -665,7 +668,7 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   let hasMore = false;
   let categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
   while (collected.length < limit + 1) {
-    const data = await fetchLinuxDoJson<Record<string, unknown>>('/latest.json', latestParams(listPage, options.category), options);
+    const data = await fetchLinuxDoJson<Record<string, unknown>>(linuxDoFeedPath(linuxDoFilter), linuxDoFeedParams(listPage, options.category, linuxDoFilter), options);
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
     categoryMap = await categoryMapForTopics(data, topics, categoryMap, options);
     const users = usersById(data.users);

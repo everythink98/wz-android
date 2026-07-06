@@ -1446,8 +1446,41 @@ describe('Android local sources', () => {
 
     expect(feed).toMatchObject({ items: [], hasMore: false, nextPage: null });
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher.mock.calls[0][0]).toContain('order=created');
-    expect(fetcher.mock.calls[0][0]).toContain('ascending=false');
+    expect(fetcher.mock.calls[0][0]).toBe('https://linux.do/latest.json');
+  });
+
+  it('requests linux.do feed filters with category scoped to the same list', async () => {
+    const cases = [
+      { filter: 'latest', path: '/latest.json', subset: null },
+      { filter: 'hot', path: '/hot.json', subset: null },
+      { filter: 'new-all', path: '/new.json', subset: null },
+      { filter: 'new-topics', path: '/new.json', subset: 'topics' },
+      { filter: 'new-replies', path: '/new.json', subset: 'replies' }
+    ] as const;
+    const fetcher = vi.fn(async () => json({
+      topic_list: {
+        topics: [{
+          id: 500,
+          title: 'linux.do filtered topic',
+          slug: 'linux-filtered-topic',
+          created_at: '2026-05-21T00:00:00.000Z',
+          bumped_at: '2026-05-21T00:00:00.000Z',
+          posts_count: 1
+        }]
+      },
+      users: []
+    }));
+
+    for (const item of cases) {
+      await getFeed({ source: 'linuxdo', category: '11', linuxDoFilter: item.filter, limit: 1, fetcher });
+    }
+
+    const urls = (fetcher.mock.calls as unknown as Array<[string]>).map(([input]) => new URL(input));
+    expect(urls.map((url) => url.pathname)).toEqual(cases.map((item) => item.path));
+    urls.forEach((url, index) => {
+      expect(url.searchParams.get('category')).toBe('11');
+      expect(url.searchParams.get('subset')).toBe(cases[index].subset);
+    });
   });
 
   it('maps linux.do feed category ids through site categories before showing rows', async () => {

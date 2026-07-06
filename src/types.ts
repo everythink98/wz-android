@@ -1,5 +1,6 @@
 export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo';
 export type FeedSource = Source | 'all';
+export type LinuxDoFeedFilter = 'latest' | 'hot' | 'new-all' | 'new-topics' | 'new-replies';
 export type SourceErrorKind = 'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
 
 export type SourceErrorInfo = string | {

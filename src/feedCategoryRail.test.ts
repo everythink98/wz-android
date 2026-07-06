@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedCategoryItems, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './feedCategoryRail';
+import { feedCategoryItems, feedLinuxDoFilterItems, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseReadingFilter } from './feedCategoryRail';
 import type { Category } from './types';
 
 const categories: Category[] = [
@@ -16,6 +16,16 @@ describe('Android feed category rail', () => {
       '未读',
       '已读',
       '收藏'
+    ]);
+  });
+
+  it('keeps linux.do list filters to the original category-page choices', () => {
+    expect(feedLinuxDoFilterItems).toEqual([
+      { value: 'latest', label: '最新' },
+      { value: 'hot', label: '热门' },
+      { value: 'new-all', label: '新·所有' },
+      { value: 'new-topics', label: '新·话题' },
+      { value: 'new-replies', label: '新·回复' }
     ]);
   });
 
