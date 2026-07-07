@@ -48,7 +48,8 @@ export function GlobalModalHost({
   changeLinuxDoPanel,
   closeNodeImageAuthPanel,
   styles,
-  theme
+  theme,
+  webViewBlockMessage
 }: {
   checking: boolean;
   closeImagePreview: () => void;
@@ -87,6 +88,7 @@ export function GlobalModalHost({
   closeNodeImageAuthPanel: () => void;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
+  webViewBlockMessage: string;
 }) {
   const nodeImageProbeScript = useMemo(() => (
     nodeImageApiKeyProbeScript(nodeImageAuthPayload)
@@ -104,6 +106,7 @@ export function GlobalModalHost({
         mountLinuxDoWebView={mountLinuxDoWebView}
         loadingLinuxDoPage={loadingLinuxDoPage}
         showLinuxDoPanel={showLinuxDoPanel}
+        webViewBlockMessage={webViewBlockMessage}
         styles={styles}
         theme={theme}
         onCheckLinuxDoCookie={checkLinuxDoCookie}
@@ -119,9 +122,9 @@ export function GlobalModalHost({
         visible={showNodeImageAuthPanel}
         title="NodeImage 授权"
         subtitle="通过 NodeSeek 授权后自动保存 Key"
-        loading={loadingNodeImageAuthPage}
+        loading={!webViewBlockMessage && loadingNodeImageAuthPage}
         loadingText="正在打开 NodeImage..."
-        error={nodeImageAuthError}
+        error={webViewBlockMessage || nodeImageAuthError}
         styles={styles}
         theme={theme}
         onClose={closeNodeImageAuthPanel}
@@ -131,7 +134,7 @@ export function GlobalModalHost({
           </View>
         )}
       >
-        {showNodeImageAuthPanel ? (
+        {showNodeImageAuthPanel && !webViewBlockMessage ? (
           <WebView
             ref={nodeImageAuthWebViewRef}
             source={{ uri: nodeImageAuthUrl }}

@@ -250,7 +250,7 @@ export function useAccountController({
         notify('没有检测到明确的妖火登录 Cookie。请确认已经登录后再试。');
         return;
       }
-      const yaohuoLoginCheck = await checkYaohuoLogin({ yaohuoCookie: cookieHeader });
+      const yaohuoLoginCheck = await checkYaohuoLogin({ yaohuoCookie: cookieHeader, yaohuoFetcher: forumFetchWithWebViewFallback });
       if (requestId !== checkingRequestIdRef.current) {
         return;
       }

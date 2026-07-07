@@ -51,7 +51,7 @@ export function Avatar({
         cancelled = true;
       };
     }
-    loadRemoteAvatarSvgText(uri, fetch).then((xml) => {
+    loadRemoteAvatarSvgText(uri).then((xml) => {
       if (!cancelled) {
         setSvgXml(xml);
       }

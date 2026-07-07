@@ -1,9 +1,10 @@
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, DatabaseBackup, LogIn, Settings, User, Wrench } from 'lucide-react-native';
+import { Activity, DatabaseBackup, LogIn, Server, Settings, User, Wrench } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
+import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
 import type { DevAnonymousOverrides, SessionSite, SiteSessionViewModels } from '../siteSessionState';
@@ -18,6 +19,7 @@ import {
   NodeSeekLoginPanel,
   YaohuoLoginPanel
 } from './more/MorePanels';
+import { NetworkProxyModal } from './more/NetworkProxyModal';
 import { createPersonalCenterItems } from './more/personalCenterItems';
 export const MoreScreen = memo(function MoreScreen({
   checking,
@@ -39,6 +41,7 @@ export const MoreScreen = memo(function MoreScreen({
   showLoginPanel,
   showYaohuoLoginPanel,
   showLinuxDoPanel,
+  showNetworkProxyPanel,
   showSettingsPanel,
   statusBusy,
   styles,
@@ -51,6 +54,12 @@ export const MoreScreen = memo(function MoreScreen({
   sessionViewModels,
   devAnonymousAvailable,
   devAnonymousOverrides,
+  networkProxyActiveProfile,
+  networkProxyApplyError,
+  networkProxyApplyStatus,
+  networkProxyState,
+  networkProxySummary,
+  webViewBlockMessage,
   onRefreshAccountStatus,
   onOpenUser,
   onCheckAppUpdate,
@@ -75,8 +84,14 @@ export const MoreScreen = memo(function MoreScreen({
   onShowLoginPanelChange,
   onShowYaohuoLoginPanelChange,
   onShowLinuxDoPanelChange,
+  onShowNetworkProxyPanelChange,
   onShowSettingsPanelChange,
   onToggleDevAnonymousOverride,
+  onDeleteNetworkProxyProfile,
+  onSelectNetworkProxyProfile,
+  onSetNetworkProxyEnabled,
+  onTestNetworkProxyProfile,
+  onUpsertNetworkProxyProfile,
   onUpdateSettings
 }: {
   checking: boolean;
@@ -98,6 +113,7 @@ export const MoreScreen = memo(function MoreScreen({
   showLoginPanel: boolean;
   showYaohuoLoginPanel: boolean;
   showLinuxDoPanel: boolean;
+  showNetworkProxyPanel: boolean;
   showSettingsPanel: boolean;
   statusBusy: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -110,6 +126,12 @@ export const MoreScreen = memo(function MoreScreen({
   sessionViewModels: SiteSessionViewModels;
   devAnonymousAvailable: boolean;
   devAnonymousOverrides: DevAnonymousOverrides;
+  networkProxyActiveProfile: NetworkProxyProfile | null;
+  networkProxyApplyError: string;
+  networkProxyApplyStatus: string;
+  networkProxyState: NetworkProxyState;
+  networkProxySummary: string;
+  webViewBlockMessage: string;
   onRefreshAccountStatus: (options?: { silent?: boolean }) => void;
   onOpenUser: (user: UserProfile) => void;
   onCheckAppUpdate: () => void;
@@ -134,8 +156,14 @@ export const MoreScreen = memo(function MoreScreen({
   onShowLoginPanelChange: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
+  onShowNetworkProxyPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
   onToggleDevAnonymousOverride: (site: SessionSite) => void;
+  onDeleteNetworkProxyProfile: (id: string) => Promise<void>;
+  onSelectNetworkProxyProfile: (id: string) => Promise<void>;
+  onSetNetworkProxyEnabled: (enabled: boolean) => Promise<void>;
+  onTestNetworkProxyProfile: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
+  onUpsertNetworkProxyProfile: (profile: NetworkProxyProfile) => Promise<void>;
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   const [backupExpanded, setBackupExpanded] = useState(false);
@@ -269,6 +297,7 @@ export const MoreScreen = memo(function MoreScreen({
           styles={styles}
           theme={theme}
           webViewRef={webViewRef}
+          webViewBlockMessage={webViewBlockMessage}
           onCheckIn={onCheckIn}
           onCheckLogin={onCheckLogin}
           onAuthorizeNodeImageApiKey={onAuthorizeNodeImageApiKey}
@@ -292,6 +321,7 @@ export const MoreScreen = memo(function MoreScreen({
           yaohuoLoginState={yaohuoLoginState}
           yaohuoLoginPrompt={yaohuoLoginPrompt}
           yaohuoWebViewRef={yaohuoWebViewRef}
+          webViewBlockMessage={webViewBlockMessage}
           onCheckYaohuoLogin={onCheckYaohuoLogin}
           onClearYaohuoLogin={onClearYaohuoLogin}
           handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
@@ -319,6 +349,31 @@ export const MoreScreen = memo(function MoreScreen({
           />
         ) : null}
       </ExpandablePanel>
+      <View style={styles.groupList}>
+        <MenuButton
+          icon={Server}
+          label="服务器代理"
+          value={networkProxySummary}
+          styles={styles}
+          theme={theme}
+          onPress={() => onShowNetworkProxyPanelChange(true)}
+        />
+      </View>
+      <NetworkProxyModal
+        activeProfile={networkProxyActiveProfile}
+        applyError={networkProxyApplyError}
+        applyStatus={networkProxyApplyStatus}
+        proxyState={networkProxyState}
+        styles={styles}
+        theme={theme}
+        visible={showNetworkProxyPanel}
+        onClose={() => onShowNetworkProxyPanelChange(false)}
+        onDeleteProfile={onDeleteNetworkProxyProfile}
+        onSelectProfile={onSelectNetworkProxyProfile}
+        onSetEnabled={onSetNetworkProxyEnabled}
+        onTestProfile={onTestNetworkProxyProfile}
+        onUpsertProfile={onUpsertNetworkProxyProfile}
+      />
       {devAnonymousAvailable ? (
         <ExpandablePanel
           quiet

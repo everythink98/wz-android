@@ -3,12 +3,19 @@ import { NativeModules } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, installVerifiedApk, type ApkInstaller, type AppUpdateDownloadProgress } from '../appUpdate';
 import { errorMessage } from '../appUtils';
+import type { Fetcher } from '../request';
 
 type CheckAppUpdateOptions = {
   silent?: boolean;
 };
 
-export function useAppUpdateController({ notify }: { notify: (message: string) => void }) {
+type UseAppUpdateControllerOptions = {
+  beforeDownload?: () => Promise<void>;
+  fetcher: Fetcher;
+  notify: (message: string) => void;
+};
+
+export function useAppUpdateController({ beforeDownload, fetcher, notify }: UseAppUpdateControllerOptions) {
   const [appUpdateBusy, setAppUpdateBusy] = useState(false);
   const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -30,7 +37,7 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       setAppUpdateMessage('正在检查更新');
     }
     try {
-      const update = await checkGithubAppUpdate();
+      const update = await checkGithubAppUpdate(fetcher);
       setAppUpdateInfo(update);
       if (update || !silent) {
         const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
@@ -49,7 +56,7 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       appUpdateBusyRef.current = false;
       setAppUpdateBusy(false);
     }
-  }, [notify]);
+  }, [fetcher, notify]);
 
   const downloadAppUpdate = useCallback(async () => {
     if (!appUpdateInfo || appUpdateDownloadingRef.current) {
@@ -66,6 +73,7 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
     setAppUpdateDownloadProgress(latestProgress);
     setAppUpdateMessage(latestProgress.title);
     try {
+      await beforeDownload?.();
       const target = `${baseDirectory}wz-${appUpdateInfo.version}.apk`;
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       const download = FileSystem.createDownloadResumable(appUpdateInfo.apkUrl, target, {}, (progress) => {
@@ -101,7 +109,7 @@ export function useAppUpdateController({ notify }: { notify: (message: string) =
       setAppUpdateDownloading(false);
       setAppUpdateDownloadProgress(null);
     }
-  }, [appUpdateInfo, notify]);
+  }, [appUpdateInfo, beforeDownload, notify]);
 
   return {
     appUpdateBusy,

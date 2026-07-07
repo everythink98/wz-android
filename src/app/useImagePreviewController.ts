@@ -8,6 +8,7 @@ import {
 import type { TopicImageDeriver } from '../topicDerivedData';
 import { errorMessage } from '../appUtils';
 import { saveImageUriToLibrary } from '../imageSave';
+import type { Fetcher } from '../request';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -20,11 +21,15 @@ function htmlPartsFromSource(source: HtmlPartsSource) {
 }
 
 export function useImagePreviewController({
+  beforeSave,
+  fetcher,
   htmlParts,
   inlineSizedImageUrls,
   notify,
   topicImageDeriver
 }: {
+  beforeSave?: () => Promise<void>;
+  fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
   notify: (message: string) => void;
@@ -82,12 +87,13 @@ export function useImagePreviewController({
     }
     try {
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
-      await saveImageUriToLibrary(uri);
+      await beforeSave?.();
+      await saveImageUriToLibrary(uri, fetcher);
       notify('图片已保存');
     } catch (error) {
       notify(errorMessage(error));
     }
-  }, [imagePreview, notify]);
+  }, [beforeSave, fetcher, imagePreview, notify]);
 
   return {
     closeImagePreview,

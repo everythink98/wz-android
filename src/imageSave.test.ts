@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveImageUriToLibrary } from './imageSave';
+import type { Fetcher } from './request';
 
 vi.mock('expo-file-system/legacy', () => ({
   EncodingType: { Base64: 'base64' },
@@ -45,29 +46,28 @@ describe('image library saving', () => {
   });
 
   it('rejects failed remote image downloads and deletes the temporary file', async () => {
-    vi.mocked(FileSystem.downloadAsync).mockResolvedValue({
-      headers: {},
-      mimeType: 'text/html',
-      status: 404,
-      uri: 'file:///cache/forum-image-1234.jpg'
-    });
+    const fetcher = vi.fn<Fetcher>(async () => new Response('missing', {
+      headers: { 'content-type': 'text/html' },
+      status: 404
+    }));
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/missing.jpg')).rejects.toThrow('图片下载失败');
+    await expect(saveImageUriToLibrary('https://cdn.example.com/missing.jpg', fetcher)).rejects.toThrow('图片下载失败');
 
+    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/missing.jpg', undefined);
+    expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
   });
 
   it('rejects non-image remote responses and deletes the temporary file', async () => {
-    vi.mocked(FileSystem.downloadAsync).mockResolvedValue({
-      headers: {},
-      mimeType: 'text/html',
-      status: 200,
-      uri: 'file:///cache/forum-image-1234.jpg'
-    });
+    const fetcher = vi.fn<Fetcher>(async () => new Response('<html></html>', {
+      headers: { 'content-type': 'text/html' },
+      status: 200
+    }));
 
-    await expect(saveImageUriToLibrary('https://cdn.example.com/file.jpg')).rejects.toThrow('下载内容不是图片');
+    await expect(saveImageUriToLibrary('https://cdn.example.com/file.jpg', fetcher)).rejects.toThrow('下载内容不是图片');
 
+    expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
   });
@@ -88,5 +88,23 @@ describe('image library saving', () => {
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', 'abc123', { encoding: FileSystem.EncodingType.Base64 });
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png');
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.png', { idempotent: true });
+  });
+
+  it('saves remote images through the provided fetcher', async () => {
+    const fetcher = vi.fn<Fetcher>(async () => new Response('image-bytes', {
+      headers: { 'content-type': 'image/jpeg' },
+      status: 200
+    }));
+
+    await saveImageUriToLibrary('https://cdn.example.com/photo.jpg', fetcher);
+
+    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/photo.jpg', undefined);
+    expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
+    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
+      'file:///cache/forum-image-1234.jpg',
+      Buffer.from('image-bytes').toString('base64'),
+      { encoding: FileSystem.EncodingType.Base64 }
+    );
+    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
   });
 });

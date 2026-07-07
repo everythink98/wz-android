@@ -20,6 +20,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from '../nodeseekCookies';
+import { setDefaultAvatarFetcher } from '../avatarImages';
 import type { TopicRecord } from '../readerData';
 import { useReaderDataController } from './useReaderDataController';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
@@ -33,6 +34,7 @@ import { AppNavigator, navigateMainTab, navigationRef, type MainTabParamList } f
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
+import { useNetworkProxyController } from './useNetworkProxyController';
 import { useTopicController } from './useTopicController';
 import { useTopicNavigationController } from './useTopicNavigationController';
 import { useTopicUiStateController } from './useTopicUiStateController';
@@ -381,6 +383,7 @@ export function AppRoot() {
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
   const [yaohuoLoginPrompt, setYaohuoLoginPrompt] = useState('');
   const [showLinuxDoPanel, setShowLinuxDoPanel] = useState(false);
+  const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
   const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   screenRef.current = screen;
@@ -420,6 +423,37 @@ export function AppRoot() {
   }, [theme]);
   const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
+  const {
+    activeProfile: networkProxyActiveProfile,
+    applyError: networkProxyApplyError,
+    applyStatus: networkProxyApplyStatus,
+    ensureNetworkProxyReady,
+    loaded: networkProxyLoaded,
+    networkProxyFetcher,
+    proxyState: networkProxyState,
+    summary: networkProxySummary,
+    deleteProxyProfile: deleteNetworkProxyProfile,
+    selectProxyProfile: selectNetworkProxyProfile,
+    setProxyEnabled: setNetworkProxyEnabled,
+    testProxyProfile: testNetworkProxyProfile,
+    upsertProxyProfile: upsertNetworkProxyProfile
+  } = useNetworkProxyController({ notify });
+  useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);
+  const networkProxyWebViewBlockMessage = !networkProxyLoaded
+    ? '代理状态读取中。'
+    : (networkProxyState.enabled && networkProxyApplyStatus !== 'applied'
+      ? networkProxyApplyError || '代理未生效。'
+      : '');
+  const [networkProxyContentReady, setNetworkProxyContentReady] = useState(false);
+  useEffect(() => {
+    if (networkProxyContentReady || !networkProxyLoaded) {
+      return;
+    }
+    if (networkProxyState.enabled && (networkProxyApplyStatus === 'loading' || networkProxyApplyStatus === 'applying')) {
+      return;
+    }
+    setNetworkProxyContentReady(true);
+  }, [networkProxyApplyStatus, networkProxyContentReady, networkProxyLoaded, networkProxyState.enabled]);
 
   const {
     clearNodeSeekLoginCookiesOnly: clearStoredNodeSeekLoginCookiesOnly,
@@ -446,6 +480,7 @@ export function AppRoot() {
     updateNodeSeekSession,
     updateYaohuoSession
   } = useSessionController({
+    defaultFetcher: networkProxyFetcher,
     linuxDoBrowserWebViewRef,
     linuxDoClearanceBeforeVerifyRef,
     linuxDoWebViewCookieHeaderRef,
@@ -560,7 +595,8 @@ export function AppRoot() {
     styles,
     theme,
     topicDetail,
-    topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`
+    topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`,
+    webViewBlockMessage: networkProxyWebViewBlockMessage
   });
   const {
     abortQuotedReplyRequests,
@@ -646,6 +682,8 @@ export function AppRoot() {
     showNextImage,
     showPreviousImage
   } = useImagePreviewController({
+    beforeSave: ensureNetworkProxyReady,
+    fetcher: networkProxyFetcher,
     htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls,
     notify,
@@ -854,6 +892,7 @@ export function AppRoot() {
     closeNodeImageAuthPanel();
     closeYaohuoLoginPanel();
     closeLinuxDoPanel();
+    setShowNetworkProxyPanel(false);
     setShowSettingsPanel(false);
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
 
@@ -953,7 +992,7 @@ export function AppRoot() {
     appUpdateMessage,
     checkAppUpdate,
     downloadAppUpdate
-  } = useAppUpdateController({ notify });
+  } = useAppUpdateController({ beforeDownload: ensureNetworkProxyReady, fetcher: networkProxyFetcher, notify });
   useEffect(() => {
     if (autoAppUpdateCheckedRef.current) {
       return;
@@ -1231,6 +1270,7 @@ export function AppRoot() {
     clearNodeSeekLoginCookiesOnly,
     clearYaohuoLoginState,
     currentNodeSeekCredentialGeneration,
+    fetcher: networkProxyFetcher,
     linuxDoWebViewUserAgentRef,
     loadYaohuoCookieForSource,
     nodeSeekWebViewUserAgentRef,
@@ -1619,6 +1659,7 @@ export function AppRoot() {
       showLoginPanel,
       showYaohuoLoginPanel,
       showLinuxDoPanel,
+      showNetworkProxyPanel,
       showSettingsPanel,
       statusBusy,
       styles,
@@ -1631,6 +1672,12 @@ export function AppRoot() {
       sessionViewModels: siteSessionViewModels,
       devAnonymousAvailable: __DEV__,
       devAnonymousOverrides,
+      networkProxyActiveProfile,
+      networkProxyApplyError,
+      networkProxyApplyStatus,
+      networkProxyState,
+      networkProxySummary,
+      webViewBlockMessage: networkProxyWebViewBlockMessage,
       onRefreshAccountStatus: refreshAccountStatus,
       onOpenUser: openUser,
       onCheckAppUpdate: checkAppUpdate,
@@ -1655,8 +1702,14 @@ export function AppRoot() {
       onShowLoginPanelChange: changeNodeSeekLoginPanel,
       onShowYaohuoLoginPanelChange: changeYaohuoLoginPanel,
       onShowLinuxDoPanelChange: changeLinuxDoPanel,
+      onShowNetworkProxyPanelChange: setShowNetworkProxyPanel,
       onShowSettingsPanelChange: setShowSettingsPanel,
       onToggleDevAnonymousOverride: toggleDevAnonymousOverride,
+      onDeleteNetworkProxyProfile: deleteNetworkProxyProfile,
+      onSelectNetworkProxyProfile: selectNetworkProxyProfile,
+      onSetNetworkProxyEnabled: setNetworkProxyEnabled,
+      onTestNetworkProxyProfile: testNetworkProxyProfile,
+      onUpsertNetworkProxyProfile: upsertNetworkProxyProfile,
       onUpdateSettings: updateSettings
   }), [
     appUpdateBusy,
@@ -1676,6 +1729,7 @@ export function AppRoot() {
     clearLogin,
     clearYaohuoLogin,
     authorizeNodeImageApiKey,
+    deleteNetworkProxyProfile,
     devAnonymousOverrides,
     downloadAppUpdate,
     exportBackupFile,
@@ -1692,6 +1746,12 @@ export function AppRoot() {
     nodeSeekWebViewUserAgent,
     nodeImageApiKeyBusy,
     nodeImageApiKeySaved,
+    networkProxyActiveProfile,
+    networkProxyApplyError,
+    networkProxyApplyStatus,
+    networkProxyState,
+    networkProxySummary,
+    networkProxyWebViewBlockMessage,
     openUser,
     readerData.settings,
     refreshAccountStatus,
@@ -1699,15 +1759,20 @@ export function AppRoot() {
     rememberVisibleNodeSeekCookiesAndRetrySearch,
     saveNodeImageApiKeyInput,
     clearNodeImageApiKeyInput,
+    selectNetworkProxyProfile,
+    setNetworkProxyEnabled,
     showLinuxDoPanel,
     showLoginPanel,
+    showNetworkProxyPanel,
     showSettingsPanel,
     showYaohuoLoginPanel,
     siteSessionViewModels,
     statusBusy,
     styles,
+    testNetworkProxyProfile,
     theme,
     toggleDevAnonymousOverride,
+    upsertNetworkProxyProfile,
     updateSettings,
     yaohuoLoginPrompt,
     yaohuoLoginState
@@ -1922,6 +1987,7 @@ export function AppRoot() {
               <ExpoStatusBar style={theme.dark ? 'light' : 'dark'} />
               <View pointerEvents="none" style={[styles.statusBarScrim, screen === 'topic' && replyComposerOpen && styles.statusBarScrimBelowOverlay]} />
               <HiddenBrowserHost
+              blockedMessage={networkProxyWebViewBlockMessage}
               failLinuxDoBrowserFetchById={failLinuxDoBrowserFetchById}
               failNodeSeekBrowserFetchById={failNodeSeekBrowserFetchById}
               handleLinuxDoBrowserFetchMessage={handleLinuxDoBrowserFetchMessage}
@@ -1978,9 +2044,11 @@ export function AppRoot() {
               showPreviousImage={showPreviousImage}
               styles={styles}
               theme={theme}
+              webViewBlockMessage={networkProxyWebViewBlockMessage}
               changeLinuxDoPanel={changeLinuxDoPanel}
               closeNodeImageAuthPanel={closeNodeImageAuthPanel}
             />
+              {networkProxyContentReady ? (
               <AppNavigator
               moreHasBadge={Boolean(appUpdateInfo)}
               navigationTheme={navigationTheme}
@@ -1997,6 +2065,7 @@ export function AppRoot() {
               onTopicClosing={flushDeferredNavigationTask}
               onUserClosing={flushDeferredNavigationTask}
               />
+              ) : null}
           </SafeAreaView>
         </KeyboardAvoidingView>
       </SafeAreaProvider>

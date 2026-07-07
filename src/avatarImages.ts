@@ -8,8 +8,18 @@ const AVATAR_SVG_TEXT_CACHE_LIMIT = 200;
 const AVATAR_SVG_TIMEOUT_MS = 4000;
 const MAX_AVATAR_SVG_TEXT_BYTES = 64 * 1024;
 const avatarSvgTextCache = new Map<string, Promise<string | null>>();
+let defaultAvatarFetcher: AvatarFetcher = fetch;
 
-export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = fetch, options: AvatarLoadOptions = {}): Promise<string | null> {
+export function setDefaultAvatarFetcher(fetcher: AvatarFetcher) {
+  defaultAvatarFetcher = fetcher;
+  return () => {
+    if (defaultAvatarFetcher === fetcher) {
+      defaultAvatarFetcher = fetch;
+    }
+  };
+}
+
+export async function loadRemoteAvatarSvgText(uri: string, fetcher: AvatarFetcher = defaultAvatarFetcher, options: AvatarLoadOptions = {}): Promise<string | null> {
   const clean = normalizeImagePreviewUrl(uri);
   if (!isNodeSeekAvatarUrl(clean)) {
     return null;

@@ -24,6 +24,7 @@ export function LinuxDoVerifyModal({
   showLinuxDoPanel,
   styles,
   theme,
+  webViewBlockMessage,
   onCheckLinuxDoCookie,
   onClearLinuxDoCookie,
   handleLinuxDoNavigation,
@@ -44,6 +45,7 @@ export function LinuxDoVerifyModal({
   showLinuxDoPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
+  webViewBlockMessage: string;
   onCheckLinuxDoCookie: () => void;
   onClearLinuxDoCookie: () => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
@@ -78,9 +80,9 @@ export function LinuxDoVerifyModal({
       visible={showLinuxDoPanel}
       title="linux.do 登录 / 验证"
       subtitle={linuxDoSession.summaryLabel === '匿名可用' ? '匿名可用，登录后内容更完整' : linuxDoSession.summaryLabel}
-      loading={loadingLinuxDoPage}
+      loading={!webViewBlockMessage && loadingLinuxDoPage}
       loadingText="正在打开 linux.do..."
-      error={linuxDoWebViewError}
+      error={webViewBlockMessage || linuxDoWebViewError}
       styles={styles}
       theme={theme}
       onClose={() => onShowLinuxDoPanelChange(false)}
@@ -92,7 +94,7 @@ export function LinuxDoVerifyModal({
         </View>
       )}
     >
-      {showLinuxDoPanel && mountLinuxDoWebView ? (
+      {showLinuxDoPanel && mountLinuxDoWebView && !webViewBlockMessage ? (
         <WebView
           key={linuxDoWebViewKey}
           ref={linuxDoWebViewRef}

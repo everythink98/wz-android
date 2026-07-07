@@ -184,7 +184,7 @@ export function useBackupStatusController({
         })
         : Promise.resolve(null);
       const yaohuoStatusPromise = yaohuoCookie
-        ? checkYaohuoLogin({ yaohuoCookie, signal: controller.signal })
+        ? checkYaohuoLogin({ yaohuoCookie, yaohuoFetcher: fetcher, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
       const yaohuoCurrentUserPromise = yaohuoCookie
         ? yaohuoStatusPromise.then((check) => {

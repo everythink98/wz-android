@@ -147,7 +147,8 @@ export function useHtmlRenderingController({
   styles,
   theme,
   topicDetail,
-  topicKey
+  topicKey,
+  webViewBlockMessage
 }: {
   onOpenExternalUrl: (url: string) => void;
   onOpenImagePreview: (url: string) => void;
@@ -171,6 +172,7 @@ export function useHtmlRenderingController({
   theme: ReaderTheme;
   topicDetail: TopicDetail | null;
   topicKey: string;
+  webViewBlockMessage: string;
 }) {
   const inlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [selectedTopic?.id, selectedTopic?.source]);
 
@@ -264,16 +266,22 @@ export function useHtmlRenderingController({
     };
     const VideoEmbedBlock = ({ embedUrl }: { embedUrl: string }) => (
       <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
-        <WebView
-          allowsFullscreenVideo
-          domStorageEnabled
-          javaScriptEnabled
-          javaScriptCanOpenWindowsAutomatically={false}
-          onShouldStartLoadWithRequest={(request) => shouldAllowBilibiliWebViewNavigation(request.url)}
-          source={{ uri: embedUrl }}
-          setSupportMultipleWindows={false}
-          style={embedStyles.webView}
-        />
+        {webViewBlockMessage ? (
+          <View style={embedStyles.blockedWebView}>
+            <Text style={[styles.inlineForumImageText, { color: theme.muted }]}>{webViewBlockMessage}</Text>
+          </View>
+        ) : (
+          <WebView
+            allowsFullscreenVideo
+            domStorageEnabled
+            javaScriptEnabled
+            javaScriptCanOpenWindowsAutomatically={false}
+            onShouldStartLoadWithRequest={(request) => shouldAllowBilibiliWebViewNavigation(request.url)}
+            source={{ uri: embedUrl }}
+            setSupportMultipleWindows={false}
+            style={embedStyles.webView}
+          />
+        )}
       </View>
     );
     const ForumVideoStickerRenderer: CustomBlockRenderer = (props) => {
@@ -501,7 +509,8 @@ export function useHtmlRenderingController({
     theme.primary,
     theme.primaryStrong,
     theme.surface,
-    theme.surface2
+    theme.surface2,
+    webViewBlockMessage
   ]);
 
   const htmlRenderersProps = useMemo<HtmlRenderersProps>(() => {
@@ -632,5 +641,11 @@ const embedStyles = StyleSheet.create({
   },
   webView: {
     flex: 1
+  },
+  blockedWebView: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 12
   }
 });

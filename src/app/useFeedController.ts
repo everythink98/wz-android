@@ -323,6 +323,7 @@ export function useFeedController({
           yaohuoCookie,
           page,
           limit: 30,
+          yaohuoFetcher: fetcher,
           signal: controller.signal
         });
         const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
@@ -367,6 +368,7 @@ export function useFeedController({
           page,
           limit: 30,
           category: category || undefined,
+          yaohuoFetcher: fetcher,
           signal: controller.signal
         });
         if (!isCurrentFeedRequest()) {

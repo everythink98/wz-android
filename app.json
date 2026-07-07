@@ -30,6 +30,7 @@
       "./plugins/withAndroidReleaseDefaults",
       "./plugins/withApkInstaller",
       "./plugins/withLinuxDoCookieModule",
+      "./plugins/withNetworkProxyModule",
       [
         "expo-media-library",
         {
