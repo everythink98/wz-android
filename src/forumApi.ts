@@ -1,7 +1,7 @@
 import { getLinuxDoCategories, getLinuxDoCurrentUserProfile, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
 import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
-import { requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
+import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
@@ -422,11 +422,11 @@ export function getUserProfile({
         throw new Error('请先登录妖火');
       }
       const targetId = id || username || '';
-      const url = `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(targetId)}&siteid=1000`;
+      const url = `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(targetId)}&siteid=1000`;
       const headers = {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         Cookie: yaohuoCookie,
-        Referer: 'https://yaohuo.me/bbs/'
+        Referer: YAOHUO_BBS_REFERER
       };
       const readHtml = async (pageUrl: string) => {
         const safeUrl = requireYaohuoRequestUrl(pageUrl);
@@ -618,11 +618,11 @@ export function getCurrentUserProfile({
       if (!yaohuoCookie?.trim()) {
         throw new Error('请先登录妖火');
       }
-      const response = await fetchWithTimeout('https://yaohuo.me/wapindex.aspx?sid=-2', {
+      const response = await fetchWithTimeout(`${YAOHUO_BASE_URL}/wapindex.aspx?sid=-2`, {
         headers: {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           Cookie: yaohuoCookie,
-          Referer: 'https://yaohuo.me/bbs/'
+          Referer: YAOHUO_BBS_REFERER
         }
       }, { fetcher, signal, timeoutMs });
       const html = await response.text();

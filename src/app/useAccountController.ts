@@ -35,7 +35,7 @@ import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
 
-const YAOHUO_COOKIE_URLS = [YAOHUO_URL, 'https://www.yaohuo.me'];
+const YAOHUO_COOKIE_URLS = [YAOHUO_URL];
 
 type Ref<T> = MutableRefObject<T>;
 

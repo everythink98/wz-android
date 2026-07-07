@@ -109,29 +109,29 @@ describe('Android app utils', () => {
       title: 'V2EX 主题',
       url: 'https://www.v2ex.com/t/789'
     });
-    expect(parseForumTopicLink('book_re.aspx?id=321&classid=177&reply=1', 'https://yaohuo.me/bbs-1.html')).toMatchObject({
+    expect(parseForumTopicLink('book_re.aspx?id=321&classid=177&reply=1', 'https://www.yaohuo.me/bbs-1.html')).toMatchObject({
       source: 'yaohuo',
       id: '321',
       title: '妖火主题',
       categoryId: '177',
       category: '妖火茶馆',
-      url: 'https://yaohuo.me/bbs-321.html'
+      url: 'https://www.yaohuo.me/bbs-321.html'
     });
-    expect(parseForumTopicLink('https://yaohuo.me/bbs/view.aspx?id=654&classid=213', 'https://yaohuo.me/bbs-1.html')).toMatchObject({
+    expect(parseForumTopicLink('https://www.yaohuo.me/bbs/view.aspx?id=654&classid=213', 'https://www.yaohuo.me/bbs-1.html')).toMatchObject({
       source: 'yaohuo',
       id: '654',
       title: '妖火主题',
       categoryId: '213',
       category: '悬赏问答',
-      url: 'https://yaohuo.me/bbs-654.html'
+      url: 'https://www.yaohuo.me/bbs-654.html'
     });
-    expect(parseForumTopicLink('/bbs/book_view.aspx?id=655&classid=201', 'https://yaohuo.me/bbs-1.html')).toMatchObject({
+    expect(parseForumTopicLink('/bbs/book_view.aspx?id=655&classid=201', 'https://www.yaohuo.me/bbs-1.html')).toMatchObject({
       source: 'yaohuo',
       id: '655',
       title: '妖火主题',
       categoryId: '201',
       category: '资源分享',
-      url: 'https://yaohuo.me/bbs-655.html'
+      url: 'https://www.yaohuo.me/bbs-655.html'
     });
   });
 
@@ -204,19 +204,19 @@ describe('Android app utils', () => {
   });
 
   it('recognizes Yaohuo user links as app users', () => {
-    expect(parseForumUserLink('/bbs/userinfo.aspx?touserid=30878', 'https://yaohuo.me/bbs-1540797.html')).toMatchObject({
+    expect(parseForumUserLink('/bbs/userinfo.aspx?touserid=30878', 'https://www.yaohuo.me/bbs-1540797.html')).toMatchObject({
       source: 'yaohuo',
       id: '30878',
       username: '30878',
-      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=30878'
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=30878'
     });
-    expect(parseForumUserLink('https://yaohuo.me/userinfo.aspx?userid=42', 'https://yaohuo.me/bbs-1540797.html')).toMatchObject({
+    expect(parseForumUserLink('https://www.yaohuo.me/userinfo.aspx?userid=42', 'https://www.yaohuo.me/bbs-1540797.html')).toMatchObject({
       source: 'yaohuo',
       id: '42',
-      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=42'
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=42'
     });
-    expect(parseForumUserLink('https://yaohuo.me/bbs/userinfo.aspx', 'https://yaohuo.me/bbs-1540797.html')).toBeNull();
-    expect(parseForumUserLink('https://evil.example/bbs/userinfo.aspx?touserid=30878', 'https://yaohuo.me/bbs-1540797.html')).toBeNull();
+    expect(parseForumUserLink('https://www.yaohuo.me/bbs/userinfo.aspx', 'https://www.yaohuo.me/bbs-1540797.html')).toBeNull();
+    expect(parseForumUserLink('https://evil.example/bbs/userinfo.aspx?touserid=30878', 'https://www.yaohuo.me/bbs-1540797.html')).toBeNull();
   });
 
   it('uses active time for V2EX list display time', () => {

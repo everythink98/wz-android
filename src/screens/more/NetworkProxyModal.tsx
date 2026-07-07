@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, Easing, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, Easing, Keyboard, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton, EmptyText, SettingRail } from '../../components/AppControls';
@@ -99,6 +99,7 @@ export function NetworkProxyModal({
   const [testResults, setTestResults] = useState<Record<string, string>>({});
   const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [draftKeyboardInset, setDraftKeyboardInset] = useState(0);
   const switchProgress = useRef(new Animated.Value(proxyState.enabled ? 1 : 0)).current;
   const draftProfile = useMemo(() => profileFromDraft(draft), [draft]);
   const errors = useMemo(() => validateNetworkProxyProfile(draftProfile), [draftProfile]);
@@ -123,8 +124,27 @@ export function NetworkProxyModal({
       setTestingId(null);
       setPendingEnabled(null);
       setSelectedIds([]);
+      setDraftKeyboardInset(0);
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (draftMode === null) {
+      setDraftKeyboardInset(0);
+      return;
+    }
+    const showSubscription = Keyboard.addListener('keyboardDidShow', (event) => {
+      setDraftKeyboardInset(Math.max(0, event.endCoordinates.height - insets.bottom));
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      Keyboard.dismiss();
+      setDraftKeyboardInset(0);
+    });
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [draftMode, insets.bottom]);
 
   useEffect(() => {
     if (pendingEnabled !== null && proxyState.enabled === pendingEnabled && applyStatus !== 'applying') {
@@ -163,9 +183,11 @@ export function NetworkProxyModal({
     if (busy) {
       return;
     }
+    Keyboard.dismiss();
     setDraft(emptyDraft);
     setDraftMode(null);
     setSubmitted(false);
+    setDraftKeyboardInset(0);
   };
 
   const saveDraft = () => {
@@ -179,9 +201,11 @@ export function NetworkProxyModal({
         const { [draftProfile.id]: _removed, ...rest } = current;
         return rest;
       });
+      Keyboard.dismiss();
       setDraft(emptyDraft);
       setDraftMode(null);
       setSubmitted(false);
+      setDraftKeyboardInset(0);
     });
   };
 
@@ -403,9 +427,9 @@ export function NetworkProxyModal({
         </View>
       </ScrollView>
       <Modal transparent visible={draftMode !== null} animationType="fade" onRequestClose={closeDraft}>
-        <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
+        <View style={styles.searchFilterModalRoot}>
           <Pressable accessibilityRole="button" accessibilityLabel="关闭代理表单" disabled={busy} style={styles.searchFilterBackdrop} onPress={closeDraft} />
-          <View style={styles.searchFilterSheet}>
+          <View style={[styles.searchFilterSheet, draftKeyboardInset ? { marginBottom: draftKeyboardInset } : null]}>
             <View style={styles.searchFilterHandle} />
             <View style={styles.searchFilterHeader}>
               <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
@@ -436,7 +460,7 @@ export function NetworkProxyModal({
               <AppButton compact label={busy ? '保存中' : '确定'} variant="primary" styles={styles} disabled={busy} onPress={saveDraft} />
             </View>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
       </View>
     </Modal>

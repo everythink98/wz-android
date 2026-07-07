@@ -65,6 +65,8 @@ const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
   '199': '站务处理',
   '288': '网站公告'
 };
+const YAOHUO_BASE_URL = 'https://www.yaohuo.me';
+const YAOHUO_HOST = 'www.yaohuo.me';
 
 function forumLinkUrl(value: string, baseUrl?: string) {
   try {
@@ -121,14 +123,14 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
     const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
     return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
   }
-  if (isForumHost(host, 'yaohuo.me')) {
+  if (host === YAOHUO_HOST) {
     const id = pathname.match(/^\/bbs-(\d+)\.html$/i)?.[1]
       || (/\/(?:view|book_re|book_view)\.aspx$/i.test(pathname) ? url.searchParams.get('id') || '' : '');
     if (!id || !/^\d+$/.test(id)) {
       return null;
     }
     const categoryId = url.searchParams.get('classid') || undefined;
-    return internalTopic('yaohuo', id, '妖火主题', `https://yaohuo.me/bbs-${id}.html`, {
+    return internalTopic('yaohuo', id, '妖火主题', `${YAOHUO_BASE_URL}/bbs-${id}.html`, {
       categoryId,
       category: categoryId ? YAOHUO_CATEGORY_NAMES[categoryId] : undefined
     });
@@ -172,7 +174,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       topics: []
     } : null;
   }
-  if (isForumHost(url.hostname, 'yaohuo.me')) {
+  if (url.hostname.toLowerCase() === YAOHUO_HOST) {
     if (!/^\/(?:bbs\/)?userinfo\.aspx$/i.test(url.pathname)) {
       return null;
     }
@@ -183,7 +185,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       source: 'yaohuo',
       id,
       username: id,
-      url: `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`,
+      url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`,
       topics: []
     } : null;
   }

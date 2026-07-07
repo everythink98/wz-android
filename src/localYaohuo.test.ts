@@ -20,7 +20,7 @@ describe('yaohuo reply parsing', () => {
         <span class="retime">2026-06-30 21:31</span>
         <span class="retext">普通回复</span>
       </div>
-    `, { url: 'https://yaohuo.me/bbs-798458.html' });
+    `, { url: 'https://www.yaohuo.me/bbs-798458.html' });
 
     expect(replies.items[0]).toMatchObject({
       author: '流金岁月',

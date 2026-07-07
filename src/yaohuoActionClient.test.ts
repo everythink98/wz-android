@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runYaohuoAction } from './yaohuoActionClient';
 import { buildYaohuoDeleteReplyRequest, buildYaohuoFavoriteRequest, buildYaohuoReplyRequest } from './yaohuoActions';
 
-function htmlResponse(body: string, status = 200, url = 'https://yaohuo.me/bbs/book_re.aspx') {
+function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/bbs/book_re.aspx') {
   const response = new Response(body, {
     status,
     headers: { 'content-type': 'text/html' }
@@ -26,15 +26,15 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(fetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/book_re.aspx', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'content-type': 'application/x-www-form-urlencoded',
         cookie: 'sidyaohuo=secret',
-        origin: 'https://yaohuo.me',
-        referer: 'https://yaohuo.me/bbs/',
+        origin: 'https://www.yaohuo.me',
+        referer: 'https://www.yaohuo.me/bbs/',
         'sec-ch-ua-mobile': '?1',
         'sec-ch-ua-platform': '"Android"',
         'sec-fetch-site': 'same-origin',
@@ -56,7 +56,7 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(fetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=123', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=123', expect.objectContaining({
       method: 'GET',
       body: undefined,
       signal: expect.any(AbortSignal)
@@ -87,7 +87,7 @@ describe('runYaohuoAction', () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re_del.aspx?action=godel&reid=32656658&id=1560268&siteid=1000&classid=177&lpage=&page=1&ot=&token=fixed-token', expect.objectContaining({
+    expect(fetcher).toHaveBeenNthCalledWith(2, 'https://www.yaohuo.me/bbs/book_re_del.aspx?action=godel&reid=32656658&id=1560268&siteid=1000&classid=177&lpage=&page=1&ot=&token=fixed-token', expect.objectContaining({
       method: 'GET',
       body: undefined
     }));
@@ -194,7 +194,7 @@ describe('runYaohuoAction', () => {
   });
 
   it('surfaces login and captcha pages as a relogin flow', async () => {
-    const loginFetcher = vi.fn(async () => htmlResponse('<html>请先登录网站</html>', 200, 'https://yaohuo.me/waplogin.aspx?siteid=1000'));
+    const loginFetcher = vi.fn(async () => htmlResponse('<html>请先登录网站</html>', 200, 'https://www.yaohuo.me/waplogin.aspx?siteid=1000'));
     await expect(runYaohuoAction({
       cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),

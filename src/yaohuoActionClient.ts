@@ -74,7 +74,7 @@ function deleteConfirmationPath(html: string) {
   try {
     const url = new URL(href.replace(/&amp;/gi, '&'), YAOHUO_BASE_URL);
     const host = url.hostname.toLowerCase();
-    if ((host !== 'yaohuo.me' && host !== 'www.yaohuo.me')
+    if (host !== 'www.yaohuo.me'
       || !YAOHUO_REPLY_DELETE_PATH_PATTERN.test(url.pathname)
       || url.searchParams.get('action')?.toLowerCase() !== 'godel'
       || !url.searchParams.get('reid')
@@ -82,7 +82,7 @@ function deleteConfirmationPath(html: string) {
       return '';
     }
     url.protocol = 'https:';
-    url.hostname = 'yaohuo.me';
+    url.hostname = 'www.yaohuo.me';
     return `${url.pathname}${url.search}`;
   } catch {
     return '';

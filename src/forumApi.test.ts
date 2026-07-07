@@ -268,10 +268,10 @@ describe('Android local forum facade', () => {
       title: '妖火主题',
       author: '火友',
       authorId: '7',
-      authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      authorUrl: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
       categoryId: '177',
       category: '妖火茶馆',
-      url: 'https://yaohuo.me/bbs-66.html?classid=177',
+      url: 'https://www.yaohuo.me/bbs-66.html?classid=177',
       createdAt: '2026-05-20T02:30:00.000Z',
       displayTimeText: '2026-05-20 10:30',
       replyCount: 0
@@ -326,11 +326,11 @@ describe('Android local forum facade', () => {
       id: '66:2:2026-05-20T02:30:00.000Z',
       topicId: '66',
       topicTitle: '查看原帖',
-      topicUrl: 'https://yaohuo.me/bbs-66.html',
-      url: 'https://yaohuo.me/bbs-66.html',
+      topicUrl: 'https://www.yaohuo.me/bbs-66.html',
+      url: 'https://www.yaohuo.me/bbs-66.html',
       author: '火友',
       authorId: '7',
-      authorUrl: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      authorUrl: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
       floor: 2,
       excerpt: '妖火回复内容。',
       createdAt: '2026-05-20T02:30:00.000Z',
@@ -376,7 +376,7 @@ describe('Android local forum facade', () => {
     await expect(getUserProfile({ source: 'v2ex', id: 'neo', username: 'neo', cursor: '2', cursorType: 'replies', fetcher })).resolves.toMatchObject({
       replies: [{ topicId: '122', floor: 8, author: 'neo', authorId: 'neo', authorUrl: 'https://www.v2ex.com/member/neo', displayTimeText: '2 分钟前' }]
     });
-    await expect(getUserProfile({ source: 'yaohuo', id: '7', username: '火友', cursor: 'https://yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2', cursorType: 'replies', fetcher, yaohuoCookie: 'sid=ok' })).resolves.toMatchObject({
+    await expect(getUserProfile({ source: 'yaohuo', id: '7', username: '火友', cursor: 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7&page=2', cursorType: 'replies', fetcher, yaohuoCookie: 'sid=ok' })).resolves.toMatchObject({
       replies: [{ topicId: '67', floor: 3 }],
       hasMoreReplies: false
     });
@@ -400,10 +400,10 @@ describe('Android local forum facade', () => {
           }
         }));
       }
-      if (input === 'https://yaohuo.me/wapindex.aspx?sid=-2') {
+      if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response('<div class="top">欢迎 <a href="/bbs/userinfo.aspx?touserid=7">火友</a></div>');
       }
-      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
         return new Response('<div>昵称：火友</div><div>主题 0 回复 0</div>');
       }
       throw new Error(`unexpected ${input}`);
@@ -432,7 +432,7 @@ describe('Android local forum facade', () => {
       source: 'yaohuo',
       id: '7',
       username: '火友',
-      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7',
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
       topics: []
     });
     expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
@@ -558,10 +558,10 @@ describe('Android local forum facade', () => {
 
   it('reads the current yaohuo account name from the signed-in user topic list when the profile only exposes an id', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://yaohuo.me/wapindex.aspx?sid=-2') {
+      if (input === 'https://www.yaohuo.me/wapindex.aspx?sid=-2') {
         return new Response('<div class="top"><a href="/bbs/userinfo.aspx?touserid=45245">我的地盘</a> <a href="/bbs/logout.aspx">退出</a></div>');
       }
-      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=45245&siteid=1000') {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=45245&siteid=1000') {
         return new Response(`
           <div class="content">用户:45245人气值1空间人气1今日人气留言板</div>
           <div class="content">
@@ -570,10 +570,10 @@ describe('Android local forum facade', () => {
           </div>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=45245&type=pub') {
         return new Response('<div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=177&id=1">主题</a>/流金岁月/阅1/2026-05-20 10:00</div>');
       }
-      if (input === 'https://yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=45245') {
+      if (input === 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=45245') {
         return new Response('<div>45245 #71 阿根廷没问题。 2026-07-03 13:45 <a href="/bbs-66.html">查看</a></div>');
       }
       throw new Error(`unexpected ${input}`);
@@ -685,14 +685,14 @@ describe('Android local forum facade', () => {
 
   it('reads yaohuo user topics from the profile post list link instead of activity links', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
         return new Response(`
           <div class="content">昵称:火友<br/><a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub">贴子(2)</a>.<a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7">回复(9)</a></div>
           <div class="title"><b>=TA的动态=</b><a href="/bbs/book_list_log.aspx?action=my&siteid=1000&classid=0&touserid=7">更多&gt;&gt;</a></div>
           <div class="content">6小时前正在论坛查询标题:<a href="/bbs/book_list_log.aspx?action=my&siteid=1000&classid=0&touserid=7&page=2">查看更多动态</a></div>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub') {
         return new Response(`
           <div class="listdata"><a href="/bbs-66.html?classid=177">妖火第一页</a>/火友/阅1/2026-05-20 10:00</div>
           <div class="listdata"><a href="/bbs-67.html?classid=177">妖火第二页</a>/火友/阅1/2026-05-21 10:00</div>
@@ -706,7 +706,7 @@ describe('Android local forum facade', () => {
     expect(profile.topicCount).toBe(2);
     expect(profile.topics.map((topic) => topic.id)).toEqual(['67', '66']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
-    expect(calls).toContain('https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub');
+    expect(calls).toContain('https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub');
     expect(calls).not.toContain('book_list_log.aspx');
   });
 
@@ -715,18 +715,18 @@ describe('Android local forum facade', () => {
       <div class="listdata"><a href="/bbs-${100 + index}.html?classid=177">妖火第${index}条</a>/火友/阅1/2026-05-20 10:${String(index).padStart(2, '0')}</div>
     `).join('');
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
         return new Response(`
           <div class="content">昵称:火友<br/><a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub">贴子(31)</a>.<a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7">回复(9)</a></div>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub') {
         return new Response(`
           ${rows}
           <a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2">下一页</a>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7') {
+      if (input === 'https://www.yaohuo.me/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7') {
         return new Response('');
       }
       throw new Error(`unexpected ${input}`);
@@ -737,20 +737,20 @@ describe('Android local forum facade', () => {
     expect(profile.topics).toHaveLength(30);
     expect(profile).toMatchObject({
       hasMoreTopics: true,
-      nextTopicsCursor: 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
+      nextTopicsCursor: 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
     });
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 
   it('keeps yaohuo user profile names out of activity text and reads the real post list', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=36925&siteid=1000') {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=36925&siteid=1000') {
         return new Response(`
           <div class="content">用户:369256小时前正在论坛查询标题:醒图7小时前<a href="/bbs/book_list_log.aspx?action=my&siteid=1000&classid=0&touserid=36925&page=2">查看更多动态</a>人气值4,443空间人气6今日人气留言板</div>
           <div class="content"><b>昵称:</b>李慕婉o<br/><a href="/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=36925&type=pub">贴子(1659)</a>.<a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=36925">回复(222)</a></div>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=36925&type=pub') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=36925&type=pub') {
         return new Response(`
           <div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=201&id=1540797">Hypic醒图国际版 v8.7.0 免登录使用所有特权</a>/李慕婉o/阅1/2026-05-28 23:31</div>
           <div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=201&id=1540798">第二个帖子</a>/李慕婉o/阅1/2026-05-28 23:32</div>
@@ -770,7 +770,7 @@ describe('Android local forum facade', () => {
     });
     expect(profile.topics.map((topic) => topic.id)).toEqual(['1540798', '1540797']);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
-    expect(calls).toContain('https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=36925&type=pub');
+    expect(calls).toContain('https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=36925&type=pub');
     expect(calls).not.toContain('book_list_log.aspx');
   });
 
@@ -782,7 +782,7 @@ describe('Android local forum facade', () => {
       <div class="listdata"><a href="/bbs/book_view.aspx?siteid=1000&classid=201&id=${1540812 + index}">妖火资源 ${index + 15}</a>/李慕婉o/阅1/2026-05-29 00:${String(index).padStart(2, '0')}</div>
     `).join('');
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://yaohuo.me/bbs/userinfo.aspx?touserid=36925&siteid=1000') {
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=36925&siteid=1000') {
         return new Response(`
           <div class="uinfo">
             <div class="username">李慕婉o</div>
@@ -796,13 +796,13 @@ describe('Android local forum facade', () => {
           <div class="content">用户:369256小时前正在论坛查询标题:醒图7小时前<a href="/bbs/book_list_log.aspx?action=my&siteid=1000&classid=0&touserid=36925&page=2">查看更多动态</a></div>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_list_search.aspx?action=search&key=36925&type=pub') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&key=36925&type=pub') {
         return new Response(`
           ${firstRows}
           <a href="/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=2">下一页</a>
         `);
       }
-      if (input === 'https://yaohuo.me/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=2') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=2') {
         return new Response(`
           ${secondRows}
           <a href="/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=3">下一页</a>
@@ -820,16 +820,16 @@ describe('Android local forum facade', () => {
     expect(profile.topics[0]).toMatchObject({ id: '1540826', author: '李慕婉o' });
     expect(profile).toMatchObject({
       hasMoreTopics: true,
-      nextTopicsCursor: 'https://yaohuo.me/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=3'
+      nextTopicsCursor: 'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&siteid=1000&classid=0&type=pub&key=36925&getTotal=1659&page=3'
     });
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
-    expect(calls).toContain('https://yaohuo.me/bbs/book_list_search.aspx?action=search&key=36925&type=pub');
+    expect(calls).toContain('https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&key=36925&type=pub');
     expect(calls).not.toContain('book_list_log.aspx');
   });
 
   it('loads yaohuo user profile topics from the next topic cursor', async () => {
     const fetcher = vi.fn(async (input: string) => {
-      if (input === 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2') {
+      if (input === 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2') {
         return new Response(`
           <div class="listdata"><a href="/bbs-130.html?classid=177">妖火下一页</a>/火友/阅1/2026-05-21 10:00</div>
         `);
@@ -843,7 +843,7 @@ describe('Android local forum facade', () => {
       username: '火友',
       fetcher,
       yaohuoCookie: 'sid=ok',
-      cursor: 'https://yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
+      cursor: 'https://www.yaohuo.me/bbs/book_list.aspx?action=search&siteid=1000&classid=0&key=7&type=pub&page=2'
     });
 
     expect(profile.topics.map((topic) => topic.id)).toEqual(['130']);
@@ -861,7 +861,7 @@ describe('Android local forum facade', () => {
       fetcher,
       yaohuoCookie: 'sid=ok',
       cursor: 'https://evil.example/bbs/book_list.aspx?page=2'
-    })).rejects.toThrow('妖火链接不属于 yaohuo.me');
+    })).rejects.toThrow('妖火链接不属于 www.yaohuo.me');
 
     expect(fetcher).not.toHaveBeenCalled();
   });

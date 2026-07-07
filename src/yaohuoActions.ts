@@ -50,7 +50,7 @@ function yaohuoDeleteUrl(deletePath: string) {
   if (!['http:', 'https:'].includes(url.protocol)
     || url.username
     || url.password
-    || (host !== 'yaohuo.me' && host !== 'www.yaohuo.me')
+    || host !== 'www.yaohuo.me'
     || !/^\/bbs\/book_re_del\.aspx$/i.test(url.pathname)) {
     throw new Error('妖火删除链接不正确');
   }
@@ -58,7 +58,7 @@ function yaohuoDeleteUrl(deletePath: string) {
   cleanPositiveInteger(url.searchParams.get('id') || '', '帖子 id');
   cleanPositiveInteger(url.searchParams.get('classid') || '', '分区 id');
   url.protocol = 'https:';
-  url.hostname = 'yaohuo.me';
+  url.hostname = 'www.yaohuo.me';
   return url;
 }
 

@@ -13,7 +13,7 @@ function isYaohuoDomain(domain?: string) {
     return true;
   }
   const normalized = String(domain || '').replace(/^\./, '').toLowerCase();
-  return normalized === 'yaohuo.me' || normalized.endsWith('.yaohuo.me');
+  return normalized === 'yaohuo.me' || normalized === 'www.yaohuo.me';
 }
 
 function normalizedCookieEntries(cookies: Record<string, YaohuoNativeCookie>) {
@@ -60,7 +60,7 @@ export function buildYaohuoSetCookieHeaders(cookieHeader: string) {
 
   return Array.from(cookies.entries())
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${name}=${value}; Domain=yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax`);
+    .map(([name, value]) => `${name}=${value}; Domain=www.yaohuo.me; Path=/; Secure; HttpOnly; SameSite=Lax`);
 }
 
 export function yaohuoCookieMapFromHeader(cookieHeader: string) {
@@ -74,7 +74,7 @@ export function yaohuoCookieMapFromHeader(cookieHeader: string) {
     const name = cookiePart.slice(0, separatorIndex).trim();
     const value = cookiePart.slice(separatorIndex + 1).trim();
     if (name && value) {
-      cookies[name] = { name, value, domain: 'yaohuo.me', secure: true };
+      cookies[name] = { name, value, domain: 'www.yaohuo.me', secure: true };
     }
   }
   return cookies;

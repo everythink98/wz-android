@@ -26,4 +26,11 @@ describe('network proxy modal guard', () => {
     expect(nameIndex).toBeGreaterThanOrEqual(0);
     expect(addressIndex).toBeGreaterThan(nameIndex);
   });
+
+  it('resets the proxy draft sheet when the Android keyboard hides', () => {
+    const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
+
+    expect(source).not.toContain('KeyboardAvoidingView');
+    expect(source).toContain("const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {\n      Keyboard.dismiss();\n      setDraftKeyboardInset(0);\n    });");
+  });
 });

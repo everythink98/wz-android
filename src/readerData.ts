@@ -48,7 +48,7 @@ const sourceBaseUrls: Record<Source, string> = {
   v2ex: 'https://www.v2ex.com',
   linuxdo: 'https://linux.do',
   nodeseek: 'https://www.nodeseek.com',
-  yaohuo: 'https://yaohuo.me'
+  yaohuo: 'https://www.yaohuo.me'
 };
 const defaultReaderSettings: ReaderSettings = {
   listDensity: 'standard',
@@ -120,7 +120,7 @@ function userProfileUrl(source: Source, id: string, fallback = '') {
   if (source === 'v2ex') {
     return `https://www.v2ex.com/member/${encodeURIComponent(cleanId)}`;
   }
-  return `https://yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
+  return `https://www.yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
 }
 
 function nowIso() {

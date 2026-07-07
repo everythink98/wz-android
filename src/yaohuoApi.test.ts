@@ -22,7 +22,7 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000',
+      'https://www.yaohuo.me/bbs/book_list.aspx?action=new&classid=177&page=2&siteid=1000',
       expect.objectContaining({
         headers: expect.objectContaining({ Cookie: 'sidyaohuo=secret' })
       })
@@ -41,7 +41,7 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list.aspx?gettotal=2025&action=new',
+      'https://www.yaohuo.me/bbs/book_list.aspx?gettotal=2025&action=new',
       expect.any(Object)
     );
   });
@@ -56,7 +56,7 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list.aspx?gettotal=2025&action=new&page=2',
+      'https://www.yaohuo.me/bbs/book_list.aspx?gettotal=2025&action=new&page=2',
       expect.any(Object)
     );
   });
@@ -142,7 +142,7 @@ describe('Android direct yaohuo API', () => {
     });
 
     expect(yaohuoFetcher).toHaveBeenCalledWith(
-      'https://yaohuo.me/bbs/book_list_search.aspx?action=search&type=title&key=%E5%85%8D%E6%B5%81&classid=0&page=2&siteid=1000&getTotal=2021',
+      'https://www.yaohuo.me/bbs/book_list_search.aspx?action=search&type=title&key=%E5%85%8D%E6%B5%81&classid=0&page=2&siteid=1000&getTotal=2021',
       expect.any(Object)
     );
     expect(result.items[0]).toMatchObject({ id: '456', title: '第二页结果' });
@@ -434,9 +434,9 @@ describe('Android direct yaohuo API', () => {
       source: 'yaohuo',
       id: '7',
       username: '火友',
-      url: 'https://yaohuo.me/bbs/userinfo.aspx?touserid=7'
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7'
     });
-    expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/wapindex.aspx?sid=-2', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenCalledWith('https://www.yaohuo.me/wapindex.aspx?sid=-2', expect.any(Object));
   });
 
   it('does not treat yaohuo navigation text as the current username', () => {
@@ -482,7 +482,7 @@ describe('Android direct yaohuo API', () => {
       headers: expect.objectContaining({
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         Cookie: 'sidyaohuo=secret',
-        Referer: 'https://yaohuo.me/bbs/',
+        Referer: 'https://www.yaohuo.me/bbs/',
         'Sec-Fetch-Site': 'same-origin',
         'User-Agent': expect.stringContaining('Android')
       })
@@ -495,7 +495,7 @@ describe('Android direct yaohuo API', () => {
       id: '123',
       title: '妖火帖子',
       author: 'alice',
-      url: 'https://yaohuo.me/bbs-123.html',
+      url: 'https://www.yaohuo.me/bbs-123.html',
       createdAt: '2026-05-20T00:00:00.000Z',
       replyCount: 1,
       categoryId: '177'
@@ -514,8 +514,8 @@ describe('Android direct yaohuo API', () => {
       yaohuoFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenNthCalledWith(1, 'https://yaohuo.me/bbs-123.html', expect.any(Object));
-    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenNthCalledWith(1, 'https://www.yaohuo.me/bbs-123.html', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1', expect.any(Object));
     expect(detail.replyCount).toBe(1);
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
   });
@@ -537,7 +537,7 @@ describe('Android direct yaohuo API', () => {
       topic,
       yaohuoCookie: 'sidyaohuo=secret',
       yaohuoFetcher
-    })).rejects.toThrow('妖火链接不属于 yaohuo.me');
+    })).rejects.toThrow('妖火链接不属于 www.yaohuo.me');
 
     expect(yaohuoFetcher).not.toHaveBeenCalled();
   });
@@ -548,7 +548,7 @@ describe('Android direct yaohuo API', () => {
       id: '456',
       title: '妖火资源帖',
       author: 'alice',
-      url: 'https://yaohuo.me/bbs-456.html',
+      url: 'https://www.yaohuo.me/bbs-456.html',
       createdAt: '2026-05-20T00:00:00.000Z',
       replyCount: 0,
       categoryId: '201',
@@ -567,7 +567,7 @@ describe('Android direct yaohuo API', () => {
       yaohuoFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://yaohuo.me/bbs/book_re.aspx?id=456&classid=201&page=1', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://www.yaohuo.me/bbs/book_re.aspx?id=456&classid=201&page=1', expect.any(Object));
     expect(detail).toMatchObject({
       categoryId: '201',
       category: '资源分享'
@@ -581,7 +581,7 @@ describe('Android direct yaohuo API', () => {
       <div class="louzhuxinxi subtitle">[楼主]<a href="/bbs/userinfo.aspx?touserid=36925">一葉知秋</a>(4级水面的小草)[荣誉]</div>
     `, {
       id: '1559685',
-      url: 'https://yaohuo.me/bbs-1559685.html'
+      url: 'https://www.yaohuo.me/bbs-1559685.html'
     });
 
     expect(detail.author).toBe('一葉知秋');
@@ -610,7 +610,7 @@ describe('Android direct yaohuo API', () => {
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
     `, {
       id: '123',
-      url: 'https://yaohuo.me/bbs-123.html'
+      url: 'https://www.yaohuo.me/bbs-123.html'
     });
 
     expect(detail.polls).toEqual([{
@@ -638,7 +638,7 @@ describe('Android direct yaohuo API', () => {
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
     `, {
       id: '123',
-      url: 'https://yaohuo.me/bbs-123.html'
+      url: 'https://www.yaohuo.me/bbs-123.html'
     });
 
     expect(detail.polls?.[0].options).toEqual([
@@ -659,7 +659,7 @@ describe('Android direct yaohuo API', () => {
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
     `, {
       id: '123',
-      url: 'https://yaohuo.me/bbs-123.html'
+      url: 'https://www.yaohuo.me/bbs-123.html'
     });
 
     expect(detail.polls?.[0]).toMatchObject({
@@ -683,7 +683,7 @@ describe('Android direct yaohuo API', () => {
       <a href="/bbs/book_list.aspx?classid=201">资源分享</a>
     `, {
       id: '456',
-      url: 'https://yaohuo.me/bbs-456.html'
+      url: 'https://www.yaohuo.me/bbs-456.html'
     });
 
     expect(detail.contentHtml).toContain('软件说明');
@@ -706,11 +706,11 @@ describe('Android direct yaohuo API', () => {
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
     `, {
       id: '1560017',
-      url: 'https://yaohuo.me/bbs-1560017.html'
+      url: 'https://www.yaohuo.me/bbs-1560017.html'
     });
 
     expect(detail.contentHtml).toContain('<forum-video');
-    expect(detail.contentHtml).toContain('src="https://yaohuo.me/uploads/demo.mp4"');
+    expect(detail.contentHtml).toContain('src="https://www.yaohuo.me/uploads/demo.mp4"');
     expect(detail.excerpt).toBe('');
   });
 
@@ -726,11 +726,11 @@ describe('Android direct yaohuo API', () => {
       <a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>
     `, {
       id: '1560017',
-      url: 'https://yaohuo.me/bbs-1560017.html'
+      url: 'https://www.yaohuo.me/bbs-1560017.html'
     });
 
     expect(detail.contentHtml).toContain('正文');
-    expect(detail.contentHtml).toContain('src="https://yaohuo.me/uploads/after-body.mp4"');
+    expect(detail.contentHtml).toContain('src="https://www.yaohuo.me/uploads/after-body.mp4"');
     expect(detail.contentHtml).not.toContain('更多回帖');
   });
 
@@ -746,7 +746,7 @@ describe('Android direct yaohuo API', () => {
       </div>
     `, {
       id: '1478784',
-      url: 'https://yaohuo.me/bbs-1478784.html'
+      url: 'https://www.yaohuo.me/bbs-1478784.html'
     });
 
     expect(detail).toMatchObject({
@@ -790,7 +790,7 @@ describe('Android direct yaohuo API', () => {
         更多回帖(1)
     `, {
       id: '1540797',
-      url: 'https://yaohuo.me/bbs-1540797.html'
+      url: 'https://www.yaohuo.me/bbs-1540797.html'
     });
 
     expect(detail.contentHtml).toContain('应用简介');
@@ -815,7 +815,7 @@ describe('Android direct yaohuo API', () => {
       yaohuoFetcher
     });
 
-    expect(yaohuoFetcher).toHaveBeenCalledWith('https://yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3', expect.any(Object));
+    expect(yaohuoFetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=3', expect.any(Object));
   });
 
   it('parses yaohuo activity replies from list-reply rows with real floors and rewards', () => {
@@ -844,7 +844,7 @@ describe('Android direct yaohuo API', () => {
     expect(result.items[0].contentHtml).toContain('得金');
     expect(result.items[0].contentHtml).toContain('666');
     expect(result.items[0].contentHtml).toContain('红包可能不一样');
-    expect(result.items[0].contentHtml).toContain('https://yaohuo.me/bbs/face/');
+    expect(result.items[0].contentHtml).toContain('https://www.yaohuo.me/bbs/face/');
     expect(result.items[0].contentHtml).toContain('.gif');
     expect(result.items[0].contentHtml).not.toContain('顶楼');
     expect(result.items[0].contentHtml).not.toContain('replyicon');

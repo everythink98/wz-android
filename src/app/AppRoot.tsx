@@ -98,7 +98,7 @@ type UserReturnTopic = {
 };
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODEIMAGE_LOGIN_HOSTS = ['nodeimage.com', 'nodeseek.com', 'challenges.cloudflare.com'];
-const YAOHUO_LOGIN_HOSTS = ['yaohuo.me'];
+const YAOHUO_LOGIN_HOSTS = ['www.yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
 
 
