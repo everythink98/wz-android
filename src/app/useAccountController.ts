@@ -302,7 +302,7 @@ export function useAccountController({
         setChecking(false);
       }
     }
-  }, [checkingRequestIdRef, clearYaohuoLoginState, currentYaohuoCredentialGeneration, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);
+  }, [checkingRequestIdRef, clearYaohuoLoginState, currentYaohuoCredentialGeneration, forumFetchWithWebViewFallback, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);
 
   const clearLogin = useCallback(async () => {
     await clearNodeSeekLoginState();

@@ -83,7 +83,10 @@ export function topicSnapshotForUserReturn(snapshot: TopicSnapshot, hasPendingOp
   };
 }
 
-export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>) {
+export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>, source: Source) {
+  if (source !== 'nodeseek') {
+    return replies;
+  }
   const contentMarkdown = edit.contentMarkdown.trim();
   if (!contentMarkdown) {
     return replies;
@@ -106,9 +109,10 @@ export function applyEditedReplyContent(replies: Reply[], edit: Pick<ReplyEditTa
 
 export function shouldApplyEditedReplyFallback(
   replies: Reply[],
-  edit?: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'>
+  edit: Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'> | undefined,
+  source: Source
 ): edit is Pick<ReplyEditTarget, 'commentId' | 'contentMarkdown'> {
-  return Boolean(edit?.contentMarkdown.trim()) && !replies.some((reply) => reply.commentId === edit?.commentId);
+  return source === 'nodeseek' && Boolean(edit?.contentMarkdown.trim()) && !replies.some((reply) => reply.commentId === edit?.commentId);
 }
 
 export function markCurrentNodeSeekOwnRepliesUnlikable(replies: Reply[], currentUser: UserProfile | undefined, currentUserId?: number | null) {

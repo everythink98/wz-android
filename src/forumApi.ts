@@ -59,6 +59,7 @@ function pageNumberFromUrl(url: string) {
 type AllFeedCursorState = {
   buffers?: Partial<Record<Source, Topic[]>>;
   nextPages?: Partial<Record<Source, number | null>>;
+  sourceCursors?: Partial<Record<Source, string | null>>;
 };
 
 function cursorTopic(value: unknown): Topic | null {
@@ -83,6 +84,7 @@ function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
     const parsed = JSON.parse(decodeURIComponent(cursor)) as AllFeedCursorState;
     const buffers: Partial<Record<Source, Topic[]>> = {};
     const nextPages: Partial<Record<Source, number | null>> = {};
+    const sourceCursors: Partial<Record<Source, string | null>> = {};
     for (const source of allFeedSources) {
       const items = Array.isArray(parsed.buffers?.[source])
         ? parsed.buffers[source]?.map(cursorTopic).filter(Boolean) as Topic[]
@@ -94,8 +96,11 @@ function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
       if (typeof nextPage === 'number' && nextPage > 0) {
         nextPages[source] = nextPage;
       }
+      if (typeof parsed.sourceCursors?.[source] === 'string' && parsed.sourceCursors[source]) {
+        sourceCursors[source] = parsed.sourceCursors[source];
+      }
     }
-    return { buffers, nextPages };
+    return { buffers, nextPages, sourceCursors };
   } catch {
     return {};
   }
@@ -104,6 +109,7 @@ function decodeAllFeedCursor(cursor?: string): AllFeedCursorState {
 function encodeAllFeedCursor(state: AllFeedCursorState) {
   const buffers: Partial<Record<Source, Topic[]>> = {};
   const nextPages: Partial<Record<Source, number | null>> = {};
+  const sourceCursors: Partial<Record<Source, string | null>> = {};
   for (const source of allFeedSources) {
     const items = state.buffers?.[source] || [];
     if (items.length) {
@@ -113,11 +119,15 @@ function encodeAllFeedCursor(state: AllFeedCursorState) {
     if (typeof nextPage === 'number' && nextPage > 0) {
       nextPages[source] = nextPage;
     }
+    const sourceCursor = state.sourceCursors?.[source];
+    if (sourceCursor) {
+      sourceCursors[source] = sourceCursor;
+    }
   }
-  if (!Object.keys(buffers).length && !Object.keys(nextPages).length) {
+  if (!Object.keys(buffers).length && !Object.keys(nextPages).length && !Object.keys(sourceCursors).length) {
     return undefined;
   }
-  return encodeURIComponent(JSON.stringify({ buffers, nextPages }));
+  return encodeURIComponent(JSON.stringify({ buffers, nextPages, sourceCursors }));
 }
 
 function topicIdentity(topic: Topic) {
@@ -180,7 +190,7 @@ export async function getFeed({
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
@@ -196,13 +206,13 @@ export async function getFeed({
     const results = await Promise.allSettled([
       fetchedSources[0]
         ? getNodeSeekFeed({ ...options, limit: adapterLimit, page: requestedPages.nodeseek })
-        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null }),
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null, nextCursor: null }),
       fetchedSources[1]
         ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: requestedPages.linuxdo })
-        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null }),
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null, nextCursor: null }),
       fetchedSources[2]
-        ? getV2exFeed({ ...options, limit: v2exLimit, page: requestedPages.v2ex })
-        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null })
+        ? getV2exFeed({ ...options, cursor: cursorState.sourceCursors?.v2ex, limit: v2exLimit, page: requestedPages.v2ex })
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null, nextCursor: cursorState.sourceCursors?.v2ex ?? null })
     ]);
     const items = sortByTime([
       ...bufferedItems,
@@ -218,11 +228,15 @@ export async function getFeed({
       nextBuffers[item.source] = [...(nextBuffers[item.source] || []), item];
     }
     const nextPages: Partial<Record<Source, number | null>> = {};
+    const sourceCursors: Partial<Record<Source, string | null>> = {};
     allFeedSources.forEach((item, index) => {
       const result = results[index];
       if (result?.status === 'fulfilled') {
         if (result.value.nextPage) {
           nextPages[item] = result.value.nextPage;
+        }
+        if (result.value.nextCursor) {
+          sourceCursors[item] = result.value.nextCursor;
         }
         return;
       }
@@ -230,7 +244,7 @@ export async function getFeed({
         nextPages[item] = requestedPages[item];
       }
     });
-    const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages });
+    const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors });
     return {
       items: selected,
       errors: mergeErrors(results, allFeedSources),

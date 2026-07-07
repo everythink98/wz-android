@@ -30,6 +30,7 @@ import java.nio.charset.Charset
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import android.util.Log
 import android.util.Base64
 
 data class NetworkProxyProfile(
@@ -42,6 +43,7 @@ data class NetworkProxyProfile(
 
 private data class ProxyTarget(val host: String, val port: Int)
 private const val BLOCKED_PROXY_PORT = 9
+private const val LOG_TAG = "WzNetworkProxy"
 
 object NetworkProxyRuntime {
   private val lock = Any()
@@ -65,18 +67,22 @@ object NetworkProxyRuntime {
         builder.proxySelector(selector)
       }
       installed = true
+      Log.i(LOG_TAG, "installed app proxy selector")
     }
   }
 
   fun setLocalProxyPort(port: Int?) {
     localProxy = if (port == null) {
+      Log.i(LOG_TAG, "disabled app proxy")
       null
     } else {
+      Log.i(LOG_TAG, "enabled app proxy on 127.0.0.1:" + port)
       Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))
     }
   }
 
   fun blockNetworkRequests() {
+    Log.w(LOG_TAG, "blocked app requests while proxy switches")
     localProxy = blockedProxy
   }
 
@@ -99,6 +105,7 @@ class NetworkProxySelector : ProxySelector() {
     if (proxy == null) {
       return delegate?.select(uri)?.toMutableList() ?: mutableListOf(Proxy.NO_PROXY)
     }
+    Log.i(LOG_TAG, "select proxy for " + (uri?.scheme ?: "unknown") + "://" + targetHost + " via " + proxy.address())
     return mutableListOf(proxy)
   }
 
@@ -116,6 +123,7 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
     get() = serverSocket.localPort
 
   fun start() {
+    Log.i(LOG_TAG, "local proxy listening on 127.0.0.1:" + port + " upstream=" + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
     executor.execute {
       while (running) {
         try {
@@ -138,6 +146,7 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
 
   fun stop() {
     running = false
+    Log.i(LOG_TAG, "local proxy stopped on 127.0.0.1:" + port)
     try {
       serverSocket.close()
     } catch (_: IOException) {
@@ -159,6 +168,7 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
         val method = parts[0].uppercase(Locale.US)
         if (method == "CONNECT") {
           val target = parseHostPort(parts[1], 443)
+          Log.i(LOG_TAG, "tunnel CONNECT " + target.host + ":" + target.port + " via " + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
           val remote = connectToTarget(target)
           local.getOutputStream().write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray(HEADER_CHARSET))
           local.soTimeout = 0
@@ -167,6 +177,7 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
         }
 
         val target = targetFromHttpRequest(parts[1], header)
+        Log.i(LOG_TAG, "proxy " + method + " " + target.host + ":" + target.port + " via " + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
         val remote = if (upstream.protocol == "http") {
           connectPlain(upstream.host, upstream.port)
         } else {

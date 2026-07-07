@@ -194,7 +194,7 @@ describe('topic action controller helpers', () => {
     const updated = applyEditedReplyContent(replies, {
       commentId: 9,
       contentMarkdown: '新回复 **重点**'
-    });
+    }, 'nodeseek');
 
     expect(updated[0]).toMatchObject({
       author: '凡想世界',
@@ -204,6 +204,21 @@ describe('topic action controller helpers', () => {
     });
     expect(updated[0].contentHtml).toContain('<strong>重点</strong>');
     expect(updated[1]).toBe(replies[1]);
+  });
+
+  it('does not apply NodeSeek markdown fallback to linux.do edited replies', () => {
+    const replies: Reply[] = [{
+      author: 'alice',
+      commentId: 9,
+      contentMarkdown: '旧回复',
+      contentHtml: '<p>旧回复</p>',
+      createdAt: '2026-01-01T00:00:00.000Z'
+    }];
+
+    expect(applyEditedReplyContent(replies, {
+      commentId: 9,
+      contentMarkdown: 'https://linux.do/t/42'
+    }, 'linuxdo')).toBe(replies);
   });
 
   it('does not override refreshed edited replies that already came back from the source', () => {
@@ -218,11 +233,11 @@ describe('topic action controller helpers', () => {
     expect(shouldApplyEditedReplyFallback(refreshed, {
       commentId: 9,
       contentMarkdown: '本地提交 https://example.com'
-    })).toBe(false);
+    }, 'nodeseek')).toBe(false);
     expect(shouldApplyEditedReplyFallback([], {
       commentId: 9,
       contentMarkdown: '本地提交 https://example.com'
-    })).toBe(true);
+    }, 'nodeseek')).toBe(true);
   });
 
   it('uses the saved NodeSeek login user id when the current user profile is not loaded', () => {

@@ -30,6 +30,7 @@ import {
 } from './localV2exHelpers';
 
 const HTML_LIST_PAGE_SIZE = 20;
+const V2EX_FEED_CURSOR_LIMIT = 200;
 const V2EX_HTML_TIMEZONE = '+08:00';
 const latestCache: { savedAt: number; data: unknown[] } = { savedAt: 0, data: [] };
 const atomParser = new XMLParser({
@@ -351,6 +352,28 @@ function appendV2exSupplementHtml(contentHtml: string, supplementHtml: string) {
   return [contentHtml, supplementHtml].filter((part) => String(part || '').trim()).join('\n');
 }
 
+function decodeV2exFeedSeenIds(cursor?: string | null) {
+  if (!cursor) {
+    return new Set<string>();
+  }
+  try {
+    const parsed = JSON.parse(decodeURIComponent(cursor)) as { seenIds?: unknown };
+    return new Set(Array.isArray(parsed.seenIds)
+      ? parsed.seenIds.map((item) => String(item || '').trim()).filter(Boolean)
+      : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function encodeV2exFeedSeenIds(previous: Set<string>, items: Topic[]) {
+  const seenIds = new Set(previous);
+  for (const item of items) {
+    seenIds.add(item.id);
+  }
+  return encodeURIComponent(JSON.stringify({ seenIds: Array.from(seenIds).slice(-V2EX_FEED_CURSOR_LIMIT) }));
+}
+
 function v2exHtmlWindowStart(options: { page: number; limit: number; category?: string }) {
   if (options.category || options.page <= 1) {
     return (options.page - 1) * options.limit;
@@ -429,10 +452,29 @@ async function fetchHtmlWindow(options: V2exOptions & {
   page: number;
   limit: number;
   category?: string;
+  seenIds?: Set<string>;
 }) {
   const path = safeNodePath(options.category);
   if (!path) {
     return null;
+  }
+  if (!options.category && options.seenIds?.size) {
+    const collected: Topic[] = [];
+    let htmlPage = 1;
+    let lastHasMore = false;
+    while (collected.length < options.limit) {
+      const html = await fetchText(`${BASE_URL}${path}?p=${htmlPage}`, options);
+      const pageResult = parseV2exListPage(html, htmlPage, path, options.category);
+      collected.push(...pageResult.items.filter((item) => !options.seenIds?.has(item.id)));
+      lastHasMore = pageResult.hasMore;
+      if (!pageResult.hasMore || pageResult.items.length === 0) {
+        break;
+      }
+      htmlPage += 1;
+    }
+    const items = collected.slice(0, options.limit);
+    const hasMore = items.length === options.limit && (collected.length > options.limit || lastHasMore);
+    return { items, hasMore, nextPage: hasMore ? options.page + 1 : null };
   }
   const start = v2exHtmlWindowStart(options);
   const firstHtmlPage = Math.floor(start / HTML_LIST_PAGE_SIZE) + 1;
@@ -466,6 +508,7 @@ export async function getV2exFeed(options: V2exOptions & {
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'all' : options.feedFilter || 'all';
+  const seenIds = decodeV2exFeedSeenIds(options.cursor);
   if (!options.category && feedFilter === 'hot') {
     const html = await fetchText(`${BASE_URL}/?tab=hot`, options);
     return { items: parseV2exAllTabPage(html, limit).items, errors: {}, hasMore: false, nextPage: null };
@@ -482,14 +525,16 @@ export async function getV2exFeed(options: V2exOptions & {
   }
   if (!options.category && page === 1) {
     const html = await fetchText(`${BASE_URL}/?tab=all`, options);
-    return { ...parseV2exAllTabPage(html, limit), errors: {} };
+    const result = parseV2exAllTabPage(html, limit);
+    return { ...result, nextCursor: result.hasMore ? encodeV2exFeedSeenIds(seenIds, result.items) : null, errors: {} };
   }
   if (options.category || page > 1) {
-    const htmlResult = await fetchHtmlWindow({ ...options, page, limit });
+    const htmlResult = await fetchHtmlWindow({ ...options, page, limit, seenIds });
     if (htmlResult) {
       return {
         ...htmlResult,
         nextPage: htmlResult.hasMore ? htmlResult.nextPage : null,
+        nextCursor: htmlResult.hasMore ? encodeV2exFeedSeenIds(seenIds, htmlResult.items) : null,
         errors: {}
       };
     }

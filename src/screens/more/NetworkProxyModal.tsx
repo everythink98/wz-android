@@ -353,7 +353,7 @@ export function NetworkProxyModal({
                 ) : null}
                 <View style={styles.flex}>
                   <View style={proxyStyles.addressLine}>
-                    <Text style={[proxyStyles.proxyAddress, { color: theme.ink }]} numberOfLines={1}>{profile.host}:{profile.port}</Text>
+                    <Text style={[proxyStyles.proxyAddress, { color: theme.ink }]} numberOfLines={1}>{profile.name}</Text>
                     {active ? (
                       <View style={[proxyStyles.currentBadge, { backgroundColor: accentSoftColor, borderColor: accentBorderColor }]}>
                         <Text style={[proxyStyles.currentBadgeText, { color: accentColor }]}>当前</Text>
@@ -371,10 +371,10 @@ export function NetworkProxyModal({
                         testProfile(profile);
                       }}
                     >
-                      <Text style={[styles.meta, { color: accentColor }]} numberOfLines={1}>{statusText}</Text>
+                      <Text style={[styles.meta, { color: accentColor }]} numberOfLines={1}>{profile.host}:{profile.port} · {statusText}</Text>
                     </Pressable>
                   ) : (
-                    <Text style={[styles.meta, activeApplying || activeDisplayedEnabled ? { color: accentColor } : null]} numberOfLines={1}>{statusText}</Text>
+                    <Text style={[styles.meta, activeApplying || activeDisplayedEnabled ? { color: accentColor } : null]} numberOfLines={1}>{profile.host}:{profile.port} · {statusText}</Text>
                   )}
                 </View>
                 {!selecting ? (

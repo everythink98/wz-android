@@ -992,7 +992,7 @@ export function AppRoot() {
     appUpdateMessage,
     checkAppUpdate,
     downloadAppUpdate
-  } = useAppUpdateController({ beforeDownload: ensureNetworkProxyReady, fetcher: networkProxyFetcher, notify });
+  } = useAppUpdateController({ beforeRequest: ensureNetworkProxyReady, fetcher: networkProxyFetcher, notify });
   useEffect(() => {
     if (autoAppUpdateCheckedRef.current) {
       return;
@@ -1500,8 +1500,8 @@ export function AppRoot() {
     if (!feedAllowsRemotePagination) {
       return;
     }
-    loadFeed({ page: activeFeedState.page + 1, cursor: feedSource === 'all' ? activeFeedState.nextCursor : undefined, nocache: true });
-  }, [activeFeedState.nextCursor, activeFeedState.page, feedAllowsRemotePagination, feedSource, loadFeed]);
+    loadFeed({ page: activeFeedState.page + 1, cursor: activeFeedState.nextCursor, nocache: true });
+  }, [activeFeedState.nextCursor, activeFeedState.page, feedAllowsRemotePagination, loadFeed]);
 
   const runCurrentSearch = useCallback(() => {
     void runSearch();

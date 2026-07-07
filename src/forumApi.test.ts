@@ -1554,6 +1554,53 @@ describe('Android local forum facade', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://www.v2ex.com/recent?p=1');
   });
 
+  it('does not skip V2EX recent page one in the aggregated Android feed', async () => {
+    const nodeSeekPage = Buffer.from(JSON.stringify({
+      rotateTopics: Array.from({ length: 30 }, (_item, index) => ({
+        postId: 900 - index,
+        titleText: `NodeSeek ${index}`,
+        titleLink: `/post-${900 - index}-1`,
+        op: { name: 'alice' },
+        time: { createdDate: `2026-05-19T00:${String(59 - index).padStart(2, '0')}:00.000Z` }
+      }))
+    })).toString('base64');
+    const item = (id: number, title: string, time: string, className = 'cell') => `
+      <div class="${className}">
+        <a class="topic-link" href="/t/${id}#reply0">${title}</a>
+        <a class="node" href="/go/create">分享创造</a>
+        <a href="/member/neo">neo</a>
+        <span title="${time}"></span>
+      </div>
+    `;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        return new Response(`<script>${nodeSeekPage}</script>`);
+      }
+      if (input.includes('linux.do')) {
+        return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (input === 'https://www.v2ex.com/?tab=all') {
+        return new Response(Array.from({ length: 20 }, (_unused, index) => item(800 - index, `all ${index}`, `2026-05-20 00:${String(59 - index).padStart(2, '0')}:00 +08:00`, 'cell item')).join('') + '<a href="/recent">更多新主题</a>');
+      }
+      if (input === 'https://www.v2ex.com/recent?p=1') {
+        return new Response(Array.from({ length: 20 }, (_unused, index) => item(700 - index, `recent p1 ${index}`, `2026-05-20 00:${String(39 - index).padStart(2, '0')}:00`)).join('') + '<a href="/recent?p=2">下一页</a>');
+      }
+      if (input === 'https://www.v2ex.com/recent?p=2') {
+        return new Response(Array.from({ length: 20 }, (_unused, index) => item(600 - index, `recent p2 ${index}`, `2026-05-19 23:${String(59 - index).padStart(2, '0')}:00`)).join(''));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const first = await getFeed({ source: 'all', limit: 30, fetcher });
+    await getFeed({ source: 'all', page: first.nextPage ?? 2, cursor: first.nextCursor ?? undefined, limit: 30, fetcher });
+
+    const calls = fetcher.mock.calls.map((call) => call[0]);
+    expect(calls.indexOf('https://www.v2ex.com/recent?p=1')).toBeGreaterThanOrEqual(0);
+    expect(calls.indexOf('https://www.v2ex.com/recent?p=2')).toBeGreaterThan(calls.indexOf('https://www.v2ex.com/recent?p=1'));
+  });
+
   it('retries a failed source on the next aggregated Android feed page', async () => {
     const nodeSeekPage = Buffer.from(JSON.stringify({
       rotateTopics: [

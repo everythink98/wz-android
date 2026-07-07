@@ -9,12 +9,22 @@ function readSource(...parts: string[]) {
 }
 
 describe('app update proxy guard', () => {
+  it('checks proxy readiness before GitHub update checks', () => {
+    const controller = readSource('src', 'app', 'useAppUpdateController.ts');
+    const checkIndex = controller.indexOf('await beforeRequest?.();');
+    const githubIndex = controller.indexOf('checkGithubAppUpdate(fetcher)');
+
+    expect(controller).toContain('beforeRequest?: () => Promise<void>');
+    expect(checkIndex).toBeGreaterThanOrEqual(0);
+    expect(githubIndex).toBeGreaterThan(checkIndex);
+  });
+
   it('checks proxy readiness before native APK download starts', () => {
     const controller = readSource('src', 'app', 'useAppUpdateController.ts');
-    const checkIndex = controller.indexOf('await beforeDownload?.();');
+    const checkIndex = controller.lastIndexOf('await beforeRequest?.();');
     const downloadIndex = controller.indexOf('FileSystem.createDownloadResumable');
 
-    expect(controller).toContain('beforeDownload?: () => Promise<void>');
+    expect(controller).toContain('beforeRequest?: () => Promise<void>');
     expect(checkIndex).toBeGreaterThanOrEqual(0);
     expect(downloadIndex).toBeGreaterThan(checkIndex);
   });

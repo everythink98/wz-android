@@ -496,8 +496,8 @@ export function useTopicController({
       }
       const refreshedItems = removeReply(data.items, excludeReply);
       const mergedReplies = mergeReplies(topicRepliesRef.current, refreshedItems);
-      const displayedReplies = shouldApplyEditedReplyFallback(refreshedItems, editedReplyContent)
-        ? applyEditedReplyContent(mergedReplies, editedReplyContent)
+      const displayedReplies = shouldApplyEditedReplyFallback(refreshedItems, editedReplyContent, detail.source)
+        ? applyEditedReplyContent(mergedReplies, editedReplyContent, detail.source)
         : mergedReplies;
       setTopicReplies(displayedReplies);
       if (afterSubmit && !targetReply && !excludeReply) {

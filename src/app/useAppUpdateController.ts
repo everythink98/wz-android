@@ -10,12 +10,12 @@ type CheckAppUpdateOptions = {
 };
 
 type UseAppUpdateControllerOptions = {
-  beforeDownload?: () => Promise<void>;
+  beforeRequest?: () => Promise<void>;
   fetcher: Fetcher;
   notify: (message: string) => void;
 };
 
-export function useAppUpdateController({ beforeDownload, fetcher, notify }: UseAppUpdateControllerOptions) {
+export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAppUpdateControllerOptions) {
   const [appUpdateBusy, setAppUpdateBusy] = useState(false);
   const [appUpdateDownloading, setAppUpdateDownloading] = useState(false);
   const [appUpdateInfo, setAppUpdateInfo] = useState<AppUpdateInfo | null>(null);
@@ -37,6 +37,7 @@ export function useAppUpdateController({ beforeDownload, fetcher, notify }: UseA
       setAppUpdateMessage('正在检查更新');
     }
     try {
+      await beforeRequest?.();
       const update = await checkGithubAppUpdate(fetcher);
       setAppUpdateInfo(update);
       if (update || !silent) {
@@ -56,7 +57,7 @@ export function useAppUpdateController({ beforeDownload, fetcher, notify }: UseA
       appUpdateBusyRef.current = false;
       setAppUpdateBusy(false);
     }
-  }, [fetcher, notify]);
+  }, [beforeRequest, fetcher, notify]);
 
   const downloadAppUpdate = useCallback(async () => {
     if (!appUpdateInfo || appUpdateDownloadingRef.current) {
@@ -73,7 +74,7 @@ export function useAppUpdateController({ beforeDownload, fetcher, notify }: UseA
     setAppUpdateDownloadProgress(latestProgress);
     setAppUpdateMessage(latestProgress.title);
     try {
-      await beforeDownload?.();
+      await beforeRequest?.();
       const target = `${baseDirectory}wz-${appUpdateInfo.version}.apk`;
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       const download = FileSystem.createDownloadResumable(appUpdateInfo.apkUrl, target, {}, (progress) => {
@@ -109,7 +110,7 @@ export function useAppUpdateController({ beforeDownload, fetcher, notify }: UseA
       setAppUpdateDownloading(false);
       setAppUpdateDownloadProgress(null);
     }
-  }, [appUpdateInfo, beforeDownload, notify]);
+  }, [appUpdateInfo, beforeRequest, notify]);
 
   return {
     appUpdateBusy,

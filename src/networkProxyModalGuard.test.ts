@@ -17,4 +17,13 @@ describe('network proxy modal guard', () => {
     expect(source).toContain("`${status}${latency ? ` · Ping: ${latency}` : ' · 测试延迟'}`");
     expect(source).toContain('const { [draftProfile.id]: _removed, ...rest } = current;');
   });
+
+  it('shows the saved proxy name before the address in the profile list', () => {
+    const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
+    const nameIndex = source.indexOf('{profile.name}</Text>');
+    const addressIndex = source.indexOf('{profile.host}:{profile.port} · {statusText}</Text>');
+
+    expect(nameIndex).toBeGreaterThanOrEqual(0);
+    expect(addressIndex).toBeGreaterThan(nameIndex);
+  });
 });

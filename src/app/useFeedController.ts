@@ -527,9 +527,15 @@ export function useFeedController({
   }, [loadFeed, notify]);
 
   const changeFeedSource = useCallback((source: FeedSource) => {
+    if (source !== feedSource) {
+      setFeedStates((current) => ({
+        ...current,
+        [source]: createFeedSourceState()
+      }));
+    }
     setFeedSource(source);
     setCategoryFilter('');
-  }, []);
+  }, [feedSource]);
 
   const setFeedFilter = useCallback((filter: SourceFeedFilter) => {
     setFeedFilters((current) => {

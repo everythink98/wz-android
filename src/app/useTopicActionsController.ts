@@ -610,7 +610,7 @@ export function useTopicActionsController({
             commentId: replyEditTarget.commentId,
             contentMarkdown: replyContent
           };
-          setTopicReplies((current) => applyEditedReplyContent(current, editedReplyContent));
+          setTopicReplies((current) => applyEditedReplyContent(current, editedReplyContent, detail.source));
           setReplyContent('');
           setReplyFace('');
           setReplyComposerOpen(false);
