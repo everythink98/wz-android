@@ -49,6 +49,7 @@ export function NodeSeekLoginPanel({
   styles,
   theme,
   webViewRef,
+  webViewBlockMessage,
   onCheckIn,
   onCheckLogin,
   onAuthorizeNodeImageApiKey,
@@ -73,6 +74,7 @@ export function NodeSeekLoginPanel({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
+  webViewBlockMessage: string;
   onCheckIn: () => void;
   onCheckLogin: () => void;
   onAuthorizeNodeImageApiKey: () => void;
@@ -178,9 +180,9 @@ export function NodeSeekLoginPanel({
         visible={showLoginPanel}
         title="NodeSeek 登录 / 验证"
         subtitle={loginState}
-        loading={loadingLoginPage}
+        loading={!webViewBlockMessage && loadingLoginPage}
         loadingText="正在打开 NodeSeek..."
-        error={webViewError}
+        error={webViewBlockMessage || webViewError}
         styles={styles}
         theme={theme}
         onClose={() => onShowLoginPanelChange(false)}
@@ -192,7 +194,7 @@ export function NodeSeekLoginPanel({
           </View>
         )}
       >
-        {showLoginPanel && accountExpanded ? (
+        {showLoginPanel && accountExpanded && !webViewBlockMessage ? (
             <WebView
               key={`nodeseek-login-${webViewKey}`}
               ref={webViewRef}
@@ -247,6 +249,7 @@ export function YaohuoLoginPanel({
   yaohuoLoginState,
   yaohuoLoginPrompt,
   yaohuoWebViewRef,
+  webViewBlockMessage,
   onCheckYaohuoLogin,
   onClearYaohuoLogin,
   handleYaohuoLoginNavigation,
@@ -263,6 +266,7 @@ export function YaohuoLoginPanel({
   yaohuoLoginState: string;
   yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
+  webViewBlockMessage: string;
   onCheckYaohuoLogin: () => void;
   onClearYaohuoLogin: () => void;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
@@ -298,9 +302,9 @@ export function YaohuoLoginPanel({
         visible={showYaohuoLoginPanel}
         title="妖火登录"
         subtitle={yaohuoLoginPrompt || yaohuoLoginState}
-        loading={loadingYaohuoLoginPage}
+        loading={!webViewBlockMessage && loadingYaohuoLoginPage}
         loadingText="正在打开妖火..."
-        error={webViewError}
+        error={webViewBlockMessage || webViewError}
         styles={styles}
         theme={theme}
         onClose={() => onShowYaohuoLoginPanelChange(false)}
@@ -312,7 +316,7 @@ export function YaohuoLoginPanel({
           </View>
         )}
       >
-        {showYaohuoLoginPanel && accountExpanded ? (
+        {showYaohuoLoginPanel && accountExpanded && !webViewBlockMessage ? (
             <WebView
               key={`yaohuo-login-${webViewKey}`}
               ref={yaohuoWebViewRef}

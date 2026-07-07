@@ -1,21 +1,23 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
+import { Buffer } from 'buffer';
 import { safeFileName } from './backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './htmlImages';
+import type { Fetcher } from './request';
 
 function imageFileExtension(uri: string) {
   return uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
 }
 
-function responseContentType(result: FileSystem.FileSystemDownloadResult) {
-  return result.mimeType || result.headers['content-type'] || result.headers['Content-Type'] || '';
+function responseContentType(response: Response) {
+  return response.headers.get('content-type') || '';
 }
 
-function assertDownloadedImage(result: FileSystem.FileSystemDownloadResult) {
-  if (result.status < 200 || result.status >= 300) {
+function assertDownloadedImage(response: Response) {
+  if (!response.ok) {
     throw new Error('图片下载失败');
   }
-  const contentType = responseContentType(result);
+  const contentType = responseContentType(response);
   if (contentType && !/^image\//i.test(contentType)) {
     throw new Error('下载内容不是图片');
   }
@@ -28,7 +30,15 @@ async function assertReadableImageFile(uri: string) {
   }
 }
 
-export async function saveImageUriToLibrary(uri: string) {
+async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fetcher) {
+  const headers = imageRequestHeadersForUrl(uri);
+  const response = await fetcher(uri, headers ? { headers } : undefined);
+  assertDownloadedImage(response);
+  const content = Buffer.from(await response.arrayBuffer()).toString('base64');
+  await FileSystem.writeAsStringAsync(target, content, { encoding: FileSystem.EncodingType.Base64 });
+}
+
+export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetch) {
   const dataImage = dataImageFileFromUrl(uri);
   if (!dataImage && !isHttpOrHttpsUrl(uri)) {
     throw new Error('图片地址不支持保存');
@@ -45,14 +55,11 @@ export async function saveImageUriToLibrary(uri: string) {
   let savedUri = '';
   try {
     const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || imageFileExtension(uri))}`;
+    savedUri = target;
     if (dataImage) {
       await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
-      savedUri = target;
     } else {
-      const headers = imageRequestHeadersForUrl(uri);
-      const downloaded = await FileSystem.downloadAsync(uri, target, headers ? { headers } : undefined);
-      savedUri = downloaded.uri;
-      assertDownloadedImage(downloaded);
+      await downloadImageWithFetcher(uri, target, fetcher);
     }
     await assertReadableImageFile(savedUri);
     await MediaLibrary.saveToLibraryAsync(savedUri);

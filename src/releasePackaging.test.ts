@@ -85,6 +85,64 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('GET_SIGNING_CERTIFICATES');
   });
 
+  it('keeps the Android network proxy module enabled', () => {
+    const app = JSON.parse(readProjectFile('app.json'));
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(app.expo.plugins).toContain('./plugins/withNetworkProxyModule');
+    expect(plugin).toContain('NetworkProxyModule');
+    expect(plugin).toContain('NetworkProxyPackage');
+    expect(plugin).toContain('LocalNetworkProxyServer');
+    expect(plugin).toContain('ProxyController');
+    expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory');
+    expect(plugin).toContain('NetworkingModule.setCustomClientBuilder');
+    expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
+  });
+
+  it('keeps network proxy failures closed instead of falling back to direct network', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const startIndex = plugin.indexOf('nextServer.start()');
+    const blockIndex = plugin.indexOf('blockServer()', startIndex);
+    const applyIndex = plugin.indexOf('applyWebViewProxy(nextServer.port)');
+
+    expect(plugin).toContain('fun blockNetworkRequests()');
+    expect(plugin).toContain('private fun blockServer()');
+    expect(plugin).toContain('blockServer()');
+    expect(plugin.match(/local\.soTimeout = 0/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(plugin).not.toContain('latch.await(5, TimeUnit.MINUTES)');
+    expect(startIndex).toBeGreaterThanOrEqual(0);
+    expect(blockIndex).toBeGreaterThan(startIndex);
+    expect(applyIndex).toBeGreaterThan(blockIndex);
+    expect(plugin).not.toContain('replaceServer(null)\n          try {\n            clearWebViewProxy()');
+  });
+
+  it('rejects invalid IPv4 literals before encoding SOCKS5 addresses', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(plugin).toContain('Invalid SOCKS5 IPv4 host');
+    expect(plugin).not.toContain('output.write(part.toInt() and 0xff)');
+  });
+
+  it('keeps local Android development hosts direct even when a system proxy exists', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const localHostIndex = plugin.indexOf('if (isLocalDevHost(targetHost))');
+    const noProxyIndex = plugin.indexOf('return mutableListOf(Proxy.NO_PROXY)', localHostIndex);
+    const delegateIndex = plugin.indexOf('delegate?.select(uri)', localHostIndex);
+
+    expect(localHostIndex).toBeGreaterThanOrEqual(0);
+    expect(noProxyIndex).toBeGreaterThan(localHostIndex);
+    expect(delegateIndex).toBeGreaterThan(noProxyIndex);
+  });
+
+  it('keeps the phone system proxy available when the app proxy is disabled', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const disabledIndex = plugin.indexOf('if (proxy == null)');
+    const delegateIndex = plugin.indexOf('delegate?.select(uri)', disabledIndex);
+
+    expect(disabledIndex).toBeGreaterThanOrEqual(0);
+    expect(delegateIndex).toBeGreaterThan(disabledIndex);
+  });
+
   it('limits media library permissions to photos', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const mediaPlugin = app.expo.plugins.find((plugin: unknown) => Array.isArray(plugin) && plugin[0] === 'expo-media-library');

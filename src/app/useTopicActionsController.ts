@@ -60,6 +60,7 @@ import {
   parseNodeSeekAccessRecord
 } from '../nodeseekCookies';
 import type { RequestOwner } from '../requestOwnership';
+import type { Fetcher } from '../request';
 import {
   abortTopicActionRuns,
   clearBusyTopicActionRuns,
@@ -170,6 +171,7 @@ export function useTopicActionsController({
   clearNodeSeekLoginCookiesOnly,
   clearYaohuoLoginState,
   currentNodeSeekCredentialGeneration,
+  fetcher,
   linuxDoWebViewUserAgentRef,
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
@@ -204,6 +206,7 @@ export function useTopicActionsController({
   clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<void>;
   clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   currentNodeSeekCredentialGeneration: () => number;
+  fetcher: Fetcher;
   linuxDoWebViewUserAgentRef: Ref<string>;
   loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
@@ -336,6 +339,7 @@ export function useTopicActionsController({
       }
       await runNodeSeekAction({
         cookieHeader: access?.cookieHeader || '',
+        fetcher,
         request: requestFactory(),
         signal: run.controller.signal,
         userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
@@ -362,7 +366,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, busy);
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -390,6 +394,7 @@ export function useTopicActionsController({
       }
       const result = await runYaohuoAction({
         cookieHeader,
+        fetcher,
         request: requestFactory(cookieHeader),
         signal: run.controller.signal
       });
@@ -418,7 +423,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, true);
     }
-  }, [canUseYaohuoActions, clearYaohuoLoginState, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+  }, [canUseYaohuoActions, clearYaohuoLoginState, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runLinuxDoRequest = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
@@ -454,6 +459,7 @@ export function useTopicActionsController({
       }
       const result = await runLinuxDoAction({
         cookieHeader: access.cookieHeader,
+        fetcher,
         userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
         request: requestFactory(),
         signal: run.controller.signal
@@ -482,7 +488,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, busy);
     }
-  }, [canUseLinuxDoActions, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
+  }, [canUseLinuxDoActions, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
 
   const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
     const next = { ...optimisticTopicActionsRef.current };
@@ -823,6 +829,7 @@ export function useTopicActionsController({
           const run = startActionRun(actionKey, true);
           try {
             imageUrl = await uploadYaohuoReplyImage({
+              fetcher,
               file,
               signal: run.controller.signal
             });
@@ -839,6 +846,7 @@ export function useTopicActionsController({
               ensureApiKey: (options) => options?.forceRefresh
                 ? ensureNodeImageApiKey({ forceRefresh: true, clearOnCancel: true })
                 : Promise.resolve(nodeSeekApiKey),
+              fetcher,
               file,
               signal: run.controller.signal
             });
@@ -862,7 +870,7 @@ export function useTopicActionsController({
         }
       }
     });
-  }, [ensureNodeImageApiKey, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, setReplyContent, startActionRun, startTopicActionRequest, topicDetail]);
+  }, [ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, setReplyContent, startActionRun, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const actionKey = nodeSeekAttendanceActionKey();

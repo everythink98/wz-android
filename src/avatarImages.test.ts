@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { loadRemoteAvatarSvgText } from './avatarImages';
+import { loadRemoteAvatarSvgText, setDefaultAvatarFetcher } from './avatarImages';
 
 describe('Android remote avatar images', () => {
   it('loads NodeSeek default avatars when the avatar endpoint returns SVG', async () => {
@@ -29,6 +29,27 @@ describe('Android remote avatar images', () => {
         'User-Agent': expect.stringContaining('Android 14')
       })
     }));
+  });
+
+  it('uses the configured default fetcher for NodeSeek SVG avatar probes', async () => {
+    const fetcher = vi.fn(async (_input: string, init?: RequestInit) => {
+      if (init?.method === 'HEAD') {
+        return new Response(null, {
+          headers: { 'content-type': 'image/svg+xml' }
+        });
+      }
+      return new Response('<svg></svg>', {
+        headers: { 'content-type': 'image/svg+xml' }
+      });
+    });
+    const resetFetcher = setDefaultAvatarFetcher(fetcher);
+
+    try {
+      await expect(loadRemoteAvatarSvgText('https://www.nodeseek.com/avatar/63000.png')).resolves.toBe('<svg></svg>');
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      resetFetcher();
+    }
   });
 
   it('reuses one pending request for the same NodeSeek SVG avatar', async () => {

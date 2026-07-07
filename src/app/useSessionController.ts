@@ -153,6 +153,7 @@ type MutableRef<T> = { current: T };
 type WebViewStopRef = { current: { stopLoading: () => void } | null };
 
 export function useSessionController({
+  defaultFetcher = fetch,
   linuxDoBrowserWebViewRef,
   linuxDoClearanceBeforeVerifyRef,
   linuxDoWebViewCookieHeaderRef,
@@ -168,6 +169,7 @@ export function useSessionController({
   webLoginDetectedRef,
   webLoginUserId
 }: {
+  defaultFetcher?: Fetcher;
   linuxDoBrowserWebViewRef: WebViewStopRef;
   linuxDoClearanceBeforeVerifyRef: MutableRef<string | null>;
   linuxDoWebViewCookieHeaderRef: MutableRef<string>;
@@ -375,7 +377,7 @@ export function useSessionController({
   const nodeSeekFetchWithWebView: Fetcher = useCallback(async (input, init) => {
     const url = String(input);
     if (!isNodeSeekRequestUrl(url)) {
-      return fetch(input, init);
+      return defaultFetcher(input, init);
     }
     const cookie = requestHeaderValue(init?.headers, 'cookie');
     const userAgent = requestHeaderValue(init?.headers, 'User-Agent');
@@ -409,7 +411,7 @@ export function useSessionController({
       });
       startNextNodeSeekBrowserFetch();
     });
-  }, [nodeSeekBrowserFetchIdRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
+  }, [defaultFetcher, nodeSeekBrowserFetchIdRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
 
   const completeNodeSeekBrowserFetch = useCallback(async (data: {
     id?: number;
@@ -517,7 +519,7 @@ export function useSessionController({
   const linuxDoFetchWithWebView: Fetcher = useCallback((input, init) => {
     const url = String(input);
     if (!isLinuxDoBrowserFetchUrl(url)) {
-      return fetch(input, init);
+      return defaultFetcher(input, init);
     }
     return new Promise<Response>((resolve, reject) => {
       let request: PendingLinuxDoBrowserFetchRequest;
@@ -551,12 +553,12 @@ export function useSessionController({
       });
       startNextLinuxDoBrowserFetch();
     });
-  }, [linuxDoBrowserFetchIdRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
+  }, [defaultFetcher, linuxDoBrowserFetchIdRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
 
   const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({
-    defaultFetcher: fetch,
+    defaultFetcher,
     webViewFetcher: nodeSeekFetchWithWebView
-  }), [nodeSeekFetchWithWebView]);
+  }), [defaultFetcher, nodeSeekFetchWithWebView]);
 
   const forumFetchWithWebViewFallback = useMemo(() => createLinuxDoWebViewFallbackFetcher({
     defaultFetcher: nodeSeekFetchWithWebViewFallback,

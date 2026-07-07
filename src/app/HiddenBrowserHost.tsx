@@ -1,4 +1,4 @@
-import { useCallback, type RefObject } from 'react';
+import { useCallback, useEffect, type RefObject } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
@@ -20,6 +20,7 @@ type HiddenBrowserState = {
 };
 
 export function HiddenBrowserHost({
+  blockedMessage,
   failLinuxDoBrowserFetchById,
   failNodeSeekBrowserFetchById,
   handleLinuxDoBrowserFetchMessage,
@@ -31,6 +32,7 @@ export function HiddenBrowserHost({
   state,
   styles
 }: {
+  blockedMessage: string;
   failLinuxDoBrowserFetchById: (requestId: number, message: string) => void;
   failNodeSeekBrowserFetchById: (requestId: number, message: string, options?: { skipStopLoading?: boolean }) => void;
   handleLinuxDoBrowserFetchMessage: (event: WebViewMessageEvent) => void;
@@ -44,6 +46,17 @@ export function HiddenBrowserHost({
 }) {
   const linuxDoBrowserFetchRequest = state.linuxDo.request;
   const nodeSeekBrowserFetchRequest = state.nodeSeek.request;
+  useEffect(() => {
+    if (!blockedMessage) {
+      return;
+    }
+    if (nodeSeekBrowserFetchRequest) {
+      failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, blockedMessage);
+    }
+    if (linuxDoBrowserFetchRequest) {
+      failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, blockedMessage);
+    }
+  }, [blockedMessage, failLinuxDoBrowserFetchById, failNodeSeekBrowserFetchById, linuxDoBrowserFetchRequest, nodeSeekBrowserFetchRequest]);
   const handleNodeSeekBrowserNavigation = useCallback((request: { url?: string }) => {
     const url = request.url || '';
     if (!url || isNodeSeekBrowserFetchUrl(url)) {
@@ -67,7 +80,7 @@ export function HiddenBrowserHost({
 
   return (
     <>
-      {nodeSeekBrowserFetchRequest ? (
+      {!blockedMessage && nodeSeekBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
           <WebView
             key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}
@@ -115,7 +128,7 @@ export function HiddenBrowserHost({
           />
         </View>
       ) : null}
-      {linuxDoBrowserFetchRequest ? (
+      {!blockedMessage && linuxDoBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
           <WebView
             key={`linuxdo-browser-fetch-${linuxDoBrowserFetchRequest.id}`}

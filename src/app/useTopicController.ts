@@ -304,7 +304,7 @@ export function useTopicController({
         return;
       }
       const detail = topic.source === 'yaohuo'
-        ? await getYaohuoTopic({ topic, yaohuoCookie, replyLimit: 30, signal: controller.signal })
+        ? await getYaohuoTopic({ topic, yaohuoCookie, yaohuoFetcher: fetcher, replyLimit: 30, signal: controller.signal })
         : await getTopic({
           source: topic.source,
           id: topic.id,
@@ -475,6 +475,7 @@ export function useTopicController({
           page: targetPage,
           limit: targetLimit ?? REPLY_PAGE_SIZE,
           yaohuoCookie,
+          yaohuoFetcher: fetcher,
           signal: controller.signal
         })
         : await getReplies({
@@ -627,6 +628,7 @@ export function useTopicController({
           page: replyNextPage,
           limit,
           yaohuoCookie,
+          yaohuoFetcher: fetcher,
           signal: controller.signal
         })
         : await getReplies({

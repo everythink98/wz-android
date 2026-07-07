@@ -77,6 +77,33 @@ describe('Android App security review guards', () => {
     expect(exported).toContain('ok=1');
   });
 
+  it('does not export server proxy settings in Android backup JSON', () => {
+    const exported = exportReaderBackupJson({
+      ...createEmptyReaderData(),
+      networkProxy: {
+        enabled: true,
+        activeId: 'tg',
+        profiles: [{
+          id: 'tg',
+          name: 'TG',
+          protocol: 'socks5',
+          host: 'proxy.example.com',
+          port: 1080,
+          username: 'demo-user',
+          password: fakeSecret
+        }]
+      },
+      'network-proxy-settings': fakeSecret
+    });
+
+    expect(exported).not.toContain('networkProxy');
+    expect(exported).not.toContain('network-proxy-settings');
+    expect(exported).not.toContain('proxy.example.com');
+    expect(exported).not.toContain('1080');
+    expect(exported).not.toContain('demo-user');
+    expect(exported).not.toContain(fakeSecret);
+  });
+
   it('does not import sensitive fields from Android backup JSON', () => {
     const merged = importReaderBackupJson(createEmptyReaderData(), JSON.stringify({
       version: 2,

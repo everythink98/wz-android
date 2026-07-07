@@ -225,6 +225,7 @@ export function useSearchController({
           limit: searchLimit,
           category: activeFilter?.source === 'yaohuo' ? activeFilter.category : undefined,
           yaohuoCookie,
+          yaohuoFetcher: fetcher,
           signal
         })
         : await searchTopics({
