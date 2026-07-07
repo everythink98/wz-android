@@ -5,6 +5,7 @@ node_modules/
 android/
 AGENTS.md
 memory/
+docs/
 .idea/
 tmp/*
 代码审查报告-*.md
