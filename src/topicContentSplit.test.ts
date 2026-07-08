@@ -12,6 +12,7 @@ describe('Android topic content splitting', () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
@@ -31,6 +32,7 @@ describe('Android topic content splitting', () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
@@ -54,6 +56,7 @@ describe('Android topic content splitting', () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
@@ -77,6 +80,7 @@ describe('Android topic content splitting', () => {
     vi.resetModules();
     vi.doMock('./localHtml', () => ({
       FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
       FORUM_VIDEO_TAG: 'forum-video',
       parseHtml: () => {
         throw new Error('parser unavailable');
@@ -91,6 +95,27 @@ describe('Android topic content splitting', () => {
         '<forum-link-card href="https://example.com" title="Example"></forum-link-card>',
         '<p>after</p>'
       ]);
+    } finally {
+      vi.doUnmock('./localHtml');
+    }
+  });
+
+  it('keeps terminal report tabs together when the parser fallback splits topic HTML', async () => {
+    vi.resetModules();
+    vi.doMock('./localHtml', () => ({
+      FORUM_LINK_CARD_TAG: 'forum-link-card',
+      FORUM_TERMINAL_REPORT_TAG: 'forum-terminal-report',
+      FORUM_VIDEO_TAG: 'forum-video',
+      parseHtml: () => {
+        throw new Error('parser unavailable');
+      }
+    }));
+    try {
+      const { splitTopicContentHtml: splitWithFallback } = await import('./topicContentSplit');
+      const report = '<forum-terminal-report><forum-terminal-tab title="基本信息"><div>one</div></forum-terminal-tab><forum-terminal-tab title="回程路由"><div>two</div></forum-terminal-tab></forum-terminal-report>';
+      const chunks = splitWithFallback(`<p>before</p>${report}<p>after</p>`, 1);
+
+      expect(chunks).toEqual(['<p>before</p>', report, '<p>after</p>']);
     } finally {
       vi.doUnmock('./localHtml');
     }

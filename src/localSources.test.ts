@@ -914,6 +914,125 @@ describe('Android local sources', () => {
     });
   });
 
+  it('turns NodeSeek magic tabs into readable mixed report tabs', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-812712-1">[NQ] ZOUTER HK BGP Global - Lite新款 留档</a>
+      <div id="0" data-comment-id="812712" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-07-08T11:47:31.000Z"></time>
+        <article class="post-content">
+          <div class="nsk-magic-tabs enabled">
+            <div class="nsk-magic-tab-title is-active"><span class="emoji">💻</span>基本信息</div>
+            <div class="nsk-magic-tab-body">
+              <div class="terminal-container embedMode">
+                <div class="xterm-rows">
+                  <div class="xterm-row"><span style="color: rgb(34, 211, 238)">硬件质量体检报告</span></div>
+                  <div class="xterm-row"><span class="xterm-fg-46 xterm-bg-18">KVM 虚拟机</span></div>
+                  <div class="xterm-row"><span>https://github.com/xykt/HardwareQuality</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="nsk-magic-tab-title"><span class="emoji">🎬</span>IP质量</div>
+            <div class="nsk-magic-tab-body">
+              <div class="terminal-container embedMode">
+                <div class="xterm-rows">
+                  <div class="xterm-row"><span style="color: #34d399">IP质量检测完成</span></div>
+                  <div class="xterm-row"><span>报告链接：https://Report.Check.Place/ip/A19T91XBU.svg</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="nsk-magic-tab-title"><span class="emoji">🌐</span>网络质量</div>
+            <div class="nsk-magic-tab-body"><p><img src="https://i.111666.best/image/network.webp" alt="网络质量报告" /></p></div>
+            <div class="nsk-magic-tab-title"><span class="emoji">📍</span>回程路由</div>
+            <div class="nsk-magic-tab-body"><p><img src="https://i.111666.best/image/route.webp" alt="回程路由报告" /></p></div>
+          </div>
+          <p>项目地址 <a href="https://github.com/xykt/HardwareQuality">HardwareQuality</a></p>
+        </article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('812712', { fetcher });
+
+    expect(topic.contentHtml).toContain('<forum-terminal-report>');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="💻基本信息">');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="🎬IP质量">');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="🌐网络质量">');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="📍回程路由">');
+    expect(topic.contentHtml).not.toContain('forum-terminal-section');
+    expect(topic.contentHtml).toContain('💻基本信息');
+    expect(topic.contentHtml).toContain('🎬IP质量');
+    expect(topic.contentHtml).toContain('🌐网络质量');
+    expect(topic.contentHtml).toContain('📍回程路由');
+    expect(topic.contentHtml).toMatch(/💻基本信息[\s\S]*🎬IP质量[\s\S]*🌐网络质量[\s\S]*📍回程路由/);
+    expect(topic.contentHtml).toContain('KVM');
+    expect(topic.contentHtml).toContain('IP质量检测完成');
+    expect(topic.contentHtml).toContain('color: rgb(34, 211, 238)');
+    expect(topic.contentHtml).toContain('color: #00ff00; background-color: #000087');
+    expect(topic.contentHtml).toContain('color: #34d399');
+    expect(topic.contentHtml).toMatch(/硬件质量体检报告<\/span><br\s*\/?><span style="color: #00ff00; background-color: #000087">KVM&nbsp;虚拟机/);
+    expect(topic.contentHtml).toContain('https://i.111666.best/image/network.webp');
+    expect(topic.contentHtml).toContain('https://i.111666.best/image/route.webp');
+    expect(topic.contentHtml).toContain('alt="网络质量报告"');
+    expect(topic.contentHtml).toContain('alt="回程路由报告"');
+    expect(topic.contentHtml).toContain('https://github.com/xykt/HardwareQuality');
+    expect(topic.contentHtml).toContain('href="https://github.com/xykt/HardwareQuality"');
+    expect(topic.contentHtml).not.toContain('terminal-container');
+    expect(topic.contentHtml).not.toContain('\u001b[36m');
+    expect(topic.contentHtml).not.toContain('\u001b[32m');
+    expect(topic.contentHtml).not.toContain('\u001b[0m');
+    expect(topic.contentHtml).not.toContain('[36m');
+    expect(topic.contentHtml).not.toContain('[32m');
+    expect(topic.contentHtml).not.toContain('[0m');
+  });
+
+  it('cleans NodeSeek ansi code reports without showing source markup', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-812712-1">[NQ] ZOUTER HK BGP Global - Lite新款 留档</a>
+      <div id="0" data-comment-id="812712" class="content-item">
+        <div class="author-info"><a href="/space/1" class="author-name">alice</a></div>
+        <time datetime="2026-07-08T11:47:31.000Z"></time>
+        <article class="post-content">
+          <p>💻基本信息</p>
+          <pre><code class="language-ansi"><span data-ansicode="27"></span>[36m硬件质量体检报告<span data-ansicode="27"></span>[0m
+<span data-ansicode="27"></span>[32mKVM 虚拟机<span data-ansicode="27"></span>[0m
+报告链接：https://Report.Check.Place/hardware/3TKDAONLE.svg</code></pre>
+          <p>🎬IP质量</p>
+          <pre><code class="language-ansi">\u001b[32mIP质量检测完成\u001b[0m</code></pre>
+          <p>🌐网络质量</p>
+          <pre><code class="language-ansi">联通 上海 \u001b[36m18ms\u001b[0m</code></pre>
+          <p>📍回程路由</p>
+          <pre><code class="language-ansi">线路 \u001b[38;5;46;48;5;18mCMIN2\u001b[0m</code></pre>
+        </article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('812712', { fetcher });
+
+    expect(topic.contentHtml).toContain('<forum-terminal-report>');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="💻基本信息">');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="🎬IP质量">');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="🌐网络质量">');
+    expect(topic.contentHtml).toContain('<forum-terminal-tab title="📍回程路由">');
+    expect(topic.contentHtml).toContain('forum-terminal-code');
+    expect(topic.contentHtml).toContain('💻基本信息');
+    expect(topic.contentHtml).toContain('🎬IP质量');
+    expect(topic.contentHtml).toContain('🌐网络质量');
+    expect(topic.contentHtml).toContain('📍回程路由');
+    expect(topic.contentHtml).toMatch(/💻基本信息[\s\S]*🎬IP质量[\s\S]*🌐网络质量[\s\S]*📍回程路由/);
+    expect(topic.contentHtml).toContain('硬件质量体检报告');
+    expect(topic.contentHtml).toContain('IP质量检测完成');
+    expect(topic.contentHtml).toContain('联通');
+    expect(topic.contentHtml).toContain('CMIN2');
+    expect(topic.contentHtml).toContain('color: rgb(0, 255, 0); background-color: rgb(0, 0, 135)');
+    expect(topic.contentHtml).toContain('https://Report.Check.Place/hardware/3TKDAONLE.svg');
+    expect(topic.contentHtml).not.toContain('language-ansi');
+    expect(topic.contentHtml).not.toContain('data-ansicode');
+    expect(topic.contentHtml).not.toContain('<code');
+    expect(topic.contentHtml).not.toContain('[36m');
+    expect(topic.contentHtml).not.toContain('[32m');
+    expect(topic.contentHtml).not.toContain('[0m');
+  });
+
   it('keeps embedded NodeSeek replies when only the topic body is rendered', async () => {
     const embeddedPayload = Buffer.from(JSON.stringify({
       postData: {

@@ -1,3 +1,4 @@
+import Anser from 'anser';
 import { parse, type HTMLElement } from 'node-html-parser';
 import { accessRequirementLevelValue } from './appUtils';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
@@ -6,6 +7,8 @@ import type { AccessRequirement } from './types';
 export const FORUM_VIDEO_TAG = 'forum-video';
 export const FORUM_VIDEO_STICKER_TAG = 'forum-video-sticker';
 export const FORUM_LINK_CARD_TAG = 'forum-link-card';
+export const FORUM_TERMINAL_REPORT_TAG = 'forum-terminal-report';
+export const FORUM_TERMINAL_TAB_TAG = 'forum-terminal-tab';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -103,9 +106,9 @@ export function hasRenderableHtmlContent(value: unknown) {
     return true;
   }
   try {
-    return Boolean(parseHtml(value).querySelector(`img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}`));
+    return Boolean(parseHtml(value).querySelector(`img, iframe, video, ${FORUM_VIDEO_TAG}, ${FORUM_VIDEO_STICKER_TAG}, ${FORUM_LINK_CARD_TAG}, ${FORUM_TERMINAL_REPORT_TAG}`));
   } catch {
-    return new RegExp(`<(?:img|iframe|video|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG})\\b`, 'i').test(String(value || ''));
+    return new RegExp(`<(?:img|iframe|video|${FORUM_VIDEO_TAG}|${FORUM_VIDEO_STICKER_TAG}|${FORUM_LINK_CARD_TAG}|${FORUM_TERMINAL_REPORT_TAG})\\b`, 'i').test(String(value || ''));
   }
 }
 
@@ -169,21 +172,22 @@ function safeCssColor(value: string) {
 }
 
 function sanitizedStyleAttribute(value: string) {
+  const declarations: string[] = [];
   for (const declaration of value.split(';')) {
     const separatorIndex = declaration.indexOf(':');
     if (separatorIndex < 0) {
       continue;
     }
     const name = declaration.slice(0, separatorIndex).trim().toLowerCase();
-    if (name !== 'color') {
+    if (name !== 'color' && name !== 'background-color') {
       continue;
     }
     const color = safeCssColor(declaration.slice(separatorIndex + 1));
     if (color) {
-      return `color: ${color}`;
+      declarations.push(`${name}: ${color}`);
     }
   }
-  return undefined;
+  return declarations.length ? declarations.join('; ') : undefined;
 }
 
 export function isAllowedDataImageUrl(value: unknown) {
@@ -214,6 +218,13 @@ function escapeHtmlAttribute(value: string) {
   return value
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
@@ -391,11 +402,288 @@ function sanitizePlayableVideos(root: HTMLElement, baseUrl: string) {
   });
 }
 
+const xtermColorSteps = [0, 95, 135, 175, 215, 255];
+const xtermAnsiColors = [
+  '#9ca3af',
+  '#f87171',
+  '#34d399',
+  '#fbbf24',
+  '#60a5fa',
+  '#c084fc',
+  '#22d3ee',
+  '#e5e7eb',
+  '#6b7280',
+  '#fca5a5',
+  '#86efac',
+  '#fde68a',
+  '#93c5fd',
+  '#d8b4fe',
+  '#67e8f9',
+  '#f9fafb'
+];
+
+function normalizeTerminalText(value: string) {
+  const lines = decodeHtml(value)
+    .replace(/\u00a0/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .split('\n');
+  while (lines.length && !lines[0].trim()) {
+    lines.shift();
+  }
+  while (lines.length && !lines[lines.length - 1].trim()) {
+    lines.pop();
+  }
+  const nonEmptyIndents = lines
+    .filter((line) => line.trim())
+    .map((line) => line.match(/^ */)?.[0].length || 0);
+  const indent = nonEmptyIndents.length ? Math.min(...nonEmptyIndents) : 0;
+  return indent ? lines.map((line) => line.slice(Math.min(indent, line.length))).join('\n') : lines.join('\n');
+}
+
+function terminalTextHtml(value: string) {
+  return escapeHtmlText(value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').replace(/\t/g, '    '))
+    .replace(/ /g, '&nbsp;')
+    .replace(/\n/g, '<br />');
+}
+
+function anserEntryStyle(entry: Anser.AnserJsonEntry) {
+  const color = entry.fg_truecolor || entry.fg;
+  const backgroundColor = entry.bg_truecolor || entry.bg;
+  return {
+    ...(color ? { color: `rgb(${color})` } : {}),
+    ...(backgroundColor ? { backgroundColor: `rgb(${backgroundColor})` } : {})
+  };
+}
+
+function ansiTerminalHtml(value: string) {
+  return Anser.ansiToJson(value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F\x7F]/g, '').replace(/\t/g, '    '), { remove_empty: true })
+    .map((entry) => {
+      const html = terminalTextHtml(entry.content);
+      const styleAttr = terminalStyleAttribute(anserEntryStyle(entry));
+      return html && styleAttr ? `<span${styleAttr}>${html}</span>` : html;
+    })
+    .join('');
+}
+
+function terminalCodeBlockHtml(value: string) {
+  return `<div class="forum-terminal-code">${ansiTerminalHtml(value)}</div>`;
+}
+
+function terminalCodeBlockContentHtml(contentHtml: string) {
+  return `<div class="forum-terminal-code">${contentHtml}</div>`;
+}
+
+function terminalTabHtml(title: string, contentHtml: string) {
+  return `<${FORUM_TERMINAL_TAB_TAG} title="${escapeHtmlAttribute(title)}">${contentHtml}</${FORUM_TERMINAL_TAB_TAG}>`;
+}
+
+function terminalReportHtml(sections: string[]) {
+  return `<${FORUM_TERMINAL_REPORT_TAG}>${sections.join('')}</${FORUM_TERMINAL_REPORT_TAG}>`;
+}
+
+function nodeSeekTerminalText(node: HTMLElement) {
+  const xtermRows = node.querySelector('.xterm-rows');
+  const source = xtermRows
+    || node.querySelector('.terminal-container')
+    || node.querySelector('pre')
+    || node.querySelector('code')
+    || node.querySelector('textarea')
+    || node;
+  const text = xtermRows
+    ? xtermRows.querySelectorAll('.xterm-row').map((row) => row.text).join('\n')
+    : source.text;
+  return normalizeTerminalText(text || '');
+}
+
+function rgbHex(red: number, green: number, blue: number) {
+  return `#${[red, green, blue].map((value) => (
+    Math.max(0, Math.min(255, value || 0)).toString(16).padStart(2, '0')
+  )).join('')}`;
+}
+
+function xtermColor(index: number) {
+  if (xtermAnsiColors[index]) {
+    return xtermAnsiColors[index];
+  }
+  if (index >= 16 && index <= 231) {
+    const offset = index - 16;
+    return rgbHex(
+      xtermColorSteps[Math.floor(offset / 36)],
+      xtermColorSteps[Math.floor((offset % 36) / 6)],
+      xtermColorSteps[offset % 6]
+    );
+  }
+  if (index >= 232 && index <= 255) {
+    const value = 8 + (index - 232) * 10;
+    return rgbHex(value, value, value);
+  }
+  return '';
+}
+
+function xtermClassStyle(className: string | undefined) {
+  const style: { backgroundColor?: string; color?: string } = {};
+  for (const token of classTokens(className)) {
+    const foregroundIndex = Number.parseInt(token.match(/^xterm-fg-(\d+)$/)?.[1] || '', 10);
+    if (Number.isFinite(foregroundIndex)) {
+      const color = xtermColor(foregroundIndex);
+      if (color) {
+        style.color = color;
+      }
+    }
+    const backgroundIndex = Number.parseInt(token.match(/^xterm-bg-(\d+)$/)?.[1] || '', 10);
+    if (Number.isFinite(backgroundIndex)) {
+      const color = xtermColor(backgroundIndex);
+      if (color) {
+        style.backgroundColor = color;
+      }
+    }
+  }
+  return style;
+}
+
+function sanitizedTerminalStyle(value: string) {
+  const style: { backgroundColor?: string; color?: string } = {};
+  for (const declaration of value.split(';')) {
+    const separatorIndex = declaration.indexOf(':');
+    if (separatorIndex < 0) {
+      continue;
+    }
+    const name = declaration.slice(0, separatorIndex).trim().toLowerCase();
+    if (name !== 'color' && name !== 'background-color') {
+      continue;
+    }
+    const color = safeCssColor(declaration.slice(separatorIndex + 1));
+    if (!color) {
+      continue;
+    }
+    if (name === 'color') {
+      style.color = color;
+    } else {
+      style.backgroundColor = color;
+    }
+  }
+  return style;
+}
+
+function terminalStyleAttribute(style: { backgroundColor?: string; color?: string }) {
+  const declarations = [
+    style.color ? `color: ${style.color}` : '',
+    style.backgroundColor ? `background-color: ${style.backgroundColor}` : ''
+  ].filter(Boolean);
+  return declarations.length ? ` style="${declarations.join('; ')}"` : '';
+}
+
+function elementTerminalStyle(node: HTMLElement) {
+  return {
+    ...xtermClassStyle(node.getAttribute('class')),
+    ...sanitizedTerminalStyle(node.getAttribute('style') || '')
+  };
+}
+
+function xtermNodeHtml(node: unknown): string {
+  if (!node || typeof node !== 'object') {
+    return '';
+  }
+  const element = node as Partial<HTMLElement>;
+  if (typeof element.getAttribute === 'function') {
+    const html = Array.isArray(element.childNodes) && element.childNodes.length
+      ? element.childNodes.map(xtermNodeHtml).join('')
+      : terminalTextHtml(element.text || '');
+    const style = elementTerminalStyle(element as HTMLElement);
+    const styleAttr = terminalStyleAttribute(style);
+    return html && styleAttr ? `<span${styleAttr}>${html}</span>` : html;
+  }
+  return terminalTextHtml(String((node as { text?: unknown }).text || ''));
+}
+
+function xtermRowsTerminalHtml(xtermRows: HTMLElement) {
+  const rows = xtermRows.querySelectorAll('.xterm-row');
+  if (!rows.length) {
+    return '';
+  }
+  return terminalCodeBlockContentHtml(rows.map((row) => row.childNodes.map(xtermNodeHtml).join('')).join('<br />'));
+}
+
+function nodeSeekMagicTabContentHtml(body: HTMLElement) {
+  const xtermRows = body.querySelector('.xterm-rows');
+  if (xtermRows) {
+    return xtermRowsTerminalHtml(xtermRows);
+  }
+  const hasTerminalContent = Boolean(
+    body.querySelector('.terminal-container, pre, code, textarea')
+  );
+  if (hasTerminalContent) {
+    const text = nodeSeekTerminalText(body);
+    if (text) {
+      return terminalCodeBlockHtml(text);
+    }
+  }
+  return body.innerHTML.trim();
+}
+
+function sanitizeNodeSeekMagicTabs(root: HTMLElement) {
+  root.querySelectorAll('.nsk-magic-tabs').forEach((node) => {
+    const titles = node.querySelectorAll('.nsk-magic-tab-title');
+    const bodies = node.querySelectorAll('.nsk-magic-tab-body');
+    const sections = titles
+      .map((titleNode, index) => {
+        const title = elementText(titleNode);
+        const body = bodies[index];
+        const contentHtml = body ? nodeSeekMagicTabContentHtml(body) : '';
+        if (!title && !contentHtml) {
+          return '';
+        }
+        return terminalTabHtml(title, contentHtml);
+      })
+      .filter(Boolean);
+    if (sections.length) {
+      node.replaceWith(terminalReportHtml(sections));
+    }
+  });
+}
+
+function terminalTextFromAnsiCodeHtml(value: string) {
+  return normalizeTerminalText(String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<span\b[^>]*\bdata-ansicode=["']?27["']?[^>]*>\s*<\/span>/gi, '\x1B')
+    .replace(/<span\b[^>]*\bdata-ansicode=["']?\d+["']?[^>]*>\s*<\/span>/gi, '')
+    .replace(/<\/?span\b[^>]*>/gi, '')
+    .replace(/<[^>]*>/g, ''));
+}
+
+function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
+  const source = String(html || '');
+  return source
+    .replace(/<pre\b[^>]*>\s*<code\b(?=[^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_match, body) => (
+      terminalCodeBlockHtml(terminalTextFromAnsiCodeHtml(body))
+    ))
+    .replace(/<code\b(?=[^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>/gi, (_match, body) => (
+      terminalCodeBlockHtml(terminalTextFromAnsiCodeHtml(body))
+    ));
+}
+
+const terminalSectionPattern = /<(?:p|div)\b[^>]*>\s*((?:💻|🎬|🌐|📍)[^<]{0,40})\s*<\/(?:p|div)>\s*<div class="forum-terminal-code">([\s\S]*?)<\/div>/g;
+
+function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
+  const source = String(html || '');
+  const matches = Array.from(source.matchAll(terminalSectionPattern));
+  if (matches.length < 2) {
+    return source;
+  }
+  const tabs = matches.map((match) => terminalTabHtml(decodeHtml(match[1]).trim(), `<div class="forum-terminal-code">${match[2]}</div>`));
+  const first = matches[0];
+  const last = matches[matches.length - 1];
+  const start = first.index ?? 0;
+  const end = (last.index ?? 0) + last[0].length;
+  return `${source.slice(0, start)}${terminalReportHtml(tabs)}${source.slice(end)}`;
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
-  const root = parseHtml(html);
+  const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
   for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
+  sanitizeNodeSeekMagicTabs(root);
   sanitizeNodeSeekStickerVideos(root, baseUrl);
   sanitizePlayableVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);

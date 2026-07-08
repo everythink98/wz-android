@@ -25,7 +25,7 @@ import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
 import { FORUM_INLINE_MEDIA_LINE_TAG, FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
-import { FORUM_LINK_CARD_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
+import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
 import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { forumVideoBlockFromHtml, splitTopicContentHtml } from '../../topicContentSplit';
 import { androidRipple, createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
@@ -92,6 +92,16 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
     tagName: FORUM_LINK_CARD_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
+  }),
+  [FORUM_TERMINAL_REPORT_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_TERMINAL_REPORT_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: false
+  }),
+  [FORUM_TERMINAL_TAB_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_TERMINAL_TAB_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: false
   }),
   [FORUM_VIDEO_STICKER_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_VIDEO_STICKER_TAG,
