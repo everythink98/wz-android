@@ -2,15 +2,50 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { errorMessage } from '../appUtils';
 import {
   createEmptyReaderData,
+  sanitizeReaderSettings,
   sanitizeReaderData,
   type ReaderData
 } from '../readerData';
 import { loadReaderData, saveCleanReaderData } from '../readerDataStore';
 
+function prepareSettingsOnlyCommit(current: ReaderData, updated: ReaderData) {
+  if (
+    updated.version !== current.version ||
+    updated.favorites !== current.favorites ||
+    updated.history !== current.history ||
+    updated.followedUsers !== current.followedUsers ||
+    updated.deletedRecords !== current.deletedRecords ||
+    !updated.settings ||
+    typeof updated.settings !== 'object'
+  ) {
+    return null;
+  }
+  return {
+    ...current,
+    settings: sanitizeReaderSettings(updated.settings)
+  };
+}
+
+function waitForNextSaveTurn() {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+function isSettingsOnlyCommit(previous: ReaderData, next: ReaderData) {
+  return next.version === previous.version
+    && next.favorites === previous.favorites
+    && next.history === previous.history
+    && next.followedUsers === previous.followedUsers
+    && next.deletedRecords === previous.deletedRecords;
+}
+
 export function prepareReaderDataCommit(current: ReaderData, updater: (current: ReaderData) => ReaderData) {
   const updated = updater(current);
   if (updated === current) {
     return null;
+  }
+  const settingsOnly = prepareSettingsOnlyCommit(current, updated);
+  if (settingsOnly) {
+    return settingsOnly;
   }
   return sanitizeReaderData(updated);
 }
@@ -71,13 +106,24 @@ export function useReaderDataController({
     readerDataRef.current = readerData;
   }
 
-  const persistReaderData = useCallback((next: ReaderData, previous?: ReaderData) => {
+  const persistReaderData = useCallback((next: ReaderData, previous?: ReaderData, options?: { skipIfSuperseded?: boolean }) => {
     readerDataRef.current = next;
-    const nextJson = JSON.stringify(next);
     const saveTask = saveQueueRef.current
       .catch(() => undefined)
-      .then(() => saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson))
-      .then((saved) => {
+      .then(waitForNextSaveTurn)
+      .then(() => {
+        if (options?.skipIfSuperseded && readerDataRef.current !== next) {
+          return null;
+        }
+        const nextJson = JSON.stringify(next);
+        return saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson)
+          .then((saved) => ({ nextJson, saved }));
+      })
+      .then((result) => {
+        if (!result) {
+          return;
+        }
+        const { nextJson, saved } = result;
         lastPersistedReaderDataRef.current = saved;
         lastPersistedReaderDataJsonRef.current = nextJson;
         setReaderData((latest) => {
@@ -120,7 +166,7 @@ export function useReaderDataController({
       return;
     }
     setReaderData(next);
-    void persistReaderData(next, previous).catch(() => undefined);
+    void persistReaderData(next, previous, { skipIfSuperseded: isSettingsOnlyCommit(previous, next) }).catch(() => undefined);
   }, [notify, persistReaderData]);
 
   const replaceReaderData = useCallback((nextValue: ReaderData) => {

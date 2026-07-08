@@ -404,7 +404,12 @@ export function AppRoot() {
     linuxDoPendingReopenTaskRef.current?.cancel();
     linuxDoPendingReopenTaskRef.current = null;
   }, []);
-  const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings]);
+  const {
+    fontFamily,
+    fontScale,
+    listDensity
+  } = readerData.settings;
+  const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings.theme]);
   const navigationTheme = useMemo(() => {
     const base = theme.dark ? DarkTheme : DefaultTheme;
     return {
@@ -421,7 +426,7 @@ export function AppRoot() {
       }
     };
   }, [theme]);
-  const styles = useMemo(() => createStyles(theme, readerData.settings, height), [height, readerData.settings, theme]);
+  const styles = useMemo(() => createStyles(theme, readerData.settings, height), [fontFamily, fontScale, height, listDensity, theme]);
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
   const {
     activeProfile: networkProxyActiveProfile,

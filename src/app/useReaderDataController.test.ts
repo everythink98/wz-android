@@ -40,6 +40,23 @@ describe('reader data controller helpers', () => {
     expect(next?.favorites[topicKey(topic)]?.topic).toEqual(topic);
   });
 
+  it('keeps record maps untouched when only settings change', () => {
+    const current = toggleFavorite(createEmptyReaderData(), topic);
+    const next = prepareReaderDataCommit(current, (value) => ({
+      ...value,
+      settings: {
+        ...value.settings,
+        theme: 'dark'
+      }
+    }));
+
+    expect(next?.settings.theme).toBe('dark');
+    expect(next?.favorites).toBe(current.favorites);
+    expect(next?.history).toBe(current.history);
+    expect(next?.followedUsers).toBe(current.followedUsers);
+    expect(next?.deletedRecords).toBe(current.deletedRecords);
+  });
+
   it('rolls reader data back when the failed save is still the visible state', () => {
     const previous = createEmptyReaderData();
     const failed = toggleFavorite(previous, topic);

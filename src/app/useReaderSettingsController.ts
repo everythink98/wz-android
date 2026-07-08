@@ -2,6 +2,13 @@ import { useCallback } from 'react';
 import type { ReaderData, ReaderSettings } from '../readerData';
 
 export function applyReaderSettingsPatch(current: ReaderData, patch: Partial<ReaderSettings>) {
+  const hasChanges = Object.entries(patch).some(
+    ([key, value]) => current.settings[key as keyof ReaderSettings] !== value
+  );
+  if (!hasChanges) {
+    return current;
+  }
+
   return {
     ...current,
     settings: {

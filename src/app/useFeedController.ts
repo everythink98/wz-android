@@ -141,7 +141,7 @@ export function useFeedController({
   const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
   const shownFeedItems = useMemo(
     () => applyFeedFilter(activeFeedState.items, readerData, shouldUseReadingFilter(feedSource) ? readingFilter : 'all'),
-    [activeFeedState.items, feedSource, readerData, readingFilter]
+    [activeFeedState.items, feedSource, readerData.favorites, readerData.history, readingFilter]
   );
 
   const loadCategories = useCallback(async (source: FeedSource = 'all') => {

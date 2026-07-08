@@ -427,7 +427,7 @@ function normalizeDeletedRecords(value: unknown): DeletedRecords {
   };
 }
 
-function normalizeSettings(value: unknown): ReaderSettings {
+export function sanitizeReaderSettings(value: unknown): ReaderSettings {
   const parsed = readerSettingsSchema.safeParse(value);
   const base = parsed.success ? parsed.data as Record<string, unknown> : {};
   return mergeReaderSettings(defaultReaderSettings, base);
@@ -466,7 +466,7 @@ export function sanitizeReaderData(value: unknown): ReaderData {
     history: limitRecordMap(normalizeRecordMap(data.history), MAX_HISTORY_RECORDS, (record) => record.savedAt),
     followedUsers: normalizeFollowedUsers(data.followedUsers),
     deletedRecords: normalizeDeletedRecords(data.deletedRecords),
-    settings: normalizeSettings(data.settings)
+    settings: sanitizeReaderSettings(data.settings)
   };
 }
 
