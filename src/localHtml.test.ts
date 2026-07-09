@@ -39,6 +39,22 @@ describe('Android local HTML helpers', () => {
     expect(result).toContain('src="https://cdn.example.com/a.png"');
   });
 
+  it('turns plain code blocks into terminal blocks for any source', () => {
+    const result = sanitizeContentHtml(`
+      <p>before</p>
+      <pre><code>one two
+three &lt; four</code></pre>
+      <p>after</p>
+    `, 'https://example.com/base/');
+
+    expect(result).toContain('<div class="forum-terminal-code">');
+    expect(result).toMatch(/one&nbsp;two<br\s*\/?>three&nbsp;&lt;&nbsp;four/);
+    expect(result).toContain('<p>before</p>');
+    expect(result).toContain('<p>after</p>');
+    expect(result).not.toContain('<pre');
+    expect(result).not.toContain('<code');
+  });
+
   it('keeps Bilibili player iframes while sanitizing their attributes', () => {
     const result = sanitizeContentHtml(`
       <iframe

@@ -651,6 +651,12 @@ function terminalTextFromAnsiCodeHtml(value: string) {
     .replace(/<[^>]*>/g, ''));
 }
 
+function terminalTextFromCodeHtml(value: string) {
+  return normalizeTerminalText(decodeHtml(String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]*>/g, '')));
+}
+
 function sanitizeNodeSeekAnsiCodeBlocksHtml(html: unknown) {
   const source = String(html || '');
   return source
@@ -678,12 +684,23 @@ function sanitizeNodeSeekAnsiReportSectionsHtml(html: unknown) {
   return `${source.slice(0, start)}${terminalReportHtml(tabs)}${source.slice(end)}`;
 }
 
+function sanitizePlainCodeBlocks(root: HTMLElement) {
+  root.querySelectorAll('pre').forEach((node) => {
+    const match = String(node.innerHTML || '').match(/^\s*<code\b(?![^>]*\blanguage-ansi\b)[^>]*>([\s\S]*?)<\/code>\s*$/i);
+    const text = match ? terminalTextFromCodeHtml(match[1]) : '';
+    if (text) {
+      node.replaceWith(terminalCodeBlockHtml(text));
+    }
+  });
+}
+
 export function sanitizeContentHtml(html: unknown, baseUrl: string) {
   const root = parseHtml(sanitizeNodeSeekAnsiReportSectionsHtml(sanitizeNodeSeekAnsiCodeBlocksHtml(html)));
   for (const selector of ['script', 'style', 'noscript']) {
     root.querySelectorAll(selector).forEach((node) => node.remove());
   }
   sanitizeNodeSeekMagicTabs(root);
+  sanitizePlainCodeBlocks(root);
   sanitizeNodeSeekStickerVideos(root, baseUrl);
   sanitizePlayableVideos(root, baseUrl);
   sanitizeIframes(root, baseUrl);

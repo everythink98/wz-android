@@ -1033,6 +1033,35 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('[0m');
   });
 
+  it('renders NodeSeek plain code reports as terminal blocks', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-814058-1">[留一下档🫠]LAX.AS3.Pro.TINY</a>
+      <div id="0" data-comment-id="814058" class="content-item">
+        <div class="author-info"><a href="/space/79544498" class="author-name">79544498</a></div>
+        <time datetime="2026-07-09T08:57:00.000Z"></time>
+        <article class="post-content">
+          <p>买不起溢价的特价机 凑合着用了 等黑五看看😢😢</p>
+          <pre><code>########################################################################
+                   IP质量体检报告(Lite)：179.255.*.*
+                   https://github.com/xykt/IPQuality
+########################################################################</code></pre>
+          <pre><code>-----------------------A Bench Script By spiritlhl-----------------------
+                   测评频道: https://t.me/+UHVoo2U4VyA5NTQ1
+------------------------基础信息查询--感谢所有开源项目------------------</code></pre>
+        </article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('814058', { fetcher });
+
+    expect(topic.contentHtml).toContain('买不起溢价的特价机');
+    expect(topic.contentHtml).toContain('forum-terminal-code');
+    expect(topic.contentHtml).toContain('IP质量体检报告(Lite)');
+    expect(topic.contentHtml).toContain('A&nbsp;Bench&nbsp;Script&nbsp;By&nbsp;spiritlhl');
+    expect(topic.contentHtml).not.toContain('<pre');
+    expect(topic.contentHtml).not.toContain('<code');
+  });
+
   it('keeps embedded NodeSeek replies when only the topic body is rendered', async () => {
     const embeddedPayload = Buffer.from(JSON.stringify({
       postData: {
