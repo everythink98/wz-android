@@ -32,6 +32,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import android.util.Log
 import android.util.Base64
+import okhttp3.ConnectionPool
+import okhttp3.OkHttpClient
 
 data class NetworkProxyProfile(
   val protocol: String,
@@ -50,6 +52,7 @@ object NetworkProxyRuntime {
   private val selector = NetworkProxySelector()
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
   @Volatile private var localProxy: Proxy? = null
+  @Volatile private var connectionPool = ConnectionPool()
   private var installed = false
 
   fun install(context: Context) {
@@ -61,10 +64,10 @@ object NetworkProxyRuntime {
       selector.setDelegate(ProxySelector.getDefault())
       ProxySelector.setDefault(selector)
       OkHttpClientProvider.setOkHttpClientFactory {
-        OkHttpClientProvider.createClientBuilder(appContext).proxySelector(selector).build()
+        OkHttpClientProvider.createClientBuilder(appContext).also { applyClientState(it) }.build()
       }
       NetworkingModule.setCustomClientBuilder { builder ->
-        builder.proxySelector(selector)
+        applyClientState(builder)
       }
       installed = true
       Log.i(LOG_TAG, "installed app proxy selector")
@@ -84,6 +87,21 @@ object NetworkProxyRuntime {
   fun blockNetworkRequests() {
     Log.w(LOG_TAG, "blocked app requests while proxy switches")
     localProxy = blockedProxy
+  }
+
+  fun recoverNodeSeekNetwork() {
+    val previous = synchronized(lock) {
+      val current = connectionPool
+      connectionPool = ConnectionPool()
+      current
+    }
+    previous.evictAll()
+    Log.w(LOG_TAG, "recovered NodeSeek network connection pool")
+  }
+
+  private fun applyClientState(builder: OkHttpClient.Builder) {
+    builder.proxySelector(selector)
+    builder.connectionPool(connectionPool)
   }
 
   fun currentLocalProxy(): Proxy? = localProxy
@@ -620,6 +638,19 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
         promise.resolve(statusMap(true, null))
       } catch (error: Exception) {
         promise.reject("proxy_test_failed", error.message ?: "代理测试失败", error)
+      }
+    }
+  }
+
+  @ReactMethod
+  fun recoverNodeSeekNetwork(promise: Promise) {
+    worker.execute {
+      try {
+        NetworkProxyRuntime.install(reactContext)
+        NetworkProxyRuntime.recoverNodeSeekNetwork()
+        promise.resolve(statusMap(true, null))
+      } catch (error: Exception) {
+        promise.reject("network_recover_failed", error.message ?: "请求通道恢复失败", error)
       }
     }
   }

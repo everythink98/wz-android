@@ -3,6 +3,14 @@ import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
+const NODESEEK_DIRECT_RECOVERY_FAILURES = 2;
+const NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE = 'NodeSeek direct fetch timeout';
+
+export type NodeSeekDirectFallbackReason = 'direct-timeout' | 'direct-error';
+export type NodeSeekDirectRecoveryEvent = {
+  reason: NodeSeekDirectFallbackReason;
+  url: string;
+};
 
 export function isNodeSeekRequestUrl(input: string) {
   try {
@@ -38,7 +46,7 @@ async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, ini
     timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => {
         controller.abort();
-        reject(new Error('NodeSeek direct fetch timeout'));
+        reject(new Error(NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE));
       }, NODESEEK_DIRECT_FETCH_TIMEOUT_MS);
     });
   }
@@ -55,11 +63,45 @@ async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, ini
 
 export function createNodeSeekWebViewFallbackFetcher({
   defaultFetcher = fetch,
-  webViewFetcher
+  webViewFetcher,
+  recoverNodeSeekNetwork
 }: {
   defaultFetcher?: Fetcher;
   webViewFetcher: Fetcher;
+  recoverNodeSeekNetwork?: (event: NodeSeekDirectRecoveryEvent) => Promise<unknown> | unknown;
 }): Fetcher {
+  let directFailureCount = 0;
+  let recoveryInFlight = false;
+
+  const resetDirectFailures = () => {
+    directFailureCount = 0;
+  };
+
+  const scheduleRecovery = (event: NodeSeekDirectRecoveryEvent) => {
+    if (!recoverNodeSeekNetwork || recoveryInFlight) {
+      return;
+    }
+    recoveryInFlight = true;
+    void Promise.resolve(recoverNodeSeekNetwork(event))
+      .catch(() => undefined)
+      .finally(() => {
+        recoveryInFlight = false;
+      });
+  };
+
+  const recordDirectFallbackSuccess = async (response: Response, reason: NodeSeekDirectFallbackReason, url: string) => {
+    const text = await response.clone().text();
+    if (isNodeSeekChallengeResponse(response, text, url)) {
+      return response;
+    }
+    directFailureCount += 1;
+    if (directFailureCount >= NODESEEK_DIRECT_RECOVERY_FAILURES) {
+      directFailureCount = 0;
+      scheduleRecovery({ reason, url });
+    }
+    return response;
+  };
+
   return async (input, init) => {
     const url = String(input);
     if (isNodeSeekGoogleSearchUrl(url)) {
@@ -73,11 +115,15 @@ export function createNodeSeekWebViewFallbackFetcher({
       response = await fetchNodeSeekDirectly(defaultFetcher, url, init);
     } catch (error) {
       if (!init?.signal?.aborted) {
-        return webViewFetcher(url, init);
+        const reason = error instanceof Error && error.message === NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE
+          ? 'direct-timeout'
+          : 'direct-error';
+        return recordDirectFallbackSuccess(await webViewFetcher(url, init), reason, url);
       }
       throw error;
     }
     const text = await response.clone().text();
+    resetDirectFailures();
     if (isNodeSeekChallengeResponse(response, text, url)) {
       return webViewFetcher(url, init);
     }

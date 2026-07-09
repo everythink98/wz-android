@@ -3192,6 +3192,81 @@ describe('Android local sources', () => {
     }
   });
 
+  it('recovers the NodeSeek direct channel after repeated direct timeouts with successful WebView fallbacks', async () => {
+    vi.useFakeTimers();
+    try {
+      const normalFetcher = vi.fn(() => new Promise<Response>(() => undefined));
+      const webViewFetcher = vi.fn(async (input: string) => {
+        const url = new URL(input);
+        if (url.pathname === '/') {
+          return html(`
+            <ul class="post-list">
+              <li class="post-list-item">
+                <div class="post-title"><a href="/post-743019-1">NodeSeek first slow fallback</a></div>
+                <div class="post-info"><time datetime="2026-05-21T00:00:00.000Z"></time></div>
+              </li>
+            </ul>
+          `);
+        }
+        return html(`
+          <a class="post-title" href="/post-743020-1">NodeSeek second slow fallback</a>
+          <div class="content-item">
+            <article class="post-content"><p>second fallback body</p></article>
+          </div>
+        `);
+      });
+      const recoverNodeSeekNetwork = vi.fn(async () => undefined);
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher,
+        recoverNodeSeekNetwork
+      });
+
+      const feedPromise = getFeed({ source: 'nodeseek', fetcher });
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(feedPromise).resolves.toMatchObject({
+        items: [expect.objectContaining({ title: 'NodeSeek first slow fallback' })]
+      });
+      expect(recoverNodeSeekNetwork).not.toHaveBeenCalled();
+
+      const topicPromise = getTopic({ source: 'nodeseek', id: '743020', fetcher });
+      await vi.advanceTimersByTimeAsync(8_000);
+      await expect(topicPromise).resolves.toMatchObject({
+        title: 'NodeSeek second slow fallback'
+      });
+
+      expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not recover the NodeSeek direct channel when Cloudflare causes the WebView fallback', async () => {
+    const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
+      status: 403,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => html(`
+      <a class="post-title" href="/post-743021-1">NodeSeek Cloudflare fallback detail</a>
+      <div class="content-item">
+        <article class="post-content"><p>cloudflare fallback body</p></article>
+      </div>
+    `));
+    const recoverNodeSeekNetwork = vi.fn(async () => undefined);
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher,
+      recoverNodeSeekNetwork
+    });
+
+    await getTopic({ source: 'nodeseek', id: '743021', fetcher });
+    await getTopic({ source: 'nodeseek', id: '743021', fetcher });
+
+    expect(webViewFetcher).toHaveBeenCalledTimes(2);
+    expect(recoverNodeSeekNetwork).not.toHaveBeenCalled();
+  });
+
   it('uses direct fetch for readable NodeSeek search pages', async () => {
     const webViewFetcher = vi.fn(async (input: string) => {
       const query = new URL(input).searchParams.get('q') || '';

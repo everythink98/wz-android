@@ -167,6 +167,7 @@ export function useSessionController({
   nodeSeekWebViewCookieHeaderRef,
   nodeSeekWebViewUserAgentRef,
   notify,
+  recoverNodeSeekNetwork,
   setLinuxDoWebViewCookieHeader,
   setLinuxDoWebViewUserAgent,
   setNodeSeekWebViewUserAgent,
@@ -183,6 +184,7 @@ export function useSessionController({
   nodeSeekWebViewCookieHeaderRef: MutableRef<string>;
   nodeSeekWebViewUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
+  recoverNodeSeekNetwork?: () => Promise<unknown> | unknown;
   setLinuxDoWebViewCookieHeader: Dispatch<SetStateAction<string>>;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
@@ -572,8 +574,9 @@ export function useSessionController({
 
   const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({
     defaultFetcher,
+    recoverNodeSeekNetwork,
     webViewFetcher: nodeSeekFetchWithWebView
-  }), [defaultFetcher, nodeSeekFetchWithWebView]);
+  }), [defaultFetcher, nodeSeekFetchWithWebView, recoverNodeSeekNetwork]);
 
   const forumFetchWithWebViewFallback = useMemo(() => createLinuxDoWebViewFallbackFetcher({
     defaultFetcher: nodeSeekFetchWithWebViewFallback,

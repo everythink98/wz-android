@@ -96,6 +96,12 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('ProxyController');
     expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory');
     expect(plugin).toContain('NetworkingModule.setCustomClientBuilder');
+    expect(plugin).toContain('fun recoverNodeSeekNetwork(promise: Promise)');
+    expect(plugin).toContain('fun recoverNodeSeekNetwork()');
+    expect(plugin).toContain('connectionPool = ConnectionPool()');
+    expect(plugin).toContain('evictAll()');
+    expect(plugin).not.toContain('cancelAll()');
+    expect(plugin).not.toContain('builder.dispatcher');
     expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
   });
 

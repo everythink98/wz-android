@@ -9,6 +9,7 @@ import {
   loadNetworkProxyState,
   MAX_NETWORK_PROXY_PROFILES,
   networkProxySummary,
+  recoverNodeSeekNetwork as recoverNativeNodeSeekNetwork,
   removeNetworkProxyProfile,
   saveNetworkProxyState,
   testNetworkProxy,
@@ -234,6 +235,8 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
     return fetch(input, init);
   }, [ensureNetworkProxyReady]);
 
+  const recoverNodeSeekNetwork = useCallback(() => recoverNativeNodeSeekNetwork(), []);
+
   return {
     activeProfile,
     applyError,
@@ -242,6 +245,7 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
     loaded,
     networkProxyFetcher,
     proxyState,
+    recoverNodeSeekNetwork,
     summary,
     deleteProxyProfile,
     selectProxyProfile,
