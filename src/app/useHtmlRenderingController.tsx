@@ -26,7 +26,9 @@ import {
   INLINE_FORUM_IMAGE_TAG,
   isHttpOrHttpsUrl,
   isInlineForumImage,
-  isPreviewableImageUrl
+  isPreviewableImageUrl,
+  normalizeImagePreviewUrl,
+  shouldMarkLoadedImageInline
 } from '../htmlImages';
 import { nsEmbedFromUrl, shouldAllowBilibiliWebViewNavigation } from '../nsVideoEmbeds';
 import { parseForumTopicLink, parseForumUserLink } from '../appUtils';
@@ -244,7 +246,26 @@ export function useHtmlRenderingController({
   topicKey: string;
   webViewBlockMessage: string;
 }) {
-  const inlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [selectedTopic?.id, selectedTopic?.source]);
+  const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({ topicKey: '', urls: {} });
+  const emptyInlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [topicKey]);
+  const inlineSizedImageUrls = inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
+  const markInlineSizedImageUrl = useCallback((url: string) => {
+    const clean = normalizeImagePreviewUrl(url).trim();
+    if (!clean) {
+      return;
+    }
+    setInlineSizedImageState((current) => (
+      current.topicKey === topicKey && current.urls[clean]
+        ? current
+        : {
+            topicKey,
+            urls: {
+              ...(current.topicKey === topicKey ? current.urls : {}),
+              [clean]: true
+            }
+          }
+    ));
+  }, [topicKey]);
 
   const topicImageDeriver = useMemo(
     () => createTopicImageDeriver(),
@@ -554,6 +575,11 @@ export function useHtmlRenderingController({
             recyclingKey={src}
             source={imageState.source}
             style={[imageState.dimensions, imageState.imageStyle, nativeImageLoaded ? null : { opacity: 0 }]}
+            onLoad={(event) => {
+              if (shouldMarkLoadedImageInline(props.tnode.attributes, event.source.width, event.source.height)) {
+                markInlineSizedImageUrl(src);
+              }
+            }}
             onLoadStart={() => setNativeImageLoadState({ src, loaded: false })}
             onLoadEnd={() => setNativeImageLoadState({ src, loaded: true })}
             onError={(event) => {
@@ -625,6 +651,7 @@ export function useHtmlRenderingController({
     nodeSeekMediaUserAgent,
     onOpenImagePreview,
     openHtmlLink,
+    markInlineSizedImageUrl,
     settings.fontScale,
     styles.htmlFloorLink,
     styles.htmlMentionLink,

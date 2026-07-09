@@ -91,7 +91,7 @@ describe('Android topic derived data', () => {
   it('treats dimension-only small images as reply images without counting emoji', () => {
     const smallRealImage = {
       ...replyWithImage,
-      contentHtml: '<p><img src="https://i.imgur.com/agAJ0Rd.png" class="embedded_image" width="20" height="20"></p>'
+      contentHtml: '<p><img src="https://i.imgur.com/agAJ0Rd.png" class="thumbnail" width="20" height="20"></p>'
     };
     const emojiOnly = {
       ...replyWithoutImage,

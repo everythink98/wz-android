@@ -82,6 +82,11 @@ export function isInlineForumImage(attributes: Record<string, string | undefined
   return isInlineForumImageAttributes(attributes);
 }
 
+export function shouldMarkLoadedImageInline(attributes: Record<string, string | undefined>, width: number, height: number) {
+  const maxDimension = Math.max(safeImageDimension(width), safeImageDimension(height));
+  return maxDimension > 0 && maxDimension <= INLINE_EMOJI_MAX_SIZE && isV2exEmbeddedImageAttributes(attributes);
+}
+
 export function markInlineSizedImageHtml(html: string, url: string) {
   const target = normalizeImagePreviewUrl(url);
   if (!target) {
@@ -663,14 +668,7 @@ function shouldSplitStickerMediaElementFromText(html: string, attributes: Record
 function shouldSplitStickerMediaFromText(attributes: Record<string, string | undefined>) {
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
-  if (Math.max(width, height) > INLINE_STICKER_MAX_SIZE) {
-    return true;
-  }
-  if (width || height) {
-    return false;
-  }
-  const knownDimensions = knownForumStickerSourceDimensions(attributes);
-  return knownDimensions ? Math.max(knownDimensions.width, knownDimensions.height) > INLINE_STICKER_MAX_SIZE : false;
+  return Math.max(width, height) > INLINE_STICKER_MAX_SIZE;
 }
 
 function isStickerMediaOnlyHtml(html: string) {
@@ -841,6 +839,7 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
   const hasSmallSize = (width > 0 && width <= 64) || (height > 0 && height <= 64);
+  const hasTinyExplicitSize = width > 0 && height > 0 && Math.max(width, height) <= INLINE_EMOJI_MAX_SIZE;
   const classMarksEmoji = /(^|\s)(emoji|emoticon|smiley|twemoji)(\s|$)/i.test(className);
   const classMarksSticker = /(^|\s)sticker(\s|$)/i.test(className);
   const classMarksAvatar = /(^|\s)(avatar|user-avatar)(\s|$)/i.test(className);
@@ -853,8 +852,13 @@ function isInlineForumImageAttributes(attributes: Record<string, string | undefi
   const hasEmojiMarker = classMarksEmoji || classMarksSticker || urlMarksEmoji || /^emoji$/i.test(role) || titleMarksEmoji || altMarksEmoji;
   return runtimeMarksInlineSized
     || labelMarksSticker
+    || (isV2exEmbeddedImageAttributes(attributes) && hasTinyExplicitSize)
     || (hasEmojiMarker && (hasSmallSize || !width || !height || classMarksEmoji || urlMarksEmoji))
     || ((classMarksAvatar || urlMarksAvatar) && hasSmallSize);
+}
+
+function isV2exEmbeddedImageAttributes(attributes: Record<string, string | undefined>) {
+  return /(^|\s)embedded_image(\s|$)/i.test(attributeValue(attributes, 'class'));
 }
 
 function isForumStickerImageAttributes(attributes: Record<string, string | undefined>) {
@@ -933,6 +937,10 @@ function isInlineForumImageUrl(url: string) {
 function parseImageDimension(value: string) {
   const match = value.match(/^\d+(?:\.\d+)?/);
   return match ? Number(match[0]) : 0;
+}
+
+function safeImageDimension(value: number) {
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function safeImageScale(scale: number) {
