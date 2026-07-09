@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runNodeSeekAction } from './nodeseekActionClient';
 import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from './nodeseekActions';
+import { browserFetchIntentFromInit } from './browserFetchIntent';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -42,6 +43,12 @@ describe('runNodeSeekAction', () => {
       body: undefined,
       signal: expect.any(AbortSignal)
     }));
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
+      owner: 'write',
+      priority: 'write',
+      cancelable: false
+    });
   });
 
   it('uses the current NodeSeek WebView user agent for write requests when provided', async () => {

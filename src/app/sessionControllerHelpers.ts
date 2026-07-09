@@ -1,3 +1,5 @@
+import type { BrowserFetchIntent } from '../browserFetchIntent';
+
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
   abortSignal?: AbortSignal;
@@ -25,6 +27,7 @@ export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   url: string;
   cookie?: string;
   userAgent?: string;
+  browserFetchIntent?: BrowserFetchIntent;
   reject: (error: Error) => void;
 };
 
@@ -256,19 +259,76 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   startNext();
 }
 
+function browserFetchPriorityRank(intent: BrowserFetchIntent | undefined) {
+  if (intent?.priority === 'write') {
+    return 3;
+  }
+  if (intent?.priority === 'foreground') {
+    return 2;
+  }
+  return 1;
+}
+
+export function shouldPreemptBrowserFetchRequest(
+  active: BrowserFetchQueueRequest | null | undefined,
+  incoming: BrowserFetchQueueRequest
+) {
+  if (!active || active.browserFetchIntent?.cancelable === false) {
+    return false;
+  }
+  return browserFetchPriorityRank(incoming.browserFetchIntent) > browserFetchPriorityRank(active.browserFetchIntent);
+}
+
+export function shouldKeepQueuedBrowserFetchRequest(
+  queued: BrowserFetchQueueRequest,
+  incoming: BrowserFetchQueueRequest
+) {
+  if (queued.browserFetchIntent?.cancelable === false) {
+    return true;
+  }
+  return browserFetchPriorityRank(queued.browserFetchIntent) > browserFetchPriorityRank(incoming.browserFetchIntent);
+}
+
+export function preemptActiveBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
+  currentRef,
+  request,
+  message,
+  rejectCurrent
+}: {
+  currentRef: MutableRef<T | null>;
+  request: T;
+  message: string;
+  rejectCurrent: (request: T, message: string) => void;
+}) {
+  const current = currentRef.current;
+  if (!current || !shouldPreemptBrowserFetchRequest(current, request)) {
+    return false;
+  }
+  rejectCurrent(current, message);
+  return true;
+}
+
 export function enqueueLatestBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   queueRef,
   request,
-  message
+  message,
+  shouldKeepQueuedRequest
 }: {
   queueRef: MutableRef<T[]>;
   request: T;
   message: string;
+  shouldKeepQueuedRequest?: (queued: T, incoming: T) => boolean;
 }) {
   const staleRequests = queueRef.current.splice(0);
+  const keptRequests: T[] = [];
   for (const staleRequest of staleRequests) {
+    if (shouldKeepQueuedRequest?.(staleRequest, request)) {
+      keptRequests.push(staleRequest);
+      continue;
+    }
     settleBrowserFetchRequestOnce(staleRequest, () => staleRequest.reject(new Error(message)));
   }
+  queueRef.current.push(...keptRequests);
   queueRef.current.push(request);
 }
 

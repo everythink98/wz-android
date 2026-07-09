@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type RefObject } from 'react';
+import { useCallback, useEffect, useState, type RefObject } from 'react';
 import { View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { shouldHandleBrowserHttpError } from './sessionControllerHelpers';
@@ -33,7 +33,7 @@ export function HiddenBrowserHost({
   styles
 }: {
   blockedMessage: string;
-  failLinuxDoBrowserFetchById: (requestId: number, message: string) => void;
+  failLinuxDoBrowserFetchById: (requestId: number, message: string, options?: { skipStopLoading?: boolean }) => void;
   failNodeSeekBrowserFetchById: (requestId: number, message: string, options?: { skipStopLoading?: boolean }) => void;
   handleLinuxDoBrowserFetchMessage: (event: WebViewMessageEvent) => void;
   handleNodeSeekBrowserFetchMessage: (event: WebViewMessageEvent) => void;
@@ -46,6 +46,7 @@ export function HiddenBrowserHost({
 }) {
   const linuxDoBrowserFetchRequest = state.linuxDo.request;
   const nodeSeekBrowserFetchRequest = state.nodeSeek.request;
+  const [hiddenBrowserWebViewGeneration, setHiddenBrowserWebViewGeneration] = useState(0);
   useEffect(() => {
     if (!blockedMessage) {
       return;
@@ -77,13 +78,22 @@ export function HiddenBrowserHost({
     }
     return false;
   }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
+  const handleHiddenBrowserRenderProcessGone = useCallback(() => {
+    setHiddenBrowserWebViewGeneration((current) => current + 1);
+    if (nodeSeekBrowserFetchRequest) {
+      failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', { skipStopLoading: true });
+    }
+    if (linuxDoBrowserFetchRequest) {
+      failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止', { skipStopLoading: true });
+    }
+  }, [failLinuxDoBrowserFetchById, failNodeSeekBrowserFetchById, linuxDoBrowserFetchRequest, nodeSeekBrowserFetchRequest]);
 
   return (
     <>
       {!blockedMessage && nodeSeekBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
           <WebView
-            key={`nodeseek-browser-fetch-${nodeSeekBrowserFetchRequest.id}`}
+            key={`nodeseek-browser-fetch-${hiddenBrowserWebViewGeneration}-${nodeSeekBrowserFetchRequest.id}`}
             ref={nodeSeekBrowserWebViewRef}
             source={{
               uri: nodeSeekBrowserFetchRequest.url,
@@ -121,9 +131,7 @@ export function HiddenBrowserHost({
               }
               failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, `NodeSeek 页面返回错误 ${event.nativeEvent.statusCode}`);
             }}
-            onRenderProcessGone={() => {
-              failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', { skipStopLoading: true });
-            }}
+            onRenderProcessGone={handleHiddenBrowserRenderProcessGone}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />
         </View>
@@ -131,7 +139,7 @@ export function HiddenBrowserHost({
       {!blockedMessage && linuxDoBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
           <WebView
-            key={`linuxdo-browser-fetch-${linuxDoBrowserFetchRequest.id}`}
+            key={`linuxdo-browser-fetch-${hiddenBrowserWebViewGeneration}-${linuxDoBrowserFetchRequest.id}`}
             ref={linuxDoBrowserWebViewRef}
             source={{
               uri: linuxDoBrowserFetchRequest.url,
@@ -169,9 +177,7 @@ export function HiddenBrowserHost({
               }
               failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, `linux.do 页面返回错误 ${event.nativeEvent.statusCode}`);
             }}
-            onRenderProcessGone={() => {
-              failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止');
-            }}
+            onRenderProcessGone={handleHiddenBrowserRenderProcessGone}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />
         </View>

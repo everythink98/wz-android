@@ -1,4 +1,5 @@
 import type { HTMLElement } from 'node-html-parser';
+import { withBrowserFetchIntent, type BrowserFetchIntent, type BrowserFetchOwner, type BrowserFetchPriority } from './browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
@@ -45,6 +46,21 @@ interface NodeSeekOptions {
   cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
   timeoutMs?: number;
+  browserFetchIntent?: BrowserFetchIntent;
+}
+
+function nodeSeekOptionsWithBrowserIntent<T extends NodeSeekOptions>(
+  options: T,
+  owner: BrowserFetchOwner,
+  priority: BrowserFetchPriority
+): T {
+  if (options.browserFetchIntent) {
+    return options;
+  }
+  return {
+    ...options,
+    browserFetchIntent: { owner, priority, cancelable: true }
+  };
 }
 
 function hasHtmlTag(value: string) {
@@ -745,9 +761,9 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
     headers['Cache-Control'] = 'no-cache';
     headers.Pragma = 'no-cache';
   }
-  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
+  const response = await fetchWithTimeout(`${BASE_URL}${path}`, withBrowserFetchIntent({
     headers
-  }, requestOptions);
+  }, requestOptions.browserFetchIntent || { owner: 'feed', priority: 'background', cancelable: true }), requestOptions);
   const text = await response.text();
   if (isNodeSeekChallengeResponse(response, text, `${BASE_URL}${path}`)) {
     throw nodeSeekCloudflareError();
@@ -767,12 +783,12 @@ function hasLoggedInNodeSeekCookie(options: NodeSeekOptions) {
 
 async function fetchNodeSeekGoogleSearchText(query: string, page: number, options: NodeSeekOptions = {}) {
   const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
-  const response = await fetchWithTimeout(googleSiteSearchUrl('nodeseek.com', query, page), {
+  const response = await fetchWithTimeout(googleSiteSearchUrl('nodeseek.com', query, page), withBrowserFetchIntent({
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
       'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
     }
-  }, requestOptions);
+  }, requestOptions.browserFetchIntent || { owner: 'search', priority: 'foreground', cancelable: true }), requestOptions);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
@@ -864,10 +880,11 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
   category?: string;
   feedFilter?: NodeSeekFeedFilter;
 } = {}): Promise<FeedResponse> {
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'background');
   const page = options.page || 1;
   const limit = options.limit || 30;
   const feedFilter = options.category ? 'postTime' : options.feedFilter || 'postTime';
-  const html = await fetchNodeSeekText(listPath(page, options.category, feedFilter), options);
+  const html = await fetchNodeSeekText(listPath(page, options.category, feedFilter), requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const renderedItems = parseHtmlTopics(html);
   const items = renderedItems.length ? renderedItems : (embedded ? embeddedTopics(embedded) : []);
@@ -885,7 +902,8 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
 }
 
 export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
-  const html = await fetchNodeSeekText('/', options);
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'background');
+  const html = await fetchNodeSeekText('/', requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   return {
     items: mergeNodeSeekCategories([
@@ -1311,7 +1329,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
-  return fetchNodeSeekText(nodeSeekTopicPagePath(id, page), options);
+  return fetchNodeSeekText(nodeSeekTopicPagePath(id, page), nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground'));
 }
 
 async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
@@ -1326,7 +1344,8 @@ async function fetchTopicPageData(id: string, page: number, options: NodeSeekOpt
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
-  const html = await fetchTopicHtml(id, 1, options);
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
+  const html = await fetchTopicHtml(id, 1, requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const currentUser = embedded ? findNodeSeekCurrentUser(embedded) : null;
@@ -1336,7 +1355,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
     const polls = mergeNodeSeekPolls(
       topic.polls,
-      await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], options)
+      await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions)
     );
     return withNodeSeekReplyPagination({
       ...topic,
@@ -1348,7 +1367,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const comments = arrayField(postData.comments);
     const first = isRecord(comments[0]) ? comments[0] : {};
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
-    const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], options));
+    const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions));
     return withNodeSeekReplyPagination({
       ...topic,
       ...(polls ? { polls } : {}),
@@ -1387,9 +1406,10 @@ async function fillNodeSeekRepliesLimit(id: string, options: NodeSeekRepliesOpti
 }
 
 export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOptions): Promise<RepliesResponse> {
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const { html, postData, rendered } = await fetchTopicPageData(id, page, options);
+  const { html, postData, rendered } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? options.offset as number : 0;
   const floorOffset = hasOffset ? offset : ((page - 1) * limit);
@@ -1415,7 +1435,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       nextPage: hasMore ? (hasPageRemainder ? page : nextPage || page + 1) : null,
       nextOffset: hasMore ? consumed : null
     };
-    return options.fillPages ? fillNodeSeekRepliesLimit(id, options, result, limit) : result;
+    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, result, limit) : result;
   }
   if (!postData) {
     throw new Error('NodeSeek 主题解析失败');
@@ -1434,7 +1454,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
       nextOffset: hasMore ? consumed : null
     };
-    return options.fillPages ? fillNodeSeekRepliesLimit(id, options, result, limit) : result;
+    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, result, limit) : result;
   }
   const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
   const nextPage = nextNodeSeekPostPage(html, id, page);
@@ -1445,11 +1465,12 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     nextPage: nextPage || null,
     nextOffset: hasMore ? floorOffset + items.length : null
   };
-  return options.fillPages ? fillNodeSeekRepliesLimit(id, options, result, limit) : result;
+  return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, result, limit) : result;
 }
 
 export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
-  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, options);
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'user', 'foreground');
+  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, requestOptions);
   if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
     throw new Error('NodeSeek 用户主页读取失败');
   }
@@ -1465,7 +1486,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   const wantsReplies = options.cursorType !== 'topics';
   let discussions: unknown[] = [];
   if (wantsTopics) {
-    const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, options);
+    const discussionData = await fetchNodeSeekJson(`/api/content/list-discussions?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, requestOptions);
     discussions = isRecord(discussionData) && Array.isArray(discussionData.discussions) ? discussionData.discussions : [];
   }
   const topics = discussions.filter(isRecord).map((discussion) => {
@@ -1502,7 +1523,7 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   let replies: UserReplyActivity[] = [];
   if (wantsReplies) {
     const readReplies = async () => {
-      const commentData = await fetchNodeSeekJson(`/api/content/list-comments?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, options);
+      const commentData = await fetchNodeSeekJson(`/api/content/list-comments?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, requestOptions);
       const comments = isRecord(commentData) && Array.isArray(commentData.comments) ? commentData.comments : [];
       return comments.filter(isRecord).map((comment) => normalizeNodeSeekUserReply(comment, username, userId, avatar)).filter(Boolean) as UserReplyActivity[];
     };
@@ -1531,7 +1552,8 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
 }
 
 export async function getNodeSeekBasicUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
-  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, options);
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
+  const userData = await fetchNodeSeekJson(`/api/account/getInfo/${encodeURIComponent(id)}?readme=1`, requestOptions);
   if (!isRecord(userData) || userData.success === false || !isRecord(userData.detail)) {
     throw new Error('NodeSeek 用户身份读取失败');
   }
@@ -1581,8 +1603,9 @@ function parseNodeSeekCurrentUserHtml(html: string) {
 }
 
 export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {}): Promise<UserProfile> {
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'account', 'background');
   try {
-    const data = await fetchNodeSeekJson('/api/account/getInfo?readme=1', options);
+    const data = await fetchNodeSeekJson('/api/account/getInfo?readme=1', requestOptions);
     const user = findNodeSeekCurrentUser(data);
     if (user) {
       return user;
@@ -1593,7 +1616,7 @@ export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {
   let lastError: unknown;
   for (const path of ['/', '/setting']) {
     try {
-      const user = parseNodeSeekCurrentUserHtml(await fetchNodeSeekText(path, options));
+      const user = parseNodeSeekCurrentUserHtml(await fetchNodeSeekText(path, requestOptions));
       if (user) {
         return user;
       }
@@ -1601,13 +1624,14 @@ export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {
       lastError = error;
     }
   }
-  if (lastError && options.signal?.aborted) {
+  if (lastError && requestOptions.signal?.aborted) {
     throw lastError;
   }
   throw new Error('无法读取当前 NodeSeek 用户身份，请重新检测 NodeSeek 登录。');
 }
 
 export async function searchNodeSeek(query: string, options: NodeSeekOptions & { limit?: number; page?: number; filter?: NodeSeekSearchFilter } = {}): Promise<SearchResponse> {
+  const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'search', 'foreground');
   const trimmedQuery = query.trim();
   const limit = options.limit || 30;
   const page = options.page || 1;
@@ -1618,10 +1642,10 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   let items: Topic[] = [];
   let nextPage: number | null = null;
   try {
-    const useGoogleSearch = !hasLoggedInNodeSeekCookie(options);
+    const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
     const html = useGoogleSearch
-      ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, options)
-      : await fetchNodeSeekText(searchPath(trimmedQuery, page, options.filter), options);
+      ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions)
+      : await fetchNodeSeekText(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
     items = parseNodeSeekSearchTopics(html);
     if (isIncompleteNodeSeekSearchPage(html, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');

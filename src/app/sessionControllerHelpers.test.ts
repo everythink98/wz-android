@@ -10,13 +10,17 @@ import {
   isCredentialWriteCurrent,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
+  preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
   rejectBrowserFetchRequest,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
   shouldHandleBrowserHttpError,
+  shouldKeepQueuedBrowserFetchRequest,
+  shouldPreemptBrowserFetchRequest,
   startNextBrowserFetchRequest,
   takeNodeSeekVerificationRetry,
+  type BrowserFetchQueueRequest,
   type BrowserFetchRequestCleanupTarget
 } from './sessionControllerHelpers';
 
@@ -309,6 +313,208 @@ describe('session controller helpers', () => {
     expect(active.reject).toHaveBeenCalledWith(new Error('NodeSeek 页面读取进程已停止'));
     expect(setActiveRequest).toHaveBeenCalledWith(null);
     expect(startNext).toHaveBeenCalledTimes(1);
+  });
+
+  it('preempts an active background browser fetch with a foreground request', () => {
+    const active: BrowserFetchQueueRequest = {
+      id: 1,
+      url: 'https://www.nodeseek.com/',
+      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
+      reject: vi.fn()
+    };
+    const incoming: BrowserFetchQueueRequest = {
+      id: 2,
+      url: 'https://www.nodeseek.com/post-2-1',
+      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
+      reject: vi.fn()
+    };
+    const currentRef: { current: BrowserFetchQueueRequest | null } = { current: active };
+    const rejectCurrent = vi.fn((request: BrowserFetchQueueRequest) => {
+      if (currentRef.current?.id === request.id) {
+        currentRef.current = null;
+      }
+    });
+
+    const preempted = preemptActiveBrowserFetchRequest({
+      currentRef,
+      request: incoming,
+      message: '请求已被新的前台读取替换',
+      rejectCurrent
+    });
+
+    expect(preempted).toBe(true);
+    expect(rejectCurrent).toHaveBeenCalledWith(active, '请求已被新的前台读取替换');
+    expect(currentRef.current).toBeNull();
+  });
+
+  it('starts the incoming foreground request instead of a stale queued read after preemption', () => {
+    const active: BrowserFetchQueueRequest = {
+      id: 1,
+      url: 'https://www.nodeseek.com/',
+      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
+      reject: vi.fn()
+    };
+    const staleQueuedRead: BrowserFetchQueueRequest = {
+      id: 2,
+      url: 'https://www.nodeseek.com/page-2',
+      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
+      reject: vi.fn()
+    };
+    const incoming: BrowserFetchQueueRequest = {
+      id: 3,
+      url: 'https://www.nodeseek.com/post-3-1',
+      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
+      reject: vi.fn()
+    };
+    const currentRef = { current: active };
+    const queueRef = { current: [staleQueuedRead] };
+    const setActiveRequest = vi.fn();
+    const rejectCurrent = (request: BrowserFetchQueueRequest, message: string) => {
+      rejectBrowserFetchRequest({
+        request,
+        message,
+        currentRef,
+        queueRef,
+        setActiveRequest,
+        startNext: () => startNextBrowserFetchRequest({
+          currentRef,
+          queueRef,
+          setActiveRequest,
+          timeoutMs: 15000,
+          timeoutMessage: 'timeout',
+          rejectCurrent: vi.fn()
+        })
+      });
+    };
+
+    enqueueLatestBrowserFetchRequest({
+      queueRef,
+      request: incoming,
+      message: '请求已取消',
+      shouldKeepQueuedRequest: shouldKeepQueuedBrowserFetchRequest
+    });
+    preemptActiveBrowserFetchRequest({
+      currentRef,
+      request: incoming,
+      message: '请求已被新的前台读取替换',
+      rejectCurrent
+    });
+
+    expect(staleQueuedRead.reject).toHaveBeenCalledWith(new Error('请求已取消'));
+    expect(active.reject).toHaveBeenCalledWith(new Error('请求已被新的前台读取替换'));
+    expect(currentRef.current).toBe(incoming);
+    expect(setActiveRequest).toHaveBeenLastCalledWith({
+      id: 3,
+      url: 'https://www.nodeseek.com/post-3-1',
+      cookie: undefined,
+      userAgent: undefined
+    });
+  });
+
+  it('does not let ordinary reads preempt a NodeSeek write request', () => {
+    const writeRequest: BrowserFetchQueueRequest = {
+      id: 1,
+      url: 'https://www.nodeseek.com/api/comment/reply',
+      browserFetchIntent: { owner: 'write', priority: 'write', cancelable: false },
+      reject: vi.fn()
+    };
+    const foregroundRead: BrowserFetchQueueRequest = {
+      id: 2,
+      url: 'https://www.nodeseek.com/post-2-1',
+      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
+      reject: vi.fn()
+    };
+
+    expect(shouldPreemptBrowserFetchRequest(writeRequest, foregroundRead)).toBe(false);
+  });
+
+  it('keeps queued NodeSeek writes when a newer read request replaces stale reads', () => {
+    const queuedWrite: BrowserFetchQueueRequest = {
+      id: 1,
+      url: 'https://www.nodeseek.com/api/comment/reply',
+      browserFetchIntent: { owner: 'write', priority: 'write', cancelable: false },
+      reject: vi.fn()
+    };
+    const staleRead: BrowserFetchQueueRequest = {
+      id: 2,
+      url: 'https://www.nodeseek.com/',
+      browserFetchIntent: { owner: 'feed', priority: 'background', cancelable: true },
+      reject: vi.fn()
+    };
+    const latestRead: BrowserFetchQueueRequest = {
+      id: 3,
+      url: 'https://www.nodeseek.com/post-3-1',
+      browserFetchIntent: { owner: 'topic', priority: 'foreground', cancelable: true },
+      reject: vi.fn()
+    };
+    const queueRef = { current: [queuedWrite, staleRead] };
+
+    enqueueLatestBrowserFetchRequest({
+      queueRef,
+      request: latestRead,
+      message: '请求已取消',
+      shouldKeepQueuedRequest: shouldKeepQueuedBrowserFetchRequest
+    });
+
+    expect(queueRef.current).toEqual([queuedWrite, latestRead]);
+    expect(queuedWrite.reject).not.toHaveBeenCalled();
+    expect(staleRead.reject).toHaveBeenCalledWith(new Error('请求已取消'));
+    expect(latestRead.reject).not.toHaveBeenCalled();
+  });
+
+  it('releases the queued browser fetch after a renderer crash rejects the active one', () => {
+    vi.useFakeTimers();
+    try {
+      const active: BrowserFetchQueueRequest = {
+        id: 1,
+        url: 'https://www.nodeseek.com/post-1-1',
+        reject: vi.fn()
+      };
+      const queued: BrowserFetchQueueRequest = {
+        id: 2,
+        url: 'https://www.nodeseek.com/post-2-1',
+        reject: vi.fn()
+      };
+      const currentRef = { current: active };
+      const queueRef = { current: [queued] };
+      const setActiveRequest = vi.fn();
+      const rejectCurrent = vi.fn((request: BrowserFetchQueueRequest, message: string) => {
+        request.reject(new Error(message));
+      });
+      const startNext = () => startNextBrowserFetchRequest({
+        currentRef,
+        queueRef,
+        setActiveRequest,
+        timeoutMs: 15000,
+        timeoutMessage: 'timeout',
+        rejectCurrent
+      });
+      const webViewRef = { current: { stopLoading: vi.fn() } };
+
+      rejectBrowserFetchRequest({
+        request: active,
+        message: 'NodeSeek 页面读取进程已停止',
+        currentRef,
+        queueRef,
+        setActiveRequest,
+        startNext,
+        webViewRef,
+        skipStopLoading: true
+      });
+
+      expect(webViewRef.current.stopLoading).not.toHaveBeenCalled();
+      expect(active.reject).toHaveBeenCalledWith(new Error('NodeSeek 页面读取进程已停止'));
+      expect(currentRef.current).toBe(queued);
+      expect(queueRef.current).toEqual([]);
+      expect(setActiveRequest).toHaveBeenLastCalledWith({
+        id: 2,
+        url: 'https://www.nodeseek.com/post-2-1',
+        cookie: undefined,
+        userAgent: undefined
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps only the latest queued browser fetch request', () => {

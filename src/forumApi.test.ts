@@ -21,6 +21,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { getCategories, getCurrentUserProfile, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
+import { browserFetchIntentFromInit } from './browserFetchIntent';
 import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -64,6 +65,13 @@ describe('Android local forum facade', () => {
     expect(calls).toContain('https://www.nodeseek.com/categories/tech/page-2?sortBy=postTime');
     expect(calls).not.toContain('https://www.nodeseek.com/categories/tech/page-2?sortBy=replyTime');
     expect(calls).not.toMatch(/127\.0\.0\.1:3000|10\.0\.2\.2|\/api\/feed|\/api\/categories/);
+    const nodeSeekFeedCall = (fetcher.mock.calls as unknown as Array<[string, RequestInit?]>)
+      .find(([input]) => input.includes('nodeseek.com/categories/tech/page-2'));
+    expect(browserFetchIntentFromInit(nodeSeekFeedCall?.[1])).toMatchObject({
+      owner: 'feed',
+      priority: 'background',
+      cancelable: true
+    });
   });
 
   it('passes no-cache through NodeSeek topic and reply reads', async () => {
@@ -87,6 +95,11 @@ describe('Android local forum facade', () => {
       expect(init?.headers).toMatchObject({
         'Cache-Control': 'no-cache',
         Pragma: 'no-cache'
+      });
+      expect(browserFetchIntentFromInit(init)).toMatchObject({
+        owner: 'topic',
+        priority: 'foreground',
+        cancelable: true
       });
     }
   });

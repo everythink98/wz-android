@@ -1,4 +1,5 @@
 import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodeseekActions';
+import { withBrowserFetchIntent } from './browserFetchIntent';
 import { fetchWithTimeout, type Fetcher } from './request';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
@@ -57,7 +58,7 @@ export async function runNodeSeekAction({
   }
   const cleanUserAgent = userAgent?.trim();
 
-  const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, {
+  const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}${request.path}`, withBrowserFetchIntent({
     method: request.method,
     headers: {
       ...NODESEEK_ACTION_HEADERS,
@@ -66,7 +67,7 @@ export async function runNodeSeekAction({
       cookie: cleanCookie
     },
     body: request.body
-  }, {
+  }, { owner: 'write', priority: 'write', cancelable: false }), {
     fetcher,
     signal,
     timeoutMs

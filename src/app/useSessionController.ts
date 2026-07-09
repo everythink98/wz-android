@@ -47,6 +47,7 @@ import type { FeedSource, Source } from '../types';
 import type { Fetcher } from '../request';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoBrowserFetchUrl, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
+import { browserFetchIntentFromInit, type BrowserFetchIntent } from '../browserFetchIntent';
 import { errorMessage } from '../appUtils';
 import {
   createSiteSessionViewModels,
@@ -63,6 +64,7 @@ import {
   enqueueCredentialWriteForGeneration,
   enqueueCredentialWrite,
   isCredentialWriteCurrent,
+  preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
   linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
@@ -70,6 +72,7 @@ import {
   requestHeaderValue,
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
+  shouldKeepQueuedBrowserFetchRequest,
   startNextBrowserFetchRequest,
   type CredentialClearOptions,
   type CredentialLoadOptions
@@ -128,6 +131,7 @@ type PendingNodeSeekBrowserFetchRequest = NodeSeekBrowserFetchRequest & {
   abortHandler?: () => void;
   httpErrorStatus?: number;
   credentialGeneration?: number;
+  browserFetchIntent?: BrowserFetchIntent;
   settled?: boolean;
 };
 
@@ -146,6 +150,7 @@ type PendingLinuxDoBrowserFetchRequest = LinuxDoBrowserFetchRequest & {
   abortHandler?: () => void;
   httpErrorStatus?: number;
   credentialGeneration?: number;
+  browserFetchIntent?: BrowserFetchIntent;
   settled?: boolean;
 };
 
@@ -392,6 +397,7 @@ export function useSessionController({
         resolve,
         reject,
         credentialGeneration: nodeSeekCredentialGateRef.current.generation,
+        browserFetchIntent: browserFetchIntentFromInit(init),
         abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
@@ -407,11 +413,18 @@ export function useSessionController({
       enqueueLatestBrowserFetchRequest({
         queueRef: nodeSeekBrowserFetchQueueRef,
         request,
-        message: '请求已取消'
+        message: '请求已取消',
+        shouldKeepQueuedRequest: shouldKeepQueuedBrowserFetchRequest
+      });
+      preemptActiveBrowserFetchRequest({
+        currentRef: nodeSeekBrowserFetchCurrentRef,
+        request,
+        message: '请求已被新的前台读取替换',
+        rejectCurrent: rejectNodeSeekBrowserFetch
       });
       startNextNodeSeekBrowserFetch();
     });
-  }, [defaultFetcher, nodeSeekBrowserFetchIdRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
+  }, [defaultFetcher, nodeSeekBrowserFetchIdRef, nodeSeekBrowserFetchCurrentRef, nodeSeekBrowserFetchQueueRef, rejectNodeSeekBrowserFetch, startNextNodeSeekBrowserFetch]);
 
   const completeNodeSeekBrowserFetch = useCallback(async (data: {
     id?: number;
@@ -503,7 +516,7 @@ export function useSessionController({
     });
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetchRef, setLinuxDoBrowserFetchRequest]);
 
-  const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string) => {
+  const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string, options: { skipStopLoading?: boolean } = {}) => {
     rejectBrowserFetchRequest({
       request,
       message,
@@ -511,7 +524,8 @@ export function useSessionController({
       queueRef: linuxDoBrowserFetchQueueRef,
       setActiveRequest: setLinuxDoBrowserFetchRequest,
       startNext: startNextLinuxDoBrowserFetch,
-      webViewRef: linuxDoBrowserWebViewRef
+      webViewRef: linuxDoBrowserWebViewRef,
+      skipStopLoading: options.skipStopLoading
     });
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, linuxDoBrowserWebViewRef, setLinuxDoBrowserFetchRequest, startNextLinuxDoBrowserFetch]);
   rejectLinuxDoBrowserFetchRef.current = rejectLinuxDoBrowserFetch;
@@ -534,6 +548,7 @@ export function useSessionController({
         resolve,
         reject,
         credentialGeneration: currentLinuxDoAccessGeneration(),
+        browserFetchIntent: browserFetchIntentFromInit(init),
         abortSignal: init?.signal || undefined
       };
       request.abortHandler = () => {
@@ -681,10 +696,10 @@ export function useSessionController({
     updateLinuxDoSession
   ]);
 
-  const failLinuxDoBrowserFetchById = useCallback((requestId: number, message: string) => {
+  const failLinuxDoBrowserFetchById = useCallback((requestId: number, message: string, options: { skipStopLoading?: boolean } = {}) => {
     const current = linuxDoBrowserFetchCurrentRef.current;
     if (current?.id === requestId) {
-      rejectLinuxDoBrowserFetch(current, message);
+      rejectLinuxDoBrowserFetch(current, message, options);
     }
   }, [linuxDoBrowserFetchCurrentRef, rejectLinuxDoBrowserFetch]);
 
