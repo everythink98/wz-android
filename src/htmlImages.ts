@@ -645,10 +645,13 @@ function shouldWrapStickerMediaInOwnLine(attributes: Record<string, string | und
   }
   const width = parseImageDimension(attributeValue(attributes, 'width'));
   const height = parseImageDimension(attributeValue(attributes, 'height'));
-  const knownDimensions = knownForumStickerSourceDimensions(attributes);
   const explicitDimension = Math.max(width, height);
-  const maxDimension = explicitDimension || Math.max(knownDimensions?.width || 0, knownDimensions?.height || 0, INLINE_STICKER_DEFAULT_SIZE);
-  return maxDimension > INLINE_EMOJI_MAX_SIZE && maxDimension <= INLINE_STICKER_MAX_SIZE;
+  if (explicitDimension) {
+    return explicitDimension > INLINE_EMOJI_MAX_SIZE && explicitDimension <= INLINE_STICKER_MAX_SIZE;
+  }
+  const knownDimensions = knownForumStickerSourceDimensions(attributes);
+  const maxDimension = Math.max(knownDimensions?.width || 0, knownDimensions?.height || 0, INLINE_STICKER_DEFAULT_SIZE);
+  return maxDimension > INLINE_EMOJI_MAX_SIZE;
 }
 
 function stickerMediaAttributesFromHtml(html: string) {

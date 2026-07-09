@@ -6,6 +6,7 @@ describe('list performance props', () => {
     expect(TOPIC_DETAIL_LIST_PERFORMANCE_PROPS).toMatchObject({
       disableScrollViewPanResponder: true,
       drawDistance: 720,
+      maintainVisibleContentPosition: { disabled: true },
       maxItemsInRecyclePool: 40
     });
   });

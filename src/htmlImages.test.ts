@@ -312,9 +312,8 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p>然而我并不知道发生了什么 也不在意 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" loading="lazy" alt="ac01"> 但是啥瓜有人说下吗</p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('然而我并不知道发生了什么 也不在意');
-    expect(result).toContain('<forum-inline-image class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" loading="lazy" alt="ac01">ac01</forum-inline-image>');
-    expect(result).toContain('但是啥瓜有人说下吗');
+    expect(result).toContain('<forum-inline-media-line>然而我并不知道发生了什么 也不在意 <forum-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" loading="lazy" alt="ac01">ac01</forum-sticker> 但是啥瓜有人说下吗</forum-inline-media-line>');
+    expect(result).not.toContain('<forum-inline-image class="sticker"');
     expect(result).not.toContain('<forum-sticker-row>');
     expect(result).not.toContain('<img class="sticker"');
   });
@@ -333,7 +332,8 @@ describe('Android HTML image preview helpers', () => {
     const html = '<p>公交车便宜 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35"> 出租车直达</p>';
     const result = flowInlineImagesInMixedParagraphs(html);
 
-    expect(result).toContain('公交车便宜 <forum-inline-image class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35">emoji35</forum-inline-image> 出租车直达');
+    expect(result).toContain('<forum-inline-media-line>公交车便宜 <forum-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35">emoji35</forum-sticker> 出租车直达</forum-inline-media-line>');
+    expect(result).not.toContain('<forum-inline-image class="sticker"');
     expect(result).not.toContain('<forum-sticker-row>');
   });
 
@@ -352,7 +352,8 @@ describe('Android HTML image preview helpers', () => {
     const result = flowInlineImagesInMixedParagraphs(html);
 
     expect(result).toContain('rt,刚坠机，我只是带上自己的ip段');
-    expect(result).toContain('ipv6顶一会儿 <forum-inline-image class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35">emoji35</forum-inline-image>');
+    expect(result).toContain('<forum-inline-media-line>ipv6顶一会儿 <forum-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/35.png" alt="emoji35">emoji35</forum-sticker></forum-inline-media-line>');
+    expect(result).not.toContain('<forum-inline-image class="sticker"');
     expect(result).not.toContain('<forum-sticker-row>');
   });
 
