@@ -26,6 +26,7 @@ const INLINE_STICKER_MAX_SIZE = 64;
 const STICKER_ROW_DEFAULT_SIZE = 100;
 const STICKER_ROW_MAX_SIZE = 160;
 const STICKER_ROW_CONTENT_WIDTH_RATIO = 0.55;
+const STICKER_ROW_DISPLAY_MAX_SIZE = 100;
 
 const IMAGE_REQUEST_HEADER_HOSTS = [
   'v2ex.com',
@@ -142,8 +143,8 @@ export function inlineForumImageDisplaySize(attributes: Record<string, string | 
   displayWidth *= safeScale;
   displayHeight *= safeScale;
   if (isStickerRow && Number.isFinite(contentWidth) && contentWidth > 0) {
-    const rowMaxSize = Math.max(64 * safeScale, contentWidth * STICKER_ROW_CONTENT_WIDTH_RATIO);
-    const rowMaxDimension = Math.min(STICKER_ROW_MAX_SIZE * safeScale, rowMaxSize);
+    const rowMaxSize = Math.max(64, contentWidth * STICKER_ROW_CONTENT_WIDTH_RATIO);
+    const rowMaxDimension = Math.min(STICKER_ROW_DISPLAY_MAX_SIZE, rowMaxSize);
     const rowDimension = Math.max(displayWidth, displayHeight);
     if (rowDimension > rowMaxDimension) {
       const ratio = rowMaxDimension / rowDimension;

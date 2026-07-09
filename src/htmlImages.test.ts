@@ -367,6 +367,15 @@ describe('Android HTML image preview helpers', () => {
     expect(result.match(/<forum-sticker-row>/g)).toHaveLength(1);
   });
 
+  it('keeps multi-sticker NodeSeek rows as one natural wrapping row', () => {
+    const html = '<p>借楼同收！ 我+99<br><img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/02.png" alt="ac02"> <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/ac/03.png" alt="ac03"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<p>借楼同收！ 我+99</p>');
+    expect(result.match(/<forum-sticker class="sticker"/g)).toHaveLength(3);
+    expect(result.match(/<forum-sticker-row>/g)).toHaveLength(1);
+  });
+
   it('keeps adjacent sticker videos in one source line', () => {
     const html = '<p>正文<br><forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" alt="emoji00" width="100" height="100"></forum-video-sticker>  <forum-video-sticker class="sticker" src="https://www.nodeseek.com/static/image/sticker/emoji/00.webm" data-fallback-src="https://www.nodeseek.com/static/image/sticker/emoji/00.png" alt="emoji00" width="100" height="100"></forum-video-sticker></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
@@ -428,7 +437,7 @@ describe('Android HTML image preview helpers', () => {
     })).toEqual({ width: 64, height: 53 });
   });
 
-  it('keeps standalone NodeSeek sticker rows near their original sticker size when source omits dimensions', () => {
+  it('uses NodeSeek sticker source dimensions as the fallback row size', () => {
     expect(inlineForumImageDisplaySize({
       class: 'sticker',
       alt: 'ac01',
@@ -458,6 +467,15 @@ describe('Android HTML image preview helpers', () => {
     }, 1, 180)).toEqual({ width: 99, height: 86 });
   });
 
+  it('does not scale sticker rows with the reader font size', () => {
+    expect(inlineForumImageDisplaySize({
+      class: 'sticker',
+      alt: 'ac01',
+      src: 'https://www.nodeseek.com/static/image/sticker/ac/01.png',
+      'data-forum-sticker-row': 'true'
+    }, 1.6, 320)).toEqual({ width: 100, height: 87 });
+  });
+
   it('keeps small standalone sticker row source dimensions instead of enlarging them', () => {
     expect(inlineForumImageDisplaySize({
       class: 'sticker',
@@ -469,7 +487,7 @@ describe('Android HTML image preview helpers', () => {
     })).toEqual({ width: 30, height: 26 });
   });
 
-  it('allows standalone sticker rows to be larger when source dimensions say so', () => {
+  it('uses explicit sticker row dimensions when content width is unknown', () => {
     expect(inlineForumImageDisplaySize({
       class: 'sticker',
       alt: 'ac01',
