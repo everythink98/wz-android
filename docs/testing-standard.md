@@ -56,7 +56,7 @@ node scripts/check-docs.mjs
 
 检查器验证已跟踪 Markdown 与稳定文档中的相对链接、反引号仓库路径；本机专用的 `docs/emulator-baseline.md` 不要求在干净 checkout 中存在。
 
-签名 APK 生成后运行：
+发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
 ```powershell
 npm run smoke:android

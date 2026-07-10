@@ -9,6 +9,7 @@ const androidDir = path.join(rootDir, 'android');
 const releaseApkFileName = 'app-arm64-v8a-release.apk';
 const releaseApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', releaseApkFileName);
 const supportedSmokeApkAbis = new Set(['arm64-v8a', 'x86_64']);
+const developmentKeystorePath = path.join(androidDir, 'app', 'debug.keystore');
 const releaseManifestFileName = 'release-manifest.json';
 const releaseManifestPath = path.join(path.dirname(releaseApkPath), releaseManifestFileName);
 const releaseEnvPath = path.join(rootDir, '.env.release.local');
@@ -20,6 +21,7 @@ const requiredSigningEnv = [
   'WZ_ANDROID_KEY_ALIAS',
   'WZ_ANDROID_KEY_PASSWORD'
 ];
+const requiredSmokeEnv = ['WZ_ANDROID_SMOKE_DEVICE', 'WZ_ANDROID_SMOKE_ABI'];
 const windowsNodeCliCommands = new Map([
   ['npm', 'npm-cli.js'],
   ['npx', 'npx-cli.js']
@@ -117,12 +119,30 @@ function verifyReleaseApkSignature(apkPath) {
     process.exit(1);
   }
   const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', apkPath]);
-  const signerSha256 = /(?:Signer #1 certificate|V2 Signer: certificate) SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
+  const signerSha256 = /(?:Signer #1 certificate|V\d+(?:\.\d+)? Signer: certificate) SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
   if (!signerSha256 || !/^[a-f0-9]{64}$/.test(signerSha256)) {
     console.error('无法从 apksigner 输出读取签名 SHA-256。');
     process.exit(1);
   }
   return signerSha256;
+}
+
+function signDevelopmentSmokeApk(inputPath, outputPath) {
+  const apkSignerJar = findApkSignerJar();
+  if (!apkSignerJar || !existsSync(developmentKeystorePath)) {
+    console.error('未找到 Android debug keystore 或 apksigner，无法生成开发签名 smoke APK。');
+    process.exit(1);
+  }
+  run('java', [
+    '-jar', apkSignerJar,
+    'sign',
+    '--ks', developmentKeystorePath,
+    '--ks-key-alias', 'androiddebugkey',
+    '--ks-pass', 'pass:android',
+    '--key-pass', 'pass:android',
+    '--out', outputPath,
+    inputPath
+  ]);
 }
 
 function cleanSha256(value) {
@@ -215,11 +235,21 @@ function verifyReleaseSigningEnv() {
   }
 }
 
+function verifySmokeEnv() {
+  const missing = requiredSmokeEnv.filter((name) => !process.env[name]);
+  if (missing.length) {
+    console.error(`发布 smoke 缺少环境变量：${missing.join(', ')}`);
+    process.exit(1);
+  }
+}
+
 loadReleaseEnvFile();
+verifyReleaseSigningEnv();
+verifySmokeEnv();
 const smokeApkAbi = requestedSmokeApkAbi(process.env.WZ_ANDROID_SMOKE_ABI);
 const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])];
-const smokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-release.apk`);
-verifyReleaseSigningEnv();
+const builtSmokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-release.apk`);
+const smokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-smoke-dev.apk`);
 
 run('npm', ['test']);
 run('npm', ['run', 'test:docs']);
@@ -253,9 +283,16 @@ run(
 verifyReleaseApk(releaseApkPath);
 const signerSha256 = verifyReleaseApkSignature(releaseApkPath);
 verifyExpectedReleaseSigner(signerSha256);
+verifyReleaseApk(builtSmokeApkPath);
+const builtSmokeSignerSha256 = verifyReleaseApkSignature(builtSmokeApkPath);
+verifyExpectedReleaseSigner(builtSmokeSignerSha256);
+signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath);
 verifyReleaseApk(smokeApkPath);
 const smokeSignerSha256 = verifyReleaseApkSignature(smokeApkPath);
-verifyExpectedReleaseSigner(smokeSignerSha256);
+if (smokeSignerSha256 === expectedReleaseSignerSha256) {
+  console.error('smoke APK 仍是正式签名，拒绝安装到开发模拟器。');
+  process.exit(1);
+}
 run('npm', ['run', 'smoke:android', '--', smokeApkPath]);
 const sha256 = releaseApkSha256();
 writeReleaseManifest({ sha256, signerSha256 });

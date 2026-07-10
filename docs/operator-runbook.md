@@ -19,7 +19,7 @@ npm run release:android
 npm run smoke:android
 ```
 
-`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它要求本机已有 `agent-device >= 0.14.0` 和一个签名兼容、未被其他 session 占用的设备，不会自动安装或升级工具。用 x86_64 AVD 发布时设置 `WZ_ANDROID_SMOKE_DEVICE=<AVD id>` 与 `WZ_ANDROID_SMOKE_ABI=x86_64`；脚本会额外生成同签名的 x86_64 smoke APK，正式上传仍只使用 arm64 APK。
+`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它要求本机已有 `agent-device >= 0.14.0`，并且必须通过 `WZ_ANDROID_SMOKE_DEVICE` 明确指定唯一的登录态设备；脚本不会自动选择其他设备。`npm run release:android` 先生成正式签名的 arm64 APK，再把同一份 x86_64 Release 代码另存为开发签名 smoke APK；正式上传仍只使用 arm64 APK 和 manifest，smoke APK 不上传。
 
 ## 检查重点
 
@@ -30,8 +30,8 @@ npm run smoke:android
 - `android/` 是生成目录，不作为长期配置来源。
 - 发布版本号以 `app.json` 和 `package*.json` 为准；每次发布递增 `expo.android.versionCode`。
 - `npm run release:android` 会先执行测试、严格无用代码检查和版本一致性检查；严格检查已包含 TypeScript 编译检查。
-- 当前 release APK 必须使用正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`。
-- 正式发布不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`。
+- 当前 release APK 必须使用正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`、`WZ_ANDROID_SMOKE_DEVICE` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`。
+- 正式 APK 不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`；开发签名只用于不上传的 smoke APK。
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
 - release 脚本生成 APK 后会校验签名，并打印 APK SHA-256；发布说明只记录 APK SHA-256，不记录签名 SHA-256。
@@ -61,7 +61,7 @@ npm run smoke:android
 ## 发布批次与闸门
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。
-- 发布候选依次通过文档引用检查、完整自动测试、typecheck、unused、版本一致性、正式签名构建和只读设备 smoke。
+- 发布候选依次通过文档引用检查、完整自动测试、typecheck、unused、版本一致性、正式签名构建与 signer 校验，再由同代码的开发签名 x86_64 APK 在唯一登录态设备上完成只读 smoke。
 - `npm run smoke:android` 使用覆盖安装保留 App 数据，检查冷启动、四个底部 Tab、Tab 重选、首页和 More 页；严格完成 `搜索 → 详情 → 作者用户页 → 用户主题嵌套详情 → 原路返回搜索` 与 `收藏 → 详情 → 作者用户页 → 原路返回收藏`，并检查崩溃、ANR 和 RedBox 迹象。搜索无结果、用户页无可打开主题或本机没有预留收藏基线都会使 smoke 失败，不会降级为跳过。
 - 实时来源只断言关键字段存在且结果可打开，不固定结果数量；本批次触及某个来源时，再按 `docs/testing-standard.md` 做该来源的登录态或原站专项验收。
 - smoke 不执行回复、编辑、删除、上传、点赞、投票、收藏切换、清除登录或其他真实写操作。

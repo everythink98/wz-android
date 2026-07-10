@@ -19,9 +19,9 @@ describe('Android release smoke guards', () => {
     expect(isVersionSupported('0.19.0')).toBe(true);
   });
 
-  it('can bind the release smoke to an explicitly selected idle device', () => {
-    expect(deviceSelectionArgs('')).toEqual([]);
-    expect(deviceSelectionArgs('  WZ_Clean_API_35  ')).toEqual(['--device', 'WZ_Clean_API_35']);
+  it('requires one explicitly selected smoke device', () => {
+    expect(() => deviceSelectionArgs('')).toThrow('WZ_ANDROID_SMOKE_DEVICE');
+    expect(deviceSelectionArgs('  WZ_Pixel_API_35  ')).toEqual(['--device', 'WZ_Pixel_API_35']);
   });
 
   it('allows only read-only navigation targets and no destructive device commands', () => {
@@ -49,10 +49,11 @@ describe('Android release smoke guards', () => {
     expect(smokeScript).toContain("['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs()]");
     const bootstrapOpenIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs()]");
     const clearLogsIndex = smokeScript.indexOf("['logs', 'clear', '--restart'");
-    const coldStartIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs(), '--relaunch']");
+    const coldStartIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
     expect(bootstrapOpenIndex).toBeGreaterThan(installIndex);
     expect(clearLogsIndex).toBeGreaterThan(bootstrapOpenIndex);
     expect(coldStartIndex).toBeGreaterThan(clearLogsIndex);
+    expect(smokeScript).not.toContain("...deviceSelectionArgs(), '--relaunch'");
     const coldStartGraceIndex = smokeScript.indexOf("['wait', '60000', '--session', smokeSession, '--platform', 'android']");
     const coldStartReadyIndex = smokeScript.indexOf("waitFor('id=\"feed-topic-first\"', 60_000);");
     expect(coldStartGraceIndex).toBeGreaterThan(coldStartIndex);
@@ -140,7 +141,7 @@ describe('Android release smoke guards', () => {
     expect(manifestIndex).toBeGreaterThan(smokeIndex);
   });
 
-  it('keeps the published arm64 APK while allowing a signed emulator-ABI smoke APK', () => {
+  it('keeps the published arm64 APK separate from a development-signed emulator smoke APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const releaseGradle = readProjectFile('scripts', 'android-release-apk.gradle');
     const loadEnvIndex = releaseScript.indexOf('loadReleaseEnvFile();');
@@ -151,7 +152,11 @@ describe('Android release smoke guards', () => {
     expect(releaseScript).toContain("['arm64-v8a', smokeApkAbi]");
     expect(releaseScript).toContain("`-PreactNativeArchitectures=${releaseApkAbis.join(',')}`");
     expect(releaseScript).toContain("`-PreleaseApkAbis=${releaseApkAbis.join(',')}`");
-    expect(releaseScript).toContain("verifyReleaseApkSignature(smokeApkPath)");
+    expect(releaseScript).toContain('app-${smokeApkAbi}-smoke-dev.apk');
+    expect(releaseScript).toContain("path.join(androidDir, 'app', 'debug.keystore')");
+    expect(releaseScript).toContain("'sign',");
+    expect(releaseScript).toContain('smokeSignerSha256 === expectedReleaseSignerSha256');
+    expect(releaseScript).not.toContain('verifyExpectedReleaseSigner(smokeSignerSha256);');
     expect(releaseScript).toContain("run('npm', ['run', 'smoke:android', '--', smokeApkPath]);");
     expect(releaseGradle).toContain('project.findProperty("releaseApkAbis") ?: "arm64-v8a"');
     expect(releaseGradle).toContain('include(*requestedReleaseAbis)');

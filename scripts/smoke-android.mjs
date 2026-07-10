@@ -8,7 +8,7 @@ const scriptPath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(scriptPath), '..');
 const appConfig = JSON.parse(readFileSync(path.join(rootDir, 'app.json'), 'utf8'));
 const appPackage = appConfig.expo.android.package;
-const defaultApkPath = path.join(rootDir, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-arm64-v8a-release.apk');
+const defaultApkPath = path.join(rootDir, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-x86_64-smoke-dev.apk');
 const smokeSession = 'wz-release-smoke';
 
 export const MIN_AGENT_DEVICE_VERSION = '0.14.0';
@@ -34,7 +34,10 @@ const runtimeFailurePatterns = [
 
 export function deviceSelectionArgs(device = process.env.WZ_ANDROID_SMOKE_DEVICE) {
   const selectedDevice = String(device || '').trim();
-  return selectedDevice ? ['--device', selectedDevice] : [];
+  if (!selectedDevice) {
+    throw new Error('必须设置 WZ_ANDROID_SMOKE_DEVICE，smoke 不会自动选择或启动其他模拟器。');
+  }
+  return ['--device', selectedDevice];
 }
 
 function executableOnPath(fileName) {
@@ -237,10 +240,7 @@ function resolveApkPath(value) {
 }
 
 function bootSelectedDevice() {
-  const selectedDevice = String(process.env.WZ_ANDROID_SMOKE_DEVICE || '').trim();
-  if (!selectedDevice) {
-    return;
-  }
+  const [, selectedDevice] = deviceSelectionArgs();
   runAgentDevice(['boot', '--platform', 'android', '--device', selectedDevice, '--headless']);
 }
 
@@ -264,7 +264,7 @@ async function main() {
     runAgentDevice(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android']);
     logging = true;
     runAgentDevice(['logs', 'mark', 'wz-smoke-start', '--session', smokeSession, '--platform', 'android']);
-    runAgentDevice(['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs(), '--relaunch']);
+    runAgentDevice(['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']);
     runAgentDevice(['wait', '60000', '--session', smokeSession, '--platform', 'android']);
     waitFor('id="feed-topic-first"', 60_000);
     pressReadOnly('id="main-tab-search"');

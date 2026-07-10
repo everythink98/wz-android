@@ -31,7 +31,7 @@ describe('Android release packaging guards', () => {
     expect(versionCheck).not.toContain("readText('memory', 'project.md')");
   });
 
-  it('keeps the published APK arm64-only while allowing an optional signed smoke ABI', () => {
+  it('keeps the published APK arm64-only and development signing limited to the smoke APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
@@ -42,6 +42,10 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('debug.keystore');
     expect(releaseScript).toContain("const releaseApkFileName = 'app-arm64-v8a-release.apk'");
     expect(releaseScript).toContain("const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])]");
+    expect(releaseScript).toContain('app-${smokeApkAbi}-smoke-dev.apk');
+    expect(releaseScript).toContain('signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath);');
+    expect(releaseScript).toContain('smokeSignerSha256 === expectedReleaseSignerSha256');
+    expect(releaseScript).not.toContain('verifyExpectedReleaseSigner(smokeSignerSha256);');
     expect(releaseScript).toContain("`-PreactNativeArchitectures=${releaseApkAbis.join(',')}`");
     expect(releaseScript).toContain("`-PreleaseApkAbis=${releaseApkAbis.join(',')}`");
     expect(releaseScript).not.toContain('armeabi-v7a');
@@ -61,7 +65,7 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('versionCode');
     expect(releaseScript).toContain('signerSha256');
     expect(releaseScript).toContain('Signer #1 certificate');
-    expect(releaseScript).toContain('V2 Signer: certificate');
+    expect(releaseScript).toContain('V\\d+(?:\\.\\d+)? Signer: certificate');
   });
 
   it('pins the expected release signer digest before writing the manifest', () => {
