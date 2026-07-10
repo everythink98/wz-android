@@ -1,5 +1,7 @@
 import type { FeedSource, SourceErrorInfo, SourceErrorKind, SourceErrors } from './types';
 
+type LegacySourceErrorInfo = string | (Omit<SourceErrorInfo, 'kind'> & { kind?: SourceErrorKind });
+
 function unknownErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error || '读取失败');
 }
@@ -18,6 +20,12 @@ function errorStatus(error: unknown) {
 }
 
 function classifiedKind(error: unknown): SourceErrorKind {
+  if (error && typeof error === 'object' && 'kind' in error) {
+    const kind = (error as { kind?: unknown }).kind;
+    if (kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required' || kind === 'permission-denied' || kind === 'ordinary') {
+      return kind;
+    }
+  }
   const reason = errorProperty(error, 'reason');
   if (errorFlag(error, 'verificationRequired') || reason === 'cloudflare' || reason === 'verification') {
     return 'verification-required';
@@ -55,19 +63,34 @@ export function sourceErrorFromUnknown(source: FeedSource, error: unknown): Sour
   };
 }
 
-export function sourceErrorMessage(error?: SourceErrorInfo) {
+export function normalizeSourceErrorInfo(error?: SourceErrorInfo | LegacySourceErrorInfo): SourceErrorInfo | undefined {
   if (!error) {
-    return '';
+    return undefined;
   }
-  return typeof error === 'string' ? error : error.message;
+  if (typeof error === 'string') {
+    return { message: error, kind: 'ordinary' };
+  }
+  return {
+    ...error,
+    kind: classifiedKind(error)
+  };
 }
 
-export function sourceErrorRequiresVerification(error?: SourceErrorInfo) {
-  return typeof error === 'object' && (Boolean(error.verificationRequired) || error.kind === 'verification-required');
+export function sourceErrorMessage(error?: SourceErrorInfo | LegacySourceErrorInfo) {
+  return normalizeSourceErrorInfo(error)?.message || '';
 }
 
-export function sourceErrorKind(error?: SourceErrorInfo): SourceErrorKind {
-  return typeof error === 'object' && error.kind ? error.kind : 'ordinary';
+export function sourceErrorRequiresVerification(error?: SourceErrorInfo | LegacySourceErrorInfo) {
+  return normalizeSourceErrorInfo(error)?.kind === 'verification-required';
+}
+
+export function yaohuoErrorRequiresLoginPanel(error?: SourceErrorInfo | LegacySourceErrorInfo) {
+  const kind = sourceErrorKind(error);
+  return kind === 'login-required' || kind === 'login-expired' || kind === 'verification-required';
+}
+
+export function sourceErrorKind(error?: SourceErrorInfo | LegacySourceErrorInfo): SourceErrorKind {
+  return normalizeSourceErrorInfo(error)?.kind || 'ordinary';
 }
 
 export function formatSourceErrorMessages(

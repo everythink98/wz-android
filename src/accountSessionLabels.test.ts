@@ -5,7 +5,7 @@ import {
   createSiteSessionViewModels,
   nodeSeekLoginStateLabel
 } from './siteSessionState';
-import { authActionMessageForSource, authNoticeForMessage } from './siteSessionPrompts';
+import { authActionMessageForSource } from './siteSessionPrompts';
 
 describe('account session labels', () => {
   it('uses readable account summaries instead of cookie names', () => {
@@ -60,14 +60,9 @@ describe('account session labels', () => {
     expect(saved.linuxdo.cookieSummary).toEqual(['cf_clearance', '_t']);
   });
 
-  it('classifies login limitations as notices and ordinary failures as errors', () => {
+  it('describes interaction limits from structured session state', () => {
     const sessions = createSiteSessionViewModels(createSiteSessionStates());
 
     expect(authActionMessageForSource('linuxdo', sessions)).toBe('匿名可阅读，登录后才能互动。');
-    expect(authNoticeForMessage('linux.do 登录已失效，请重新登录。')).toEqual({
-      message: 'linux.do 登录已失效，请重新登录。',
-      tone: 'danger'
-    });
-    expect(authNoticeForMessage('读取失败，请稍后重试。')).toBeNull();
   });
 });

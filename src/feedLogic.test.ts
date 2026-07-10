@@ -324,7 +324,7 @@ describe('Android feed logic helpers', () => {
       nextCursor: 'cursor-before'
     }, {
       items: [{ ...topic, id: '2', url: 'https://example.com/2' }],
-      errors: { v2ex: '读取失败' },
+      errors: { v2ex: { kind: 'ordinary', message: '读取失败' } },
       hasMore: true,
       nextPage: 3,
       nextCursor: 'cursor-after'

@@ -1,9 +1,11 @@
-import type { FeedSource, Source } from './types';
+import type { FeedSource, Source, SourceErrorInfo } from './types';
 import type { SiteSessionViewModels } from './siteSessionState';
 
 export type AuthPromptSurface = 'search' | 'read' | 'action';
 export type AuthNoticeTone = 'neutral' | 'warning' | 'danger';
+export type AuthNoticeKind = 'anonymous' | 'logged-in' | 'verified' | 'login-required' | 'login-expired' | 'verification-required';
 export type AuthNotice = {
+  kind: AuthNoticeKind;
   message: string;
   tone: AuthNoticeTone;
 };
@@ -20,8 +22,8 @@ const searchSessionSources: Array<{ source: Source; label: string }> = [
   { source: 'yaohuo', label: '妖火' }
 ];
 
-function notice(message: string, tone: AuthNoticeTone): AuthNotice {
-  return { message, tone };
+function notice(kind: AuthNoticeKind, message: string, tone: AuthNoticeTone): AuthNotice {
+  return { kind, message, tone };
 }
 
 export function authNoticeForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface): AuthNotice | null {
@@ -31,44 +33,44 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
   const session = sessions[source];
   if (source === 'nodeseek') {
     if (session.status === 'logged-in') {
-      return notice(surface === 'search' ? '已登录搜索。' : 'NodeSeek 已登录。', 'neutral');
+      return notice('logged-in', surface === 'search' ? '已登录搜索。' : 'NodeSeek 已登录。', 'neutral');
     }
     if (session.status === 'verified') {
-      return notice('已通过访问验证，登录后可使用完整能力。', 'neutral');
+      return notice('verified', '已通过访问验证，登录后可使用完整能力。', 'neutral');
     }
     if (session.status === 'verification-required' || session.status === 'verifying') {
-      return notice('需要完成 NodeSeek 验证后继续。', 'warning');
+      return notice('verification-required', '需要完成 NodeSeek 验证后继续。', 'warning');
     }
     if (session.status === 'expired') {
-      return notice('NodeSeek 登录已失效，请重新登录。', 'danger');
+      return notice('login-expired', 'NodeSeek 登录已失效，请重新登录。', 'danger');
     }
-    return notice(surface === 'search' ? '未登录搜索，结果可能不完整。' : '请先在“更多”里登录并检测 NodeSeek Cookie。', 'warning');
+    return notice('login-required', surface === 'search' ? '未登录搜索，结果可能不完整。' : '请先在“更多”里登录并检测 NodeSeek Cookie。', 'warning');
   }
   if (source === 'yaohuo') {
     if (session.status === 'logged-in') {
-      return notice('妖火已登录。', 'neutral');
+      return notice('logged-in', '妖火已登录。', 'neutral');
     }
     if (session.status === 'expired') {
-      return notice('妖火登录已失效，请重新登录。', 'danger');
+      return notice('login-expired', '妖火登录已失效，请重新登录。', 'danger');
     }
     if (session.status === 'verification-required' || session.status === 'verifying') {
-      return notice('妖火需要完成访问验证。', 'warning');
+      return notice('verification-required', '妖火需要完成访问验证。', 'warning');
     }
-    return notice('妖火需要登录后使用此功能。', 'warning');
+    return notice('login-required', '妖火需要登录后使用此功能。', 'warning');
   }
   if (session.status === 'logged-in') {
-    return notice('linux.do 已登录。', 'neutral');
+    return notice('logged-in', 'linux.do 已登录。', 'neutral');
   }
   if (session.status === 'verified') {
-    return notice(surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可互动。', 'neutral');
+    return notice('verified', surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '已通过访问验证，登录后可互动。', 'neutral');
   }
   if (session.status === 'verification-required' || session.status === 'verifying') {
-    return notice('linux.do 需要完成验证后继续。', 'warning');
+    return notice('verification-required', 'linux.do 需要完成验证后继续。', 'warning');
   }
   if (session.status === 'expired') {
-    return notice('linux.do 登录已失效，请重新登录。', 'danger');
+    return notice('login-expired', 'linux.do 登录已失效，请重新登录。', 'danger');
   }
-  return notice(surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '匿名可阅读，登录后才能互动。', 'neutral');
+  return notice('anonymous', surface === 'search' ? '未登录搜索使用 Google，结果可能不完整。' : '匿名可阅读，登录后才能互动。', 'neutral');
 }
 
 export function authHintForSource(source: FeedSource, sessions: SiteSessionViewModels, surface: AuthPromptSurface) {
@@ -86,33 +88,24 @@ export function searchSessionNoticeItems(source: FeedSource, sessions: SiteSessi
 }
 
 export function searchSessionNoticeLightTone(notice: AuthNotice): SearchSessionNoticeLightTone {
-  if (notice.message.includes('已登录')) {
+  if (notice.kind === 'logged-in') {
     return 'success';
   }
-  if (notice.message.includes('登录已失效') || notice.message.includes('需要登录')) {
+  if (notice.kind === 'login-expired' || notice.kind === 'login-required') {
     return 'danger';
   }
   return notice.tone;
 }
 
-export function authNoticeForMessage(message: string): AuthNotice | null {
-  if (!message) {
-    return null;
+export function authNoticeForSourceError(error: SourceErrorInfo): AuthNotice | null {
+  if (error.kind === 'login-expired') {
+    return notice('login-expired', error.message, 'danger');
   }
-  if (message.includes('登录已失效') || message.includes('已失效')) {
-    return notice(message, 'danger');
+  if (error.kind === 'login-required') {
+    return notice('login-required', error.message, 'warning');
   }
-  if (
-    message.includes('需要登录')
-    || message.includes('未登录')
-    || message.includes('需要完成')
-    || message.includes('需要验证')
-    || message.includes('Cloudflare 验证')
-  ) {
-    return notice(message, 'warning');
-  }
-  if (message.includes('匿名可阅读') || message.includes('已登录') || message.includes('已通过访问验证')) {
-    return notice(message, 'neutral');
+  if (error.kind === 'verification-required') {
+    return notice('verification-required', error.message, 'warning');
   }
   return null;
 }

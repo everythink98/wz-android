@@ -214,10 +214,11 @@ export const FeedScreen = memo(function FeedScreen({
     scrollFeedToTop();
   }, [scrollFeedToTop]);
 
-  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ item: topic }) => (
+  const renderTopicItem = useCallback<ListRenderItem<Topic>>(({ index, item: topic }) => (
     <MemoizedTopicCard
       readerState={getTopicListItemStateFromIndex(topicStateIndex, topic)}
       styles={styles}
+      testID={index === 0 ? 'feed-topic-first' : undefined}
       theme={theme}
       topic={topic}
       onOpenTopic={onOpenTopic}

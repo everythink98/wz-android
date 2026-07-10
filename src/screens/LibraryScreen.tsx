@@ -98,6 +98,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   libraryTab,
   categories,
   followedUsers,
+  loaded,
   records,
   scrollToTopSignal,
   topicStateIndex,
@@ -113,6 +114,7 @@ export const LibraryScreen = memo(function LibraryScreen({
   libraryTab: LibraryTab;
   categories: Parameters<typeof libraryCategoryFilterItems>[0];
   followedUsers: FollowedUserRecord[];
+  loaded: boolean;
   records: TopicRecord[];
   scrollToTopSignal: number;
   topicStateIndex: TopicListItemStateIndex;
@@ -185,6 +187,7 @@ export const LibraryScreen = memo(function LibraryScreen({
     return (
       <View style={styles.libraryItem}>
         <MemoizedTopicCard
+          testID={libraryTab === 'favorites' && record === filteredRecords[0] ? 'library-favorite-first' : undefined}
           readerState={libraryTab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
           styles={styles}
           theme={theme}
@@ -194,7 +197,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         />
       </View>
     );
-  }, [libraryTab, onOpenTopic, renderTopicTrailingAction, styles, theme, topicStateIndex]);
+  }, [filteredRecords, libraryTab, onOpenTopic, renderTopicTrailingAction, styles, theme, topicStateIndex]);
   const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
     <View style={styles.libraryUserRow}>
       <Pressable accessibilityRole="button" style={[styles.menuButton, styles.libraryUserButton]} onPress={() => onOpenUser(item.user)}>
@@ -257,6 +260,7 @@ export const LibraryScreen = memo(function LibraryScreen({
     filteredRecords,
     followedUsers,
     libraryTab,
+    loaded,
     records,
     sourceFilter,
     styles,
@@ -265,6 +269,10 @@ export const LibraryScreen = memo(function LibraryScreen({
 
   return (
     <FlashList
+      testID={loaded && libraryTab === 'favorites' ? 'library-favorites-ready' : undefined}
+      accessibilityLabel={loaded && libraryTab === 'favorites'
+        ? filteredRecords.length ? '收藏列表，已加载，有收藏' : '收藏列表，已加载，没有收藏'
+        : '收藏列表'}
       key={libraryTab}
       ref={listRef}
       style={styles.content}
@@ -274,7 +282,11 @@ export const LibraryScreen = memo(function LibraryScreen({
       getItemType={(item) => libraryDataItemType(item as LibraryDataItem, libraryTab)}
       {...TOPIC_LIST_PERFORMANCE_PROPS}
       ListHeaderComponent={header}
-      ListEmptyComponent={<EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />}
+      ListEmptyComponent={(
+        <View testID={loaded && libraryTab === 'favorites' && !filteredRecords.length ? 'library-favorites-empty' : undefined}>
+          <EmptyText text={libraryTab === 'users' ? '这里还没有关注用户' : '这里还没有内容'} styles={styles} />
+        </View>
+      )}
       renderItem={libraryTab === 'users' ? renderUserItem as ListRenderItem<FollowedUserRecord | LibraryListItem> : renderLibraryItem as ListRenderItem<FollowedUserRecord | LibraryListItem>}
     />
   );

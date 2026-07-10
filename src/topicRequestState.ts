@@ -3,14 +3,14 @@ import { isCurrentOwnedRequest, type RequestOwner } from './requestOwnership';
 type Ref<T> = { current: T };
 
 export function isCurrentTopicLoadRequest({
-  currentTopicKeyRef,
+  getCurrentTopicKey,
   ownerRef,
   requestId,
   requestIdRef,
   requestOwner,
   requestTopicKey
 }: {
-  currentTopicKeyRef: Ref<string | null>;
+  getCurrentTopicKey: () => string | null;
   ownerRef: Ref<RequestOwner>;
   requestId: number;
   requestIdRef: Ref<number>;
@@ -19,7 +19,7 @@ export function isCurrentTopicLoadRequest({
 }) {
   return isCurrentOwnedRequest(requestOwner, ownerRef)
     && requestId === requestIdRef.current
-    && currentTopicKeyRef.current === requestTopicKey;
+    && getCurrentTopicKey() === requestTopicKey;
 }
 
 export const isCurrentTopicRepliesRequest = isCurrentTopicLoadRequest;

@@ -617,7 +617,7 @@ describe('session controller helpers', () => {
 
   it('starts account refresh silently without using stale NodeSeek page state', () => {
     const appRootSource = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
-    const refreshSource = readFileSync(path.join(process.cwd(), 'src/app/useBackupStatusController.ts'), 'utf8');
+    const refreshSource = readFileSync(path.join(process.cwd(), 'src/app/useAccountStatusController.ts'), 'utf8');
 
     expect(appRootSource).toContain('refreshAccountStatus({ silent: true })');
     expect(appRootSource).not.toContain('nodeSeekUserId: webLoginUserId');

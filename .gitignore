@@ -5,7 +5,14 @@ node_modules/
 android/
 AGENTS.md
 memory/
-docs/
+# 稳定、脱敏文档进入版本控制；模拟器基线等运行态资料继续只留本机。
+docs/*
+!docs/product-charter.md
+!docs/architecture.md
+!docs/testing-standard.md
+!docs/operator-runbook.md
+!docs/handoff.md
+!docs/code-cleanup-map.md
 .idea/
 tmp/*
 代码审查报告-*.md

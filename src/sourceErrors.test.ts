@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, sourceErrorKind } from './sourceErrors';
+import { linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, normalizeSourceErrorInfo, sourceErrorFromUnknown, sourceErrorKind, yaohuoErrorRequiresLoginPanel } from './sourceErrors';
 
 describe('source error navigation helpers', () => {
   it('does not auto-open verification for aggregated feed errors', () => {
     const errors = {
       nodeseek: {
+        kind: 'verification-required' as const,
         message: 'NodeSeek 需要验证',
         reason: 'cloudflare',
         verificationRequired: true
@@ -18,6 +19,7 @@ describe('source error navigation helpers', () => {
   it('auto-opens linux.do verification only for the single-source feed', () => {
     const errors = {
       linuxdo: {
+        kind: 'verification-required' as const,
         message: 'linux.do 需要验证',
         reason: 'cloudflare',
         verificationRequired: true
@@ -62,5 +64,31 @@ describe('source error navigation helpers', () => {
       kind: 'permission-denied'
     });
     expect(sourceErrorKind(sourceErrorFromUnknown('v2ex', new Error('network')))).toBe('ordinary');
+  });
+
+  it('opens the Yaohuo login panel for verification without treating it as expired', () => {
+    const verification = sourceErrorFromUnknown('yaohuo', Object.assign(new Error('妖火需要完成访问验证'), {
+      loginRequired: true,
+      reason: 'verification'
+    }));
+
+    expect(verification.kind).toBe('verification-required');
+    expect(yaohuoErrorRequiresLoginPanel(verification)).toBe(true);
+    expect(yaohuoErrorRequiresLoginPanel({ kind: 'ordinary', message: '网络失败' })).toBe(false);
+  });
+
+  it('normalizes legacy source errors to the structured kind and message contract', () => {
+    expect(normalizeSourceErrorInfo('旧版读取失败')).toEqual({
+      kind: 'ordinary',
+      message: '旧版读取失败'
+    });
+    expect(normalizeSourceErrorInfo({
+      message: '需要验证',
+      reason: 'cloudflare',
+      verificationRequired: true
+    })).toMatchObject({
+      kind: 'verification-required',
+      message: '需要验证'
+    });
   });
 });

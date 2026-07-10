@@ -35,20 +35,13 @@ import { runLinuxDoAction } from '../linuxdoActionClient';
 import { runNodeSeekAction } from '../nodeseekActionClient';
 import { runYaohuoAction } from '../yaohuoActionClient';
 import {
-  applyBookmarkToTopic,
-  applyInteractionToReplies,
-  applyInteractionToTopic,
-  applyNodeSeekCollectionToTopic,
-  applyPollVoteToReplies,
-  applyPollVoteToTopic,
   linuxDoBookmarkIdFromActionResult,
   topicActionStateKey,
   type InteractionType,
   type OptimisticActionState
 } from '../topicActionState';
-import type { Reply, Topic, TopicDetail, TopicPoll } from '../types';
+import type { Reply, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
-import { isSameReply, removeReply } from '../feedLogic';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
 import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
 import {
@@ -81,7 +74,6 @@ import {
 import { errorMessage, isCanceledRequest } from '../appUtils';
 import { canUseLinuxDoLike } from '../linuxdoPermissions';
 import {
-  appendReplyImageMarkup,
   normalizeReplyImageAsset,
   replyImageMarkupForSource,
   replyImageUploadSupported,
@@ -91,8 +83,8 @@ import {
 } from '../replyImageUpload';
 import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
-import type { ReplyEditTarget, ReplyTarget } from '../appTypes';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
+import type { TopicSessionController } from './useTopicSessionController';
 import {
   beginOptimisticTopicAction,
   clearExpiredLinuxDoLogin,
@@ -101,7 +93,6 @@ import {
   runOptimisticActionQueue as runOptimisticActionQueueHelper
 } from './topicActionHelpers';
 import {
-  applyEditedReplyContent,
   canSubmitReplyToTopic,
   canVotePollOnTopic,
   currentTopicActionTopic,
@@ -179,27 +170,14 @@ export function useTopicActionsController({
   notify,
   optimisticTopicActionsRef,
   refreshTopicReplies,
-  replyContent,
-  replyFace,
-  replyEditTarget,
-  replyTarget,
   resetLinuxDoLevelState,
-  selectedTopic,
   setActionBusy,
   setOptimisticTopicActions,
-  setReplyComposerOpen,
-  setReplyContent,
-  setReplyFace,
-  setReplyEditTarget,
-  setReplyTarget,
-  setTopicDetail,
-  setTopicReplies,
   showLinuxDoLogin,
   showYaohuoLogin,
   siteSessionStates,
   topicActionRequestOwnerRef,
-  topicDetail,
-  topicReplies,
+  topicSession,
   updateLinuxDoSession
 }: {
   actionAbortRef: Ref<{ abort: () => void; abortAll: () => void } | null>;
@@ -214,29 +192,26 @@ export function useTopicActionsController({
   notify: (message: string) => void;
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
   refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
-  replyContent: string;
-  replyFace: string;
-  replyEditTarget: ReplyEditTarget | null;
-  replyTarget: ReplyTarget | null;
   resetLinuxDoLevelState: () => void;
-  selectedTopic: Topic | null;
   setActionBusy: Dispatch<SetStateAction<boolean>>;
   setOptimisticTopicActions: Dispatch<SetStateAction<Record<string, OptimisticActionState>>>;
-  setReplyComposerOpen: Dispatch<SetStateAction<boolean>>;
-  setReplyContent: Dispatch<SetStateAction<string>>;
-  setReplyFace: Dispatch<SetStateAction<string>>;
-  setReplyEditTarget: Dispatch<SetStateAction<ReplyEditTarget | null>>;
-  setReplyTarget: Dispatch<SetStateAction<ReplyTarget | null>>;
-  setTopicDetail: Dispatch<SetStateAction<TopicDetail | null>>;
-  setTopicReplies: Dispatch<SetStateAction<Reply[]>>;
   showLinuxDoLogin: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   siteSessionStates: SiteSessionStates;
   topicActionRequestOwnerRef: Ref<RequestOwner>;
-  topicDetail: TopicDetail | null;
-  topicReplies: Reply[];
+  topicSession: TopicSessionController;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
 }) {
+  const {
+    state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic, topicDetail, topicReplies },
+    commands: {
+      actions: topicActions,
+      composer: topicComposer
+    }
+  } = topicSession;
+  const appendReplyMarkup = topicComposer.appendMarkup;
+  const applyTopicActionUpdate = topicActions.applyUpdate;
+  const completeReplySubmission = topicComposer.completeSubmission;
   const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);
   const canUseYaohuoActions = isSiteLoggedIn(siteSessionStates.yaohuo);
   const canUseLinuxDoActions = isSiteLoggedIn(siteSessionStates.linuxdo);
@@ -610,12 +585,7 @@ export function useTopicActionsController({
             commentId: replyEditTarget.commentId,
             contentMarkdown: replyContent
           };
-          setTopicReplies((current) => applyEditedReplyContent(current, editedReplyContent, detail.source));
-          setReplyContent('');
-          setReplyFace('');
-          setReplyComposerOpen(false);
-          setReplyTarget(null);
-          setReplyEditTarget(null);
+          completeReplySubmission({ editedReplyContent, source: detail.source });
           await refreshTopicReplies({
             silent: true,
             afterSubmit: true,
@@ -652,11 +622,7 @@ export function useTopicActionsController({
           if (!isCurrentTopicActionRequest(requestOwner)) {
             return;
           }
-          setReplyContent('');
-          setReplyFace('');
-          setReplyComposerOpen(false);
-          setReplyTarget(null);
-          setReplyEditTarget(null);
+          completeReplySubmission();
           await refreshTopicReplies({ silent: true, afterSubmit: true });
         }
         return;
@@ -675,11 +641,7 @@ export function useTopicActionsController({
           if (!isCurrentTopicActionRequest(requestOwner)) {
             return;
           }
-          setReplyContent('');
-          setReplyFace('');
-          setReplyComposerOpen(false);
-          setReplyTarget(null);
-          setReplyEditTarget(null);
+          completeReplySubmission();
           await refreshTopicReplies({ silent: true, afterSubmit: true });
         }
         return;
@@ -693,15 +655,11 @@ export function useTopicActionsController({
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return;
         }
-        setReplyContent('');
-        setReplyFace('');
-        setReplyComposerOpen(false);
-        setReplyTarget(null);
-        setReplyEditTarget(null);
+        completeReplySubmission();
         await refreshTopicReplies({ silent: true, afterSubmit: true });
       }
     });
-  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyEditTarget, replyFace, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyFace, setReplyTarget, startTopicActionRequest, topicDetail]);
+  }, [completeReplySubmission, isCurrentTopicActionRequest, notify, refreshTopicReplies, replyContent, replyEditTarget, replyFace, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const deleteReplyConfirmed = useCallback(async (reply: Reply) => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -747,16 +705,10 @@ export function useTopicActionsController({
       if (!deleted || !isCurrentTopicActionRequest(requestOwner)) {
         return;
       }
-      if ((replyEditTarget && isSameReply(reply, replyEditTarget)) || (replyTarget && isSameReply(reply, replyTarget))) {
-        setReplyComposerOpen(false);
-        setReplyContent('');
-        setReplyTarget(null);
-        setReplyEditTarget(null);
-      }
-      setTopicReplies((current) => removeReply(current, reply));
+      applyTopicActionUpdate({ type: 'reply-deleted', reply });
       await refreshTopicReplies({ silent: true, afterSubmit: true, targetReply: reply, excludeReply: reply });
     });
-  }, [isCurrentTopicActionRequest, notify, refreshTopicReplies, replyEditTarget, replyTarget, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setReplyComposerOpen, setReplyContent, setReplyEditTarget, setReplyTarget, setTopicReplies, startTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, refreshTopicReplies, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const deleteReply = useCallback((reply: Reply) => {
     if (!reply.canDelete) {
@@ -862,7 +814,7 @@ export function useTopicActionsController({
           return;
         }
         const markup = replyImageMarkupForSource(detail.source, imageUrl, file.name);
-        setReplyContent((current) => appendReplyImageMarkup(current, markup));
+        appendReplyMarkup(markup);
         notify('图片已插入');
       } catch (error) {
         if (!isCanceledRequest(error) && isCurrentTopicActionRequest(requestOwner)) {
@@ -870,7 +822,7 @@ export function useTopicActionsController({
         }
       }
     });
-  }, [ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, setReplyContent, startActionRun, startTopicActionRequest, topicDetail]);
+  }, [appendReplyMarkup, ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const actionKey = nodeSeekAttendanceActionKey();
@@ -911,8 +863,7 @@ export function useTopicActionsController({
         currentActive: Boolean(target?.liked),
         applyDisplayed: (desiredActive) => {
           const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const, reactionId: 'heart' };
-          setTopicDetail((current) => applyInteractionToTopic(current, patch));
-          setTopicReplies((current) => applyInteractionToReplies(current, patch));
+          applyTopicActionUpdate({ type: 'interaction', patch });
         },
         sendDesired: async (desiredActive) => Boolean(await runLinuxDoActionForOptimisticUpdate(
           () => buildLinuxDoLikeRequest({ postId: commentId, liked: !desiredActive }),
@@ -948,8 +899,7 @@ export function useTopicActionsController({
       currentActive: Boolean(target?.[activeField]),
       applyDisplayed: (desiredActive) => {
         const patch = { commentId, type, mode: desiredActive ? 'add' as const : 'remove' as const };
-        setTopicDetail((current) => applyInteractionToTopic(current, patch));
-        setTopicReplies((current) => applyInteractionToReplies(current, patch));
+        applyTopicActionUpdate({ type: 'interaction', patch });
       },
       sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
         () => buildNodeSeekInteractionRequest({ type, commentId, active: !desiredActive }),
@@ -959,7 +909,7 @@ export function useTopicActionsController({
         ? type === 'upvote' ? '点赞已提交' : type === 'like' ? '加鸡腿请求已提交' : '反对已提交'
         : type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对'
     });
-  }, [notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, setTopicReplies, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail, topicReplies]);
+  }, [applyTopicActionUpdate, notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail, topicReplies]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -992,7 +942,7 @@ export function useTopicActionsController({
       requestOwner,
       currentActive: collected,
       applyDisplayed: (desiredActive) => {
-        setTopicDetail((current) => applyNodeSeekCollectionToTopic(current, { collected: desiredActive }));
+        applyTopicActionUpdate({ type: 'collection', collected: desiredActive });
       },
       sendDesired: (desiredActive) => runNodeSeekActionForOptimisticUpdate(
         () => buildNodeSeekCollectionRequest({
@@ -1003,7 +953,7 @@ export function useTopicActionsController({
       ),
       successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
     });
-  }, [runNodeSeekActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
 
   const bookmarkOnLinuxDoSite = useCallback(async () => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -1020,10 +970,11 @@ export function useTopicActionsController({
       requestOwner,
       currentActive: bookmarked,
       applyDisplayed: (desiredActive) => {
-        setTopicDetail((current) => applyBookmarkToTopic(current, {
+        applyTopicActionUpdate({
+          type: 'bookmark',
           bookmarked: desiredActive,
           bookmarkId: desiredActive ? bookmarkId : undefined
-        }));
+        });
       },
       sendDesired: async (desiredActive) => {
         const result = await runLinuxDoActionForOptimisticUpdate(
@@ -1041,7 +992,7 @@ export function useTopicActionsController({
         if (!desiredActive) {
           bookmarkId = undefined;
           if (isCurrentTopicActionRequest(requestOwner) && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
-            setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true }));
+            applyTopicActionUpdate({ type: 'bookmark', bookmarked: true });
           }
         }
         if (desiredActive) {
@@ -1049,7 +1000,7 @@ export function useTopicActionsController({
           if (resultBookmarkId) {
             bookmarkId = resultBookmarkId;
             if (isCurrentTopicActionRequest(requestOwner) && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
-              setTopicDetail((current) => applyBookmarkToTopic(current, { bookmarked: true, bookmarkId }));
+              applyTopicActionUpdate({ type: 'bookmark', bookmarked: true, bookmarkId });
             }
           }
         }
@@ -1057,7 +1008,7 @@ export function useTopicActionsController({
       },
       successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏'
     });
-  }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runLinuxDoActionForOptimisticUpdate, selectedTopic, setTopicDetail, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, optimisticTopicActionsRef, runLinuxDoActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
 
   const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -1108,21 +1059,18 @@ export function useTopicActionsController({
         if (!isCurrentTopicActionRequest(requestOwner)) {
           return;
         }
-        setTopicDetail((current) => applyPollVoteToTopic(current, {
+        applyTopicActionUpdate({
+          type: 'poll-vote',
+          patch: {
           pollId: poll.id,
           pollName: poll.name,
           pollPostId: poll.postId,
           optionIds
-        }));
-        setTopicReplies((current) => applyPollVoteToReplies(current, {
-          pollId: poll.id,
-          pollName: poll.name,
-          pollPostId: poll.postId,
-          optionIds
-        }));
+          }
+        });
       }
     });
-  }, [isCurrentTopicActionRequest, notify, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, setTopicDetail, setTopicReplies, startTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   return {
     bookmarkOnLinuxDoSite,

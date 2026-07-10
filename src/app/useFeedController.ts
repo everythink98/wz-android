@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCategories, getFeed, getYaohuoFeed } from '../sources/sourceGateway';
+import type { SourceGateway } from '../sources/sourceGateway';
 import { defaultFeedFilters, shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
   applyFeedFilter,
@@ -16,18 +16,12 @@ import {
   errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
-  isLinuxDoCloudflareError,
-  isNodeSeekCloudflareError,
-  isYaohuoLoginExpiredError,
-  isYaohuoLoginRequiredError,
   sourceLabel,
   startAbortableRequest
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
-import type { Fetcher } from '../request';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
-import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown } from '../sourceErrors';
-import type { Category, FeedFilterState, FeedSource, FeedResponse, LinuxDoFeedFilter, Source, SourceFeedFilter, SourceErrors, Topic } from '../types';
+import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
+import type { Category, FeedFilterState, FeedSource, FeedResponse, LinuxDoFeedFilter, SourceFeedFilter, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
   baseFeedRetryPending?: boolean;
@@ -94,29 +88,21 @@ export function mergedFeedResponseAfterSplitFetch(responses: FeedResponse[], err
 }
 
 export function useFeedController({
-  clearYaohuoLoginState,
-  fetcher,
-  loadNodeSeekCookieForSource,
-  loadYaohuoCookieForSource,
-  nodeSeekUserAgentRef,
   notify,
   readerData,
   readerDataLoaded,
   showLinuxDoVerification,
   showNodeSeekVerification,
-  showYaohuoLogin
+  showYaohuoLogin,
+  sourceGateway
 }: {
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
-  fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   readerData: ReaderData;
   readerDataLoaded: boolean;
   showLinuxDoVerification: (message?: string) => void;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
+  sourceGateway: SourceGateway;
 }) {
   const feedRequestIdRef = useRef(0);
   const feedRequestOwnerRef = useRef(createRequestOwner('feed'));
@@ -148,15 +134,11 @@ export function useFeedController({
     const requestId = ++categoriesRequestIdRef.current;
     const controller = startAbortableRequest(categoriesAbortRef);
     try {
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(source);
-      const data = await getCategories({
+      const data = await sourceGateway.getCategories({
         source,
         nocache: true,
-        fetcher,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekUserAgentRef.current,
         signal: controller.signal
-      });
+      }, { isCurrent: () => requestId === categoriesRequestIdRef.current && !controller.signal.aborted });
       if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {
         return;
       }
@@ -180,7 +162,7 @@ export function useFeedController({
     } finally {
       finishAbortableRequest(categoriesAbortRef, controller);
     }
-  }, [fetcher, loadNodeSeekCookieForSource, nodeSeekUserAgentRef, notify, showNodeSeekVerification]);
+  }, [notify, showNodeSeekVerification, sourceGateway]);
 
   const markFeedLoadMoreFailed = useCallback((source: FeedSource) => {
     setFeedStates((current) => ({
@@ -227,7 +209,6 @@ export function useFeedController({
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
     feedSourceRequestIdRef.current[requestSource] = requestId;
     const isLoadMore = !reset && page > 1;
-    let yaohuoGeneration: number | undefined;
     if (!isLoadMore && reset && clearItems) {
       setFeedStates((current) => ({
         ...current,
@@ -281,62 +262,42 @@ export function useFeedController({
           };
         });
       };
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
-        loadNodeSeekCookieForSource(source)
-      ]);
+      const hasYaohuoCredential = source === 'all' ? await sourceGateway.hasYaohuoCredential() : false;
       if (!isCurrentFeedRequest()) {
         return;
       }
-      if (source === 'yaohuo' && !yaohuoCookie) {
-        const message = '请先登录妖火。';
-        if (isLoadMore) {
-          markFeedLoadMoreFailed(requestSource);
-        }
-        showYaohuoLogin(isLoadMore ? `加载下一页失败：${message}` : message);
-        return;
-      }
       let finalErrors: SourceErrors = {};
-      if (source === 'all' && yaohuoCookie) {
+      if (source === 'all' && hasYaohuoCredential) {
         const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({
           page,
           cursor,
-          hasYaohuoCookie: true,
+          hasYaohuoCookie: hasYaohuoCredential,
           retryWithoutCursor: Boolean(requestBaseState.baseFeedRetryPending)
         });
         const basePromise = shouldFetchBaseFeed
-          ? getFeed({
+          ? sourceGateway.getFeed({
             source,
             page,
             cursor,
             limit: 30,
           category: category || undefined,
           feedFilter: requestFeedFilter,
-          nocache,
-            fetcher,
-            nodeSeekCookie,
-            nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+            nocache,
             signal: controller.signal
-          })
+          }, { isCurrent: isCurrentFeedRequest })
           : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-        const yaohuoPromise = getYaohuoFeed({
-          yaohuoCookie,
+        const yaohuoPromise = sourceGateway.getFeed({
+          source: 'yaohuo',
           page,
           limit: 30,
-          yaohuoFetcher: fetcher,
           signal: controller.signal
-        });
+        }, { isCurrent: isCurrentFeedRequest });
         const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
         if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
           throw baseResult.reason;
         }
         if (yaohuoResult.status === 'rejected' && isCanceledRequest(yaohuoResult.reason)) {
           throw yaohuoResult.reason;
-        }
-        if (yaohuoResult.status === 'rejected' && isYaohuoLoginRequiredError(yaohuoResult.reason)) {
-          if (isYaohuoLoginExpiredError(yaohuoResult.reason)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
-          }
         }
         if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
           throw baseResult.reason;
@@ -363,21 +324,20 @@ export function useFeedController({
           applyFeedResponse(splitResponse);
         }
       } else if (source === 'yaohuo') {
-        const data = await getYaohuoFeed({
-          yaohuoCookie,
+        const data = await sourceGateway.getFeed({
+          source: 'yaohuo',
           page,
           limit: 30,
           category: category || undefined,
-          yaohuoFetcher: fetcher,
           signal: controller.signal
-        });
+        }, { isCurrent: isCurrentFeedRequest });
         if (!isCurrentFeedRequest()) {
           return;
         }
         applyFeedResponse(data);
         finalErrors = data.errors || {};
       } else {
-        const data = await getFeed({
+        const data = await sourceGateway.getFeed({
           source,
           page,
           cursor,
@@ -386,11 +346,8 @@ export function useFeedController({
           feedFilter: requestFeedFilter,
           linuxDoFilter: requestSource === 'linuxdo' ? requestFeedFilter as LinuxDoFeedFilter | undefined : undefined,
           nocache,
-          fetcher,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
           signal: controller.signal
-        });
+        }, { isCurrent: isCurrentFeedRequest });
         if (!isCurrentFeedRequest()) {
           return;
         }
@@ -429,32 +386,29 @@ export function useFeedController({
         notify(successMessage);
       }
     } catch (error) {
-      if (isCurrentFeedRequest()) {
-        const message = errorMessage(error);
-        const notice = isLoadMore ? `加载下一页失败：${message}` : message;
-        if (isLoadMore && !isCanceledRequest(error)) {
+      if (isCurrentFeedRequest() && !isCanceledRequest(error)) {
+        const sourceError = sourceErrorFromUnknown(requestSource, error);
+        const notice = isLoadMore ? `加载下一页失败：${sourceError.message}` : sourceError.message;
+        if (isLoadMore) {
           markFeedLoadMoreFailed(requestSource);
         }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
+        if (requestSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
             showYaohuoLogin(notice);
           }
           return;
         }
-        if (isNodeSeekCloudflareError(error)) {
+        if (requestSource === 'nodeseek' && sourceError.kind === 'verification-required') {
           showNodeSeekVerification(notice);
           return;
         }
-        if (isLinuxDoCloudflareError(error)) {
+        if (requestSource === 'linuxdo' && sourceError.kind === 'verification-required') {
           showLinuxDoVerification(notice);
           return;
         }
-        if (!isCanceledRequest(error)) {
-          notify(notice);
-        }
+        notify(notice);
       }
     } finally {
       const isLatestForFeedSource = feedSourceRequestIdRef.current[requestSource] === requestId;
@@ -476,18 +430,14 @@ export function useFeedController({
     }
   }, [
     categoryFilter,
-    clearYaohuoLoginState,
     feedFilters,
     feedSource,
-    fetcher,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
     markFeedLoadMoreFailed,
-    nodeSeekUserAgentRef,
     notify,
     showLinuxDoVerification,
     showNodeSeekVerification,
-    showYaohuoLogin
+    showYaohuoLogin,
+    sourceGateway
   ]);
 
   const loadFeedRef = useRef(loadFeed);

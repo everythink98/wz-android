@@ -25,6 +25,26 @@ export type TopicSession = {
   scrollY: number;
 };
 
+export type TopicRouteSessionStore = Map<string, TopicSnapshot>;
+
+export function createTopicRouteSessionStore(): TopicRouteSessionStore {
+  return new Map();
+}
+
+export function saveTopicRouteSnapshot(store: TopicRouteSessionStore, routeKey: string, snapshot: TopicSnapshot) {
+  if (routeKey) {
+    store.set(routeKey, snapshot);
+  }
+}
+
+export function readTopicRouteSnapshot(store: TopicRouteSessionStore, routeKey: string) {
+  return store.get(routeKey);
+}
+
+export function removeTopicRouteSnapshot(store: TopicRouteSessionStore, routeKey: string) {
+  store.delete(routeKey);
+}
+
 export function shouldReuseCurrentTopicDetail({
   currentDetail,
   nextTopic,
@@ -44,10 +64,10 @@ export function shouldReuseCurrentTopicDetail({
   );
 }
 
-export function createEmptyTopicSession(topic: Topic): TopicSession {
+export function createInactiveTopicSession(): TopicSession {
   return {
-    key: topicKey(topic),
-    selectedTopic: topic,
+    key: '',
+    selectedTopic: null,
     topicDetail: null,
     topicReplies: [],
     topicError: '',
@@ -69,11 +89,27 @@ export function createEmptyTopicSession(topic: Topic): TopicSession {
   };
 }
 
+export function createEmptyTopicSession(topic: Topic): TopicSession {
+  return {
+    ...createInactiveTopicSession(),
+    key: topicKey(topic),
+    selectedTopic: topic
+  };
+}
+
 export function pushTopicSession(stack: TopicSession[], current: TopicSession, nextTopic?: Topic) {
   if (nextTopic && current.key === topicKey(nextTopic)) {
     return stack;
   }
   return [...stack, current];
+}
+
+export function pushTopicSnapshot(stack: TopicSnapshot[], current: TopicSnapshot, nextTopic?: Topic) {
+  return pushTopicSession(
+    stack.map(topicSessionFromSnapshot),
+    topicSessionFromSnapshot(current),
+    nextTopic
+  ).map(snapshotFromTopicSession);
 }
 
 export function snapshotFromTopicSession(session: TopicSession): TopicSnapshot {

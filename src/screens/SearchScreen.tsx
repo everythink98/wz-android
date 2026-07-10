@@ -60,6 +60,7 @@ function SearchInputField({
     <View style={styles.searchInputShell}>
       <Search size={18} color={theme.muted} strokeWidth={1.9} style={styles.searchInputIcon} />
       <TextInput
+        testID="search-query"
         accessibilityLabel="搜索关键词"
         style={styles.searchInput}
         value={query}
@@ -84,6 +85,7 @@ function SearchInputField({
         </Pressable>
       ) : null}
       <Pressable
+        testID="search-submit"
         accessibilityRole="button"
         accessibilityLabel="提交搜索"
         accessibilityState={{ disabled: busy }}
@@ -470,11 +472,12 @@ export const SearchScreen = memo(function SearchScreen({
   const changeSearchSource = useCallback((value: string) => {
     onSearchSourceChange(value as FeedSource);
   }, [onSearchSourceChange]);
-  const renderTopicCard = useCallback((item: Topic) => (
+  const renderTopicCard = useCallback((item: Topic, testID?: string) => (
     <MemoizedTopicCard
       highlightQuery={query}
       readerState={getTopicListItemStateFromIndex(topicStateIndex, item)}
       styles={styles}
+      testID={testID}
       theme={theme}
       topic={item}
       onOpenTopic={onOpenTopic}
@@ -526,9 +529,18 @@ export const SearchScreen = memo(function SearchScreen({
       })
       : []
   ), [expandedSearchGroups, showSearchGroups, visibleSearchGroups]);
+  const firstSearchResultKey = useMemo(() => {
+    const item = listItems.find((candidate) => candidate.type === 'topic');
+    return item?.type === 'topic' ? topicKey(item.topic) : '';
+  }, [listItems]);
+  const completedSearchAccessibilityLabel = visibleSearchGroups.some((group) => group.items.length > 0)
+    ? '搜索结果，已完成，有可打开结果'
+    : visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => !group.loading)
+      ? '搜索结果，已完成，结构化回退'
+      : '搜索结果，已完成，缺少结构化结果';
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
-      return renderTopicCard(item.topic);
+      return renderTopicCard(item.topic, topicKey(item.topic) === firstSearchResultKey ? 'search-result-first' : undefined);
     }
     if (item.type === 'groupHeader') {
       const Chevron = item.expanded ? ChevronUp : ChevronDown;
@@ -552,7 +564,7 @@ export const SearchScreen = memo(function SearchScreen({
     }
     if (item.type === 'groupError') {
       return (
-        <View style={styles.errorBox}>
+        <View testID={`search-outcome-error-${item.group.source}`} style={styles.errorBox}>
           <Text style={styles.errorText}>{item.group.error}</Text>
           <AppButton label={`重试 ${item.group.label}`} variant="ghost" styles={styles} disabled={busy} onPress={() => onRetrySearchSource(item.group.source)} />
         </View>
@@ -574,7 +586,7 @@ export const SearchScreen = memo(function SearchScreen({
           ? styles.authNoticeTextWarning
           : styles.authNoticeTextNeutral;
       return (
-        <View style={[styles.authNoticeBox, noticeBoxStyle]}>
+        <View testID={`search-outcome-auth-${item.group.source}`} style={[styles.authNoticeBox, noticeBoxStyle]}>
           <Text style={[styles.authNoticeText, noticeTextStyle]}>{authNotice.message}</Text>
         </View>
       );
@@ -583,7 +595,7 @@ export const SearchScreen = memo(function SearchScreen({
       return <LoadingState text={`${item.group.label} 搜索中...`} styles={styles} theme={theme} />;
     }
     if (item.type === 'groupEmpty') {
-      return <EmptyText text={searchGroupEmptyText(item.group)} styles={styles} />;
+      return <View testID={`search-outcome-empty-${item.group.source}`}><EmptyText text={searchGroupEmptyText(item.group)} styles={styles} /></View>;
     }
     if (item.type === 'groupLoadMore') {
       return (
@@ -597,7 +609,7 @@ export const SearchScreen = memo(function SearchScreen({
       );
     }
     return null;
-  }, [busy, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme, toggleSearchGroup]);
+  }, [busy, firstSearchResultKey, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme, toggleSearchGroup]);
   const keySearchListItem = useCallback((item: SearchListItem) => {
     if (item.type === 'topic') {
       return `topic:${item.groupSource || item.topic.source}:${topicKey(item.topic)}`;
@@ -726,6 +738,8 @@ export const SearchScreen = memo(function SearchScreen({
     <View style={styles.content}>
       <FlashList
         ref={listRef}
+        accessibilityLabel={hasSubmittedQuery && !busy ? completedSearchAccessibilityLabel : '搜索结果'}
+        testID={hasSubmittedQuery && !busy ? 'search-complete' : undefined}
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         data={listItems}

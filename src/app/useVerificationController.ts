@@ -66,7 +66,7 @@ export function useVerificationController({
   setLinuxDoWebViewUserAgent,
   setLoadingLinuxDoPage,
   setMountLinuxDoWebView,
-  setScreen,
+  changeScreen,
   setShowLinuxDoPanel,
   setShowSettingsPanel,
   showLinuxDoPanel,
@@ -108,7 +108,7 @@ export function useVerificationController({
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setLoadingLinuxDoPage: Dispatch<SetStateAction<boolean>>;
   setMountLinuxDoWebView: Dispatch<SetStateAction<boolean>>;
-  setScreen: Dispatch<SetStateAction<Screen>>;
+  changeScreen: (screen: Screen) => void;
   setShowLinuxDoPanel: Dispatch<SetStateAction<boolean>>;
   setShowSettingsPanel: Dispatch<SetStateAction<boolean>>;
   showLinuxDoPanel: boolean;
@@ -118,14 +118,14 @@ export function useVerificationController({
   updateNodeSeekSession: (event: SiteSessionEvent) => void;
 }) {
   const showNodeSeekVerification = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证') => {
-    setScreen('more');
+    changeScreen('more');
     changeNodeSeekLoginPanel(true);
     closeYaohuoLoginPanel();
     setShowLinuxDoPanel(false);
     setShowSettingsPanel(false);
     updateNodeSeekSession({ type: 'verification-required', message });
     notify(message);
-  }, [changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify, setScreen, setShowLinuxDoPanel, setShowSettingsPanel, updateNodeSeekSession]);
+  }, [changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify, setShowLinuxDoPanel, setShowSettingsPanel, updateNodeSeekSession]);
 
   const refreshLinuxDoClearanceState = useCallback(async () => {
     const access = await clearLinuxDoSavedClearance();
@@ -303,7 +303,7 @@ export function useVerificationController({
       const task = InteractionManager.runAfterInteractions(() => {
         linuxDoPendingReopenTaskRef.current = null;
         reopenExistingTopicScreenRef.current = true;
-        setScreen('topic');
+        changeScreen('topic');
         void openTopicRef.current?.(pendingTopic, true);
       });
       linuxDoPendingReopenTaskRef.current = task;
@@ -324,7 +324,7 @@ export function useVerificationController({
     linuxDoVerifiedRetryTopicKeyRef,
     openTopicRef,
     reopenExistingTopicScreenRef,
-    setScreen,
+    changeScreen,
     showLinuxDoPanel,
     showLinuxDoPanelRef
   ]);

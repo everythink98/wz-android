@@ -20,7 +20,7 @@ import {
   type CustomBlockRenderer
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
+import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
@@ -36,7 +36,7 @@ import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerfor
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
-import { authNoticeForMessage } from '../../siteSessionPrompts';
+import { authNoticeForSourceError } from '../../siteSessionPrompts';
 import { getLinuxDoEmojiUrls } from '../../localLinuxdo';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
@@ -169,10 +169,10 @@ export const TopicScreen = memo(function TopicScreen({
   htmlRenderers,
   htmlRenderersProps,
   htmlTagsStyles,
-  expandedQuotesRef,
-  loadedQuotedRepliesRef,
+  expandedQuotes,
+  loadedQuotedReplies,
   loadingMoreReplies,
-  loadingQuotedFloorsRef,
+  loadingQuotedFloors,
   commentQuery,
   replyHighlightQuery,
   quoteStateVersion,
@@ -237,10 +237,10 @@ export const TopicScreen = memo(function TopicScreen({
   htmlRenderers: HtmlRenderers;
   htmlRenderersProps: HtmlRenderersProps;
   htmlTagsStyles: HtmlTagsStyles;
-  expandedQuotesRef: RefObject<Record<string, boolean>>;
-  loadedQuotedRepliesRef: RefObject<Record<number, Reply>>;
+  expandedQuotes: Record<string, boolean>;
+  loadedQuotedReplies: Record<number, Reply>;
   loadingMoreReplies: boolean;
-  loadingQuotedFloorsRef: RefObject<Record<string, boolean>>;
+  loadingQuotedFloors: Record<string, boolean>;
   commentQuery: string;
   replyHighlightQuery: string;
   quoteStateVersion: number;
@@ -258,7 +258,7 @@ export const TopicScreen = memo(function TopicScreen({
   theme: ReaderTheme;
   topic: TopicDetail | null;
   topicBusy: boolean;
-  topicError: string;
+  topicError: SourceErrorInfo | null;
   topicFavorite: boolean;
   topicScrollRef: RefObject<FlashListRef<TopicListItem> | null>;
   unreadReplyCount: number;
@@ -325,13 +325,13 @@ export const TopicScreen = memo(function TopicScreen({
         next.set(reply.floor, reply);
       }
     });
-    Object.values(loadedQuotedRepliesRef.current).forEach((reply) => {
+    Object.values(loadedQuotedReplies).forEach((reply) => {
       if (reply.floor) {
         next.set(reply.floor, reply);
       }
     });
     return next;
-  }, [loadedQuotedRepliesRef, quoteStateVersion, sourceReplies]);
+  }, [loadedQuotedReplies, quoteStateVersion, sourceReplies]);
   const newReplyFloorStart = useMemo(() => {
     if (unreadReplyCount <= 0) {
       return Number.POSITIVE_INFINITY;
@@ -651,14 +651,14 @@ export const TopicScreen = memo(function TopicScreen({
           actionBusy={actionBusy}
           canWrite={canWrite}
           contentWidth={contentWidth}
-          expandedQuotes={expandedQuotesRef.current}
+          expandedQuotes={expandedQuotes}
           isActionPending={isOptimisticActionPending}
           inlineSizedImageUrls={inlineSizedImageUrls}
           linuxDoEmojiUrls={linuxDoEmojiUrls}
           topicImageDeriver={topicImageDeriver}
           topicBaseUrl={topicBaseUrl}
-          loadedQuotedReplies={loadedQuotedRepliesRef.current}
-          loadingQuotedFloors={loadingQuotedFloorsRef.current}
+          loadedQuotedReplies={loadedQuotedReplies}
+          loadingQuotedFloors={loadingQuotedFloors}
           onTogglePollSelection={togglePollSelection}
           reply={listItem.reply}
           replyFloor={listItem.replyFloor}
@@ -685,12 +685,12 @@ export const TopicScreen = memo(function TopicScreen({
     canWrite,
     commentQuery,
     contentWidth,
-    expandedQuotesRef,
+    expandedQuotes,
     inlineSizedImageUrls,
     topicImageDeriver,
     isOptimisticActionPending,
-    loadedQuotedRepliesRef,
-    loadingQuotedFloorsRef,
+    loadedQuotedReplies,
+    loadingQuotedFloors,
     linuxDoEmojiUrls,
     newReplyFloorStart,
     onCommentQueryChange,
@@ -724,8 +724,8 @@ export const TopicScreen = memo(function TopicScreen({
 
   const topicHeaderStatusBadges = topicStatusBadges(item);
   const itemAccessRequirementText = forumAccessRequirementText(item.accessRequirement);
-  const topicReadableError = topicError ? readableTopicError(topicError) : '';
-  const topicAuthNotice = authNoticeForMessage(topicError) || authNoticeForMessage(topicReadableError);
+  const topicReadableError = topicError ? readableTopicError(topicError.message) : '';
+  const topicAuthNotice = topicError ? authNoticeForSourceError(topicError) : null;
   const topicAuthNoticeBoxStyle = topicAuthNotice?.tone === 'danger'
     ? styles.authNoticeBoxDanger
     : topicAuthNotice?.tone === 'warning'
@@ -748,6 +748,7 @@ export const TopicScreen = memo(function TopicScreen({
           </View>
           <Text selectable style={styles.articleTitle}>{item.title}</Text>
           <Pressable
+            testID="topic-author"
             accessibilityRole="button"
             disabled={!userFromTopic(item)}
             style={styles.topicAuthorRow}
@@ -791,8 +792,8 @@ export const TopicScreen = memo(function TopicScreen({
           <View style={topicAuthNotice ? [styles.authNoticeBox, topicAuthNoticeBoxStyle] : styles.errorBox}>
             <Text style={topicAuthNotice ? [styles.authNoticeText, topicAuthNoticeTextStyle] : styles.errorText}>{topicAuthNotice?.message || topicReadableError}</Text>
             <View style={styles.actions}>
-              {item.source === 'linuxdo' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
-              {item.source === 'nodeseek' && topicError.includes('Cloudflare') ? <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} /> : null}
+              {item.source === 'linuxdo' && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyLinuxDo} /> : null}
+              {item.source === 'nodeseek' && topicError.kind === 'verification-required' ? <AppButton label="去验证" styles={styles} onPress={onVerifyNodeSeek} /> : null}
               <AppButton label="重试" styles={styles} onPress={onRefreshWholeTopic} />
             </View>
           </View>
@@ -882,6 +883,8 @@ export const TopicScreen = memo(function TopicScreen({
         </View>
         <FlashList
           ref={topicScrollRef}
+          accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
+          testID={topic ? 'topic-detail-loaded' : undefined}
           style={[styles.content, styles.topicContent]}
           contentContainerStyle={styles.topicContentInner}
           data={replyListItems}

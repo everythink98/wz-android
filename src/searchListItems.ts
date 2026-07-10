@@ -1,4 +1,4 @@
-import type { Source, Topic } from './types';
+import type { Source, SourceErrorKind, Topic } from './types';
 import type { AuthNotice } from './siteSessionPrompts';
 
 export type SearchGroup = {
@@ -6,8 +6,8 @@ export type SearchGroup = {
   label: string;
   items: Topic[];
   error?: string;
+  errorKind?: SourceErrorKind;
   authNotice?: AuthNotice;
-  verificationRequired?: boolean;
   loading?: boolean;
   loadingMore?: boolean;
   hasMore?: boolean;
@@ -28,13 +28,11 @@ function shouldRenderAuthNotice(group: SearchGroup) {
 }
 
 function errorLooksLikeVerification(group: SearchGroup) {
-  const message = `${group.error || ''} ${group.authNotice?.message || ''}`;
-  return Boolean(group.verificationRequired || /验证|Cloudflare/i.test(message));
+  return group.errorKind === 'verification-required';
 }
 
 function errorLooksLikeLogin(group: SearchGroup) {
-  const message = `${group.error || ''} ${group.authNotice?.message || ''}`;
-  return /登录|未登录|login/i.test(message);
+  return group.errorKind === 'login-required' || group.errorKind === 'login-expired';
 }
 
 export function searchGroupMeta(group: SearchGroup) {
@@ -46,7 +44,7 @@ export function searchGroupMeta(group: SearchGroup) {
       return '需验证';
     }
     if (group.authNotice?.message === group.error && errorLooksLikeLogin(group)) {
-      return group.authNotice.tone === 'danger' ? '登录失效' : '需登录';
+      return group.errorKind === 'login-expired' ? '登录失效' : '需登录';
     }
     return '请求失败';
   }

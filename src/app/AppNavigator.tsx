@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { CommonActions, NavigationContainer, createNavigationContainerRef, type NavigatorScreenParams, type Theme } from '@react-navigation/native';
+import { NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { TabBarIcon, tabNavItems } from '../components/NavBar';
 import { triggerPressFeedback } from '../components/AppControls';
 import type { createStyles, ReaderTheme } from '../theme';
+import type { Screen } from '../appTypes';
 
 export type MainTabParamList = {
   feed: undefined;
@@ -28,10 +29,69 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
   if (!navigationRef.isReady()) {
     return;
   }
-  navigationRef.dispatch(CommonActions.navigate({
-    name: 'MainTabs',
-    params: { screen }
-  }));
+  navigationRef.dispatch(StackActions.popTo('MainTabs', { screen }));
+}
+
+function appScreenForRouteName(routeName?: string): Screen {
+  if (routeName === 'Topic') {
+    return 'topic';
+  }
+  if (routeName === 'User') {
+    return 'user';
+  }
+  if (routeName === 'search' || routeName === 'library' || routeName === 'more') {
+    return routeName;
+  }
+  return 'feed';
+}
+
+function currentAppRoute() {
+  const route = navigationRef.getCurrentRoute();
+  return { routeKey: route?.key || '', screen: appScreenForRouteName(route?.name) };
+}
+
+function currentAppScreen(): Screen {
+  return currentAppRoute().screen;
+}
+
+export function currentTopicRouteKey() {
+  const route = navigationRef.getCurrentRoute();
+  return route?.name === 'Topic' ? route.key : null;
+}
+
+export function previousTopicRouteKey() {
+  if (!navigationRef.isReady()) {
+    return null;
+  }
+  const state = navigationRef.getRootState();
+  const currentIndex = state.index ?? state.routes.length - 1;
+  const previousRoute = state.routes[currentIndex - 1];
+  return previousRoute?.name === 'Topic' ? previousRoute.key : null;
+}
+
+export function navigateAppScreen(screen: Screen) {
+  if (!navigationRef.isReady()) {
+    return false;
+  }
+  if (currentAppScreen() === screen) {
+    return true;
+  }
+  if (screen === 'topic') {
+    navigationRef.dispatch(StackActions.push('Topic'));
+  } else if (screen === 'user') {
+    navigationRef.dispatch(StackActions.push('User'));
+  } else {
+    navigateMainTab(screen);
+  }
+  return true;
+}
+
+export function pushTopicRoute() {
+  if (!navigationRef.isReady()) {
+    return false;
+  }
+  navigationRef.dispatch(StackActions.push('Topic'));
+  return true;
 }
 
 function MainTabsHost({
@@ -63,6 +123,7 @@ function MainTabsHost({
           tabBarShowLabel: false,
           tabBarStyle: styles.nav,
           tabBarItemStyle: styles.navItem,
+          tabBarButtonTestID: `main-tab-${item.value}`,
           tabBarAccessibilityLabel: item.value === 'more' && moreHasBadge ? '更多，有可用更新' : item.label,
           tabBarIcon: ({ focused }: { focused: boolean }) => (
             <TabBarIcon focused={focused} icon={item.icon} label={item.label} showBadge={item.value === 'more' && moreHasBadge} styles={styles} theme={theme} />
@@ -104,6 +165,7 @@ export function AppNavigator({
   styles,
   theme,
   onReady,
+  onScreenChange,
   onTabPress,
   onTopicClosing,
   onUserClosing
@@ -119,12 +181,25 @@ export function AppNavigator({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onReady: () => void;
+  onScreenChange: (screen: Screen, routeKey: string) => void;
   onTabPress: (target: keyof MainTabParamList) => void;
   onTopicClosing: () => void;
   onUserClosing: () => void;
 }) {
+  const publishCurrentScreen = () => {
+    const route = currentAppRoute();
+    onScreenChange(route.screen, route.routeKey);
+  };
   return (
-    <NavigationContainer ref={navigationRef} theme={navigationTheme} onReady={onReady}>
+    <NavigationContainer
+      ref={navigationRef}
+      theme={navigationTheme}
+      onReady={() => {
+        publishCurrentScreen();
+        onReady();
+      }}
+      onStateChange={publishCurrentScreen}
+    >
       <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', freezeOnBlur: true, contentStyle: { backgroundColor: theme.background } }}>
         <Stack.Screen name="MainTabs">
           {() => (

@@ -13,7 +13,7 @@ import {
   useWindowDimensions
 } from 'react-native';
 import type { FlashListRef } from '@shopify/flash-list';
-import { DarkTheme, DefaultTheme, StackActions } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import * as Clipboard from 'expo-clipboard';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -26,18 +26,18 @@ import { useReaderDataController } from './useReaderDataController';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import { useBackupStatusController } from './useBackupStatusController';
+import { useAccountStatusController } from './useAccountStatusController';
 import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { AppNavigator, navigateMainTab, navigationRef, type MainTabParamList } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigationRef, previousTopicRouteKey, pushTopicRoute, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
 import { useNetworkProxyController } from './useNetworkProxyController';
 import { useTopicController } from './useTopicController';
-import { useTopicNavigationController } from './useTopicNavigationController';
-import { useTopicUiStateController } from './useTopicUiStateController';
+import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
 import { useUserController } from './useUserController';
 import { useVerificationController, type DeferredNavigationTask } from './useVerificationController';
 import { useAccountController } from './useAccountController';
@@ -55,8 +55,8 @@ import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
-import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { FeedSource, Reply, Source, Topic, TopicDetail, UserProfile } from '../types';
+import { createSourceGateway, type LinuxDoLevelProfile } from '../sources/sourceGateway';
+import type { FeedSource, Source, Topic, UserProfile } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
@@ -123,17 +123,14 @@ export function AppRoot() {
   const checkingRequestIdRef = useRef(0);
   const topicActionRequestOwnerRef = useRef(createRequestOwner('topic-action'));
   const actionAbortRef = useRef<{ abort: () => void; abortAll: () => void } | null>(null);
-  const loadingMoreRepliesRef = useRef(false);
   const repliesAbortRef = useRef<AbortController | null>(null);
   const repliesRequestIdRef = useRef(0);
-  const currentTopicKeyRef = useRef<string | null>(null);
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
-  const topicBackStackRef = useRef<TopicSnapshot[]>([]);
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
   const userReturnTopicRef = useRef<UserReturnTopic | null>(null);
   const reopenExistingTopicScreenRef = useRef(false);
-  const skipNextNavigationSyncRef = useRef(false);
+  const pendingNavigationScreenRef = useRef<Screen | null>(null);
   const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
   const linuxDoPendingTopicVerifiedRef = useRef(false);
   const linuxDoPendingReopenTopicAfterCloseRef = useRef<Topic | null>(null);
@@ -164,6 +161,11 @@ export function AppRoot() {
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
+  const changeScreen = useCallback((nextScreen: Screen) => {
+    if (!navigateAppScreen(nextScreen)) {
+      pendingNavigationScreenRef.current = nextScreen;
+    }
+  }, []);
   const autoAppUpdateCheckedRef = useRef(false);
   const notify = useCallback((message: string) => {
     if (!message) {
@@ -183,7 +185,6 @@ export function AppRoot() {
   const [linuxDoLevelError, setLinuxDoLevelError] = useState('');
   const [mountLinuxDoWebView, setMountLinuxDoWebView] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [topicBusy, setTopicBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [optimisticTopicActions, setOptimisticTopicActions] = useState<Record<string, OptimisticActionState>>({});
   const [nodeSeekWebViewUserAgent, setNodeSeekWebViewUserAgent] = useState(DEFAULT_NODESEEK_ANDROID_USER_AGENT);
@@ -368,16 +369,59 @@ export function AppRoot() {
       }
     })();
   }, [finishNodeImageAuth, notify]);
-  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null);
-  const [topicDetail, setTopicDetail] = useState<TopicDetail | null>(null);
-  const [topicError, setTopicError] = useState('');
-  const [topicReplies, setTopicReplies] = useState<Reply[]>([]);
-  const topicScrollYRef = useRef(0);
-  const [replyNextPage, setReplyNextPage] = useState<number | null>(null);
-  const [replyNextOffset, setReplyNextOffset] = useState<number | null>(null);
-  const [replyHasMore, setReplyHasMore] = useState(false);
-  const [unreadReplyCount, setUnreadReplyCount] = useState(0);
-  const [loadingMoreReplies, setLoadingMoreReplies] = useState(false);
+  const topicSession = useTopicSessionController({ invalidateTopicActionRequests, notify });
+  const {
+    state: {
+      commentQuery,
+      debouncedCommentQuery,
+      expandedQuotes,
+      loadedQuotedReplies,
+      loadingMoreReplies,
+      loadingQuotedFloors,
+      quoteStateVersion,
+      replyComposerOpen,
+      replyContent,
+      replyEditTarget,
+      replyFace,
+      replyFilter,
+      replyHasMore,
+      replyTarget,
+      selectedTopic,
+      topicBusy,
+      topicDetail,
+      topicError,
+      topicReplies,
+      unreadReplyCount
+    },
+    commands: {
+      composer: topicComposer,
+      navigation: topicNavigation,
+      quotes: topicQuotes,
+      topic: topicLifecycle,
+      view: topicView
+    },
+    restore: restoreTopicSnapshot,
+    snapshot: topicSnapshot
+  } = topicSession;
+  const abortQuotedReplyRequests = topicQuotes.abortRequests;
+  const activateTopicRoute = topicNavigation.activateRoute;
+  const changeCommentQuery = topicView.changeCommentQuery;
+  const changeReplyContent = topicComposer.changeContent;
+  const changeReplyFace = topicComposer.changeFace;
+  const changeReplyFilter = topicView.changeReplyFilter;
+  const clearTopicBackStack = topicNavigation.clearBackStack;
+  const clearTopicRoutes = topicNavigation.clearRoutes;
+  const editReply = topicComposer.editReply;
+  const forgetTopicRoute = topicNavigation.forgetRoute;
+  const popTopicBackStack = topicNavigation.popBackStack;
+  const readTopicBackStack = topicNavigation.readBackStack;
+  const rememberScrollY = topicView.rememberScrollY;
+  const replaceTopicBackStack = topicNavigation.replaceBackStack;
+  const replyToFloor = topicComposer.replyToFloor;
+  const restoreTopicRoute = topicNavigation.restoreRoute;
+  const saveTopicRoute = topicNavigation.saveRoute;
+  const stopTopicWork = topicLifecycle.stopWork;
+  const toggleReplyComposer = topicComposer.toggle;
   const [showLoginPanel, setShowLoginPanel] = useState(false);
   const showLoginPanelRef = useRef(showLoginPanel);
   const [showYaohuoLoginPanel, setShowYaohuoLoginPanel] = useState(false);
@@ -389,17 +433,6 @@ export function AppRoot() {
   screenRef.current = screen;
   showLoginPanelRef.current = showLoginPanel;
   showLinuxDoPanelRef.current = showLinuxDoPanel;
-  useEffect(() => {
-    setTopicDetail((current) => {
-      if (!current || current.replies === topicReplies) {
-        return current;
-      }
-      return {
-        ...current,
-        replies: topicReplies
-      };
-    });
-  }, [topicReplies]);
   const cancelLinuxDoPendingReopenTask = useCallback(() => {
     linuxDoPendingReopenTaskRef.current?.cancel();
     linuxDoPendingReopenTaskRef.current = null;
@@ -605,49 +638,14 @@ export function AppRoot() {
     topicKey: `${selectedTopic?.source || ''}:${selectedTopic?.id || ''}`,
     webViewBlockMessage: networkProxyWebViewBlockMessage
   });
-  const {
-    abortQuotedReplyRequests,
-    commentQuery,
-    debouncedCommentQuery,
-    editReply,
-    expandedQuotesRef,
-    filteredReplies,
-    loadedQuotedReplies,
-    loadedQuotedRepliesRef,
-    loadingQuotedFloorsRef,
-    quoteStateVersion,
-    quotedReplyAbortRefs,
-    replyComposerOpen,
-    replyContent,
-    replyFace,
-    replyEditTarget,
-    replyFilter,
-    replyTarget,
-    replyToFloor,
-    resetQuoteState,
-    setCommentQuery,
-    setExpandedQuotes,
-    setLoadedQuotedReplies,
-    setLoadingQuotedFloors,
-    setQuoteStateVersion,
-    setReplyComposerOpen,
-    setReplyContent,
-    setReplyFace,
-    setReplyEditTarget,
-    setReplyFilter,
-    setReplyTarget,
-    toggleReplyComposer,
-    topicRepliesRef,
-    updateExpandedQuotes,
-    updateLoadedQuotedReplies,
-    updateLoadingQuotedFloors
-  } = useTopicUiStateController({
+  const filteredReplies = useMemo(() => filterTopicSessionReplies({
+    commentQuery: debouncedCommentQuery,
     inlineSizedImageUrls,
-    notify,
+    replyFilter,
     topicDetail,
     topicImageDeriver,
     topicReplies
-  });
+  }), [debouncedCommentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
   const nodeSeekCurrentUserForTopicActions = siteSessionViewModels.nodeseek.currentUser || (topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined);
   const displayReplies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, webLoginUserId),
@@ -772,11 +770,11 @@ export function AppRoot() {
   }, []);
 
   const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
-    setScreen('more');
+    changeScreen('more');
     setYaohuoLoginPrompt(message);
     changeYaohuoLoginPanel(true);
     notify(message);
-  }, [changeYaohuoLoginPanel, notify]);
+  }, [changeScreen, changeYaohuoLoginPanel, notify]);
 
   const {
     changeLinuxDoPanel,
@@ -825,7 +823,7 @@ export function AppRoot() {
     setLinuxDoWebViewUserAgent,
     setLoadingLinuxDoPage,
     setMountLinuxDoWebView,
-    setScreen,
+    changeScreen,
     setShowLinuxDoPanel,
     setShowSettingsPanel,
     showLinuxDoPanel,
@@ -903,6 +901,19 @@ export function AppRoot() {
     setShowSettingsPanel(false);
   }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeNodeImageAuthPanel, closeYaohuoLoginPanel]);
 
+  const sourceGateway = useMemo(() => createSourceGateway({
+    clearYaohuoLoginState,
+    fetcher: forumFetchWithWebViewFallback,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
+    nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current
+  }), [
+    clearYaohuoLoginState,
+    forumFetchWithWebViewFallback,
+    loadNodeSeekCookieForSource,
+    loadYaohuoCookieForSource
+  ]);
+
   const {
     activeFeedState,
     categories,
@@ -920,17 +931,13 @@ export function AppRoot() {
     setReadingFilter,
     shownFeedItems
   } = useFeedController({
-    clearYaohuoLoginState,
-    fetcher: forumFetchWithWebViewFallback,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     readerData,
     readerDataLoaded,
     showLinuxDoVerification,
     showNodeSeekVerification,
-    showYaohuoLogin
+    showYaohuoLogin,
+    sourceGateway
   });
 
   const {
@@ -951,25 +958,28 @@ export function AppRoot() {
     setSearchSource
   } = useSearchController({
     categories,
-    clearYaohuoLoginState,
-    fetcher: forumFetchWithWebViewFallback,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
     sessionViewModels: siteSessionViewModels,
     showNodeSeekVerification,
-    showYaohuoLogin
+    showYaohuoLogin,
+    sourceGateway
   });
 
   const {
     backupBusy,
     exportBackupFile,
-    importBackupFile,
+    importBackupFile
+  } = useBackupStatusController({
+    notify,
+    readerDataRef,
+    replaceReaderData,
+    waitForReaderDataSave
+  });
+  const {
     refreshAccountStatus,
     statusBusy
-  } = useBackupStatusController({
+  } = useAccountStatusController({
     clearYaohuoLoginState,
     currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
@@ -978,11 +988,8 @@ export function AppRoot() {
     loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
-    readerDataRef,
-    replaceReaderData,
     resetLinuxDoLevelState,
-    saveNodeSeekCookieHeader,
-    waitForReaderDataSave
+    saveNodeSeekCookieHeader
   });
   useEffect(() => {
     if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
@@ -1008,10 +1015,19 @@ export function AppRoot() {
     void checkAppUpdate({ silent: true });
   }, [checkAppUpdate]);
 
-  const changeScreen = useCallback((nextScreen: Screen) => {
-    const leavingTopicForUser = screen === 'topic' && nextScreen === 'user';
-    const shouldInvalidateTopicActions = shouldInvalidateTopicActionsOnScreenChange(screen, nextScreen);
-    if (screen === 'more' && nextScreen !== 'more') {
+  const handleNavigationScreenChange = useCallback((nextScreen: Screen, routeKey: string) => {
+    const previousScreen = screenRef.current;
+    if (nextScreen === 'topic' && routeKey) {
+      if (!restoreTopicRoute(routeKey)) {
+        activateTopicRoute(routeKey);
+      }
+    }
+    if (previousScreen === nextScreen) {
+      return;
+    }
+    const leavingTopicForUser = previousScreen === 'topic' && nextScreen === 'user';
+    const shouldInvalidateTopicActions = shouldInvalidateTopicActionsOnScreenChange(previousScreen, nextScreen);
+    if (previousScreen === 'more' && nextScreen !== 'more') {
       closeMorePanels();
     }
     if (nextScreen !== 'topic') {
@@ -1026,12 +1042,11 @@ export function AppRoot() {
       if (shouldInvalidateTopicActions) {
         invalidateTopicActionRequests(null);
       }
-      loadingMoreRepliesRef.current = false;
-      setLoadingMoreReplies(false);
-      setTopicBusy(false);
+      stopTopicWork();
     }
     if (nextScreen !== 'topic' && !leavingTopicForUser) {
-      topicBackStackRef.current = [];
+      clearTopicBackStack();
+      clearTopicRoutes();
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
       topicAbortRef.current?.abort();
@@ -1039,16 +1054,14 @@ export function AppRoot() {
       abortQuotedReplyRequests();
       pendingLinuxDoTopicRef.current = null;
       invalidateTopicActionRequests(null);
-      currentTopicKeyRef.current = null;
-      loadingMoreRepliesRef.current = false;
-      setLoadingMoreReplies(false);
-      setTopicBusy(false);
+      stopTopicWork(true);
     }
     if (nextScreen !== 'user' && nextScreen !== 'topic') {
       userReturnTopicRef.current = null;
     }
+    screenRef.current = nextScreen;
     setScreen(nextScreen);
-  }, [abortQuotedReplyRequests, closeMorePanels, invalidateTopicActionRequests, screen]);
+  }, [abortQuotedReplyRequests, activateTopicRoute, clearTopicBackStack, clearTopicRoutes, closeMorePanels, invalidateTopicActionRequests, restoreTopicRoute, stopTopicWork]);
 
   const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback(async (options?: { silent?: boolean }) => {
     const saved = await rememberVisibleNodeSeekCookies(options);
@@ -1069,53 +1082,11 @@ export function AppRoot() {
     return true;
   }, [changeNodeSeekLoginPanel, changeScreen, rememberVisibleNodeSeekCookies]);
 
-  const { restoreTopicSnapshot, topicSnapshot } = useTopicNavigationController({
-    commentQuery,
-    currentTopicKeyRef,
-    expandedQuotesRef,
-    invalidateTopicActionRequests,
-    loadedQuotedRepliesRef,
-    loadingMoreRepliesRef,
-    loadingQuotedFloorsRef,
-    replyComposerOpen,
-    replyContent,
-    replyFace,
-    replyEditTarget,
-    replyFilter,
-    replyHasMore,
-    replyNextOffset,
-    replyNextPage,
-    replyTarget,
-    selectedTopic,
-    setCommentQuery,
-    setExpandedQuotes,
-    setLoadedQuotedReplies,
-    setLoadingMoreReplies,
-    setLoadingQuotedFloors,
-    setQuoteStateVersion,
-    setReplyComposerOpen,
-    setReplyContent,
-    setReplyFace,
-    setReplyEditTarget,
-    setReplyFilter,
-    setReplyHasMore,
-    setReplyNextOffset,
-    setReplyNextPage,
-    setReplyTarget,
-    setSelectedTopic,
-    setTopicBusy,
-    setTopicDetail,
-    setTopicError,
-    setTopicReplies,
-    setUnreadReplyCount,
-    topicDetail,
-    topicError,
-    topicReplies,
-    topicScrollYRef,
-    unreadReplyCount
-  });
-
   const prepareUserNavigation = useCallback(() => {
+    const routeKey = currentTopicRouteKey();
+    if (routeKey) {
+      saveTopicRoute(routeKey);
+    }
     if (screen !== 'user') {
       userReturnScreenRef.current = screen;
     }
@@ -1126,19 +1097,21 @@ export function AppRoot() {
           topicSnapshot(),
           hasPendingOptimisticTopicAction(optimisticTopicActionsRef.current)
         ),
-        backStack: [...topicBackStackRef.current]
+        backStack: readTopicBackStack()
       };
     } else if (screen !== 'user') {
       userReturnTopicRef.current = null;
     }
     changeScreen('user');
-  }, [changeScreen, screen, topicSnapshot]);
+  }, [changeScreen, readTopicBackStack, saveTopicRoute, screen, topicSnapshot]);
 
   const pushTopicScreen = useCallback(() => {
-    if (navigationRef.isReady()) {
-      navigationRef.dispatch(StackActions.push('Topic'));
+    const routeKey = currentTopicRouteKey();
+    if (routeKey) {
+      saveTopicRoute(routeKey);
     }
-  }, []);
+    pushTopicRoute();
+  }, [saveTopicRoute]);
 
   const {
     currentUserFollowed,
@@ -1153,11 +1126,6 @@ export function AppRoot() {
     userLoadingMoreTopics,
     userProfile
   } = useUserController({
-    clearYaohuoLoginState,
-    fetcher: forumFetchWithWebViewFallback,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onOpenUserScreen: prepareUserNavigation,
     readerData,
@@ -1165,6 +1133,7 @@ export function AppRoot() {
     sessionViewModels: siteSessionViewModels,
     showLinuxDoVerification,
     showNodeSeekVerification,
+    sourceGateway,
     showYaohuoLogin
   });
   openUserRef.current = openUser;
@@ -1178,75 +1147,36 @@ export function AppRoot() {
     topicFavorite
   } = useTopicController({
     changeScreen,
-    clearYaohuoLoginState,
     commitReaderData,
-    currentTopicKeyRef,
-    expandedQuotesRef,
-    fetcher: forumFetchWithWebViewFallback,
     handleLinuxDoCloudflareForTopic,
     linuxDoDismissedVerificationTopicKeyRef,
     linuxDoPendingTopicVerifiedRef,
     linuxDoVerifiedRetryTopicKeyRef,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    loadedQuotedRepliesRef,
-    loadingMoreRepliesRef,
-    nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     onNodeSeekTopicVerificationRequired: handleNodeSeekTopicVerificationRequired,
     pendingLinuxDoTopicRef,
     pushTopicScreen,
-    quotedReplyAbortRefs,
     readerData,
     readerDataRef,
     reopenExistingTopicScreenRef,
     repliesAbortRef,
     repliesRequestIdRef,
-    replyNextOffset,
-    replyNextPage,
-    resetQuoteState,
     screen,
-    selectedTopic,
-    sessionViewModels: siteSessionViewModels,
-    setCommentQuery,
-    setLoadedQuotedReplies: updateLoadedQuotedReplies,
-    setLoadingMoreReplies,
-    setLoadingQuotedFloors: updateLoadingQuotedFloors,
-    setReplyComposerOpen,
-    setReplyContent,
-    setReplyFace,
-    setReplyEditTarget,
-    setReplyFilter,
-    setReplyHasMore,
-    setReplyNextOffset,
-    setReplyNextPage,
-    setReplyTarget,
-    setSelectedTopic,
-    setTopicBusy,
-    setTopicDetail,
-    setTopicError,
-    setTopicReplies,
-    setUnreadReplyCount,
     showYaohuoLogin,
-    onTopicContextChange: invalidateTopicActionRequests,
+    sourceGateway,
     topicAbortRef,
-    topicBackStackRef,
-    topicDetail,
-    topicReplies,
-    topicRepliesRef,
     topicRequestIdRef,
     topicReturnScreenRef,
-    topicSnapshot,
-    updateExpandedQuotes
+    topicSession
   });
   const showLinuxDoLogin = useCallback((message = '匿名可阅读，登录后才能互动。') => {
-    setScreen('more');
+    changeScreen('more');
     changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     setShowSettingsPanel(false);
     notify(message);
     changeLinuxDoPanel(true);
-  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, closeYaohuoLoginPanel, notify]);
+  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify]);
 
   openTopicRef.current = openTopic;
 
@@ -1256,7 +1186,7 @@ export function AppRoot() {
       return;
     }
     pendingNodeSeekTopicRetryRef.current = detail;
-    showNodeSeekVerification(topicError || 'NodeSeek 需要完成 Cloudflare 验证');
+    showNodeSeekVerification(topicError?.message || 'NodeSeek 需要完成 Cloudflare 验证');
   }, [selectedTopic, showNodeSeekVerification, topicDetail, topicError]);
 
   const {
@@ -1285,27 +1215,14 @@ export function AppRoot() {
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
-    replyContent,
-    replyFace,
-    replyEditTarget,
-    replyTarget,
     resetLinuxDoLevelState,
-    selectedTopic,
     setActionBusy,
     setOptimisticTopicActions,
-    setReplyComposerOpen,
-    setReplyContent,
-    setReplyFace,
-    setReplyEditTarget,
-    setReplyTarget,
-    setTopicDetail,
-    setTopicReplies,
     showLinuxDoLogin,
     showYaohuoLogin,
     siteSessionStates: effectiveSiteSessionStates,
     topicActionRequestOwnerRef,
-    topicDetail,
-    topicReplies,
+    topicSession,
     updateLinuxDoSession
   });
 
@@ -1329,27 +1246,36 @@ export function AppRoot() {
   const goBackFromTopic = useCallback(() => {
     abortQuotedReplyRequests();
     cancelDeferredNavigationTask();
-    const previousTopic = topicBackStackRef.current.pop();
+    const closingRouteKey = currentTopicRouteKey();
+    const returningRouteKey = previousTopicRouteKey();
+    const previousTopic = popTopicBackStack();
     const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
-    if (previousTopic) {
+    if (returningRouteKey || previousTopic) {
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
       topicAbortRef.current?.abort();
       repliesAbortRef.current?.abort();
-      restoreTopicSnapshot(previousTopic);
+      const restoredByRoute = returningRouteKey ? restoreTopicRoute(returningRouteKey) : false;
+      if (!restoredByRoute && previousTopic) {
+        restoreTopicSnapshot(previousTopic);
+      }
+      if (closingRouteKey) {
+        forgetTopicRoute(closingRouteKey);
+      }
       if (canGoBack) {
         navigationRef.goBack();
       }
       return;
     }
+    if (closingRouteKey) {
+      forgetTopicRoute(closingRouteKey);
+    }
     if (canGoBack) {
-      skipNextNavigationSyncRef.current = true;
       navigationRef.goBack();
-      runAfterNavigationInteractions(() => changeScreen(topicReturnScreenRef.current));
       return;
     }
     changeScreen(topicReturnScreenRef.current);
-  }, [abortQuotedReplyRequests, cancelDeferredNavigationTask, changeScreen, restoreTopicSnapshot, runAfterNavigationInteractions]);
+  }, [abortQuotedReplyRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicRoute, restoreTopicSnapshot]);
 
   const goBackFromUser = useCallback(() => {
     cancelDeferredNavigationTask();
@@ -1360,16 +1286,16 @@ export function AppRoot() {
         return;
       }
       topicReturnScreenRef.current = returnTopic.returnScreen;
-      topicBackStackRef.current = [...returnTopic.backStack];
+      replaceTopicBackStack(returnTopic.backStack);
       restoreTopicSnapshot(returnTopic.snapshot);
       userReturnTopicRef.current = null;
     };
     const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
     if (canGoBack) {
-      skipNextNavigationSyncRef.current = true;
       navigationRef.goBack();
+    } else {
+      changeScreen(userReturnScreenRef.current);
     }
-    changeScreen(userReturnScreenRef.current);
     if (returnTopic?.snapshot.selectedTopic && shouldReloadRestoredTopic) {
       const selectedReturnTopic = returnTopic.snapshot.selectedTopic;
       const reloadRestoredTopic = () => {
@@ -1392,11 +1318,11 @@ export function AppRoot() {
     } else {
       restoreReturnTopic();
     }
-  }, [cancelDeferredNavigationTask, changeScreen, openTopic, restoreTopicSnapshot, runAfterNavigationInteractions]);
+  }, [cancelDeferredNavigationTask, changeScreen, openTopic, replaceTopicBackStack, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
   const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    topicScrollYRef.current = Math.max(0, event.nativeEvent.contentOffset.y);
-  }, []);
+    rememberScrollY(event.nativeEvent.contentOffset.y);
+  }, [rememberScrollY]);
 
   const {
     handleLinuxDoBrowserFetchMessage,
@@ -1479,29 +1405,14 @@ export function AppRoot() {
     toggleReplyComposer
   ]);
 
-  const syncNavigationToScreen = useCallback((nextScreen: Screen) => {
-    if (!navigationRef.isReady()) {
+  const handleNavigationReady = useCallback(() => {
+    const pendingScreen = pendingNavigationScreenRef.current;
+    if (!pendingScreen) {
       return;
     }
-    if (nextScreen === 'topic') {
-      navigationRef.dispatch(StackActions.push('Topic'));
-      return;
-    }
-    if (nextScreen === 'user') {
-      navigationRef.dispatch(StackActions.push('User'));
-      return;
-    }
-    if (nextScreen === 'feed' || nextScreen === 'search' || nextScreen === 'library' || nextScreen === 'more') {
-      navigateMainTab(nextScreen);
-    }
+    pendingNavigationScreenRef.current = null;
+    navigateAppScreen(pendingScreen);
   }, []);
-  useEffect(() => {
-    if (skipNextNavigationSyncRef.current) {
-      skipNextNavigationSyncRef.current = false;
-      return;
-    }
-    syncNavigationToScreen(screen);
-  }, [screen, syncNavigationToScreen]);
 
   const loadMoreActiveFeed = useCallback(() => {
     if (!feedAllowsRemotePagination) {
@@ -1619,6 +1530,7 @@ export function AppRoot() {
       categories,
       followedUsers: followedUserRecords,
       libraryTab,
+      loaded: readerDataLoaded,
       records: libraryRecords,
       scrollToTopSignal: tabScrollToTopSignals.library,
       topicStateIndex,
@@ -1638,6 +1550,7 @@ export function AppRoot() {
     libraryTab,
     openTopic,
     openUser,
+    readerDataLoaded,
     removeFollowedUser,
     removeLibraryTopic,
     styles,
@@ -1799,10 +1712,10 @@ export function AppRoot() {
       htmlTagsStyles,
       inlineSizedImageUrls,
       topicImageDeriver,
-      expandedQuotesRef,
-      loadedQuotedRepliesRef,
+      expandedQuotes,
+      loadedQuotedReplies,
       loadingMoreReplies,
-      loadingQuotedFloorsRef,
+      loadingQuotedFloors,
       commentQuery,
       replyHighlightQuery: debouncedCommentQuery,
       quoteStateVersion,
@@ -1825,7 +1738,7 @@ export function AppRoot() {
       topicScrollRef,
       unreadReplyCount,
       onBack: goBackFromTopic,
-      onCommentQueryChange: setCommentQuery,
+      onCommentQueryChange: changeCommentQuery,
       optimisticActions: optimisticTopicActions,
       onDeleteReply: deleteReply,
       onEditReply: editReply,
@@ -1839,9 +1752,9 @@ export function AppRoot() {
       onOpenOriginal: openExternalUrl,
       onOpenReadingSettings: openReadingSettingsFromTopic,
       onReplyComposerOpenChange: toggleReplyComposer,
-      onReplyContentChange: setReplyContent,
-      onReplyFaceChange: setReplyFace,
-      onReplyFilterChange: setReplyFilter,
+      onReplyContentChange: changeReplyContent,
+      onReplyFaceChange: changeReplyFace,
+      onReplyFilterChange: changeReplyFilter,
       onReplyToFloor: replyToFloor,
       onRefreshTopic: refreshTopicReplies,
       onRefreshWholeTopic: refreshWholeTopic,
@@ -1865,7 +1778,7 @@ export function AppRoot() {
     editReply,
     contentWidth,
     debouncedCommentQuery,
-    expandedQuotesRef,
+    expandedQuotes,
     favoriteOnYaohuoSite,
     displayReplies,
     goBackFromTopic,
@@ -1879,9 +1792,9 @@ export function AppRoot() {
     inlineSizedImageUrls,
     interact,
     loadMoreReplies,
-    loadedQuotedRepliesRef,
+    loadedQuotedReplies,
     loadingMoreReplies,
-    loadingQuotedFloorsRef,
+    loadingQuotedFloors,
     openExternalUrl,
     openReadingSettingsFromTopic,
     openUser,
@@ -1897,7 +1810,7 @@ export function AppRoot() {
     replyHasMore,
     replyTarget,
     replyToFloor,
-    setReplyFace,
+    changeReplyFace,
     selectedTopic,
     shareTopic,
     styles,
@@ -2067,7 +1980,8 @@ export function AppRoot() {
               renderUserScreen={renderUserScreen}
               styles={styles}
               theme={theme}
-              onReady={() => syncNavigationToScreen(screen)}
+              onReady={handleNavigationReady}
+              onScreenChange={handleNavigationScreenChange}
               onTabPress={handleMainTabPress}
               onTopicClosing={flushDeferredNavigationTask}
               onUserClosing={flushDeferredNavigationTask}

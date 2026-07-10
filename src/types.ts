@@ -12,9 +12,9 @@ export type FeedFilterState = {
 };
 export type SourceErrorKind = 'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
 
-export type SourceErrorInfo = string | {
+export type SourceErrorInfo = {
   message: string;
-  kind?: SourceErrorKind;
+  kind: SourceErrorKind;
   reason?: string;
   loginRequired?: boolean;
   retryable?: boolean;

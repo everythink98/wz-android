@@ -18,6 +18,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: npm run test:docs
+      - run: npm run check:docs
       - run: npm run typecheck
       - run: npm run check:unused
       - run: node scripts/check-version.mjs

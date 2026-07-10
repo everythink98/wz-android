@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   createEmptyTopicSession,
+  createInactiveTopicSession,
+  createTopicRouteSessionStore,
   pushTopicSession,
+  readTopicRouteSnapshot,
+  removeTopicRouteSnapshot,
+  saveTopicRouteSnapshot,
   shouldReuseCurrentTopicDetail,
   snapshotFromTopicSession,
   topicSessionFromSnapshot,
@@ -30,6 +35,14 @@ function detail(id: string): TopicDetail {
 }
 
 describe('topic session state', () => {
+  it('starts without a fabricated topic before the first topic route opens', () => {
+    expect(createInactiveTopicSession()).toEqual({
+      ...createEmptyTopicSession(topic('unused')),
+      key: '',
+      selectedTopic: null
+    });
+  });
+
   it('does not push the current topic when the app link points to itself', () => {
     const current = createEmptyTopicSession(topic('1'));
     const stack = pushTopicSession([], current, topic('1'));
@@ -69,6 +82,13 @@ describe('topic session state', () => {
       ...createEmptyTopicSession(topic('3')),
       replyContent: '待回复',
       replyFace: '淡定.gif',
+      replyComposerOpen: true,
+      replyTarget: { floor: 2, author: 'bob' },
+      replyEditTarget: { commentId: 9, floor: 3, contentMarkdown: '旧回复' },
+      expandedQuotes: { '4:2': true },
+      loadedQuotedReplies: {
+        2: { floor: 2, author: 'bob', createdAt: '2026-06-06T01:00:00.000Z', contentHtml: '<p>quote</p>' }
+      },
       scrollY: 120
     };
     const restored = topicSessionFromSnapshot(snapshotFromTopicSession(session));
@@ -77,6 +97,13 @@ describe('topic session state', () => {
       key: 'nodeseek:3',
       replyContent: '待回复',
       replyFace: '淡定.gif',
+      replyComposerOpen: true,
+      replyTarget: { floor: 2, author: 'bob' },
+      replyEditTarget: { commentId: 9, floor: 3, contentMarkdown: '旧回复' },
+      expandedQuotes: { '4:2': true },
+      loadedQuotedReplies: {
+        2: { floor: 2, author: 'bob', createdAt: '2026-06-06T01:00:00.000Z', contentHtml: '<p>quote</p>' }
+      },
       scrollY: 120
     });
   });
@@ -99,5 +126,18 @@ describe('topic session state', () => {
     expect(snapshot.loadingQuotedFloors).toEqual({});
     expect(restored.topicError).toBe('');
     expect(restored.loadingQuotedFloors).toEqual({});
+  });
+
+  it('stores separate snapshots by navigation route key even for the same topic', () => {
+    const store = createTopicRouteSessionStore();
+    const base = snapshotFromTopicSession(createEmptyTopicSession(topic('5')));
+
+    saveTopicRouteSnapshot(store, 'Topic-route-a', { ...base, replyContent: '草稿 A' });
+    saveTopicRouteSnapshot(store, 'Topic-route-b', { ...base, replyContent: '草稿 B' });
+
+    expect(readTopicRouteSnapshot(store, 'Topic-route-a')?.replyContent).toBe('草稿 A');
+    expect(readTopicRouteSnapshot(store, 'Topic-route-b')?.replyContent).toBe('草稿 B');
+    removeTopicRouteSnapshot(store, 'Topic-route-b');
+    expect(readTopicRouteSnapshot(store, 'Topic-route-b')).toBeUndefined();
   });
 });

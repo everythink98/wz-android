@@ -20,9 +20,14 @@ allprojects { project ->
         project.android {
             splits {
                 abi {
+                    def requestedReleaseAbis = (project.findProperty("releaseApkAbis") ?: "arm64-v8a")
+                            .toString()
+                            .split(",")
+                            .collect { it.trim() }
+                            .findAll { it }
                     enable true
                     reset()
-                    include "arm64-v8a"
+                    include(*requestedReleaseAbis)
                     universalApk false
                 }
             }

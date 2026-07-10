@@ -11,22 +11,16 @@ import {
   type SourceSearchFilter
 } from '../searchFilters';
 import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '../searchHistory';
-import { searchTopics, searchYaohuoTopics } from '../sources/sourceGateway';
+import type { SourceGateway } from '../sources/sourceGateway';
 import {
-  errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
-  isNodeSeekCloudflareError,
-  isYaohuoLoginExpiredError,
-  isYaohuoLoginRequiredError,
   sourceLabel,
   startAbortableRequest
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
-import type { Fetcher } from '../request';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
-import { sourceErrorMessage, sourceErrorRequiresVerification } from '../sourceErrors';
-import { authNoticeForMessage, authNoticeForSource, searchSessionNoticeItems } from '../siteSessionPrompts';
+import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
+import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, FeedSource, Source, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
@@ -57,28 +51,20 @@ function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
 
 export function useSearchController({
   categories,
-  clearYaohuoLoginState,
-  fetcher,
-  loadNodeSeekCookieForSource,
-  loadYaohuoCookieForSource,
-  nodeSeekUserAgentRef,
   notify,
   onNodeSeekSearchVerificationRequired,
   sessionViewModels,
   showNodeSeekVerification,
-  showYaohuoLogin
+  showYaohuoLogin,
+  sourceGateway
 }: {
   categories: Category[];
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
-  fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
   sessionViewModels: SiteSessionViewModels;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
+  sourceGateway: SourceGateway;
 }) {
   const searchRequestIdRef = useRef(0);
   const searchRequestOwnerRef = useRef(createRequestOwner('search'));
@@ -204,56 +190,33 @@ export function useSearchController({
     filter?: SourceSearchFilter,
     options?: { isCurrent?: () => boolean }
   ): Promise<RemoteSearchSourceResult> => {
-    let yaohuoGeneration: number | undefined;
     const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
     try {
       const activeFilter = filter?.source === source ? filter : undefined;
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
-        loadNodeSeekCookieForSource(source)
-      ]);
-      if (source === 'yaohuo' && !yaohuoCookie) {
-        const message = '妖火需要登录后使用此功能。';
-        const group = { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || sourceStatusNotice, hasMore: false, nextPage: null };
-        return { kind: 'action-required', group, action: { type: 'yaohuo-login', message } };
-      }
       const searchLimit = source === 'linuxdo' ? 50 : 30;
-      const data = source === 'yaohuo'
-        ? await searchYaohuoTopics({
-          query,
-          page,
-          limit: searchLimit,
-          category: activeFilter?.source === 'yaohuo' ? activeFilter.category : undefined,
-          yaohuoCookie,
-          yaohuoFetcher: fetcher,
-          signal
-        })
-        : await searchTopics({
-          query,
-          source,
-          page,
-          limit: searchLimit,
-          categories,
-          fetcher,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          sort: source === 'v2ex' ? sort : 'relevance',
-          filter: activeFilter,
-          signal
-        });
+      const data = await sourceGateway.searchTopics({
+        query,
+        source,
+        page,
+        limit: searchLimit,
+        categories,
+        sort: source === 'v2ex' ? sort : 'relevance',
+        filter: activeFilter,
+        signal
+      }, { isCurrent: options?.isCurrent });
       const sourceError = data.errors?.[source];
-      const sourceErrorText = sourceErrorMessage(sourceError) || undefined;
+      const sourceErrorText = sourceError?.message || undefined;
       const group = {
         source,
         label: sourceLabel(source),
         items: data.items,
-        authNotice: sourceErrorText ? authNoticeForMessage(sourceErrorText) || undefined : sourceStatusNotice,
+        authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
         error: sourceErrorText,
-        verificationRequired: sourceErrorRequiresVerification(sourceError),
+        errorKind: sourceError?.kind,
         hasMore: Boolean(data.hasMore && data.nextPage),
         nextPage: data.nextPage ?? null
       };
-      if (source === 'nodeseek' && group.verificationRequired && group.error) {
+      if (source === 'nodeseek' && group.errorKind === 'verification-required' && group.error) {
         return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message: group.error } };
       }
       return remoteSearchResult(group);
@@ -261,25 +224,19 @@ export function useSearchController({
       if (isCanceledRequest(error)) {
         throw error;
       }
-      if (source === 'yaohuo' && isYaohuoLoginRequiredError(error)) {
-        const message = isYaohuoLoginExpiredError(error) ? '妖火登录已失效，请重新登录。' : errorMessage(error);
-        if (isYaohuoLoginExpiredError(error)) {
-          if (options?.isCurrent?.() !== false) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
-          }
-        }
-        const group = { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || sourceStatusNotice, hasMore: false, nextPage: null };
+      const sourceError = sourceErrorFromUnknown(source, error);
+      const message = sourceError.message;
+      if (source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+        const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
         return { kind: 'action-required', group, action: { type: 'yaohuo-login', message } };
       }
-      if (source === 'nodeseek' && isNodeSeekCloudflareError(error)) {
-        const message = errorMessage(error);
-        const group = { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || sourceStatusNotice, verificationRequired: true, hasMore: false, nextPage: null };
+      if (source === 'nodeseek' && sourceError.kind === 'verification-required') {
+        const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
         return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message } };
       }
-      const message = errorMessage(error);
-      return { kind: 'failed', group: { source, label: sourceLabel(source), items: [], error: message, authNotice: authNoticeForMessage(message) || undefined, hasMore: false, nextPage: null } };
+      return { kind: 'failed', group: { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || undefined, hasMore: false, nextPage: null } };
     }
-  }, [categories, clearYaohuoLoginState, fetcher, loadNodeSeekCookieForSource, loadYaohuoCookieForSource, nodeSeekUserAgentRef, sessionViewModels]);
+  }, [categories, sessionViewModels, sourceGateway]);
 
   const handleRemoteSearchAction = useCallback((action: RemoteSearchAction, retryNodeSeek = () => { void runSearchRef.current?.('nodeseek'); }) => {
     if (action.type === 'yaohuo-login') {
@@ -380,19 +337,19 @@ export function useSearchController({
         ? errors.map((group) => `${group.label}：${group.error}`).join('；')
         : `搜索完成：${resultCount} 条结果`);
     } catch (error) {
-      if (isCurrentSearchRequest()) {
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState();
+      if (isCurrentSearchRequest() && !isCanceledRequest(error)) {
+        const failureSource = sourceOverride || requestSearchSource;
+        const sourceError = sourceErrorFromUnknown(failureSource, error);
+        if (failureSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
-            showYaohuoLogin(errorMessage(error));
+            showYaohuoLogin(sourceError.message);
           }
           return;
         }
-        if (isNodeSeekCloudflareError(error)) {
-          const message = errorMessage(error);
-          requireNodeSeekSearchVerification(message, () => {
+        if (failureSource === 'nodeseek' && sourceError.kind === 'verification-required') {
+          requireNodeSeekSearchVerification(sourceError.message, () => {
             void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
               filters: requestFilters,
               query,
@@ -401,9 +358,7 @@ export function useSearchController({
           });
           return;
         }
-        if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
-        }
+        notify(sourceError.message);
       }
     } finally {
       if (isCurrentSearchRequest()) {
@@ -413,7 +368,6 @@ export function useSearchController({
     }
   }, [
     addRecentSearch,
-    clearYaohuoLoginState,
     notify,
     requireNodeSeekSearchVerification,
     handleRemoteSearchAction,
@@ -492,12 +446,19 @@ export function useSearchController({
       notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
     } catch (error) {
       if (isCurrentSearchRequest() && !isCanceledRequest(error)) {
+        const sourceError = sourceErrorFromUnknown(source, error);
         const nextGroups = searchGroupsRef.current.map((group) => (
-          group.source === source ? { ...group, loadingMore: false, error: errorMessage(error) } : group
+          group.source === source ? {
+            ...group,
+            loadingMore: false,
+            error: sourceError.message,
+            errorKind: sourceError.kind,
+            authNotice: authNoticeForSourceError(sourceError) || group.authNotice
+          } : group
         ));
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
-        notify(errorMessage(error));
+        notify(sourceError.message);
       }
     } finally {
       if (isCurrentSearchRequest()) {

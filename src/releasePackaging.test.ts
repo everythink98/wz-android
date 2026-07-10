@@ -22,7 +22,16 @@ describe('Android release packaging guards', () => {
     expect(prebuildIndex).toBeGreaterThan(versionIndex);
   });
 
-  it('keeps release APK signing and arm64-only output guarded', () => {
+  it('keeps version truth in config instead of duplicating it in stable docs', () => {
+    const versionCheck = readProjectFile('scripts', 'check-version.mjs');
+
+    expect(versionCheck).toContain('version !== appVersion');
+    expect(versionCheck).toContain('Number.isInteger(versionCode)');
+    expect(versionCheck).not.toContain("readText('README.md')");
+    expect(versionCheck).not.toContain("readText('memory', 'project.md')");
+  });
+
+  it('keeps the published APK arm64-only while allowing an optional signed smoke ABI', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const gradle = readProjectFile('scripts', 'android-release-apk.gradle');
 
@@ -31,9 +40,13 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('verifyReleaseSigningEnv();');
     expect(releaseScript).toContain('androiddebugkey');
     expect(releaseScript).toContain('debug.keystore');
-    expect(releaseScript).toContain("'-PreactNativeArchitectures=arm64-v8a'");
+    expect(releaseScript).toContain("const releaseApkFileName = 'app-arm64-v8a-release.apk'");
+    expect(releaseScript).toContain("const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])]");
+    expect(releaseScript).toContain("`-PreactNativeArchitectures=${releaseApkAbis.join(',')}`");
+    expect(releaseScript).toContain("`-PreleaseApkAbis=${releaseApkAbis.join(',')}`");
     expect(releaseScript).not.toContain('armeabi-v7a');
-    expect(gradle).toContain('include "arm64-v8a"');
+    expect(gradle).toContain('project.findProperty("releaseApkAbis") ?: "arm64-v8a"');
+    expect(gradle).toContain('include(*requestedReleaseAbis)');
     expect(gradle).not.toContain('armeabi-v7a');
   });
 

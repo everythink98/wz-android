@@ -32,11 +32,11 @@ describe('feed controller helpers', () => {
   };
 
   it('does not apply partial all-feed load-more results when any source failed', () => {
-    expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: 'HTTP 500' }, true)).toBeNull();
+    expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: { kind: 'ordinary', message: 'HTTP 500' } }, true)).toBeNull();
   });
 
   it('keeps partial all-feed refresh results when a source failed', () => {
-    expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: 'HTTP 500' }, false)).toEqual(response);
+    expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: { kind: 'ordinary', message: 'HTTP 500' } }, false)).toEqual(response);
   });
 
   it('lets the default all feed load before reader data finishes loading', () => {

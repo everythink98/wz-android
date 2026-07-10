@@ -18,6 +18,7 @@ type TopicCardProps = {
   topic: Topic;
   readerState: TopicListItemState;
   styles: ReturnType<typeof createStyles>;
+  testID?: string;
   theme: ReaderTheme;
   onOpenTopic: (topic: Topic) => void;
 };
@@ -64,6 +65,7 @@ export function topicCardPropsAreEqual(previous: TopicCardProps, next: TopicCard
     && previous.renderTrailingAction === next.renderTrailingAction
     && previous.onOpenTopic === next.onOpenTopic
     && previous.styles === next.styles
+    && previous.testID === next.testID
     && previous.theme === next.theme
     && previous.readerState.favorite === next.readerState.favorite
     && previous.readerState.read === next.readerState.read
@@ -101,6 +103,7 @@ export function TopicCard({
   topic,
   readerState,
   styles,
+  testID,
   theme,
   onOpenTopic
 }: TopicCardProps) {
@@ -119,7 +122,7 @@ export function TopicCard({
   const accessRequirementText = forumAccessRequirementText(topic.accessRequirement);
   return (
     <View style={styles.topicRowShell}>
-      <Pressable accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
+      <Pressable testID={testID} accessibilityRole="button" android_ripple={androidRipple(theme.primarySoft)} style={[styles.topicCardPressable, readerState.read && styles.topicCardRead]} onPress={openTopicPress}>
         <View style={styles.topicCardHead}>
           <View style={styles.topicBadgeRow}>
             <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(topic.source, theme)]} numberOfLines={1}>{sourceLabel(topic.source)}</Text>

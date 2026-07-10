@@ -10,7 +10,7 @@ describe('topic request state', () => {
     const currentTopicKeyRef = { current: 'nodeseek:1' };
 
     expect(isCurrentTopicLoadRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: () => currentTopicKeyRef.current,
       ownerRef,
       requestId: 1,
       requestIdRef,
@@ -26,7 +26,7 @@ describe('topic request state', () => {
     const currentTopicKeyRef = { current: 'nodeseek:2' };
 
     expect(isCurrentTopicLoadRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: () => currentTopicKeyRef.current,
       ownerRef,
       requestId: 1,
       requestIdRef,
@@ -43,7 +43,7 @@ describe('topic request state', () => {
     const currentTopicKeyRef = { current: 'nodeseek:1' };
 
     expect(isCurrentTopicLoadRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: () => currentTopicKeyRef.current,
       ownerRef,
       requestId: 1,
       requestIdRef,
@@ -59,7 +59,7 @@ describe('topic request state', () => {
     const currentTopicKeyRef = { current: 'nodeseek:1' };
 
     expect(isCurrentTopicRepliesRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: () => currentTopicKeyRef.current,
       ownerRef,
       requestId: 1,
       requestIdRef,
@@ -69,7 +69,7 @@ describe('topic request state', () => {
 
     currentTopicKeyRef.current = 'nodeseek:2';
     expect(isCurrentTopicRepliesRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: () => currentTopicKeyRef.current,
       ownerRef,
       requestId: 1,
       requestIdRef,
@@ -80,7 +80,7 @@ describe('topic request state', () => {
     currentTopicKeyRef.current = 'nodeseek:1';
     requestIdRef.current = 2;
     expect(isCurrentTopicRepliesRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: () => currentTopicKeyRef.current,
       ownerRef,
       requestId: 1,
       requestIdRef,

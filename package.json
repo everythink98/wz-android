@@ -1,17 +1,20 @@
 {
   "name": "wz-android",
-  "version": "1.3.53",
+  "version": "1.3.54",
   "private": true,
   "main": "index.ts",
   "scripts": {
     "start": "expo start --dev-client",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:docs": "node --test scripts/check-docs.test.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
     "check:unused": "tsc --noEmit --noUnusedLocals --noUnusedParameters --allowUnreachableCode false --allowUnusedLabels false",
     "preandroid": "npm run generate:adaptive-icon",
     "android": "expo run:android",
     "generate:adaptive-icon": "node scripts/generate-adaptive-icon.mjs",
     "release:android": "node scripts/release-android.mjs",
+    "smoke:android": "node scripts/smoke-android.mjs",
     "typecheck": "tsc --noEmit",
     "ios": "expo run:ios"
   },

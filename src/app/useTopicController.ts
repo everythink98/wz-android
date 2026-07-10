@@ -1,11 +1,5 @@
-import { useCallback, useMemo, useRef, type Dispatch, type SetStateAction } from 'react';
-import {
-  getReply,
-  getReplies,
-  getTopic,
-  getYaohuoReplies,
-  getYaohuoTopic
-} from '../sources/sourceGateway';
+import { useCallback, useMemo, useRef } from 'react';
+import type { SourceGateway } from '../sources/sourceGateway';
 import {
   recordHistory,
   topicKey,
@@ -14,27 +8,20 @@ import {
 } from '../readerData';
 import { isSameReply, mergeReplies, removeReply } from '../feedLogic';
 import {
-  errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
-  isLinuxDoCloudflareError,
-  isNodeSeekCloudflareError,
-  isYaohuoLoginExpiredError,
-  isYaohuoLoginRequiredError,
   startAbortableRequest
 } from '../appUtils';
 import { REPLY_PAGE_SIZE, replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
-import { pushTopicSession, shouldReuseCurrentTopicDetail, topicSessionFromSnapshot } from '../topicSessionState';
+import { shouldReuseCurrentTopicDetail } from '../topicSessionState';
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
 import { applyEditedReplyContent, shouldApplyEditedReplyFallback } from './topicActionControllerHelpers';
-import type { Fetcher } from '../request';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
-import { authHintForSource } from '../siteSessionPrompts';
-import type { SiteSessionViewModels } from '../siteSessionState';
-import type { FeedSource, Reply, Source, Topic, TopicDetail } from '../types';
-import type { ReplyEditTarget, ReplyFilter, ReplyRefreshTarget, ReplyTarget, Screen, TopicRepliesRefreshOptions, TopicSnapshot } from '../appTypes';
+import type { TopicSessionController } from './useTopicSessionController';
+import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
+import type { Reply, Topic } from '../types';
+import type { ReplyRefreshTarget, Screen, TopicRepliesRefreshOptions } from '../appTypes';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -52,129 +39,61 @@ function replyTargetIndex(replies: Reply[], target?: ReplyRefreshTarget | null) 
 
 export function useTopicController({
   changeScreen,
-  clearYaohuoLoginState,
   commitReaderData,
-  currentTopicKeyRef,
-  expandedQuotesRef,
-  fetcher,
   handleLinuxDoCloudflareForTopic,
   linuxDoDismissedVerificationTopicKeyRef,
   linuxDoPendingTopicVerifiedRef,
   linuxDoVerifiedRetryTopicKeyRef,
-  loadNodeSeekCookieForSource,
-  loadYaohuoCookieForSource,
-  loadedQuotedRepliesRef,
-  loadingMoreRepliesRef,
-  nodeSeekUserAgentRef,
   notify,
-  onTopicContextChange,
+  onNodeSeekTopicVerificationRequired,
   pendingLinuxDoTopicRef,
   pushTopicScreen,
-  quotedReplyAbortRefs,
   readerData,
   readerDataRef,
   reopenExistingTopicScreenRef,
-  replyNextOffset,
-  replyNextPage,
-  resetQuoteState,
+  repliesAbortRef,
+  repliesRequestIdRef,
   screen,
-  selectedTopic,
-  sessionViewModels,
-  setCommentQuery,
-  setLoadingMoreReplies,
-  setLoadedQuotedReplies,
-  setLoadingQuotedFloors,
-  setReplyComposerOpen,
-  setReplyContent,
-  setReplyFace,
-  setReplyEditTarget,
-  setReplyFilter,
-  setReplyHasMore,
-  setReplyNextOffset,
-  setReplyNextPage,
-  setReplyTarget,
-  setSelectedTopic,
-  setTopicBusy,
-  setTopicDetail,
-  setTopicError,
-  setTopicReplies,
-  setUnreadReplyCount,
-  onNodeSeekTopicVerificationRequired,
   showYaohuoLogin,
+  sourceGateway,
   topicAbortRef,
-  topicBackStackRef,
-  topicDetail,
-  topicReplies,
-  topicRepliesRef,
   topicRequestIdRef,
   topicReturnScreenRef,
-  topicSnapshot,
-  updateExpandedQuotes,
-  repliesAbortRef,
-  repliesRequestIdRef
+  topicSession
 }: {
   changeScreen: (nextScreen: Screen) => void;
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   commitReaderData: (updater: (current: ReaderData) => ReaderData) => void;
-  currentTopicKeyRef: MutableRef<string | null>;
-  expandedQuotesRef: MutableRef<Record<string, boolean>>;
-  fetcher: Fetcher;
   handleLinuxDoCloudflareForTopic: (topic: Topic, message: string) => Promise<boolean>;
   linuxDoDismissedVerificationTopicKeyRef: MutableRef<string | null>;
   linuxDoPendingTopicVerifiedRef: MutableRef<boolean>;
   linuxDoVerifiedRetryTopicKeyRef: MutableRef<string | null>;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  loadedQuotedRepliesRef: MutableRef<Record<number, Reply>>;
-  loadingMoreRepliesRef: MutableRef<boolean>;
-  nodeSeekUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
-  onTopicContextChange: (topicKey: string | null) => void;
+  onNodeSeekTopicVerificationRequired: (message: string) => void;
   pendingLinuxDoTopicRef: MutableRef<Topic | null>;
   pushTopicScreen: () => void;
-  quotedReplyAbortRefs: MutableRef<Record<string, AbortController>>;
   readerData: ReaderData;
   readerDataRef: MutableRef<ReaderData>;
   reopenExistingTopicScreenRef: MutableRef<boolean>;
-  replyNextOffset: number | null;
-  replyNextPage: number | null;
-  resetQuoteState: () => void;
-  screen: Screen;
-  selectedTopic: Topic | null;
-  sessionViewModels: SiteSessionViewModels;
-  setCommentQuery: Dispatch<SetStateAction<string>>;
-  setLoadingMoreReplies: Dispatch<SetStateAction<boolean>>;
-  setLoadedQuotedReplies: (updater: (current: Record<number, Reply>) => Record<number, Reply>) => void;
-  setLoadingQuotedFloors: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
-  setReplyComposerOpen: Dispatch<SetStateAction<boolean>>;
-  setReplyContent: Dispatch<SetStateAction<string>>;
-  setReplyFace: Dispatch<SetStateAction<string>>;
-  setReplyEditTarget: Dispatch<SetStateAction<ReplyEditTarget | null>>;
-  setReplyFilter: Dispatch<SetStateAction<ReplyFilter>>;
-  setReplyHasMore: Dispatch<SetStateAction<boolean>>;
-  setReplyNextOffset: Dispatch<SetStateAction<number | null>>;
-  setReplyNextPage: Dispatch<SetStateAction<number | null>>;
-  setReplyTarget: Dispatch<SetStateAction<ReplyTarget | null>>;
-  setSelectedTopic: Dispatch<SetStateAction<Topic | null>>;
-  setTopicBusy: Dispatch<SetStateAction<boolean>>;
-  setTopicDetail: Dispatch<SetStateAction<TopicDetail | null>>;
-  setTopicError: Dispatch<SetStateAction<string>>;
-  setTopicReplies: Dispatch<SetStateAction<Reply[]>>;
-  setUnreadReplyCount: Dispatch<SetStateAction<number>>;
-  onNodeSeekTopicVerificationRequired: (message: string) => void;
-  showYaohuoLogin: (message?: string) => void;
-  topicAbortRef: MutableRef<AbortController | null>;
-  topicBackStackRef: MutableRef<TopicSnapshot[]>;
-  topicDetail: TopicDetail | null;
-  topicReplies: Reply[];
-  topicRepliesRef: MutableRef<Reply[]>;
-  topicRequestIdRef: MutableRef<number>;
-  topicReturnScreenRef: MutableRef<Exclude<Screen, 'topic'>>;
-  topicSnapshot: () => TopicSnapshot;
-  updateExpandedQuotes: (updater: (current: Record<string, boolean>) => Record<string, boolean>) => void;
   repliesAbortRef: MutableRef<AbortController | null>;
   repliesRequestIdRef: MutableRef<number>;
+  screen: Screen;
+  showYaohuoLogin: (message?: string) => void;
+  sourceGateway: SourceGateway;
+  topicAbortRef: MutableRef<AbortController | null>;
+  topicRequestIdRef: MutableRef<number>;
+  topicReturnScreenRef: MutableRef<Exclude<Screen, 'topic'>>;
+  topicSession: TopicSessionController;
 }) {
+  const {
+    state: { replyNextOffset, replyNextPage, selectedTopic, topicDetail, topicReplies },
+    commands: {
+      navigation: topicNavigation,
+      quotes: topicQuotes,
+      replies: topicReplyCommands,
+      topic: topicCommands
+    },
+    snapshot: topicSnapshot
+  } = topicSession;
   const topicRequestOwnerRef = useRef(createRequestOwner('topic'));
   const repliesRequestOwnerRef = useRef(createRequestOwner('topic-replies'));
   const replyVisitedPageKeysRef = useRef<Record<string, Set<string>>>({});
@@ -191,38 +110,13 @@ export function useTopicController({
       linuxDoDismissedVerificationTopicKeyRef.current = null;
     }
     const nextTopicKey = topicKey(topic);
-    const activeTopicKey = currentTopicKeyRef.current || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
+    const activeTopicKey = topicCommands.getCurrentKey() || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
     const opensDifferentTopic = nextTopicKey !== activeTopicKey;
     if (screen !== 'topic' && !reopenExistingTopicScreen) {
       topicReturnScreenRef.current = screen;
-      topicBackStackRef.current = [];
+      topicNavigation.clearBackStack();
     } else if (opensDifferentTopic) {
-      topicBackStackRef.current = pushTopicSession(
-        topicBackStackRef.current.map(topicSessionFromSnapshot),
-        topicSessionFromSnapshot(topicSnapshot()),
-        topic
-      ).map((session) => ({
-        key: session.key,
-        selectedTopic: session.selectedTopic,
-        topicDetail: session.topicDetail,
-        topicReplies: session.topicReplies,
-        topicError: session.topicError,
-        replyHasMore: session.replyHasMore,
-        replyNextPage: session.replyNextPage,
-        replyNextOffset: session.replyNextOffset,
-        unreadReplyCount: session.unreadReplyCount,
-        commentQuery: session.commentQuery,
-        replyFilter: session.replyFilter,
-        replyContent: session.replyContent,
-        replyFace: session.replyFace,
-        replyComposerOpen: session.replyComposerOpen,
-        replyTarget: session.replyTarget,
-        replyEditTarget: session.replyEditTarget,
-        expandedQuotes: session.expandedQuotes,
-        loadedQuotedReplies: session.loadedQuotedReplies,
-        loadingQuotedFloors: session.loadingQuotedFloors,
-        scrollY: session.scrollY
-      }));
+      topicNavigation.pushBackStack(topicSnapshot(), topic);
       pushTopicScreen();
     }
     if (screen !== 'topic' && shouldReuseCurrentTopicDetail({
@@ -231,10 +125,7 @@ export function useTopicController({
       nocache,
       reopenExistingTopicScreen
     })) {
-      onTopicContextChange(nextTopicKey);
-      currentTopicKeyRef.current = nextTopicKey;
-      setSelectedTopic(topic);
-      setTopicBusy(false);
+      topicCommands.reuse(topic, nextTopicKey);
       if (!reopenExistingTopicScreen) {
         changeScreen('topic');
       }
@@ -253,7 +144,7 @@ export function useTopicController({
     const requestId = ++topicRequestIdRef.current;
     const requestOwner = startOwnedRequest(topicRequestOwnerRef, `topic:${nextTopicKey}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentTopicRequest = () => isCurrentTopicLoadRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: topicCommands.getCurrentKey,
       ownerRef: topicRequestOwnerRef,
       requestId,
       requestIdRef: topicRequestIdRef,
@@ -262,70 +153,30 @@ export function useTopicController({
     });
     repliesRequestIdRef.current += 1;
     repliesAbortRef.current?.abort();
-    loadingMoreRepliesRef.current = false;
-    onTopicContextChange(nextTopicKey);
-    currentTopicKeyRef.current = nextTopicKey;
     replyVisitedPageKeysRef.current[nextTopicKey] = new Set();
-    setSelectedTopic(topic);
-    setTopicDetail(null);
-    setTopicError('');
-    setTopicReplies([]);
-    setCommentQuery('');
-    setUnreadReplyCount(0);
-    setReplyHasMore(false);
-    setReplyNextPage(null);
-    setReplyNextOffset(null);
-    setLoadingMoreReplies(false);
-    setReplyContent('');
-    setReplyFace('');
-    setReplyComposerOpen(false);
-    setReplyTarget(null);
-    setReplyEditTarget(null);
-    setReplyFilter('all');
-    resetQuoteState();
+    topicCommands.beginLoad(topic, nextTopicKey);
     if (!reopenExistingTopicScreen) {
       changeScreen('topic');
     }
-    setTopicBusy(true);
     const controller = startAbortableRequest(topicAbortRef);
-    let yaohuoGeneration: number | undefined;
     try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(topic.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
-        loadNodeSeekCookieForSource(topic.source)
-      ]);
-      if (!isCurrentTopicRequest()) {
-        return;
-      }
-      if (topic.source === 'yaohuo' && !yaohuoCookie) {
-        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
-        setTopicError(message);
-        showYaohuoLogin(message);
-        return;
-      }
-      const detail = topic.source === 'yaohuo'
-        ? await getYaohuoTopic({ topic, yaohuoCookie, yaohuoFetcher: fetcher, replyLimit: 30, signal: controller.signal })
-        : await getTopic({
-          source: topic.source,
-          id: topic.id,
-          nocache,
-          fetcher,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          signal: controller.signal,
-          timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
-        });
+      const detail = await sourceGateway.getTopic({
+        source: topic.source,
+        id: topic.id,
+        topic,
+        nocache,
+        signal: controller.signal,
+        timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
+      }, { isCurrent: isCurrentTopicRequest });
       if (!isCurrentTopicRequest()) {
         return;
       }
       const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
       const previousReplyCount = readerDataRef.current.history[topicKey(displayDetail)]?.topic.replyCount;
-      setUnreadReplyCount(typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0);
-      setTopicDetail(displayDetail);
-      setTopicReplies(displayDetail.replies || []);
-      setReplyHasMore(Boolean(displayDetail.replyHasMore && displayDetail.replyNextPage));
-      setReplyNextPage(displayDetail.replyNextPage ?? null);
-      setReplyNextOffset(displayDetail.replyNextOffset ?? null);
+      topicCommands.resolveLoad(
+        displayDetail,
+        typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0
+      );
       commitReaderData((current) => updateFavoriteTopic(recordHistory(current, displayDetail), displayDetail));
       if (nocache) {
         notify('主题已更新');
@@ -333,22 +184,22 @@ export function useTopicController({
       linuxDoVerifiedRetryTopicKeyRef.current = null;
     } catch (error) {
       if (isCurrentTopicRequest()) {
-        const message = errorMessage(error);
-        setTopicError(message);
-        if (isLinuxDoCloudflareError(error)) {
+        const sourceError = sourceErrorFromUnknown(topic.source, error);
+        const message = sourceError.message;
+        topicCommands.failLoad(sourceError);
+        if (topic.source === 'linuxdo' && sourceError.kind === 'verification-required') {
           await handleLinuxDoCloudflareForTopic(topic, message);
           return;
         }
-        if (isNodeSeekCloudflareError(error)) {
+        if (topic.source === 'nodeseek' && sourceError.kind === 'verification-required') {
           onNodeSeekTopicVerificationRequired(message);
           return;
         }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
+        if (topic.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
-            showYaohuoLogin(errorMessage(error));
+            showYaohuoLogin(message);
           }
           return;
         }
@@ -358,57 +209,38 @@ export function useTopicController({
       }
     } finally {
       if (isCurrentTopicRequest()) {
-        setTopicBusy(false);
+        topicCommands.finishLoad();
       }
       finishAbortableRequest(topicAbortRef, controller);
     }
   }, [
+    topicCommands.beginLoad,
     changeScreen,
-    clearYaohuoLoginState,
     commitReaderData,
-    currentTopicKeyRef,
-    fetcher,
+    topicNavigation.clearBackStack,
+    topicCommands.getCurrentKey,
     handleLinuxDoCloudflareForTopic,
     linuxDoDismissedVerificationTopicKeyRef,
     linuxDoPendingTopicVerifiedRef,
     linuxDoVerifiedRetryTopicKeyRef,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    loadingMoreRepliesRef,
-    nodeSeekUserAgentRef,
     notify,
-    onTopicContextChange,
+    topicCommands.failLoad,
+    topicCommands.finishLoad,
     pendingLinuxDoTopicRef,
     pushTopicScreen,
+    topicNavigation.pushBackStack,
     readerDataRef,
     reopenExistingTopicScreenRef,
     repliesAbortRef,
     repliesRequestIdRef,
-    resetQuoteState,
+    topicCommands.resolveLoad,
+    topicCommands.reuse,
     screen,
     selectedTopic,
-    sessionViewModels,
-    setCommentQuery,
-    setLoadingMoreReplies,
-    setReplyComposerOpen,
-    setReplyContent,
-    setReplyEditTarget,
-    setReplyFace,
-    setReplyFilter,
-    setReplyHasMore,
-    setReplyNextOffset,
-    setReplyNextPage,
-    setReplyTarget,
-    setSelectedTopic,
-    setTopicBusy,
-    setTopicDetail,
-    setTopicError,
-    setTopicReplies,
-    setUnreadReplyCount,
+    sourceGateway,
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicAbortRef,
-    topicBackStackRef,
     topicDetail,
     topicRequestIdRef,
     topicReturnScreenRef,
@@ -435,28 +267,17 @@ export function useTopicController({
     const requestId = ++repliesRequestIdRef.current;
     const requestOwner = startOwnedRequest(repliesRequestOwnerRef, `topic-replies:${requestTopicKey}:refresh:${afterSubmit ? 'after-submit' : 'manual'}`);
     const isCurrentRepliesRequest = () => isCurrentTopicRepliesRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: topicCommands.getCurrentKey,
       ownerRef: repliesRequestOwnerRef,
       requestId,
       requestIdRef: repliesRequestIdRef,
       requestOwner,
       requestTopicKey
     });
-    loadingMoreRepliesRef.current = true;
     repliesAbortRef.current?.abort();
     let controller: AbortController | null = null;
-    setLoadingMoreReplies(true);
-    let yaohuoGeneration: number | undefined;
+    topicReplyCommands.beginLoad();
     try {
-      const yaohuoCookie = await loadYaohuoCookieForSource(detail.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } });
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
-      if (!isCurrentRepliesRequest()) {
-        return false;
-      }
-      if (detail.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin(authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。');
-        return false;
-      }
       controller = startAbortableRequest(repliesAbortRef);
       const expectedReplyCount = Math.max(detail.replyCount || 0, topicReplies.length) + 1;
       const { page: targetPage, offset: targetOffset, limit: targetLimit } = replyRefreshTarget({
@@ -468,42 +289,30 @@ export function useTopicController({
         loadedReplyCount: topicReplies.length,
         targetReplyIndex: replyTargetIndex(topicReplies, targetReply)
       });
-      const data = detail.source === 'yaohuo'
-        ? await getYaohuoReplies({
-          id: detail.id,
-          categoryId: detail.categoryId,
-          page: targetPage,
-          limit: targetLimit ?? REPLY_PAGE_SIZE,
-          yaohuoCookie,
-          yaohuoFetcher: fetcher,
-          signal: controller.signal
-        })
-        : await getReplies({
-          source: detail.source,
-          id: detail.id,
-          page: targetPage,
-          limit: targetLimit ?? REPLY_PAGE_SIZE,
-          offset: targetOffset,
-          nocache,
-          fetcher,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          fillPages: !afterSubmit && detail.source === 'nodeseek',
-          signal: controller.signal
-        });
+      const data = await sourceGateway.getReplies({
+        source: detail.source,
+        id: detail.id,
+        categoryId: detail.categoryId,
+        page: targetPage,
+        limit: targetLimit ?? REPLY_PAGE_SIZE,
+        offset: targetOffset,
+        nocache,
+        fillPages: !afterSubmit && detail.source === 'nodeseek',
+        signal: controller.signal
+      }, { isCurrent: isCurrentRepliesRequest });
       if (!isCurrentRepliesRequest()) {
         return false;
       }
       const refreshedItems = removeReply(data.items, excludeReply);
-      const mergedReplies = mergeReplies(topicRepliesRef.current, refreshedItems);
+      const mergedReplies = mergeReplies(topicReplyCommands.getCurrent(), refreshedItems);
       const displayedReplies = shouldApplyEditedReplyFallback(refreshedItems, editedReplyContent, detail.source)
         ? applyEditedReplyContent(mergedReplies, editedReplyContent, detail.source)
         : mergedReplies;
-      setTopicReplies(displayedReplies);
+      const replyCount = afterSubmit && !targetReply && !excludeReply
+        ? replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length)
+        : undefined;
       if (afterSubmit && !targetReply && !excludeReply) {
-        const replyCount = replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length);
-        setTopicDetail((current) => current && topicKey(current) === requestTopicKey && replyCount > current.replyCount ? { ...current, replyCount } : current);
-        setSelectedTopic((current) => current && topicKey(current) === requestTopicKey && replyCount > current.replyCount ? { ...current, replyCount } : current);
+        topicReplyCommands.resolve({ replies: displayedReplies, replyCount, requestTopicKey });
       }
       if (!afterSubmit) {
         const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
@@ -511,9 +320,14 @@ export function useTopicController({
         replyVisitedPageKeysRef.current[requestTopicKey] = visitedPages;
         const nextPageKey = replyPageVisitKey(data.nextPage, data.nextOffset);
         const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(nextPageKey));
-        setReplyHasMore(canLoadNext);
-        setReplyNextPage(canLoadNext ? data.nextPage ?? null : null);
-        setReplyNextOffset(canLoadNext ? data.nextOffset ?? null : null);
+        topicReplyCommands.resolve({
+          replies: displayedReplies,
+          hasMore: canLoadNext,
+          nextPage: data.nextPage ?? null,
+          nextOffset: data.nextOffset ?? null
+        });
+      } else if (targetReply || excludeReply) {
+        topicReplyCommands.resolve({ replies: displayedReplies });
       }
       if (!silent) {
         notify(`评论已更新${refreshedItems.length ? `，读取 ${refreshedItems.length} 条` : ''}`);
@@ -521,48 +335,44 @@ export function useTopicController({
       return true;
     } catch (error) {
       if (isCurrentRepliesRequest()) {
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
+        const sourceError = sourceErrorFromUnknown(detail.source, error);
+        if (detail.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
-            showYaohuoLogin(errorMessage(error));
+            showYaohuoLogin(sourceError.message);
           }
           return false;
         }
-        if (isLinuxDoCloudflareError(error)) {
-          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
+        if (detail.source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return false;
         }
-        if (isNodeSeekCloudflareError(error)) {
-          const message = errorMessage(error);
-          setTopicError(message);
-          onNodeSeekTopicVerificationRequired(message);
+        if (detail.source === 'nodeseek' && sourceError.kind === 'verification-required') {
+          topicCommands.failLoad(sourceError);
+          onNodeSeekTopicVerificationRequired(sourceError.message);
           return false;
         }
         if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
+          notify(sourceError.message);
         }
       }
       return false;
     } finally {
       if (isCurrentRepliesRequest()) {
-        loadingMoreRepliesRef.current = false;
-        setLoadingMoreReplies(false);
+        topicReplyCommands.finishLoad();
       }
       if (controller) {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
   }, [
-    clearYaohuoLoginState,
-    currentTopicKeyRef,
-    fetcher,
+    topicReplyCommands.beginLoad,
+    topicCommands.failLoad,
+    topicReplyCommands.finishLoad,
+    topicCommands.getCurrentKey,
+    topicReplyCommands.getCurrent,
     handleLinuxDoCloudflareForTopic,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    loadingMoreRepliesRef,
-    nodeSeekUserAgentRef,
     notify,
     openTopic,
     repliesAbortRef,
@@ -570,152 +380,116 @@ export function useTopicController({
     replyNextOffset,
     replyNextPage,
     selectedTopic,
-    sessionViewModels,
-    setLoadingMoreReplies,
-    setReplyHasMore,
-    setReplyNextOffset,
-    setReplyNextPage,
-    setSelectedTopic,
-    setTopicReplies,
-    setTopicDetail,
+    sourceGateway,
+    topicReplyCommands.resolve,
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
     topicDetail,
     topicReplies,
-    topicRepliesRef
   ]);
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
-    if (!detail || !replyNextPage || loadingMoreRepliesRef.current) {
+    if (!detail || !replyNextPage || topicReplyCommands.isLoading()) {
       return;
     }
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
     const requestOwner = startOwnedRequest(repliesRequestOwnerRef, `topic-replies:${requestTopicKey}:more:${replyNextPage}:${replyNextOffset || ''}`);
     const isCurrentRepliesRequest = () => isCurrentTopicRepliesRequest({
-      currentTopicKeyRef,
+      getCurrentTopicKey: topicCommands.getCurrentKey,
       ownerRef: repliesRequestOwnerRef,
       requestId,
       requestIdRef: repliesRequestIdRef,
       requestOwner,
       requestTopicKey
     });
-    loadingMoreRepliesRef.current = true;
     let controller: AbortController | null = null;
-    setLoadingMoreReplies(true);
-    let yaohuoGeneration: number | undefined;
+    topicReplyCommands.beginLoad();
     try {
-      const yaohuoCookie = await loadYaohuoCookieForSource(detail.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } });
-      const nodeSeekCookie = await loadNodeSeekCookieForSource(detail.source);
-      if (!isCurrentRepliesRequest()) {
-        return;
-      }
-      if (detail.source === 'yaohuo' && !yaohuoCookie) {
-        showYaohuoLogin(authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。');
-        return;
-      }
       controller = startAbortableRequest(repliesAbortRef);
       const limit = replyLoadMoreLimit({
         source: detail.source,
         replyNextPage,
         replyNextOffset
       });
-      const data = detail.source === 'yaohuo'
-        ? await getYaohuoReplies({
-          id: detail.id,
-          categoryId: detail.categoryId,
-          page: replyNextPage,
-          limit,
-          yaohuoCookie,
-          yaohuoFetcher: fetcher,
-          signal: controller.signal
-        })
-        : await getReplies({
-          source: detail.source,
-          id: detail.id,
-          page: replyNextPage,
-          limit,
-          offset: replyNextOffset,
-          fetcher,
-          nodeSeekCookie,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          signal: controller.signal
-        });
+      const data = await sourceGateway.getReplies({
+        source: detail.source,
+        id: detail.id,
+        categoryId: detail.categoryId,
+        page: replyNextPage,
+        limit,
+        offset: replyNextOffset,
+        signal: controller.signal
+      }, { isCurrent: isCurrentRepliesRequest });
       if (!isCurrentRepliesRequest()) {
         return;
       }
-      const currentReplies = topicRepliesRef.current;
+      const currentReplies = topicReplyCommands.getCurrent();
       const mergedReplies = mergeReplies(currentReplies, data.items);
       const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
       visitedPages.add(replyPageVisitKey(replyNextPage, replyNextOffset));
       replyVisitedPageKeysRef.current[requestTopicKey] = visitedPages;
       const nextPageKey = replyPageVisitKey(data.nextPage, data.nextOffset);
       const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(nextPageKey));
-      setTopicReplies(mergedReplies);
-      setReplyHasMore(canLoadNext);
-      setReplyNextPage(canLoadNext ? data.nextPage ?? null : null);
-      setReplyNextOffset(canLoadNext ? data.nextOffset ?? null : null);
+      topicReplyCommands.resolve({
+        replies: mergedReplies,
+        hasMore: canLoadNext,
+        nextPage: data.nextPage ?? null,
+        nextOffset: data.nextOffset ?? null
+      });
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
       if (isCurrentRepliesRequest()) {
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
+        const sourceError = sourceErrorFromUnknown(detail.source, error);
+        if (detail.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
-            showYaohuoLogin(errorMessage(error));
+            showYaohuoLogin(sourceError.message);
           }
           return;
         }
-        if (isLinuxDoCloudflareError(error)) {
-          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
+        if (detail.source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return;
         }
-        if (isNodeSeekCloudflareError(error)) {
-          const message = errorMessage(error);
-          setTopicError(message);
-          onNodeSeekTopicVerificationRequired(message);
+        if (detail.source === 'nodeseek' && sourceError.kind === 'verification-required') {
+          topicCommands.failLoad(sourceError);
+          onNodeSeekTopicVerificationRequired(sourceError.message);
           return;
         }
         if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
+          notify(sourceError.message);
         }
       }
     } finally {
       if (isCurrentRepliesRequest()) {
-        loadingMoreRepliesRef.current = false;
-        setLoadingMoreReplies(false);
+        topicReplyCommands.finishLoad();
       }
       if (controller) {
         finishAbortableRequest(repliesAbortRef, controller);
       }
     }
   }, [
-    clearYaohuoLoginState,
-    currentTopicKeyRef,
-    fetcher,
+    topicReplyCommands.beginLoad,
+    topicCommands.failLoad,
+    topicReplyCommands.finishLoad,
+    topicCommands.getCurrentKey,
+    topicReplyCommands.getCurrent,
     handleLinuxDoCloudflareForTopic,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    loadingMoreRepliesRef,
-    nodeSeekUserAgentRef,
+    topicReplyCommands.isLoading,
     notify,
     repliesAbortRef,
     repliesRequestIdRef,
     replyNextOffset,
     replyNextPage,
     selectedTopic,
-    sessionViewModels,
-    setLoadingMoreReplies,
-    setReplyHasMore,
-    setReplyNextOffset,
-    setReplyNextPage,
-    setTopicReplies,
+    sourceGateway,
+    topicReplyCommands.resolve,
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
-    topicDetail,
-    topicRepliesRef
+    topicDetail
   ]);
 
   const refreshWholeTopic = useCallback(() => {
@@ -735,75 +509,74 @@ export function useTopicController({
     quotedReply?: Reply;
   }) => {
     const key = `${replyFloor}:${quotedFloor}`;
-    if (expandedQuotesRef.current[key]) {
-      updateExpandedQuotes((current) => ({ ...current, [key]: false }));
+    if (topicQuotes.isExpanded(key)) {
+      topicQuotes.changeExpanded(key, false);
       return;
     }
 
-    if (quotedReply || loadedQuotedRepliesRef.current[quotedFloor]) {
-      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
+    if (quotedReply || topicQuotes.getLoaded(quotedFloor)) {
+      topicQuotes.changeExpanded(key, true);
       return;
     }
 
     const detail = topicDetail || selectedTopic;
     if (!detail || detail.source !== 'linuxdo') {
       notify('引用楼层未加载');
-      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
+      topicQuotes.changeExpanded(key, true);
       return;
     }
     const requestTopicKey = topicKey(detail);
 
-    setLoadingQuotedFloors((current) => ({ ...current, [key]: true }));
-    quotedReplyAbortRefs.current[key]?.abort?.();
+    topicQuotes.changeLoading(key, true);
     const controller = new AbortController();
-    quotedReplyAbortRefs.current[key] = controller;
+    topicQuotes.replaceRequest(key, controller);
     try {
-      const loaded = await getReply({
+      const loaded = await sourceGateway.getReply({
         source: detail.source,
         id: detail.id,
         floor: quotedFloor,
-        fetcher,
         signal: controller.signal
-      });
-      if (currentTopicKeyRef.current !== requestTopicKey) {
+      }, { isCurrent: () => topicCommands.getCurrentKey() === requestTopicKey });
+      if (topicCommands.getCurrentKey() !== requestTopicKey) {
         return;
       }
-      if (loaded.floor) {
-        setLoadedQuotedReplies((current) => ({ ...current, [loaded.floor as number]: loaded }));
-      }
-      updateExpandedQuotes((current) => ({ ...current, [key]: true }));
+      topicQuotes.remember(loaded);
+      topicQuotes.changeExpanded(key, true);
       notify(`引用已展开 #${quotedFloor}`);
     } catch (error) {
-      if (currentTopicKeyRef.current === requestTopicKey) {
-        if (isLinuxDoCloudflareError(error)) {
-          await handleLinuxDoCloudflareForTopic(detail, errorMessage(error));
+      if (topicCommands.getCurrentKey() === requestTopicKey) {
+        const sourceError = sourceErrorFromUnknown(detail.source, error);
+        if (sourceError.kind === 'verification-required') {
+          await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return;
         }
         if (!isCanceledRequest(error)) {
-          notify(errorMessage(error));
+          notify(sourceError.message);
         }
       }
     } finally {
-      if (quotedReplyAbortRefs.current[key] === controller) {
-        delete quotedReplyAbortRefs.current[key];
+      if (topicQuotes.isRequest(key, controller)) {
+        topicQuotes.clearRequest(key, controller);
       }
-      if (currentTopicKeyRef.current === requestTopicKey) {
-        setLoadingQuotedFloors((current) => ({ ...current, [key]: false }));
+      if (topicCommands.getCurrentKey() === requestTopicKey) {
+        topicQuotes.changeLoading(key, false);
       }
     }
   }, [
-    currentTopicKeyRef,
-    expandedQuotesRef,
-    fetcher,
+    topicQuotes.clearRequest,
+    topicCommands.getCurrentKey,
+    topicQuotes.getLoaded,
     handleLinuxDoCloudflareForTopic,
-    loadedQuotedRepliesRef,
+    topicQuotes.isExpanded,
+    topicQuotes.isRequest,
     notify,
-    quotedReplyAbortRefs,
+    topicQuotes.remember,
+    topicQuotes.replaceRequest,
     selectedTopic,
-    setLoadedQuotedReplies,
-    setLoadingQuotedFloors,
+    sourceGateway,
+    topicQuotes.changeExpanded,
+    topicQuotes.changeLoading,
     topicDetail,
-    updateExpandedQuotes
   ]);
 
   return {

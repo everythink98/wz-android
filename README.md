@@ -37,7 +37,7 @@
 
 **[下载阅坛 Android APK](https://github.com/everythink98/wz-android/releases/latest/download/app-arm64-v8a-release.apk)**
 
-当前版本为 `1.3.53`，Android `versionCode` 为 `57`，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
+当前版本号和 Android `versionCode` 以 `package.json` 与 `app.json` 为准，发布包为 Android arm64-v8a APK。首次安装第三方 APK 时，Android 可能会要求允许“安装未知应用”。
 
 ## 隐私与数据
 
@@ -59,6 +59,6 @@ npm run release:android
 
 `npm run android` 需要 Expo development build，不能用 Expo Go 验证。需要 Android Studio 提供 Android SDK / 模拟器，或准备一台已开启 USB 调试的 Android 手机。
 
-`npm run release:android` 会先读取本机 `.env.release.local`，再在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`，随后校验 APK 签名并输出 APK SHA-256。正式发布必须配置 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`；不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`。不要提交 keystore、`.env.release.local` 或明文密码。旧 debug 签名包用户切换到正式签名版本时，需要先备份数据再重装。
+`npm run release:android` 会先读取本机 `.env.release.local`，再在 `android/app/build/outputs/apk/release/` 生成 `app-arm64-v8a-release.apk`，校验 APK 签名，执行只读设备 smoke，最后输出 APK SHA-256。正式发布必须配置 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`，并准备 `agent-device >= 0.14.0` 与签名兼容的测试设备；不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`。x86_64 AVD 需要同时设置 `WZ_ANDROID_SMOKE_DEVICE=<AVD id>` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`，只额外生成同签名 smoke APK，不改变上传的 arm64 产物。不要提交 keystore、`.env.release.local` 或明文密码。旧 debug 签名包用户切换到正式签名版本时，需要先备份数据再重装。
 
 当前本机正式签名配置放在 `.env.release.local`，keystore 放在用户目录的 `.wz-android/` 下。发布前务必备份这两个文件；丢失 keystore 或密码后，同包名新版无法继续覆盖升级旧版。

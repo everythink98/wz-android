@@ -56,6 +56,7 @@ describe('Android search list items', () => {
       label: 'NodeSeek',
       items: [],
       authNotice: {
+        kind: 'login-required',
         message: '未登录搜索，结果可能不完整。',
         tone: 'warning'
       }
@@ -76,6 +77,7 @@ describe('Android search list items', () => {
       label: 'NodeSeek',
       items: [],
       authNotice: {
+        kind: 'logged-in',
         message: '已登录搜索。',
         tone: 'neutral'
       }
@@ -97,10 +99,12 @@ describe('Android search list items', () => {
       label: '妖火',
       items: [],
       authNotice: {
+        kind: 'login-required',
         message: '妖火需要登录后使用此功能。',
         tone: 'warning'
       },
-      error: '妖火需要登录后使用此功能。'
+      error: '妖火需要登录后使用此功能。',
+      errorKind: 'login-required'
     }];
 
     const items = buildSearchListItems({
@@ -118,6 +122,7 @@ describe('Android search list items', () => {
       label: 'NodeSeek',
       items: [],
       authNotice: {
+        kind: 'login-required',
         message: '未登录搜索，结果可能不完整。',
         tone: 'warning'
       },
@@ -139,11 +144,12 @@ describe('Android search list items', () => {
       label: 'NodeSeek',
       items: [],
       authNotice: {
-        message: 'NodeSeek 需要完成 Cloudflare 验证',
+        kind: 'verification-required',
+        message: 'NodeSeek 要求额外操作',
         tone: 'warning'
       },
-      error: 'NodeSeek 需要完成 Cloudflare 验证',
-      verificationRequired: true
+      error: 'NodeSeek 要求额外操作',
+      errorKind: 'verification-required'
     }];
 
     const items = buildSearchListItems({

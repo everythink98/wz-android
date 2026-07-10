@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
 import { ChevronLeft, ExternalLink, RefreshCw, Star } from 'lucide-react-native';
-import type { Topic, UserProfile, UserReplyActivity } from '../types';
+import type { SourceErrorInfo, Topic, UserProfile, UserReplyActivity } from '../types';
 import { formatDateTime, sourceLabel } from '../appUtils';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
 import { androidRipple, createStyles, type ReaderTheme } from '../theme';
@@ -10,7 +10,7 @@ import { AppButton, EmptyText, IconButton, LoadingState, PillRail } from '../com
 import { Avatar } from '../components/Avatar';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
-import { authNoticeForMessage } from '../siteSessionPrompts';
+import { authNoticeForSourceError } from '../siteSessionPrompts';
 import { createUserListItems, userListInstanceKey, userListItemKey, userListItemType, type UserActivityTab, type UserListItem } from './user/userScreenItems';
 
 const USER_LIST_POSITION_PROPS = { disabled: true };
@@ -88,7 +88,7 @@ export const UserScreen = memo(function UserScreen({
   onToggleFollow
 }: {
   busy: boolean;
-  error: string;
+  error: SourceErrorInfo | null;
   followed: boolean;
   profile: UserProfile | null;
   requestedUser: UserProfile | null;
@@ -135,7 +135,7 @@ export const UserScreen = memo(function UserScreen({
   const autoLoadArmedRef = useRef(false);
   const pendingScrollTopRef = useRef(false);
   const followTarget = profile || requestedUser;
-  const userAuthNotice = authNoticeForMessage(error);
+  const userAuthNotice = error ? authNoticeForSourceError(error) : null;
   const userAuthNoticeBoxStyle = userAuthNotice?.tone === 'danger'
     ? styles.authNoticeBoxDanger
     : userAuthNotice?.tone === 'warning'
@@ -228,7 +228,7 @@ export const UserScreen = memo(function UserScreen({
       ) : null}
       {error ? (
         <View style={userAuthNotice ? [styles.authNoticeBox, userAuthNoticeBoxStyle] : styles.errorBox}>
-          <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>{userAuthNotice?.message || error}</Text>
+          <Text style={userAuthNotice ? [styles.authNoticeText, userAuthNoticeTextStyle] : styles.errorText}>{userAuthNotice?.message || error.message}</Text>
         </View>
       ) : null}
       {busy ? <LoadingState text="正在读取用户主页..." styles={styles} theme={theme} /> : null}
@@ -250,12 +250,13 @@ export const UserScreen = memo(function UserScreen({
     </View>
   ), [busy, changeUserTab, error, followTarget, followed, onOpenOriginal, onToggleFollow, profile, profileStats, replies.length, styles, theme, topics.length, user, userAuthNotice, userAuthNoticeBoxStyle, userAuthNoticeTextStyle, userTab]);
 
-  const renderItem = useCallback<ListRenderItem<UserListItem>>(({ item }) => {
+  const renderItem = useCallback<ListRenderItem<UserListItem>>(({ item, index }) => {
     if (item.type === 'reply') {
       return <UserReplyCard reply={item.reply} styles={styles} theme={theme} onOpenTopic={onOpenTopic} />;
     }
     return (
       <MemoizedTopicCard
+        testID={index === 0 ? 'user-topic-first' : undefined}
         readerState={getTopicListItemStateFromIndex(topicStateIndex, item.topic)}
         styles={styles}
         theme={theme}
@@ -283,6 +284,7 @@ export const UserScreen = memo(function UserScreen({
       </View>
       {renderProfileHeader()}
       <FlashList
+        testID={profile && !busy ? 'user-screen-loaded' : undefined}
         key={listInstanceKey}
         ref={listRef}
         style={styles.content}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getUserProfile } from '../sources/sourceGateway';
+import type { SourceGateway } from '../sources/sourceGateway';
 import { mergeTopics } from '../feedLogic';
 import {
   isUserFollowed,
@@ -7,22 +7,16 @@ import {
   type ReaderData
 } from '../readerData';
 import {
-  errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
-  isLinuxDoCloudflareError,
-  isNodeSeekCloudflareError,
-  isYaohuoLoginExpiredError,
-  isYaohuoLoginRequiredError,
   startAbortableRequest
 } from '../appUtils';
 import { nodeSeekUserIdFromValue } from '../userNavigation';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
-import type { Fetcher } from '../request';
-import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { authHintForSource } from '../siteSessionPrompts';
+import { sourceErrorFromUnknown } from '../sourceErrors';
 import type { SiteSessionViewModels } from '../siteSessionState';
-import type { FeedSource, Source, UserProfile, UserReplyActivity } from '../types';
+import type { Source, SourceErrorInfo, UserProfile, UserReplyActivity } from '../types';
 import type { Screen } from '../appTypes';
 
 function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
@@ -38,12 +32,22 @@ function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserRepl
   return merged;
 }
 
+export function userSourceRecoveryTarget(source: Source, error: SourceErrorInfo) {
+  if (error.kind === 'verification-required') {
+    return source === 'linuxdo'
+      ? 'linuxdo-verification'
+      : source === 'nodeseek'
+        ? 'nodeseek-verification'
+        : source === 'yaohuo'
+          ? 'yaohuo-login'
+          : null;
+  }
+  return source === 'yaohuo' && (error.kind === 'login-required' || error.kind === 'login-expired')
+    ? 'yaohuo-login'
+    : null;
+}
+
 export function useUserController({
-  clearYaohuoLoginState,
-  fetcher,
-  loadNodeSeekCookieForSource,
-  loadYaohuoCookieForSource,
-  nodeSeekUserAgentRef,
   notify,
   onOpenUserScreen,
   readerData,
@@ -51,13 +55,9 @@ export function useUserController({
   sessionViewModels,
   showLinuxDoVerification,
   showNodeSeekVerification,
-  showYaohuoLogin
+  showYaohuoLogin,
+  sourceGateway
 }: {
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
-  fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  loadYaohuoCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
-  nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
   onOpenUserScreen: () => void;
   readerData: ReaderData;
@@ -66,6 +66,7 @@ export function useUserController({
   showLinuxDoVerification: (message?: string) => void;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
+  sourceGateway: SourceGateway;
 }) {
   const userRequestIdRef = useRef(0);
   const userRequestOwnerRef = useRef(createRequestOwner('user'));
@@ -79,7 +80,7 @@ export function useUserController({
   const [userBusy, setUserBusy] = useState(false);
   const [userLoadingMoreTopics, setUserLoadingMoreTopics] = useState(false);
   const [userLoadingMoreReplies, setUserLoadingMoreReplies] = useState(false);
-  const [userError, setUserError] = useState('');
+  const [userError, setUserError] = useState<SourceErrorInfo | null>(null);
 
   const followedUserRecords = useMemo<FollowedUserRecord[]>(
     () => Object.values(readerData.followedUsers).sort((left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)),
@@ -107,6 +108,38 @@ export function useUserController({
 
   useEffect(() => cancelUserRequests, [cancelUserRequests]);
 
+  const handleUserSourceError = useCallback(({ error, source }: {
+    error: unknown;
+    source: Source;
+  }) => {
+    const classifiedError = sourceErrorFromUnknown(source, error);
+    const sourceError = source === 'yaohuo' && classifiedError.kind === 'login-required'
+      ? {
+        ...classifiedError,
+        message: authHintForSource('yaohuo', sessionViewModels, 'read') || classifiedError.message
+      }
+      : classifiedError;
+    setUserError(sourceError);
+    const recoveryTarget = userSourceRecoveryTarget(source, sourceError);
+    if (recoveryTarget === 'linuxdo-verification') {
+      showLinuxDoVerification(sourceError.message);
+      return;
+    }
+    if (recoveryTarget === 'nodeseek-verification') {
+      showNodeSeekVerification(sourceError.message);
+      return;
+    }
+    if (recoveryTarget === 'yaohuo-login') {
+      if (sourceError.kind === 'login-expired') {
+        showYaohuoLogin('妖火登录已失效，请重新登录。');
+      } else {
+        showYaohuoLogin(sourceError.message);
+      }
+      return;
+    }
+    notify(sourceError.message);
+  }, [notify, sessionViewModels, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
+
   const openUser = useCallback(async (user: UserProfile, nocache = false) => {
     if (!user.id && !user.username) {
       notify('用户信息不完整');
@@ -125,7 +158,7 @@ export function useUserController({
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     setSelectedUser(requestUser);
     setUserProfile(null);
-    setUserError('');
+    setUserError(null);
     setUserBusy(true);
     setUserLoadingMoreTopics(false);
     setUserLoadingMoreReplies(false);
@@ -134,31 +167,13 @@ export function useUserController({
     userVisitedTopicCursorsRef.current = new Set();
     userVisitedReplyCursorsRef.current = new Set();
     const controller = startAbortableRequest(userAbortRef);
-    let yaohuoGeneration: number | undefined;
     try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(requestUser.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
-        loadNodeSeekCookieForSource(requestUser.source)
-      ]);
-      if (!isCurrentUserRequest()) {
-        return;
-      }
-      if (requestUser.source === 'yaohuo' && !yaohuoCookie) {
-        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
-        showYaohuoLogin(message);
-        setUserError(message);
-        return;
-      }
-      const profile = await getUserProfile({
+      const profile = await sourceGateway.getUserProfile({
         source: requestUser.source,
         id: requestUser.id,
         username: requestUser.username,
-        fetcher,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-        yaohuoCookie,
         signal: controller.signal
-      });
+      }, { isCurrent: isCurrentUserRequest });
       if (!isCurrentUserRequest()) {
         return;
       }
@@ -167,29 +182,8 @@ export function useUserController({
         notify('用户主页已更新');
       }
     } catch (error) {
-      if (isCurrentUserRequest()) {
-        const message = errorMessage(error);
-        setUserError(message);
-        if (isLinuxDoCloudflareError(error)) {
-          showLinuxDoVerification(message);
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
-          return;
-        }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(message);
-          }
-          return;
-        }
-        if (!isCanceledRequest(error)) {
-          notify(message);
-        }
+      if (isCurrentUserRequest() && !isCanceledRequest(error)) {
+        handleUserSourceError({ error, source: requestUser.source });
       }
     } finally {
       if (isCurrentUserRequest()) {
@@ -200,17 +194,10 @@ export function useUserController({
       finishAbortableRequest(userAbortRef, controller);
     }
   }, [
-    clearYaohuoLoginState,
-    fetcher,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    nodeSeekUserAgentRef,
+    handleUserSourceError,
     notify,
     onOpenUserScreen,
-    sessionViewModels,
-    showLinuxDoVerification,
-    showNodeSeekVerification,
-    showYaohuoLogin
+    sourceGateway
   ]);
 
   const loadMoreUserTopics = useCallback(async () => {
@@ -224,34 +211,16 @@ export function useUserController({
     const controller = startAbortableRequest(userAbortRef);
     userLoadingMoreTopicCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMoreTopics(true);
-    setUserError('');
-    let yaohuoGeneration: number | undefined;
+    setUserError(null);
     try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(current.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
-        loadNodeSeekCookieForSource(current.source)
-      ]);
-      if (!isCurrentUserRequest()) {
-        return;
-      }
-      if (current.source === 'yaohuo' && !yaohuoCookie) {
-        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
-        showYaohuoLogin(message);
-        setUserError(message);
-        return;
-      }
-      const nextProfile = await getUserProfile({
+      const nextProfile = await sourceGateway.getUserProfile({
         source: current.source,
         id: current.id,
         username: current.username,
-        fetcher,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-        yaohuoCookie,
         cursor: current.nextTopicsCursor,
         cursorType: 'topics',
         signal: controller.signal
-      });
+      }, { isCurrent: isCurrentUserRequest });
       if (!isCurrentUserRequest()) {
         return;
       }
@@ -272,26 +241,7 @@ export function useUserController({
       notify('用户帖子已加载更多');
     } catch (error) {
       if (isCurrentUserRequest() && !isCanceledRequest(error)) {
-        const message = errorMessage(error);
-        setUserError(message);
-        if (isLinuxDoCloudflareError(error)) {
-          showLinuxDoVerification(message);
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
-          return;
-        }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(message);
-          }
-          return;
-        }
-        notify(message);
+        handleUserSourceError({ error, source: current.source });
       }
     } finally {
       if (isCurrentUserRequest()) {
@@ -301,16 +251,9 @@ export function useUserController({
       finishAbortableRequest(userAbortRef, controller);
     }
   }, [
-    clearYaohuoLoginState,
-    fetcher,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    nodeSeekUserAgentRef,
+    handleUserSourceError,
     notify,
-    sessionViewModels,
-    showLinuxDoVerification,
-    showNodeSeekVerification,
-    showYaohuoLogin,
+    sourceGateway,
     userBusy,
     userLoadingMoreTopics,
     userProfile
@@ -327,34 +270,16 @@ export function useUserController({
     const controller = startAbortableRequest(userAbortRef);
     userLoadingMoreReplyCursorRef.current = current.nextRepliesCursor;
     setUserLoadingMoreReplies(true);
-    setUserError('');
-    let yaohuoGeneration: number | undefined;
+    setUserError(null);
     try {
-      const [yaohuoCookie, nodeSeekCookie] = await Promise.all([
-        loadYaohuoCookieForSource(current.source, { captureGeneration: (generation) => { yaohuoGeneration = generation; } }),
-        loadNodeSeekCookieForSource(current.source)
-      ]);
-      if (!isCurrentUserRequest()) {
-        return;
-      }
-      if (current.source === 'yaohuo' && !yaohuoCookie) {
-        const message = authHintForSource('yaohuo', sessionViewModels, 'read') || '妖火需要登录后使用此功能。';
-        showYaohuoLogin(message);
-        setUserError(message);
-        return;
-      }
-      const nextProfile = await getUserProfile({
+      const nextProfile = await sourceGateway.getUserProfile({
         source: current.source,
         id: current.id,
         username: current.username,
-        fetcher,
-        nodeSeekCookie,
-        nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-        yaohuoCookie,
         cursor: current.nextRepliesCursor,
         cursorType: 'replies',
         signal: controller.signal
-      });
+      }, { isCurrent: isCurrentUserRequest });
       if (!isCurrentUserRequest()) {
         return;
       }
@@ -375,26 +300,7 @@ export function useUserController({
       notify('用户回复已加载更多');
     } catch (error) {
       if (isCurrentUserRequest() && !isCanceledRequest(error)) {
-        const message = errorMessage(error);
-        setUserError(message);
-        if (isLinuxDoCloudflareError(error)) {
-          showLinuxDoVerification(message);
-          return;
-        }
-        if (isNodeSeekCloudflareError(error)) {
-          showNodeSeekVerification(message);
-          return;
-        }
-        if (isYaohuoLoginRequiredError(error)) {
-          if (isYaohuoLoginExpiredError(error)) {
-            await clearYaohuoLoginState({ generation: yaohuoGeneration });
-            showYaohuoLogin('妖火登录已失效，请重新登录。');
-          } else {
-            showYaohuoLogin(message);
-          }
-          return;
-        }
-        notify(message);
+        handleUserSourceError({ error, source: current.source });
       }
     } finally {
       if (isCurrentUserRequest()) {
@@ -404,16 +310,9 @@ export function useUserController({
       finishAbortableRequest(userAbortRef, controller);
     }
   }, [
-    clearYaohuoLoginState,
-    fetcher,
-    loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource,
-    nodeSeekUserAgentRef,
+    handleUserSourceError,
     notify,
-    sessionViewModels,
-    showLinuxDoVerification,
-    showNodeSeekVerification,
-    showYaohuoLogin,
+    sourceGateway,
     userBusy,
     userLoadingMoreReplies,
     userProfile

@@ -8,6 +8,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const androidDir = path.join(rootDir, 'android');
 const releaseApkFileName = 'app-arm64-v8a-release.apk';
 const releaseApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', releaseApkFileName);
+const supportedSmokeApkAbis = new Set(['arm64-v8a', 'x86_64']);
 const releaseManifestFileName = 'release-manifest.json';
 const releaseManifestPath = path.join(path.dirname(releaseApkPath), releaseManifestFileName);
 const releaseEnvPath = path.join(rootDir, '.env.release.local');
@@ -23,6 +24,15 @@ const windowsNodeCliCommands = new Map([
   ['npm', 'npm-cli.js'],
   ['npx', 'npx-cli.js']
 ]);
+
+function requestedSmokeApkAbi(value) {
+  const abi = String(value || 'arm64-v8a').trim();
+  if (!supportedSmokeApkAbis.has(abi)) {
+    console.error(`WZ_ANDROID_SMOKE_ABI 仅支持：${[...supportedSmokeApkAbis].join(', ')}`);
+    process.exit(1);
+  }
+  return abi;
+}
 
 function commandForCurrentPlatform(command, args) {
   const nodeCli = windowsNodeCliCommands.get(command);
@@ -76,9 +86,9 @@ function runCapture(command, args, options = {}) {
   return `${result.stdout || ''}${result.stderr || ''}`;
 }
 
-function verifyReleaseApk() {
-  if (!existsSync(releaseApkPath)) {
-    console.error(`未找到 release APK：${releaseApkPath}`);
+function verifyReleaseApk(apkPath) {
+  if (!existsSync(apkPath)) {
+    console.error(`未找到 release APK：${apkPath}`);
     process.exit(1);
   }
 }
@@ -100,13 +110,13 @@ function findApkSignerJar() {
     [0] || null;
 }
 
-function verifyReleaseApkSignature() {
+function verifyReleaseApkSignature(apkPath) {
   const apkSignerJar = findApkSignerJar();
   if (!apkSignerJar) {
     console.error('未找到 apksigner，请确认 ANDROID_HOME 或 ANDROID_SDK_ROOT 指向 Android SDK。');
     process.exit(1);
   }
-  const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', releaseApkPath]);
+  const output = runCapture('java', ['-jar', apkSignerJar, 'verify', '--verbose', '--print-certs', apkPath]);
   const signerSha256 = /(?:Signer #1 certificate|V2 Signer: certificate) SHA-256 digest:\s*([a-fA-F0-9:]+)/.exec(output)?.[1]?.replace(/:/g, '').toLowerCase();
   if (!signerSha256 || !/^[a-f0-9]{64}$/.test(signerSha256)) {
     console.error('无法从 apksigner 输出读取签名 SHA-256。');
@@ -206,9 +216,14 @@ function verifyReleaseSigningEnv() {
 }
 
 loadReleaseEnvFile();
+const smokeApkAbi = requestedSmokeApkAbi(process.env.WZ_ANDROID_SMOKE_ABI);
+const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])];
+const smokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-release.apk`);
 verifyReleaseSigningEnv();
 
 run('npm', ['test']);
+run('npm', ['run', 'test:docs']);
+run('npm', ['run', 'check:docs']);
 run('npm', ['run', 'check:unused']);
 run('node', ['scripts/check-version.mjs']);
 
@@ -226,7 +241,8 @@ run(
     '-I',
     '../scripts/android-release-apk.gradle',
     '-PnewArchEnabled=true',
-    '-PreactNativeArchitectures=arm64-v8a',
+    `-PreactNativeArchitectures=${releaseApkAbis.join(',')}`,
+    `-PreleaseApkAbis=${releaseApkAbis.join(',')}`,
     '-Pandroid.enableShrinkResourcesInReleaseBuilds=true',
     '-Pandroid.enableMinifyInReleaseBuilds=true',
     '-PEX_DEV_CLIENT_NETWORK_INSPECTOR=false'
@@ -234,9 +250,13 @@ run(
   { cwd: androidDir }
 );
 
-verifyReleaseApk();
-const signerSha256 = verifyReleaseApkSignature();
+verifyReleaseApk(releaseApkPath);
+const signerSha256 = verifyReleaseApkSignature(releaseApkPath);
 verifyExpectedReleaseSigner(signerSha256);
+verifyReleaseApk(smokeApkPath);
+const smokeSignerSha256 = verifyReleaseApkSignature(smokeApkPath);
+verifyExpectedReleaseSigner(smokeSignerSha256);
+run('npm', ['run', 'smoke:android', '--', smokeApkPath]);
 const sha256 = releaseApkSha256();
 writeReleaseManifest({ sha256, signerSha256 });
 printReleaseApkSha256(sha256);

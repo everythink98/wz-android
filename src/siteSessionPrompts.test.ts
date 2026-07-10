@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authActionMessageForSource, authNoticeForMessage, authNoticeForSource, searchSessionNoticeItems, searchSessionNoticeLightTone } from './siteSessionPrompts';
+import { authActionMessageForSource, authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems, searchSessionNoticeLightTone } from './siteSessionPrompts';
 import { createSiteSessionViewModels, createSiteSessionStates } from './siteSessionState';
 
 describe('site session prompts', () => {
@@ -26,14 +26,17 @@ describe('site session prompts', () => {
     }));
 
     expect(authNoticeForSource('nodeseek', sessions, 'search')).toEqual({
+      kind: 'verified',
       message: '已通过访问验证，登录后可使用完整能力。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('linuxdo', sessions, 'search')).toEqual({
+      kind: 'anonymous',
       message: '未登录搜索使用 Google，结果可能不完整。',
       tone: 'neutral'
     });
     expect(authNoticeForSource('yaohuo', sessions, 'search')).toEqual({
+      kind: 'login-expired',
       message: '妖火登录已失效，请重新登录。',
       tone: 'danger'
     });
@@ -63,12 +66,12 @@ describe('site session prompts', () => {
     }));
 
     expect(searchSessionNoticeItems('all', sessions)).toEqual([
-      { source: 'nodeseek', label: 'NodeSeek', notice: { message: '已登录搜索。', tone: 'neutral' } },
-      { source: 'linuxdo', label: 'linux.do', notice: { message: '未登录搜索使用 Google，结果可能不完整。', tone: 'neutral' } },
-      { source: 'yaohuo', label: '妖火', notice: { message: '妖火登录已失效，请重新登录。', tone: 'danger' } }
+      { source: 'nodeseek', label: 'NodeSeek', notice: { kind: 'logged-in', message: '已登录搜索。', tone: 'neutral' } },
+      { source: 'linuxdo', label: 'linux.do', notice: { kind: 'anonymous', message: '未登录搜索使用 Google，结果可能不完整。', tone: 'neutral' } },
+      { source: 'yaohuo', label: '妖火', notice: { kind: 'login-expired', message: '妖火登录已失效，请重新登录。', tone: 'danger' } }
     ]);
     expect(searchSessionNoticeItems('nodeseek', sessions)).toEqual([
-      { source: 'nodeseek', label: 'NodeSeek', notice: { message: '已登录搜索。', tone: 'neutral' } }
+      { source: 'nodeseek', label: 'NodeSeek', notice: { kind: 'logged-in', message: '已登录搜索。', tone: 'neutral' } }
     ]);
     expect(searchSessionNoticeItems('v2ex', sessions)).toEqual([]);
   });
@@ -93,29 +96,32 @@ describe('site session prompts', () => {
     }));
 
     expect(authNoticeForSource('yaohuo', sessions, 'read')).toEqual({
+      kind: 'login-required',
       message: '妖火需要登录后使用此功能。',
       tone: 'warning'
     });
     expect(authNoticeForSource('v2ex', sessions, 'read')).toBeNull();
   });
 
-  it('classifies existing detail and user messages into notice tones', () => {
-    expect(authNoticeForMessage('妖火需要登录后使用此功能。')).toEqual({
-      message: '妖火需要登录后使用此功能。',
-      tone: 'warning'
-    });
-    expect(authNoticeForMessage('linux.do 登录已失效，请重新登录。')).toEqual({
-      message: 'linux.do 登录已失效，请重新登录。',
+  it('classifies source errors by kind independently from display copy', () => {
+    expect(authNoticeForSourceError({ kind: 'login-expired', message: '会话不可继续' })).toEqual({
+      kind: 'login-expired',
+      message: '会话不可继续',
       tone: 'danger'
     });
-    expect(authNoticeForMessage('读取失败，请稍后重试。')).toBeNull();
+    expect(authNoticeForSourceError({ kind: 'verification-required', message: '站点要求额外操作' })).toEqual({
+      kind: 'verification-required',
+      message: '站点要求额外操作',
+      tone: 'warning'
+    });
+    expect(authNoticeForSourceError({ kind: 'ordinary', message: '登录两个字不代表登录错误' })).toBeNull();
   });
 
   it('uses separate light colors for login status without changing copy tones', () => {
-    expect(searchSessionNoticeLightTone({ message: '已登录搜索。', tone: 'neutral' })).toBe('success');
-    expect(searchSessionNoticeLightTone({ message: '匿名可阅读，登录后才能互动。', tone: 'neutral' })).toBe('neutral');
-    expect(searchSessionNoticeLightTone({ message: '未登录搜索，结果可能不完整。', tone: 'warning' })).toBe('warning');
-    expect(searchSessionNoticeLightTone({ message: '妖火需要登录后使用此功能。', tone: 'warning' })).toBe('danger');
-    expect(searchSessionNoticeLightTone({ message: 'NodeSeek 登录已失效，请重新登录。', tone: 'danger' })).toBe('danger');
+    expect(searchSessionNoticeLightTone({ kind: 'logged-in', message: '任意文案', tone: 'neutral' })).toBe('success');
+    expect(searchSessionNoticeLightTone({ kind: 'anonymous', message: '任意文案', tone: 'neutral' })).toBe('neutral');
+    expect(searchSessionNoticeLightTone({ kind: 'verification-required', message: '任意文案', tone: 'warning' })).toBe('warning');
+    expect(searchSessionNoticeLightTone({ kind: 'login-required', message: '任意文案', tone: 'warning' })).toBe('danger');
+    expect(searchSessionNoticeLightTone({ kind: 'login-expired', message: '任意文案', tone: 'danger' })).toBe('danger');
   });
 });
