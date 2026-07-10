@@ -57,6 +57,7 @@ export function NodeSeekLoginPanel({
   onClearNodeImageApiKey,
   onClearLogin,
   onHandleLoginMessage,
+  onWebViewState,
   handleNodeSeekLoginNavigation,
   onRememberNodeSeekCookies,
   onSetLoadingLoginPage,
@@ -82,6 +83,7 @@ export function NodeSeekLoginPanel({
   onClearNodeImageApiKey: () => void;
   onClearLogin: () => void;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
+  onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
   onSetLoadingLoginPage: (value: boolean) => void;
@@ -210,22 +212,26 @@ export function NodeSeekLoginPanel({
                 if ('code' in event.nativeEvent) {
                   return;
                 }
+                onWebViewState('ready');
                 setWebViewError('');
                 webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
                 void onRememberNodeSeekCookies({ silent: true });
               }}
               onLoadStart={() => {
+                onWebViewState('start');
                 setWebViewError('');
                 setWebViewNeedsRemount(false);
                 onSetLoadingLoginPage(true);
               }}
               onMessage={onHandleLoginMessage}
               onError={(event) => {
+                onWebViewState('error');
                 onSetLoadingLoginPage(false);
                 setWebViewError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
+                onWebViewState('renderer-gone');
                 onSetLoadingLoginPage(false);
                 setWebViewNeedsRemount(true);
                 setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
@@ -253,6 +259,7 @@ export function YaohuoLoginPanel({
   onCheckYaohuoLogin,
   onClearYaohuoLogin,
   handleYaohuoLoginNavigation,
+  onWebViewState,
   onSetLoadingYaohuoLoginPage,
   onShowYaohuoLoginPanelChange
 }: {
@@ -270,6 +277,7 @@ export function YaohuoLoginPanel({
   onCheckYaohuoLogin: () => void;
   onClearYaohuoLogin: () => void;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
+  onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
 }) {
@@ -330,19 +338,23 @@ export function YaohuoLoginPanel({
                 if ('code' in event.nativeEvent) {
                   return;
                 }
+                onWebViewState('ready');
                 setWebViewError('');
               }}
               onLoadStart={() => {
+                onWebViewState('start');
                 setWebViewError('');
                 setWebViewNeedsRemount(false);
                 onSetLoadingYaohuoLoginPage(true);
               }}
               onError={(event) => {
+                onWebViewState('error');
                 onSetLoadingYaohuoLoginPage(false);
                 setWebViewError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
+                onWebViewState('renderer-gone');
                 onSetLoadingYaohuoLoginPage(false);
                 setWebViewNeedsRemount(true);
                 setWebViewError('妖火登录页面已停止，请刷新页面重试。');

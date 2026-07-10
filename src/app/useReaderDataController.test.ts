@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, toggleFavorite, topicKey } from '../readerData';
+import { setDiagnosticWriter } from '../diagnostics';
 import type { Topic } from '../types';
 import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderDataController';
 
@@ -13,6 +14,10 @@ const topic: Topic = {
   createdAt: '2026-05-18T11:34:13.000Z',
   replyCount: 2
 };
+
+afterEach(() => {
+  setDiagnosticWriter(null);
+});
 
 describe('reader data controller helpers', () => {
   it('skips persistence when a commit updater returns the current object', () => {
@@ -88,6 +93,10 @@ describe('reader data controller helpers', () => {
   });
 
   it('enters recovery mode from a failed load path', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => {
+      diagnosticLines.push(line);
+    });
     const notify = vi.fn();
     const onLoaded = vi.fn();
     const onLoadFailed = vi.fn();
@@ -105,5 +114,23 @@ describe('reader data controller helpers', () => {
     expect(onLoadFailed).toHaveBeenCalled();
     expect(onLoaded).toHaveBeenCalledWith(createEmptyReaderData());
     expect(notify).toHaveBeenCalledWith('本机资料读取失败，已进入恢复模式；请先导入备份再修改本机资料：bad storage');
+    const events = diagnosticLines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toEqual([
+      expect.objectContaining({ area: 'reader-data', operation: 'load', phase: 'intent' }),
+      expect.objectContaining({
+        area: 'reader-data',
+        operation: 'load',
+        phase: 'apply',
+        state: 'recovery-mode'
+      }),
+      expect.objectContaining({
+        area: 'reader-data',
+        operation: 'load',
+        phase: 'finish',
+        outcome: 'failure',
+        reason: 'storage_error'
+      })
+    ]);
+    expect(new Set(events.map((event) => event.traceId)).size).toBe(1);
   });
 });

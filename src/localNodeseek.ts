@@ -32,6 +32,7 @@ import {
   withNodeSeekReplyPagination
 } from './localNodeseekHelpers';
 import { nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
+import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
 
 const BASE_URL = NODESEEK_BASE_URL;
 const NODESEEK_CLOUDFLARE_MESSAGE = 'NodeSeek 需要完成 Cloudflare 验证';
@@ -893,25 +894,54 @@ export async function getNodeSeekFeed(options: NodeSeekOptions & {
     : items;
   const nextPage = nextNodeSeekListPage(html, page);
   const hasMore = Boolean(nextPage);
-  return {
+  const result = {
     items: filtered.slice(0, limit),
     errors: {},
     hasMore,
     nextPage: nextPage || null
   };
+  const embeddedCandidateCount = embedded
+    ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length
+    : 0;
+  const renderedCandidateCount = Math.max(
+    (html.match(/<li\b[^>]*\bpost-list-item\b/gi) || []).length,
+    (html.match(/<a\b[^>]*href=["'][^"']*post-/gi) || []).length
+  );
+  const candidateCount = renderedItems.length ? renderedCandidateCount : embeddedCandidateCount;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: renderedItems.length ? 'rendered-list' : 'embedded-list',
+    candidateCount,
+    validCount: result.items.length,
+    droppedCount: Math.max(0, candidateCount - result.items.length),
+    isExpectedEmpty: candidateCount === 0 && (page > 1 || Boolean(options.category)),
+    isParseEmpty: page === 1 && !options.category && candidateCount === 0,
+    hasRepeatedCursor: Boolean(nextPage && nextPage === page)
+  });
 }
 
 export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'feed', 'background');
   const html = await fetchNodeSeekText('/', requestOptions);
   const embedded = extractNodeSeekEmbeddedData(html);
-  return {
+  const embeddedCategories = embedded ? normalizeCategories(embedded) : [] as Category[];
+  const htmlCategories = parseHtmlCategories(html);
+  const result = {
     items: mergeNodeSeekCategories([
-      ...(embedded ? normalizeCategories(embedded) : [] as Category[]),
-      ...parseHtmlCategories(html)
+      ...embeddedCategories,
+      ...htmlCategories
     ]),
     errors: {}
   };
+  const candidateCount = embeddedCategories.length
+    ? arrayField(embedded?.allCategory).length
+    : (html.match(/<a\b[^>]*href=["'][^"']*\/categories\//gi) || []).length;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: embeddedCategories.length ? 'embedded-categories' : 'rendered-categories',
+    candidateCount,
+    validCount: result.items.length,
+    droppedCount: Math.max(0, candidateCount - result.items.length),
+    isParseEmpty: candidateCount === 0
+  });
 }
 
 function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }) {
@@ -1357,22 +1387,39 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       topic.polls,
       await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions)
     );
-    return withNodeSeekReplyPagination({
+    const result = withNodeSeekReplyPagination({
       ...topic,
       ...(polls ? { polls } : {}),
       ...(currentUser ? { currentUser } : {})
     }, html, id, 1);
+    const comments = postData ? arrayField(postData.comments) : [];
+    return annotateSourceDiagnosticSummary(result, {
+      parserVariant: 'rendered-topic',
+      candidateCount: 1 + Math.max(rendered.replies.length, Math.max(0, comments.length - 1)),
+      validCount: 1 + result.replies.length,
+      droppedCount: Math.max(0, Math.max(rendered.replies.length, Math.max(0, comments.length - 1)) - result.replies.length),
+      missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
+    });
   }
   if (postData) {
     const comments = arrayField(postData.comments);
     const first = isRecord(comments[0]) ? comments[0] : {};
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
     const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions));
-    return withNodeSeekReplyPagination({
+    const result = withNodeSeekReplyPagination({
       ...topic,
       ...(polls ? { polls } : {}),
       ...(currentUser ? { currentUser } : {})
     }, html, id, 1);
+    const replyCandidates = Math.max(0, comments.length - 1);
+    const missingFloorCount = comments.slice(1).filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length;
+    return annotateSourceDiagnosticSummary(result, {
+      parserVariant: 'embedded-topic',
+      candidateCount: 1 + replyCandidates,
+      validCount: 1 + result.replies.length,
+      droppedCount: Math.max(0, replyCandidates - result.replies.length),
+      missingFloorCount
+    });
   }
   throw new Error('NodeSeek 主题解析失败');
 }
@@ -1399,10 +1446,41 @@ async function fillNodeSeekRepliesLimit(id: string, options: NodeSeekRepliesOpti
     offset: result.nextOffset,
     limit: limit - result.items.length
   });
-  return {
+  const combined = {
     ...extra,
     items: [...result.items, ...extra.items]
   };
+  return mergeSourceDiagnosticSummaries(combined, 'multi-page-replies', [result, extra], {
+    validCount: combined.items.length,
+    hasRepeatedCursor: false
+  });
+}
+
+function annotateNodeSeekReplies(
+  result: RepliesResponse,
+  {
+    candidateCount,
+    missingFloorCount,
+    offset,
+    page,
+    parserVariant
+  }: {
+    candidateCount: number;
+    missingFloorCount: number;
+    offset: number;
+    page: number;
+    parserVariant: string;
+  }
+) {
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant,
+    candidateCount,
+    validCount: result.items.length,
+    droppedCount: Math.max(0, candidateCount - result.items.length),
+    missingFloorCount,
+    isExpectedEmpty: candidateCount === 0,
+    hasRepeatedCursor: result.nextPage === page && result.nextOffset === offset
+  });
 }
 
 export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOptions): Promise<RepliesResponse> {
@@ -1435,7 +1513,14 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       nextPage: hasMore ? (hasPageRemainder ? page : nextPage || page + 1) : null,
       nextOffset: hasMore ? consumed : null
     };
-    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, result, limit) : result;
+    const annotated = annotateNodeSeekReplies(result, {
+      parserVariant: 'rendered-replies',
+      candidateCount: renderedSource.length,
+      missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length,
+      offset,
+      page
+    });
+    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
   }
   if (!postData) {
     throw new Error('NodeSeek 主题解析失败');
@@ -1454,7 +1539,15 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
       nextPage: hasMore ? (hasPageRemainder ? 1 : nextPage || 2) : null,
       nextOffset: hasMore ? consumed : null
     };
-    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, result, limit) : result;
+    const missingFloorCount = comments.slice(1).filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length;
+    const annotated = annotateNodeSeekReplies(result, {
+      parserVariant: 'embedded-replies',
+      candidateCount: Math.max(0, comments.length - 1),
+      missingFloorCount,
+      offset,
+      page
+    });
+    return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
   }
   const items = normalizeReplies(comments, { skipFirst: false, floorOffset });
   const nextPage = nextNodeSeekPostPage(html, id, page);
@@ -1465,7 +1558,14 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     nextPage: nextPage || null,
     nextOffset: hasMore ? floorOffset + items.length : null
   };
-  return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, result, limit) : result;
+  const annotated = annotateNodeSeekReplies(result, {
+    parserVariant: 'embedded-replies',
+    candidateCount: comments.length,
+    missingFloorCount: comments.filter((comment) => isRecord(comment) && optionalInteger(comment.floorIndex ?? comment.floor) === undefined).length,
+    offset,
+    page
+  });
+  return requestOptions.fillPages ? fillNodeSeekRepliesLimit(id, requestOptions, annotated, limit) : annotated;
 }
 
 export async function getNodeSeekUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
@@ -1521,15 +1621,28 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
   }) as Array<Topic | null>;
   const visibleTopics = sortNodeSeekUserTopics(topics.filter(Boolean) as Topic[]);
   let replies: UserReplyActivity[] = [];
+  let replyCandidateCount = 0;
+  let missingFloorCount = 0;
+  let partialErrorCount = 0;
   if (wantsReplies) {
     const readReplies = async () => {
       const commentData = await fetchNodeSeekJson(`/api/content/list-comments?uid=${encodeURIComponent(userId)}&page=${cursorPage}`, requestOptions);
       const comments = isRecord(commentData) && Array.isArray(commentData.comments) ? commentData.comments : [];
+      replyCandidateCount = comments.length;
+      missingFloorCount = comments.filter((comment) => isRecord(comment) && !parsePositiveInteger(comment.floor_id || comment.floor || comment.rank)).length;
       return comments.filter(isRecord).map((comment) => normalizeNodeSeekUserReply(comment, username, userId, avatar)).filter(Boolean) as UserReplyActivity[];
     };
-    replies = options.cursorType === 'replies' ? await readReplies() : await readReplies().catch(() => []);
+    if (options.cursorType === 'replies') {
+      replies = await readReplies();
+    } else {
+      try {
+        replies = await readReplies();
+      } catch {
+        partialErrorCount += 1;
+      }
+    }
   }
-  return {
+  const result: UserProfile = {
     source: 'nodeseek',
     id: userId,
     username,
@@ -1549,6 +1662,19 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     hasMoreReplies: wantsReplies && replies.length > 0,
     nextRepliesCursor: wantsReplies && replies.length > 0 ? String(cursorPage + 1) : null
   };
+  const candidateCount = 1 + discussions.length + replyCandidateCount;
+  const hasUserIdentity = Boolean(user.member_name || user.username || user.name || user.member_id || user.id);
+  const validCount = (hasUserIdentity ? 1 : 0) + visibleTopics.length + replies.length;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'api-user',
+    candidateCount,
+    validCount,
+    droppedCount: Math.max(0, candidateCount - validCount),
+    partialErrorCount,
+    missingFloorCount,
+    hasRepeatedCursor: result.nextTopicsCursor === options.cursor || result.nextRepliesCursor === options.cursor,
+    isParseEmpty: !hasUserIdentity && visibleTopics.length === 0 && replies.length === 0
+  });
 }
 
 export async function getNodeSeekBasicUserProfile(id: string, options: NodeSeekOptions = {}): Promise<UserProfile> {
@@ -1560,7 +1686,7 @@ export async function getNodeSeekBasicUserProfile(id: string, options: NodeSeekO
   const user = userData.detail;
   const userId = String(user.member_id || user.id || id).trim() || id;
   const username = String(user.member_name || user.username || user.name || userId).trim() || userId;
-  return {
+  return annotateSourceDiagnosticSummary({
     source: 'nodeseek',
     id: userId,
     username,
@@ -1568,7 +1694,12 @@ export async function getNodeSeekBasicUserProfile(id: string, options: NodeSeekO
     avatar: absoluteUrl(user.avatar || `/avatar/${encodeURIComponent(userId)}.png`, BASE_URL),
     url: nodeSeekSpaceUrl(userId),
     topics: []
-  };
+  }, {
+    parserVariant: 'api-user-basic',
+    candidateCount: 1,
+    validCount: 1,
+    droppedCount: 0
+  });
 }
 
 function parseNodeSeekCurrentUserHtml(html: string) {
@@ -1636,16 +1767,31 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
   const limit = options.limit || 30;
   const page = options.page || 1;
   if (!trimmedQuery) {
-    return { items: [], errors: {}, hasMore: false, nextPage: null };
+    return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
+      parserVariant: 'search-empty-query',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      isExpectedEmpty: true
+    });
   }
 
   let items: Topic[] = [];
   let nextPage: number | null = null;
+  let candidateCount = 0;
+  let parserVariant = 'rendered-search';
   try {
     const useGoogleSearch = !hasLoggedInNodeSeekCookie(requestOptions);
     const html = useGoogleSearch
       ? await fetchNodeSeekGoogleSearchText(trimmedQuery, page, requestOptions)
       : await fetchNodeSeekText(searchPath(trimmedQuery, page, requestOptions.filter), requestOptions);
+    parserVariant = useGoogleSearch || isGoogleSiteSearchResponse(html, 'nodeseek.com') ? 'google-search' : 'rendered-search';
+    const embedded = extractNodeSeekEmbeddedData(html);
+    candidateCount = Math.max(
+      (html.match(/<li\b[^>]*\bpost-list-item\b/gi) || []).length,
+      (html.match(/<a\b[^>]*href=["'][^"']*post-/gi) || []).length,
+      embedded ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length : 0
+    );
     items = parseNodeSeekSearchTopics(html);
     if (isIncompleteNodeSeekSearchPage(html, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
@@ -1660,10 +1806,18 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
     throw error;
   }
 
-  return {
+  const result = {
     items: items.slice(0, limit),
     errors: {},
     hasMore: Boolean(nextPage),
     nextPage
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant,
+    candidateCount,
+    validCount: result.items.length,
+    droppedCount: Math.max(0, candidateCount - result.items.length),
+    isExpectedEmpty: candidateCount === 0,
+    hasRepeatedCursor: nextPage === page
+  });
 }

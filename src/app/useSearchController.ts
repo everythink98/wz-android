@@ -11,7 +11,16 @@ import {
   type SourceSearchFilter
 } from '../searchFilters';
 import { mergeLoadedSearchHistory, normalizeSearchHistory, sameSearchHistory } from '../searchHistory';
-import type { SourceGateway } from '../sources/sourceGateway';
+import type { SourceGateway, SourceGatewayReadContext } from '../sources/sourceGateway';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  type DiagnosticFields,
+  type DiagnosticOutcome,
+  type DiagnosticReason
+} from '../diagnostics';
 import {
   finishAbortableRequest,
   isCanceledRequest,
@@ -22,7 +31,7 @@ import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '..
 import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
-import type { Category, FeedSource, Source, Topic } from '../types';
+import type { Category, FeedSource, Source, SourceErrorInfo, Topic } from '../types';
 import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
@@ -47,6 +56,13 @@ function mergedSearchGroupItemCount(groups: SearchGroup[]) {
 
 function remoteSearchResult(group: SearchGroup): RemoteSearchSourceResult {
   return group.error ? { kind: 'failed', group } : { kind: 'success', group };
+}
+
+function diagnosticReasonForSearchError(error?: SourceErrorInfo): DiagnosticReason {
+  if (error?.kind === 'login-required' || error?.kind === 'login-expired') return 'login_required';
+  if (error?.kind === 'verification-required') return 'verification_required';
+  if (error?.kind === 'permission-denied') return 'permission_denied';
+  return error ? normalizeDiagnosticReason(error.message) : 'unknown';
 }
 
 export function useSearchController({
@@ -188,7 +204,7 @@ export function useSearchController({
     signal: AbortSignal,
     sort: SearchSort = 'relevance',
     filter?: SourceSearchFilter,
-    options?: { isCurrent?: () => boolean }
+    options?: SourceGatewayReadContext
   ): Promise<RemoteSearchSourceResult> => {
     const sourceStatusNotice = authNoticeForSource(source, sessionViewModels, 'search') || undefined;
     try {
@@ -203,7 +219,7 @@ export function useSearchController({
         sort: source === 'v2ex' ? sort : 'relevance',
         filter: activeFilter,
         signal
-      }, { isCurrent: options?.isCurrent });
+      }, options);
       const sourceError = data.errors?.[source];
       const sourceErrorText = sourceError?.message || undefined;
       const group = {
@@ -249,7 +265,21 @@ export function useSearchController({
   const runSearch = useCallback(async (options?: Source | SearchRunOptions) => {
     const runOptions: Partial<SearchRunOptions> & { sourceOverride?: Source } = typeof options === 'string' ? { sourceOverride: options } : options || {};
     const query = (runOptions.query ?? searchQuery).trim();
+    const requestSearchSource = runOptions.source ?? searchSource;
+    const trace = beginDiagnosticTrace('search', 'run', {
+      source: runOptions.sourceOverride || requestSearchSource,
+      hasQuery: Boolean(query)
+    });
+    let traceFinished = false;
+    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
+      if (!traceFinished) {
+        traceFinished = true;
+        finishDiagnosticTrace(trace, outcome, fields);
+      }
+    };
     if (!query) {
+      markDiagnosticStage(trace, 'guard', { state: 'missing-query' });
+      finishTrace('blocked', { reason: 'not_ready' });
       notify('请输入搜索词');
       return;
     }
@@ -260,7 +290,6 @@ export function useSearchController({
     if (runOptions.source !== undefined && runOptions.source !== searchSource) {
       setSearchSource(runOptions.source);
     }
-    const requestSearchSource = runOptions.source ?? searchSource;
     const requestFilters = runOptions.filters ?? searchFiltersRef.current;
     const sourceOverride = runOptions.sourceOverride;
     submittedSearchQueryRef.current = query;
@@ -281,6 +310,11 @@ export function useSearchController({
         ? feedSources
         : [requestSearchSource as Source];
     const activeSort = remoteSearchSort(requestSearchSource, requestFilters);
+    markDiagnosticStage(trace, 'guard', {
+      source: sourceOverride || requestSearchSource,
+      state: sourceOverride ? 'retry' : 'started',
+      count: activeSources.length
+    });
     if (!sourceOverride) {
       searchVisitedPagesRef.current = {};
     }
@@ -300,12 +334,23 @@ export function useSearchController({
       addRecentSearch(query);
       const resultsBySource: Partial<Record<Source, RemoteSearchSourceResult>> = {};
       await Promise.all(activeSources.map(async (source) => {
-        const result = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, requestFilter, { isCurrent: () => isCurrentSearchRequest() });
+        const result = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, requestFilter, {
+          isCurrent: () => isCurrentSearchRequest(),
+          trace
+        });
         if (!isCurrentSearchRequest()) {
           return;
         }
         resultsBySource[source] = result;
         const group = groupFromRemoteSearchResult(result);
+        const beforeCount = searchGroupsRef.current.find((currentGroup) => currentGroup.source === source)?.items.length || 0;
+        markDiagnosticStage(trace, 'apply', {
+          source,
+          beforeCount,
+          afterCount: group.items.length,
+          itemCount: group.items.length,
+          hasMore: Boolean(group.hasMore)
+        });
         const nextGroups = searchGroupsRef.current.map((currentGroup) => (
           currentGroup.source === source ? { ...group, loading: false } : currentGroup
         ));
@@ -313,6 +358,10 @@ export function useSearchController({
         setSearchGroups(nextGroups);
       }));
       if (!isCurrentSearchRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source: sourceOverride || requestSearchSource,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       const nextGroups = searchGroupsRef.current.map((group) => (
@@ -330,22 +379,51 @@ export function useSearchController({
             searchSource: requestSearchSource
           }));
         });
+        finishTrace(resultCount ? 'partial' : 'blocked', {
+          source: sourceOverride || requestSearchSource,
+          reason: action.type === 'nodeseek-verification' ? 'verification_required' : 'login_required',
+          itemCount: resultCount
+        });
         return;
       }
       const errors = nextGroups.filter((group) => group.error);
       notify(errors.length
         ? errors.map((group) => `${group.label}：${group.error}`).join('；')
         : `搜索完成：${resultCount} 条结果`);
+      if (errors.length) {
+        const reason = diagnosticReasonForSearchError(errors[0]?.errorKind ? {
+          kind: errors[0].errorKind,
+          message: errors[0].error || ''
+        } : undefined);
+        finishTrace(
+          resultCount ? 'partial' : reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
+          { source: sourceOverride || requestSearchSource, reason, itemCount: resultCount, partialErrorCount: errors.length }
+        );
+      } else {
+        finishTrace('success', { source: sourceOverride || requestSearchSource, itemCount: resultCount });
+      }
     } catch (error) {
-      if (isCurrentSearchRequest() && !isCanceledRequest(error)) {
+      if (isCanceledRequest(error)) {
+        finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
+          source: sourceOverride || requestSearchSource,
+          reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
+        });
+      } else if (!isCurrentSearchRequest()) {
+        finishTrace('stale', { source: sourceOverride || requestSearchSource, reason: 'superseded' });
+      } else {
         const failureSource = sourceOverride || requestSearchSource;
         const sourceError = sourceErrorFromUnknown(failureSource, error);
+        const reason = diagnosticReasonForSearchError(sourceError);
+        const outcome = reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied'
+          ? 'blocked'
+          : 'failure';
         if (failureSource === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
           if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
             showYaohuoLogin(sourceError.message);
           }
+          finishTrace(outcome, { source: failureSource, reason });
           return;
         }
         if (failureSource === 'nodeseek' && sourceError.kind === 'verification-required') {
@@ -356,11 +434,19 @@ export function useSearchController({
               searchSource: requestSearchSource
             }));
           });
+          finishTrace(outcome, { source: failureSource, reason });
           return;
         }
         notify(sourceError.message);
+        finishTrace(outcome, { source: failureSource, reason });
       }
     } finally {
+      if (!traceFinished) {
+        finishTrace(isCurrentSearchRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+          source: sourceOverride || requestSearchSource,
+          reason: isCurrentSearchRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+        });
+      }
       if (isCurrentSearchRequest()) {
         setSearchBusy(false);
       }
@@ -379,6 +465,14 @@ export function useSearchController({
   ]);
 
   const loadMoreSearchSource = useCallback(async (source: Source, page: number) => {
+    const trace = beginDiagnosticTrace('search', 'load-more', { source, page });
+    let traceFinished = false;
+    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
+      if (!traceFinished) {
+        traceFinished = true;
+        finishDiagnosticTrace(trace, outcome, fields);
+      }
+    };
     const requestFilters = snapshotSearchFilters(submittedSearchFiltersRef.current);
     const requestSearchSource = submittedSearchSourceRef.current;
     const requestSnapshot = createSearchMoreRequestSnapshot({
@@ -389,13 +483,25 @@ export function useSearchController({
       submittedQuery: submittedSearchQueryRef.current
     });
     if (!requestSnapshot) {
+      markDiagnosticStage(trace, 'guard', { source, state: 'missing-snapshot' });
+      finishTrace('blocked', { source, reason: 'not_ready' });
       return;
     }
     const { activeFilter, ownerKey, query, sort, visitedKey } = requestSnapshot;
     const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
     if (!currentGroup || currentGroup.loading || currentGroup.loadingMore || !currentGroup.hasMore) {
+      const busy = Boolean(currentGroup?.loading || currentGroup?.loadingMore);
+      markDiagnosticStage(trace, 'guard', {
+        source,
+        state: !currentGroup ? 'missing-group' : busy ? 'busy' : 'complete'
+      });
+      finishTrace(busy ? 'blocked' : currentGroup ? 'noop' : 'blocked', {
+        source,
+        ...(busy ? { reason: 'busy' } : currentGroup ? {} : { reason: 'not_ready' })
+      });
       return;
     }
+    markDiagnosticStage(trace, 'guard', { source, state: 'load-more', page });
     const markedGroups = searchGroupsRef.current.map((group) => (
       group.source === source ? { ...group, loadingMore: true, error: undefined } : { ...group, loadingMore: false }
     ));
@@ -407,8 +513,15 @@ export function useSearchController({
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
     setSearchBusy(true);
     try {
-      const result = await runRemoteSearchSource(source, query, page, controller.signal, sort, activeFilter, { isCurrent: () => isCurrentSearchRequest() });
+      const result = await runRemoteSearchSource(source, query, page, controller.signal, sort, activeFilter, {
+        isCurrent: () => isCurrentSearchRequest(),
+        trace
+      });
       if (!isCurrentSearchRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       const data = groupFromRemoteSearchResult(result);
@@ -430,9 +543,16 @@ export function useSearchController({
           nextPage: canLoadNext ? data.nextPage ?? null : null
         };
       });
+      const updated = nextGroups.find((group) => group.source === source);
+      markDiagnosticStage(trace, 'apply', {
+        source,
+        beforeCount: currentGroup.items.length,
+        afterCount: updated?.items.length || currentGroup.items.length,
+        itemCount: data.items.length,
+        hasMore: Boolean(updated?.hasMore)
+      });
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
-      const updated = nextGroups.find((group) => group.source === source);
       if (result.kind === 'action-required') {
         handleRemoteSearchAction(result.action, () => {
           void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
@@ -441,11 +561,39 @@ export function useSearchController({
             searchSource: requestSearchSource
           }));
         });
+        finishTrace(updated?.items.length ? 'partial' : 'blocked', {
+          source,
+          reason: result.action.type === 'nodeseek-verification' ? 'verification_required' : 'login_required',
+          itemCount: updated?.items.length || 0
+        });
         return;
       }
       notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
+      if (updated?.error) {
+        const reason = diagnosticReasonForSearchError(updated.errorKind ? { kind: updated.errorKind, message: updated.error } : undefined);
+        finishTrace(updated.items.length > currentGroup.items.length ? 'partial' : 'failure', {
+          source,
+          reason,
+          beforeCount: currentGroup.items.length,
+          afterCount: updated.items.length
+        });
+      } else {
+        finishTrace('success', {
+          source,
+          beforeCount: currentGroup.items.length,
+          afterCount: updated?.items.length || currentGroup.items.length,
+          hasMore: Boolean(updated?.hasMore)
+        });
+      }
     } catch (error) {
-      if (isCurrentSearchRequest() && !isCanceledRequest(error)) {
+      if (isCanceledRequest(error)) {
+        finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
+          source,
+          reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
+        });
+      } else if (!isCurrentSearchRequest()) {
+        finishTrace('stale', { source, reason: 'superseded' });
+      } else {
         const sourceError = sourceErrorFromUnknown(source, error);
         const nextGroups = searchGroupsRef.current.map((group) => (
           group.source === source ? {
@@ -459,8 +607,19 @@ export function useSearchController({
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
         notify(sourceError.message);
+        const reason = diagnosticReasonForSearchError(sourceError);
+        finishTrace(
+          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
+          { source, reason }
+        );
       }
     } finally {
+      if (!traceFinished) {
+        finishTrace(isCurrentSearchRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+          source,
+          reason: isCurrentSearchRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+        });
+      }
       if (isCurrentSearchRequest()) {
         setSearchBusy(false);
       }

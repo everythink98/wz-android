@@ -4,6 +4,7 @@ import {
   BackHandler,
   KeyboardAvoidingView,
   Linking,
+  Platform,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   ScrollView,
@@ -26,6 +27,7 @@ import { useReaderDataController } from './useReaderDataController';
 import { useReaderDataActionsController } from './useReaderDataActionsController';
 import { useReaderSettingsController } from './useReaderSettingsController';
 import { useBackupStatusController } from './useBackupStatusController';
+import { useDiagnosticLogController } from './useDiagnosticLogController';
 import { useAccountStatusController } from './useAccountStatusController';
 import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
@@ -90,6 +92,18 @@ import { clearNodeImageApiKey, loadNodeImageApiKey, saveNodeImageApiKey } from '
 import { nodeImageApiKeyFromResponse } from '../replyImageUpload';
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '../appUrls';
 import type { NodeImageAuthPayload } from '../loginWebViewScripts';
+import {
+  CURRENT_ANDROID_VERSION_CODE,
+  CURRENT_APP_VERSION,
+  CURRENT_EXPO_VERSION,
+  CURRENT_REACT_NATIVE_VERSION
+} from '../appUpdate';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  type DiagnosticTrace
+} from '../diagnostics';
 
 type UserReturnTopic = {
   returnScreen: Exclude<Screen, 'topic'>;
@@ -480,7 +494,9 @@ export function AppRoot() {
   useEffect(() => setDefaultAvatarFetcher(networkProxyFetcher), [networkProxyFetcher]);
   const networkProxyWebViewBlockMessage = !networkProxyLoaded
     ? '代理状态读取中。'
-    : (networkProxyState.enabled && networkProxyApplyStatus !== 'applied'
+    : (networkProxyApplyStatus === 'failed'
+      ? networkProxyApplyError || '代理状态不确定，请重新应用代理设置。'
+      : networkProxyState.enabled && networkProxyApplyStatus !== 'applied'
       ? networkProxyApplyError || '代理未生效。'
       : '');
   const [networkProxyContentReady, setNetworkProxyContentReady] = useState(false);
@@ -849,6 +865,8 @@ export function AppRoot() {
     clearLogin,
     clearYaohuoLogin,
     handleLoginMessage,
+    recordNodeSeekLoginWebViewState,
+    recordYaohuoLoginWebViewState,
     rememberVisibleNodeSeekCookies,
     refreshLinuxDoLevel
   } = useAccountController({
@@ -875,11 +893,13 @@ export function AppRoot() {
     setWebLoginUserId,
     showLinuxDoVerification,
     showLoginPanelRef,
+    showYaohuoLoginPanel,
     updateLinuxDoSession,
     updateNodeSeekSession,
     updateYaohuoSession,
     webLoginDetectedRef,
     webViewRef,
+    yaohuoLoginPanelRequestRef,
     yaohuoWebViewRef
   });
 
@@ -976,6 +996,35 @@ export function AppRoot() {
     replaceReaderData,
     waitForReaderDataSave
   });
+  const diagnosticMetadata = useMemo(() => ({
+    androidApiLevel: typeof Platform.Version === 'number' ? Platform.Version : undefined,
+    appVersion: CURRENT_APP_VERSION,
+    currentScreen: screen,
+    deviceModel: Platform.OS === 'android' ? Platform.constants.Model : undefined,
+    expoVersion: CURRENT_EXPO_VERSION,
+    fontScale,
+    linuxDoSession: siteSessionViewModels.linuxdo.status,
+    nodeSeekSession: siteSessionViewModels.nodeseek.status,
+    proxyEnabled: networkProxyState.enabled,
+    reactNativeVersion: CURRENT_REACT_NATIVE_VERSION,
+    screenHeight: height,
+    screenWidth: width,
+    theme: theme.dark ? 'dark' as const : 'light' as const,
+    versionCode: CURRENT_ANDROID_VERSION_CODE,
+    yaohuoSession: siteSessionViewModels.yaohuo.status
+  }), [
+    fontScale,
+    height,
+    networkProxyState.enabled,
+    screen,
+    siteSessionViewModels,
+    theme.dark,
+    width
+  ]);
+  const {
+    diagnosticBusy,
+    exportDiagnosticLogFile
+  } = useDiagnosticLogController({ metadata: diagnosticMetadata, notify });
   const {
     refreshAccountStatus,
     statusBusy
@@ -1017,12 +1066,21 @@ export function AppRoot() {
 
   const handleNavigationScreenChange = useCallback((nextScreen: Screen, routeKey: string) => {
     const previousScreen = screenRef.current;
+    const trace = beginDiagnosticTrace('navigation', 'screen-change', {
+      previousState: previousScreen,
+      nextState: nextScreen,
+      routeKind: routeKey ? 'stack' : 'tab'
+    });
     if (nextScreen === 'topic' && routeKey) {
       if (!restoreTopicRoute(routeKey)) {
         activateTopicRoute(routeKey);
+        markDiagnosticStage(trace, 'apply', { state: 'topic-route-activated' });
+      } else {
+        markDiagnosticStage(trace, 'apply', { state: 'topic-route-restored' });
       }
     }
     if (previousScreen === nextScreen) {
+      finishDiagnosticTrace(trace, 'noop', { state: 'same-screen' });
       return;
     }
     const leavingTopicForUser = previousScreen === 'topic' && nextScreen === 'user';
@@ -1061,6 +1119,7 @@ export function AppRoot() {
     }
     screenRef.current = nextScreen;
     setScreen(nextScreen);
+    finishDiagnosticTrace(trace, 'success', { state: 'applied' });
   }, [abortQuotedReplyRequests, activateTopicRoute, clearTopicBackStack, clearTopicRoutes, closeMorePanels, invalidateTopicActionRequests, restoreTopicRoute, stopTopicWork]);
 
   const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback(async (options?: { silent?: boolean }) => {
@@ -1226,6 +1285,83 @@ export function AppRoot() {
     updateLinuxDoSession
   });
 
+  const pageDiagnosticStateRef = useRef('');
+  useEffect(() => {
+    let itemCount = 0;
+    let isBusy = false;
+    let hasError = false;
+    let emptyReason = 'none';
+    if (screen === 'feed') {
+      itemCount = shownFeedItems.length;
+      isBusy = feedBusy || activeFeedState.loadingMore || activeFeedState.refreshing;
+      emptyReason = isBusy ? 'loading' : itemCount ? 'none' : 'no-items';
+    } else if (screen === 'search') {
+      itemCount = searchGroups.reduce((count, group) => count + group.items.length, 0);
+      isBusy = searchBusy || searchGroups.some((group) => group.loading || group.loadingMore);
+      hasError = searchGroups.some((group) => Boolean(group.error));
+      emptyReason = !submittedSearchQuery ? 'not-started' : isBusy ? 'loading' : hasError && !itemCount ? 'source-error' : itemCount ? 'none' : 'no-results';
+    } else if (screen === 'library') {
+      itemCount = libraryTab === 'users' ? followedUserRecords.length : libraryRecords.length;
+      isBusy = !readerDataLoaded;
+      emptyReason = isBusy ? 'not-loaded' : itemCount ? 'none' : 'no-items';
+    } else if (screen === 'more') {
+      itemCount = 1;
+      isBusy = backupBusy || diagnosticBusy || appUpdateBusy || appUpdateDownloading || statusBusy;
+    } else if (screen === 'topic') {
+      itemCount = topicReplies.length;
+      isBusy = topicBusy || loadingMoreReplies;
+      hasError = Boolean(topicError);
+      emptyReason = isBusy ? 'loading' : hasError ? 'load-failed' : topicDetail ? (itemCount ? 'none' : 'no-replies') : 'no-topic';
+    } else {
+      itemCount = (userProfile?.topics?.length || 0) + (userProfile?.replies?.length || 0);
+      isBusy = userBusy || userLoadingMoreTopics || userLoadingMoreReplies;
+      hasError = Boolean(userError);
+      emptyReason = isBusy ? 'loading' : hasError ? 'load-failed' : userProfile ? (itemCount ? 'none' : 'no-items') : 'no-user';
+    }
+    const stateKey = `${screen}:${isBusy}:${hasError}:${itemCount}:${emptyReason}`;
+    if (pageDiagnosticStateRef.current === stateKey) {
+      return;
+    }
+    pageDiagnosticStateRef.current = stateKey;
+    const trace = beginDiagnosticTrace('app', 'page-state', {
+      screen,
+      isBusy,
+      hasError,
+      itemCount,
+      emptyReason
+    });
+    markDiagnosticStage(trace, 'apply', { state: 'summary' });
+    finishDiagnosticTrace(trace, 'success');
+  }, [
+    activeFeedState.loadingMore,
+    activeFeedState.refreshing,
+    appUpdateBusy,
+    appUpdateDownloading,
+    backupBusy,
+    diagnosticBusy,
+    feedBusy,
+    followedUserRecords.length,
+    libraryRecords.length,
+    libraryTab,
+    loadingMoreReplies,
+    readerDataLoaded,
+    screen,
+    searchBusy,
+    searchGroups,
+    shownFeedItems.length,
+    statusBusy,
+    submittedSearchQuery,
+    topicBusy,
+    topicDetail,
+    topicError,
+    topicReplies.length,
+    userBusy,
+    userError,
+    userLoadingMoreReplies,
+    userLoadingMoreTopics,
+    userProfile
+  ]);
+
   const shareTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (!detail?.url) {
@@ -1243,13 +1379,19 @@ export function AppRoot() {
     }
   }, [notify, selectedTopic, topicDetail]);
 
-  const goBackFromTopic = useCallback(() => {
+  const goBackFromTopic = useCallback((parentTrace?: DiagnosticTrace) => {
+    const trace = parentTrace || beginDiagnosticTrace('navigation', 'topic-back');
     abortQuotedReplyRequests();
     cancelDeferredNavigationTask();
     const closingRouteKey = currentTopicRouteKey();
     const returningRouteKey = previousTopicRouteKey();
     const previousTopic = popTopicBackStack();
     const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    markDiagnosticStage(trace, 'guard', {
+      canGoBack,
+      hasRoute: Boolean(returningRouteKey),
+      hasSnapshot: Boolean(previousTopic)
+    });
     if (returningRouteKey || previousTopic) {
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
@@ -1265,6 +1407,9 @@ export function AppRoot() {
       if (canGoBack) {
         navigationRef.goBack();
       }
+      finishDiagnosticTrace(trace, 'success', {
+        state: restoredByRoute ? 'route-restored' : 'snapshot-restored'
+      });
       return;
     }
     if (closingRouteKey) {
@@ -1272,12 +1417,15 @@ export function AppRoot() {
     }
     if (canGoBack) {
       navigationRef.goBack();
+      finishDiagnosticTrace(trace, 'success', { state: 'native-back' });
       return;
     }
     changeScreen(topicReturnScreenRef.current);
+    finishDiagnosticTrace(trace, 'success', { state: 'return-screen' });
   }, [abortQuotedReplyRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicRoute, restoreTopicSnapshot]);
 
-  const goBackFromUser = useCallback(() => {
+  const goBackFromUser = useCallback((parentTrace?: DiagnosticTrace) => {
+    const trace = parentTrace || beginDiagnosticTrace('navigation', 'user-back');
     cancelDeferredNavigationTask();
     const returnTopic = userReturnScreenRef.current === 'topic' ? userReturnTopicRef.current : null;
     const shouldReloadRestoredTopic = Boolean(returnTopic?.snapshot.selectedTopic && !returnTopic.snapshot.topicDetail && !returnTopic.snapshot.topicError);
@@ -1291,6 +1439,11 @@ export function AppRoot() {
       userReturnTopicRef.current = null;
     };
     const canGoBack = navigationRef.isReady() && navigationRef.canGoBack();
+    markDiagnosticStage(trace, 'guard', {
+      canGoBack,
+      hasSnapshot: Boolean(returnTopic),
+      shouldReload: shouldReloadRestoredTopic
+    });
     if (canGoBack) {
       navigationRef.goBack();
     } else {
@@ -1311,13 +1464,19 @@ export function AppRoot() {
         restoreReturnTopic();
         reloadRestoredTopic();
       }
+      finishDiagnosticTrace(trace, canGoBack ? 'partial' : 'success', { state: 'topic-reload-scheduled' });
       return;
     }
     if (canGoBack && returnTopic) {
       runAfterNavigationInteractions(restoreReturnTopic);
+      finishDiagnosticTrace(trace, 'partial', { state: 'topic-restore-scheduled' });
+      return;
     } else {
       restoreReturnTopic();
     }
+    finishDiagnosticTrace(trace, 'success', {
+      state: returnTopic ? 'topic-restored' : 'return-screen'
+    });
   }, [cancelDeferredNavigationTask, changeScreen, openTopic, replaceTopicBackStack, restoreTopicSnapshot, runAfterNavigationInteractions]);
 
   const handleTopicScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -1342,46 +1501,55 @@ export function AppRoot() {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      const trace = beginDiagnosticTrace('navigation', 'hardware-back', { screen });
+      const handled = (state: string) => {
+        markDiagnosticStage(trace, 'guard', { state });
+        finishDiagnosticTrace(trace, 'success', { state });
+        return true;
+      };
       if (imagePreview) {
         closeImagePreview();
-        return true;
+        return handled('image-preview-closed');
       }
       if (showLoginPanel) {
         changeNodeSeekLoginPanel(false);
-        return true;
+        return handled('login-panel-closed');
       }
       if (showNodeImageAuthPanel) {
         closeNodeImageAuthPanel();
-        return true;
+        return handled('image-auth-panel-closed');
       }
       if (showYaohuoLoginPanel) {
         closeYaohuoLoginPanel();
-        return true;
+        return handled('yaohuo-panel-closed');
       }
       if (showLinuxDoPanel) {
         closeLinuxDoPanel();
-        return true;
+        return handled('linuxdo-panel-closed');
       }
       if (showSettingsPanel) {
         setShowSettingsPanel(false);
-        return true;
+        return handled('settings-panel-closed');
       }
       if (shouldCloseReplyComposerOnBack(screen, replyComposerOpen)) {
         toggleReplyComposer(false);
-        return true;
+        return handled('reply-composer-closed');
       }
       if (screen === 'topic') {
-        goBackFromTopic();
+        markDiagnosticStage(trace, 'guard', { state: 'topic-back' });
+        goBackFromTopic(trace);
         return true;
       }
       if (screen === 'user') {
-        goBackFromUser();
+        markDiagnosticStage(trace, 'guard', { state: 'user-back' });
+        goBackFromUser(trace);
         return true;
       }
       if (screen !== 'feed') {
         changeScreen('feed');
-        return true;
+        return handled('feed-return');
       }
+      finishDiagnosticTrace(trace, 'noop', { state: 'system-back' });
       return false;
     });
     return () => subscription.remove();
@@ -1584,6 +1752,7 @@ export function AppRoot() {
       statusBusy,
       styles,
       backupBusy,
+      diagnosticBusy,
       theme,
       webViewRef,
       yaohuoLoginState,
@@ -1615,7 +1784,10 @@ export function AppRoot() {
       handleNodeSeekLoginNavigation,
       handleYaohuoLoginNavigation,
       onHandleLoginMessage: handleLoginMessage,
+      onNodeSeekLoginWebViewState: recordNodeSeekLoginWebViewState,
+      onYaohuoLoginWebViewState: recordYaohuoLoginWebViewState,
       onExportBackupFile: exportBackupFile,
+      onExportDiagnosticLog: exportDiagnosticLogFile,
       onImportBackupFile: importBackupFile,
       onSetLoadingLoginPage: setLoadingLoginPage,
       onSetLoadingYaohuoLoginPage: setLoadingYaohuoLoginPage,
@@ -1638,6 +1810,7 @@ export function AppRoot() {
     appUpdateInfo,
     appUpdateMessage,
     backupBusy,
+    diagnosticBusy,
     changeLinuxDoPanel,
     changeNodeSeekLoginPanel,
     changeYaohuoLoginPanel,
@@ -1653,6 +1826,7 @@ export function AppRoot() {
     devAnonymousOverrides,
     downloadAppUpdate,
     exportBackupFile,
+    exportDiagnosticLogFile,
     handleLoginMessage,
     handleNodeSeekLoginNavigation,
     handleYaohuoLoginNavigation,
@@ -1673,6 +1847,8 @@ export function AppRoot() {
     networkProxySummary,
     networkProxyWebViewBlockMessage,
     openUser,
+    recordNodeSeekLoginWebViewState,
+    recordYaohuoLoginWebViewState,
     readerData.settings,
     refreshAccountStatus,
     refreshLinuxDoLevel,

@@ -13,6 +13,15 @@ import {
 } from '../feedLogic';
 import type { ReaderData } from '../readerData';
 import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  type DiagnosticFields,
+  type DiagnosticOutcome,
+  type DiagnosticReason
+} from '../diagnostics';
+import {
   errorMessage,
   finishAbortableRequest,
   isCanceledRequest,
@@ -21,7 +30,7 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
-import type { Category, FeedFilterState, FeedSource, FeedResponse, LinuxDoFeedFilter, SourceFeedFilter, SourceErrors, Topic } from '../types';
+import type { Category, FeedFilterState, FeedSource, FeedResponse, LinuxDoFeedFilter, SourceErrorInfo, SourceFeedFilter, SourceErrors, Topic } from '../types';
 
 type FeedSourceState = {
   baseFeedRetryPending?: boolean;
@@ -87,6 +96,13 @@ export function mergedFeedResponseAfterSplitFetch(responses: FeedResponse[], err
   return merged;
 }
 
+function diagnosticReasonForSourceError(error?: SourceErrorInfo): DiagnosticReason {
+  if (error?.kind === 'login-required' || error?.kind === 'login-expired') return 'login_required';
+  if (error?.kind === 'verification-required') return 'verification_required';
+  if (error?.kind === 'permission-denied') return 'permission_denied';
+  return error ? normalizeDiagnosticReason(error.message) : 'unknown';
+}
+
 export function useFeedController({
   notify,
   readerData,
@@ -122,6 +138,10 @@ export function useFeedController({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const [categories, setCategories] = useState<Category[]>([]);
+  const categoriesRef = useRef(categories);
+  if (categoriesRef.current !== categories) {
+    categoriesRef.current = categories;
+  }
 
   const activeFeedState = feedStates[feedSource];
   const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
@@ -131,35 +151,79 @@ export function useFeedController({
   );
 
   const loadCategories = useCallback(async (source: FeedSource = 'all') => {
+    const trace = beginDiagnosticTrace('feed', 'categories', { source });
+    let traceFinished = false;
+    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
+      if (!traceFinished) {
+        traceFinished = true;
+        finishDiagnosticTrace(trace, outcome, fields);
+      }
+    };
     const requestId = ++categoriesRequestIdRef.current;
     const controller = startAbortableRequest(categoriesAbortRef);
+    const isLatestCategoriesRequest = () => requestId === categoriesRequestIdRef.current;
+    const isCurrentCategoriesRequest = () => isLatestCategoriesRequest() && !controller.signal.aborted;
+    markDiagnosticStage(trace, 'guard', { source, state: 'started' });
     try {
       const data = await sourceGateway.getCategories({
         source,
         nocache: true,
         signal: controller.signal
-      }, { isCurrent: () => requestId === categoriesRequestIdRef.current && !controller.signal.aborted });
-      if (requestId !== categoriesRequestIdRef.current || controller.signal.aborted) {
+      }, { isCurrent: isCurrentCategoriesRequest, trace });
+      if (!isCurrentCategoriesRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       if (source !== 'all' && !data.items.length) {
+        finishTrace('noop', { source, reason: 'parse_empty' });
         return;
       }
+      const currentCategories = categoriesRef.current;
+      const nextCategories = source === 'all' ? mergeCategories(data.items, []) : mergeCategories(currentCategories, data.items);
+      markDiagnosticStage(trace, 'apply', {
+        source,
+        beforeCount: currentCategories.length,
+        afterCount: nextCategories.length,
+        itemCount: data.items.length
+      });
       setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
       const errors = Object.entries(data.errors || {});
       if (errors.length) {
+        const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
+        const outcome = data.items.length ? 'partial' : reason === 'verification_required' || reason === 'login_required' || reason === 'permission_denied' ? 'blocked' : 'failure';
         const verificationMessage = nodeSeekVerificationNavigationMessage(source, data.errors);
         if (verificationMessage) {
           showNodeSeekVerification(verificationMessage);
+          finishTrace(outcome, { source, reason, partialErrorCount: errors.length });
           return;
         }
         notify(formatSourceErrorMessages(data.errors, sourceLabel));
+        finishTrace(outcome, { source, reason, partialErrorCount: errors.length });
+        return;
       }
+      finishTrace('success', { source, itemCount: data.items.length });
     } catch (error) {
-      if (requestId === categoriesRequestIdRef.current && !controller.signal.aborted && !isCanceledRequest(error)) {
+      if (isCanceledRequest(error)) {
+        finishTrace(isLatestCategoriesRequest() ? 'canceled' : 'stale', {
+          source,
+          reason: isLatestCategoriesRequest() ? 'canceled' : 'superseded'
+        });
+      } else if (!isCurrentCategoriesRequest()) {
+        finishTrace('stale', { source, reason: 'superseded' });
+      } else {
         notify(errorMessage(error));
+        finishTrace('failure', { source, reason: normalizeDiagnosticReason(error) });
       }
     } finally {
+      if (!traceFinished) {
+        finishTrace(isCurrentCategoriesRequest() ? 'failure' : 'stale', {
+          source,
+          reason: isCurrentCategoriesRequest() ? 'unknown' : 'superseded'
+        });
+      }
       finishAbortableRequest(categoriesAbortRef, controller);
     }
   }, [notify, showNodeSeekVerification, sourceGateway]);
@@ -195,10 +259,26 @@ export function useFeedController({
     clearItems?: boolean;
     successMessage?: string;
   } = {}) => {
+    const requestSource = source;
+    const isLoadMore = !reset && page > 1;
+    const trace = beginDiagnosticTrace('feed', 'load', {
+      source: requestSource,
+      page,
+      isLoadMore,
+      hasCursor: Boolean(cursor)
+    });
+    let traceFinished = false;
+    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
+      if (!traceFinished) {
+        traceFinished = true;
+        finishDiagnosticTrace(trace, outcome, fields);
+      }
+    };
     if (feedLoadingRef.current && !reset) {
+      markDiagnosticStage(trace, 'guard', { source: requestSource, state: 'busy', isLoadMore });
+      finishTrace('blocked', { source: requestSource, reason: 'busy' });
       return;
     }
-    const requestSource = source;
     const requestBaseState = feedStatesRef.current[requestSource];
     const requestFeedFilter = feedFilter ?? feedFilterForRequest(requestSource, category, feedFilters);
     const requestKey = feedRequestKey(requestSource, category, requestFeedFilter);
@@ -208,7 +288,11 @@ export function useFeedController({
     const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
     feedSourceRequestIdRef.current[requestSource] = requestId;
-    const isLoadMore = !reset && page > 1;
+    markDiagnosticStage(trace, 'guard', {
+      source: requestSource,
+      state: isLoadMore ? 'load-more' : reset ? 'reset' : 'initial',
+      isLoadMore
+    });
     if (!isLoadMore && reset && clearItems) {
       setFeedStates((current) => ({
         ...current,
@@ -246,12 +330,19 @@ export function useFeedController({
           return;
         }
         appliedFeedResponse = appliedFeedResponse ? mergeFeedResponses(appliedFeedResponse, data) : data;
+        const nextPageState = nextFeedPageState(requestBaseState, appliedFeedResponse, {
+          requestedPage: page,
+          reset
+        });
+        markDiagnosticStage(trace, 'apply', {
+          source: requestSource,
+          beforeCount: requestBaseState.items.length,
+          afterCount: nextPageState.items.length,
+          itemCount: data.items.length,
+          hasMore: nextPageState.hasMore
+        });
         setFeedStates((current) => {
           const previous = current[requestSource];
-          const nextPageState = nextFeedPageState(requestBaseState, appliedFeedResponse as FeedResponse, {
-            requestedPage: page,
-            reset
-          });
           return {
             ...current,
             [requestSource]: {
@@ -264,6 +355,10 @@ export function useFeedController({
       };
       const hasYaohuoCredential = source === 'all' ? await sourceGateway.hasYaohuoCredential() : false;
       if (!isCurrentFeedRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       let finalErrors: SourceErrors = {};
@@ -284,14 +379,14 @@ export function useFeedController({
           feedFilter: requestFeedFilter,
             nocache,
             signal: controller.signal
-          }, { isCurrent: isCurrentFeedRequest })
+          }, { isCurrent: isCurrentFeedRequest, trace })
           : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
         const yaohuoPromise = sourceGateway.getFeed({
           source: 'yaohuo',
           page,
           limit: 30,
           signal: controller.signal
-        }, { isCurrent: isCurrentFeedRequest });
+        }, { isCurrent: isCurrentFeedRequest, trace });
         const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
         if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
           throw baseResult.reason;
@@ -303,6 +398,10 @@ export function useFeedController({
           throw baseResult.reason;
         }
         if (!isCurrentFeedRequest()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: requestSource,
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
           return;
         }
         setFeedStates((current) => ({
@@ -330,8 +429,12 @@ export function useFeedController({
           limit: 30,
           category: category || undefined,
           signal: controller.signal
-        }, { isCurrent: isCurrentFeedRequest });
+        }, { isCurrent: isCurrentFeedRequest, trace });
         if (!isCurrentFeedRequest()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: requestSource,
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
           return;
         }
         applyFeedResponse(data);
@@ -347,24 +450,39 @@ export function useFeedController({
           linuxDoFilter: requestSource === 'linuxdo' ? requestFeedFilter as LinuxDoFeedFilter | undefined : undefined,
           nocache,
           signal: controller.signal
-        }, { isCurrent: isCurrentFeedRequest });
+        }, { isCurrent: isCurrentFeedRequest, trace });
         if (!isCurrentFeedRequest()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: requestSource,
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
           return;
         }
         applyFeedResponse(data);
         finalErrors = data.errors || {};
       }
       if (!isCurrentFeedRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       const errors = Object.entries(finalErrors);
       if (errors.length) {
+        const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
+        const outcome = appliedFeedResponse
+          ? 'partial'
+          : reason === 'verification_required' || reason === 'login_required' || reason === 'permission_denied'
+            ? 'blocked'
+            : 'failure';
         const verificationMessage = nodeSeekVerificationNavigationMessage(requestSource, finalErrors);
         if (verificationMessage) {
           if (isLoadMore) {
             markFeedLoadMoreFailed(requestSource);
           }
           showNodeSeekVerification(isLoadMore ? `加载下一页失败：${verificationMessage}` : verificationMessage);
+          finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
           return;
         }
         const linuxDoVerificationMessage = linuxDoVerificationNavigationMessage(requestSource, finalErrors);
@@ -373,6 +491,7 @@ export function useFeedController({
             markFeedLoadMoreFailed(requestSource);
           }
           showLinuxDoVerification(isLoadMore ? `加载下一页失败：${linuxDoVerificationMessage}` : linuxDoVerificationMessage);
+          finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
           return;
         }
         const message = formatSourceErrorMessages(finalErrors, sourceLabel);
@@ -382,12 +501,32 @@ export function useFeedController({
         } else {
           notify(message);
         }
+        finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
       } else if (successMessage) {
         notify(successMessage);
       }
+      if (!errors.length) {
+        const appliedSummary = appliedFeedResponse as FeedResponse | null;
+        finishTrace('success', {
+          source: requestSource,
+          itemCount: appliedSummary?.items.length || 0,
+          hasMore: Boolean(appliedSummary?.hasMore)
+        });
+      }
     } catch (error) {
-      if (isCurrentFeedRequest() && !isCanceledRequest(error)) {
+      if (isCanceledRequest(error)) {
+        finishTrace(isCurrentFeedRequest() ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: isCurrentFeedRequest() ? 'canceled' : 'superseded'
+        });
+      } else if (!isCurrentFeedRequest()) {
+        finishTrace('stale', { source: requestSource, reason: 'superseded' });
+      } else {
         const sourceError = sourceErrorFromUnknown(requestSource, error);
+        const reason = diagnosticReasonForSourceError(sourceError);
+        const outcome = reason === 'verification_required' || reason === 'login_required' || reason === 'permission_denied'
+          ? 'blocked'
+          : 'failure';
         const notice = isLoadMore ? `加载下一页失败：${sourceError.message}` : sourceError.message;
         if (isLoadMore) {
           markFeedLoadMoreFailed(requestSource);
@@ -398,19 +537,29 @@ export function useFeedController({
           } else {
             showYaohuoLogin(notice);
           }
+          finishTrace(outcome, { source: requestSource, reason });
           return;
         }
         if (requestSource === 'nodeseek' && sourceError.kind === 'verification-required') {
           showNodeSeekVerification(notice);
+          finishTrace(outcome, { source: requestSource, reason });
           return;
         }
         if (requestSource === 'linuxdo' && sourceError.kind === 'verification-required') {
           showLinuxDoVerification(notice);
+          finishTrace(outcome, { source: requestSource, reason });
           return;
         }
         notify(notice);
+        finishTrace(outcome, { source: requestSource, reason });
       }
     } finally {
+      if (!traceFinished) {
+        finishTrace(isCurrentFeedRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: isCurrentFeedRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+        });
+      }
       const isLatestForFeedSource = feedSourceRequestIdRef.current[requestSource] === requestId;
       if (isLatestForFeedSource) {
         setFeedStates((current) => ({

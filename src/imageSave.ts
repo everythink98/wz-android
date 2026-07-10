@@ -4,6 +4,14 @@ import { Buffer } from 'buffer';
 import { safeFileName } from './backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './htmlImages';
 import type { Fetcher } from './request';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  withDiagnosticFetcher,
+  type DiagnosticTrace
+} from './diagnostics';
 
 function imageFileExtension(uri: string) {
   return uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
@@ -30,42 +38,63 @@ async function assertReadableImageFile(uri: string) {
   }
 }
 
-async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fetcher) {
+async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fetcher, trace: DiagnosticTrace) {
   const headers = imageRequestHeadersForUrl(uri);
-  const response = await fetcher(uri, headers ? { headers } : undefined);
+  const response = await withDiagnosticFetcher(trace, fetcher)(uri, headers ? { headers } : undefined);
   assertDownloadedImage(response);
+  markDiagnosticStage(trace, 'parse', { contentType: responseContentType(response) || 'unknown' });
   const content = Buffer.from(await response.arrayBuffer()).toString('base64');
   await FileSystem.writeAsStringAsync(target, content, { encoding: FileSystem.EncodingType.Base64 });
 }
 
-export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetch) {
+export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetch, parentTrace?: DiagnosticTrace) {
   const dataImage = dataImageFileFromUrl(uri);
-  if (!dataImage && !isHttpOrHttpsUrl(uri)) {
-    throw new Error('图片地址不支持保存');
-  }
-  const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
-  if (!permission.granted) {
-    throw new Error('没有图片保存权限');
-  }
-  const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
-  if (!baseDirectory) {
-    throw new Error('无法创建图片文件');
-  }
-  const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
-  let savedUri = '';
+  const trace = parentTrace || beginDiagnosticTrace('media', 'save-image', {
+    channel: dataImage ? 'data' : isHttpOrHttpsUrl(uri) ? 'remote' : 'unsupported'
+  });
+  const ownsTrace = !parentTrace;
   try {
-    const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || imageFileExtension(uri))}`;
-    savedUri = target;
-    if (dataImage) {
-      await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
-    } else {
-      await downloadImageWithFetcher(uri, target, fetcher);
+    if (!dataImage && !isHttpOrHttpsUrl(uri)) {
+      throw new Error('图片地址不支持保存');
     }
-    await assertReadableImageFile(savedUri);
-    await MediaLibrary.saveToLibraryAsync(savedUri);
-  } finally {
-    if (shouldDeleteFile && savedUri) {
-      await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
+    const permission = await MediaLibrary.requestPermissionsAsync(false, ['photo']);
+    markDiagnosticStage(trace, 'credential', { isGranted: permission.granted });
+    if (!permission.granted) {
+      throw new Error('没有图片保存权限');
     }
+    const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
+    if (!baseDirectory) {
+      throw new Error('无法创建图片文件');
+    }
+    const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
+    let savedUri = '';
+    try {
+      const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || imageFileExtension(uri))}`;
+      savedUri = target;
+      markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
+      if (dataImage) {
+        await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
+      } else {
+        await downloadImageWithFetcher(uri, target, fetcher, trace);
+      }
+      await assertReadableImageFile(savedUri);
+      markDiagnosticStage(trace, 'parse', { state: 'file-readable' });
+      markDiagnosticStage(trace, 'persist', { state: 'media-library-start' });
+      await MediaLibrary.saveToLibraryAsync(savedUri);
+      markDiagnosticStage(trace, 'persist', { state: 'media-library' });
+    } finally {
+      if (shouldDeleteFile && savedUri) {
+        await FileSystem.deleteAsync(savedUri, { idempotent: true }).catch(() => undefined);
+      }
+    }
+    if (ownsTrace) {
+      finishDiagnosticTrace(trace, 'success');
+    }
+  } catch (error) {
+    if (ownsTrace) {
+      const reason = normalizeDiagnosticReason(error);
+      finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
+    }
+    throw error;
   }
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
@@ -25,6 +25,12 @@ import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  setDiagnosticWriter,
+  withDiagnosticFetcher
+} from './diagnostics';
 import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -113,6 +119,10 @@ describe('Android local sources', () => {
   beforeEach(() => {
     vi.mocked(SecureStore.getItemAsync).mockReset();
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    setDiagnosticWriter(null);
   });
 
   it('reads NodeSeek feed, categories, topic, replies, and search without project server endpoints', async () => {
@@ -3056,6 +3066,8 @@ describe('Android local sources', () => {
   });
 
   it('retries NodeSeek through the WebView fallback only after Cloudflare', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
     const normalFetcher = vi.fn(async () => new Response('<html><title>Just a moment...</title><div class="cf-turnstile"></div></html>', {
       status: 403,
       headers: { 'cf-mitigated': 'challenge' }
@@ -3078,6 +3090,49 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(webViewCalls[0]?.[0]).toBe('https://www.nodeseek.com/post-743011-1');
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation }) => operation === 'transport-fallback');
+    expect(events).toEqual([
+      expect.objectContaining({ phase: 'intent', source: 'nodeseek', reason: 'verification_required' }),
+      expect.objectContaining({ phase: 'transport', channel: 'direct', status: 403, reason: 'verification_required' }),
+      expect.objectContaining({ phase: 'transport', channel: 'webview', status: 200 }),
+      expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/743011|post-|https?:|cf-turnstile/);
+  });
+
+  it('keeps NodeSeek direct and WebView fallback stages on the caller trace', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: async () => new Response('<html><div class="cf-turnstile"></div></html>', {
+        status: 403,
+        headers: { 'cf-mitigated': 'challenge' }
+      }),
+      webViewFetcher: async () => html(`
+        <a class="post-title" href="/post-743019-1">NodeSeek shared trace detail</a>
+        <div class="content-item"><article class="post-content"><p>正文</p></article></div>
+      `)
+    });
+
+    const topic = await getTopic({
+      source: 'nodeseek',
+      id: '743019',
+      fetcher: withDiagnosticFetcher(trace, fallbackFetcher)
+    });
+    finishDiagnosticTrace(trace, 'success');
+
+    expect(topic.title).toBe('NodeSeek shared trace detail');
+    const events = lines.map((line) => JSON.parse(line));
+    expect(new Set(events.map((event) => event.traceId))).toEqual(new Set([trace.traceId]));
+    expect(events.filter((event) => event.phase === 'intent')).toHaveLength(1);
+    expect(events.filter((event) => event.phase === 'finish')).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'transport', channel: 'direct', state: 'fallback' }),
+      expect.objectContaining({ phase: 'transport', channel: 'webview', state: 'finish' })
+    ]));
   });
 
   it('keeps NodeSeek edit metadata when replies use the WebView fallback', async () => {
@@ -4517,6 +4572,8 @@ describe('Android local sources', () => {
   });
 
   it('retries a linux.do JSON read once through the WebView fallback after Cloudflare', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
     const normalFetcher = vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
       status: 403,
       headers: { 'cf-mitigated': 'challenge' }
@@ -4545,6 +4602,16 @@ describe('Android local sources', () => {
     expect(webViewFetcher).toHaveBeenCalledTimes(1);
     const webViewCalls = webViewFetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
     expect(webViewCalls[0]?.[0]).toBe('https://linux.do/t/42.json');
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation }) => operation === 'transport-fallback');
+    expect(events).toEqual([
+      expect.objectContaining({ phase: 'intent', source: 'linuxdo', reason: 'verification_required' }),
+      expect.objectContaining({ phase: 'transport', channel: 'direct', status: 403, reason: 'verification_required' }),
+      expect.objectContaining({ phase: 'transport', channel: 'webview', status: 200 }),
+      expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
   });
 
   it('does not read ordinary linux.do JSON twice before handing it to callers', async () => {

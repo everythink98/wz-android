@@ -22,6 +22,7 @@ vi.mock('react-native', () => ({
 
 import { getCategories, getCurrentUserProfile, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
 import { browserFetchIntentFromInit } from './browserFetchIntent';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
@@ -230,6 +231,10 @@ describe('Android local forum facade', () => {
     expect(linuxdo).toMatchObject({ source: 'linuxdo', id: 'alice', username: 'alice', postCount: 8, topicCount: 2 });
     expect(v2ex).toMatchObject({ source: 'v2ex', id: 'neo', username: 'neo', bio: 'hello' });
     expect(yaohuo).toMatchObject({ source: 'yaohuo', id: '7', username: '火友', postCount: 12 });
+    expect(sourceDiagnosticSummary(nodeseek)).toMatchObject({ parserVariant: 'api-user', partialErrorCount: 0 });
+    expect(sourceDiagnosticSummary(linuxdo)).toMatchObject({ parserVariant: 'discourse-user', partialErrorCount: 0 });
+    expect(sourceDiagnosticSummary(v2ex)).toMatchObject({ parserVariant: 'api-user', partialErrorCount: 0 });
+    expect(sourceDiagnosticSummary(yaohuo)).toMatchObject({ parserVariant: 'html-user', partialErrorCount: 0 });
     expect(nodeseek.levelLabel).toBe('Lv6');
     expect(linuxdo.levelLabel).toBe('Lv2');
     expect(linuxdo.topics[0].authorLevelLabel).toBe('Lv2');
@@ -350,6 +355,56 @@ describe('Android local forum facade', () => {
       displayTimeText: '2026-05-20 10:30'
     });
     expect(yaohuo.nextRepliesCursor).toContain('page=2');
+  });
+
+  it('keeps four-site user subrequest degradation out of the response while exposing a safe summary', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com/api/account/getInfo/1?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: 'node', member_id: 1 } }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-discussions')) {
+        return new Response(JSON.stringify({ success: true, discussions: [] }));
+      }
+      if (input.includes('nodeseek.com/api/content/list-comments')) {
+        throw new Error('comments unavailable');
+      }
+      if (input.includes('linux.do/u/linux/summary.json')) {
+        return new Response(JSON.stringify({ user_summary: { user: { username: 'linux' } }, topics: [] }));
+      }
+      if (input.includes('linux.do/user_actions.json')) {
+        throw new Error('actions unavailable');
+      }
+      if (input.includes('v2ex.com/api/members/show.json')) {
+        return new Response(JSON.stringify({ username: 'v2' }));
+      }
+      if (input.includes('v2ex.com/member/v2/topics')) {
+        return new Response('<div class="empty-state">empty</div>');
+      }
+      if (input.includes('v2ex.com/feed/member/v2.xml')) {
+        return new Response('');
+      }
+      if (input.includes('v2ex.com/member/v2/replies')) {
+        throw new Error('replies unavailable');
+      }
+      if (input === 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7&siteid=1000') {
+        return new Response('<div class="content">昵称:火友 <a href="/bbs/book_re_my.aspx?action=class&siteid=1000&classid=0&touserid=7">回复</a></div>');
+      }
+      if (input.includes('book_re_my.aspx')) {
+        throw new Error('activity unavailable');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profiles = await Promise.all([
+      getUserProfile({ source: 'nodeseek', id: '1', fetcher }),
+      getUserProfile({ source: 'linuxdo', id: 'linux', fetcher }),
+      getUserProfile({ source: 'v2ex', id: 'v2', fetcher }),
+      getUserProfile({ source: 'yaohuo', id: '7', username: '火友', fetcher, yaohuoCookie: 'sid=ok' })
+    ]);
+
+    expect(profiles.map((profile) => sourceDiagnosticSummary(profile)?.partialErrorCount)).toEqual([1, 1, 1, 1]);
+    expect(profiles.every((profile) => sourceDiagnosticSummary(profile)?.hasDegradation)).toBe(true);
+    expect(profiles.every((profile) => !('diagnostic' in profile))).toBe(true);
   });
 
   it('loads user replies from each source reply cursor', async () => {

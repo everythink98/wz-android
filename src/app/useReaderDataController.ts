@@ -7,6 +7,23 @@ import {
   type ReaderData
 } from '../readerData';
 import { loadReaderData, saveCleanReaderData } from '../readerDataStore';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  type DiagnosticTrace
+} from '../diagnostics';
+
+export type ReaderDataMutationReason =
+  | 'backup-imported'
+  | 'favorite-toggled'
+  | 'follow-removed'
+  | 'follow-toggled'
+  | 'history-cleared'
+  | 'history-recorded'
+  | 'library-topic-removed'
+  | 'settings-updated';
 
 function prepareSettingsOnlyCommit(current: ReaderData, updated: ReaderData) {
   if (
@@ -36,6 +53,12 @@ function isSettingsOnlyCommit(previous: ReaderData, next: ReaderData) {
     && next.history === previous.history
     && next.followedUsers === previous.followedUsers
     && next.deletedRecords === previous.deletedRecords;
+}
+
+function readerDataRecordCount(value: ReaderData) {
+  return Object.keys(value.favorites).length
+    + Object.keys(value.history).length
+    + Object.keys(value.followedUsers).length;
 }
 
 export function prepareReaderDataCommit(current: ReaderData, updater: (current: ReaderData) => ReaderData) {
@@ -72,16 +95,28 @@ export async function loadInitialReaderData({
   onLoadFailed?: () => void;
   onLoaded: (readerData: ReaderData) => void;
 }) {
+  const trace = beginDiagnosticTrace('reader-data', 'load');
   try {
     const savedReaderData = await load();
     if (isActive()) {
+      markDiagnosticStage(trace, 'apply', {
+        count: readerDataRecordCount(savedReaderData),
+        state: 'loaded'
+      });
       onLoaded(savedReaderData);
+      finishDiagnosticTrace(trace, 'success', { count: readerDataRecordCount(savedReaderData) });
+    } else {
+      finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
     }
   } catch (error) {
     if (isActive()) {
+      markDiagnosticStage(trace, 'apply', { state: 'recovery-mode' });
       notify(`本机资料读取失败，已进入恢复模式；请先导入备份再修改本机资料：${errorMessage(error)}`);
       onLoadFailed?.();
       onLoaded(createEmptyReaderData());
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+    } else {
+      finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
     }
   }
 }
@@ -106,15 +141,32 @@ export function useReaderDataController({
     readerDataRef.current = readerData;
   }
 
-  const persistReaderData = useCallback((next: ReaderData, previous?: ReaderData, options?: { skipIfSuperseded?: boolean }) => {
+  const persistReaderData = useCallback((
+    next: ReaderData,
+    previous?: ReaderData,
+    options?: {
+      mutationReason?: ReaderDataMutationReason;
+      skipIfSuperseded?: boolean;
+      trace?: DiagnosticTrace;
+    }
+  ) => {
+    const trace = options?.trace || beginDiagnosticTrace('reader-data', 'save', {
+      mutationReason: options?.mutationReason || 'unknown'
+    });
+    markDiagnosticStage(trace, 'guard', { state: 'queued' });
     readerDataRef.current = next;
     const saveTask = saveQueueRef.current
       .catch(() => undefined)
       .then(waitForNextSaveTurn)
       .then(() => {
         if (options?.skipIfSuperseded && readerDataRef.current !== next) {
+          finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
           return null;
         }
+        markDiagnosticStage(trace, 'persist', {
+          count: readerDataRecordCount(next),
+          state: 'started'
+        });
         const nextJson = JSON.stringify(next);
         return saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson)
           .then((saved) => ({ nextJson, saved }));
@@ -126,6 +178,10 @@ export function useReaderDataController({
         const { nextJson, saved } = result;
         lastPersistedReaderDataRef.current = saved;
         lastPersistedReaderDataJsonRef.current = nextJson;
+        markDiagnosticStage(trace, 'apply', {
+          count: readerDataRecordCount(saved),
+          state: 'persisted'
+        });
         setReaderData((latest) => {
           if (latest !== next) {
             return latest;
@@ -133,9 +189,22 @@ export function useReaderDataController({
           readerDataRef.current = saved;
           return saved;
         });
+        finishDiagnosticTrace(trace, 'success', { count: readerDataRecordCount(saved) });
       })
       .catch((error) => {
         if (previous) {
+          const latestBeforeRollback = readerDataRef.current;
+          const projectedRollback = rollbackFailedReaderDataSave(
+            latestBeforeRollback,
+            next,
+            previous,
+            lastPersistedReaderDataRef.current
+          );
+          markDiagnosticStage(trace, 'rollback', {
+            before: readerDataRecordCount(latestBeforeRollback),
+            after: readerDataRecordCount(projectedRollback),
+            didRollback: projectedRollback !== latestBeforeRollback
+          });
           setReaderData((latest) => {
             const restored = rollbackFailedReaderDataSave(latest, next, previous, lastPersistedReaderDataRef.current);
             if (restored !== latest) {
@@ -144,6 +213,7 @@ export function useReaderDataController({
             return restored;
           });
         }
+        finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         notify(errorMessage(error));
         throw error;
       });
@@ -151,32 +221,56 @@ export function useReaderDataController({
     return saveTask;
   }, [notify]);
 
-  const commitReaderData = useCallback((updater: (current: ReaderData) => ReaderData) => {
+  const commitReaderData = useCallback((
+    mutationReason: ReaderDataMutationReason,
+    updater: (current: ReaderData) => ReaderData
+  ) => {
+    const trace = beginDiagnosticTrace('reader-data', 'mutate', { mutationReason });
     if (!readerDataLoadedRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'not-loaded' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       notify('本机资料尚未加载完成，请稍后再试。');
       return;
     }
     if (readerDataWriteSuspendedRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'recovery-mode' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'storage_error' });
       notify('本机资料读取失败，请先导入备份再修改本机资料。');
       return;
     }
     const previous = readerDataRef.current;
     const next = prepareReaderDataCommit(previous, updater);
     if (!next) {
+      finishDiagnosticTrace(trace, 'noop');
       return;
     }
+    markDiagnosticStage(trace, 'apply', {
+      before: readerDataRecordCount(previous),
+      after: readerDataRecordCount(next)
+    });
     setReaderData(next);
-    void persistReaderData(next, previous, { skipIfSuperseded: isSettingsOnlyCommit(previous, next) }).catch(() => undefined);
+    void persistReaderData(next, previous, {
+      mutationReason,
+      skipIfSuperseded: isSettingsOnlyCommit(previous, next),
+      trace
+    }).catch(() => undefined);
   }, [notify, persistReaderData]);
 
-  const replaceReaderData = useCallback((nextValue: ReaderData) => {
+  const replaceReaderData = useCallback((mutationReason: ReaderDataMutationReason, nextValue: ReaderData) => {
+    const trace = beginDiagnosticTrace('reader-data', 'replace', { mutationReason });
     if (!readerDataLoadedRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'not-loaded' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       return Promise.reject(new Error('本机资料尚未加载完成，请稍后再试。'));
     }
     const previous = readerDataRef.current;
     const next = sanitizeReaderData(nextValue);
+    markDiagnosticStage(trace, 'apply', {
+      before: readerDataRecordCount(previous),
+      after: readerDataRecordCount(next)
+    });
     setReaderData(next);
-    return persistReaderData(next, previous).then(() => {
+    return persistReaderData(next, previous, { mutationReason, trace }).then(() => {
       readerDataWriteSuspendedRef.current = false;
     });
   }, [persistReaderData]);

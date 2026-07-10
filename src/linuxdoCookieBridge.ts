@@ -2,6 +2,13 @@ import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
 import { createCredentialWriteGate, enqueueCredentialWriteForGeneration, replaceCredentialWrite } from './app/sessionControllerHelpers';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  hintDiagnosticOutcome,
+  markDiagnosticStage,
+  type DiagnosticTrace
+} from './diagnostics';
 
 interface LinuxDoNativeCookie {
   name?: string;
@@ -164,17 +171,20 @@ export function linuxDoClearanceCookieFromValue(value?: string | null): Record<s
   };
 }
 
-async function withLinuxDoCookieReadTimeout<T>(promise: Promise<T>, fallback: T, timeoutMs: number) {
+type CookieStoreReadStatus = 'success' | 'empty' | 'timeout' | 'error';
+
+async function withLinuxDoCookieReadTimeout<T extends Record<string, unknown>>(promise: Promise<T>, fallback: T, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      promise,
-      new Promise<T>((resolve) => {
-        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      promise.then(
+        (value) => ({ value, status: Object.keys(value).length ? 'success' : 'empty' } as const),
+        () => ({ value: fallback, status: 'error' } as const)
+      ),
+      new Promise<{ value: T; status: CookieStoreReadStatus }>((resolve) => {
+        timer = setTimeout(() => resolve({ value: fallback, status: 'timeout' }), timeoutMs);
       })
     ]);
-  } catch {
-    return fallback;
   } finally {
     if (timer) {
       clearTimeout(timer);
@@ -189,39 +199,59 @@ async function readLinuxDoCookiesFromCookieManager() {
 }
 
 export async function readLinuxDoCookiesFromStores({
+  diagnosticTrace,
   readAndroidStore = readLinuxDoClearanceFromAndroidWebViewStore,
   readCookieManagerStore = readLinuxDoCookiesFromCookieManager,
   timeoutMs = LINUXDO_COOKIE_READ_TIMEOUT_MS
 }: {
+  diagnosticTrace?: DiagnosticTrace;
   readAndroidStore?: LinuxDoCookieStoreReader;
   readCookieManagerStore?: LinuxDoCookieStoreReader;
   timeoutMs?: number;
 } = {}) {
-  const [androidStoreCookies, cookieManagerCookies] = await Promise.all([
+  const ownsTrace = !diagnosticTrace;
+  const trace = diagnosticTrace || beginDiagnosticTrace('credential', 'cookie-store-read', { source: 'linuxdo' });
+  const [androidStore, cookieManagerStore] = await Promise.all([
     withLinuxDoCookieReadTimeout(readAndroidStore(), {}, timeoutMs),
     withLinuxDoCookieReadTimeout(readCookieManagerStore(), {}, timeoutMs)
   ]);
-  return mergeLinuxDoCookies(androidStoreCookies, cookieManagerCookies);
+  for (const [store, result] of [
+    ['android-webview', androidStore],
+    ['cookie-manager', cookieManagerStore]
+  ] as const) {
+    markDiagnosticStage(trace, 'credential', {
+      source: 'linuxdo',
+      store,
+      state: result.status,
+      hasCredential: Object.keys(result.value).length > 0
+    });
+  }
+  const cookies = mergeLinuxDoCookies(androidStore.value, cookieManagerStore.value);
+  const failedStatuses = [androidStore.status, cookieManagerStore.status].filter((status) => status === 'timeout' || status === 'error');
+  if (failedStatuses.length) {
+    const outcome = Object.keys(cookies).length ? 'partial' : 'failure';
+    const reason = failedStatuses.includes('timeout') ? 'timeout' : 'storage_error';
+    if (ownsTrace) {
+      finishDiagnosticTrace(trace, outcome, { source: 'linuxdo', reason });
+    } else {
+      hintDiagnosticOutcome(trace, 'partial', { source: 'linuxdo', reason });
+    }
+  } else if (ownsTrace) {
+    finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', hasCredential: Object.keys(cookies).length > 0 });
+  }
+  return cookies;
 }
 
 async function readLinuxDoClearanceFromAndroidWebViewStore() {
   const module = await linuxDoAndroidCookieModule();
   if (module?.getLinuxDoCookieHeader) {
-    try {
-      return parseLinuxDoDocumentCookie(await module.getLinuxDoCookieHeader() || '');
-    } catch {
-      return {};
-    }
+    return parseLinuxDoDocumentCookie(await module.getLinuxDoCookieHeader() || '');
   }
   if (!module?.getClearance) {
     return {};
   }
-  try {
-    const value = await module.getClearance();
-    return linuxDoClearanceCookieFromValue(value);
-  } catch {
-    return {};
-  }
+  const value = await module.getClearance();
+  return linuxDoClearanceCookieFromValue(value);
 }
 
 function linuxDoAccessFromHeader(cookieHeader: string, userAgent?: string): LinuxDoAccess {

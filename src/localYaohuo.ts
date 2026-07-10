@@ -23,6 +23,7 @@ import {
   yaohuoUserUrl as userUrl
 } from './localYaohuoHelpers';
 import { normalizeYaohuoReplyDeletePath } from './yaohuoActions';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
@@ -389,12 +390,24 @@ export function parseYaohuoListHtml(html: string, {
     items.push(...parseCompactListItems(root, classId, limit));
   }
   const nextPage = nextPageFromHtml(html, page, items.length, limit);
-  return {
+  const result = {
     items: preserveOrder ? items : sortTopicsByTime(items),
     errors: {},
     hasMore: Boolean(nextPage),
     nextPage
   };
+  const compactCandidates = root.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]').length;
+  const candidateCount = Math.max(rows.length, chunks.length, compactCandidates);
+  const explicitEmpty = /暂无|没有(?:相关)?(?:帖子|主题|内容)|无(?:帖子|主题|内容)/.test(elementText(root));
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'html-list',
+    candidateCount,
+    validCount: result.items.length,
+    droppedCount: Math.max(0, candidateCount - result.items.length),
+    isExpectedEmpty: candidateCount === 0 && (page > 1 || explicitEmpty || Boolean(classId)),
+    isParseEmpty: candidateCount === 0 && page === 1 && !classId && !explicitEmpty,
+    hasRepeatedCursor: Boolean(nextPage && nextPage === page)
+  });
 }
 
 function extractMarkedContent(html: string, start: string, end: string) {
@@ -664,7 +677,7 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
   const polls = parseVotePolls(html, String(id || ''));
   const accessRequirement = yaohuoTopicAccessRequirementFromContent(contentHtml)
     || yaohuoTopicAccessRequirementFromContent(html);
-  return {
+  const result: TopicDetail = {
     source: 'yaohuo',
     id: String(id || ''),
     title: topicTitle(root) || '',
@@ -685,6 +698,13 @@ export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; ur
     ...(accessRequirement ? { accessRequirement } : {}),
     ...(polls ? { polls } : {})
   };
+  const validCount = result.title || result.contentHtml || result.author || result.accessRequirement ? 1 : 0;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'html-topic',
+    candidateCount: 1,
+    validCount,
+    droppedCount: validCount ? 0 : 1
+  });
 }
 
 function parseFloor(value: string) {
@@ -696,12 +716,11 @@ function parseFloor(value: string) {
   return Number.isInteger(floor) && floor > 0 ? floor : undefined;
 }
 
-function parseReplyFloor(row: HTMLElement, text: string, fallback: number) {
+function explicitReplyFloor(row: HTMLElement, text: string) {
   return parsePositiveInteger(row.getAttribute('data-floor'))
     || parsePositiveInteger(String(row.getAttribute('id') || '').match(/floor-(\d+)/i)?.[1])
     || parsePositiveInteger(row.querySelector('.floornumber0')?.getAttribute('title')?.match(/原\s*(\d+)\s*楼/i)?.[1])
-    || parseFloor(text.match(/\[(沙发|椅子|板凳|\d+楼?)\]/)?.[1] || '')
-    || fallback;
+    || parseFloor(text.match(/\[(沙发|椅子|板凳|\d+楼?)\]/)?.[1] || '');
 }
 
 function yaohuoReplyContentHtml(row: HTMLElement, rawHtml: string, authorHtml: string) {
@@ -753,10 +772,15 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
   const root = parseHtml(html);
   const rows = root.querySelectorAll('div.list-reply, div.line1, div.line2');
   const floorOffset = Math.max(0, page - 1) * limit;
+  let missingFloorCount = 0;
   const items = rows.map((row, index) => {
     const rawHtml = row.innerHTML;
     const text = elementText(row);
-    const floor = parseReplyFloor(row, text, floorOffset + index + 1);
+    const explicitFloor = explicitReplyFloor(row, text);
+    if (!explicitFloor) {
+      missingFloorCount += 1;
+    }
+    const floor = explicitFloor || floorOffset + index + 1;
     const deletePath = yaohuoReplyDeletePath(row, url);
     const deleteId = yaohuoReplyDeleteId(deletePath);
     const authorLink = row.querySelectorAll('a[href*="userinfo"]').at(-1);
@@ -781,11 +805,20 @@ export function parseYaohuoRepliesHtml(html: string, { page = 1, limit = 30, url
     };
   }).slice(0, limit);
   const nextPage = nextPageFromHtml(html, page, items.length, limit);
-  return {
+  const result = {
     items,
     hasMore: Boolean(nextPage),
     nextPage
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'html-replies',
+    candidateCount: rows.length,
+    validCount: items.length,
+    droppedCount: Math.max(0, rows.length - items.length),
+    missingFloorCount,
+    isExpectedEmpty: rows.length === 0,
+    hasRepeatedCursor: Boolean(nextPage && nextPage === page)
+  });
 }
 
 export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: { id: string; username?: string; url?: string }): UserProfile {
@@ -831,7 +864,7 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
       ...(levelLabel ? { authorLevelLabel: levelLabel } : {})
     }];
   });
-  return {
+  const result: UserProfile = {
     source: 'yaohuo',
     id,
     username: username || displayName,
@@ -841,6 +874,17 @@ export function parseYaohuoUserProfileHtml(html: string, { id, username, url }: 
     ...stats,
     topics: sortTopicsByCreatedAt(topics).slice(0, 30)
   };
+  const hasProfileSurface = /昵称|用户名|发帖|回帖|等级|注册/.test(visibleText)
+    || Boolean(root.querySelector('.username, .user-name, h1'))
+    || result.topics.length > 0;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'html-user',
+    candidateCount: 1 + topics.length,
+    validCount: (hasProfileSurface ? 1 : 0) + result.topics.length,
+    droppedCount: Math.max(0, topics.length - result.topics.length) + (hasProfileSurface ? 0 : 1),
+    partialErrorCount: 0,
+    isParseEmpty: !hasProfileSurface && result.topics.length === 0
+  });
 }
 
 export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: { id: string; username?: string; url?: string }): UserReplyActivity[] {
@@ -851,7 +895,7 @@ export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: 
   const seenTopicDates = new Set<string>();
   const replyRows = root.querySelectorAll('div.listdata, div.line1, div.line2');
   const rows = replyRows.length ? replyRows : root.querySelectorAll('div');
-  return rows
+  const replies = rows
     .map((row, index) => {
       const viewLinks = row.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]');
       if (viewLinks.length !== 1) {
@@ -908,6 +952,17 @@ export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: 
       };
     })
     .filter(Boolean) as UserReplyActivity[];
+  const candidateCount = rows.filter((row) => (
+    row.querySelectorAll('a[href*="/bbs-"], a[href*="book_view"]').length === 1
+  )).length;
+  return annotateSourceDiagnosticSummary(replies, {
+    parserVariant: 'html-user-replies',
+    candidateCount,
+    validCount: replies.length,
+    droppedCount: Math.max(0, candidateCount - replies.length),
+    missingFloorCount: replies.filter((reply) => !reply.floor).length,
+    isExpectedEmpty: candidateCount === 0
+  });
 }
 
 export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProfile | null {
@@ -940,12 +995,25 @@ export function parseYaohuoCurrentUserHtml(html: string, url?: string): UserProf
 
 export function parseYaohuoSearchHtml(html: string, options: { classId?: string; page?: number; limit?: number; url?: string } = {}): SearchResponse {
   const result = parseYaohuoListHtml(html, { ...options, classId: options.classId || '0', preserveOrder: true });
-  return {
+  const response = {
     items: result.items,
     errors: result.errors,
     hasMore: result.hasMore,
     nextPage: result.nextPage
   };
+  const summary = sourceDiagnosticSummary(result);
+  return annotateSourceDiagnosticSummary(response, {
+    parserVariant: 'html-search',
+    candidateCount: summary?.candidateCount || 0,
+    validCount: response.items.length,
+    droppedCount: summary?.droppedCount || 0,
+    partialErrorCount: summary?.partialErrorCount || 0,
+    missingFloorCount: summary?.missingFloorCount || 0,
+    hasDegradation: summary?.hasDegradation || false,
+    hasRepeatedCursor: summary?.hasRepeatedCursor || false,
+    isExpectedEmpty: (summary?.candidateCount || 0) === 0,
+    isParseEmpty: (summary?.candidateCount || 0) > 0 && summary?.isParseEmpty === true
+  });
 }
 
 export function checkYaohuoLoginHtml(html: string, url?: string) {
@@ -963,5 +1031,11 @@ export function checkYaohuoLoginHtml(html: string, url?: string) {
 }
 
 export function yaohuoCategoriesResponse() {
-  return { items: YAOHUO_CATEGORIES, errors: {} };
+  const result = { items: YAOHUO_CATEGORIES, errors: {} };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'static-categories',
+    candidateCount: YAOHUO_CATEGORIES.length,
+    validCount: YAOHUO_CATEGORIES.length,
+    droppedCount: 0
+  });
 }

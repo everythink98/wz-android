@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Fetcher } from '../request';
 import { errorMessage } from '../appUtils';
 import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  type DiagnosticTrace
+} from '../diagnostics';
+import {
   activeNetworkProxyProfile,
   applyNetworkProxy,
   createEmptyNetworkProxyState,
@@ -20,6 +27,15 @@ import {
 
 type ApplyStatus = 'loading' | 'disabled' | 'applying' | 'applied' | 'failed';
 
+function diagnosticProxyState(state: NetworkProxyState) {
+  const profile = activeNetworkProxyProfile(state);
+  return {
+    hasProxy: Boolean(profile),
+    isEnabled: state.enabled,
+    ...(profile ? { protocol: profile.protocol } : {})
+  };
+}
+
 export function useNetworkProxyController({ notify }: { notify: (message: string) => void }) {
   const [proxyState, setProxyState] = useState<NetworkProxyState>(() => createEmptyNetworkProxyState());
   const [loaded, setLoaded] = useState(false);
@@ -30,6 +46,7 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
   const loadedRef = useRef(loaded);
   const applyStatusRef = useRef(applyStatus);
   const applyErrorRef = useRef(applyError);
+  const pendingProxyApplyTraceRef = useRef<{ resolve: () => void; trace: DiagnosticTrace } | null>(null);
 
   proxyStateRef.current = proxyState;
   loadedRef.current = loaded;
@@ -51,18 +68,24 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
 
   useEffect(() => {
     let canceled = false;
+    const trace = beginDiagnosticTrace('proxy', 'load');
     const task = loadNetworkProxyState()
       .then((state) => {
         if (canceled) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
           return;
         }
         proxyStateRef.current = state;
         loadedRef.current = true;
         setProxyState(state);
         setLoaded(true);
+        const fields = diagnosticProxyState(state);
+        markDiagnosticStage(trace, 'persist', { store: 'secure-store', ...fields });
+        finishDiagnosticTrace(trace, 'success', fields);
       })
       .catch(() => {
         if (canceled) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
           return;
         }
         const emptyState = createEmptyNetworkProxyState();
@@ -70,6 +93,8 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
         loadedRef.current = true;
         setProxyState(emptyState);
         setLoaded(true);
+        markDiagnosticStage(trace, 'persist', { store: 'secure-store', state: 'failure' });
+        finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
       });
     readyPromiseRef.current = task.then(() => undefined);
     return () => {
@@ -83,31 +108,65 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
     }
     let canceled = false;
     const profile = proxyState.enabled ? activeProfile : null;
+    const pendingTrace = pendingProxyApplyTraceRef.current;
+    if (pendingTrace) {
+      pendingProxyApplyTraceRef.current = null;
+    }
+    const trace = pendingTrace?.trace || beginDiagnosticTrace('proxy', 'apply', diagnosticProxyState(proxyState));
+    const ownsTrace = !pendingTrace;
     setApplyState('applying');
     const task = applyNetworkProxy(profile)
       .then(() => {
         if (canceled) {
+          if (ownsTrace) {
+            finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+          }
           return;
         }
-        setApplyState(profile ? 'applied' : 'disabled');
+        const state = profile ? 'applied' : 'disabled';
+        setApplyState(state);
+        markDiagnosticStage(trace, 'apply', { channel: 'native', state });
+        if (ownsTrace) {
+          finishDiagnosticTrace(trace, 'success', { state });
+        }
       })
       .catch((error) => {
         if (canceled) {
+          if (ownsTrace) {
+            finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+          }
           return;
         }
         const message = errorMessage(error);
         setApplyState('failed', message);
-        if (profile) {
+        markDiagnosticStage(trace, 'apply', {
+          channel: 'native',
+          state: 'failed',
+          reason: normalizeDiagnosticReason(error)
+        });
+        if (ownsTrace) {
+          finishDiagnosticTrace(trace, 'failure', {
+            state: 'failed',
+            reason: normalizeDiagnosticReason(error)
+          });
+        }
+        if (profile && !pendingTrace) {
           notify(message);
         }
+      })
+      .finally(() => {
+        pendingTrace?.resolve();
       });
     readyPromiseRef.current = task.then(() => undefined, () => undefined);
     return () => {
       canceled = true;
+      pendingTrace?.resolve();
     };
-  }, [activeProfile, applyKey, loaded, notify, proxyState.enabled, setApplyState]);
+  }, [applyKey, loaded, notify, proxyState.enabled, setApplyState]);
 
-  const replaceProxyState = useCallback(async (next: NetworkProxyState) => {
+  const replaceProxyState = useCallback(async (next: NetworkProxyState, parentTrace?: DiagnosticTrace) => {
+    const trace = parentTrace || beginDiagnosticTrace('proxy', 'save', diagnosticProxyState(next));
+    const ownsTrace = !parentTrace;
     const previous = proxyStateRef.current;
     proxyStateRef.current = next;
     setProxyState(next);
@@ -115,10 +174,18 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
       const saved = await saveNetworkProxyState(next);
       proxyStateRef.current = saved;
       setProxyState(saved);
+      markDiagnosticStage(trace, 'persist', { store: 'secure-store', ...diagnosticProxyState(saved) });
+      if (ownsTrace) {
+        finishDiagnosticTrace(trace, 'success', diagnosticProxyState(saved));
+      }
       return saved;
     } catch (error) {
       proxyStateRef.current = previous;
       setProxyState(previous);
+      markDiagnosticStage(trace, 'rollback', { state: 'restored' });
+      if (ownsTrace) {
+        finishDiagnosticTrace(trace, 'failure', { reason: 'storage_error' });
+      }
       throw error;
     }
   }, []);
@@ -128,20 +195,52 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
   }, [setApplyState]);
 
   const setProxyEnabled = useCallback(async (enabled: boolean) => {
+    const trace = beginDiagnosticTrace('proxy', 'set-enabled', { isEnabled: enabled });
     if (enabled && !activeNetworkProxyProfile(proxyStateRef.current)) {
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'not_ready' });
       notify('请先添加并选择一个代理。');
+      return;
+    }
+    if (proxyStateRef.current.enabled === enabled) {
+      finishDiagnosticTrace(trace, 'noop', { isEnabled: enabled });
       return;
     }
     const previousStatus = applyStatusRef.current;
     const previousError = applyErrorRef.current;
+    let resolveApply: () => void = () => undefined;
+    const applyCompleted = new Promise<void>((resolve) => {
+      resolveApply = resolve;
+    });
+    const pendingTrace = { resolve: resolveApply, trace };
+    pendingProxyApplyTraceRef.current = pendingTrace;
+    let nativeApplyFailed = false;
     beginProxyApplyTransition();
     try {
       await replaceProxyState({
         ...proxyStateRef.current,
         enabled
-      });
+      }, trace);
+      markDiagnosticStage(trace, 'apply', { state: 'pending', isEnabled: enabled });
+      await applyCompleted;
+      const status = applyStatusRef.current;
+      if (status === 'applied' || status === 'disabled') {
+        finishDiagnosticTrace(trace, 'success', { isEnabled: enabled, state: status });
+      } else if (status === 'failed') {
+        finishDiagnosticTrace(trace, 'failure', { isEnabled: enabled, state: status, reason: 'network_error' });
+        nativeApplyFailed = true;
+        throw new Error(applyErrorRef.current || '代理未生效。');
+      } else {
+        finishDiagnosticTrace(trace, 'canceled', { isEnabled: enabled, reason: 'superseded' });
+      }
     } catch (error) {
-      setApplyState(previousStatus, previousError);
+      if (pendingProxyApplyTraceRef.current === pendingTrace) {
+        pendingProxyApplyTraceRef.current = null;
+        resolveApply();
+      }
+      if (!nativeApplyFailed) {
+        setApplyState(previousStatus, previousError);
+      }
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
       throw error;
     }
   }, [beginProxyApplyTransition, notify, replaceProxyState, setApplyState]);
@@ -209,9 +308,22 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
   }, [beginProxyApplyTransition, replaceProxyState, setApplyState]);
 
   const testProxyProfile = useCallback(async (profile: NetworkProxyProfile) => {
-    const result = await testNetworkProxy(profile);
-    notify(`代理测试通过 · ${result.latencyMs} ms`);
-    return result;
+    const trace = beginDiagnosticTrace('proxy', 'test', { protocol: profile.protocol });
+    markDiagnosticStage(trace, 'transport', { channel: 'native', state: 'start' });
+    try {
+      const result = await testNetworkProxy(profile);
+      markDiagnosticStage(trace, 'transport', {
+        channel: 'native',
+        state: 'finish',
+        ...(result.latencyMs === undefined ? {} : { latencyMs: result.latencyMs })
+      });
+      finishDiagnosticTrace(trace, 'success');
+      notify(`代理测试通过 · ${result.latencyMs} ms`);
+      return result;
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      throw error;
+    }
   }, [notify]);
 
   const ensureNetworkProxyReady = useCallback(async () => {
@@ -219,13 +331,32 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
       await readyPromiseRef.current;
     }
     const current = proxyStateRef.current;
+    if (applyStatusRef.current === 'failed') {
+      const trace = beginDiagnosticTrace('proxy', 'guard', {
+        isEnabled: current.enabled,
+        hasProxy: Boolean(activeNetworkProxyProfile(current)),
+        state: 'failed'
+      });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'network_error' });
+      throw new Error(applyErrorRef.current || '代理状态不确定，请重新应用代理设置。');
+    }
     if (!current.enabled) {
       return;
     }
     if (!activeNetworkProxyProfile(current)) {
+      const trace = beginDiagnosticTrace('proxy', 'guard', { isEnabled: true, hasProxy: false });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'missing_credential' });
       throw new Error('代理未选择。');
     }
     if (applyStatusRef.current !== 'applied') {
+      const trace = beginDiagnosticTrace('proxy', 'guard', {
+        isEnabled: true,
+        hasProxy: true,
+        state: applyStatusRef.current
+      });
+      finishDiagnosticTrace(trace, 'blocked', {
+        reason: 'not_ready'
+      });
       throw new Error(applyErrorRef.current || '代理未生效。');
     }
   }, []);
@@ -235,7 +366,18 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
     return fetch(input, init);
   }, [ensureNetworkProxyReady]);
 
-  const recoverNodeSeekNetwork = useCallback(() => recoverNativeNodeSeekNetwork(), []);
+  const recoverNodeSeekNetwork = useCallback(async () => {
+    const trace = beginDiagnosticTrace('proxy', 'recover');
+    markDiagnosticStage(trace, 'apply', { channel: 'native', state: 'start' });
+    try {
+      const result = await recoverNativeNodeSeekNetwork();
+      finishDiagnosticTrace(trace, 'success');
+      return result;
+    } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      throw error;
+    }
+  }, []);
 
   return {
     activeProfile,

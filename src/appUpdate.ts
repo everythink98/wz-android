@@ -1,4 +1,5 @@
 import appConfig from '../app.json';
+import packageConfig from '../package.json';
 import { fetchWithTimeout, type Fetcher } from './request';
 
 export const UPDATE_APK_NAME = 'app-arm64-v8a-release.apk';
@@ -6,7 +7,9 @@ export const UPDATE_MANIFEST_NAME = 'release-manifest.json';
 export const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/everythink98/wz-android/releases/latest';
 export const CURRENT_APP_VERSION = String(appConfig.expo.version);
 export const CURRENT_ANDROID_PACKAGE = String(appConfig.expo.android.package);
-const CURRENT_ANDROID_VERSION_CODE = Number(appConfig.expo.android.versionCode);
+export const CURRENT_ANDROID_VERSION_CODE = Number(appConfig.expo.android.versionCode);
+export const CURRENT_EXPO_VERSION = String(packageConfig.dependencies.expo).replace(/^[^\d]*/, '');
+export const CURRENT_REACT_NATIVE_VERSION = String(packageConfig.dependencies['react-native']).replace(/^[^\d]*/, '');
 const GITHUB_RELEASE_APK_HOST = 'github.com';
 const GITHUB_RELEASE_APK_PATH_PREFIX = '/everythink98/wz-android/releases/download/';
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;

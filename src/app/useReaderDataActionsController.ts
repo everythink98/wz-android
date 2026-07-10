@@ -9,31 +9,37 @@ import {
 } from '../readerData';
 import type { LibraryTab } from '../feedLogic';
 import type { Topic, UserProfile } from '../types';
+import type { ReaderDataMutationReason } from './useReaderDataController';
+
+type CommitReaderData = (
+  mutationReason: ReaderDataMutationReason,
+  updater: (current: ReaderData) => ReaderData
+) => void;
 
 export function useReaderDataActionsController({
   commitReaderData,
   libraryTab,
   readerDataRef
 }: {
-  commitReaderData: (updater: (current: ReaderData) => ReaderData) => void;
+  commitReaderData: CommitReaderData;
   libraryTab: LibraryTab;
   readerDataRef: MutableRefObject<ReaderData>;
 }) {
   const toggleTopicFavorite = useCallback((topic: Topic) => {
-    commitReaderData((current) => toggleFavorite(current, topic));
+    commitReaderData('favorite-toggled', (current) => toggleFavorite(current, topic));
   }, [commitReaderData]);
 
   const toggleUserFollow = useCallback((user: UserProfile) => {
-    commitReaderData((current) => toggleFollowedUser(current, user));
+    commitReaderData('follow-toggled', (current) => toggleFollowedUser(current, user));
   }, [commitReaderData]);
 
   const removeFollowedUser = useCallback((user: UserProfile) => {
-    commitReaderData((current) => removeFollowedUsers(current, [user]));
+    commitReaderData('follow-removed', (current) => removeFollowedUsers(current, [user]));
   }, [commitReaderData]);
 
   const removeLibraryTopic = useCallback((topic: Topic) => {
     const section = libraryTab === 'history' ? 'history' : 'favorites';
-    commitReaderData((current) => removeRecords(current, section, [topic]));
+    commitReaderData('library-topic-removed', (current) => removeRecords(current, section, [topic]));
   }, [commitReaderData, libraryTab]);
 
   const clearHistory = useCallback(() => {
@@ -41,7 +47,7 @@ export function useReaderDataActionsController({
     if (!Object.keys(records).length) {
       return;
     }
-    commitReaderData((current) => clearRecords(current, 'history'));
+    commitReaderData('history-cleared', (current) => clearRecords(current, 'history'));
   }, [commitReaderData, readerDataRef]);
 
   return {

@@ -1,6 +1,34 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('react', () => ({
+  useCallback: <T,>(callback: T) => callback,
+  useEffect: (effect: () => void | (() => void)) => { effect(); },
+  useMemo: <T,>(factory: () => T) => factory(),
+  useRef: <T,>(value: T) => ({ current: value }),
+  useState: <T,>(initial: T | (() => T)) => {
+    let current = typeof initial === 'function' ? (initial as () => T)() : initial;
+    return [current, (next: T | ((value: T) => T)) => {
+      current = typeof next === 'function' ? (next as (value: T) => T)(current) : next;
+    }];
+  }
+}));
+
+vi.mock('@react-native-cookies/cookies', () => ({
+  default: {
+    clearByName: vi.fn(),
+    flush: vi.fn(async () => undefined),
+    get: vi.fn(async () => ({})),
+    setFromResponse: vi.fn(async () => true)
+  }
+}));
+vi.mock('expo-secure-store', () => ({
+  deleteItemAsync: vi.fn(async () => undefined),
+  getItemAsync: vi.fn(async () => null),
+  setItemAsync: vi.fn(async () => undefined)
+}));
+vi.mock('react-native', () => ({ NativeModules: { LinuxDoCookieModule: {} } }));
 import {
   advanceCredentialWriteGeneration,
   createCredentialWriteGate,
@@ -23,8 +51,177 @@ import {
   type BrowserFetchQueueRequest,
   type BrowserFetchRequestCleanupTarget
 } from './sessionControllerHelpers';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  setDiagnosticWriter,
+  withDiagnosticFetcher
+} from '../diagnostics';
+import type { Fetcher } from '../request';
+import { useSessionController } from './useSessionController';
+
+afterEach(() => {
+  setDiagnosticWriter(null);
+});
+
+function createTestSessionController(defaultFetcher: Fetcher = vi.fn()) {
+  return useSessionController({
+    defaultFetcher,
+    linuxDoBrowserWebViewRef: { current: null },
+    linuxDoClearanceBeforeVerifyRef: { current: null },
+    linuxDoWebViewCookieHeaderRef: { current: '' },
+    linuxDoWebViewUserAgentRef: { current: '' },
+    nodeSeekBrowserWebViewRef: { current: null },
+    nodeSeekWebViewCookieHeaderRef: { current: '' },
+    nodeSeekWebViewUserAgentRef: { current: '' },
+    notify: vi.fn(),
+    setLinuxDoWebViewCookieHeader: vi.fn(),
+    setLinuxDoWebViewUserAgent: vi.fn(),
+    setNodeSeekWebViewUserAgent: vi.fn(),
+    setWebLoginUserId: vi.fn(),
+    webLoginDetectedRef: { current: false },
+    webLoginUserId: null
+  });
+}
 
 describe('session controller helpers', () => {
+  it('records a session transition without cookie facts or raw errors', () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+
+    controller.dispatchSiteSessionEvent({
+      site: 'nodeseek',
+      type: 'verification-required',
+      message: 'private cookie=secret raw error'
+    });
+
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation }) => operation === 'state-transition');
+    expect(events).toEqual([
+      expect.objectContaining({ phase: 'intent', source: 'nodeseek', eventType: 'verification-required' }),
+      expect.objectContaining({
+        phase: 'apply',
+        previousState: 'anonymous',
+        nextState: 'verification-required',
+        hasCredential: false
+      }),
+      expect.objectContaining({ phase: 'finish', outcome: 'success', state: 'verification-required' })
+    ]);
+    expect(JSON.stringify(events)).not.toMatch(/private|cookie|secret|raw error/);
+  });
+
+  it('records an externally superseded credential save as stale without a generation argument', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+
+    await controller.saveNodeSeekCookieHeader({
+      session: { name: 'session', value: 'private-cookie-value' }
+    }, { isCurrent: () => false });
+
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ area, operation, source }) => area === 'credential' && operation === 'save' && source === 'nodeseek');
+    expect(events.at(-1)).toMatchObject({ phase: 'finish', outcome: 'stale', reason: 'stale' });
+    expect(JSON.stringify(events)).not.toMatch(/private-cookie-value|session=/);
+  });
+
+  it('records WebView credential restore and clear with one terminal event each', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+
+    await controller.restoreSavedYaohuoCookiesToWebView();
+    await controller.clearNodeSeekLoginState();
+
+    const events = lines.map((line) => JSON.parse(line));
+    for (const operation of ['restore-webview', 'clear']) {
+      const operationEvents = events.filter((event) => event.operation === operation);
+      expect(operationEvents[0]).toMatchObject({ phase: 'intent' });
+      expect(operationEvents.filter((event) => event.phase === 'finish')).toHaveLength(1);
+      expect(operationEvents.at(-1)).toMatchObject({ outcome: 'success' });
+    }
+    expect(JSON.stringify(events.filter((event) => ['restore-webview', 'clear'].includes(event.operation))))
+      .not.toMatch(/cookieHeader|private|session=/);
+  });
+
+  it('keeps a hidden WebView request trace safe from URL, HTML, and cookie data', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html>private challenge body</html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const url = 'https://www.nodeseek.com/post-private-query-1';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => {
+      expect(lines.some((line) => {
+        const event = JSON.parse(line);
+        return event.area === 'webview' && event.operation === 'browser-fetch';
+      })).toBe(true);
+    });
+    await controller.completeNodeSeekBrowserFetch({
+      id: 1,
+      url,
+      html: '<html>private rendered body</html>',
+      cookie: 'session=private-cookie'
+    });
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+
+    const events = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ area, operation }) => area === 'webview' && operation === 'browser-fetch');
+    expect(events.map(({ phase }) => phase)).toEqual(['intent', 'guard', 'transport', 'parse', 'finish']);
+    expect(events.at(-2)).toMatchObject({
+      channel: 'webview',
+      status: 200,
+      hasCredential: true,
+      isChallenge: false
+    });
+    expect(events.at(-1)).toMatchObject({ outcome: 'success' });
+    expect(JSON.stringify(events)).not.toMatch(/private-query|rendered body|private-cookie|google\.com|nodeseek\.com|session=/);
+  });
+
+  it('keeps the hidden WebView queue on its caller trace without an early terminal event', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const fetcher = withDiagnosticFetcher(trace, controller.forumFetchWithWebViewFallback);
+    const url = 'https://www.nodeseek.com/post-private-query-2';
+
+    const responsePromise = fetcher(url, {});
+    await vi.waitFor(() => {
+      expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true);
+    });
+    expect(lines.map((line) => JSON.parse(line)).filter((event) => event.traceId === trace.traceId && event.phase === 'finish')).toHaveLength(0);
+
+    await controller.completeNodeSeekBrowserFetch({
+      id: 1,
+      url,
+      html: '<html>private rendered body</html>',
+      cookie: 'session=private-cookie'
+    });
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+    expect(lines.map((line) => JSON.parse(line)).filter((event) => event.traceId === trace.traceId && event.phase === 'finish')).toHaveLength(0);
+
+    finishDiagnosticTrace(trace, 'success');
+    const events = lines.map((line) => JSON.parse(line)).filter((event) => event.traceId === trace.traceId);
+    expect(new Set(events.map((event) => event.traceId))).toEqual(new Set([trace.traceId]));
+    expect(events.filter(({ phase }) => phase === 'intent')).toHaveLength(1);
+    expect(events.filter(({ phase }) => phase === 'finish')).toHaveLength(1);
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'guard', channel: 'webview', state: 'queued' }),
+      expect.objectContaining({ phase: 'parse', channel: 'webview', status: 200 })
+    ]));
+  });
+
   it('settles a browser fetch request only once', () => {
     const timeout = setTimeout(() => undefined, 10_000);
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');

@@ -22,6 +22,14 @@ import type { TopicSessionController } from './useTopicSessionController';
 import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import type { Reply, Topic } from '../types';
 import type { ReplyRefreshTarget, Screen, TopicRepliesRefreshOptions } from '../appTypes';
+import type { ReaderDataMutationReason } from './useReaderDataController';
+import {
+  beginDiagnosticTrace,
+  diagnosticRef,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason
+} from '../diagnostics';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -62,7 +70,10 @@ export function useTopicController({
   topicSession
 }: {
   changeScreen: (nextScreen: Screen) => void;
-  commitReaderData: (updater: (current: ReaderData) => ReaderData) => void;
+  commitReaderData: (
+    mutationReason: ReaderDataMutationReason,
+    updater: (current: ReaderData) => ReaderData
+  ) => void;
   handleLinuxDoCloudflareForTopic: (topic: Topic, message: string) => Promise<boolean>;
   linuxDoDismissedVerificationTopicKeyRef: MutableRef<string | null>;
   linuxDoPendingTopicVerifiedRef: MutableRef<boolean>;
@@ -104,6 +115,11 @@ export function useTopicController({
   ), [currentTopic, readerData.favorites]);
 
   const openTopic = useCallback(async (topic: Topic, nocache = false) => {
+    const trace = beginDiagnosticTrace('topic', 'open', {
+      source: topic.source,
+      topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`),
+      mode: nocache ? 'refresh' : 'open'
+    });
     const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
     reopenExistingTopicScreenRef.current = false;
     if (!reopenExistingTopicScreen) {
@@ -129,9 +145,13 @@ export function useTopicController({
       if (!reopenExistingTopicScreen) {
         changeScreen('topic');
       }
+      markDiagnosticStage(trace, 'apply', { state: 'cached-detail-reused' });
+      finishDiagnosticTrace(trace, 'success', { state: 'cached-detail-reused' });
       return;
     }
     if (screen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
+      markDiagnosticStage(trace, 'guard', { state: 'same-topic' });
+      finishDiagnosticTrace(trace, 'noop', { reason: 'duplicate' });
       return;
     }
     if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
@@ -167,8 +187,9 @@ export function useTopicController({
         nocache,
         signal: controller.signal,
         timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
-      }, { isCurrent: isCurrentTopicRequest });
+      }, { isCurrent: isCurrentTopicRequest, trace });
       if (!isCurrentTopicRequest()) {
+        finishDiagnosticTrace(trace, 'stale', { source: topic.source, reason: 'stale' });
         return;
       }
       const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
@@ -177,25 +198,38 @@ export function useTopicController({
         displayDetail,
         typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0
       );
-      commitReaderData((current) => updateFavoriteTopic(recordHistory(current, displayDetail), displayDetail));
+      markDiagnosticStage(trace, 'apply', {
+        itemCount: detail.replies?.length || 0,
+        hasContent: Boolean(detail.contentHtml?.trim())
+      });
+      commitReaderData('history-recorded', (current) => (
+        updateFavoriteTopic(recordHistory(current, displayDetail), displayDetail)
+      ));
       if (nocache) {
         notify('主题已更新');
       }
       linuxDoVerifiedRetryTopicKeyRef.current = null;
+      finishDiagnosticTrace(trace, 'success', {
+        itemCount: detail.replies?.length || 0,
+        hasContent: Boolean(detail.contentHtml?.trim())
+      });
     } catch (error) {
       if (isCurrentTopicRequest()) {
         const sourceError = sourceErrorFromUnknown(topic.source, error);
         const message = sourceError.message;
         topicCommands.failLoad(sourceError);
         if (topic.source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           await handleLinuxDoCloudflareForTopic(topic, message);
           return;
         }
         if (topic.source === 'nodeseek' && sourceError.kind === 'verification-required') {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           onNodeSeekTopicVerificationRequired(message);
           return;
         }
         if (topic.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'login_required' });
           if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
@@ -203,9 +237,14 @@ export function useTopicController({
           }
           return;
         }
-        if (!isCanceledRequest(error)) {
+        if (isCanceledRequest(error)) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+        } else {
+          finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(message);
         }
+      } else {
+        finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
       }
     } finally {
       if (isCurrentTopicRequest()) {
@@ -253,14 +292,35 @@ export function useTopicController({
     nocache = !silent || afterSubmit,
     editedReplyContent,
     targetReply,
-    excludeReply
+    excludeReply,
+    diagnosticTrace
   }: TopicRepliesRefreshOptions = {}) => {
     const detail = topicDetail || selectedTopic;
+    const ownsTrace = !diagnosticTrace;
+    const trace = diagnosticTrace || beginDiagnosticTrace('reply', 'refresh', {
+      source: detail?.source || 'unknown',
+      ...(detail ? { topicRef: diagnosticRef('topic', `${detail.source}:${detail.id}`) } : {}),
+      mode: afterSubmit ? 'after-submit' : silent ? 'silent' : 'manual'
+    });
+    const finishRefreshTrace = (outcome: Parameters<typeof finishDiagnosticTrace>[1], fields: Parameters<typeof finishDiagnosticTrace>[2] = {}) => {
+      if (ownsTrace) {
+        finishDiagnosticTrace(trace, outcome, fields);
+        return;
+      }
+      markDiagnosticStage(trace, 'apply', {
+        ...fields,
+        state: `refresh-${outcome}`
+      });
+    };
     if (!detail) {
+      markDiagnosticStage(trace, 'guard', { state: 'missing-topic' });
+      finishRefreshTrace('blocked', { reason: 'not_ready' });
       return false;
     }
     if (detail.source === 'v2ex') {
+      markDiagnosticStage(trace, 'guard', { state: 'topic-refresh-delegated' });
       await openTopic(detail, true);
+      finishRefreshTrace('success', { state: 'topic-refresh-delegated' });
       return true;
     }
     const requestTopicKey = topicKey(detail);
@@ -299,8 +359,9 @@ export function useTopicController({
         nocache,
         fillPages: !afterSubmit && detail.source === 'nodeseek',
         signal: controller.signal
-      }, { isCurrent: isCurrentRepliesRequest });
+      }, { isCurrent: isCurrentRepliesRequest, trace });
       if (!isCurrentRepliesRequest()) {
+        finishRefreshTrace('stale', { reason: 'stale' });
         return false;
       }
       const refreshedItems = removeReply(data.items, excludeReply);
@@ -332,11 +393,21 @@ export function useTopicController({
       if (!silent) {
         notify(`评论已更新${refreshedItems.length ? `，读取 ${refreshedItems.length} 条` : ''}`);
       }
+      markDiagnosticStage(trace, 'apply', {
+        beforeCount: topicReplies.length,
+        afterCount: displayedReplies.length,
+        itemCount: refreshedItems.length
+      });
+      finishRefreshTrace('success', {
+        itemCount: refreshedItems.length,
+        hasMore: Boolean(data.hasMore)
+      });
       return true;
     } catch (error) {
       if (isCurrentRepliesRequest()) {
         const sourceError = sourceErrorFromUnknown(detail.source, error);
         if (detail.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          finishRefreshTrace('blocked', { reason: 'login_required' });
           if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
@@ -345,17 +416,24 @@ export function useTopicController({
           return false;
         }
         if (detail.source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          finishRefreshTrace('blocked', { reason: 'verification_required' });
           await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return false;
         }
         if (detail.source === 'nodeseek' && sourceError.kind === 'verification-required') {
+          finishRefreshTrace('blocked', { reason: 'verification_required' });
           topicCommands.failLoad(sourceError);
           onNodeSeekTopicVerificationRequired(sourceError.message);
           return false;
         }
-        if (!isCanceledRequest(error)) {
+        if (isCanceledRequest(error)) {
+          finishRefreshTrace('canceled', { reason: 'canceled' });
+        } else {
+          finishRefreshTrace('failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
         }
+      } else {
+        finishRefreshTrace('stale', { reason: 'stale' });
       }
       return false;
     } finally {
@@ -390,7 +468,19 @@ export function useTopicController({
 
   const loadMoreReplies = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
+    const trace = beginDiagnosticTrace('reply', 'load-more', {
+      source: detail?.source || 'unknown',
+      ...(detail ? { topicRef: diagnosticRef('topic', `${detail.source}:${detail.id}`) } : {}),
+      page: replyNextPage || 0
+    });
     if (!detail || !replyNextPage || topicReplyCommands.isLoading()) {
+      const state = !detail ? 'missing-topic' : !replyNextPage ? 'no-next-page' : 'busy';
+      markDiagnosticStage(trace, 'guard', { state });
+      finishDiagnosticTrace(
+        trace,
+        state === 'no-next-page' ? 'noop' : 'blocked',
+        { reason: state === 'busy' ? 'busy' : 'not_ready' }
+      );
       return;
     }
     const requestTopicKey = topicKey(detail);
@@ -421,8 +511,9 @@ export function useTopicController({
         limit,
         offset: replyNextOffset,
         signal: controller.signal
-      }, { isCurrent: isCurrentRepliesRequest });
+      }, { isCurrent: isCurrentRepliesRequest, trace });
       if (!isCurrentRepliesRequest()) {
+        finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
         return;
       }
       const currentReplies = topicReplyCommands.getCurrent();
@@ -431,18 +522,31 @@ export function useTopicController({
       visitedPages.add(replyPageVisitKey(replyNextPage, replyNextOffset));
       replyVisitedPageKeysRef.current[requestTopicKey] = visitedPages;
       const nextPageKey = replyPageVisitKey(data.nextPage, data.nextOffset);
-      const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(nextPageKey));
+      const repeatedCursor = Boolean(data.hasMore && data.nextPage && visitedPages.has(nextPageKey));
+      const canLoadNext = Boolean(data.hasMore && data.nextPage && !repeatedCursor);
       topicReplyCommands.resolve({
         replies: mergedReplies,
         hasMore: canLoadNext,
         nextPage: data.nextPage ?? null,
         nextOffset: data.nextOffset ?? null
       });
+      markDiagnosticStage(trace, 'apply', {
+        beforeCount: currentReplies.length,
+        afterCount: mergedReplies.length,
+        itemCount: data.items.length,
+        hasMore: canLoadNext
+      });
+      finishDiagnosticTrace(
+        trace,
+        repeatedCursor ? 'partial' : 'success',
+        repeatedCursor ? { reason: 'duplicate' } : { itemCount: data.items.length }
+      );
       notify(`已加载 ${data.items.length} 条回复`);
     } catch (error) {
       if (isCurrentRepliesRequest()) {
         const sourceError = sourceErrorFromUnknown(detail.source, error);
         if (detail.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'login_required' });
           if (sourceError.kind === 'login-expired') {
             showYaohuoLogin('妖火登录已失效，请重新登录。');
           } else {
@@ -451,17 +555,24 @@ export function useTopicController({
           return;
         }
         if (detail.source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return;
         }
         if (detail.source === 'nodeseek' && sourceError.kind === 'verification-required') {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           topicCommands.failLoad(sourceError);
           onNodeSeekTopicVerificationRequired(sourceError.message);
           return;
         }
-        if (!isCanceledRequest(error)) {
+        if (isCanceledRequest(error)) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+        } else {
+          finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
         }
+      } else {
+        finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
       }
     } finally {
       if (isCurrentRepliesRequest()) {
@@ -508,19 +619,29 @@ export function useTopicController({
     quotedFloor: number;
     quotedReply?: Reply;
   }) => {
+    const detail = topicDetail || selectedTopic;
+    const trace = beginDiagnosticTrace('reply', 'toggle-quote', {
+      source: detail?.source || 'unknown',
+      ...(detail ? { topicRef: diagnosticRef('topic', `${detail.source}:${detail.id}`) } : {})
+    });
     const key = `${replyFloor}:${quotedFloor}`;
     if (topicQuotes.isExpanded(key)) {
       topicQuotes.changeExpanded(key, false);
+      markDiagnosticStage(trace, 'apply', { state: 'collapsed' });
+      finishDiagnosticTrace(trace, 'success', { state: 'collapsed' });
       return;
     }
 
     if (quotedReply || topicQuotes.getLoaded(quotedFloor)) {
       topicQuotes.changeExpanded(key, true);
+      markDiagnosticStage(trace, 'apply', { state: 'cached-quote' });
+      finishDiagnosticTrace(trace, 'success', { state: 'cached-quote' });
       return;
     }
 
-    const detail = topicDetail || selectedTopic;
     if (!detail || detail.source !== 'linuxdo') {
+      markDiagnosticStage(trace, 'guard', { state: detail ? 'unsupported-source' : 'missing-topic' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: detail ? 'unsupported' : 'not_ready' });
       notify('引用楼层未加载');
       topicQuotes.changeExpanded(key, true);
       return;
@@ -536,23 +657,32 @@ export function useTopicController({
         id: detail.id,
         floor: quotedFloor,
         signal: controller.signal
-      }, { isCurrent: () => topicCommands.getCurrentKey() === requestTopicKey });
+      }, { isCurrent: () => topicCommands.getCurrentKey() === requestTopicKey, trace });
       if (topicCommands.getCurrentKey() !== requestTopicKey) {
+        finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
         return;
       }
       topicQuotes.remember(loaded);
       topicQuotes.changeExpanded(key, true);
+      markDiagnosticStage(trace, 'apply', { state: 'quote-expanded' });
+      finishDiagnosticTrace(trace, 'success');
       notify(`引用已展开 #${quotedFloor}`);
     } catch (error) {
       if (topicCommands.getCurrentKey() === requestTopicKey) {
         const sourceError = sourceErrorFromUnknown(detail.source, error);
         if (sourceError.kind === 'verification-required') {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return;
         }
-        if (!isCanceledRequest(error)) {
+        if (isCanceledRequest(error)) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+        } else {
+          finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
         }
+      } else {
+        finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
       }
     } finally {
       if (topicQuotes.isRequest(key, controller)) {

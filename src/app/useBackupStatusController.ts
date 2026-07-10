@@ -7,6 +7,14 @@ import { exportReaderBackupJson, importReaderBackupJson } from '../readerBackup'
 import { safeFileName } from '../backupFiles';
 import { readBackupFileText } from '../backupImportFile';
 import { runBackupOperation } from '../backupOperation';
+import type { ReaderDataMutationReason } from './useReaderDataController';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  type DiagnosticReason
+} from '../diagnostics';
 
 export function useBackupStatusController({
   notify,
@@ -16,7 +24,7 @@ export function useBackupStatusController({
 }: {
   notify: (message: string) => void;
   readerDataRef: { current: ReaderData };
-  replaceReaderData: (nextValue: ReaderData) => Promise<void>;
+  replaceReaderData: (mutationReason: ReaderDataMutationReason, nextValue: ReaderData) => Promise<void>;
   waitForReaderDataSave: () => Promise<void>;
 }) {
   const backupBusyRef = useRef(false);
@@ -44,46 +52,92 @@ export function useBackupStatusController({
   }, []);
 
   const exportBackupFile = useCallback(async () => {
-    await runBackupOperation({
+    const trace = beginDiagnosticTrace('backup', 'export');
+    if (backupBusyRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'busy' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
+      return;
+    }
+    let failureReason: DiagnosticReason = 'unknown';
+    const completed = await runBackupOperation({
       busyRef: backupBusyRef,
       notify,
       setBusy: setBackupBusy,
       task: async () => {
-        await waitForReaderDataSave();
-        const content = exportReaderBackupJson(readerDataRef.current);
-        await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
-        notify('备份文件已生成');
+        try {
+          markDiagnosticStage(trace, 'guard', { state: 'waiting-for-save' });
+          await waitForReaderDataSave();
+          const content = exportReaderBackupJson(readerDataRef.current);
+          markDiagnosticStage(trace, 'persist', { byteCount: new TextEncoder().encode(content).byteLength });
+          await shareTextFile(safeFileName('forum-reader-backup', 'json'), content, 'application/json');
+          markDiagnosticStage(trace, 'apply', { state: 'share-completed' });
+          notify('备份文件已生成');
+        } catch (error) {
+          failureReason = normalizeDiagnosticReason(error);
+          markDiagnosticStage(trace, failureReason === 'invalid_response' ? 'parse' : 'persist', {
+            state: 'failure',
+            reason: failureReason
+          });
+          throw error;
+        }
       }
     });
+    finishDiagnosticTrace(trace, completed ? 'success' : 'failure', completed ? {} : { reason: failureReason });
   }, [notify, readerDataRef, shareTextFile, waitForReaderDataSave]);
 
   const importBackupFile = useCallback(async () => {
-    await runBackupOperation({
+    const trace = beginDiagnosticTrace('backup', 'import');
+    if (backupBusyRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'busy' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
+      return;
+    }
+    let canceled = false;
+    let failureReason: DiagnosticReason = 'unknown';
+    const completed = await runBackupOperation({
       busyRef: backupBusyRef,
       notify,
       setBusy: setBackupBusy,
       task: async () => {
-        const result = await DocumentPicker.getDocumentAsync({
-          copyToCacheDirectory: true,
-          type: ['application/json', 'text/json', '*/*']
-        });
-        if (result.canceled || !result.assets?.[0]?.uri) {
-          return;
-        }
-        const pickedAsset = result.assets[0];
-        const pickedUri = pickedAsset.uri;
         try {
-          const content = await readBackupFileText(pickedAsset);
-          const merged = importReaderBackupJson(readerDataRef.current, content);
-          await replaceReaderData(merged);
-          notify('备份已恢复，本机资料已合并');
-        } finally {
-          if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
-            await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
+          markDiagnosticStage(trace, 'guard', { state: 'document-picker' });
+          const result = await DocumentPicker.getDocumentAsync({
+            copyToCacheDirectory: true,
+            type: ['application/json', 'text/json', '*/*']
+          });
+          if (result.canceled || !result.assets?.[0]?.uri) {
+            canceled = true;
+            return;
           }
+          const pickedAsset = result.assets[0];
+          const pickedUri = pickedAsset.uri;
+          try {
+            const content = await readBackupFileText(pickedAsset);
+            markDiagnosticStage(trace, 'parse', { byteCount: new TextEncoder().encode(content).byteLength });
+            const merged = importReaderBackupJson(readerDataRef.current, content);
+            markDiagnosticStage(trace, 'apply', { state: 'merge-started' });
+            await replaceReaderData('backup-imported', merged);
+            notify('备份已恢复，本机资料已合并');
+          } finally {
+            if (FileSystem.cacheDirectory && pickedUri.startsWith(FileSystem.cacheDirectory)) {
+              await FileSystem.deleteAsync(pickedUri, { idempotent: true }).catch(() => undefined);
+            }
+          }
+        } catch (error) {
+          failureReason = normalizeDiagnosticReason(error);
+          markDiagnosticStage(trace, failureReason === 'invalid_response' ? 'parse' : 'persist', {
+            state: 'failure',
+            reason: failureReason
+          });
+          throw error;
         }
       }
     });
+    finishDiagnosticTrace(
+      trace,
+      canceled ? 'canceled' : completed ? 'success' : 'failure',
+      canceled ? { reason: 'canceled' } : completed ? {} : { reason: failureReason }
+    );
   }, [notify, readerDataRef, replaceReaderData]);
 
   return {

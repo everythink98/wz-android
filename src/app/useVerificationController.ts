@@ -1,4 +1,4 @@
-import { useCallback, useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { InteractionManager } from 'react-native';
 import type { WebView, WebViewMessageEvent } from 'react-native-webview';
 import {
@@ -24,6 +24,15 @@ import { errorMessage } from '../appUtils';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
 import type { Screen } from '../appTypes';
 import type { SiteSessionEvent } from '../siteSessionState';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  type DiagnosticFields,
+  type DiagnosticOutcome,
+  type DiagnosticTrace
+} from '../diagnostics';
 
 const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
 const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
@@ -117,7 +126,46 @@ export function useVerificationController({
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
   updateNodeSeekSession: (event: SiteSessionEvent) => void;
 }) {
+  const linuxDoVerificationTraceRef = useRef<DiagnosticTrace | null>(null);
+
+  const finishLinuxDoVerificationTrace = useCallback((
+    trace: DiagnosticTrace,
+    outcome: DiagnosticOutcome,
+    fields: DiagnosticFields = {}
+  ) => {
+    if (linuxDoVerificationTraceRef.current !== trace) {
+      return;
+    }
+    finishDiagnosticTrace(trace, outcome, { source: 'linuxdo', ...fields });
+    linuxDoVerificationTraceRef.current = null;
+  }, []);
+
+  const startLinuxDoVerificationTrace = useCallback((mode: 'open' | 'manual') => {
+    const previousTrace = linuxDoVerificationTraceRef.current;
+    if (previousTrace) {
+      finishDiagnosticTrace(previousTrace, 'stale', {
+        source: 'linuxdo',
+        reason: 'superseded'
+      });
+    }
+    const trace = beginDiagnosticTrace('credential', 'check', {
+      source: 'linuxdo',
+      mode
+    });
+    linuxDoVerificationTraceRef.current = trace;
+    return trace;
+  }, []);
+
+  const currentLinuxDoVerificationTrace = useCallback((mode: 'open' | 'manual' = 'manual') => {
+    return linuxDoVerificationTraceRef.current || startLinuxDoVerificationTrace(mode);
+  }, [startLinuxDoVerificationTrace]);
+
   const showNodeSeekVerification = useCallback((message = 'NodeSeek 需要完成 Cloudflare 验证') => {
+    const linuxDoTrace = linuxDoVerificationTraceRef.current;
+    if (linuxDoTrace) {
+      markDiagnosticStage(linuxDoTrace, 'apply', { source: 'linuxdo', state: 'linuxdo-panel-closed' });
+      finishLinuxDoVerificationTrace(linuxDoTrace, 'canceled', { reason: 'superseded' });
+    }
     changeScreen('more');
     changeNodeSeekLoginPanel(true);
     closeYaohuoLoginPanel();
@@ -125,7 +173,7 @@ export function useVerificationController({
     setShowSettingsPanel(false);
     updateNodeSeekSession({ type: 'verification-required', message });
     notify(message);
-  }, [changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify, setShowLinuxDoPanel, setShowSettingsPanel, updateNodeSeekSession]);
+  }, [changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, finishLinuxDoVerificationTrace, notify, setShowLinuxDoPanel, setShowSettingsPanel, updateNodeSeekSession]);
 
   const refreshLinuxDoClearanceState = useCallback(async () => {
     const access = await clearLinuxDoSavedClearance();
@@ -141,9 +189,10 @@ export function useVerificationController({
   }, [linuxDoWebViewCookieHeaderRef, resetLinuxDoLevelState, setLinuxDoWebViewCookieHeader, updateLinuxDoSession]);
 
   const rememberLinuxDoClearanceBeforeVerify = useCallback(async () => {
+    const diagnosticTrace = linuxDoVerificationTraceRef.current || undefined;
     const [savedAccess, webViewCookies] = await Promise.all([
       loadLinuxDoAccess(),
-      readLinuxDoCookiesFromStores().catch(() => ({}))
+      readLinuxDoCookiesFromStores({ diagnosticTrace }).catch(() => ({}))
     ]);
     const visibleCookies = parseLinuxDoDocumentCookie(linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader);
     const cookies = mergeLinuxDoCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || ''), webViewCookies, visibleCookies);
@@ -162,6 +211,10 @@ export function useVerificationController({
       return;
     }
     setLoadingLinuxDoPage(value);
+    const trace = linuxDoVerificationTraceRef.current;
+    if (!value && trace) {
+      markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'ready' });
+    }
   }, [linuxDoWebViewSessionRef, setLoadingLinuxDoPage]);
 
   const setLinuxDoWebViewErrorForSession = useCallback((value: string, webViewKey?: number) => {
@@ -169,11 +222,27 @@ export function useVerificationController({
       return;
     }
     setLinuxDoWebViewError(value);
-  }, [linuxDoWebViewSessionRef, setLinuxDoWebViewError]);
+    const trace = linuxDoVerificationTraceRef.current
+      || (value && showLinuxDoPanelRef.current ? currentLinuxDoVerificationTrace('open') : null);
+    if (value && trace) {
+      const reason = value.includes('已停止') ? 'renderer_gone' : value.includes('超时') ? 'timeout' : 'network_error';
+      markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'failure', reason });
+      finishLinuxDoVerificationTrace(trace, 'failure', { reason });
+    }
+  }, [currentLinuxDoVerificationTrace, finishLinuxDoVerificationTrace, linuxDoWebViewSessionRef, setLinuxDoWebViewError, showLinuxDoPanelRef]);
 
   const resetLinuxDoWebView = useCallback(() => {
     if (linuxDoPanelClosingSessionRef.current !== null) {
       return;
+    }
+    const trace = linuxDoVerificationTraceRef.current
+      || (showLinuxDoPanelRef.current ? currentLinuxDoVerificationTrace('open') : null);
+    if (trace) {
+      markDiagnosticStage(trace, 'transport', {
+        source: 'linuxdo',
+        channel: 'webview',
+        state: 'reset'
+      });
     }
     const nextSession = nextLinuxDoWebViewSession();
     checkingRequestIdRef.current += 1;
@@ -197,6 +266,7 @@ export function useVerificationController({
     }, 80);
   }, [
     checkingRequestIdRef,
+    currentLinuxDoVerificationTrace,
     linuxDoPanelClosingSessionRef,
     linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewMountTimerRef,
@@ -212,6 +282,14 @@ export function useVerificationController({
   ]);
 
   const closeLinuxDoPanel = useCallback(() => {
+    const trace = linuxDoVerificationTraceRef.current;
+    if (trace) {
+      markDiagnosticStage(trace, 'apply', {
+        source: 'linuxdo',
+        state: 'linuxdo-panel-closed'
+      });
+      finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
+    }
     if (linuxDoPanelClosingSessionRef.current !== null) {
       linuxDoWebViewRef.current?.stopLoading();
       setMountLinuxDoWebView(false);
@@ -258,6 +336,7 @@ export function useVerificationController({
   }, [
     cancelLinuxDoPendingReopenTask,
     checkingRequestIdRef,
+    finishLinuxDoVerificationTrace,
     linuxDoDismissedVerificationTopicKeyRef,
     linuxDoPanelClosingSessionRef,
     linuxDoPendingReopenTopicAfterCloseRef,
@@ -331,9 +410,13 @@ export function useVerificationController({
 
   const changeLinuxDoPanel = useCallback((visible: boolean) => {
     if (visible) {
+      const trace = currentLinuxDoVerificationTrace('open');
       if (linuxDoPanelClosingSessionRef.current !== null) {
+        markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'busy' });
+        finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'busy' });
         return;
       }
+      markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'open' });
       if (!pendingLinuxDoTopicRef.current) {
         linuxDoRequireFreshClearanceRef.current = false;
         void rememberLinuxDoClearanceBeforeVerify();
@@ -345,6 +428,8 @@ export function useVerificationController({
     closeLinuxDoPanel();
   }, [
     closeLinuxDoPanel,
+    currentLinuxDoVerificationTrace,
+    finishLinuxDoVerificationTrace,
     linuxDoPanelClosingSessionRef,
     linuxDoRequireFreshClearanceRef,
     pendingLinuxDoTopicRef,
@@ -355,6 +440,12 @@ export function useVerificationController({
 
   const showLinuxDoVerification = useCallback((message = 'linux.do 需要完成 Cloudflare 验证') => {
     if (linuxDoPanelClosingSessionRef.current !== null) {
+      const trace = startLinuxDoVerificationTrace('open');
+      markDiagnosticStage(trace, 'guard', {
+        source: 'linuxdo',
+        state: 'busy'
+      });
+      finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'busy' });
       pendingLinuxDoTopicRef.current = null;
       linuxDoPendingTopicVerifiedRef.current = false;
       setMountLinuxDoWebView(false);
@@ -375,11 +466,13 @@ export function useVerificationController({
     closeYaohuoLoginPanel,
     linuxDoPanelClosingSessionRef,
     linuxDoPendingTopicVerifiedRef,
+    finishLinuxDoVerificationTrace,
     notify,
     pendingLinuxDoTopicRef,
     setLoadingLinuxDoPage,
     setMountLinuxDoWebView,
     setShowSettingsPanel,
+    startLinuxDoVerificationTrace,
     updateLinuxDoSession
   ]);
 
@@ -404,6 +497,7 @@ export function useVerificationController({
       notify(message);
       return true;
     }
+    currentLinuxDoVerificationTrace('open');
     linuxDoRequireFreshClearanceRef.current = true;
     await rememberLinuxDoClearanceBeforeVerify();
     await refreshLinuxDoClearanceState();
@@ -412,6 +506,7 @@ export function useVerificationController({
     return true;
   }, [
     linuxDoDismissedVerificationTopicKeyRef,
+    currentLinuxDoVerificationTrace,
     linuxDoPendingReopenTopicAfterCloseRef,
     linuxDoPendingTopicVerifiedRef,
     linuxDoRequireFreshClearanceRef,
@@ -425,6 +520,7 @@ export function useVerificationController({
   ]);
 
   const verifyLinuxDoFromTopic = useCallback(async () => {
+    currentLinuxDoVerificationTrace('open');
     linuxDoVerifiedRetryTopicKeyRef.current = null;
     linuxDoDismissedVerificationTopicKeyRef.current = null;
     linuxDoRequireFreshClearanceRef.current = true;
@@ -437,6 +533,7 @@ export function useVerificationController({
     showLinuxDoVerification();
   }, [
     linuxDoDismissedVerificationTopicKeyRef,
+    currentLinuxDoVerificationTrace,
     linuxDoRequireFreshClearanceRef,
     linuxDoVerifiedRetryTopicKeyRef,
     pendingLinuxDoTopicRef,
@@ -449,6 +546,14 @@ export function useVerificationController({
 
   const handleLinuxDoMessage = useCallback((event: WebViewMessageEvent, webViewKey?: number) => {
     if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
+      const trace = linuxDoVerificationTraceRef.current;
+      if (trace) {
+        markDiagnosticStage(trace, 'guard', {
+          source: 'linuxdo',
+          isCurrent: false,
+          reason: 'stale'
+        });
+      }
       return;
     }
     if (!showLinuxDoPanelRef.current) {
@@ -460,6 +565,15 @@ export function useVerificationController({
         userAgent?: string;
         cookie?: string;
       };
+      const trace = linuxDoVerificationTraceRef.current;
+      if (trace) {
+        markDiagnosticStage(trace, 'parse', {
+          source: 'linuxdo',
+          messageRecognized: data.type === 'linuxdo-webview',
+          hasCredential: data.type === 'linuxdo-webview' && typeof data.cookie === 'string',
+          userAgentSource: data.type === 'linuxdo-webview' && typeof data.userAgent === 'string' ? 'webview' : 'default'
+        });
+      }
       if (data.type === 'linuxdo-webview') {
         setLinuxDoWebViewErrorForSession('', webViewKey);
       }
@@ -475,6 +589,14 @@ export function useVerificationController({
         setLinuxDoWebViewCookieHeader(data.cookie);
       }
     } catch {
+      const trace = linuxDoVerificationTraceRef.current;
+      if (trace) {
+        markDiagnosticStage(trace, 'parse', {
+          source: 'linuxdo',
+          messageRecognized: false,
+          reason: 'invalid_response'
+        });
+      }
       // Ignore unrelated messages from the page.
     }
   }, [
@@ -488,15 +610,31 @@ export function useVerificationController({
   ]);
 
   const probeLinuxDoPage = useCallback(async () => {
+    const trace = linuxDoVerificationTraceRef.current;
+    if (trace) {
+      markDiagnosticStage(trace, 'transport', {
+        source: 'linuxdo',
+        channel: 'webview',
+        state: 'started'
+      });
+    }
     linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
     await new Promise((resolve) => setTimeout(resolve, 250));
+    if (trace && linuxDoVerificationTraceRef.current === trace) {
+      markDiagnosticStage(trace, 'transport', {
+        source: 'linuxdo',
+        channel: 'webview',
+        state: 'complete'
+      });
+    }
   }, [linuxDoWebViewRef]);
 
   const readCurrentLinuxDoCookies = useCallback(async () => {
     await probeLinuxDoPage();
+    const diagnosticTrace = linuxDoVerificationTraceRef.current || undefined;
     const [savedAccess, nativeCookies] = await Promise.all([
       loadLinuxDoAccess(),
-      readLinuxDoCookiesFromStores()
+      readLinuxDoCookiesFromStores({ diagnosticTrace })
     ]);
     const linuxDoDocumentCookieHeader = linuxDoWebViewCookieHeaderRef.current || linuxDoWebViewCookieHeader;
     return mergeLinuxDoCookies(
@@ -520,6 +658,11 @@ export function useVerificationController({
   }, [readCurrentLinuxDoCookies]);
 
   const checkLinuxDoCookie = useCallback(async () => {
+    const trace = currentLinuxDoVerificationTrace('manual');
+    markDiagnosticStage(trace, 'credential', {
+      source: 'linuxdo',
+      state: 'started'
+    });
     const requestId = ++checkingRequestIdRef.current;
     const linuxDoWebViewSession = linuxDoWebViewSessionRef.current;
     const isCurrentLinuxDoCheck = () => {
@@ -539,10 +682,17 @@ export function useVerificationController({
     try {
       const cookies = await waitForLinuxDoClearance();
       if (!isCurrentLinuxDoCheck()) {
+        finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
         return;
       }
       const summary = summarizeLinuxDoCookies(cookies);
       const cookieHeader = buildLinuxDoCookieHeader(cookies);
+      const hasCredential = canStoreLinuxDoAccess(cookies) && Boolean(cookieHeader);
+      markDiagnosticStage(trace, 'credential', {
+        source: 'linuxdo',
+        count: summary.names.length,
+        hasCredential
+      });
       if (!canStoreLinuxDoAccess(cookies) || !cookieHeader || !canAcceptLinuxDoAccessUpdate(cookies, linuxDoClearanceBeforeVerifyRef.current, linuxDoRequireFreshClearanceRef.current)) {
         updateLinuxDoSession({
           type: 'verification-required',
@@ -551,12 +701,30 @@ export function useVerificationController({
         resetLinuxDoLevelState();
         linuxDoPendingTopicVerifiedRef.current = false;
         notify('没有检测到新的 linux.do 验证信息。请完成验证后再试。');
+        finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'missing_credential' });
         return;
       }
+      markDiagnosticStage(trace, 'persist', {
+        source: 'linuxdo',
+        state: 'started',
+        hasCredential: true
+      });
       const savedAccess = await saveLinuxDoAccess(cookieHeader, linuxDoWebViewUserAgentRef.current || linuxDoWebViewUserAgent || undefined);
-      if (!savedAccess || !isCurrentLinuxDoCheck()) {
+      if (!savedAccess) {
+        finishLinuxDoVerificationTrace(trace, isCurrentLinuxDoCheck() ? 'failure' : 'stale', {
+          reason: isCurrentLinuxDoCheck() ? 'storage_error' : 'stale'
+        });
         return;
       }
+      if (!isCurrentLinuxDoCheck()) {
+        finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
+        return;
+      }
+      markDiagnosticStage(trace, 'persist', {
+        source: 'linuxdo',
+        state: 'saved',
+        hasCredential: true
+      });
       resetLinuxDoLevelState();
       updateLinuxDoSession({
         type: 'verification-succeeded',
@@ -569,6 +737,10 @@ export function useVerificationController({
       linuxDoClearanceBeforeVerifyRef.current = linuxDoClearanceValue(cookies);
       linuxDoRequireFreshClearanceRef.current = false;
       linuxDoPendingTopicVerifiedRef.current = Boolean(pendingLinuxDoTopicRef.current);
+      finishLinuxDoVerificationTrace(trace, 'success', {
+        hasCredential: true,
+        isLoggedIn: summary.loggedIn
+      });
       if (linuxDoPendingTopicVerifiedRef.current) {
         closeLinuxDoPanel();
       }
@@ -576,6 +748,11 @@ export function useVerificationController({
       if (isCurrentLinuxDoCheck()) {
         linuxDoPendingTopicVerifiedRef.current = false;
         notify(errorMessage(error));
+        finishLinuxDoVerificationTrace(trace, 'failure', {
+          reason: normalizeDiagnosticReason(error)
+        });
+      } else {
+        finishLinuxDoVerificationTrace(trace, 'stale', { reason: 'stale' });
       }
     } finally {
       if (isCurrentLinuxDoCheck()) {
@@ -585,6 +762,8 @@ export function useVerificationController({
   }, [
     checkingRequestIdRef,
     closeLinuxDoPanel,
+    currentLinuxDoVerificationTrace,
+    finishLinuxDoVerificationTrace,
     linuxDoClearanceBeforeVerifyRef,
     linuxDoPendingTopicVerifiedRef,
     linuxDoRequireFreshClearanceRef,
@@ -605,6 +784,14 @@ export function useVerificationController({
     if (!showLinuxDoPanelRef.current) {
       return;
     }
+    const trace = linuxDoVerificationTraceRef.current;
+    if (trace) {
+      markDiagnosticStage(trace, 'apply', {
+        source: 'linuxdo',
+        state: 'linuxdo-panel-closed'
+      });
+      finishLinuxDoVerificationTrace(trace, 'canceled', { reason: 'canceled' });
+    }
     checkingRequestIdRef.current += 1;
     linuxDoWebViewSessionRef.current += 1;
     setLinuxDoWebViewKey(linuxDoWebViewSessionRef.current);
@@ -618,6 +805,7 @@ export function useVerificationController({
     setChecking(false);
   }, [
     checkingRequestIdRef,
+    finishLinuxDoVerificationTrace,
     linuxDoWebViewMountTimerRef,
     linuxDoWebViewRef,
     linuxDoWebViewSessionRef,

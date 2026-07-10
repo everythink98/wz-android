@@ -1,4 +1,5 @@
 import type { BrowserFetchIntent } from '../browserFetchIntent';
+import type { DiagnosticTrace } from '../diagnostics';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
@@ -15,6 +16,7 @@ export type NodeSeekVerificationRetry<TopicLike> =
 export type CredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
   captureNodeSeekUserId?: (userId: number | null) => void;
+  diagnosticTrace?: DiagnosticTrace;
 };
 export type CredentialClearOptions = { generation?: number; force?: boolean };
 export type CredentialWriteGate = {

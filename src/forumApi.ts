@@ -25,6 +25,12 @@ import type {
   UserProfile
 } from './types';
 import { fetchWithTimeout, type Fetcher } from './request';
+import {
+  annotateSourceDiagnosticSummary,
+  copySourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries,
+  sourceDiagnosticSummary
+} from './sourceAdapterDiagnostics';
 
 const allFeedSources = ['nodeseek', 'linuxdo', 'v2ex'] as const satisfies readonly Source[];
 
@@ -130,6 +136,25 @@ function encodeAllFeedCursor(state: AllFeedCursorState) {
   return encodeURIComponent(JSON.stringify({ buffers, nextPages, sourceCursors }));
 }
 
+function settledDiagnosticFacts(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>) {
+  let droppedCount = 0;
+  let partialErrorCount = 0;
+  let missingFloorCount = 0;
+  let hasRepeatedCursor = false;
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      partialErrorCount += 1;
+      continue;
+    }
+    const summary = sourceDiagnosticSummary(result.value);
+    droppedCount += summary?.droppedCount || 0;
+    partialErrorCount += (summary?.partialErrorCount || 0) + Object.keys(result.value.errors || {}).length;
+    missingFloorCount += summary?.missingFloorCount || 0;
+    hasRepeatedCursor ||= summary?.hasRepeatedCursor === true;
+  }
+  return { droppedCount, partialErrorCount, missingFloorCount, hasRepeatedCursor };
+}
+
 function topicIdentity(topic: Topic) {
   return `${topic.source}:${topic.id}`;
 }
@@ -147,10 +172,10 @@ function filterExcludedSearchItems(items: Topic[], expression: SearchExpression)
 function filterSearchItems(response: SearchResponse, query: string, limit: number, filter?: SourceSearchFilter): SearchResponse {
   const expression = parseSearchExpression(query);
   const scopedItems = filterSearchResponseItems(response.items, filter, query);
-  return {
+  return copySourceDiagnosticSummary({
     ...response,
     items: filterExcludedSearchItems(scopedItems, expression).slice(0, limit)
-  };
+  }, response);
 }
 
 function pickSource<T>(source: Source, handlers: Partial<Record<Source, () => Promise<T>>>): Promise<T> {
@@ -245,13 +270,23 @@ export async function getFeed({
       }
     });
     const nextCursor = encodeAllFeedCursor({ buffers: nextBuffers, nextPages, sourceCursors });
-    return {
+    const response = {
       items: selected,
       errors: mergeErrors(results, allFeedSources),
       hasMore: Boolean(nextCursor),
       nextPage: nextCursor ? page + 1 : null,
       nextCursor
     };
+    const facts = settledDiagnosticFacts(results);
+    return mergeSourceDiagnosticSummaries(response, 'aggregate-feed', results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []), {
+      candidateCount: selected.length + facts.droppedCount,
+      validCount: selected.length,
+      droppedCount: facts.droppedCount,
+      partialErrorCount: facts.partialErrorCount,
+      missingFloorCount: facts.missingFloorCount,
+      hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page || response.nextCursor === cursor,
+      isExpectedEmpty: selected.length === 0 && facts.droppedCount === 0 && (page > 1 || Boolean(category))
+    });
   }
   const effectiveLinuxDoFilter = source === 'linuxdo'
     ? (feedFilter as LinuxDoFeedFilter | undefined) || linuxDoFilter
@@ -289,10 +324,19 @@ export async function getCategories({
       getV2exCategories(options),
       Promise.resolve(yaohuoCategoriesResponse())
     ]);
-    return {
+    const response = {
       items: results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []),
       errors: mergeErrors(results, sources)
     };
+    const facts = settledDiagnosticFacts(results);
+    return mergeSourceDiagnosticSummaries(response, 'aggregate-categories', results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []), {
+      candidateCount: response.items.length + facts.droppedCount,
+      validCount: response.items.length,
+      droppedCount: facts.droppedCount,
+      partialErrorCount: facts.partialErrorCount,
+      missingFloorCount: facts.missingFloorCount,
+      hasRepeatedCursor: facts.hasRepeatedCursor
+    });
   }
   if (source === 'yaohuo') {
     return yaohuoCategoriesResponse();
@@ -362,7 +406,13 @@ export function getReplies({
   return pickSource<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),
-    v2ex: async (): Promise<RepliesResponse> => ({ items: [], hasMore: false, nextPage: null })
+    v2ex: async (): Promise<RepliesResponse> => annotateSourceDiagnosticSummary({ items: [], hasMore: false, nextPage: null }, {
+      parserVariant: 'unsupported-replies',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      isExpectedEmpty: true
+    })
   });
 }
 
@@ -423,6 +473,27 @@ export function getUserProfile({
       }
       const targetId = id || username || '';
       const url = `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(targetId)}&siteid=1000`;
+      const diagnosticSources: unknown[] = [];
+      let partialErrorCount = 0;
+      let hasRepeatedCursor = false;
+      const annotateUserProfile = (profile: UserProfile) => {
+        const childSummaries = diagnosticSources.map(sourceDiagnosticSummary).filter(Boolean);
+        const droppedCount = childSummaries.reduce((total, summary) => total + (summary?.droppedCount || 0), 0);
+        const missingFloorCount = childSummaries.reduce((total, summary) => total + (summary?.missingFloorCount || 0), 0);
+        const childPartialErrorCount = childSummaries.reduce((total, summary) => total + (summary?.partialErrorCount || 0), 0);
+        const identityValid = childSummaries.some((summary) => summary?.parserVariant === 'html-user' && summary.isParseEmpty) ? 0 : 1;
+        const validCount = identityValid + profile.topics.length + (profile.replies?.length || 0);
+        return mergeSourceDiagnosticSummaries(profile, 'html-user', diagnosticSources, {
+          candidateCount: 1 + profile.topics.length + (profile.replies?.length || 0) + droppedCount,
+          validCount,
+          droppedCount,
+          partialErrorCount: partialErrorCount + childPartialErrorCount,
+          missingFloorCount,
+          hasRepeatedCursor: hasRepeatedCursor
+            || profile.nextTopicsCursor === cursor
+            || profile.nextRepliesCursor === cursor
+        });
+      };
       const headers = {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         Cookie: yaohuoCookie,
@@ -442,13 +513,15 @@ export function getUserProfile({
       };
       const readProfilePage = async (pageUrl: string) => {
         const page = await readHtml(pageUrl);
+        const profile = parseYaohuoUserProfileHtml(page.html, {
+          id: targetId,
+          username,
+          url: page.url
+        });
+        diagnosticSources.push(profile);
         return {
           ...page,
-          profile: parseYaohuoUserProfileHtml(page.html, {
-            id: targetId,
-            username,
-            url: page.url
-          })
+          profile
         };
       };
       const readTopicPage = async (pageUrl: string) => {
@@ -460,6 +533,7 @@ export function getUserProfile({
           page: pageNumber,
           url: page.url
         });
+        diagnosticSources.push(result);
         return {
           ...page,
           result,
@@ -473,6 +547,7 @@ export function getUserProfile({
           username: authorFallback || username || targetId,
           url: page.url
         });
+        diagnosticSources.push(replies);
         return {
           ...page,
           replies,
@@ -493,7 +568,7 @@ export function getUserProfile({
       if (cursor) {
         if (cursorType === 'replies') {
           const replyPage = await readReplyPage(cursor, username || targetId);
-          return {
+          return annotateUserProfile({
             source: 'yaohuo',
             id: targetId,
             username: username || targetId,
@@ -505,11 +580,11 @@ export function getUserProfile({
             replies: replyPage.replies,
             hasMoreReplies: Boolean(replyPage.nextUrl),
             nextRepliesCursor: replyPage.nextUrl || null
-          };
+          });
         }
         const topicPage = await readTopicPage(cursor);
         addTopics(topicPage.result.items, username || targetId);
-        return {
+        return annotateUserProfile({
           source: 'yaohuo',
           id: targetId,
           username: username || targetId,
@@ -521,30 +596,36 @@ export function getUserProfile({
           replies: [],
           hasMoreReplies: false,
           nextRepliesCursor: null
-        };
+        });
       }
 
       const firstPage = await readProfilePage(url);
       const authorFallback = firstPage.profile.displayName || firstPage.profile.username || targetId;
       const firstReplyUrl = yaohuoUserProfileReplyListUrl(firstPage.html, targetId, firstPage.url);
-      const firstReplyPage = firstReplyUrl
-        ? await readReplyPage(firstReplyUrl, authorFallback).catch(() => ({ replies: [], nextUrl: '' }))
-        : { replies: [], nextUrl: '' };
+      let firstReplyPage: { replies: NonNullable<UserProfile['replies']>; nextUrl: string } = { replies: [], nextUrl: '' };
+      if (firstReplyUrl) {
+        try {
+          firstReplyPage = await readReplyPage(firstReplyUrl, authorFallback);
+        } catch {
+          partialErrorCount += 1;
+        }
+      }
       let nextUrl = yaohuoUserProfileTopicListUrl(firstPage.html, targetId, firstPage.url);
       if (!nextUrl) {
-        return {
+        return annotateUserProfile({
           ...firstPage.profile,
           hasMoreTopics: false,
           nextTopicsCursor: null,
           replies: firstReplyPage.replies,
           hasMoreReplies: Boolean(firstReplyPage.nextUrl),
           nextRepliesCursor: firstReplyPage.nextUrl || null
-        };
+        });
       }
 
       const visited = new Set<string>();
       for (let page = 1; nextUrl && topics.length < 30 && page <= 10; page += 1) {
         if (visited.has(nextUrl)) {
+          hasRepeatedCursor = true;
           break;
         }
         visited.add(nextUrl);
@@ -563,7 +644,7 @@ export function getUserProfile({
           ? { ...reply, author: replyAuthor }
           : reply
       ));
-      return {
+      return annotateUserProfile({
         ...profile,
         topics: visibleTopics,
         hasMoreTopics: Boolean(nextUrl),
@@ -571,7 +652,7 @@ export function getUserProfile({
         replies,
         hasMoreReplies: Boolean(firstReplyPage.nextUrl),
         nextRepliesCursor: firstReplyPage.nextUrl || null
-      };
+      });
     }
   });
 }
@@ -640,7 +721,7 @@ export function getCurrentUserProfile({
           signal,
           timeoutMs
         });
-        return { ...profile, topics: [] };
+        return copySourceDiagnosticSummary({ ...profile, topics: [] }, profile);
       }
       if (check.loginRequired) {
         throw new Error(check.message || '妖火登录已失效，请重新登录。');
@@ -688,7 +769,7 @@ export async function searchTopics({
       searchV2ex(adapterQuery, options)
     ]);
     const expression = parseSearchExpression(query);
-    return {
+    const response = {
       items: sortTopicsByCreatedAt(filterExcludedSearchItems(
         results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []),
         expression
@@ -697,6 +778,16 @@ export async function searchTopics({
       hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
       nextPage: results.some((result) => result.status === 'fulfilled' && result.value.hasMore) ? page + 1 : null
     };
+    const facts = settledDiagnosticFacts(results);
+    return mergeSourceDiagnosticSummaries(response, 'aggregate-search', results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []), {
+      candidateCount: response.items.length + facts.droppedCount,
+      validCount: response.items.length,
+      droppedCount: facts.droppedCount,
+      partialErrorCount: facts.partialErrorCount,
+      missingFloorCount: facts.missingFloorCount,
+      hasRepeatedCursor: facts.hasRepeatedCursor || response.nextPage === page,
+      isExpectedEmpty: response.items.length === 0 && facts.droppedCount === 0 && facts.partialErrorCount === 0
+    });
   }
   const activeFilter = filter?.source === source ? filter : undefined;
   const response = await pickSource(source, {

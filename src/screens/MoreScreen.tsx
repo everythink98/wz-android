@@ -1,7 +1,7 @@
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, DatabaseBackup, LogIn, Server, Settings, User, Wrench } from 'lucide-react-native';
+import { Activity, Bug, DatabaseBackup, LogIn, Server, Settings, User, Wrench } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
@@ -46,6 +46,7 @@ export const MoreScreen = memo(function MoreScreen({
   statusBusy,
   styles,
   backupBusy,
+  diagnosticBusy,
   theme,
   webViewRef,
   yaohuoLoginState,
@@ -77,7 +78,10 @@ export const MoreScreen = memo(function MoreScreen({
   handleNodeSeekLoginNavigation,
   handleYaohuoLoginNavigation,
   onHandleLoginMessage,
+  onNodeSeekLoginWebViewState,
+  onYaohuoLoginWebViewState,
   onExportBackupFile,
+  onExportDiagnosticLog,
   onImportBackupFile,
   onSetLoadingLoginPage,
   onSetLoadingYaohuoLoginPage,
@@ -118,6 +122,7 @@ export const MoreScreen = memo(function MoreScreen({
   statusBusy: boolean;
   styles: ReturnType<typeof createStyles>;
   backupBusy: boolean;
+  diagnosticBusy: boolean;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
   yaohuoLoginState: string;
@@ -149,7 +154,10 @@ export const MoreScreen = memo(function MoreScreen({
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
+  onNodeSeekLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
+  onYaohuoLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
   onExportBackupFile: () => void;
+  onExportDiagnosticLog: () => void;
   onImportBackupFile: () => void;
   onSetLoadingLoginPage: (value: boolean) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
@@ -167,6 +175,7 @@ export const MoreScreen = memo(function MoreScreen({
   onUpdateSettings: (patch: Partial<ReaderSettings>) => void;
 }) {
   const [backupExpanded, setBackupExpanded] = useState(false);
+  const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
   const [personalCenterExpanded, setPersonalCenterExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(false);
@@ -305,6 +314,7 @@ export const MoreScreen = memo(function MoreScreen({
           onClearNodeImageApiKey={onClearNodeImageApiKey}
           onClearLogin={onClearLogin}
           onHandleLoginMessage={onHandleLoginMessage}
+          onWebViewState={onNodeSeekLoginWebViewState}
           handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
           onRememberNodeSeekCookies={onRememberNodeSeekCookies}
           onSetLoadingLoginPage={onSetLoadingLoginPage}
@@ -325,6 +335,7 @@ export const MoreScreen = memo(function MoreScreen({
           onCheckYaohuoLogin={onCheckYaohuoLogin}
           onClearYaohuoLogin={onClearYaohuoLogin}
           handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
+          onWebViewState={onYaohuoLoginWebViewState}
           onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
           onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
         />
@@ -395,6 +406,26 @@ export const MoreScreen = memo(function MoreScreen({
           </View>
         </ExpandablePanel>
       ) : null}
+      <ExpandablePanel
+        quiet
+        title="问题诊断"
+        meta={diagnosticBusy ? '正在生成' : '生成脱敏日志并分享'}
+        icon={Bug}
+        expanded={diagnosticExpanded}
+        styles={styles}
+        theme={theme}
+        onExpandedChange={setDiagnosticExpanded}
+      >
+        <View style={styles.stack}>
+          <Text style={styles.meta}>日志只保存在本机并经过脱敏。显示问题请同时附截图；特定内容解析异常请附原帖链接。</Text>
+          <AppButton
+            label={diagnosticBusy ? '正在生成' : '生成并分享诊断日志'}
+            styles={styles}
+            disabled={diagnosticBusy}
+            onPress={onExportDiagnosticLog}
+          />
+        </View>
+      </ExpandablePanel>
       <ExpandablePanel
         quiet
         title="备份 / 恢复"

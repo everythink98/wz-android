@@ -9,6 +9,12 @@ import type { TopicImageDeriver } from '../topicDerivedData';
 import { errorMessage } from '../appUtils';
 import { saveImageUriToLibrary } from '../imageSave';
 import type { Fetcher } from '../request';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason
+} from '../diagnostics';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -82,15 +88,25 @@ export function useImagePreviewController({
     } : current);
   }, []);
   const savePreviewImage = useCallback(async () => {
+    const trace = beginDiagnosticTrace('media', 'save-preview', {
+      itemCount: imagePreview?.urls.length || 0
+    });
     if (!imagePreview?.urls.length) {
+      markDiagnosticStage(trace, 'guard', { state: 'empty-preview' });
+      finishDiagnosticTrace(trace, 'noop', { reason: 'not_ready' });
       return;
     }
     try {
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
+      markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
-      await saveImageUriToLibrary(uri, fetcher);
+      await saveImageUriToLibrary(uri, fetcher, trace);
+      markDiagnosticStage(trace, 'apply', { state: 'saved' });
+      finishDiagnosticTrace(trace, 'success');
       notify('图片已保存');
     } catch (error) {
+      const reason = normalizeDiagnosticReason(error);
+      finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
       notify(errorMessage(error));
     }
   }, [beforeSave, fetcher, imagePreview, notify]);

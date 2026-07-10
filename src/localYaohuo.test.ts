@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseYaohuoRepliesHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
+import { parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 
 describe('yaohuo reply parsing', () => {
+  it('summarizes invalid list candidates and source replies with synthesized floors', () => {
+    const list = parseYaohuoListHtml('<div class="listdata">broken row</div>');
+    const replies = parseYaohuoRepliesHtml('<div class="line1">reply <a href="/userinfo.aspx?touserid=1">bob</a></div>');
+    const repeated = parseYaohuoListHtml(`
+      <div class="listdata"><a href="/bbs-1.html">topic</a>/author/阅1/2026-07-10 10:00</div>
+      <a href="?page=1">下一页</a>
+    `, { page: 1 });
+
+    expect(sourceDiagnosticSummary(list)).toMatchObject({
+      parserVariant: 'html-list',
+      candidateCount: 1,
+      validCount: 0,
+      droppedCount: 1,
+      isParseEmpty: true
+    });
+    expect(sourceDiagnosticSummary(replies)).toMatchObject({
+      parserVariant: 'html-replies',
+      candidateCount: 1,
+      validCount: 1,
+      missingFloorCount: 1
+    });
+    expect(sourceDiagnosticSummary(repeated)).toMatchObject({ hasRepeatedCursor: true });
+  });
+
   it('marks only replies with the original own-delete link as deletable', () => {
     const replies = parseYaohuoRepliesHtml(`
       <div class="reline list-reply" data-floor="3">

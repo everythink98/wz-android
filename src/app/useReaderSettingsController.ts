@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { ReaderData, ReaderSettings } from '../readerData';
+import type { ReaderDataMutationReason } from './useReaderDataController';
 
 export function applyReaderSettingsPatch(current: ReaderData, patch: Partial<ReaderSettings>) {
   const hasChanges = Object.entries(patch).some(
@@ -21,10 +22,13 @@ export function applyReaderSettingsPatch(current: ReaderData, patch: Partial<Rea
 export function useReaderSettingsController({
   commitReaderData
 }: {
-  commitReaderData: (updater: (current: ReaderData) => ReaderData) => void;
+  commitReaderData: (
+    mutationReason: ReaderDataMutationReason,
+    updater: (current: ReaderData) => ReaderData
+  ) => void;
 }) {
   const updateSettings = useCallback((patch: Partial<ReaderSettings>) => {
-    commitReaderData((current) => applyReaderSettingsPatch(current, patch));
+    commitReaderData('settings-updated', (current) => applyReaderSettingsPatch(current, patch));
   }, [commitReaderData]);
 
   return { updateSettings };

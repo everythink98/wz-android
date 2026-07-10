@@ -15,6 +15,17 @@ import {
 } from '../yaohuoApi';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
 import { sourceErrorFromUnknown } from '../sourceErrors';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  hintDiagnosticOutcome,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  withDiagnosticFetcher,
+  type DiagnosticFields,
+  type DiagnosticTrace
+} from '../diagnostics';
+import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import type { FeedSource, Topic } from '../types';
 
 export { getCurrentUserProfile } from '../forumApi';
@@ -125,12 +136,13 @@ export async function getUserProfile(options: GetUserProfileOptions) {
 
 type SourceGatewayCredentialLoadOptions = {
   captureGeneration?: (generation: number) => void;
+  diagnosticTrace?: DiagnosticTrace;
 };
 
 type SourceGatewayDependencies = {
   clearYaohuoLoginState: (options?: { generation?: number }) => Promise<void>;
   fetcher: Fetcher;
-  loadNodeSeekCookieForSource: (source: FeedSource) => Promise<string | undefined>;
+  loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgent: () => string;
 };
@@ -145,36 +157,122 @@ type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
 type ManagedGetReplyOptions = Omit<GetReplyOptions, 'fetcher'>;
 type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie'>;
-type SourceGatewayReadContext = { isCurrent?: () => boolean };
+export type SourceGatewayReadContext = {
+  isCurrent?: () => boolean;
+  trace?: DiagnosticTrace;
+};
+
+function summarizeReadResult(result: unknown) {
+  const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+  const errors = value.errors && typeof value.errors === 'object'
+    ? Object.values(value.errors).filter(Boolean).length
+    : 0;
+  const summary: Record<string, string | number | boolean | null> = {
+    resultPresent: result !== null && result !== undefined,
+    partialErrorCount: errors
+  };
+  for (const [field, diagnosticField] of [
+    ['items', 'itemCount'],
+    ['replies', 'replyCount'],
+    ['topics', 'topicCount']
+  ] as const) {
+    if (Array.isArray(value[field])) {
+      summary[diagnosticField] = value[field].length;
+    }
+  }
+  for (const field of ['hasMore', 'hasMoreTopics', 'hasMoreReplies'] as const) {
+    if (typeof value[field] === 'boolean') {
+      summary[field] = value[field];
+    }
+  }
+  if ('nextPage' in value) {
+    summary.hasNextPage = typeof value.nextPage === 'number';
+  }
+  if ('nextCursor' in value) {
+    summary.hasNextCursor = typeof value.nextCursor === 'string' && Boolean(value.nextCursor);
+  }
+  if (typeof value.contentHtml === 'string') {
+    summary.hasContent = Boolean(value.contentHtml.trim());
+  }
+  const adapterSummary = sourceDiagnosticSummary(result);
+  if (adapterSummary) {
+    Object.assign(summary, adapterSummary);
+  }
+  return summary satisfies DiagnosticFields;
+}
 
 export function createSourceGateway(dependencies: SourceGatewayDependencies) {
-  const read = async <T>(source: FeedSource, operation: (credentials: {
+  const read = async <T>(source: FeedSource, operationName: string, operation: (credentials: {
+    fetcher: Fetcher;
     nodeSeekCookie?: string;
     nodeSeekUserAgent?: string;
     yaohuoCookie?: string;
   }) => Promise<T>, context?: SourceGatewayReadContext) => {
+    const ownsTrace = !context?.trace;
+    const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
     let yaohuoGeneration: number | undefined;
-    const nodeSeekCookie = source === 'nodeseek' || source === 'all'
-      ? await dependencies.loadNodeSeekCookieForSource(source)
-      : undefined;
-    const yaohuoCookie = source === 'yaohuo'
-      ? await dependencies.loadYaohuoCookieForSource(source, {
-        captureGeneration: (generation) => { yaohuoGeneration = generation; }
-      })
-      : undefined;
     try {
-      return await operation({
+      const nodeSeekCookie = source === 'nodeseek' || source === 'all'
+        ? await dependencies.loadNodeSeekCookieForSource(source, { diagnosticTrace: trace })
+        : undefined;
+      const yaohuoCookie = source === 'yaohuo'
+        ? await dependencies.loadYaohuoCookieForSource(source, {
+          captureGeneration: (generation) => { yaohuoGeneration = generation; },
+          diagnosticTrace: trace
+        })
+        : undefined;
+      markDiagnosticStage(trace, 'credential', {
+        source,
+        hasCredential: Boolean(nodeSeekCookie?.trim() || yaohuoCookie?.trim())
+      });
+      markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
+      const result = await operation({
+        fetcher: withDiagnosticFetcher(trace, dependencies.fetcher),
         nodeSeekCookie,
         nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
         yaohuoCookie
       });
+      const summary = summarizeReadResult(result);
+      markDiagnosticStage(trace, 'parse', { source, ...summary });
+      const parseEmpty = summary.isParseEmpty === true;
+      const degraded = parseEmpty
+        || summary.hasDegradation === true
+        || Number(summary.partialErrorCount || 0) > 0;
+      if (ownsTrace) {
+        finishDiagnosticTrace(
+          trace,
+          parseEmpty ? (Number(summary.validCount || 0) > 0 ? 'partial' : 'failure') : degraded ? 'partial' : 'success',
+          { source, ...(parseEmpty ? { reason: 'parse_empty' } : {}) }
+        );
+      } else if (parseEmpty) {
+        hintDiagnosticOutcome(trace, Number(summary.validCount || 0) > 0 ? 'partial' : 'failure', {
+          source,
+          reason: 'parse_empty'
+        });
+      } else if (degraded) {
+        hintDiagnosticOutcome(trace, 'partial', { source });
+      }
+      return result;
     } catch (error) {
       if (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE) {
+        if (ownsTrace) {
+          finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
+        }
         throw error;
       }
       const sourceError = sourceErrorFromUnknown(source, error);
       if (source === 'yaohuo' && sourceError.kind === 'login-expired' && context?.isCurrent?.() !== false) {
         await dependencies.clearYaohuoLoginState({ generation: yaohuoGeneration });
+      }
+      if (ownsTrace) {
+        const reason = normalizeDiagnosticReason(error);
+        finishDiagnosticTrace(
+          trace,
+          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied'
+            ? 'blocked'
+            : 'failure',
+          { source, reason }
+        );
       }
       throw Object.assign(error instanceof Error ? error : new Error(sourceError.message), sourceError);
     }
@@ -186,52 +284,46 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
     },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
       const source = options.source || 'all';
-      return read(source, (credentials) => getForumCategories({
+      return read(source, 'getCategories', (credentials) => getForumCategories({
         ...options,
-        ...credentials,
-        fetcher: dependencies.fetcher
+        ...credentials
       }), context);
     },
     getFeed(options: ManagedGetFeedOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, (credentials) => getFeed({
+      return read(options.source, 'getFeed', (credentials) => getFeed({
         ...options,
-        ...credentials,
-        fetcher: dependencies.fetcher
+        ...credentials
       }), context);
     },
     searchTopics(options: ManagedSearchTopicsOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, (credentials) => searchTopics({
+      return read(options.source, 'searchTopics', (credentials) => searchTopics({
         ...options,
-        ...credentials,
-        fetcher: dependencies.fetcher
+        ...credentials
       }), context);
     },
     getTopic(options: ManagedGetTopicOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, (credentials) => getTopic({
+      return read(options.source, 'getTopic', (credentials) => getTopic({
         ...options,
-        ...credentials,
-        fetcher: dependencies.fetcher
+        ...credentials
       }), context);
     },
     getReplies(options: ManagedGetRepliesOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, (credentials) => getReplies({
+      return read(options.source, 'getReplies', (credentials) => getReplies({
         ...options,
-        ...credentials,
-        fetcher: dependencies.fetcher
+        ...credentials
       }), context);
     },
     getReply(options: ManagedGetReplyOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, () => getForumReply({
+      return read(options.source, 'getReply', ({ fetcher }) => getForumReply({
         ...options,
-        fetcher: dependencies.fetcher
+        fetcher
       }), context);
     },
     getUserProfile(options: ManagedGetUserProfileOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, (credentials) => getUserProfile({
-          ...options,
-          ...credentials,
-          fetcher: dependencies.fetcher,
-        }), context);
+      return read(options.source, 'getUserProfile', (credentials) => getUserProfile({
+        ...options,
+        ...credentials
+      }), context);
     }
   };
 }

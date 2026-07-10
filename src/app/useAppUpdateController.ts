@@ -4,6 +4,13 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { AppUpdateInfo, checkGithubAppUpdate, CURRENT_APP_VERSION, formatAppUpdateDownloadProgress, installVerifiedApk, type ApkInstaller, type AppUpdateDownloadProgress } from '../appUpdate';
 import { errorMessage } from '../appUtils';
 import type { Fetcher } from '../request';
+import {
+  beginDiagnosticTrace,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  withDiagnosticFetcher
+} from '../diagnostics';
 
 type CheckAppUpdateOptions = {
   silent?: boolean;
@@ -26,7 +33,10 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
 
   const checkAppUpdate = useCallback(async (options: CheckAppUpdateOptions = {}) => {
     const silent = options.silent === true;
+    const trace = beginDiagnosticTrace('update', 'check', { mode: silent ? 'silent' : 'manual' });
     if (appUpdateBusyRef.current || appUpdateDownloadingRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'busy' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
     appUpdateBusyRef.current = true;
@@ -37,8 +47,10 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
       setAppUpdateMessage('正在检查更新');
     }
     try {
+      markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeRequest?.();
-      const update = await checkGithubAppUpdate(fetcher);
+      const update = await checkGithubAppUpdate(withDiagnosticFetcher(trace, fetcher));
+      markDiagnosticStage(trace, 'parse', { state: update ? 'update-available' : 'current' });
       setAppUpdateInfo(update);
       if (update || !silent) {
         const message = update ? `发现新版 ${update.version}` : `已是最新版 ${CURRENT_APP_VERSION}`;
@@ -47,7 +59,10 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
           notify(message);
         }
       }
+      markDiagnosticStage(trace, 'apply', { state: 'status-updated' });
+      finishDiagnosticTrace(trace, 'success', { state: update ? 'update-available' : 'current' });
     } catch (error) {
+      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
       if (!silent) {
         const message = errorMessage(error);
         setAppUpdateMessage(message);
@@ -60,21 +75,36 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
   }, [beforeRequest, fetcher, notify]);
 
   const downloadAppUpdate = useCallback(async () => {
+    const trace = beginDiagnosticTrace('update', 'download');
     if (!appUpdateInfo || appUpdateDownloadingRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: appUpdateDownloadingRef.current ? 'busy' : 'missing-update' });
+      finishDiagnosticTrace(trace, 'blocked', {
+        reason: appUpdateDownloadingRef.current ? 'busy' : 'not_ready'
+      });
       return;
     }
     const baseDirectory = FileSystem.cacheDirectory || FileSystem.documentDirectory;
     if (!baseDirectory) {
+      markDiagnosticStage(trace, 'guard', { state: 'cache-unavailable' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'storage_error' });
       notify('无法访问本机缓存目录。');
       return;
     }
     appUpdateDownloadingRef.current = true;
     setAppUpdateDownloading(true);
     let latestProgress = formatAppUpdateDownloadProgress(appUpdateInfo.version, 0, -1);
+    let downloadStartedAt = 0;
     setAppUpdateDownloadProgress(latestProgress);
     setAppUpdateMessage(latestProgress.title);
     try {
+      markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeRequest?.();
+      downloadStartedAt = Date.now();
+      markDiagnosticStage(trace, 'transport', {
+        endpoint: 'github',
+        method: 'GET',
+        state: 'start'
+      });
       const target = `${baseDirectory}wz-${appUpdateInfo.version}.apk`;
       await FileSystem.deleteAsync(target, { idempotent: true }).catch(() => undefined);
       const download = FileSystem.createDownloadResumable(appUpdateInfo.apkUrl, target, {}, (progress) => {
@@ -89,6 +119,14 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
       if (result.status < 200 || result.status >= 300) {
         throw new Error(`下载失败：HTTP ${result.status}`);
       }
+      markDiagnosticStage(trace, 'transport', {
+        endpoint: 'github',
+        method: 'GET',
+        state: 'finish',
+        status: result.status,
+        byteCount: latestProgress.downloadedBytes,
+        transportDurationMs: Math.max(0, Date.now() - downloadStartedAt)
+      });
       const verifyingProgress: AppUpdateDownloadProgress = {
         ...latestProgress,
         title: '下载完成，正在校验安装包',
@@ -97,11 +135,25 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
       };
       setAppUpdateDownloadProgress(verifyingProgress);
       setAppUpdateMessage(verifyingProgress.title);
+      markDiagnosticStage(trace, 'parse', { state: 'package-verification' });
       const installer = NativeModules.ApkInstallerModule as ApkInstaller | undefined;
       await installVerifiedApk(installer, result.uri, appUpdateInfo);
+      markDiagnosticStage(trace, 'apply', { state: 'installer-opened' });
       setAppUpdateMessage('下载完成，请确认安装');
       notify('下载完成，请确认安装');
+      finishDiagnosticTrace(trace, 'success');
     } catch (error) {
+      const reason = normalizeDiagnosticReason(error);
+      if (downloadStartedAt) {
+        markDiagnosticStage(trace, 'transport', {
+          endpoint: 'github',
+          method: 'GET',
+          state: 'failure',
+          transportDurationMs: Math.max(0, Date.now() - downloadStartedAt),
+          reason
+        });
+      }
+      finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', { reason });
       const message = errorMessage(error);
       setAppUpdateMessage(message);
       notify(message);

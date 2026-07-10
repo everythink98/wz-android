@@ -1,4 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('react', () => ({
+  useCallback: <T,>(callback: T) => callback,
+  useEffect: () => undefined,
+  useMemo: <T,>(factory: () => T) => factory(),
+  useRef: <T,>(value: T) => ({ current: value }),
+  useState: <T,>(initial: T | (() => T)) => {
+    let state = typeof initial === 'function' ? (initial as () => T)() : initial;
+    return [state, (next: T | ((current: T) => T)) => {
+      state = typeof next === 'function' ? (next as (current: T) => T)(state) : next;
+    }];
+  }
+}));
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
@@ -20,8 +33,16 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { mergedFeedResponseAfterSplitFetch, shouldWaitForReaderDataBeforeFeed } from './useFeedController';
-import type { FeedResponse } from '../types';
+import { createEmptyReaderData } from '../readerData';
+import { setDiagnosticWriter, type DiagnosticEvent, type DiagnosticTrace } from '../diagnostics';
+import type { SourceGateway } from '../sources/sourceGateway';
+import { mergedFeedResponseAfterSplitFetch, shouldWaitForReaderDataBeforeFeed, useFeedController } from './useFeedController';
+import type { FeedResponse, Topic } from '../types';
+
+afterEach(() => {
+  setDiagnosticWriter(null);
+  vi.clearAllMocks();
+});
 
 describe('feed controller helpers', () => {
   const response: FeedResponse = {
@@ -42,5 +63,85 @@ describe('feed controller helpers', () => {
   it('lets the default all feed load before reader data finishes loading', () => {
     expect(shouldWaitForReaderDataBeforeFeed('all', 'all')).toBe(false);
     expect(shouldWaitForReaderDataBeforeFeed('all', 'favorite')).toBe(true);
+  });
+
+  it('traces one feed read through gateway context, apply counts, and one terminal event', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const topic: Topic = {
+      source: 'v2ex',
+      id: 'private-topic-id',
+      title: 'private title',
+      author: 'private author',
+      url: 'https://www.v2ex.com/t/private?token=secret',
+      createdAt: '2026-07-10T00:00:00.000Z',
+      replyCount: 0
+    };
+    let gatewayTrace: DiagnosticTrace | undefined;
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn(async (_options, context) => {
+        gatewayTrace = context?.trace;
+        return { items: [topic], errors: {}, hasMore: true, nextPage: 2 };
+      })
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await controller.loadFeed({ source: 'v2ex', reset: true, nocache: true });
+
+    const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
+    expect(gatewayTrace?.traceId).toBe(events[0]?.traceId);
+    expect(events.map((event) => event.phase)).toEqual(['intent', 'guard', 'apply', 'finish']);
+    expect(events.find((event) => event.phase === 'apply')).toMatchObject({ beforeCount: 0, afterCount: 1 });
+    expect(events.filter((event) => event.phase === 'finish')).toEqual([
+      expect.objectContaining({ area: 'feed', operation: 'load', outcome: 'success' })
+    ]);
+    expect(lines.join('')).not.toMatch(/private-topic-id|private title|private author|v2ex\.com|token=secret/);
+  });
+
+  it('records a blocked pagination guard while another feed read is active', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    const pending = Promise.withResolvers<FeedResponse>();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn(() => pending.promise)
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    const first = controller.loadFeed({ source: 'v2ex', reset: true });
+    await vi.waitFor(() => expect(sourceGateway.getFeed).toHaveBeenCalledTimes(1));
+    await controller.loadFeed({ source: 'v2ex', page: 2 });
+    pending.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+    await first;
+
+    const terminalEvents = lines
+      .map((line) => JSON.parse(line) as DiagnosticEvent)
+      .filter((event) => event.phase === 'finish');
+    expect(terminalEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ outcome: 'blocked', reason: 'busy' }),
+      expect.objectContaining({ outcome: 'success' })
+    ]));
+    expect(new Set(terminalEvents.map((event) => event.traceId)).size).toBe(2);
   });
 });

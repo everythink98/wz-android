@@ -28,6 +28,7 @@ import {
   v2exMemberUrl as memberUrl,
   v2exNodeIdFromHref as nodeIdFromHref
 } from './localV2exHelpers';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 
 const HTML_LIST_PAGE_SIZE = 20;
 const V2EX_FEED_CURSOR_LIMIT = 200;
@@ -511,32 +512,67 @@ export async function getV2exFeed(options: V2exOptions & {
   const seenIds = decodeV2exFeedSeenIds(options.cursor);
   if (!options.category && feedFilter === 'hot') {
     const html = await fetchText(`${BASE_URL}/?tab=hot`, options);
-    return { items: parseV2exAllTabPage(html, limit).items, errors: {}, hasMore: false, nextPage: null };
+    const items = parseV2exAllTabPage(html, limit).items;
+    const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
+    return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore: false, nextPage: null }, {
+      parserVariant: 'html-hot-feed',
+      candidateCount,
+      validCount: items.length,
+      droppedCount: Math.max(0, candidateCount - items.length),
+      isParseEmpty: candidateCount === 0
+    });
   }
   if (!options.category && feedFilter === 'latest') {
     const html = await fetchText(`${BASE_URL}/recent?p=${page}`, options);
     const pageResult = parseV2exListPage(html, page, '/recent');
-    return {
+    const result = {
       items: pageResult.items.slice(0, limit),
       errors: {},
       hasMore: pageResult.hasMore,
       nextPage: pageResult.hasMore ? page + 1 : null
     };
+    const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
+    return annotateSourceDiagnosticSummary(result, {
+      parserVariant: 'html-latest-feed',
+      candidateCount,
+      validCount: result.items.length,
+      droppedCount: Math.max(0, candidateCount - result.items.length),
+      isExpectedEmpty: page > 1 && candidateCount === 0,
+      isParseEmpty: page === 1 && candidateCount === 0,
+      hasRepeatedCursor: result.nextPage === page
+    });
   }
   if (!options.category && page === 1) {
     const html = await fetchText(`${BASE_URL}/?tab=all`, options);
     const result = parseV2exAllTabPage(html, limit);
-    return { ...result, nextCursor: result.hasMore ? encodeV2exFeedSeenIds(seenIds, result.items) : null, errors: {} };
+    const response = { ...result, nextCursor: result.hasMore ? encodeV2exFeedSeenIds(seenIds, result.items) : null, errors: {} };
+    const candidateCount = (html.match(/class=["'][^"']*\bitem\b/gi) || []).length;
+    return annotateSourceDiagnosticSummary(response, {
+      parserVariant: 'html-all-feed',
+      candidateCount,
+      validCount: response.items.length,
+      droppedCount: Math.max(0, candidateCount - response.items.length),
+      isParseEmpty: candidateCount === 0,
+      hasRepeatedCursor: response.nextCursor === options.cursor
+    });
   }
   if (options.category || page > 1) {
     const htmlResult = await fetchHtmlWindow({ ...options, page, limit, seenIds });
     if (htmlResult) {
-      return {
+      const result = {
         ...htmlResult,
         nextPage: htmlResult.hasMore ? htmlResult.nextPage : null,
         nextCursor: htmlResult.hasMore ? encodeV2exFeedSeenIds(seenIds, htmlResult.items) : null,
         errors: {}
       };
+      return annotateSourceDiagnosticSummary(result, {
+        parserVariant: 'html-window-feed',
+        candidateCount: result.items.length,
+        validCount: result.items.length,
+        droppedCount: 0,
+        isExpectedEmpty: result.items.length === 0 && (page > 1 || Boolean(options.category)),
+        hasRepeatedCursor: result.nextCursor === options.cursor
+      });
     }
   }
   const data = await loadLatest(options);
@@ -547,8 +583,14 @@ export async function getV2exFeed(options: V2exOptions & {
   const start = (page - 1) * limit;
   let pageItems = filtered.slice(start, start + limit);
   let hasMore = filtered.length >= start + limit;
+  let partialErrorCount = 0;
   if (!options.category && page === 1 && pageItems.length < limit) {
-    const htmlResult = await fetchHtmlWindow({ ...options, page, limit }).catch(() => null);
+    let htmlResult: Awaited<ReturnType<typeof fetchHtmlWindow>> = null;
+    try {
+      htmlResult = await fetchHtmlWindow({ ...options, page, limit });
+    } catch {
+      partialErrorCount += 1;
+    }
     if (htmlResult) {
       const seen = new Set(pageItems.map((topic) => topic.id));
       const merged = [...pageItems];
@@ -562,12 +604,22 @@ export async function getV2exFeed(options: V2exOptions & {
       hasMore = hasMore || htmlResult.hasMore || merged.length > limit;
     }
   }
-  return {
+  const result = {
     items: pageItems,
     errors: {},
     hasMore,
     nextPage: hasMore ? page + 1 : null
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'api-latest-feed',
+    candidateCount: pageItems.length,
+    validCount: pageItems.length,
+    droppedCount: 0,
+    partialErrorCount,
+    isExpectedEmpty: pageItems.length === 0 && (page > 1 || Boolean(options.category)),
+    isParseEmpty: page === 1 && !options.category && pageItems.length === 0,
+    hasRepeatedCursor: result.nextPage === page
+  });
 }
 
 export async function getV2exCategories(options: V2exOptions & { nocache?: boolean } = {}): Promise<CategoriesResponse> {
@@ -587,7 +639,13 @@ export async function getV2exCategories(options: V2exOptions & { nocache?: boole
     seen.add(item.id);
     return true;
   });
-  return { items, errors: {} };
+  return annotateSourceDiagnosticSummary({ items, errors: {} }, {
+    parserVariant: 'api-categories',
+    candidateCount: data.length,
+    validCount: items.length,
+    droppedCount: Math.max(0, data.length - items.length),
+    isParseEmpty: data.length === 0
+  });
 }
 
 function normalizeReply(raw: unknown, index: number): Reply | null {
@@ -765,11 +823,34 @@ function parseV2exAtomFeed(xml: string, username: string, avatar?: string) {
 
 async function fetchV2exMemberTopics(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
   const pageQuery = page > 1 ? `?p=${encodeURIComponent(String(page))}` : '';
-  const html = await fetchText(`${memberUrl(username)}/topics${pageQuery}`, options).catch(() => '');
-  return html ? {
-    items: parseV2exMemberTopics(html, username, avatar).slice(0, 30),
-    nextCursor: nextV2exMemberPageCursor(html, page)
-  } : { items: [], nextCursor: null };
+  try {
+    const html = await fetchText(`${memberUrl(username)}/topics${pageQuery}`, options);
+    const items = parseV2exMemberTopics(html, username, avatar).slice(0, 30);
+    const candidateCount = Math.max(
+      (html.match(/class=["'][^"']*\bitem\b/gi) || []).length,
+      (html.match(/<a\b[^>]*href=["'][^"']*\/t\//gi) || []).length
+    );
+    return annotateSourceDiagnosticSummary({
+      items,
+      nextCursor: nextV2exMemberPageCursor(html, page)
+    }, {
+      parserVariant: 'html-user-topics',
+      candidateCount,
+      validCount: items.length,
+      droppedCount: Math.max(0, candidateCount - items.length),
+      isExpectedEmpty: candidateCount === 0
+    });
+  } catch {
+    return annotateSourceDiagnosticSummary({ items: [] as Topic[], nextCursor: null }, {
+      parserVariant: 'html-user-topics',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      partialErrorCount: 1,
+      hasDegradation: true,
+      isExpectedEmpty: true
+    });
+  }
 }
 
 async function fetchV2exMemberReplies(username: string, avatar: string | undefined, options: V2exOptions, page = 1) {
@@ -779,8 +860,27 @@ async function fetchV2exMemberReplies(username: string, avatar: string | undefin
 }
 
 async function fetchV2exMemberFeedTopics(username: string, avatar: string | undefined, options: V2exOptions) {
-  const xml = await fetchText(`${BASE_URL}/feed/member/${encodeURIComponent(username)}.xml`, options).catch(() => '');
-  return xml ? parseV2exAtomFeed(xml, username, avatar).slice(0, 30) : [];
+  try {
+    const xml = await fetchText(`${BASE_URL}/feed/member/${encodeURIComponent(username)}.xml`, options);
+    const topics = xml ? parseV2exAtomFeed(xml, username, avatar).slice(0, 30) : [];
+    return annotateSourceDiagnosticSummary(topics, {
+      parserVariant: 'atom-user-topics',
+      candidateCount: topics.length,
+      validCount: topics.length,
+      droppedCount: 0,
+      isExpectedEmpty: topics.length === 0
+    });
+  } catch {
+    return annotateSourceDiagnosticSummary([] as Topic[], {
+      parserVariant: 'atom-user-topics',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      partialErrorCount: 1,
+      hasDegradation: true,
+      isExpectedEmpty: true
+    });
+  }
 }
 
 export async function getV2exUserProfile(id: string, username: string, options: V2exOptions = {}): Promise<UserProfile> {
@@ -806,12 +906,20 @@ export async function getV2exUserProfile(id: string, username: string, options: 
   const profileTopics = sortTopicsByCreatedAt(feedTopics).slice(0, 30).map((topic) => (
     levelLabel ? { ...topic, authorLevelLabel: topic.authorLevelLabel || levelLabel } : topic
   ));
-  const replyResult = wantsReplies
-    ? options.cursorType === 'replies'
-      ? await fetchV2exMemberReplies(resolvedUsername, avatar, options, page)
-      : await fetchV2exMemberReplies(resolvedUsername, avatar, options, page).catch(() => ({ items: [], nextCursor: null }))
-    : { items: [], nextCursor: null };
-  return {
+  let replyResult = { items: [] as UserReplyActivity[], nextCursor: null as string | null };
+  let replyPartialErrorCount = 0;
+  if (wantsReplies) {
+    if (options.cursorType === 'replies') {
+      replyResult = await fetchV2exMemberReplies(resolvedUsername, avatar, options, page);
+    } else {
+      try {
+        replyResult = await fetchV2exMemberReplies(resolvedUsername, avatar, options, page);
+      } catch {
+        replyPartialErrorCount += 1;
+      }
+    }
+  }
+  const result: UserProfile = {
     source: 'v2ex',
     id: resolvedUsername,
     username: resolvedUsername,
@@ -830,15 +938,37 @@ export async function getV2exUserProfile(id: string, username: string, options: 
     hasMoreReplies: Boolean(replyResult.nextCursor),
     nextRepliesCursor: replyResult.nextCursor
   };
+  const topicsSummary = sourceDiagnosticSummary(topicsPage);
+  const feedSummary = sourceDiagnosticSummary(feedTopics);
+  const partialErrorCount = (topicsSummary?.partialErrorCount || 0)
+    + (feedSummary?.partialErrorCount || 0)
+    + replyPartialErrorCount;
+  const hasUserIdentity = Boolean(memberData.username || memberData.id);
+  const candidateCount = 1 + profileTopics.length + replyResult.items.length;
+  const validCount = (hasUserIdentity ? 1 : 0) + profileTopics.length + replyResult.items.length;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: !topicsPage.items.length && profileTopics.length ? 'atom-user-topics' : 'api-user',
+    candidateCount,
+    validCount,
+    droppedCount: (topicsSummary?.droppedCount || 0) + (feedSummary?.droppedCount || 0),
+    partialErrorCount,
+    missingFloorCount: replyResult.items.filter((reply) => !reply.floor).length,
+    hasRepeatedCursor: result.nextTopicsCursor === options.cursor || result.nextRepliesCursor === options.cursor,
+    isParseEmpty: !hasUserIdentity && profileTopics.length === 0 && replyResult.items.length === 0
+  });
 }
 
 export async function getV2exTopic(id: string, options: V2exOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
+  let detailHtmlFailed = false;
   const [topicData, replyResult, detailHtml] = await Promise.all([
     fetchJson<unknown[]>(`${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`, options),
     fetchJson<unknown[]>(`${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`, options)
       .then((data) => ({ data }))
       .catch((error: unknown) => ({ error })),
-    fetchText(`${BASE_URL}/t/${encodeURIComponent(id)}`, options).catch(() => '')
+    fetchText(`${BASE_URL}/t/${encodeURIComponent(id)}`, options).catch(() => {
+      detailHtmlFailed = true;
+      return '';
+    })
   ]);
   const topic = normalizeApiTopic(Array.isArray(topicData) ? topicData[0] : null);
   if (!topic) {
@@ -855,7 +985,7 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
     throw replyResult.error instanceof Error ? replyResult.error : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
   }
   const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
-  return {
+  const result = {
     ...topic,
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
@@ -869,6 +999,15 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
     replyNextPage: null,
     ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
   };
+  const replyCandidates = 'data' in replyResult && Array.isArray(replyResult.data) ? replyResult.data.length : htmlDetail?.replies.length || 0;
+  const partialErrorCount = Number(detailHtmlFailed) + Number('error' in replyResult);
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: apiReplies.length ? 'api-topic' : htmlDetail ? 'html-topic-fallback' : 'api-topic',
+    candidateCount: 1 + replyCandidates,
+    validCount: 1 + replies.length,
+    droppedCount: Math.max(0, replyCandidates - replies.length),
+    partialErrorCount
+  });
 }
 
 function sov2exHits(data: unknown) {
@@ -980,10 +1119,18 @@ export async function searchV2ex(query: string, options: V2exOptions & { limit?:
   const hasMore = typeof total === 'number'
     ? total > from + hits.length
     : hits.length >= limit;
-  return {
+  const result = {
     items,
     errors: {},
     hasMore,
     nextPage: hasMore ? page + 1 : null
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'sov2ex-search',
+    candidateCount: hits.length,
+    validCount: items.length,
+    droppedCount: Math.max(0, hits.length - items.length),
+    isExpectedEmpty: hits.length === 0,
+    hasRepeatedCursor: result.nextPage === page
+  });
 }

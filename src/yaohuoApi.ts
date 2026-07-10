@@ -15,6 +15,7 @@ import {
   YAOHUO_LOGIN_URL,
   requireYaohuoRequestUrl
 } from './localYaohuoHelpers';
+import { mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -209,7 +210,7 @@ export async function getYaohuoTopicDirect({
     timeoutMs
   });
 
-  return {
+  const result = {
     ...detail,
     categoryId: detail.categoryId || topic.categoryId,
     category: detail.category || topic.category,
@@ -219,6 +220,9 @@ export async function getYaohuoTopicDirect({
     replyNextPage: replies.nextPage,
     replyNextOffset: replies.hasMore ? replies.items.length : null
   };
+  return mergeSourceDiagnosticSummaries(result, 'html-topic-with-replies', [detail, replies], {
+    validCount: 1 + replies.items.length
+  });
 }
 
 export async function getYaohuoRepliesDirect({

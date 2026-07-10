@@ -1,6 +1,15 @@
 import type { Fetcher } from './request';
 import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import { isNodeSeekChallengeResponse } from './localNodeseekHelpers';
+import {
+  beginDiagnosticTrace,
+  diagnosticTraceForRequest,
+  finishDiagnosticTrace,
+  markDiagnosticStage,
+  normalizeDiagnosticReason,
+  registerDiagnosticContextFetcher,
+  type DiagnosticReason
+} from './diagnostics';
 
 const NODESEEK_DIRECT_FETCH_TIMEOUT_MS = 8000;
 const NODESEEK_DIRECT_RECOVERY_FAILURES = 2;
@@ -61,6 +70,97 @@ async function fetchNodeSeekDirectly(defaultFetcher: Fetcher, input: string, ini
   }
 }
 
+async function fetchNodeSeekThroughWebView(
+  webViewFetcher: Fetcher,
+  url: string,
+  init: RequestInit | undefined,
+  reason: DiagnosticReason,
+  directStatus?: number
+) {
+  const inheritedTrace = diagnosticTraceForRequest(init);
+  const trace = inheritedTrace || beginDiagnosticTrace('source', 'transport-fallback', {
+    source: 'nodeseek',
+    reason
+  });
+  markDiagnosticStage(trace, 'transport', {
+    source: 'nodeseek',
+    channel: 'direct',
+    state: 'fallback',
+    reason,
+    ...(directStatus === undefined ? {} : { status: directStatus })
+  });
+  try {
+    const response = await webViewFetcher(url, init);
+    markDiagnosticStage(trace, 'transport', {
+      source: 'nodeseek',
+      channel: 'webview',
+      state: 'finish',
+      status: response.status
+    });
+    if (!inheritedTrace) {
+      finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
+        source: 'nodeseek',
+        channel: 'webview',
+        ...(response.ok ? {} : { reason: 'http_error' })
+      });
+    }
+    return response;
+  } catch (error) {
+    const fallbackReason = normalizeDiagnosticReason(error);
+    markDiagnosticStage(trace, 'transport', {
+      source: 'nodeseek',
+      channel: 'webview',
+      state: 'failure',
+      reason: fallbackReason
+    });
+    if (!inheritedTrace) {
+      finishDiagnosticTrace(trace, fallbackReason === 'canceled' ? 'canceled' : 'failure', {
+        source: 'nodeseek',
+        channel: 'webview',
+        reason: fallbackReason
+      });
+    }
+    throw error;
+  }
+}
+
+async function fetchNodeSeekWebViewOnly(webViewFetcher: Fetcher, url: string, init?: RequestInit) {
+  const inheritedTrace = diagnosticTraceForRequest(init);
+  const trace = inheritedTrace || beginDiagnosticTrace('source', 'webview-transport', {
+    source: 'nodeseek',
+    channel: 'webview'
+  });
+  markDiagnosticStage(trace, 'transport', { source: 'nodeseek', channel: 'webview', state: 'start' });
+  try {
+    const response = await webViewFetcher(url, init);
+    markDiagnosticStage(trace, 'transport', {
+      source: 'nodeseek',
+      channel: 'webview',
+      state: 'finish',
+      status: response.status
+    });
+    if (!inheritedTrace) {
+      finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
+        source: 'nodeseek',
+        channel: 'webview',
+        ...(response.ok ? {} : { reason: 'http_error' })
+      });
+    }
+    return response;
+  } catch (error) {
+    const reason = normalizeDiagnosticReason(error);
+    markDiagnosticStage(trace, 'transport', { source: 'nodeseek', channel: 'webview', state: 'failure', reason });
+    if (!inheritedTrace) {
+      finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
+        source: 'nodeseek',
+        channel: 'webview',
+        reason
+      });
+    }
+    throw error;
+  }
+}
+
 export function createNodeSeekWebViewFallbackFetcher({
   defaultFetcher = fetch,
   webViewFetcher,
@@ -102,10 +202,10 @@ export function createNodeSeekWebViewFallbackFetcher({
     return response;
   };
 
-  return async (input, init) => {
+  return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
     if (isNodeSeekGoogleSearchUrl(url)) {
-      return webViewFetcher(url, init);
+      return fetchNodeSeekWebViewOnly(webViewFetcher, url, init);
     }
     if (!isNodeSeekRequestUrl(url)) {
       return defaultFetcher(input, init);
@@ -118,15 +218,21 @@ export function createNodeSeekWebViewFallbackFetcher({
         const reason = error instanceof Error && error.message === NODESEEK_DIRECT_FETCH_TIMEOUT_MESSAGE
           ? 'direct-timeout'
           : 'direct-error';
-        return recordDirectFallbackSuccess(await webViewFetcher(url, init), reason, url);
+        const diagnosticReason = normalizeDiagnosticReason(error);
+        return recordDirectFallbackSuccess(await fetchNodeSeekThroughWebView(
+          webViewFetcher,
+          url,
+          init,
+          diagnosticReason === 'unknown' ? 'network_error' : diagnosticReason
+        ), reason, url);
       }
       throw error;
     }
     const text = await response.clone().text();
     resetDirectFailures();
     if (isNodeSeekChallengeResponse(response, text, url)) {
-      return webViewFetcher(url, init);
+      return fetchNodeSeekThroughWebView(webViewFetcher, url, init, 'verification_required', response.status);
     }
     return response;
-  };
+  });
 }

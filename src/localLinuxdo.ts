@@ -33,6 +33,7 @@ import {
   preferredLinuxDoAccessRequirement
 } from './localLinuxdoHelpers';
 import { linuxDoEmojiUrlMapFromData, type LinuxDoEmojiUrlMap } from './linuxdoReactions';
+import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
@@ -666,6 +667,7 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   const collected: Topic[] = [];
   let listPage = firstListPage;
   let hasMore = false;
+  let droppedCount = 0;
   let categoryMap = new Map<string, { name: string; accessRequirement?: Topic['accessRequirement'] }>();
   while (collected.length < limit + 1) {
     const data = await fetchLinuxDoJson<Record<string, unknown>>(linuxDoFeedPath(linuxDoFilter), linuxDoFeedParams(listPage, options.category, linuxDoFilter), options);
@@ -676,6 +678,7 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
       const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
       return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
     }).filter(Boolean) as Topic[];
+    droppedCount += Math.max(0, topics.length - items.length);
     if (!items.length) {
       break;
     }
@@ -690,18 +693,27 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
     }
     break;
   }
-  return {
+  const result = {
     items: collected.slice(0, limit),
     errors: {},
     hasMore,
     nextPage: hasMore ? page + 1 : null
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-feed',
+    candidateCount: result.items.length + droppedCount,
+    validCount: result.items.length,
+    droppedCount,
+    isExpectedEmpty: result.items.length === 0 && droppedCount === 0 && (page > 1 || Boolean(options.category)),
+    isParseEmpty: page === 1 && !options.category && result.items.length === 0 && droppedCount === 0,
+    hasRepeatedCursor: result.nextPage === page
+  });
 }
 
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   const categories = Array.isArray(data.categories) ? data.categories : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
-  return {
+  const result = {
     items: categories.filter(isRecord).filter((category) => !isUncategorizedCategory(category)).map((category) => ({
       source: 'linuxdo' as const,
       id: String(category.id),
@@ -710,6 +722,13 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
     })).filter((category) => category.id && category.name),
     errors: {}
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-categories',
+    candidateCount: categories.length,
+    validCount: result.items.length,
+    droppedCount: Math.max(0, categories.length - result.items.length),
+    isParseEmpty: categories.length === 0
+  });
 }
 
 async function topicData(id: string, options: LinuxDoOptions) {
@@ -726,7 +745,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
       throw error;
     }
     const contentHtml = accessRequirement.detail || (error instanceof Error ? error.message : accessRequirement.label);
-    return {
+    return annotateSourceDiagnosticSummary({
       source: 'linuxdo',
       id,
       title: '受限帖子',
@@ -740,7 +759,12 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
       replyHasMore: false,
       replyNextPage: null,
       accessRequirement
-    };
+    }, {
+      parserVariant: 'access-restricted-topic',
+      candidateCount: 1,
+      validCount: 1,
+      droppedCount: 0
+    });
   }
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
@@ -762,7 +786,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
   cacheTopicStream(id, data);
   cacheTopicStream(topic.id, data);
-  return {
+  const result = {
     ...topic,
     contentHtml: sanitizeContentHtml(isRecord(firstPost) ? firstPost.cooked || '' : '', BASE_URL),
     replies,
@@ -778,6 +802,13 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     ...(firstPostBoostCount ? { boostCount: firstPostBoostCount } : {}),
     ...(positiveNumber(data.bookmark_id) ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {})
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-topic',
+    candidateCount: 1 + Math.max(0, posts.length - 1),
+    validCount: 1 + replies.length,
+    droppedCount: Math.max(0, posts.length - 1 - replies.length),
+    missingFloorCount: replyPosts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length
+  });
 }
 
 async function fetchPosts(id: string, postIds: unknown[], options: LinuxDoOptions) {
@@ -806,7 +837,13 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   const start = 1 + previousReplyCount;
   const postIds = stream.slice(start, start + limit);
   if (!postIds.length) {
-    return { items: [], hasMore: false, nextPage: null };
+    return annotateSourceDiagnosticSummary({ items: [], hasMore: false, nextPage: null }, {
+      parserVariant: 'discourse-replies',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      isExpectedEmpty: true
+    });
   }
   const posts = await fetchPosts(id, postIds, options);
   const hasMore = stream.length > start + limit;
@@ -814,12 +851,20 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
     posts.map((post, index) => normalizePost(post, index, id, previousReplyCount + index + 2)).filter(Boolean) as Reply[],
     options
   );
-  return {
+  const result = {
     items,
     hasMore,
     nextPage: hasMore ? page + 1 : null,
     nextOffset: hasMore ? previousReplyCount + postIds.length : null
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-replies',
+    candidateCount: postIds.length,
+    validCount: items.length,
+    droppedCount: Math.max(0, postIds.length - items.length),
+    missingFloorCount: posts.filter((post) => isRecord(post) && !parsePositiveInteger(post.post_number)).length,
+    hasRepeatedCursor: result.nextPage === page && result.nextOffset === options.offset
+  });
 }
 
 export async function getLinuxDoReply(id: string, floor: number, options: LinuxDoOptions = {}): Promise<Reply> {
@@ -829,7 +874,13 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   if (embedded) {
     const reply = normalizePost(embedded, floor - 1, id, floor);
     if (reply) {
-      return reply;
+      return annotateSourceDiagnosticSummary(reply, {
+        parserVariant: 'embedded-reply',
+        candidateCount: 1,
+        validCount: 1,
+        droppedCount: 0,
+        missingFloorCount: isRecord(embedded) && !parsePositiveInteger(embedded.post_number) ? 1 : 0
+      });
     }
   }
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
@@ -843,7 +894,13 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   if (!reply) {
     throw new Error('引用楼层未找到');
   }
-  return reply;
+  return annotateSourceDiagnosticSummary(reply, {
+    parserVariant: 'fetched-reply',
+    candidateCount: posts.length,
+    validCount: 1,
+    droppedCount: Math.max(0, posts.length - 1),
+    missingFloorCount: posts.filter((item) => isRecord(item) && !parsePositiveInteger(item.post_number)).length
+  });
 }
 
 async function linuxDoCsrfToken(options: LinuxDoOptions) {
@@ -875,10 +932,17 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
     return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
   }).filter(Boolean) as Topic[];
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
-  return {
+  const result = {
     items,
     hasMore: Boolean(grouped.more_full_page_results)
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-search-page',
+    candidateCount: topics.length,
+    validCount: items.length,
+    droppedCount: Math.max(0, topics.length - items.length),
+    isExpectedEmpty: topics.length === 0
+  });
 }
 
 function linuxDoTopicIdFromUrl(value: string) {
@@ -942,16 +1006,33 @@ async function searchLinuxDoGoogle(query: string, options: LinuxDoOptions & { li
   const cleanQuery = query.trim();
   const page = options.page || 1;
   if (!cleanQuery) {
-    return { items: [], errors: {}, hasMore: false, nextPage: null };
+    return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
+      parserVariant: 'google-search',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      isExpectedEmpty: true
+    });
   }
   const html = await fetchLinuxDoGoogleSearchText(cleanQuery, page, options);
   const nextPage = hasGoogleSiteSearchNextPage(html, 'linux.do', page + 1) ? page + 1 : null;
-  return {
-    items: parseLinuxDoGoogleSearchTopics(html).slice(0, options.limit || 30),
+  const parsedItems = parseLinuxDoGoogleSearchTopics(html);
+  const items = parsedItems.slice(0, options.limit || 30);
+  const candidateCount = parsedItems.length;
+  const result = {
+    items,
     errors: {},
     hasMore: Boolean(nextPage),
     nextPage
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'google-search',
+    candidateCount,
+    validCount: items.length,
+    droppedCount: Math.max(0, candidateCount - items.length),
+    isExpectedEmpty: candidateCount === 0,
+    hasRepeatedCursor: nextPage === page
+  });
 }
 
 export async function searchLinuxDo(query: string, options: LinuxDoOptions & { limit?: number; page?: number } = {}): Promise<SearchResponse> {
@@ -971,12 +1052,17 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
   const collected: Topic[] = [];
   let searchPage = firstSearchPage;
   let searchHasMore = false;
+  let candidateCount = 0;
+  let droppedCount = 0;
   while (collected.length < needed) {
     const data = await fetchLinuxDoJson<Record<string, unknown>>('/search', {
       q: cleanQuery,
       page: searchPage
     }, options, { referer: searchReferer, csrfToken });
     const result = await topicsFromLinuxDoSearchData(data, options);
+    const pageSummary = sourceDiagnosticSummary(result);
+    candidateCount += pageSummary?.candidateCount || result.items.length;
+    droppedCount += pageSummary?.droppedCount || 0;
     if (!result.items.length) {
       searchHasMore = false;
       break;
@@ -990,12 +1076,20 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
   }
   const items = collected.slice(firstOffset, firstOffset + limit);
   const hasMore = collected.length > firstOffset + limit || searchHasMore;
-  return {
+  const result = {
     items,
     errors: {},
     hasMore,
     nextPage: hasMore ? page + 1 : null
   };
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-search',
+    candidateCount,
+    validCount: items.length,
+    droppedCount,
+    isExpectedEmpty: candidateCount === 0,
+    hasRepeatedCursor: result.nextPage === page
+  });
 }
 
 export async function getLinuxDoUserProfile(id: string, username: string, options: LinuxDoOptions = {}): Promise<UserProfile> {
@@ -1023,6 +1117,7 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
   const levelLabel = linuxDoLevelLabel(user);
   const rawTopics = wantsTopics && Array.isArray(data.topics) ? data.topics : [];
   let rawUserActions: unknown[] = [];
+  let partialErrorCount = 0;
   if (wantsReplies) {
     const readUserActions = async () => {
       const actionData = await fetchLinuxDoJson<Record<string, unknown>>('/user_actions.json', {
@@ -1032,13 +1127,21 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
       }, options);
       return Array.isArray(actionData.user_actions) ? actionData.user_actions : [];
     };
-    rawUserActions = cursorType === 'replies' ? await readUserActions() : await readUserActions().catch(() => []);
+    if (cursorType === 'replies') {
+      rawUserActions = await readUserActions();
+    } else {
+      try {
+        rawUserActions = await readUserActions();
+      } catch {
+        partialErrorCount += 1;
+      }
+    }
   }
   const categoryMap = await categoryMapForTopics(data, [...rawTopics, ...rawUserActions], categoryMapFromData(data), options);
   const topics = rawTopics.map((topic) => normalizeTopic(topic, categoryMap, resolvedUsername, user)).filter(Boolean) as Topic[];
   const visibleTopics = sortTopicsByCreatedAt(topics);
   const replies = rawUserActions.map((action) => normalizeUserActionReply(action, categoryMap, resolvedUsername, user)).filter(Boolean) as UserReplyActivity[];
-  return {
+  const result: UserProfile = {
     source: 'linuxdo',
     id: resolvedUsername,
     username: resolvedUsername,
@@ -1057,6 +1160,19 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     hasMoreReplies: wantsReplies && replies.length > 0,
     nextRepliesCursor: wantsReplies && replies.length > 0 ? String(replyOffset + LIST_PAGE_SIZE) : null
   };
+  const candidateCount = 1 + rawTopics.length + rawUserActions.length;
+  const hasUserIdentity = Boolean(user.username || user.name || user.id);
+  const validCount = (hasUserIdentity ? 1 : 0) + visibleTopics.length + replies.length;
+  return annotateSourceDiagnosticSummary(result, {
+    parserVariant: 'discourse-user',
+    candidateCount,
+    validCount,
+    droppedCount: Math.max(0, candidateCount - validCount),
+    partialErrorCount,
+    missingFloorCount: rawUserActions.filter((action) => isRecord(action) && !parsePositiveInteger(action.post_number)).length,
+    hasRepeatedCursor: result.nextTopicsCursor === options.cursor || result.nextRepliesCursor === options.cursor,
+    isParseEmpty: !hasUserIdentity && visibleTopics.length === 0 && replies.length === 0
+  });
 }
 
 export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOptions = {}): Promise<UserProfile> {

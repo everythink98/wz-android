@@ -3,6 +3,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveImageUriToLibrary } from './imageSave';
 import type { Fetcher } from './request';
+import { setDiagnosticWriter } from './diagnostics';
 
 vi.mock('expo-file-system/legacy', () => ({
   EncodingType: { Base64: 'base64' },
@@ -21,6 +22,7 @@ vi.mock('expo-media-library', () => ({
 
 describe('image library saving', () => {
   afterEach(() => {
+    setDiagnosticWriter(null);
     vi.restoreAllMocks();
   });
 
@@ -79,6 +81,24 @@ describe('image library saving', () => {
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
+  });
+
+  it('records permission failure without exporting the image URL', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    vi.mocked(MediaLibrary.requestPermissionsAsync).mockResolvedValue({ granted: false } as MediaLibrary.PermissionResponse);
+
+    await expect(saveImageUriToLibrary('https://cdn.example.com/private-title-91827.jpg')).rejects.toThrow('没有图片保存权限');
+
+    const events = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events).toEqual([
+      expect.objectContaining({ area: 'media', operation: 'save-image', phase: 'intent', channel: 'remote' }),
+      expect.objectContaining({ phase: 'credential', isGranted: false }),
+      expect.objectContaining({ phase: 'finish', outcome: 'blocked', reason: 'permission_denied' })
+    ]);
+    expect(JSON.stringify(events)).not.toContain('private-title-91827');
   });
 
   it('saves data images and removes the temporary file afterwards', async () => {
