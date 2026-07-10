@@ -16,6 +16,7 @@ export const READ_ONLY_PRESS_TARGETS = Object.freeze([
   'id="main-tab-search"',
   'id="main-tab-library"',
   'id="main-tab-more"',
+  'label="展开问题诊断"',
   'id="main-tab-feed"',
   'id="search-submit"',
   'id="search-result-first"',
@@ -309,6 +310,8 @@ async function main() {
     }
     pressReadOnly('id="main-tab-more"');
     waitFor('text="关于阅坛"');
+    pressReadOnly('label="展开问题诊断"');
+    waitFor('label="生成并分享诊断日志"');
     pressReadOnly('id="main-tab-feed"');
     waitFor('id="feed-topic-first"', 60_000);
 

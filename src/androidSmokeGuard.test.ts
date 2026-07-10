@@ -31,6 +31,7 @@ describe('Android release smoke guards', () => {
       'id="main-tab-search"',
       'id="main-tab-library"',
       'id="main-tab-more"',
+      'label="展开问题诊断"',
       'id="main-tab-feed"',
       'id="search-submit"',
       'id="search-result-first"',
@@ -67,6 +68,14 @@ describe('Android release smoke guards', () => {
     expect(smokeScript).toContain("['keyboard', 'dismiss'");
     expect(smokeScript).toContain("['is', 'visible', 'id=\"search-result-first\"'");
     expect(smokeScript).toContain("['back', '--system'");
+    const moreIndex = smokeScript.indexOf("pressReadOnly('id=\"main-tab-more\"');");
+    const diagnosticIndex = smokeScript.indexOf("pressReadOnly('label=\"展开问题诊断\"');");
+    const diagnosticButtonIndex = smokeScript.indexOf("waitFor('label=\"生成并分享诊断日志\"');");
+    const feedIndex = smokeScript.indexOf("pressReadOnly('id=\"main-tab-feed\"');", moreIndex);
+    expect(diagnosticIndex).toBeGreaterThan(moreIndex);
+    expect(diagnosticButtonIndex).toBeGreaterThan(diagnosticIndex);
+    expect(feedIndex).toBeGreaterThan(diagnosticButtonIndex);
+    expect(smokeScript).not.toContain("pressReadOnly('label=\"生成并分享诊断日志\"');");
     expect(smokeScript).not.toContain("['scroll', 'down'");
     expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:uninstall|reinstall)['"]/);
     expect(smokeScript).not.toContain("'--shutdown'");
@@ -127,6 +136,19 @@ describe('Android release smoke guards', () => {
     expect(libraryScreen).toContain("'收藏列表，已加载，没有收藏'");
     expect(libraryScreen).toContain("filteredRecords.length ? '收藏列表，已加载，有收藏'");
     expect(libraryScreen).toContain("!filteredRecords.length ? 'library-favorites-empty'");
+  });
+
+  it('keeps diagnostic logging initialized and wired into the Release More screen', () => {
+    const entry = readProjectFile('index.ts');
+    const appRoot = readProjectFile('src', 'app', 'AppRoot.tsx');
+    const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
+
+    expect(entry).toContain("import { initializeDiagnosticFileLogging } from './src/diagnosticFileStore';");
+    expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(entry.indexOf('registerRootComponent(App);'));
+    expect(appRoot).toContain('useDiagnosticLogController({ metadata: diagnosticMetadata, notify })');
+    expect(appRoot).toContain('onExportDiagnosticLog: exportDiagnosticLogFile');
+    expect(moreScreen).toContain('title="问题诊断"');
+    expect(moreScreen).toContain('onPress={onExportDiagnosticLog}');
   });
 
   it('runs smoke only after APK signer verification and before writing the release manifest', () => {
