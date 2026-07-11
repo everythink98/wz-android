@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
-import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { androidRipple, createStyles, LINK_COLOR, type ReaderTheme } from '../theme';
 
@@ -145,11 +144,6 @@ export function ExpandablePanel({
   const panelExpanded = expanded ?? internalExpanded;
   const Icon = icon;
   const StateIcon = panelExpanded ? ChevronUp : ChevronDown;
-  const bodyStyle = useAnimatedStyle(() => ({
-    opacity: withTiming(panelExpanded ? 1 : 0, { duration: 160 }),
-    transform: [{ translateY: withTiming(panelExpanded ? 0 : -4, { duration: 160 }) }]
-  }), [panelExpanded]);
-
   const toggleExpanded = () => {
     const nextExpanded = !panelExpanded;
     setInternalExpanded(nextExpanded);
@@ -179,9 +173,9 @@ export function ExpandablePanel({
           <StateIcon size={18} color={theme.primary} strokeWidth={1.9} />
         </View>
       </Pressable>
-      <Animated.View pointerEvents={panelExpanded ? 'auto' : 'none'} style={[styles.expandableBody, { display: panelExpanded ? 'flex' : 'none' }, bodyStyle]}>
+      <View pointerEvents={panelExpanded ? 'auto' : 'none'} style={[styles.expandableBody, { display: panelExpanded ? 'flex' : 'none' }]}>
         {children}
-      </Animated.View>
+      </View>
     </View>
   );
 }

@@ -113,10 +113,13 @@ describe('account center view', () => {
     expect(`${more}${panels}${linuxDoModal}`).toContain('刷新页面');
   });
 
-  it('keeps More as a control surface instead of letting scroll momentum swallow taps', () => {
+  it('keeps More controls out of the Android Fabric animated-transform hit-testing path', () => {
     const appRoot = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
+    const appControls = readFileSync(path.join(process.cwd(), 'src/components/AppControls.tsx'), 'utf8');
 
-    expect(appRoot).toContain('decelerationRate={0}');
     expect(appRoot).toContain('keyboardShouldPersistTaps="always"');
+    expect(appRoot).not.toContain('decelerationRate={0}');
+    expect(appControls).not.toContain('react-native-reanimated');
+    expect(appControls).not.toContain('<Animated.View');
   });
 });

@@ -2116,7 +2116,7 @@ export function AppRoot() {
     <LibraryScreen {...libraryProps} />
   ), [libraryProps]);
   const renderMoreTab = useCallback(() => (
-    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} decelerationRate={0} keyboardShouldPersistTaps="always">
+    <ScrollView ref={moreScrollRef} style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="always">
       <MoreScreen {...moreProps} />
     </ScrollView>
   ), [moreProps, styles]);
