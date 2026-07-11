@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import { NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -52,6 +52,13 @@ function currentAppRoute() {
 
 function currentAppScreen(): Screen {
   return currentAppRoute().screen;
+}
+
+export function shouldUpdateAppRootScreen(previousScreen: Screen, nextScreen: Screen) {
+  return previousScreen === 'topic'
+    || previousScreen === 'user'
+    || nextScreen === 'topic'
+    || nextScreen === 'user';
 }
 
 export function currentTopicRouteKey() {
@@ -153,7 +160,7 @@ function MainTabsHost({
   );
 }
 
-export function AppNavigator({
+export const AppNavigator = memo(function AppNavigator({
   moreHasBadge,
   navigationTheme,
   renderFeedTab,
@@ -232,4 +239,4 @@ export function AppNavigator({
       </Stack.Navigator>
     </NavigationContainer>
   );
-}
+});

@@ -61,6 +61,7 @@ export function useTopicController({
   reopenExistingTopicScreenRef,
   repliesAbortRef,
   repliesRequestIdRef,
+  getCurrentScreen,
   screen,
   showYaohuoLogin,
   sourceGateway,
@@ -87,6 +88,7 @@ export function useTopicController({
   reopenExistingTopicScreenRef: MutableRef<boolean>;
   repliesAbortRef: MutableRef<AbortController | null>;
   repliesRequestIdRef: MutableRef<number>;
+  getCurrentScreen: () => Screen;
   screen: Screen;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
@@ -121,6 +123,7 @@ export function useTopicController({
       mode: nocache ? 'refresh' : 'open'
     });
     const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
+    const currentScreen = getCurrentScreen();
     reopenExistingTopicScreenRef.current = false;
     if (!reopenExistingTopicScreen) {
       linuxDoDismissedVerificationTopicKeyRef.current = null;
@@ -128,14 +131,14 @@ export function useTopicController({
     const nextTopicKey = topicKey(topic);
     const activeTopicKey = topicCommands.getCurrentKey() || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
     const opensDifferentTopic = nextTopicKey !== activeTopicKey;
-    if (screen !== 'topic' && !reopenExistingTopicScreen) {
-      topicReturnScreenRef.current = screen;
+    if (currentScreen !== 'topic' && !reopenExistingTopicScreen) {
+      topicReturnScreenRef.current = currentScreen;
       topicNavigation.clearBackStack();
     } else if (opensDifferentTopic) {
       topicNavigation.pushBackStack(topicSnapshot(), topic);
       pushTopicScreen();
     }
-    if (screen !== 'topic' && shouldReuseCurrentTopicDetail({
+    if (currentScreen !== 'topic' && shouldReuseCurrentTopicDetail({
       currentDetail: topicDetail,
       nextTopic: topic,
       nocache,
@@ -149,7 +152,7 @@ export function useTopicController({
       finishDiagnosticTrace(trace, 'success', { state: 'cached-detail-reused' });
       return;
     }
-    if (screen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
+    if (currentScreen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
       markDiagnosticStage(trace, 'guard', { state: 'same-topic' });
       finishDiagnosticTrace(trace, 'noop', { reason: 'duplicate' });
       return;
@@ -258,6 +261,7 @@ export function useTopicController({
     commitReaderData,
     topicNavigation.clearBackStack,
     topicCommands.getCurrentKey,
+    getCurrentScreen,
     handleLinuxDoCloudflareForTopic,
     linuxDoDismissedVerificationTopicKeyRef,
     linuxDoPendingTopicVerifiedRef,
@@ -274,7 +278,6 @@ export function useTopicController({
     repliesRequestIdRef,
     topicCommands.resolveLoad,
     topicCommands.reuse,
-    screen,
     selectedTopic,
     sourceGateway,
     onNodeSeekTopicVerificationRequired,

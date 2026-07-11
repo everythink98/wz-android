@@ -10,13 +10,17 @@ import {
 } from '../diagnostics';
 
 export function useDiagnosticLogController({
+  getCurrentScreen,
   metadata,
   notify
 }: {
+  getCurrentScreen: () => DiagnosticExportMetadata['currentScreen'];
   metadata: DiagnosticExportMetadata;
   notify: (message: string) => void;
 }) {
   const diagnosticBusyRef = useRef(false);
+  const metadataRef = useRef(metadata);
+  metadataRef.current = metadata;
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
 
   const exportDiagnosticLogFile = useCallback(async () => {
@@ -34,7 +38,10 @@ export function useDiagnosticLogController({
       task: async () => {
         try {
           markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
-          await exportDiagnosticLog(metadata);
+          await exportDiagnosticLog({
+            ...metadataRef.current,
+            currentScreen: getCurrentScreen()
+          });
           markDiagnosticStage(trace, 'apply', { state: 'share-completed' });
           notify('诊断日志已生成');
         } catch (error) {
@@ -44,7 +51,7 @@ export function useDiagnosticLogController({
       }
     });
     finishDiagnosticTrace(trace, completed ? 'success' : 'failure', completed ? {} : { reason: failureReason });
-  }, [metadata, notify]);
+  }, [getCurrentScreen, notify]);
 
   return {
     diagnosticBusy,

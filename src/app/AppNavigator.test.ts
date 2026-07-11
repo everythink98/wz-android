@@ -23,7 +23,21 @@ vi.mock('@react-navigation/native-stack', () => ({
 vi.mock('../components/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('../components/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 
-import { navigateMainTab } from './AppNavigator';
+import { AppNavigator, navigateMainTab, shouldUpdateAppRootScreen } from './AppNavigator';
+
+describe('AppNavigator', () => {
+  it('skips parent-only rerenders when its navigation props are unchanged', () => {
+    expect(AppNavigator).toMatchObject({ $$typeof: Symbol.for('react.memo') });
+  });
+
+  it('keeps main-tab state inside the navigator while publishing detail transitions', () => {
+    expect(shouldUpdateAppRootScreen('feed', 'more')).toBe(false);
+    expect(shouldUpdateAppRootScreen('search', 'library')).toBe(false);
+    expect(shouldUpdateAppRootScreen('more', 'topic')).toBe(true);
+    expect(shouldUpdateAppRootScreen('topic', 'more')).toBe(true);
+    expect(shouldUpdateAppRootScreen('topic', 'user')).toBe(true);
+  });
+});
 
 describe('navigateMainTab', () => {
   beforeEach(() => {

@@ -6,7 +6,7 @@ import {
   sanitizeReaderData,
   type ReaderData
 } from '../readerData';
-import { loadReaderData, saveCleanReaderData } from '../readerDataStore';
+import { loadReaderData, saveCleanReaderData, saveReaderSettings } from '../readerDataStore';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -158,7 +158,7 @@ export function useReaderDataController({
     const saveTask = saveQueueRef.current
       .catch(() => undefined)
       .then(waitForNextSaveTurn)
-      .then(() => {
+      .then((): Promise<{ nextJson: string | null; saved: ReaderData }> | null => {
         if (options?.skipIfSuperseded && readerDataRef.current !== next) {
           finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
           return null;
@@ -167,7 +167,10 @@ export function useReaderDataController({
           count: readerDataRecordCount(next),
           state: 'started'
         });
-        const nextJson = JSON.stringify(next);
+        if (options?.mutationReason === 'settings-updated' && previous && isSettingsOnlyCommit(previous, next)) {
+          return saveReaderSettings(next.settings).then(() => ({ nextJson: null, saved: next }));
+        }
+        const nextJson: string | null = JSON.stringify(next);
         return saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson)
           .then((saved) => ({ nextJson, saved }));
       })
@@ -177,7 +180,9 @@ export function useReaderDataController({
         }
         const { nextJson, saved } = result;
         lastPersistedReaderDataRef.current = saved;
-        lastPersistedReaderDataJsonRef.current = nextJson;
+        if (nextJson !== null) {
+          lastPersistedReaderDataJsonRef.current = nextJson;
+        }
         markDiagnosticStage(trace, 'apply', {
           count: readerDataRecordCount(saved),
           state: 'persisted'

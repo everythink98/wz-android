@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const rootDir = path.resolve(__dirname, '..');
 
 function readSource(...parts: string[]) {
-  return readFileSync(path.join(rootDir, ...parts), 'utf8');
+  return readFileSync(path.join(rootDir, ...parts), 'utf8').replaceAll('\r\n', '\n');
 }
 
 describe('network proxy modal guard', () => {

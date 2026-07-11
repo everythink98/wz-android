@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createEmptyReaderData, topicKey } from './readerData';
 import { MAX_BACKUP_JSON_BYTES } from './readerBackup';
-import { loadReaderData, saveCleanReaderData } from './readerDataStore';
+import { loadReaderData, saveCleanReaderData, saveReaderSettings } from './readerDataStore';
 import type { Topic } from './types';
 
 vi.mock('expo-secure-store', () => {
@@ -82,6 +82,24 @@ describe('reader data store', () => {
 
     expect(saved).toBe(data);
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it('persists settings without rewriting the full reader-data snapshot', async () => {
+    const settings = { ...createEmptyReaderData().settings, theme: 'dark' as const };
+
+    await saveReaderSettings(settings);
+
+    expect(AsyncStorage.setItem).toHaveBeenCalledTimes(1);
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('reader-settings', JSON.stringify(settings));
+    expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('reader-data', expect.any(String));
+  });
+
+  it('loads separately persisted settings over the full reader-data snapshot', async () => {
+    const data = createEmptyReaderData();
+    asyncStorage.__store.set('reader-data', JSON.stringify(data));
+    asyncStorage.__store.set('reader-settings', JSON.stringify({ ...data.settings, theme: 'dark' }));
+
+    await expect(loadReaderData()).resolves.toMatchObject({ settings: { theme: 'dark' } });
   });
 
   it('rejects oversized clean data before writing AsyncStorage', async () => {

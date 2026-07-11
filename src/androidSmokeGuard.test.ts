@@ -145,7 +145,7 @@ describe('Android release smoke guards', () => {
 
     expect(entry).toContain("import { initializeDiagnosticFileLogging } from './src/diagnosticFileStore';");
     expect(entry.indexOf('initializeDiagnosticFileLogging();')).toBeLessThan(entry.indexOf('registerRootComponent(App);'));
-    expect(appRoot).toContain('useDiagnosticLogController({ metadata: diagnosticMetadata, notify })');
+    expect(appRoot).toContain('useDiagnosticLogController({ getCurrentScreen, metadata: diagnosticMetadata, notify })');
     expect(appRoot).toContain('onExportDiagnosticLog: exportDiagnosticLogFile');
     expect(moreScreen).toContain('title="问题诊断"');
     expect(moreScreen).toContain('onPress={onExportDiagnosticLog}');

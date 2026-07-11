@@ -33,7 +33,7 @@ import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigationRef, previousTopicRouteKey, pushTopicRoute, type MainTabParamList } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigationRef, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
@@ -175,6 +175,7 @@ export function AppRoot() {
   const { width, height } = useWindowDimensions();
   const [screen, setScreen] = useState<Screen>('feed');
   const screenRef = useRef<Screen>('feed');
+  const getCurrentScreen = useCallback(() => screenRef.current, []);
   const changeScreen = useCallback((nextScreen: Screen) => {
     if (!navigateAppScreen(nextScreen)) {
       pendingNavigationScreenRef.current = nextScreen;
@@ -1046,7 +1047,7 @@ export function AppRoot() {
   const {
     diagnosticBusy,
     exportDiagnosticLogFile
-  } = useDiagnosticLogController({ metadata: diagnosticMetadata, notify });
+  } = useDiagnosticLogController({ getCurrentScreen, metadata: diagnosticMetadata, notify });
   const {
     refreshAccountStatus,
     statusBusy
@@ -1140,7 +1141,9 @@ export function AppRoot() {
       userReturnTopicRef.current = null;
     }
     screenRef.current = nextScreen;
-    setScreen(nextScreen);
+    if (shouldUpdateAppRootScreen(previousScreen, nextScreen)) {
+      setScreen(nextScreen);
+    }
     finishDiagnosticTrace(trace, 'success', { state: 'applied' });
   }, [abortQuotedReplyRequests, activateTopicRoute, clearTopicBackStack, clearTopicRoutes, closeMorePanels, invalidateTopicActionRequests, restoreTopicRoute, stopTopicWork]);
 
@@ -1164,14 +1167,15 @@ export function AppRoot() {
   }, [changeNodeSeekLoginPanel, changeScreen, rememberVisibleNodeSeekCookies]);
 
   const prepareUserNavigation = useCallback(() => {
+    const currentScreen = screenRef.current;
     const routeKey = currentTopicRouteKey();
     if (routeKey) {
       saveTopicRoute(routeKey);
     }
-    if (screen !== 'user') {
-      userReturnScreenRef.current = screen;
+    if (currentScreen !== 'user') {
+      userReturnScreenRef.current = currentScreen;
     }
-    if (screen === 'topic') {
+    if (currentScreen === 'topic') {
       userReturnTopicRef.current = {
         returnScreen: topicReturnScreenRef.current,
         snapshot: topicSnapshotForUserReturn(
@@ -1180,11 +1184,11 @@ export function AppRoot() {
         ),
         backStack: readTopicBackStack()
       };
-    } else if (screen !== 'user') {
+    } else if (currentScreen !== 'user') {
       userReturnTopicRef.current = null;
     }
     changeScreen('user');
-  }, [changeScreen, readTopicBackStack, saveTopicRoute, screen, topicSnapshot]);
+  }, [changeScreen, readTopicBackStack, saveTopicRoute, topicSnapshot]);
 
   const pushTopicScreen = useCallback(() => {
     const routeKey = currentTopicRouteKey();
@@ -1242,6 +1246,7 @@ export function AppRoot() {
     reopenExistingTopicScreenRef,
     repliesAbortRef,
     repliesRequestIdRef,
+    getCurrentScreen,
     screen,
     showYaohuoLogin,
     sourceGateway,
@@ -1309,27 +1314,28 @@ export function AppRoot() {
 
   const pageDiagnosticStateRef = useRef('');
   useEffect(() => {
+    const currentScreen = screenRef.current;
     let itemCount = 0;
     let isBusy = false;
     let hasError = false;
     let emptyReason = 'none';
-    if (screen === 'feed') {
+    if (currentScreen === 'feed') {
       itemCount = shownFeedItems.length;
       isBusy = feedBusy || activeFeedState.loadingMore || activeFeedState.refreshing;
       emptyReason = isBusy ? 'loading' : itemCount ? 'none' : 'no-items';
-    } else if (screen === 'search') {
+    } else if (currentScreen === 'search') {
       itemCount = searchGroups.reduce((count, group) => count + group.items.length, 0);
       isBusy = searchBusy || searchGroups.some((group) => group.loading || group.loadingMore);
       hasError = searchGroups.some((group) => Boolean(group.error));
       emptyReason = !submittedSearchQuery ? 'not-started' : isBusy ? 'loading' : hasError && !itemCount ? 'source-error' : itemCount ? 'none' : 'no-results';
-    } else if (screen === 'library') {
+    } else if (currentScreen === 'library') {
       itemCount = libraryTab === 'users' ? followedUserRecords.length : libraryRecords.length;
       isBusy = !readerDataLoaded;
       emptyReason = isBusy ? 'not-loaded' : itemCount ? 'none' : 'no-items';
-    } else if (screen === 'more') {
+    } else if (currentScreen === 'more') {
       itemCount = 1;
       isBusy = backupBusy || diagnosticBusy || appUpdateBusy || appUpdateDownloading || statusBusy;
-    } else if (screen === 'topic') {
+    } else if (currentScreen === 'topic') {
       itemCount = topicReplies.length;
       isBusy = topicBusy || loadingMoreReplies;
       hasError = Boolean(topicError);
@@ -1340,13 +1346,13 @@ export function AppRoot() {
       hasError = Boolean(userError);
       emptyReason = isBusy ? 'loading' : hasError ? 'load-failed' : userProfile ? (itemCount ? 'none' : 'no-items') : 'no-user';
     }
-    const stateKey = `${screen}:${isBusy}:${hasError}:${itemCount}:${emptyReason}`;
+    const stateKey = `${currentScreen}:${isBusy}:${hasError}:${itemCount}:${emptyReason}`;
     if (pageDiagnosticStateRef.current === stateKey) {
       return;
     }
     pageDiagnosticStateRef.current = stateKey;
     const trace = beginDiagnosticTrace('app', 'page-state', {
-      screen,
+      screen: currentScreen,
       isBusy,
       hasError,
       itemCount,
@@ -1523,7 +1529,8 @@ export function AppRoot() {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      const trace = beginDiagnosticTrace('navigation', 'hardware-back', { screen });
+      const currentScreen = screenRef.current;
+      const trace = beginDiagnosticTrace('navigation', 'hardware-back', { screen: currentScreen });
       const handled = (state: string) => {
         markDiagnosticStage(trace, 'guard', { state });
         finishDiagnosticTrace(trace, 'success', { state });
@@ -1553,21 +1560,21 @@ export function AppRoot() {
         setShowSettingsPanel(false);
         return handled('settings-panel-closed');
       }
-      if (shouldCloseReplyComposerOnBack(screen, replyComposerOpen)) {
+      if (shouldCloseReplyComposerOnBack(currentScreen, replyComposerOpen)) {
         toggleReplyComposer(false);
         return handled('reply-composer-closed');
       }
-      if (screen === 'topic') {
+      if (currentScreen === 'topic') {
         markDiagnosticStage(trace, 'guard', { state: 'topic-back' });
         goBackFromTopic(trace);
         return true;
       }
-      if (screen === 'user') {
+      if (currentScreen === 'user') {
         markDiagnosticStage(trace, 'guard', { state: 'user-back' });
         goBackFromUser(trace);
         return true;
       }
-      if (screen !== 'feed') {
+      if (currentScreen !== 'feed') {
         changeScreen('feed');
         return handled('feed-return');
       }
@@ -1584,7 +1591,6 @@ export function AppRoot() {
     goBackFromTopic,
     goBackFromUser,
     imagePreview,
-    screen,
     closeLinuxDoPanel,
     showLoginPanel,
     showNodeImageAuthPanel,
