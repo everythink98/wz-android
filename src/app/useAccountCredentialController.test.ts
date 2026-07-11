@@ -202,7 +202,35 @@ describe('account credential controller ownership', () => {
       .map((line) => JSON.parse(line) as { operation?: string; phase?: string })
       .filter((event) => event.operation === 'save')
       .map((event) => event.phase))
-      .toEqual(['intent', 'guard', 'persist', 'apply', 'finish']);
+      .toEqual(['intent', 'guard', 'credential', 'persist', 'apply', 'finish']);
+  });
+
+  it('records biometric cancellation without account or password text', async () => {
+    mocks.save.mockRejectedValue(new Error('User canceled the authentication'));
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const { controller } = createController();
+
+    await expect(controller.handleAccountCenterCommand({
+      type: 'save-credential',
+      site: 'nodeseek',
+      account: 'PRIVATE_ACCOUNT_VALUE',
+      password: 'PRIVATE_PASSWORD_VALUE'
+    })).rejects.toThrow('User canceled');
+
+    const events = lines.map((line) => JSON.parse(line) as {
+      operation?: string;
+      phase?: string;
+      outcome?: string;
+      reason?: string;
+      isAuthenticationRequired?: boolean;
+    });
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: 'save', phase: 'intent', isAuthenticationRequired: true }),
+      expect.objectContaining({ operation: 'save', phase: 'credential', isAuthenticationRequired: true }),
+      expect.objectContaining({ operation: 'save', phase: 'finish', outcome: 'canceled', reason: 'canceled' })
+    ]));
+    expect(lines.join('')).not.toMatch(/PRIVATE_ACCOUNT_VALUE|PRIVATE_PASSWORD_VALUE|User canceled/);
   });
 
   it('drops an older summary reload that finishes after a save', async () => {

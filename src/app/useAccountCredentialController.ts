@@ -18,6 +18,7 @@ import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
   markDiagnosticStage,
+  normalizeDiagnosticReason,
   type DiagnosticFields,
   type DiagnosticOutcome,
   type DiagnosticTrace
@@ -319,31 +320,49 @@ export function useAccountCredentialController({
 
     const generation = ++summaryRevisionRef.current;
     if (command.type === 'save-credential') {
-      const trace = beginDiagnosticTrace('credential', 'save', { site: command.site, store: 'secure-store', generation });
+      const isAuthenticationRequired = command.allowUnprotected !== true;
+      const trace = beginDiagnosticTrace('credential', 'save', {
+        site: command.site,
+        store: 'secure-store',
+        generation,
+        isAuthenticationRequired
+      });
       markDiagnosticStage(trace, 'guard', { site: command.site, state: 'pending', generation });
+      markDiagnosticStage(trace, 'credential', {
+        site: command.site,
+        state: isAuthenticationRequired ? 'pending' : 'not-required',
+        isAuthenticationRequired
+      });
       try {
         const summary = await credentialVault.save(command.site, {
           account: command.account,
           password: command.password,
           ...(command.allowUnprotected ? { allowUnprotected: true } : {})
         });
-        markDiagnosticStage(trace, 'persist', { site: command.site, store: 'secure-store', state: 'saved' });
+        const didUseBiometric = summary.protection === 'biometric';
+        markDiagnosticStage(trace, 'persist', {
+          site: command.site,
+          store: 'secure-store',
+          state: 'saved',
+          didUseBiometric
+        });
         setCredentialSummaries((current) => ({ ...current, [command.site]: summary }));
         markDiagnosticStage(trace, 'apply', { site: command.site, state: 'status-updated' });
-        finishDiagnosticTrace(trace, 'success', { site: command.site });
+        finishDiagnosticTrace(trace, 'success', { site: command.site, didUseBiometric });
         notify('登录信息已安全保存。');
         return;
       } catch (error) {
         const blocked = error instanceof CredentialVaultError
           && (error.code === 'biometric-unavailable' || error.code === 'invalid-input');
+        const reason = blocked ? 'unsupported' : normalizeDiagnosticReason(error);
         markDiagnosticStage(trace, blocked ? 'guard' : 'persist', {
           site: command.site,
           state: 'failure',
-          reason: blocked ? 'unsupported' : 'storage_error'
+          reason
         });
-        finishDiagnosticTrace(trace, blocked ? 'blocked' : 'failure', {
+        finishDiagnosticTrace(trace, blocked ? 'blocked' : reason === 'canceled' ? 'canceled' : 'failure', {
           site: command.site,
-          reason: blocked ? 'unsupported' : 'storage_error'
+          reason
         });
         throw error;
       } finally {

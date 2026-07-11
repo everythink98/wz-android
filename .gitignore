@@ -36,4 +36,5 @@ tmp-*.jpeg
 tmp-*.png
 tmp-*.xml
 coverage/
+dogfood-output/
 npm-debug.log*

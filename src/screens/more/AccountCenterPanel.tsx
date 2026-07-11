@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Alert, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '../../credentialVault';
 import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
 import type { UserProfile } from '../../types';
-import { alphaColor, androidRipple, createStyles, LINK_COLOR, type ReaderTheme } from '../../theme';
-import { ExpandablePanel, IconButton, triggerPressFeedback } from '../../components/AppControls';
+import { androidRipple, createStyles, LINK_COLOR, type ReaderTheme } from '../../theme';
+import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '../../components/AppControls';
 import {
   accountCenterSummary,
   createSiteAccountViews,
@@ -23,7 +23,6 @@ export type AccountCenterCommand =
 
 type CommandHandler = (command: AccountCenterCommand) => void | Promise<void>;
 type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
-type AccountActionVariant = 'danger' | 'primary' | 'quiet';
 
 function createAccountCenterStyles(theme: ReaderTheme) {
   const actionColor = theme.dark ? theme.primary : LINK_COLOR;
@@ -129,15 +128,6 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       paddingHorizontal: 14,
       paddingVertical: 6
     },
-    formStack: {
-      gap: 10
-    },
-    formActions: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6
-    },
     action: {
       alignItems: 'center',
       borderRadius: 12,
@@ -153,29 +143,14 @@ function createAccountCenterStyles(theme: ReaderTheme) {
       paddingHorizontal: 10,
       paddingVertical: 7
     },
-    actionPrimary: {
-      backgroundColor: theme.primaryStrong
-    },
-    actionQuiet: {
-      backgroundColor: 'transparent'
-    },
-    actionDanger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08)
-    },
     actionPressed: {
       opacity: 0.72
     },
     actionDisabled: {
       opacity: 0.42
     },
-    actionTextPrimary: {
-      color: theme.onPrimary
-    },
     actionTextQuiet: {
       color: actionColor
-    },
-    actionTextDanger: {
-      color: theme.danger
     }
   });
 }
@@ -185,7 +160,6 @@ function AccountAction({
   disclosure = false,
   disabled = false,
   label,
-  variant = 'quiet',
   accountStyles,
   styles,
   theme,
@@ -195,7 +169,6 @@ function AccountAction({
   disclosure?: boolean;
   disabled?: boolean;
   label: string;
-  variant?: AccountActionVariant;
   accountStyles: AccountCenterStyles;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -206,14 +179,11 @@ function AccountAction({
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ disabled }}
-      android_ripple={androidRipple(variant === 'primary' ? alphaColor(theme.onPrimary, 0.15) : theme.primarySoft)}
+      android_ripple={androidRipple(theme.primarySoft)}
       disabled={disabled}
       style={({ pressed }) => [
         accountStyles.action,
         compact && accountStyles.actionCompact,
-        variant === 'primary' && accountStyles.actionPrimary,
-        variant === 'quiet' && accountStyles.actionQuiet,
-        variant === 'danger' && accountStyles.actionDanger,
         pressed && accountStyles.actionPressed,
         disabled && accountStyles.actionDisabled
       ]}
@@ -222,12 +192,7 @@ function AccountAction({
         onPress();
       }}
     >
-      <Text style={[
-        styles.buttonText,
-        variant === 'primary' && accountStyles.actionTextPrimary,
-        variant === 'quiet' && accountStyles.actionTextQuiet,
-        variant === 'danger' && accountStyles.actionTextDanger
-      ]}>
+      <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>
         {label}
       </Text>
       {disclosure ? <ChevronRight size={15} color={theme.dark ? theme.primary : LINK_COLOR} strokeWidth={1.8} /> : null}
@@ -258,6 +223,8 @@ function CredentialEditor({
   const [account, setAccount] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [keyboardAvoidingEnabled, setKeyboardAvoidingEnabled] = useState(false);
+  const savingRef = useRef(false);
 
   const clearDraft = () => {
     setAccount('');
@@ -266,14 +233,32 @@ function CredentialEditor({
 
   useEffect(() => {
     if (!active) {
+      setKeyboardAvoidingEnabled(false);
       clearDraft();
       setEditing(false);
     }
   }, [active]);
 
+  const closeEditor = () => {
+    if (busy || savingRef.current) {
+      return;
+    }
+    setKeyboardAvoidingEnabled(false);
+    Keyboard.dismiss();
+    clearDraft();
+    setEditing(false);
+  };
+
   const persist = async (allowUnprotected = false) => {
+    if (savingRef.current) {
+      return;
+    }
+    savingRef.current = true;
+    setKeyboardAvoidingEnabled(false);
+    Keyboard.dismiss();
     setBusy(true);
     try {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await onCommand({
         type: 'save-credential',
         site: view.site,
@@ -289,15 +274,15 @@ function CredentialEditor({
           '无法使用身份安全识别',
           '继续后将使用 Android 本机加密保存，但填入时不会再次进行身份安全识别。',
           [
-            { text: '取消', style: 'cancel', onPress: clearDraft },
+            { text: '取消', style: 'cancel' },
             { text: '继续保存', onPress: () => { void persist(true); } }
           ]
         );
       } else {
-        clearDraft();
         Alert.alert('无法保存登录信息', messageFromError(error));
       }
     } finally {
+      savingRef.current = false;
       setBusy(false);
     }
   };
@@ -351,65 +336,84 @@ function CredentialEditor({
           />
         ) : null}
       </View>
-      {editing ? (
-        <View style={accountStyles.formStack}>
-          <TextInput
-            accessibilityLabel={`${view.label} 登录账号`}
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect={false}
-            placeholder="账号 / 邮箱"
-            placeholderTextColor={theme.muted}
-            style={styles.input}
-            value={account}
-            onChangeText={setAccount}
+      <Modal transparent visible={editing} animationType="fade" onRequestClose={closeEditor}>
+        <KeyboardAvoidingView behavior="height" enabled={keyboardAvoidingEnabled} style={styles.searchFilterModalRoot}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`关闭${view.label}自动填入设置`}
+            disabled={busy}
+            style={styles.searchFilterBackdrop}
+            onPress={closeEditor}
           />
-          <TextInput
-            accessibilityLabel={`${view.label} 登录密码`}
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect={false}
-            placeholder="密码"
-            placeholderTextColor={theme.muted}
-            secureTextEntry
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-          />
-          <View style={accountStyles.formActions}>
-            <AccountAction
-              label={busy ? '保存中' : '保存'}
-              disabled={busy || !account.trim() || !password}
-              variant="primary"
-              accountStyles={accountStyles}
-              styles={styles}
-              theme={theme}
-              onPress={() => { void persist(); }}
-            />
-            <AccountAction
-              compact
-              label="取消"
-              accountStyles={accountStyles}
-              styles={styles}
-              theme={theme}
-              disabled={busy}
-              onPress={() => { clearDraft(); setEditing(false); }}
-            />
-            {view.credential.state !== 'missing' ? (
-              <AccountAction
+          <View style={styles.searchFilterSheet}>
+            <View style={styles.searchFilterHandle} />
+            <View style={styles.searchFilterHeader}>
+              <View style={styles.flex}>
+                <Text style={styles.searchFilterTitle}>
+                  {view.credential.state === 'missing'
+                    ? '设置自动填入'
+                    : view.credential.state === 'invalidated'
+                      ? '重新设置自动填入'
+                      : '管理自动填入'}
+                </Text>
+                <Text style={styles.meta}>{view.label}</Text>
+              </View>
+            </View>
+            <ScrollView
+              style={styles.searchFilterBody}
+              contentContainerStyle={styles.searchFilterBodyInner}
+              keyboardShouldPersistTaps="always"
+            >
+              <View style={styles.stack}>
+                <Text style={styles.panelTitle}>账号 / 邮箱</Text>
+                <TextInput
+                  accessibilityLabel={`${view.label} 登录账号`}
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  autoCorrect={false}
+                  placeholder="账号 / 邮箱"
+                  placeholderTextColor={theme.muted}
+                  style={styles.input}
+                  value={account}
+                  onFocus={() => setKeyboardAvoidingEnabled(true)}
+                  onChangeText={setAccount}
+                />
+              </View>
+              <View style={styles.stack}>
+                <Text style={styles.panelTitle}>密码</Text>
+                <TextInput
+                  accessibilityLabel={`${view.label} 登录密码`}
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  autoCorrect={false}
+                  placeholder="密码"
+                  placeholderTextColor={theme.muted}
+                  secureTextEntry
+                  style={styles.input}
+                  value={password}
+                  onFocus={() => setKeyboardAvoidingEnabled(true)}
+                  onChangeText={setPassword}
+                />
+              </View>
+            </ScrollView>
+            <View style={styles.searchFilterActions}>
+              {view.credential.state !== 'missing' ? (
+                <AppButton compact label="删除" variant="danger" styles={styles} disabled={busy} onPress={confirmDelete} />
+              ) : null}
+              <View style={styles.flex} />
+              <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeEditor} />
+              <AppButton
                 compact
-                label="删除"
-                variant="danger"
-                accountStyles={accountStyles}
+                label={busy ? '保存中' : '保存'}
+                variant="primary"
                 styles={styles}
-                theme={theme}
-                disabled={busy}
-                onPress={confirmDelete}
+                disabled={busy || !account.trim() || !password}
+                onPress={() => { void persist(); }}
               />
-            ) : null}
+            </View>
           </View>
-        </View>
-      ) : null}
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
