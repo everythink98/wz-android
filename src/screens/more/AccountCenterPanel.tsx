@@ -239,6 +239,18 @@ function CredentialEditor({
     }
   }, [active]);
 
+  useEffect(() => {
+    if (!editing) {
+      return;
+    }
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => setKeyboardAvoidingEnabled(true));
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setKeyboardAvoidingEnabled(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [editing]);
+
   const closeEditor = () => {
     if (busy || savingRef.current) {
       return;
