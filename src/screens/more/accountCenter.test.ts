@@ -112,4 +112,11 @@ describe('account center view', () => {
     expect(`${more}${panels}${linuxDoModal}`).toContain('清除登录');
     expect(`${more}${panels}${linuxDoModal}`).toContain('刷新页面');
   });
+
+  it('keeps More as a control surface instead of letting scroll momentum swallow taps', () => {
+    const appRoot = readFileSync(path.join(process.cwd(), 'src/app/AppRoot.tsx'), 'utf8');
+
+    expect(appRoot).toContain('decelerationRate={0}');
+    expect(appRoot).toContain('keyboardShouldPersistTaps="always"');
+  });
 });
