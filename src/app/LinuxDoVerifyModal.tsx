@@ -6,6 +6,7 @@ import type { LoginNavigationRequest } from '../appTypes';
 import { AppButton } from '../components/AppControls';
 import { LoginWebViewModal } from '../components/LoginWebViewModal';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
+import { LOGIN_FORM_ADAPTERS } from '../loginFormAdapters';
 import type { SiteSessionViewModel } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 
@@ -14,6 +15,10 @@ const LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
 
 export function LinuxDoVerifyModal({
   checking,
+  credentialAttempt,
+  credentialFillPending,
+  credentialSaved,
+  loginFormMode,
   linuxDoSession,
   linuxDoWebViewError,
   linuxDoWebViewKey,
@@ -29,12 +34,18 @@ export function LinuxDoVerifyModal({
   onClearLinuxDoCookie,
   handleLinuxDoNavigation,
   onHandleLinuxDoMessage,
+  onLoginFormMessage,
+  onRequestCredentialFill,
   onResetLinuxDoWebView,
   onSetLinuxDoWebViewError,
   onSetLoadingLinuxDoPage,
   onShowLinuxDoPanelChange
 }: {
   checking: boolean;
+  credentialAttempt: number;
+  credentialFillPending: boolean;
+  credentialSaved: boolean;
+  loginFormMode: boolean;
   linuxDoSession: SiteSessionViewModel;
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
@@ -50,8 +61,10 @@ export function LinuxDoVerifyModal({
   onClearLinuxDoCookie: () => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
+  onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  onRequestCredentialFill: () => void;
   onResetLinuxDoWebView: () => void;
-  onSetLinuxDoWebViewError: (value: string, webViewKey?: number) => void;
+  onSetLinuxDoWebViewError: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
   onSetLoadingLinuxDoPage: (value: boolean, webViewKey?: number) => void;
   onShowLinuxDoPanelChange: (value: boolean) => void;
 }) {
@@ -71,10 +84,10 @@ export function LinuxDoVerifyModal({
     }
     const timeout = setTimeout(() => {
       onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。', linuxDoWebViewKey);
+      onSetLinuxDoWebViewError('linux.do 页面打开超时：请检查模拟器网络后刷新页面。', linuxDoWebViewKey, credentialAttempt);
     }, LINUXDO_WEBVIEW_LOADING_TIMEOUT_MS);
     return () => clearTimeout(timeout);
-  }, [linuxDoWebViewKey, loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
+  }, [credentialAttempt, linuxDoWebViewKey, loadingLinuxDoPage, onSetLinuxDoWebViewError, onSetLoadingLinuxDoPage, showLinuxDoPanel]);
   return (
     <LoginWebViewModal
       visible={showLinuxDoPanel}
@@ -88,6 +101,7 @@ export function LinuxDoVerifyModal({
       onClose={() => onShowLinuxDoPanelChange(false)}
       actions={(
         <View style={styles.actions}>
+          {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
           <AppButton label={checking ? '检测中' : '检测状态'} styles={styles} disabled={checking} onPress={onCheckLinuxDoCookie} />
           <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLinuxDoCookie} />
           <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={onResetLinuxDoWebView} />
@@ -98,7 +112,7 @@ export function LinuxDoVerifyModal({
         <WebView
           key={linuxDoWebViewKey}
           ref={linuxDoWebViewRef}
-          source={{ uri: LINUXDO_VERIFY_URL }}
+          source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.linuxdo.loginUrl : LINUXDO_VERIFY_URL }}
           androidLayerType="software"
           javaScriptEnabled
           javaScriptCanOpenWindowsAutomatically={false}
@@ -117,25 +131,32 @@ export function LinuxDoVerifyModal({
           onLoadEnd={(event) => {
             markLinuxDoPageReady();
             if (!('code' in event.nativeEvent)) {
-              onSetLinuxDoWebViewError('', linuxDoWebViewKey);
+              onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             }
             linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+            if (loginFormMode) {
+              linuxDoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(credentialAttempt));
+            }
           }}
           onLoadStart={() => {
-            onSetLinuxDoWebViewError('', linuxDoWebViewKey);
+            onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             if (!linuxDoWebViewReadyRef.current) {
               onSetLoadingLinuxDoPage(true, linuxDoWebViewKey);
             }
           }}
-          onMessage={(event) => onHandleLinuxDoMessage(event, linuxDoWebViewKey)}
+          onMessage={(event) => {
+            if (!onLoginFormMessage(event)) {
+              onHandleLinuxDoMessage(event, linuxDoWebViewKey);
+            }
+          }}
           onError={(event) => {
             onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-            onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey);
+            onSetLinuxDoWebViewError(`linux.do 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`, linuxDoWebViewKey, credentialAttempt);
           }}
           renderError={() => <View style={styles.webViewErrorPlaceholder} />}
           onRenderProcessGone={() => {
             onSetLoadingLinuxDoPage(false, linuxDoWebViewKey);
-            onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey);
+            onSetLinuxDoWebViewError('linux.do 验证页面已停止，请刷新页面重试。', linuxDoWebViewKey, credentialAttempt);
           }}
           onShouldStartLoadWithRequest={handleLinuxDoNavigation}
         />

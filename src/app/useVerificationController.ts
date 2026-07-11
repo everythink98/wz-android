@@ -24,6 +24,7 @@ import { errorMessage } from '../appUtils';
 import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
 import type { Screen } from '../appTypes';
 import type { SiteSessionEvent } from '../siteSessionState';
+import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -63,6 +64,7 @@ export function useVerificationController({
   linuxDoWebViewUserAgent,
   linuxDoWebViewUserAgentRef,
   notify,
+  onLoginWebViewFailure,
   openTopicRef,
   pendingLinuxDoTopicRef,
   reopenExistingTopicScreenRef,
@@ -105,6 +107,7 @@ export function useVerificationController({
   linuxDoWebViewUserAgent: string;
   linuxDoWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
+  onLoginWebViewFailure: (site: 'linuxdo', attempt: number, reason: LoginWebViewFailureReason) => void;
   openTopicRef: Ref<((topic: Topic, nocache?: boolean) => Promise<void>) | null>;
   pendingLinuxDoTopicRef: Ref<Topic | null>;
   reopenExistingTopicScreenRef: Ref<boolean>;
@@ -127,6 +130,7 @@ export function useVerificationController({
   updateNodeSeekSession: (event: SiteSessionEvent) => void;
 }) {
   const linuxDoVerificationTraceRef = useRef<DiagnosticTrace | null>(null);
+  const linuxDoTerminalWebViewSessionRef = useRef<number | null>(null);
 
   const finishLinuxDoVerificationTrace = useCallback((
     trace: DiagnosticTrace,
@@ -217,19 +221,27 @@ export function useVerificationController({
     }
   }, [linuxDoWebViewSessionRef, setLoadingLinuxDoPage]);
 
-  const setLinuxDoWebViewErrorForSession = useCallback((value: string, webViewKey?: number) => {
+  const setLinuxDoWebViewErrorForSession = useCallback((value: string, webViewKey?: number, credentialAttempt = 0) => {
     if (webViewKey !== undefined && webViewKey !== linuxDoWebViewSessionRef.current) {
       return;
     }
     setLinuxDoWebViewError(value);
+    const session = webViewKey ?? linuxDoWebViewSessionRef.current;
+    if (value && linuxDoTerminalWebViewSessionRef.current === session) {
+      return;
+    }
     const trace = linuxDoVerificationTraceRef.current
       || (value && showLinuxDoPanelRef.current ? currentLinuxDoVerificationTrace('open') : null);
-    if (value && trace) {
-      const reason = value.includes('已停止') ? 'renderer_gone' : value.includes('超时') ? 'timeout' : 'network_error';
-      markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'failure', reason });
-      finishLinuxDoVerificationTrace(trace, 'failure', { reason });
+    if (value) {
+      linuxDoTerminalWebViewSessionRef.current = session;
+      const reason: LoginWebViewFailureReason = value.includes('已停止') ? 'renderer_gone' : value.includes('超时') ? 'timeout' : 'network_error';
+      if (trace) {
+        markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'failure', reason });
+        finishLinuxDoVerificationTrace(trace, 'failure', { reason });
+      }
+      onLoginWebViewFailure('linuxdo', credentialAttempt, reason);
     }
-  }, [currentLinuxDoVerificationTrace, finishLinuxDoVerificationTrace, linuxDoWebViewSessionRef, setLinuxDoWebViewError, showLinuxDoPanelRef]);
+  }, [currentLinuxDoVerificationTrace, finishLinuxDoVerificationTrace, linuxDoWebViewSessionRef, onLoginWebViewFailure, setLinuxDoWebViewError, showLinuxDoPanelRef]);
 
   const resetLinuxDoWebView = useCallback(() => {
     if (linuxDoPanelClosingSessionRef.current !== null) {
@@ -414,7 +426,7 @@ export function useVerificationController({
       if (linuxDoPanelClosingSessionRef.current !== null) {
         markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'busy' });
         finishLinuxDoVerificationTrace(trace, 'blocked', { reason: 'busy' });
-        return;
+        return false;
       }
       markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'open' });
       if (!pendingLinuxDoTopicRef.current) {
@@ -423,9 +435,10 @@ export function useVerificationController({
       }
       setShowLinuxDoPanel(true);
       resetLinuxDoWebView();
-      return;
+      return true;
     }
     closeLinuxDoPanel();
+    return true;
   }, [
     closeLinuxDoPanel,
     currentLinuxDoVerificationTrace,

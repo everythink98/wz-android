@@ -14,7 +14,7 @@
 - 登录、Cookie、验证、备份、发布和安装属于高风险功能；只跑 UI 不算通过。
 - 只打开 App、看首页显示、截图留存，都不算完整测试。
 - 优化代码前先看 `docs/emulator-baseline.md`；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异。
-- 登录和验证网页必须从 App 的 `更多 -> 账号与验证` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
+- 登录和验证网页必须从 App 的 `更多 -> 账号中心` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
 - 用户提供 NodeSeek、linux.do、V2EX 或妖火主题链接用于效果验证或排障时，先解析来源和主题 id，再用模拟器 App 内详情页验证；不得用 Chrome 或桌面浏览器代替。该内部验证流程不代表产品需要支持外部链接直达。
 - 新增或修改依赖登录态的能力时，必须从 App 内原站同类页面核实字段、权限、入口和请求；未登录页面、桌面浏览器、第三方客户端、作者名或猜测的 API 不能作为依据。必要时可通过 WebView 调试查看 DOM、全局数据、已加载 JS 和 network，但不得输出 Cookie、token 或含敏感信息的截图、UI dump；临时取证文件只能保留在本机且不得提交。
 - 单一账号、页面或当前已加载 JS/API 中没有对应入口或行为，不足以证明原站不支持。证据不足时不得猜测实现或新增入口，也不得据此移除或隐藏已有能力；应说明证据缺口。
@@ -55,9 +55,9 @@
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
 | 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、回复列表、分页游标正确；主题和回复的来源、分类、标题、作者、时间、楼层、摘要按原站支持范围显示；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/localYaohuo.test.ts`、`src/yaohuoApi.test.ts`、`src/screens/user/userScreenItems.test.ts`、`src/components/TopicCard.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupImportFile.test.ts`、`src/backupOperation.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
-| 登录 / 验证 / Cookie | Cookie 只保存在本机；检查登录态不泄露敏感值；Cloudflare / 验证状态用结构化状态判断；不能靠显示文字当流程条件；页面提示必须区分未登录、登录失效、需要验证和普通失败 | `src/siteSessionState.test.ts`、`src/nodeseekCookies.test.ts`、`src/nodeseekCookieBridge.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/sourceErrors.test.ts`、`src/appSecurity.test.ts` |
+| 登录 / 验证 / Cookie / 凭据 | `SiteSessionState` 是三站唯一登录状态来源；Cookie 与保存凭据互不删除；账号密码仅进 SecureStore；填入前后都校验可信 URL、路径和字段，触发输入事件但不提交；检查登录态和诊断不泄露敏感值；页面提示区分未登录、失效、验证和普通失败 | `src/siteSessionState.test.ts`、`src/app/sessionControllerHelpers.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/nodeseekCookies.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/appSecurity.test.ts` |
 | 问题诊断 | Release 常驻入口可生成 UTF-8 JSON Lines 并打开系统分享；日志轮转和导出不阻塞业务；临时分享文件随后删除；所有字段经过白名单和脱敏；页面提示显示问题附截图、内容特例附原帖链接 | `src/diagnostics.test.ts`、`src/diagnosticFileStore.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/app/useReaderDataController.test.ts`、`src/imageSave.test.ts` |
-| 更多页 / 外观 / 更新 | 个人中心从会话 `currentUser` 显示当前账号主页；`刷新账号状态` 位于个人中心；进入 More 页不自动刷新；冷启动静默刷新不阻塞首页；账号与验证不显示 Cookie 名称且只保留登录、验证、清除登录、NodeImage 和 linux.do 等级入口；服务器代理配置不进备份，启用失败不静默直连；开发版测试工具独立于账号区；备份、状态检查、外观设置和更新检查不互相占用错误状态；更新按钮只在有新版时提示 | `src/app/accountStatusHelpers.test.ts`、`src/screens/more/personalCenterItems.test.ts`、`src/siteSessionState.test.ts`、`src/nodeseekCookies.test.ts`、`src/networkProxy.test.ts`、`src/networkProxyControllerGuard.test.ts`、`src/networkProxyModalGuard.test.ts`、`src/webViewProxyGuard.test.ts`、`src/appUpdate.test.ts`、`src/appUpdateProxyGuard.test.ts`、`src/releasePackaging.test.ts` |
+| 更多页 / 外观 / 更新 | 单一账号中心按 NodeSeek、linux.do、妖火排列且只显示一站详情；顶部区分待处理、网站登录和自动填入数量；原主页、登录 / 验证、检测、清除登录、刷新网页、签到、NodeImage 和等级入口均保留；进入 More 页不自动刷新；测试工具独立；代理、备份、诊断、外观和更新行为不变 | `src/app/accountStatusHelpers.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/siteSessionState.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/networkProxy.test.ts`、`src/webViewProxyGuard.test.ts`、`src/appUpdate.test.ts`、`src/releasePackaging.test.ts` |
 | 发布 / 安装 | 版本号一致；release 先跑测试、文档和无用代码检查；正式签名有效；按设备 ABI 覆盖安装签名 APK；只读 smoke 通过；敏感文件不提交 | `src/releasePackaging.test.ts`、`src/androidSmokeGuard.test.ts`、`npm run release:android` |
 
 ## 文档与发布候选 smoke
@@ -197,7 +197,7 @@ npm run typecheck
 
 在不卸载、不清数据、不清 Cookie 的前提下执行：
 
-1. `更多 -> 账号与验证` 确认 NodeSeek、linux.do、妖火是可写登录态；NodeImage 显示已保存或可自动授权。
+1. `更多 -> 账号中心` 确认 NodeSeek、linux.do、妖火是可写登录态；NodeImage 显示已保存或可自动授权。
 2. NodeSeek 无 Key 或强制重新授权时，点击图片按钮应打开 App 内 NodeImage 授权页；授权成功后关闭弹层并显示已保存。
 3. force-stop 后重新打开 App，再进 NodeSeek 回复框点图片，已有 Key 时应直接打开文件选择器，不再弹授权。
 4. 默认只打开三站文件选择器并取消，确认回复框和草稿状态没有损坏；上传请求、响应解析和草稿插入由自动测试覆盖。
@@ -245,12 +245,11 @@ npm run typecheck
 | 收藏 | 收藏数、来源筛选、分类筛选、已收藏 / 已读状态 | 取消收藏 |
 | 历史 | 历史数、最近阅读、已读状态 | 删除、清空历史 |
 | 关注用户 | 关注数、用户页、用户主题列表、返回 | 取消关注 |
-| 个人中心 | 已识别数量、三站当前账号主页、`刷新账号状态` 按钮、手动刷新结果；冷启动首页不等待账号刷新 | 打开原站主页、退出登录、清除登录、手工改 Cookie |
-| 账号与验证 | 三站登录 / 验证状态；从 App 内打开登录 / 验证页；确认包名仍为 `com.wz.reader` | 清除登录、退出登录、手工改 Cookie |
+| 账号中心 | 三站顺序、单站详情、真实状态、身份、凭据摘要、主操作、顶部唯一公共 `刷新账号状态` 和全部原服务入口；从 App 内打开登录 / 验证页并确认包名仍为 `com.wz.reader`；临时匿名下账号中心与弹层同步，关闭后恢复；测试凭据填入但不提交并在结束前删除 | 清除网站登录、退出登录、手工改 Cookie、提交测试登录、真实签到 |
 | 回复编辑 / 图片上传 | 三站回复框、失败后可继续编辑、格式按钮、文件选择器打开和取消、NodeImage 授权和缓存；真实上传及草稿插入默认由自动测试覆盖 | 真实上传、真实发送回复、清除 NodeImage Key |
 | 回复删除 | 删除入口和权限显示；确认框取消及删除后消失默认由自动测试覆盖 | 点击已有内容的删除入口、真实新发回复、真实删除回复、删除旧回复、删除他人回复、清数据制造状态 |
 | 测试工具 | 只在开发版可见；正式版不可见；临时匿名开关独立于账号区；说明“不删除 Cookie” | 清数据、退出登录、清 Cookie |
-| 更多页 | 版本、检查更新、个人中心当前账号识别、linux.do 等级、服务器代理入口、问题诊断入口、备份入口、外观入口；诊断日志验收时打开分享面板后取消，确认 App 可继续使用 | 备份导出、导入、安装更新、切换外观、启用未知代理 |
+| 更多页 | 版本、检查更新、账号中心、linux.do 等级、服务器代理入口、问题诊断入口、备份入口、外观入口；诊断日志验收时打开分享面板后取消，确认 App 可继续使用 | 备份导出、导入、安装更新、切换外观、启用未知代理 |
 
 ## 改动类型对应验证
 
@@ -259,7 +258,7 @@ npm run typecheck
 | 来源解析、搜索、详情、用户页 | 对应来源测试、`src/forumApi.test.ts`、`src/localSources.test.ts`、`npm run typecheck`、模拟器验收 |
 | App controller、请求归属、取消请求 | 对应 controller helper 测试、`src/requestOwnership.test.ts`、`npm run typecheck`、模拟器验收 |
 | 登录、验证、Cookie、写操作 | 相关 cookie / action / session 测试、`src/appSecurity.test.ts`、`npm run typecheck`、模拟器验收 |
-| 个人中心账号刷新、NodeSeek 当前账号兜底 | `src/forumApi.test.ts`、`src/nodeseekCookies.test.ts`、`src/loginWebViewScripts.test.ts`、`src/screens/more/personalCenterItems.test.ts`、`src/siteSessionState.test.ts`、`npm run typecheck`、模拟器验收 |
+| 账号中心、凭据保存 / 填入、NodeSeek 当前账号兜底 | `src/forumApi.test.ts`、`src/nodeseekCookies.test.ts`、`src/loginWebViewScripts.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/siteSessionState.test.ts`、`src/app/sessionControllerHelpers.test.ts`、`npm run typecheck`、模拟器验收 |
 | 回复编辑、楼层回复、图片上传、NodeImage Key | 回复图片上传验收、相关 action / WebView script 测试、`npm run typecheck`、模拟器验收 |
 | 回复删除、删除权限、评论 id / 删除链接解析 | 回复删除验收、相关 action / 来源解析测试、`npm run typecheck`、模拟器验收 |
 | 收藏、历史、备份 / 恢复 | reader data / backup 测试、`src/appSecurity.test.ts`、`npm run typecheck` |

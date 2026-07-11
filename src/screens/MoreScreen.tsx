@@ -1,26 +1,26 @@
 import { memo, type RefObject, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { Activity, Bug, DatabaseBackup, LogIn, Server, Settings, User, Wrench } from 'lucide-react-native';
+import { Activity, Bug, DatabaseBackup, Server, Settings, Wrench } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
 import type { ReaderSettings } from '../readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
 import type { DevAnonymousOverrides, SessionSite, SiteSessionViewModels } from '../siteSessionState';
-import type { UserProfile } from '../types';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
   AppearancePanel,
   BackupRestorePanel,
-  LinuxDoVerifyPanel,
   LinuxDoLevelPanel,
   NodeSeekLoginPanel,
   YaohuoLoginPanel
 } from './more/MorePanels';
 import { NetworkProxyModal } from './more/NetworkProxyModal';
-import { createPersonalCenterItems } from './more/personalCenterItems';
+import { AccountCenterPanel, type AccountCenterCommand } from './more/AccountCenterPanel';
+import type { CredentialSummaries } from './more/accountCenter';
+import type { AccountCredentialFillAttempt } from '../app/useAccountCredentialController';
 export const MoreScreen = memo(function MoreScreen({
   checking,
   appUpdateBusy,
@@ -28,7 +28,9 @@ export const MoreScreen = memo(function MoreScreen({
   appUpdateDownloadProgress,
   appUpdateInfo,
   appUpdateMessage,
-  loginState,
+  credentialLoginSite,
+  credentialFillAttempt,
+  credentialSummaries,
   loadingLoginPage,
   loadingYaohuoLoginPage,
   linuxDoLevelBusy,
@@ -36,6 +38,7 @@ export const MoreScreen = memo(function MoreScreen({
   linuxDoLevelProfile,
   nodeImageApiKeyBusy,
   nodeImageApiKeySaved,
+  nodeSeekUserId,
   nodeSeekWebViewUserAgent,
   settings,
   showLoginPanel,
@@ -49,7 +52,7 @@ export const MoreScreen = memo(function MoreScreen({
   diagnosticBusy,
   theme,
   webViewRef,
-  yaohuoLoginState,
+  pendingCredentialFillSite,
   yaohuoLoginPrompt,
   yaohuoWebViewRef,
   sessionViewModels,
@@ -61,8 +64,7 @@ export const MoreScreen = memo(function MoreScreen({
   networkProxyState,
   networkProxySummary,
   webViewBlockMessage,
-  onRefreshAccountStatus,
-  onOpenUser,
+  onAccountCenterCommand,
   onCheckAppUpdate,
   onDownloadAppUpdate,
   onCheckIn,
@@ -87,7 +89,7 @@ export const MoreScreen = memo(function MoreScreen({
   onSetLoadingYaohuoLoginPage,
   onShowLoginPanelChange,
   onShowYaohuoLoginPanelChange,
-  onShowLinuxDoPanelChange,
+  onLoginFormMessage,
   onShowNetworkProxyPanelChange,
   onShowSettingsPanelChange,
   onToggleDevAnonymousOverride,
@@ -104,7 +106,9 @@ export const MoreScreen = memo(function MoreScreen({
   appUpdateDownloadProgress: AppUpdateDownloadProgress | null;
   appUpdateInfo: AppUpdateInfo | null;
   appUpdateMessage: string;
-  loginState: string;
+  credentialLoginSite: SessionSite | null;
+  credentialFillAttempt: AccountCredentialFillAttempt | null;
+  credentialSummaries: CredentialSummaries;
   loadingLoginPage: boolean;
   loadingYaohuoLoginPage: boolean;
   linuxDoLevelBusy: boolean;
@@ -112,6 +116,7 @@ export const MoreScreen = memo(function MoreScreen({
   linuxDoLevelProfile: LinuxDoLevelProfile | null;
   nodeImageApiKeyBusy: boolean;
   nodeImageApiKeySaved: boolean;
+  nodeSeekUserId: number | null;
   nodeSeekWebViewUserAgent: string;
   settings: ReaderSettings;
   showLoginPanel: boolean;
@@ -125,7 +130,7 @@ export const MoreScreen = memo(function MoreScreen({
   diagnosticBusy: boolean;
   theme: ReaderTheme;
   webViewRef: RefObject<WebView | null>;
-  yaohuoLoginState: string;
+  pendingCredentialFillSite: SessionSite | null;
   yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   sessionViewModels: SiteSessionViewModels;
@@ -137,8 +142,7 @@ export const MoreScreen = memo(function MoreScreen({
   networkProxyState: NetworkProxyState;
   networkProxySummary: string;
   webViewBlockMessage: string;
-  onRefreshAccountStatus: (options?: { silent?: boolean }) => void;
-  onOpenUser: (user: UserProfile) => void;
+  onAccountCenterCommand: (command: AccountCenterCommand) => void | Promise<void>;
   onCheckAppUpdate: () => void;
   onDownloadAppUpdate: () => void;
   onCheckIn: () => void;
@@ -154,8 +158,8 @@ export const MoreScreen = memo(function MoreScreen({
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
-  onNodeSeekLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
-  onYaohuoLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
+  onNodeSeekLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
+  onYaohuoLoginWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
   onExportBackupFile: () => void;
   onExportDiagnosticLog: () => void;
   onImportBackupFile: () => void;
@@ -163,7 +167,7 @@ export const MoreScreen = memo(function MoreScreen({
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onShowLoginPanelChange: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
-  onShowLinuxDoPanelChange: (value: boolean) => void;
+  onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
   onShowNetworkProxyPanelChange: (value: boolean) => void;
   onShowSettingsPanelChange: (value: boolean) => void;
   onToggleDevAnonymousOverride: (site: SessionSite) => void;
@@ -177,14 +181,11 @@ export const MoreScreen = memo(function MoreScreen({
   const [backupExpanded, setBackupExpanded] = useState(false);
   const [diagnosticExpanded, setDiagnosticExpanded] = useState(false);
   const [accountExpanded, setAccountExpanded] = useState(false);
-  const [personalCenterExpanded, setPersonalCenterExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
-  const personalCenterItems = createPersonalCenterItems(sessionViewModels);
-  const personalCenterReadyCount = personalCenterItems.filter((item) => item.canOpen).length;
   const updateNotes = appUpdateInfo?.notes.trim();
   const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
   const appUpdateProgressWidth = appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null ? `${appUpdateDownloadProgress.percent}%` as `${number}%` : null;
@@ -253,113 +254,98 @@ export const MoreScreen = memo(function MoreScreen({
         {appUpdateStatus && !appUpdateDownloadProgress ? <Text style={styles.meta}>{appUpdateStatus}</Text> : null}
         {appUpdateInfo && updateNotes ? <Text style={styles.meta}>{updateNotes}</Text> : null}
       </View>
-      <ExpandablePanel
-        quiet
-        title="个人中心"
-        meta={personalCenterReadyCount ? `已识别 ${personalCenterReadyCount}/3 · 当前登录账号主页` : '未识别当前账号'}
-        icon={User}
-        expanded={personalCenterExpanded}
-        styles={styles}
-        theme={theme}
-        onExpandedChange={setPersonalCenterExpanded}
-      >
-        {personalCenterItems.map((item) => (
-          <MenuButton
-            key={item.source}
-            disabled={!item.canOpen}
-            icon={User}
-            label={item.label}
-            value={item.canOpen ? `${item.value} · 我的主页` : item.value}
-            styles={styles}
-            theme={theme}
-            onPress={() => {
-              if (item.user) {
-                onOpenUser(item.user);
-              }
-            }}
-          />
-        ))}
-        <View style={styles.stack}>
-          <AppButton label={statusBusy ? '刷新中' : '刷新账号状态'} styles={styles} disabled={statusBusy} onPress={() => onRefreshAccountStatus()} />
-        </View>
-      </ExpandablePanel>
-      <ExpandablePanel
-        quiet
-        title="账号与验证"
-        meta={`NodeSeek ${nodeSeekSession.summaryLabel} · 妖火 ${yaohuoSession.summaryLabel} · linux.do ${linuxDoSession.summaryLabel}`}
-        icon={LogIn}
+      <AccountCenterPanel
+        credentials={credentialSummaries}
         expanded={accountExpanded}
+        forcedSite={showLoginPanel ? 'nodeseek' : showYaohuoLoginPanel ? 'yaohuo' : showLinuxDoPanel ? 'linuxdo' : null}
+        pendingFillSite={pendingCredentialFillSite}
+        nodeSeekUserId={nodeSeekUserId}
+        sessions={sessionViewModels}
+        siteContent={{
+          nodeseek: (
+            <NodeSeekLoginPanel
+              checking={checking}
+              credentialAttempt={credentialFillAttempt?.site === 'nodeseek' ? credentialFillAttempt.attempt : 0}
+              credentialFillPending={pendingCredentialFillSite === 'nodeseek'}
+              credentialSaved={credentialSummaries.nodeseek.hasCredential}
+              nodeSeekSession={nodeSeekSession}
+              nodeImageApiKeyBusy={nodeImageApiKeyBusy}
+              nodeImageApiKeySaved={nodeImageApiKeySaved}
+              accountExpanded={accountExpanded}
+              loginFormMode={credentialLoginSite === 'nodeseek'}
+              loadingLoginPage={loadingLoginPage}
+              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
+              showLoginPanel={showLoginPanel}
+              styles={styles}
+              theme={theme}
+              webViewRef={webViewRef}
+              webViewBlockMessage={webViewBlockMessage}
+              onCheckIn={onCheckIn}
+              onCheckLogin={onCheckLogin}
+              onAuthorizeNodeImageApiKey={onAuthorizeNodeImageApiKey}
+              onSaveNodeImageApiKey={onSaveNodeImageApiKey}
+              onClearNodeImageApiKey={onClearNodeImageApiKey}
+              onClearLogin={onClearLogin}
+              onHandleLoginMessage={onHandleLoginMessage}
+              onLoginFormMessage={onLoginFormMessage}
+              onRequestCredentialFill={() => { void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'nodeseek' }); }}
+              onWebViewState={onNodeSeekLoginWebViewState}
+              handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
+              onRememberNodeSeekCookies={onRememberNodeSeekCookies}
+              onSetLoadingLoginPage={onSetLoadingLoginPage}
+              onShowLoginPanelChange={onShowLoginPanelChange}
+            />
+          ),
+          linuxdo: (
+            <>
+              <MenuButton nested icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
+              {levelExpanded ? (
+                <LinuxDoLevelPanel
+                  busy={linuxDoLevelBusy}
+                  error={linuxDoLevelError}
+                  linuxDoSession={linuxDoSession}
+                  profile={linuxDoLevelProfile}
+                  styles={styles}
+                  theme={theme}
+                  onOpenLogin={() => { void onAccountCenterCommand({ type: 'open-login', site: 'linuxdo' }); }}
+                  onRefresh={onRefreshLinuxDoLevel}
+                />
+              ) : null}
+            </>
+          ),
+          yaohuo: (
+            <YaohuoLoginPanel
+              checking={checking}
+              credentialAttempt={credentialFillAttempt?.site === 'yaohuo' ? credentialFillAttempt.attempt : 0}
+              credentialFillPending={pendingCredentialFillSite === 'yaohuo'}
+              credentialSaved={credentialSummaries.yaohuo.hasCredential}
+              yaohuoSession={yaohuoSession}
+              accountExpanded={accountExpanded}
+              loginFormMode={credentialLoginSite === 'yaohuo'}
+              loadingYaohuoLoginPage={loadingYaohuoLoginPage}
+              showYaohuoLoginPanel={showYaohuoLoginPanel}
+              styles={styles}
+              theme={theme}
+              yaohuoLoginPrompt={yaohuoLoginPrompt}
+              yaohuoWebViewRef={yaohuoWebViewRef}
+              webViewBlockMessage={webViewBlockMessage}
+              onCheckYaohuoLogin={onCheckYaohuoLogin}
+              onClearYaohuoLogin={onClearYaohuoLogin}
+              handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
+              onLoginFormMessage={onLoginFormMessage}
+              onRequestCredentialFill={() => { void onAccountCenterCommand({ type: 'open-login-with-fill', site: 'yaohuo' }); }}
+              onWebViewState={onYaohuoLoginWebViewState}
+              onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
+              onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
+            />
+          )
+        }}
+        statusBusy={statusBusy}
         styles={styles}
         theme={theme}
+        onCommand={onAccountCenterCommand}
         onExpandedChange={setAccountExpanded}
-      >
-        <NodeSeekLoginPanel
-          checking={checking}
-          nodeSeekSession={nodeSeekSession}
-          nodeImageApiKeyBusy={nodeImageApiKeyBusy}
-          nodeImageApiKeySaved={nodeImageApiKeySaved}
-          accountExpanded={accountExpanded}
-          loginState={loginState}
-          loadingLoginPage={loadingLoginPage}
-          nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
-          showLoginPanel={showLoginPanel}
-          styles={styles}
-          theme={theme}
-          webViewRef={webViewRef}
-          webViewBlockMessage={webViewBlockMessage}
-          onCheckIn={onCheckIn}
-          onCheckLogin={onCheckLogin}
-          onAuthorizeNodeImageApiKey={onAuthorizeNodeImageApiKey}
-          onSaveNodeImageApiKey={onSaveNodeImageApiKey}
-          onClearNodeImageApiKey={onClearNodeImageApiKey}
-          onClearLogin={onClearLogin}
-          onHandleLoginMessage={onHandleLoginMessage}
-          onWebViewState={onNodeSeekLoginWebViewState}
-          handleNodeSeekLoginNavigation={handleNodeSeekLoginNavigation}
-          onRememberNodeSeekCookies={onRememberNodeSeekCookies}
-          onSetLoadingLoginPage={onSetLoadingLoginPage}
-          onShowLoginPanelChange={onShowLoginPanelChange}
-        />
-        <YaohuoLoginPanel
-          checking={checking}
-          yaohuoSession={yaohuoSession}
-          accountExpanded={accountExpanded}
-          loadingYaohuoLoginPage={loadingYaohuoLoginPage}
-          showYaohuoLoginPanel={showYaohuoLoginPanel}
-          styles={styles}
-          theme={theme}
-          yaohuoLoginState={yaohuoLoginState}
-          yaohuoLoginPrompt={yaohuoLoginPrompt}
-          yaohuoWebViewRef={yaohuoWebViewRef}
-          webViewBlockMessage={webViewBlockMessage}
-          onCheckYaohuoLogin={onCheckYaohuoLogin}
-          onClearYaohuoLogin={onClearYaohuoLogin}
-          handleYaohuoLoginNavigation={handleYaohuoLoginNavigation}
-          onWebViewState={onYaohuoLoginWebViewState}
-          onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
-          onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
-        />
-        <LinuxDoVerifyPanel
-          linuxDoSession={linuxDoSession}
-          showLinuxDoPanel={showLinuxDoPanel}
-          styles={styles}
-          theme={theme}
-          onShowLinuxDoPanelChange={onShowLinuxDoPanelChange}
-        />
-        <MenuButton icon={Activity} label="linux.do 等级" value={levelMeta} expanded={levelExpanded} styles={styles} theme={theme} onPress={() => setLevelExpanded((value) => !value)} />
-        {levelExpanded ? (
-          <LinuxDoLevelPanel
-            busy={linuxDoLevelBusy}
-            error={linuxDoLevelError}
-            linuxDoSession={linuxDoSession}
-            profile={linuxDoLevelProfile}
-            styles={styles}
-            theme={theme}
-            onOpenLogin={() => onShowLinuxDoPanelChange(true)}
-            onRefresh={onRefreshLinuxDoLevel}
-          />
-        ) : null}
-      </ExpandablePanel>
+      />
       <View style={styles.groupList}>
         <MenuButton
           icon={Server}

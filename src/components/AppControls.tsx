@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-nati
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import Animated, { useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { androidRipple, createStyles, type ReaderTheme } from '../theme';
+import { androidRipple, createStyles, LINK_COLOR, type ReaderTheme } from '../theme';
 
 export const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 
@@ -82,6 +82,7 @@ export function MenuButton({
   disabled = false,
   icon,
   label,
+  nested = false,
   value,
   expanded,
   styles,
@@ -91,6 +92,7 @@ export function MenuButton({
   disabled?: boolean;
   icon: LucideIcon;
   label: string;
+  nested?: boolean;
   value: string;
   expanded?: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -99,16 +101,19 @@ export function MenuButton({
 }) {
   const Icon = icon;
   const Chevron = expanded === undefined ? ChevronRight : ChevronDown;
+  const nestedActionColor = theme.dark ? theme.primary : LINK_COLOR;
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} style={[styles.menuButton, disabled && styles.buttonDisabled]} onPress={() => pressWithFeedback(onPress)}>
-      <View style={styles.menuIcon}>
-        <Icon size={19} color={theme.primary} strokeWidth={1.8} />
-      </View>
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled }} android_ripple={nested ? androidRipple(theme.primarySoft) : undefined} disabled={disabled} style={[styles.menuButton, disabled && styles.buttonDisabled]} onPress={() => pressWithFeedback(onPress)}>
+      {nested ? null : (
+        <View style={styles.menuIcon}>
+          <Icon size={19} color={theme.primary} strokeWidth={1.8} />
+        </View>
+      )}
       <View style={styles.flex}>
-        <Text style={styles.menuLabel}>{label}</Text>
+        <Text style={[styles.menuLabel, nested && { color: nestedActionColor }]}>{label}</Text>
         <Text style={styles.meta} numberOfLines={2}>{value}</Text>
       </View>
-      <Chevron size={16} color={theme.muted} strokeWidth={1.6} style={[styles.menuChevron, expanded && styles.menuChevronExpanded]} />
+      <Chevron size={16} color={nested ? nestedActionColor : theme.muted} strokeWidth={1.6} style={[styles.menuChevron, expanded && styles.menuChevronExpanded]} />
     </Pressable>
   );
 }

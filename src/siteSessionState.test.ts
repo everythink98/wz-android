@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createSiteSessionViewModels,
   applyDevAnonymousOverrides,
-  nodeSeekLoginStateLabel,
+  nodeSeekUserIdForSession,
   reduceSiteSessionState,
   createSiteSessionStates,
   isDevAnonymousSource,
@@ -189,9 +189,9 @@ describe('site session state', () => {
       }
     }));
 
-    expect(nodeSeekLoginStateLabel(viewModels.nodeseek, null)).toBe('已失效');
-    expect(nodeSeekLoginStateLabel(viewModels.nodeseek, 123)).toBe('网页已确认登录：用户 123');
-    expect(nodeSeekLoginStateLabel(createSiteSessionViewModels(createSiteSessionStates({
+    expect(nodeSeekUserIdForSession(viewModels.nodeseek, null)).toBeNull();
+    expect(nodeSeekUserIdForSession(viewModels.nodeseek, 123)).toBeNull();
+    expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates({
       nodeseek: {
         site: 'nodeseek',
         status: 'verification-required',
@@ -199,7 +199,8 @@ describe('site session state', () => {
         isVerifying: false,
         lastError: '需要验证'
       }
-    })).nodeseek, null)).toBe('需要验证');
+    })).nodeseek, 123)).toBeNull();
+    expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek, 123)).toBeNull();
   });
 
   it('moves login detection, verification success, expiry, and clearing through one reducer', () => {

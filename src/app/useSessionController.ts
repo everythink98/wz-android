@@ -60,7 +60,6 @@ import {
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
-  nodeSeekLoginStateLabel,
   reduceSiteSessionState,
   type ScopedSiteSessionEvent,
   type SessionSite,
@@ -240,8 +239,7 @@ export function useSessionController({
   setLinuxDoWebViewUserAgent,
   setNodeSeekWebViewUserAgent,
   setWebLoginUserId,
-  webLoginDetectedRef,
-  webLoginUserId
+  webLoginDetectedRef
 }: {
   defaultFetcher?: Fetcher;
   linuxDoBrowserWebViewRef: WebViewStopRef;
@@ -258,7 +256,6 @@ export function useSessionController({
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setWebLoginUserId: Dispatch<SetStateAction<number | null>>;
   webLoginDetectedRef: MutableRef<boolean>;
-  webLoginUserId: number | null;
 }) {
   const nodeSeekBrowserFetchIdRef = useRef(0);
   const nodeSeekBrowserFetchCurrentRef = useRef<PendingNodeSeekBrowserFetchRequest | null>(null);
@@ -274,17 +271,22 @@ export function useSessionController({
   const yaohuoCredentialGateRef = useRef(createCredentialWriteGate());
   const [siteSessionStates, setSiteSessionStates] = useState(() => createSiteSessionStates());
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
-  const loginState = useMemo(() => {
-    return nodeSeekLoginStateLabel(siteSessionViewModels.nodeseek, webLoginUserId);
-  }, [siteSessionViewModels.nodeseek, webLoginUserId]);
-
-  const yaohuoLoginState = siteSessionViewModels.yaohuo.summaryLabel;
 
   const dispatchSiteSessionEvent = useCallback((event: ScopedSiteSessionEvent) => {
     const trace = beginDiagnosticTrace('session', 'state-transition', {
       source: event.site,
       eventType: event.type
     });
+    if (event.site === 'nodeseek' && (
+      event.type === 'login-expired'
+      || event.type === 'cleared'
+      || event.type === 'verification-required'
+      || event.type === 'verification-started'
+      || (event.type === 'cookie-loaded' && event.loggedIn !== true)
+      || (event.type === 'verification-succeeded' && event.loggedIn !== true)
+    )) {
+      setWebLoginUserId(null);
+    }
     setSiteSessionStates((current) => {
       const previous = current[event.site];
       const next = reduceSiteSessionState(previous, event);
@@ -301,7 +303,7 @@ export function useSessionController({
         [event.site]: next
       };
     });
-  }, []);
+  }, [setWebLoginUserId]);
 
   const updateNodeSeekSession = useCallback((event: SiteSessionEvent) => {
     dispatchSiteSessionEvent({ ...event, site: 'nodeseek' });
@@ -1207,7 +1209,6 @@ export function useSessionController({
     },
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
-    loginState,
     markLinuxDoBrowserFetchHttpError,
     markNodeSeekBrowserFetchHttpError,
     restoreSavedYaohuoCookiesToWebView,
@@ -1217,8 +1218,7 @@ export function useSessionController({
     siteSessionViewModels,
     updateLinuxDoSession,
     updateNodeSeekSession,
-    updateYaohuoSession,
-    yaohuoLoginState
+    updateYaohuoSession
   };
 }
 

@@ -13,10 +13,14 @@ import { nodeImageApiKeyProbeScript, type NodeImageAuthPayload } from '../loginW
 
 export function GlobalModalHost({
   checking,
+  credentialFillAttempt,
+  credentialFillPending,
   closeImagePreview,
   handleLinuxDoMessage,
   handleLinuxDoNavigation,
   imagePreview,
+  linuxDoCredentialSaved,
+  linuxDoLoginFormMode,
   linuxDoSession,
   linuxDoWebViewError,
   linuxDoWebViewKey,
@@ -35,6 +39,7 @@ export function GlobalModalHost({
   clearLinuxDoCookie,
   handleNodeImageAuthMessage,
   handleNodeImageAuthNavigation,
+  handleCredentialLoginFormMessage,
   setLinuxDoWebViewErrorForSession,
   setLoadingLinuxDoPageForSession,
   setLoadingNodeImageAuthPage,
@@ -46,16 +51,21 @@ export function GlobalModalHost({
   savePreviewImage,
   selectPreviewImage,
   changeLinuxDoPanel,
+  requestLinuxDoCredentialFill,
   closeNodeImageAuthPanel,
   styles,
   theme,
   webViewBlockMessage
 }: {
   checking: boolean;
+  credentialFillAttempt: number;
+  credentialFillPending: boolean;
   closeImagePreview: () => void;
   handleLinuxDoMessage: (event: WebViewMessageEvent, webViewKey?: number) => void;
   handleLinuxDoNavigation: (request: LoginNavigationRequest) => boolean;
   imagePreview: ImagePreviewList | null;
+  linuxDoCredentialSaved: boolean;
+  linuxDoLoginFormMode: boolean;
   linuxDoSession: SiteSessionViewModel;
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
@@ -74,7 +84,8 @@ export function GlobalModalHost({
   clearLinuxDoCookie: () => void;
   handleNodeImageAuthMessage: (event: WebViewMessageEvent) => void;
   handleNodeImageAuthNavigation: (request: LoginNavigationRequest) => boolean;
-  setLinuxDoWebViewErrorForSession: (value: string, webViewKey?: number) => void;
+  handleCredentialLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  setLinuxDoWebViewErrorForSession: (value: string, webViewKey?: number, credentialAttempt?: number) => void;
   setLoadingLinuxDoPageForSession: (value: boolean, webViewKey?: number) => void;
   setLoadingNodeImageAuthPage: (value: boolean) => void;
   setNodeImageAuthError: (value: string) => void;
@@ -85,6 +96,7 @@ export function GlobalModalHost({
   savePreviewImage: () => void;
   selectPreviewImage: (index: number) => void;
   changeLinuxDoPanel: (value: boolean) => void;
+  requestLinuxDoCredentialFill: () => void;
   closeNodeImageAuthPanel: () => void;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
@@ -98,6 +110,10 @@ export function GlobalModalHost({
     <>
       <MemoizedLinuxDoVerifyModal
         checking={checking}
+        credentialAttempt={credentialFillAttempt}
+        credentialFillPending={credentialFillPending}
+        credentialSaved={linuxDoCredentialSaved}
+        loginFormMode={linuxDoLoginFormMode}
         linuxDoSession={linuxDoSession}
         linuxDoWebViewError={linuxDoWebViewError}
         linuxDoWebViewKey={linuxDoWebViewKey}
@@ -113,6 +129,8 @@ export function GlobalModalHost({
         onClearLinuxDoCookie={clearLinuxDoCookie}
         handleLinuxDoNavigation={handleLinuxDoNavigation}
         onHandleLinuxDoMessage={handleLinuxDoMessage}
+        onLoginFormMessage={handleCredentialLoginFormMessage}
+        onRequestCredentialFill={requestLinuxDoCredentialFill}
         onResetLinuxDoWebView={resetLinuxDoWebView}
         onSetLinuxDoWebViewError={setLinuxDoWebViewErrorForSession}
         onSetLoadingLinuxDoPage={setLoadingLinuxDoPageForSession}

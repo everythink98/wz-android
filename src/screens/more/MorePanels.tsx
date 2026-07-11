@@ -1,7 +1,7 @@
 import { type RefObject, useEffect, useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { CheckCircle, Image as ImageIcon, LogIn } from 'lucide-react-native';
+import { CheckCircle, Image as ImageIcon } from 'lucide-react-native';
 import type { ReaderSettings } from '../../readerData';
 import type { LoginNavigationRequest } from '../../appTypes';
 import { NODESEEK_URL, YAOHUO_URL } from '../../appUrls';
@@ -10,10 +10,12 @@ import { createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, MenuButton, SettingRail } from '../../components/AppControls';
 import { LoginWebViewModal } from '../../components/LoginWebViewModal';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../../loginWebViewScripts';
+import { LOGIN_FORM_ADAPTERS } from '../../loginFormAdapters';
 import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
+const LOGIN_WEBVIEW_LOADING_TIMEOUT_MS = 12000;
 
 export function BackupRestorePanel({
   backupBusy,
@@ -39,10 +41,13 @@ export function BackupRestorePanel({
 export function NodeSeekLoginPanel({
   accountExpanded,
   checking,
+  credentialAttempt,
+  credentialFillPending,
+  credentialSaved,
   nodeSeekSession,
   nodeImageApiKeyBusy,
   nodeImageApiKeySaved,
-  loginState,
+  loginFormMode,
   loadingLoginPage,
   nodeSeekWebViewUserAgent,
   showLoginPanel,
@@ -57,6 +62,8 @@ export function NodeSeekLoginPanel({
   onClearNodeImageApiKey,
   onClearLogin,
   onHandleLoginMessage,
+  onLoginFormMessage,
+  onRequestCredentialFill,
   onWebViewState,
   handleNodeSeekLoginNavigation,
   onRememberNodeSeekCookies,
@@ -65,10 +72,13 @@ export function NodeSeekLoginPanel({
 }: {
   accountExpanded: boolean;
   checking: boolean;
+  credentialAttempt: number;
+  credentialFillPending: boolean;
+  credentialSaved: boolean;
   nodeSeekSession: SiteSessionViewModel;
   nodeImageApiKeyBusy: boolean;
   nodeImageApiKeySaved: boolean;
-  loginState: string;
+  loginFormMode: boolean;
   loadingLoginPage: boolean;
   nodeSeekWebViewUserAgent: string;
   showLoginPanel: boolean;
@@ -83,7 +93,9 @@ export function NodeSeekLoginPanel({
   onClearNodeImageApiKey: () => void;
   onClearLogin: () => void;
   onHandleLoginMessage: (event: WebViewMessageEvent) => void;
-  onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
+  onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  onRequestCredentialFill: () => void;
+  onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
   onRememberNodeSeekCookies: (options?: { silent?: boolean }) => Promise<boolean>;
   onSetLoadingLoginPage: (value: boolean) => void;
@@ -103,6 +115,18 @@ export function NodeSeekLoginPanel({
     }
   }, [showLoginPanel]);
 
+  useEffect(() => {
+    if (!showLoginPanel || !loadingLoginPage || webViewBlockMessage) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => {
+      onWebViewState('timeout', credentialAttempt);
+      onSetLoadingLoginPage(false);
+      setWebViewError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
+    }, LOGIN_WEBVIEW_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [credentialAttempt, loadingLoginPage, onSetLoadingLoginPage, onWebViewState, showLoginPanel, webViewBlockMessage]);
+
   const refreshWebView = () => {
     setWebViewError('');
     onSetLoadingLoginPage(true);
@@ -116,9 +140,9 @@ export function NodeSeekLoginPanel({
 
   return (
     <>
-      <MenuButton icon={LogIn} label="NodeSeek 登录 / 验证" value={loginState} styles={styles} theme={theme} onPress={() => onShowLoginPanelChange(!showLoginPanel)} />
-      {nodeSeekSession.canWrite ? <MenuButton icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
+      {nodeSeekSession.canWrite ? <MenuButton nested icon={CheckCircle} label="NodeSeek 签到" value="使用本机登录 Cookie" styles={styles} theme={theme} onPress={onCheckIn} /> : null}
       <MenuButton
+        nested
         icon={ImageIcon}
         label="NodeImage API Key"
         value={nodeImageApiKeySaved ? '已保存，NodeSeek 图片上传可用' : '未保存，NodeSeek 图片上传不可用'}
@@ -181,7 +205,7 @@ export function NodeSeekLoginPanel({
       <LoginWebViewModal
         visible={showLoginPanel}
         title="NodeSeek 登录 / 验证"
-        subtitle={loginState}
+        subtitle={nodeSeekSession.summaryLabel}
         loading={!webViewBlockMessage && loadingLoginPage}
         loadingText="正在打开 NodeSeek..."
         error={webViewBlockMessage || webViewError}
@@ -190,6 +214,7 @@ export function NodeSeekLoginPanel({
         onClose={() => onShowLoginPanelChange(false)}
         actions={(
           <View style={styles.actions}>
+            {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckLogin} />
             <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
@@ -198,9 +223,9 @@ export function NodeSeekLoginPanel({
       >
         {showLoginPanel && accountExpanded && !webViewBlockMessage ? (
             <WebView
-              key={`nodeseek-login-${webViewKey}`}
+              key={`nodeseek-login-${webViewKey}-${credentialAttempt}`}
               ref={webViewRef}
-              source={{ uri: NODESEEK_URL }}
+              source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.nodeseek.loginUrl : NODESEEK_URL }}
               javaScriptCanOpenWindowsAutomatically={false}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
@@ -212,26 +237,33 @@ export function NodeSeekLoginPanel({
                 if ('code' in event.nativeEvent) {
                   return;
                 }
-                onWebViewState('ready');
+                onWebViewState('ready', credentialAttempt);
                 setWebViewError('');
                 webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
+                if (loginFormMode) {
+                  webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
+                }
                 void onRememberNodeSeekCookies({ silent: true });
               }}
               onLoadStart={() => {
-                onWebViewState('start');
+                onWebViewState('start', credentialAttempt);
                 setWebViewError('');
                 setWebViewNeedsRemount(false);
                 onSetLoadingLoginPage(true);
               }}
-              onMessage={onHandleLoginMessage}
+              onMessage={(event) => {
+                if (!onLoginFormMessage(event)) {
+                  onHandleLoginMessage(event);
+                }
+              }}
               onError={(event) => {
-                onWebViewState('error');
+                onWebViewState('error', credentialAttempt);
                 onSetLoadingLoginPage(false);
                 setWebViewError(`NodeSeek 页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
-                onWebViewState('renderer-gone');
+                onWebViewState('renderer-gone', credentialAttempt);
                 onSetLoadingLoginPage(false);
                 setWebViewNeedsRemount(true);
                 setWebViewError('NodeSeek 登录页面已停止，请刷新页面重试。');
@@ -247,37 +279,47 @@ export function NodeSeekLoginPanel({
 export function YaohuoLoginPanel({
   accountExpanded,
   checking,
+  credentialAttempt,
+  credentialFillPending,
+  credentialSaved,
   yaohuoSession,
+  loginFormMode,
   loadingYaohuoLoginPage,
   showYaohuoLoginPanel,
   styles,
   theme,
-  yaohuoLoginState,
   yaohuoLoginPrompt,
   yaohuoWebViewRef,
   webViewBlockMessage,
   onCheckYaohuoLogin,
   onClearYaohuoLogin,
   handleYaohuoLoginNavigation,
+  onLoginFormMessage,
+  onRequestCredentialFill,
   onWebViewState,
   onSetLoadingYaohuoLoginPage,
   onShowYaohuoLoginPanelChange
 }: {
   accountExpanded: boolean;
   checking: boolean;
+  credentialAttempt: number;
+  credentialFillPending: boolean;
+  credentialSaved: boolean;
   yaohuoSession: SiteSessionViewModel;
+  loginFormMode: boolean;
   loadingYaohuoLoginPage: boolean;
   showYaohuoLoginPanel: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
-  yaohuoLoginState: string;
   yaohuoLoginPrompt: string;
   yaohuoWebViewRef: RefObject<WebView | null>;
   webViewBlockMessage: string;
   onCheckYaohuoLogin: () => void;
   onClearYaohuoLogin: () => void;
   handleYaohuoLoginNavigation: (request: LoginNavigationRequest) => boolean;
-  onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone') => void;
+  onLoginFormMessage: (event: WebViewMessageEvent) => boolean;
+  onRequestCredentialFill: () => void;
+  onWebViewState: (state: 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout', attempt?: number) => void;
   onSetLoadingYaohuoLoginPage: (value: boolean) => void;
   onShowYaohuoLoginPanelChange: (value: boolean) => void;
 }) {
@@ -292,6 +334,18 @@ export function YaohuoLoginPanel({
     }
   }, [showYaohuoLoginPanel]);
 
+  useEffect(() => {
+    if (!showYaohuoLoginPanel || !loadingYaohuoLoginPage || webViewBlockMessage) {
+      return undefined;
+    }
+    const timeout = setTimeout(() => {
+      onWebViewState('timeout', credentialAttempt);
+      onSetLoadingYaohuoLoginPage(false);
+      setWebViewError('妖火页面打开超时：请检查模拟器网络后刷新页面。');
+    }, LOGIN_WEBVIEW_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [credentialAttempt, loadingYaohuoLoginPage, onSetLoadingYaohuoLoginPage, onWebViewState, showYaohuoLoginPanel, webViewBlockMessage]);
+
   const refreshWebView = () => {
     setWebViewError('');
     onSetLoadingYaohuoLoginPage(true);
@@ -305,11 +359,10 @@ export function YaohuoLoginPanel({
 
   return (
     <>
-      <MenuButton icon={LogIn} label="妖火登录" value={yaohuoLoginState} styles={styles} theme={theme} onPress={() => onShowYaohuoLoginPanelChange(!showYaohuoLoginPanel)} />
       <LoginWebViewModal
         visible={showYaohuoLoginPanel}
         title="妖火登录"
-        subtitle={yaohuoLoginPrompt || yaohuoLoginState}
+        subtitle={yaohuoSession.summaryLabel}
         loading={!webViewBlockMessage && loadingYaohuoLoginPage}
         loadingText="正在打开妖火..."
         error={webViewBlockMessage || webViewError}
@@ -318,6 +371,7 @@ export function YaohuoLoginPanel({
         onClose={() => onShowYaohuoLoginPanelChange(false)}
         actions={(
           <View style={styles.actions}>
+            {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
             <AppButton label={checking ? '检测中' : '检测登录'} styles={styles} disabled={checking} onPress={onCheckYaohuoLogin} />
             <AppButton label="清除登录" variant="danger" styles={styles} onPress={onClearYaohuoLogin} />
             <AppButton label="刷新页面" variant="ghost" styles={styles} onPress={refreshWebView} />
@@ -325,10 +379,13 @@ export function YaohuoLoginPanel({
         )}
       >
         {showYaohuoLoginPanel && accountExpanded && !webViewBlockMessage ? (
+          <View style={styles.flex}>
+            {yaohuoLoginPrompt ? <Text style={styles.meta}>{yaohuoLoginPrompt}</Text> : null}
             <WebView
-              key={`yaohuo-login-${webViewKey}`}
+              style={styles.flex}
+              key={`yaohuo-login-${webViewKey}-${credentialAttempt}`}
               ref={yaohuoWebViewRef}
-              source={{ uri: yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
+              source={{ uri: loginFormMode ? LOGIN_FORM_ADAPTERS.yaohuo.loginUrl : yaohuoSession.canWrite ? YAOHUO_SESSION_URL : YAOHUO_LOGIN_URL }}
               javaScriptCanOpenWindowsAutomatically={false}
               sharedCookiesEnabled
               thirdPartyCookiesEnabled
@@ -338,50 +395,37 @@ export function YaohuoLoginPanel({
                 if ('code' in event.nativeEvent) {
                   return;
                 }
-                onWebViewState('ready');
+                onWebViewState('ready', credentialAttempt);
                 setWebViewError('');
+                if (loginFormMode) {
+                  yaohuoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.yaohuo.probeScript(credentialAttempt));
+                }
               }}
               onLoadStart={() => {
-                onWebViewState('start');
+                onWebViewState('start', credentialAttempt);
                 setWebViewError('');
                 setWebViewNeedsRemount(false);
                 onSetLoadingYaohuoLoginPage(true);
               }}
+              onMessage={(event) => { onLoginFormMessage(event); }}
               onError={(event) => {
-                onWebViewState('error');
+                onWebViewState('error', credentialAttempt);
                 onSetLoadingYaohuoLoginPage(false);
                 setWebViewError(`妖火页面加载失败：${event.nativeEvent.description || '请检查模拟器网络后刷新页面。'}`);
               }}
               renderError={() => <View style={styles.webViewErrorPlaceholder} />}
               onRenderProcessGone={() => {
-                onWebViewState('renderer-gone');
+                onWebViewState('renderer-gone', credentialAttempt);
                 onSetLoadingYaohuoLoginPage(false);
                 setWebViewNeedsRemount(true);
                 setWebViewError('妖火登录页面已停止，请刷新页面重试。');
               }}
               onShouldStartLoadWithRequest={handleYaohuoLoginNavigation}
             />
+          </View>
         ) : null}
       </LoginWebViewModal>
     </>
-  );
-}
-
-export function LinuxDoVerifyPanel({
-  linuxDoSession,
-  showLinuxDoPanel,
-  styles,
-  theme,
-  onShowLinuxDoPanelChange
-}: {
-  linuxDoSession: SiteSessionViewModel;
-  showLinuxDoPanel: boolean;
-  styles: ReturnType<typeof createStyles>;
-  theme: ReaderTheme;
-  onShowLinuxDoPanelChange: (value: boolean) => void;
-}) {
-  return (
-    <MenuButton icon={LogIn} label="linux.do 登录 / 验证" value={linuxDoSession.summaryLabel} styles={styles} theme={theme} onPress={() => onShowLinuxDoPanelChange(!showLinuxDoPanel)} />
   );
 }
 

@@ -112,7 +112,7 @@ const operationValues = closedValues(
   'getCategories', 'getFeed', 'getReplies',
   'getReply', 'getTopic', 'getUserProfile', 'guard', 'hardware-back', 'image-upload',
   'import', 'interaction', 'js-error', 'load', 'load-more', 'load-more-replies',
-  'load-more-topics', 'load-stored', 'mutate', 'open', 'page-state', 'parse-topic',
+  'load-more-topics', 'load-stored', 'load-summary', 'mutate', 'open', 'page-state', 'parse-topic',
   'recover', 'refresh', 'replace', 'request', 'restore-webview', 'run', 'save',
   'save-image', 'save-preview',
   'screen-change', 'searchTopics', 'set-enabled', 'state-transition', 'submit', 'test',

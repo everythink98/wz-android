@@ -236,11 +236,8 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
   };
 }
 
-export function nodeSeekLoginStateLabel(state: SiteSessionViewModel, webLoginUserId: number | null) {
-  if (webLoginUserId) {
-    return `网页已确认登录：用户 ${webLoginUserId}`;
-  }
-  return state.summaryLabel;
+export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUserId: number | null) {
+  return state.isLoggedIn ? webLoginUserId : null;
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {

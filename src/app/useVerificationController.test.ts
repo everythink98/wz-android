@@ -57,6 +57,7 @@ function createController() {
     injectJavaScript: vi.fn(),
     stopLoading: vi.fn()
   });
+  const onLoginWebViewFailure = vi.fn();
   const controller = useVerificationController({
     cancelLinuxDoPendingReopenTask: vi.fn(),
     changeNodeSeekLoginPanel: vi.fn(),
@@ -80,6 +81,7 @@ function createController() {
     linuxDoWebViewUserAgent: '',
     linuxDoWebViewUserAgentRef: ref(''),
     notify: vi.fn(),
+    onLoginWebViewFailure,
     openTopicRef: ref(null),
     pendingLinuxDoTopicRef: ref(null),
     reopenExistingTopicScreenRef: ref(false),
@@ -102,7 +104,7 @@ function createController() {
     updateLinuxDoSession: vi.fn(),
     updateNodeSeekSession: vi.fn()
   });
-  return { controller, linuxDoWebViewSessionRef };
+  return { controller, linuxDoWebViewSessionRef, onLoginWebViewFailure };
 }
 
 afterEach(() => {
@@ -232,25 +234,28 @@ describe('linux.do visible verification diagnostics', () => {
   it('records renderer loss as the terminal WebView failure', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
-    const { controller, linuxDoWebViewSessionRef } = createController();
+    const { controller, linuxDoWebViewSessionRef, onLoginWebViewFailure } = createController();
 
     controller.changeLinuxDoPanel(true);
     controller.setLinuxDoWebViewErrorForSession(
       'linux.do 验证页面已停止，请刷新页面重试。',
-      linuxDoWebViewSessionRef.current
+      linuxDoWebViewSessionRef.current,
+      9
     );
     controller.setLinuxDoWebViewErrorForSession(
       'linux.do 页面加载失败，请刷新页面重试。',
-      linuxDoWebViewSessionRef.current
+      linuxDoWebViewSessionRef.current,
+      9
     );
 
     const terminalEvents = lines
       .map((line) => JSON.parse(line) as DiagnosticEvent)
       .filter((event) => event.area === 'credential' && event.operation === 'check' && event.phase === 'finish');
     expect(terminalEvents).toEqual([
-      expect.objectContaining({ outcome: 'failure', reason: 'renderer_gone' }),
-      expect.objectContaining({ outcome: 'failure', reason: 'network_error' })
+      expect.objectContaining({ outcome: 'failure', reason: 'renderer_gone' })
     ]);
-    expect(new Set(terminalEvents.map((event) => event.traceId)).size).toBe(2);
+    expect(new Set(terminalEvents.map((event) => event.traceId)).size).toBe(1);
+    expect(onLoginWebViewFailure).toHaveBeenNthCalledWith(1, 'linuxdo', 9, 'renderer_gone');
+    expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
   });
 });

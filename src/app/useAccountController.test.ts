@@ -77,9 +77,11 @@ function createController(overrides: Partial<Parameters<typeof useAccountControl
     linuxDoLevelRequestIdRef: ref(0),
     linuxDoWebViewUserAgentRef: ref(''),
     nodeSeekLoginPanelRequestRef: ref(7),
+    nodeSeekCurrentUserId: null,
     nodeSeekWebViewCookieHeaderRef: ref(''),
     nodeSeekWebViewUserAgentRef: ref(''),
     notify: vi.fn(),
+    onLoginWebViewFailure: vi.fn(),
     resetLinuxDoLevelState: vi.fn(),
     resetLinuxDoWebView: vi.fn(),
     saveNodeSeekCookieHeader: vi.fn(async () => 'NODESEEK_SAVED_COOKIE_SECRET'),
@@ -121,9 +123,9 @@ describe('visible account WebView diagnostics', () => {
     });
     const saveNodeSeekCookieHeader = vi.fn(async (
       _cookies: Record<string, unknown>,
-      _options?: { diagnosticTrace?: DiagnosticTrace }
+      _options?: { diagnosticTrace?: DiagnosticTrace; resetCurrentUser?: boolean }
     ) => 'NODESEEK_SAVED_COOKIE_SECRET');
-    const controller = createController({ saveNodeSeekCookieHeader });
+    const controller = createController({ nodeSeekCurrentUserId: 9487, saveNodeSeekCookieHeader });
 
     controller.handleLoginMessage({
       nativeEvent: {
@@ -159,7 +161,18 @@ describe('visible account WebView diagnostics', () => {
     const cookieStoreTrace = mocks.readNodeSeekCookiesFromStores.mock.calls[0]?.[0]?.diagnosticTrace;
     expect(cookieStoreTrace).toEqual(expect.objectContaining({ traceId: parentEvents[0].traceId }));
     expect(saveNodeSeekCookieHeader.mock.calls[0]?.[1]?.diagnosticTrace).toBe(cookieStoreTrace);
+    expect(saveNodeSeekCookieHeader.mock.calls[0]?.[1]?.resetCurrentUser).toBe(false);
     expect(lines.join('')).not.toMatch(/PRIVATE_NODESEEK_COOKIE_NAME|NODESEEK_NATIVE_COOKIE_SECRET|PRIVATE_CSRF_SECRET|PRIVATE_USER_AGENT_SECRET|NODESEEK_WEBVIEW_COOKIE_SECRET|PRIVATE_HTML|9487/);
+
+    controller.handleLoginMessage({
+      nativeEvent: {
+        data: JSON.stringify({ type: 'nodeseek-login', loggedIn: true, userId: 9999 })
+      }
+    } as never);
+    const changedAccount = controller.checkLogin();
+    await vi.advanceTimersByTimeAsync(250);
+    await changedAccount;
+    expect(saveNodeSeekCookieHeader.mock.calls[1]?.[1]?.resetCurrentUser).toBe(true);
   });
 
   it('links Yaohuo cookie detection, server confirmation, and save with one sanitized terminal trace', async () => {
@@ -206,11 +219,13 @@ describe('visible account WebView diagnostics', () => {
 
   it('finishes a visible login trace at the real WebView failure stage', () => {
     const lines: string[] = [];
+    const onLoginWebViewFailure = vi.fn();
     setDiagnosticWriter((line) => { lines.push(line); });
-    const controller = createController();
+    const controller = createController({ onLoginWebViewFailure });
 
     controller.recordNodeSeekLoginWebViewState('start');
-    controller.recordNodeSeekLoginWebViewState('renderer-gone');
+    controller.recordNodeSeekLoginWebViewState('renderer-gone', 7);
+    controller.recordNodeSeekLoginWebViewState('error', 7);
 
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent)
       .filter((event) => event.area === 'credential' && event.operation === 'check' && event.source === 'nodeseek');
@@ -220,5 +235,16 @@ describe('visible account WebView diagnostics', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'failure', reason: 'renderer_gone' })
     ]));
     expect(events.filter((event) => event.phase === 'finish')).toHaveLength(1);
+    expect(onLoginWebViewFailure).toHaveBeenCalledWith('nodeseek', 7, 'renderer_gone');
+    expect(onLoginWebViewFailure).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a login page timeout to the automatic-fill lifecycle', () => {
+    const onLoginWebViewFailure = vi.fn();
+    const controller = createController({ onLoginWebViewFailure });
+
+    controller.recordYaohuoLoginWebViewState('timeout', 8);
+
+    expect(onLoginWebViewFailure).toHaveBeenCalledWith('yaohuo', 8, 'timeout');
   });
 });

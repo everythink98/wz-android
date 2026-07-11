@@ -3,7 +3,7 @@ import {
   applyDevAnonymousOverrides,
   createSiteSessionStates,
   createSiteSessionViewModels,
-  nodeSeekLoginStateLabel
+  nodeSeekUserIdForSession
 } from './siteSessionState';
 import { authActionMessageForSource } from './siteSessionPrompts';
 
@@ -30,7 +30,7 @@ describe('account session labels', () => {
       }
     }));
 
-    expect(nodeSeekLoginStateLabel(sessions.nodeseek, 48872)).toBe('网页已确认登录：用户 48872');
+    expect(nodeSeekUserIdForSession(sessions.nodeseek, 48872)).toBe(48872);
     expect(sessions.linuxdo.summaryLabel).toBe('匿名可用');
     expect(sessions.yaohuo.summaryLabel).toBe('已失效');
     expect(Object.values(sessions).map((item) => item.summaryLabel).join(' ')).not.toContain('sidyaohuo');

@@ -43,6 +43,7 @@ import { filterTopicSessionReplies, useTopicSessionController } from './useTopic
 import { useUserController } from './useUserController';
 import { useVerificationController, type DeferredNavigationTask } from './useVerificationController';
 import { useAccountController } from './useAccountController';
+import { useAccountCredentialController } from './useAccountCredentialController';
 import { useTopicActionsController } from './useTopicActionsController';
 import { takeNodeSeekVerificationRetry } from './sessionControllerHelpers';
 import {
@@ -84,10 +85,11 @@ import {
   applyDevAnonymousOverrides,
   createSiteSessionViewModels,
   isDevAnonymousSource,
-  nodeSeekLoginStateLabel,
+  nodeSeekUserIdForSession,
   type DevAnonymousOverrides,
   type SessionSite
 } from '../siteSessionState';
+import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import { clearNodeImageApiKey, loadNodeImageApiKey, saveNodeImageApiKey } from '../nodeimageCredentials';
 import { nodeImageApiKeyFromResponse } from '../replyImageUpload';
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '../appUrls';
@@ -114,8 +116,6 @@ const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODEIMAGE_LOGIN_HOSTS = ['nodeimage.com', 'nodeseek.com', 'challenges.cloudflare.com'];
 const YAOHUO_LOGIN_HOSTS = ['www.yaohuo.me'];
 const LINUXDO_LOGIN_HOSTS = ['linux.do', 'challenges.cloudflare.com'];
-
-
 function sortedRecords(records: Record<string, TopicRecord>) {
   return Object.values(records).sort((left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt));
 }
@@ -211,6 +211,20 @@ export function AppRoot() {
   const [loadingNodeImageAuthPage, setLoadingNodeImageAuthPage] = useState(false);
   const [nodeImageAuthError, setNodeImageAuthError] = useState('');
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
+  const credentialFailureHandlerRef = useRef<(
+    site: SessionSite,
+    attempt: number,
+    reason: LoginWebViewFailureReason
+  ) => void>(() => undefined);
+  const handleCredentialLoginWebViewFailure = useCallback((
+    site: SessionSite,
+    attempt: number,
+    reason: LoginWebViewFailureReason
+  ) => credentialFailureHandlerRef.current(site, attempt, reason), []);
+  const credentialClearIntentHandlerRef = useRef<(site: SessionSite) => void>(() => undefined);
+  const handleClearCredentialLoginIntent = useCallback((site: SessionSite) => {
+    credentialClearIntentHandlerRef.current(site);
+  }, []);
   const accountStatusInitialRefreshRef = useRef(false);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
     startOwnedRequest(topicActionRequestOwnerRef, `topic-action-context:${nextTopicKey || 'none'}`);
@@ -549,8 +563,7 @@ export function AppRoot() {
     setLinuxDoWebViewUserAgent,
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
-    webLoginDetectedRef,
-    webLoginUserId
+    webLoginDetectedRef
   });
 
   const [devAnonymousOverrides, setDevAnonymousOverrides] = useState<DevAnonymousOverrides>({});
@@ -558,10 +571,7 @@ export function AppRoot() {
     __DEV__ ? applyDevAnonymousOverrides(siteSessionStates, devAnonymousOverrides) : siteSessionStates
   ), [devAnonymousOverrides, siteSessionStates]);
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(effectiveSiteSessionStates), [effectiveSiteSessionStates]);
-  const loginState = useMemo(() => (
-    nodeSeekLoginStateLabel(siteSessionViewModels.nodeseek, __DEV__ && devAnonymousOverrides.nodeseek ? null : webLoginUserId)
-  ), [devAnonymousOverrides.nodeseek, siteSessionViewModels.nodeseek, webLoginUserId]);
-  const yaohuoLoginState = siteSessionViewModels.yaohuo.summaryLabel;
+  const effectiveNodeSeekUserId = nodeSeekUserIdForSession(siteSessionViewModels.nodeseek, webLoginUserId);
   useEffect(() => {
     setLinuxDoDevAnonymousOverride(Boolean(__DEV__ && devAnonymousOverrides.linuxdo));
     return () => setLinuxDoDevAnonymousOverride(false);
@@ -664,8 +674,8 @@ export function AppRoot() {
   }), [debouncedCommentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
   const nodeSeekCurrentUserForTopicActions = siteSessionViewModels.nodeseek.currentUser || (topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined);
   const displayReplies = useMemo(
-    () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, webLoginUserId),
-    [filteredReplies, nodeSeekCurrentUserForTopicActions, webLoginUserId]
+    () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, effectiveNodeSeekUserId),
+    [effectiveNodeSeekUserId, filteredReplies, nodeSeekCurrentUserForTopicActions]
   );
   useEffect(() => {
     const currentUser = topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined;
@@ -748,12 +758,13 @@ export function AppRoot() {
     readerData.settings.listDensity
   ]);
   const closeYaohuoLoginPanel = useCallback(() => {
+    handleClearCredentialLoginIntent('yaohuo');
     yaohuoLoginPanelRequestRef.current += 1;
     yaohuoWebViewRef.current?.stopLoading();
     setShowYaohuoLoginPanel(false);
     setYaohuoLoginPrompt('');
     setLoadingYaohuoLoginPage(false);
-  }, []);
+  }, [handleClearCredentialLoginIntent]);
 
   const changeYaohuoLoginPanel = useCallback((visible: boolean) => {
     if (visible) {
@@ -777,13 +788,14 @@ export function AppRoot() {
   const changeNodeSeekLoginPanel = useCallback((visible: boolean) => {
     nodeSeekLoginPanelRequestRef.current += 1;
     if (!visible) {
+      handleClearCredentialLoginIntent('nodeseek');
       pendingNodeSeekSearchRetryRef.current = null;
       pendingNodeSeekTopicRetryRef.current = null;
     }
     webViewRef.current?.stopLoading();
     setLoadingLoginPage(visible);
     setShowLoginPanel(visible);
-  }, []);
+  }, [handleClearCredentialLoginIntent]);
 
   const showYaohuoLogin = useCallback((message = '请先登录妖火。') => {
     changeScreen('more');
@@ -827,6 +839,7 @@ export function AppRoot() {
     linuxDoWebViewUserAgent,
     linuxDoWebViewUserAgentRef,
     notify,
+    onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     openTopicRef,
     pendingLinuxDoTopicRef,
     reopenExistingTopicScreenRef,
@@ -848,6 +861,13 @@ export function AppRoot() {
     updateLinuxDoSession,
     updateNodeSeekSession
   });
+  const previousLinuxDoPanelVisibleRef = useRef(showLinuxDoPanel);
+  useEffect(() => {
+    if (previousLinuxDoPanelVisibleRef.current && !showLinuxDoPanel) {
+      handleClearCredentialLoginIntent('linuxdo');
+    }
+    previousLinuxDoPanelVisibleRef.current = showLinuxDoPanel;
+  }, [handleClearCredentialLoginIntent, showLinuxDoPanel]);
 
   const handleNodeSeekSearchVerificationRequired = useCallback((message: string, retry: () => void) => {
     pendingNodeSeekSearchRetryRef.current = retry;
@@ -878,9 +898,11 @@ export function AppRoot() {
     linuxDoLevelRequestIdRef,
     linuxDoWebViewUserAgentRef,
     nodeSeekLoginPanelRequestRef,
+    nodeSeekCurrentUserId: siteSessionViewModels.nodeseek.currentUser?.id ?? null,
     nodeSeekWebViewCookieHeaderRef,
     nodeSeekWebViewUserAgentRef,
     notify,
+    onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     resetLinuxDoLevelState,
     resetLinuxDoWebView,
     saveNodeSeekCookieHeader,
@@ -1600,6 +1622,33 @@ export function AppRoot() {
     }
   }, [openUser, selectedUser, userProfile]);
 
+  const {
+    clearCredentialLoginIntent,
+    credentialFillAttempt,
+    credentialLoginSite,
+    credentialSummaries,
+    finishCredentialFillForLoginFailure,
+    handleAccountCenterCommand,
+    handleCredentialLoginFormMessage,
+    openAccountLogin,
+    pendingCredentialFillSite
+  } = useAccountCredentialController({
+    changeLinuxDoPanel,
+    changeNodeSeekLoginPanel,
+    changeScreen,
+    changeYaohuoLoginPanel,
+    linuxDoWebViewRef,
+    notify,
+    openUser,
+    refreshAccountStatus,
+    setYaohuoLoginPrompt,
+    webViewRef,
+    webViewBlockMessage: networkProxyWebViewBlockMessage,
+    yaohuoWebViewRef
+  });
+  credentialFailureHandlerRef.current = finishCredentialFillForLoginFailure;
+  credentialClearIntentHandlerRef.current = clearCredentialLoginIntent;
+
   const feedProps = useMemo(() => ({
       busy: feedBusy || actionBusy,
       categories,
@@ -1734,12 +1783,15 @@ export function AppRoot() {
       appUpdateDownloadProgress,
       appUpdateInfo,
       appUpdateMessage,
-      loginState,
+      credentialFillAttempt,
+      credentialLoginSite,
+      credentialSummaries,
       loadingLoginPage,
       loadingYaohuoLoginPage,
       linuxDoLevelBusy,
       linuxDoLevelError,
       linuxDoLevelProfile,
+      nodeSeekUserId: effectiveNodeSeekUserId,
       nodeSeekWebViewUserAgent,
       nodeImageApiKeyBusy,
       nodeImageApiKeySaved,
@@ -1755,7 +1807,7 @@ export function AppRoot() {
       diagnosticBusy,
       theme,
       webViewRef,
-      yaohuoLoginState,
+      pendingCredentialFillSite,
       yaohuoLoginPrompt,
       yaohuoWebViewRef,
       sessionViewModels: siteSessionViewModels,
@@ -1767,8 +1819,7 @@ export function AppRoot() {
       networkProxyState,
       networkProxySummary,
       webViewBlockMessage: networkProxyWebViewBlockMessage,
-      onRefreshAccountStatus: refreshAccountStatus,
-      onOpenUser: openUser,
+      onAccountCenterCommand: handleAccountCenterCommand,
       onCheckAppUpdate: checkAppUpdate,
       onDownloadAppUpdate: downloadAppUpdate,
       onCheckIn: checkIn,
@@ -1793,7 +1844,7 @@ export function AppRoot() {
       onSetLoadingYaohuoLoginPage: setLoadingYaohuoLoginPage,
       onShowLoginPanelChange: changeNodeSeekLoginPanel,
       onShowYaohuoLoginPanelChange: changeYaohuoLoginPanel,
-      onShowLinuxDoPanelChange: changeLinuxDoPanel,
+      onLoginFormMessage: handleCredentialLoginFormMessage,
       onShowNetworkProxyPanelChange: setShowNetworkProxyPanel,
       onShowSettingsPanelChange: setShowSettingsPanel,
       onToggleDevAnonymousOverride: toggleDevAnonymousOverride,
@@ -1811,7 +1862,6 @@ export function AppRoot() {
     appUpdateMessage,
     backupBusy,
     diagnosticBusy,
-    changeLinuxDoPanel,
     changeNodeSeekLoginPanel,
     changeYaohuoLoginPanel,
     checkAppUpdate,
@@ -1821,6 +1871,9 @@ export function AppRoot() {
     checking,
     clearLogin,
     clearYaohuoLogin,
+    credentialFillAttempt,
+    credentialLoginSite,
+    credentialSummaries,
     authorizeNodeImageApiKey,
     deleteNetworkProxyProfile,
     devAnonymousOverrides,
@@ -1828,15 +1881,17 @@ export function AppRoot() {
     exportBackupFile,
     exportDiagnosticLogFile,
     handleLoginMessage,
+    handleAccountCenterCommand,
+    handleCredentialLoginFormMessage,
     handleNodeSeekLoginNavigation,
     handleYaohuoLoginNavigation,
     importBackupFile,
     linuxDoLevelBusy,
     linuxDoLevelError,
     linuxDoLevelProfile,
+    effectiveNodeSeekUserId,
     loadingLoginPage,
     loadingYaohuoLoginPage,
-    loginState,
     nodeSeekWebViewUserAgent,
     nodeImageApiKeyBusy,
     nodeImageApiKeySaved,
@@ -1846,11 +1901,10 @@ export function AppRoot() {
     networkProxyState,
     networkProxySummary,
     networkProxyWebViewBlockMessage,
-    openUser,
+    pendingCredentialFillSite,
     recordNodeSeekLoginWebViewState,
     recordYaohuoLoginWebViewState,
     readerData.settings,
-    refreshAccountStatus,
     refreshLinuxDoLevel,
     rememberVisibleNodeSeekCookiesAndRetrySearch,
     saveNodeImageApiKeyInput,
@@ -1870,8 +1924,7 @@ export function AppRoot() {
     toggleDevAnonymousOverride,
     upsertNetworkProxyProfile,
     updateSettings,
-    yaohuoLoginPrompt,
-    yaohuoLoginState
+    yaohuoLoginPrompt
   ]);
 
   const topicProps = useMemo(() => ({
@@ -2106,14 +2159,19 @@ export function AppRoot() {
             />
               <GlobalModalHost
               checking={checking}
+              credentialFillAttempt={credentialFillAttempt?.site === 'linuxdo' ? credentialFillAttempt.attempt : 0}
+              credentialFillPending={pendingCredentialFillSite === 'linuxdo'}
               checkLinuxDoCookie={checkLinuxDoCookie}
               clearLinuxDoCookie={clearLinuxDoCookie}
               closeImagePreview={closeImagePreview}
               handleLinuxDoMessage={handleLinuxDoMessage}
               handleLinuxDoNavigation={handleLinuxDoNavigation}
+              handleCredentialLoginFormMessage={handleCredentialLoginFormMessage}
               handleNodeImageAuthMessage={handleNodeImageAuthMessage}
               handleNodeImageAuthNavigation={handleNodeImageAuthNavigation}
               imagePreview={imagePreview}
+              linuxDoCredentialSaved={credentialSummaries.linuxdo.hasCredential}
+              linuxDoLoginFormMode={credentialLoginSite === 'linuxdo'}
               linuxDoSession={siteSessionViewModels.linuxdo}
               linuxDoWebViewError={linuxDoWebViewError}
               linuxDoWebViewKey={linuxDoWebViewKey}
@@ -2142,6 +2200,7 @@ export function AppRoot() {
               theme={theme}
               webViewBlockMessage={networkProxyWebViewBlockMessage}
               changeLinuxDoPanel={changeLinuxDoPanel}
+              requestLinuxDoCredentialFill={() => openAccountLogin('linuxdo', true)}
               closeNodeImageAuthPanel={closeNodeImageAuthPanel}
             />
               {networkProxyContentReady ? (

@@ -64,7 +64,7 @@ afterEach(() => {
   setDiagnosticWriter(null);
 });
 
-function createTestSessionController(defaultFetcher: Fetcher = vi.fn()) {
+function createTestSessionController(defaultFetcher: Fetcher = vi.fn(), setWebLoginUserId = vi.fn()) {
   return useSessionController({
     defaultFetcher,
     linuxDoBrowserWebViewRef: { current: null },
@@ -78,9 +78,8 @@ function createTestSessionController(defaultFetcher: Fetcher = vi.fn()) {
     setLinuxDoWebViewCookieHeader: vi.fn(),
     setLinuxDoWebViewUserAgent: vi.fn(),
     setNodeSeekWebViewUserAgent: vi.fn(),
-    setWebLoginUserId: vi.fn(),
-    webLoginDetectedRef: { current: false },
-    webLoginUserId: null
+    setWebLoginUserId,
+    webLoginDetectedRef: { current: false }
   });
 }
 
@@ -110,6 +109,20 @@ describe('session controller helpers', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'success', state: 'verification-required' })
     ]);
     expect(JSON.stringify(events)).not.toMatch(/private|cookie|secret|raw error/);
+  });
+
+  it('invalidates only definitive non-login NodeSeek identity transitions', () => {
+    const setWebLoginUserId = vi.fn();
+    const controller = createTestSessionController(vi.fn(), setWebLoginUserId);
+
+    controller.dispatchSiteSessionEvent({ site: 'nodeseek', type: 'check-failed', message: 'offline' });
+    expect(setWebLoginUserId).not.toHaveBeenCalled();
+
+    controller.dispatchSiteSessionEvent({ site: 'nodeseek', type: 'login-expired' });
+    controller.dispatchSiteSessionEvent({ site: 'nodeseek', type: 'cookie-loaded', loggedIn: false });
+    controller.dispatchSiteSessionEvent({ site: 'nodeseek', type: 'verification-succeeded', loggedIn: false, at: '2026-07-10T00:00:00.000Z' });
+    expect(setWebLoginUserId).toHaveBeenCalledTimes(3);
+    expect(setWebLoginUserId).toHaveBeenNthCalledWith(1, null);
   });
 
   it('records an externally superseded credential save as stale without a generation argument', async () => {

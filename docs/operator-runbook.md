@@ -39,7 +39,7 @@ npm run smoke:android
 - 首页、搜索、详情、回复和用户页的读取不应直接 import `forumApi`、`yaohuoApi` 或 `local*` 来源文件，应通过 `src/sources/sourceGateway.ts`；已有互动 action client 按触及路径逐项迁移，不改变请求格式。
 - `App.tsx` 应保持入口职责，不承载 WebView、Cookie、来源读取和业务回调。
 - `src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是兼容入口，不应重新塞回大段实现。
-- More 页 `个人中心` 显示当前账号主页并提供 `刷新账号状态`；`账号与验证` 只保留登录、验证、清除登录、NodeImage 和 linux.do 等级相关入口。
+- More 页只有一个 `账号中心`：统一显示三站网站登录态、当前身份、自动填入状态（本机保存账号密码）和原有站点服务，并提供 `刷新账号状态`；测试工具、代理、诊断、备份和外观保持独立。
 - More 页 `服务器代理` 支持 HTTP / SOCKS5；启用失败时网络请求不应静默直连。
 - 账号状态刷新由 `src/app/useAccountStatusController.ts` 提供，备份 I/O 由 `src/app/useBackupStatusController.ts` 提供；启动后由 `AppRoot` 静默刷新一次，进入 More 页本身不应触发刷新。
 - 模拟器验证最新代码时禁止使用 `adb uninstall`、`adb shell pm clear`、清空模拟器数据或重置 emulator。
@@ -53,7 +53,7 @@ npm run smoke:android
 - 涉及首页来源、分类、单站排序或分页缓存时，至少运行 `npm test -- src/feedLogic.test.ts src/feedCategoryRail.test.ts src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`，并在模拟器检查对应单站筛选。
 - 涉及登录、验证、Cookie、写操作、详情返回或来源解析时，运行相关来源 / 安全 / 体验测试和 `npm run typecheck`。
 - 涉及来源 gateway 时，至少运行 `npm test -- src/forumApi.test.ts src/localSources.test.ts src/sources/sourceGateway.test.ts src/sources/sourceGatewayContract.test.ts` 和 `npm run typecheck`。
-- 涉及账号区时，至少运行相关账号、会话、来源测试和 `npm run typecheck`；当前账号 UI 位于 `src/screens/MoreScreen.tsx` 与 `src/screens/more/personalCenterItems.ts`，登录 / 验证 UI 位于 `src/screens/more/MorePanels.tsx`。
+- 涉及账号区时，至少运行账号中心、会话、凭据仓库、登录表单 adapter 和来源测试及 `npm run typecheck`；统一 UI 位于 `src/screens/more/AccountCenterPanel.tsx`，视图规则位于 `src/screens/more/accountCenter.ts`，凭据和填入边界位于 `src/credentialVault.ts`、`src/loginFormAdapters.ts`。
 - 涉及服务器代理时，至少运行 `npm test -- src/networkProxy.test.ts src/networkProxyControllerGuard.test.ts src/networkProxyModalGuard.test.ts src/webViewProxyGuard.test.ts src/appUpdateProxyGuard.test.ts src/releasePackaging.test.ts` 和 `npm run typecheck`；改 `plugins/withNetworkProxyModule.js` 后发布前必须跑 `npm run release:android`。
 - 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
 - 发布前运行 `npm run release:android`；它已经包含 `npm test`、文档检查、`npm run check:unused`、版本一致性、APK 签名校验、只读设备 smoke 和 SHA-256 输出。

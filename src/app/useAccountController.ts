@@ -34,6 +34,7 @@ import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
+import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -47,7 +48,7 @@ import {
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL];
 
 type Ref<T> = MutableRefObject<T>;
-type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone';
+export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout';
 
 export function useAccountController({
   checkingRequestIdRef,
@@ -58,9 +59,11 @@ export function useAccountController({
   linuxDoLevelRequestIdRef,
   linuxDoWebViewUserAgentRef,
   nodeSeekLoginPanelRequestRef,
+  nodeSeekCurrentUserId,
   nodeSeekWebViewCookieHeaderRef,
   nodeSeekWebViewUserAgentRef,
   notify,
+  onLoginWebViewFailure,
   resetLinuxDoLevelState,
   resetLinuxDoWebView,
   saveNodeSeekCookieHeader,
@@ -90,9 +93,11 @@ export function useAccountController({
   linuxDoLevelRequestIdRef: Ref<number>;
   linuxDoWebViewUserAgentRef: Ref<string>;
   nodeSeekLoginPanelRequestRef: Ref<number>;
+  nodeSeekCurrentUserId: string | number | null;
   nodeSeekWebViewCookieHeaderRef: Ref<string>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
+  onLoginWebViewFailure: (site: 'nodeseek' | 'yaohuo', attempt: number, reason: LoginWebViewFailureReason) => void;
   resetLinuxDoLevelState: () => void;
   resetLinuxDoWebView: () => void;
   saveNodeSeekCookieHeader: (
@@ -120,8 +125,10 @@ export function useAccountController({
   const nodeSeekWebLoginUserIdRef = useRef<number | null>(null);
   const nodeSeekWebLoginCsrfTokenRef = useRef('');
   const nodeSeekLoginTraceRef = useRef<{ trace: DiagnosticTrace; panelRequestId: number } | null>(null);
+  const nodeSeekTerminalRequestRef = useRef<number | null>(null);
   const wasNodeSeekLoginPanelVisibleRef = useRef(false);
   const yaohuoLoginTraceRef = useRef<{ trace: DiagnosticTrace; panelRequestId: number } | null>(null);
+  const yaohuoTerminalRequestRef = useRef<number | null>(null);
   const wasYaohuoLoginPanelVisibleRef = useRef(false);
   const observedYaohuoLoginPanelRequestRef = useRef(yaohuoLoginPanelRequestRef.current);
 
@@ -236,12 +243,20 @@ export function useAccountController({
     wasYaohuoLoginPanelVisibleRef.current = showYaohuoLoginPanel;
   });
 
-  const recordNodeSeekLoginWebViewState = useCallback((state: LoginWebViewDiagnosticState) => {
+  const recordNodeSeekLoginWebViewState = useCallback((state: LoginWebViewDiagnosticState, attempt = 0) => {
+    const requestId = nodeSeekLoginPanelRequestRef.current;
+    if (state === 'start' && nodeSeekTerminalRequestRef.current === requestId) {
+      nodeSeekTerminalRequestRef.current = null;
+    } else if (nodeSeekTerminalRequestRef.current === requestId) {
+      return;
+    }
     const trace = currentNodeSeekLoginTrace('open');
-    if (state === 'error' || state === 'renderer-gone') {
-      const reason = state === 'renderer-gone' ? 'renderer_gone' : 'network_error';
+    if (state === 'error' || state === 'renderer-gone' || state === 'timeout') {
+      nodeSeekTerminalRequestRef.current = requestId;
+      const reason: LoginWebViewFailureReason = state === 'renderer-gone' ? 'renderer_gone' : state === 'timeout' ? 'timeout' : 'network_error';
       markDiagnosticStage(trace, 'transport', { source: 'nodeseek', channel: 'webview', state: 'failure', reason });
       finishNodeSeekLoginTrace(trace, 'failure', { reason });
+      onLoginWebViewFailure('nodeseek', attempt, reason);
       return;
     }
     markDiagnosticStage(trace, 'transport', {
@@ -249,14 +264,22 @@ export function useAccountController({
       channel: 'webview',
       state: state === 'start' ? 'started' : 'ready'
     });
-  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace]);
+  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, onLoginWebViewFailure]);
 
-  const recordYaohuoLoginWebViewState = useCallback((state: LoginWebViewDiagnosticState) => {
+  const recordYaohuoLoginWebViewState = useCallback((state: LoginWebViewDiagnosticState, attempt = 0) => {
+    const requestId = yaohuoLoginPanelRequestRef.current;
+    if (state === 'start' && yaohuoTerminalRequestRef.current === requestId) {
+      yaohuoTerminalRequestRef.current = null;
+    } else if (yaohuoTerminalRequestRef.current === requestId) {
+      return;
+    }
     const trace = currentYaohuoLoginTrace('open');
-    if (state === 'error' || state === 'renderer-gone') {
-      const reason = state === 'renderer-gone' ? 'renderer_gone' : 'network_error';
+    if (state === 'error' || state === 'renderer-gone' || state === 'timeout') {
+      yaohuoTerminalRequestRef.current = requestId;
+      const reason: LoginWebViewFailureReason = state === 'renderer-gone' ? 'renderer_gone' : state === 'timeout' ? 'timeout' : 'network_error';
       markDiagnosticStage(trace, 'transport', { source: 'yaohuo', channel: 'webview', state: 'failure', reason });
       finishYaohuoLoginTrace(trace, 'failure', { reason });
+      onLoginWebViewFailure('yaohuo', attempt, reason);
       return;
     }
     markDiagnosticStage(trace, 'transport', {
@@ -264,7 +287,7 @@ export function useAccountController({
       channel: 'webview',
       state: state === 'start' ? 'started' : 'ready'
     });
-  }, [currentYaohuoLoginTrace, finishYaohuoLoginTrace]);
+  }, [currentYaohuoLoginTrace, finishYaohuoLoginTrace, onLoginWebViewFailure]);
 
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -277,19 +300,21 @@ export function useAccountController({
         cookie?: string;
       };
       if (data.type === 'nodeseek-login') {
-        const trace = currentNodeSeekLoginTrace('open');
-        markDiagnosticStage(trace, 'transport', {
-          source: 'nodeseek',
-          channel: 'webview',
-          state: 'ready'
-        });
-        markDiagnosticStage(trace, 'parse', {
-          source: 'nodeseek',
-          messageRecognized: true,
-          hasCredential: typeof data.cookie === 'string',
-          isLoggedIn: Boolean(data.loggedIn),
-          userAgentSource: typeof data.userAgent === 'string' ? 'webview' : 'default'
-        });
+        if (nodeSeekTerminalRequestRef.current !== nodeSeekLoginPanelRequestRef.current) {
+          const trace = currentNodeSeekLoginTrace('open');
+          markDiagnosticStage(trace, 'transport', {
+            source: 'nodeseek',
+            channel: 'webview',
+            state: 'ready'
+          });
+          markDiagnosticStage(trace, 'parse', {
+            source: 'nodeseek',
+            messageRecognized: true,
+            hasCredential: typeof data.cookie === 'string',
+            isLoggedIn: Boolean(data.loggedIn),
+            userAgentSource: typeof data.userAgent === 'string' ? 'webview' : 'default'
+          });
+        }
       }
       if (data.type === 'nodeseek-login' && typeof data.userAgent === 'string') {
         const userAgent = sanitizeNodeSeekUserAgent(data.userAgent);
@@ -342,7 +367,6 @@ export function useAccountController({
       channel: 'webview',
       state: 'started'
     });
-    nodeSeekWebLoginUserIdRef.current = null;
     nodeSeekWebLoginCsrfTokenRef.current = '';
     webLoginDetectedRef.current = false;
     webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
@@ -387,7 +411,9 @@ export function useAccountController({
       const cookieHeader = await saveNodeSeekCookieHeader(cookies, {
         verifiedByPage: webLoginDetectedRef.current,
         isCurrent,
-        resetCurrentUser: true,
+        resetCurrentUser: nodeSeekCurrentUserId !== null
+          && nodeSeekWebLoginUserIdRef.current !== null
+          && String(nodeSeekWebLoginUserIdRef.current) !== String(nodeSeekCurrentUserId),
         userId: nodeSeekWebLoginUserIdRef.current,
         csrfToken: nodeSeekWebLoginCsrfTokenRef.current || undefined,
         diagnosticTrace: trace
@@ -426,7 +452,7 @@ export function useAccountController({
       });
       throw error;
     }
-  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, notify, readCurrentNodeSeekCookies, saveNodeSeekCookieHeader, webLoginDetectedRef]);
+  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, nodeSeekCurrentUserId, notify, readCurrentNodeSeekCookies, saveNodeSeekCookieHeader, webLoginDetectedRef]);
 
   const checkLogin = useCallback(async () => {
     const trace = currentNodeSeekLoginTrace('manual');

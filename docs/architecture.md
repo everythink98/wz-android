@@ -24,7 +24,7 @@
 | 站点 action client | 当前写入实现，由 `useTopicActionsController` 按来源和 capability 调用 |
 | `src/screens/` | 首页、搜索、收藏、更多、用户页和详情页导出入口 |
 | `src/screens/topic/` | 详情页主体、详情页 helper 和详情页局部组件 |
-| `src/screens/more/` | More 页个人中心、账号与验证、备份、外观、状态检查等局部面板 |
+| `src/screens/more/` | More 页账号中心、备份、外观、状态检查等局部面板 |
 | `src/screens/library/` | 收藏页列表模型与列表 key helper |
 | `src/components/` | 通用控件、主题卡片、图片预览和底部导航 |
 | `src/feedCategoryRail.ts`、`src/feedLogic.ts` | 首页来源、分类、单站排序和列表缓存 key |
@@ -60,15 +60,18 @@
 - NodeSeek 单站在未选分类时支持 `新帖子`、`新评论`；V2EX 单站在未选分类时支持 `全部`、`最新`、`最热`。
 - 新增首页筛选状态应先放进 `src/feedCategoryRail.ts`，再通过 `src/app/useFeedController.ts` 进入 `getFeed`。
 
-## 个人中心与账号
+## 账号中心
 
-- More 页 `个人中心` 由 `src/screens/MoreScreen.tsx` 承载，`src/screens/more/personalCenterItems.ts` 从三站会话状态的 `currentUser` 生成主页入口。
-- `刷新账号状态` 按钮位于 `个人中心`；`账号与验证` 只保留登录、验证、清除登录、NodeImage 和 linux.do 等级相关入口。
+- More 页只有一个 `账号中心`，由 `src/screens/MoreScreen.tsx`、`src/screens/more/AccountCenterPanel.tsx` 和 `src/screens/more/accountCenter.ts` 承载；三站共用会话、身份、凭据摘要和主操作视图，同一时间只展开一个站点。
+- 账号中心顶部只有一个公共 `刷新账号状态`，一次刷新三站；主页、登录 / 验证、检测、清除登录、刷新网页、NodeImage、签到和 linux.do 等级等原入口仍按站点进入。测试工具、代理、诊断、备份和外观保持独立。
+- `src/credentialVault.ts` 使用现有 SecureStore 按站点隔离账号密码；`src/loginFormAdapters.ts` 只允许在三站声明的可信登录 URL 和字段上主动填入，触发输入事件但不提交。
+- 网站 Cookie 与保存的账号密码是两套独立数据：清除网站登录不删除凭据，删除凭据也不退出当前网站登录。
 - More 页 `服务器代理` 由 `src/screens/more/NetworkProxyModal.tsx` 承载，配置 HTTP / SOCKS5 代理并可测试延迟。
 - `src/app/useAccountStatusController.ts` 负责 `refreshAccountStatus`；`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
 - `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录 / 验证页检测、Cookie 保存 / 清理和 linux.do 等级读取。
 - `src/app/useSessionController.ts` 只负责加载 Cookie 和会话事实；NodeSeek Cookie 加载只返回本次凭据里的 userId，不顺带读取个人资料。
-- NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。
+- `SiteSessionState` 是账号中心和登录弹层的唯一登录状态来源；NodeSeek 的 WebView userId 只在 session 已登录时补充身份，不能覆盖已失效、匿名或需要验证状态。
+- NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。确定未登录的 session event 会清理运行时身份提示，普通 `check-failed` 不会误判退出。
 - linux.do 验证弹层由 `src/app/LinuxDoVerifyModal.tsx` 和全局 modal host 承载。
 
 ## 服务器代理
