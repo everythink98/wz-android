@@ -62,9 +62,9 @@ export function alphaColor(hex: string, alpha: number) {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-type ChipTone = { light: string; dark: string };
-
 export type StatusBadgeTone = 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning';
+
+type ChipTone = { light: string; dark: string };
 
 const TOPIC_TAG_TONES: ChipTone[] = [
   { light: '#2f6555', dark: '#9fd0bf' },
@@ -77,14 +77,33 @@ const TOPIC_TAG_TONES: ChipTone[] = [
   { light: '#5d6874', dark: '#b8c2ca' }
 ];
 
-const STATUS_BADGE_TONES: Record<StatusBadgeTone, ChipTone> = {
-  accent: { light: '#5f6f2e', dark: '#c9d887' },
-  danger: { light: '#a35046', dark: '#e09a91' },
-  info: { light: '#386f8f', dark: '#9fc7e3' },
-  neutral: { light: '#66706a', dark: '#b4bbb6' },
-  success: { light: '#2f6555', dark: '#9fd0bf' },
-  warning: { light: '#8a6430', dark: '#dfbd78' }
+const SOURCE_BADGE_COLORS: Record<Source, { dark: string; light: string }> = {
+  v2ex: { light: '#6D8AA8', dark: '#9FB6CF' },
+  linuxdo: { light: '#B08A5E', dark: '#D4B790' },
+  nodeseek: { light: '#1677FF', dark: '#5B9CFF' },
+  yaohuo: { light: '#A8788E', dark: '#D0A6B6' }
 };
+
+function chipToneStyle(color: string, theme: ReaderTheme): TextStyle {
+  return {
+    backgroundColor: theme.surface2,
+    borderColor: theme.line,
+    color
+  };
+}
+
+function statusToneColor(tone: StatusBadgeTone, theme: ReaderTheme) {
+  if (tone === 'danger') {
+    return theme.danger;
+  }
+  if (tone === 'warning') {
+    return theme.warning;
+  }
+  if (tone === 'neutral') {
+    return theme.muted;
+  }
+  return theme.primary;
+}
 
 function stableToneIndex(label: string, toneCount: number) {
   let hash = 0;
@@ -95,8 +114,13 @@ function stableToneIndex(label: string, toneCount: number) {
   return Math.abs(hash) % toneCount;
 }
 
-function chipToneStyle(tone: ChipTone, theme: ReaderTheme): TextStyle {
-  const color = theme.dark ? tone.dark : tone.light;
+function topicTagColor(label: string, theme: ReaderTheme) {
+  const tone = TOPIC_TAG_TONES[stableToneIndex(label, TOPIC_TAG_TONES.length)];
+  return theme.dark ? tone.dark : tone.light;
+}
+
+export function topicTagColorStyle(label: string, theme: ReaderTheme): TextStyle {
+  const color = topicTagColor(label, theme);
   return {
     backgroundColor: alphaColor(color, theme.dark ? 0.17 : 0.085),
     borderColor: alphaColor(color, theme.dark ? 0.42 : 0.22),
@@ -104,98 +128,74 @@ function chipToneStyle(tone: ChipTone, theme: ReaderTheme): TextStyle {
   };
 }
 
-function chipToneTextStyle(tone: ChipTone, theme: ReaderTheme): TextStyle {
-  return {
-    color: theme.dark ? tone.dark : tone.light
-  };
-}
-
-export function topicTagColorStyle(label: string, theme: ReaderTheme): TextStyle {
-  return chipToneStyle(TOPIC_TAG_TONES[stableToneIndex(label, TOPIC_TAG_TONES.length)], theme);
-}
-
 export function topicTagTextColorStyle(label: string, theme: ReaderTheme): TextStyle {
-  return chipToneTextStyle(TOPIC_TAG_TONES[stableToneIndex(label, TOPIC_TAG_TONES.length)], theme);
+  return { color: topicTagColor(label, theme) };
 }
 
 export function topicStatusBadgeColorStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
-  return chipToneStyle(STATUS_BADGE_TONES[tone], theme);
+  return chipToneStyle(statusToneColor(tone, theme), theme);
 }
 
 export function topicStatusBadgeTextColorStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
-  return chipToneTextStyle(STATUS_BADGE_TONES[tone], theme);
+  return { color: statusToneColor(tone, theme) };
 }
 
 export function replyContextBadgeStyle(tone: StatusBadgeTone, theme: ReaderTheme): TextStyle {
-  return chipToneStyle(STATUS_BADGE_TONES[tone], theme);
-}
-
-const SOURCE_TONES: Record<Source, ChipTone> = {
-  v2ex: { light: '#6d8aa8', dark: '#9fb6cf' },
-  linuxdo: { light: '#b08a5e', dark: '#d4b790' },
-  nodeseek: { light: '#639a8f', dark: '#93c2b6' },
-  yaohuo: { light: '#a8788e', dark: '#d0a6b6' }
-};
-
-function sourceAccentColor(source: Source, theme: ReaderTheme): string {
-  const tone = SOURCE_TONES[source];
-  return theme.dark ? tone.dark : tone.light;
+  return chipToneStyle(statusToneColor(tone, theme), theme);
 }
 
 export function sourceBadgeColorStyle(source: Source, theme: ReaderTheme): TextStyle {
-  const color = sourceAccentColor(source, theme);
+  const color = SOURCE_BADGE_COLORS[source][theme.dark ? 'dark' : 'light'];
   return {
-    color,
-    backgroundColor: alphaColor(color, theme.dark ? 0.18 : 0.09),
-    borderColor: alphaColor(color, theme.dark ? 0.4 : 0.22)
+    backgroundColor: alphaColor(color, theme.dark ? 0.14 : 0.08),
+    borderColor: alphaColor(color, theme.dark ? 0.26 : 0.16),
+    color
   };
 }
 
 export function createTheme(settings: ReaderSettings): ReaderTheme {
   const dark = settings.theme === 'dark';
-  const palette = { light: '#111111', dark: '#7cc9a4', lightOn: '#ffffff', darkOn: '#0c1410' };
-  const success = { light: '#2f6a54', dark: palette.dark };
   const favorite = { light: '#facc15', dark: '#fde047' };
   if (dark) {
     return {
       dark: true,
-      background: '#12151a',
-      surface: '#12151a',
-      surface2: '#232831',
-      line: '#313840',
-      lineStrong: '#454d54',
-      ink: '#e8ece9',
-      muted: '#97a39c',
-      primary: palette.dark,
-      primaryStrong: '#90d6b5',
-      primarySoft: alphaColor(palette.dark, 0.14),
-      mist: alphaColor(palette.dark, 0.12),
-      onPrimary: palette.darkOn,
-      onOverlay: '#f4f6f5',
-      danger: '#d98a7e',
-      warning: '#d8b06a',
-      success: success.dark,
+      background: '#121212',
+      surface: '#181818',
+      surface2: '#222222',
+      line: '#303030',
+      lineStrong: '#444444',
+      ink: '#F1F1F1',
+      muted: '#A0A0A0',
+      primary: '#5B9CFF',
+      primaryStrong: '#1677FF',
+      primarySoft: 'rgba(22, 119, 255, 0.16)',
+      mist: 'rgba(22, 119, 255, 0.16)',
+      onPrimary: '#121212',
+      onOverlay: '#F1F1F1',
+      danger: '#F08A7C',
+      warning: '#D6A758',
+      success: '#5B9CFF',
       favorite: favorite.dark
     };
   }
   return {
     dark: false,
-    background: '#ffffff',
-    surface: '#ffffff',
-    surface2: '#f4f4f5',
-    line: '#e5e7eb',
-    lineStrong: '#d4d4d8',
-    ink: '#18181b',
-    muted: '#71717a',
-    primary: palette.light,
-    primaryStrong: '#000000',
-    primarySoft: alphaColor(palette.light, 0.08),
-    mist: alphaColor(palette.light, 0.08),
-    onPrimary: palette.lightOn,
-    onOverlay: '#ffffff',
-    danger: '#b3503f',
-    warning: '#9a6b2e',
-    success: success.light,
+    background: '#F7F7F7',
+    surface: '#FCFCFC',
+    surface2: '#F0F0F0',
+    line: '#E3E3E3',
+    lineStrong: '#D0D0D0',
+    ink: '#181818',
+    muted: '#707070',
+    primary: '#1677FF',
+    primaryStrong: '#0958D9',
+    primarySoft: 'rgba(22, 119, 255, 0.10)',
+    mist: 'rgba(22, 119, 255, 0.10)',
+    onPrimary: '#FCFCFC',
+    onOverlay: '#FCFCFC',
+    danger: '#B84A3A',
+    warning: '#8A641F',
+    success: '#1677FF',
     favorite: favorite.light
   };
 }

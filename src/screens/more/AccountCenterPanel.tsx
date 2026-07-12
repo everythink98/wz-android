@@ -4,7 +4,7 @@ import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '../../credentialVault';
 import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
 import type { UserProfile } from '../../types';
-import { androidRipple, createStyles, LINK_COLOR, type ReaderTheme } from '../../theme';
+import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '../../components/AppControls';
 import {
   accountCenterSummary,
@@ -25,7 +25,7 @@ type CommandHandler = (command: AccountCenterCommand) => void | Promise<void>;
 type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
 
 function createAccountCenterStyles(theme: ReaderTheme) {
-  const actionColor = theme.dark ? theme.primary : LINK_COLOR;
+  const actionColor = theme.primary;
   return StyleSheet.create({
     selectorRow: {
       alignItems: 'center',
@@ -195,7 +195,7 @@ function AccountAction({
       <Text style={[styles.buttonText, accountStyles.actionTextQuiet]}>
         {label}
       </Text>
-      {disclosure ? <ChevronRight size={15} color={theme.dark ? theme.primary : LINK_COLOR} strokeWidth={1.8} /> : null}
+      {disclosure ? <ChevronRight size={15} color={theme.primary} strokeWidth={1.8} /> : null}
     </Pressable>
   );
 }

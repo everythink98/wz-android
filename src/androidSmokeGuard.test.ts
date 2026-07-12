@@ -64,7 +64,7 @@ describe('Android release smoke guards', () => {
     expect(smokeScript).toContain("'--timeout', '60000'");
     expect(smokeScript).toContain("['logs', 'stop'");
     expect(smokeScript).toContain("['close', '--session', smokeSession");
-    expect(smokeScript).toContain("['fill', 'id=\"search-query\"', 'codex'");
+    expect(smokeScript).toContain("['fill', 'id=\"search-query\"', 'vps'");
     expect(smokeScript).toContain("['keyboard', 'dismiss'");
     expect(smokeScript).toContain("['is', 'visible', 'id=\"search-result-first\"'");
     expect(smokeScript).toContain("['back', '--system'");

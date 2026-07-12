@@ -16,6 +16,7 @@ const optionalRepositoryPaths = new Set([
   'docs/emulator-baseline.md',
   'android/app/build/outputs/apk/release',
   'android/app/build/outputs/apk/release/app-arm64-v8a-release.apk',
+  'android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk',
   'release-manifest.json'
 ]);
 

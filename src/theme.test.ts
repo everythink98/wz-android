@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { StyleSheet } from 'react-native';
 import { type ReaderSettings } from './readerData';
-import { createStyles, createTheme, LINK_COLOR } from './theme';
+import {
+  createStyles,
+  createTheme,
+  LINK_COLOR,
+  sourceBadgeColorStyle,
+  topicStatusBadgeColorStyle,
+  topicTagColorStyle
+} from './theme';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -46,21 +53,52 @@ describe('Android reader theme safety rails', () => {
     expect(styles.userContentInner.paddingBottom).toBe(styles.contentInner.paddingBottom);
   });
 
-  it('uses a black primary color on the white light theme without flattening status colors', () => {
+  it('uses neutral light surfaces with the proxy blue accent', () => {
     const theme = createTheme(settings);
 
-    expect(theme.background).toBe('#ffffff');
-    expect(theme.surface).toBe('#ffffff');
-    expect(theme.surface2).toBe('#f4f4f5');
-    expect(theme.line).toBe('#e5e7eb');
-    expect(theme.ink).toBe('#18181b');
-    expect(theme.muted).toBe('#71717a');
-    expect(theme.primary).toBe('#111111');
-    expect(theme.primaryStrong).toBe('#000000');
-    expect(theme.primarySoft).toBe('rgba(17, 17, 17, 0.08)');
-    expect(theme.onPrimary).toBe('#ffffff');
-    expect(theme.success).toBe('#2f6a54');
+    expect(theme.background).toBe('#F7F7F7');
+    expect(theme.surface).toBe('#FCFCFC');
+    expect(theme.surface2).toBe('#F0F0F0');
+    expect(theme.line).toBe('#E3E3E3');
+    expect(theme.ink).toBe('#181818');
+    expect(theme.muted).toBe('#707070');
+    expect(theme.primary).toBe('#1677FF');
+    expect(theme.primaryStrong).toBe('#0958D9');
+    expect(theme.primarySoft).toBe('rgba(22, 119, 255, 0.10)');
+    expect(theme.onPrimary).toBe('#FCFCFC');
+    expect(theme.success).toBe(theme.primary);
     expect(theme.favorite).toBe('#facc15');
+  });
+
+  it('uses achromatic graphite surfaces and blue state colors in dark mode', () => {
+    const theme = createTheme({ ...settings, theme: 'dark' });
+
+    expect(theme).toMatchObject({
+      background: '#121212',
+      surface: '#181818',
+      surface2: '#222222',
+      line: '#303030',
+      lineStrong: '#444444',
+      ink: '#F1F1F1',
+      muted: '#A0A0A0',
+      primary: '#5B9CFF',
+      primaryStrong: '#1677FF',
+      primarySoft: 'rgba(22, 119, 255, 0.16)',
+      success: '#5B9CFF'
+    });
+  });
+
+  it('uses stable hashed colors for functional tags and stable source identities', () => {
+    const theme = createTheme(settings);
+
+    expect(topicTagColorStyle('任意标签', theme)).toEqual(topicTagColorStyle('任意标签', theme));
+    expect(topicTagColorStyle('任意标签', theme).color).not.toBe(topicTagColorStyle('另一个标签', theme).color);
+    expect(sourceBadgeColorStyle('nodeseek', theme).color).toBe(theme.primary);
+    expect(topicTagColorStyle('任意标签', theme).color).not.toBe(sourceBadgeColorStyle('nodeseek', theme).color);
+    expect(sourceBadgeColorStyle('v2ex', theme).color).not.toBe(sourceBadgeColorStyle('linuxdo', theme).color);
+    expect(sourceBadgeColorStyle('linuxdo', theme).color).not.toBe(sourceBadgeColorStyle('yaohuo', theme).color);
+    expect(topicStatusBadgeColorStyle('success', theme).color).toBe(theme.primary);
+    expect(topicStatusBadgeColorStyle('danger', theme).color).toBe(theme.danger);
   });
 
   it('keeps reply action buttons tappable without forcing a wrapped row', () => {
@@ -73,6 +111,19 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyCompactActionButton.flexShrink).toBe(1);
     expect(styles.replyCompactActionButton.minWidth).toBeGreaterThanOrEqual(44);
     expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(44);
+  });
+
+  it('keeps appearance controls compact, equal-width, and touch accessible', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.appearanceSegmentedControl.flex).toBe(1);
+    expect(styles.appearanceSegment.flex).toBe(1);
+    expect(styles.appearanceStepButton.width).toBeGreaterThanOrEqual(44);
+    expect(styles.appearanceStepButton.height).toBeGreaterThanOrEqual(44);
+    expect(styles.appearanceSlider.height).toBeGreaterThanOrEqual(44);
+    expect(styles.menuIcon.backgroundColor).toBeUndefined();
+    expect(styles.expandableStateIcon.backgroundColor).toBeUndefined();
   });
 
   it('keeps reply composer actions grouped at the bottom edge', () => {
@@ -129,7 +180,7 @@ describe('Android reader theme safety rails', () => {
     expect('paddingBottom' in styles.nav).toBe(false);
   });
 
-  it('keeps selected bottom navigation black without a capsule background', () => {
+  it('keeps selected bottom navigation in the accent color without a capsule background', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown> | undefined>;
 

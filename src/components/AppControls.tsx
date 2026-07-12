@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import { ChevronDown, ChevronRight, ChevronUp, type LucideIcon } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import { androidRipple, createStyles, LINK_COLOR, type ReaderTheme } from '../theme';
+import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 
 export const TOUCH_HIT_SLOP = { top: 6, right: 6, bottom: 6, left: 6 };
 
@@ -100,7 +100,7 @@ export function MenuButton({
 }) {
   const Icon = icon;
   const Chevron = expanded === undefined ? ChevronRight : ChevronDown;
-  const nestedActionColor = theme.dark ? theme.primary : LINK_COLOR;
+  const nestedActionColor = theme.primary;
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ disabled }} android_ripple={nested ? androidRipple(theme.primarySoft) : undefined} disabled={disabled} style={[styles.menuButton, disabled && styles.buttonDisabled]} onPress={() => pressWithFeedback(onPress)}>
       {nested ? null : (

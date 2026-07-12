@@ -6,6 +6,9 @@ export const readerDataVersion = 2;
 export const MAX_HISTORY_RECORDS = 1000;
 export const MAX_DELETED_RECORDS = 1000;
 export const MAX_READER_STRING_LENGTH = 4096;
+export const FONT_SCALE_MIN = 0.85;
+export const FONT_SCALE_MAX = 1.4;
+export const FONT_SCALE_STEP = 0.05;
 
 export interface TopicRecord {
   topic: Topic;
@@ -433,10 +436,17 @@ export function sanitizeReaderSettings(value: unknown): ReaderSettings {
   return mergeReaderSettings(defaultReaderSettings, base);
 }
 
-function cleanFontScale(value: unknown, fallback: number) {
+export function normalizeFontScale(value: unknown, fallback = 1) {
   return typeof value === 'number' && Number.isFinite(value)
-    ? Math.max(0.9, Math.min(1.25, Math.round(value * 100) / 100))
+    ? Math.max(FONT_SCALE_MIN, Math.min(FONT_SCALE_MAX, Math.round(Math.round(value / FONT_SCALE_STEP) * FONT_SCALE_STEP * 100) / 100))
     : fallback;
+}
+
+export function fontScaleFromSliderPosition(position: number, width: number) {
+  const ratio = Number.isFinite(position) && Number.isFinite(width) && width > 0
+    ? Math.max(0, Math.min(1, position / width))
+    : 0;
+  return normalizeFontScale(FONT_SCALE_MIN + ratio * (FONT_SCALE_MAX - FONT_SCALE_MIN));
 }
 
 function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSettings {
@@ -447,7 +457,7 @@ function mergeReaderSettings(local: ReaderSettings, value: unknown): ReaderSetti
   return {
     listDensity: base.listDensity === 'compact' || base.listDensity === 'standard' || base.listDensity === 'loose' ? base.listDensity : local.listDensity,
     theme: base.theme === 'light' || base.theme === 'dark' ? base.theme : local.theme,
-    fontScale: cleanFontScale(base.fontScale, local.fontScale),
+    fontScale: normalizeFontScale(base.fontScale, local.fontScale),
     lineHeight: base.lineHeight === 'compact' || base.lineHeight === 'standard' || base.lineHeight === 'loose' ? base.lineHeight : local.lineHeight,
     contentWidth: base.contentWidth === 'narrow' || base.contentWidth === 'standard' || base.contentWidth === 'wide' ? base.contentWidth : local.contentWidth,
     fontFamily: base.fontFamily === 'sans' || base.fontFamily === 'serif' ? base.fontFamily : local.fontFamily

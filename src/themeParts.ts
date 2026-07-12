@@ -1,8 +1,6 @@
 import { StyleSheet } from 'react-native';
 import type { ReaderTheme } from './theme';
 
-type AlphaColor = (hex: string, alpha: number) => string;
-
 export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string | undefined) {
   return {
     nav: {
@@ -72,14 +70,13 @@ export function createNavigationStyles(theme: ReaderTheme, appFontFamily: string
 export function createTopicStyles(
   theme: ReaderTheme,
   appFontFamily: string | undefined,
-  fontScale: number,
-  alphaColor: AlphaColor
+  fontScale: number
 ) {
   return {
     topicAccessNotice: {
       gap: 8,
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.14 : 0.06),
-      borderColor: alphaColor(theme.danger, 0.28),
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderRadius: 10,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
@@ -118,8 +115,8 @@ export function createTopicStyles(
       fontSize: 11,
       fontWeight: '600' as const,
       lineHeight: 16,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.20 : 0.12),
-      borderColor: alphaColor(theme.primary, 0.32),
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderRadius: 6,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 8,

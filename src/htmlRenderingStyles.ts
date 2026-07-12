@@ -14,6 +14,7 @@ export function buildHtmlRenderingStyles({
 }) {
   const baseFontSize = Math.round(16 * settings.fontScale);
   const baseLineHeight = Math.round(baseFontSize * lineHeightMultiplier(settings.lineHeight));
+  const linkColor = theme.dark ? theme.primary : LINK_COLOR;
   const htmlBaseStyle: HtmlBaseStyle = {
     color: theme.ink,
     fontFamily: fontFamilyValue(settings.fontFamily),
@@ -44,7 +45,7 @@ export function buildHtmlRenderingStyles({
     h5: heading(15, 22, '600', 12, 5),
     h6: heading(14, 21, '600', 10, 4),
     a: {
-      color: LINK_COLOR
+      color: linkColor
     },
     img: {
       borderRadius: 10,
@@ -122,11 +123,11 @@ export function buildHtmlRenderingStyles({
   };
   const htmlClassesStyles: HtmlClassesStyles = {
     'forum-user-mention': {
-      backgroundColor: alphaColor(LINK_COLOR, theme.dark ? 0.2 : 0.12),
-      borderColor: alphaColor(LINK_COLOR, theme.dark ? 0.38 : 0.26),
+      backgroundColor: alphaColor(linkColor, theme.dark ? 0.2 : 0.12),
+      borderColor: alphaColor(linkColor, theme.dark ? 0.38 : 0.26),
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
-      color: LINK_COLOR,
+      color: linkColor,
       fontWeight: '700',
       paddingHorizontal: 5,
       paddingVertical: 1,

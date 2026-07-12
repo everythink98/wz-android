@@ -270,11 +270,11 @@ async function main() {
     waitFor('id="feed-topic-first"', 60_000);
     pressReadOnly('id="main-tab-search"');
     waitFor('id="search-query"');
-    runAgentDevice(['fill', 'id="search-query"', 'codex', '--session', smokeSession, '--platform', 'android']);
+    runAgentDevice(['fill', 'id="search-query"', 'vps', '--session', smokeSession, '--platform', 'android']);
     pressReadOnly('id="search-submit"');
     runAgentDevice(['keyboard', 'dismiss', '--session', smokeSession, '--platform', 'android']);
     waitFor('id="search-complete"', 60_000);
-    assertSearchQueryPreserved('codex');
+    assertSearchQueryPreserved('vps');
     findSearchOutcome();
     pressReadOnly('id="search-result-first"');
     waitFor('id="topic-detail-loaded"', 60_000);
@@ -289,10 +289,10 @@ async function main() {
     waitFor('id="topic-detail-loaded"', 60_000);
     systemBack();
     waitFor('id="search-complete"', 60_000);
-    assertSearchQueryPreserved('codex');
+    assertSearchQueryPreserved('vps');
     pressReadOnly('id="main-tab-search"');
     waitFor('id="search-complete"', 60_000);
-    assertSearchQueryPreserved('codex');
+    assertSearchQueryPreserved('vps');
     pressReadOnly('id="main-tab-library"');
     waitFor('id="library-favorites-ready"', 60_000);
     findLibraryOutcome();

@@ -108,12 +108,12 @@ export function NetworkProxyModal({
   const displayedEnabled = pendingEnabled ?? proxyState.enabled;
   const switchDisabled = busy || applyStatus === 'applying';
   const switchTranslateX = switchProgress.interpolate({ inputRange: [0, 1], outputRange: [0, 28] });
-  const accentColor = theme.dark ? theme.primary : '#2AABEE';
-  const accentSoftColor = theme.dark ? theme.mist : 'rgba(42, 171, 238, 0.1)';
-  const accentBorderColor = theme.dark ? theme.line : 'rgba(42, 171, 238, 0.22)';
-  const cardColor = theme.dark ? theme.surface2 : '#FFFFFF';
-  const pageColor = theme.dark ? theme.surface : '#F1F2F5';
-  const selectedColor = theme.dark ? theme.success : '#51C85A';
+  const accentBaseColor = '#1677FF';
+  const accentColor = theme.primary;
+  const accentSoftColor = theme.primarySoft;
+  const accentBorderColor = theme.line;
+  const cardColor = theme.surface;
+  const pageColor = theme.background;
 
   useEffect(() => {
     if (!visible) {
@@ -325,10 +325,10 @@ export function NetworkProxyModal({
             accessibilityState={{ checked: displayedEnabled, disabled: switchDisabled }}
             disabled={switchDisabled}
             hitSlop={8}
-            style={[proxyStyles.toggleTrack, { backgroundColor: displayedEnabled ? accentColor : theme.lineStrong, opacity: switchDisabled ? 0.72 : 1 }]}
+            style={[proxyStyles.toggleTrack, { backgroundColor: displayedEnabled ? accentBaseColor : theme.lineStrong, opacity: switchDisabled ? 0.72 : 1 }]}
             onPress={() => toggleEnabled(!displayedEnabled)}
           >
-            <Animated.View style={[proxyStyles.toggleThumb, { transform: [{ translateX: switchTranslateX }] }]} />
+            <Animated.View style={[proxyStyles.toggleThumb, { backgroundColor: theme.surface, transform: [{ translateX: switchTranslateX }] }]} />
           </Pressable>
         </View>
 
@@ -371,8 +371,8 @@ export function NetworkProxyModal({
                 onPress={() => chooseProfile(profile)}
               >
                 {selecting ? (
-                  <View style={[proxyStyles.checkCircle, { borderColor: theme.lineStrong }, selected && { backgroundColor: selectedColor, borderColor: selectedColor }]}>
-                    {selected ? <Check size={13} color="#fff" strokeWidth={2.4} /> : null}
+                  <View style={[proxyStyles.checkCircle, { borderColor: theme.lineStrong }, selected && { backgroundColor: accentBaseColor, borderColor: accentBaseColor }]}>
+                    {selected ? <Check size={13} color={theme.onPrimary} strokeWidth={2.4} /> : null}
                   </View>
                 ) : null}
                 <View style={styles.flex}>
@@ -510,7 +510,7 @@ function ProxyInput({
 
 const proxyStyles = StyleSheet.create({
   content: {
-    gap: 12,
+    gap: 8,
     padding: 16
   },
   header: {
@@ -529,7 +529,7 @@ const proxyStyles = StyleSheet.create({
     marginHorizontal: 8
   },
   card: {
-    borderRadius: 14,
+    borderRadius: 10,
     overflow: 'hidden',
     paddingHorizontal: 16,
     paddingVertical: 14
@@ -552,7 +552,6 @@ const proxyStyles = StyleSheet.create({
     width: 64
   },
   toggleThumb: {
-    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     elevation: 3,
     height: 32,

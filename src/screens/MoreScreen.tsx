@@ -21,6 +21,12 @@ import { NetworkProxyModal } from './more/NetworkProxyModal';
 import { AccountCenterPanel, type AccountCenterCommand } from './more/AccountCenterPanel';
 import type { CredentialSummaries } from './more/accountCenter';
 import type { AccountCredentialFillAttempt } from '../app/useAccountCredentialController';
+
+function appearanceSummary(settings: ReaderSettings) {
+  const themeLabel = settings.theme === 'dark' ? '深色' : '浅色';
+  const densityLabel = settings.listDensity === 'compact' ? '紧凑密度' : settings.listDensity === 'loose' ? '宽松密度' : '标准密度';
+  return `${themeLabel} · 字号 ${Math.round(settings.fontScale * 100)}% · ${densityLabel}`;
+}
 export const MoreScreen = memo(function MoreScreen({
   checking,
   appUpdateBusy,
@@ -432,7 +438,7 @@ export const MoreScreen = memo(function MoreScreen({
       <ExpandablePanel
         quiet
         title="外观"
-        meta="字号 · 白天/黑夜 · 阅读调节"
+        meta={appearanceSummary(settings)}
         icon={Settings}
         expanded={showSettingsPanel}
         styles={styles}

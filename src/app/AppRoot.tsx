@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   BackHandler,
@@ -471,6 +471,7 @@ export function AppRoot() {
     fontScale,
     listDensity
   } = readerData.settings;
+  const deferredFontScale = useDeferredValue(fontScale);
   const theme = useMemo(() => createTheme(readerData.settings), [readerData.settings.theme]);
   const navigationTheme = useMemo(() => {
     const base = theme.dark ? DarkTheme : DefaultTheme;
@@ -488,7 +489,10 @@ export function AppRoot() {
       }
     };
   }, [theme]);
-  const styles = useMemo(() => createStyles(theme, readerData.settings, height), [fontFamily, fontScale, height, listDensity, theme]);
+  const styles = useMemo(
+    () => createStyles(theme, { ...readerData.settings, fontScale: deferredFontScale }, height),
+    [deferredFontScale, fontFamily, height, listDensity, theme]
+  );
   const contentWidth = Math.min(width - 40, contentWidthValue(readerData.settings.contentWidth));
   const {
     activeProfile: networkProxyActiveProfile,

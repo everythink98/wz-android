@@ -26,7 +26,8 @@ async function createFixture(markdown) {
 test('allows documented release output paths before generated APKs exist', async () => {
   const rootDir = await createFixture([
     'Output directory: `android/app/build/outputs/apk/release/`.',
-    'Published APK: `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`.'
+    'Published APK: `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`.',
+    'Smoke APK: `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`.'
   ].join('\n'));
 
   const errors = findBrokenDocReferences(rootDir, ['docs/guide.md']);

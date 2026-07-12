@@ -10,6 +10,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
   const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)));
   const appFontFamily = fontFamilyValue(settings.fontFamily);
+  const linkColor = theme.dark ? theme.primary : LINK_COLOR;
   const topicRowBackground = theme.surface;
   const warningColor = theme.warning;
   const radiusSm = 10;
@@ -21,7 +22,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
   const replyNeutralBorder = alphaColor(neutralBase, theme.dark ? 0.12 : 0.09);
   const replyNeutralBorderStrong = alphaColor(neutralBase, theme.dark ? 0.24 : 0.16);
   const navigationStyles = createNavigationStyles(theme, appFontFamily);
-  const topicStyles = createTopicStyles(theme, appFontFamily, fontScale, alphaColor);
+  const topicStyles = createTopicStyles(theme, appFontFamily, fontScale);
   const panelStyles = createPanelStyles(theme, appFontFamily);
   const baseStyles = StyleSheet.create({
     screen: {
@@ -1196,9 +1197,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignItems: 'center',
       justifyContent: 'center',
       width: 30,
-      height: 30,
-      borderRadius: radiusSm,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.13 : 0.07)
+      height: 30
     },
     menuLabel: {
       color: theme.ink,
@@ -1288,12 +1287,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     expandableStateIcon: {
       alignItems: 'center',
       justifyContent: 'center',
-      width: 32,
-      height: 32,
-      borderColor: theme.line,
-      borderRadius: 10,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface2
+      width: 24,
+      height: 32
     },
     expandableBody: {
       gap: 10,
@@ -1320,33 +1315,173 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     settingGroup: {
       gap: 7
     },
-    chipWrap: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8
+    appearanceSettings: {
+      gap: 20,
+      paddingTop: 4
     },
-    removableChip: {
-      maxWidth: 240,
-      minHeight: 38,
-      justifyContent: 'center',
+    appearanceSection: {
+      gap: 4
+    },
+    appearanceSectionTitle: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 17
+    },
+    appearanceSettingRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 12,
+      minHeight: 48
+    },
+    appearanceSettingRowDivided: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth
+    },
+    appearanceSettingLabel: {
+      flexBasis: 72,
+      flexShrink: 0,
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      fontWeight: '500',
+      lineHeight: 20
+    },
+    appearanceSegmentedControl: {
+      flex: 1,
+      flexDirection: 'row',
+      minWidth: 0,
+      padding: 2,
       backgroundColor: theme.surface2,
       borderColor: theme.line,
       borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      paddingHorizontal: 12,
-      paddingVertical: 5
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    appearanceSegment: {
+      alignItems: 'center',
+      flex: 1,
+      justifyContent: 'center',
+      minHeight: 36,
+      minWidth: 0,
+      borderRadius: 6,
+      paddingHorizontal: 4
+    },
+    appearanceSegmentActive: {
+      backgroundColor: theme.primarySoft
+    },
+    appearanceSegmentText: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '500',
+      includeFontPadding: false
+    },
+    appearanceSegmentTextActive: {
+      color: theme.primary,
+      fontWeight: '600'
+    },
+    appearanceFontScaleBlock: {
+      gap: 2,
+      paddingBottom: 4
+    },
+    appearanceFontScaleHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      minHeight: 40
+    },
+    appearanceFontScaleValue: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '600',
+      lineHeight: 18
+    },
+    appearanceSliderRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 12
+    },
+    appearanceStepButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 44,
+      height: 44,
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
+      borderRadius: 8,
+      borderWidth: StyleSheet.hairlineWidth
+    },
+    appearanceStepButtonText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 20,
+      fontWeight: '500',
+      includeFontPadding: false
+    },
+    appearanceControlDisabled: {
+      opacity: 0.38
+    },
+    appearanceSlider: {
+      flex: 1,
+      height: 44,
+      justifyContent: 'center',
+      minWidth: 0
+    },
+    appearanceSliderTrack: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      height: 4,
+      backgroundColor: theme.lineStrong,
+      borderRadius: 2
+    },
+    appearanceSliderFill: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      height: 4,
+      backgroundColor: theme.primary,
+      borderRadius: 2,
+      transformOrigin: 'left center'
+    },
+    appearanceSliderThumb: {
+      position: 'absolute',
+      left: 0,
+      width: 20,
+      height: 20,
+      marginLeft: -10,
+      backgroundColor: theme.primaryStrong,
+      borderColor: theme.surface,
+      borderRadius: 10,
+      borderWidth: 2
+    },
+    chipWrap: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth
+    },
+    removableChip: {
+      flex: 1,
+      minHeight: 44,
+      justifyContent: 'center',
+      paddingLeft: 2,
+      paddingRight: 44,
+      paddingVertical: 8
     },
     removableChipPadded: {
-      paddingRight: 24
+      paddingRight: 44
     },
     removableChipText: {
-      maxWidth: 198
+      color: theme.ink,
+      fontSize: 14,
+      maxWidth: '100%'
     },
     removableChipShell: {
       position: 'relative',
-      justifyContent: 'center',
-      paddingRight: 4,
-      paddingTop: 4
+      flexDirection: 'row',
+      borderBottomColor: theme.line,
+      borderBottomWidth: StyleSheet.hairlineWidth
     },
     removableChipClose: {
       position: 'absolute',
@@ -1354,12 +1489,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       right: 0,
       alignItems: 'center',
       justifyContent: 'center',
-      width: 21,
-      height: 21,
-      borderRadius: 11,
-      backgroundColor: theme.surface,
-      borderColor: theme.line,
-      borderWidth: StyleSheet.hairlineWidth
+      width: 44,
+      height: 44
     },
     loginPanel: {
       gap: 10
@@ -2035,7 +2166,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       alignSelf: 'stretch',
       height: 10,
       borderRadius: 999,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.16 : 0.08)
+      backgroundColor: theme.line
     },
     loadingPlaceholderLineShort: {
       width: '42%'
@@ -2045,8 +2176,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     errorBox: {
       gap: 8,
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
-      borderColor: alphaColor(theme.danger, 0.34),
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderRadius: radiusMd,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
@@ -2059,8 +2190,8 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     infoBox: {
       gap: 8,
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.14 : 0.06),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.3 : 0.16),
+      backgroundColor: theme.surface2,
+      borderColor: theme.line,
       borderRadius: radiusMd,
       borderWidth: StyleSheet.hairlineWidth,
       padding: 12
@@ -2078,16 +2209,16 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       padding: 12
     },
     authNoticeBoxNeutral: {
-      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.09 : 0.04),
-      borderColor: alphaColor(theme.primary, theme.dark ? 0.18 : 0.10)
+      backgroundColor: theme.surface2,
+      borderColor: theme.line
     },
     authNoticeBoxWarning: {
-      backgroundColor: alphaColor(warningColor, theme.dark ? 0.16 : 0.08),
-      borderColor: alphaColor(warningColor, theme.dark ? 0.38 : 0.22)
+      backgroundColor: theme.surface2,
+      borderColor: theme.line
     },
     authNoticeBoxDanger: {
-      backgroundColor: alphaColor(theme.danger, theme.dark ? 0.16 : 0.08),
-      borderColor: alphaColor(theme.danger, 0.34)
+      backgroundColor: theme.surface2,
+      borderColor: theme.line
     },
     authNoticeText: {
       fontFamily: appFontFamily,
@@ -2451,29 +2582,29 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyTargetPill: {
       alignSelf: 'flex-start',
-      backgroundColor: alphaColor(LINK_COLOR, theme.dark ? 0.14 : 0.06),
-      borderColor: alphaColor(LINK_COLOR, theme.dark ? 0.3 : 0.16),
+      backgroundColor: alphaColor(linkColor, theme.dark ? 0.14 : 0.06),
+      borderColor: alphaColor(linkColor, theme.dark ? 0.3 : 0.16),
       borderRadius: 8,
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 5
     },
     replyTargetText: {
-      color: LINK_COLOR,
+      color: linkColor,
       fontFamily: appFontFamily,
       fontSize: 12,
       fontWeight: '600',
       lineHeight: 16
     },
     htmlMentionLink: {
-      color: LINK_COLOR,
+      color: linkColor,
       fontFamily: appFontFamily,
       fontSize: Math.round(15 * fontScale),
       fontWeight: '600',
       lineHeight: Math.round(24 * fontScale)
     },
     htmlFloorLink: {
-      color: LINK_COLOR,
+      color: linkColor,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * fontScale),
       fontWeight: '600',
@@ -2497,7 +2628,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       textAlignVertical: 'center'
     },
     htmlReplyReferenceMentionText: {
-      color: LINK_COLOR,
+      color: linkColor,
       fontFamily: appFontFamily,
       fontSize: Math.round(13 * fontScale),
       fontWeight: '600',
