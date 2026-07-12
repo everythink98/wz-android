@@ -1,6 +1,7 @@
 import { fetchWithTimeout, type Fetcher } from './request';
 import type { LinuxDoActionRequest } from './linuxdoActions';
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import { normalizeDiagnosticReason } from './diagnostics';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   canStoreLinuxDoLogin,
@@ -170,7 +171,30 @@ export async function checkLinuxDoLoginAccess({
     };
   }
   try {
-    await getCsrfToken({ cookieHeader: cleanCookie, fetcher, signal, timeoutMs, userAgent });
+    const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/current.json`, {
+      headers: {
+        ...LINUXDO_ACTION_HEADERS,
+        Cookie: cleanCookie,
+        'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
+      }
+    }, { fetcher, signal, timeoutMs });
+    const data = await readJsonResponse(response);
+    if (response.status === 401 || response.status === 404) {
+      throw linuxDoLoginRequiredError();
+    }
+    if (!response.ok) {
+      throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
+    }
+    const currentUser = data.current_user && typeof data.current_user === 'object'
+      ? data.current_user as Record<string, unknown>
+      : data.user && typeof data.user === 'object'
+        ? data.user as Record<string, unknown>
+        : data;
+    const userId = Number(currentUser.id);
+    const username = typeof currentUser.username === 'string' ? currentUser.username.trim() : '';
+    if (!Number.isInteger(userId) || userId <= 0 || !username) {
+      throw new Error('linux.do 登录状态响应不完整');
+    }
     return {
       ok: true,
       message: '登录可用'
@@ -188,7 +212,10 @@ export async function checkLinuxDoLoginAccess({
     }
     return {
       ok: false,
-      message: error instanceof Error ? error.message : 'linux.do 登录检查失败'
+      message: error instanceof Error ? error.message : 'linux.do 会话检查失败',
+      reason: error instanceof Error && error.message === 'linux.do 登录状态响应不完整'
+        ? 'invalid_response' as const
+        : normalizeDiagnosticReason(error)
     };
   }
 }

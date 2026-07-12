@@ -34,7 +34,7 @@ function createController(overrides: Partial<Parameters<typeof useAccountCredent
     changeLinuxDoPanel: vi.fn(() => true),
     changeNodeSeekLoginPanel: vi.fn(),
     changeScreen: vi.fn(),
-    changeYaohuoLoginPanel: vi.fn(),
+    changeYaohuoLoginPanel: vi.fn(() => true),
     linuxDoWebViewRef: { current: null },
     notify,
     openUser: vi.fn(async () => undefined),
@@ -131,6 +131,35 @@ describe('account credential controller ownership', () => {
 
     expect(lines.map((line) => JSON.parse(line) as { operation?: string }))
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ operation: 'load' })]));
+  });
+
+  it('does not start a fill trace when temporary anonymous mode blocks the yaohuo login page', () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const changeYaohuoLoginPanel = vi.fn(() => false);
+    const { controller } = createController({ changeYaohuoLoginPanel });
+
+    controller.openAccountLogin('yaohuo', true);
+
+    expect(changeYaohuoLoginPanel).toHaveBeenCalledWith(true);
+    expect(lines.map((line) => JSON.parse(line) as { operation?: string }))
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ operation: 'load' })]));
+  });
+
+  it('opens the yaohuo login page again after temporary anonymous mode is disabled', () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    let blocked = true;
+    const { controller } = createController({ changeYaohuoLoginPanel: vi.fn(() => !blocked) });
+
+    controller.openAccountLogin('yaohuo', true);
+    blocked = false;
+    controller.openAccountLogin('yaohuo', true);
+
+    expect(lines.map((line) => JSON.parse(line) as { operation?: string; phase?: string }))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ operation: 'load', phase: 'intent' })
+      ]));
   });
 
   it('finishes automatic fill immediately when WebViews are blocked', () => {

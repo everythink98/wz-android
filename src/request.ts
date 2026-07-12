@@ -3,6 +3,7 @@ export type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 export const REQUEST_CANCELED_MESSAGE = '请求已取消';
+export const REQUEST_SUPERSEDED_MESSAGE = '请求已被新请求替代';
 
 export interface FetchWithTimeoutOptions {
   fetcher?: Fetcher;

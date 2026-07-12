@@ -283,7 +283,7 @@ export const FeedScreen = memo(function FeedScreen({
         data={feedItems}
         keyExtractor={topicKey}
         keyboardShouldPersistTaps="handled"
-        refreshControl={(
+        refreshControl={busy && feedItems.length === 0 ? undefined : (
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}

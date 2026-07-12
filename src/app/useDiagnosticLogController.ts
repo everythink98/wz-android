@@ -24,12 +24,13 @@ export function useDiagnosticLogController({
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
 
   const exportDiagnosticLogFile = useCallback(async () => {
-    const trace = beginDiagnosticTrace('diagnostic', 'export');
     if (diagnosticBusyRef.current) {
+      const trace = beginDiagnosticTrace('diagnostic', 'export');
       markDiagnosticStage(trace, 'guard', { state: 'busy' });
       finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
       return;
     }
+    let trace: ReturnType<typeof beginDiagnosticTrace> | undefined;
     let failureReason: DiagnosticReason = 'unknown';
     const completed = await runBackupOperation({
       busyRef: diagnosticBusyRef,
@@ -37,19 +38,27 @@ export function useDiagnosticLogController({
       setBusy: setDiagnosticBusy,
       task: async () => {
         try {
-          markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
           await exportDiagnosticLog({
             ...metadataRef.current,
             currentScreen: getCurrentScreen()
+          }, {
+            onSnapshotReady: () => {
+              trace = beginDiagnosticTrace('diagnostic', 'export');
+              markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
+            }
           });
-          markDiagnosticStage(trace, 'apply', { state: 'share-completed' });
+          if (trace) {
+            markDiagnosticStage(trace, 'apply', { state: 'share-completed' });
+          }
           notify('诊断日志已生成');
         } catch (error) {
+          trace ||= beginDiagnosticTrace('diagnostic', 'export');
           failureReason = normalizeDiagnosticReason(error);
           throw error;
         }
       }
     });
+    trace ||= beginDiagnosticTrace('diagnostic', 'export');
     finishDiagnosticTrace(trace, completed ? 'success' : 'failure', completed ? {} : { reason: failureReason });
   }, [getCurrentScreen, notify]);
 

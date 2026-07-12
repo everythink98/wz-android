@@ -29,7 +29,7 @@ describe('NodeSeek login WebView probe script', () => {
     vi.restoreAllMocks();
   });
 
-  it('reads explicit NodeSeek UID and CSRF from the rendered page without fetch', async () => {
+  it('reads the explicit NodeSeek UID without capturing page CSRF', async () => {
     const fetchMock = vi.fn(async () => new Response('{}')) as unknown as typeof fetch;
     const payload = await runNodeSeekLoginProbe('/', `
       <meta name="csrf-token" content="page-csrf">
@@ -44,9 +44,9 @@ describe('NodeSeek login WebView probe script', () => {
       type: 'nodeseek-login',
       status: 'logged-in',
       loggedIn: true,
-      userId: 54874,
-      csrfToken: 'page-csrf'
+      userId: 54874
     });
+    expect(payload).not.toHaveProperty('csrfToken');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

@@ -85,6 +85,7 @@ import {
   applyDevAnonymousOverrides,
   createSiteSessionViewModels,
   isDevAnonymousSource,
+  nodeSeekTopicCurrentUserForSession,
   nodeSeekUserIdForSession,
   type DevAnonymousOverrides,
   type SessionSite
@@ -459,7 +460,6 @@ export function AppRoot() {
   const [showNetworkProxyPanel, setShowNetworkProxyPanel] = useState(false);
   const showLinuxDoPanelRef = useRef(showLinuxDoPanel);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
-  screenRef.current = screen;
   showLoginPanelRef.current = showLoginPanel;
   showLinuxDoPanelRef.current = showLinuxDoPanel;
   const cancelLinuxDoPendingReopenTask = useCallback(() => {
@@ -572,6 +572,8 @@ export function AppRoot() {
   });
 
   const [devAnonymousOverrides, setDevAnonymousOverrides] = useState<DevAnonymousOverrides>({});
+  const yaohuoCredentialSuppressedRef = useRef(Boolean(__DEV__ && devAnonymousOverrides.yaohuo));
+  yaohuoCredentialSuppressedRef.current = Boolean(__DEV__ && devAnonymousOverrides.yaohuo);
   const effectiveSiteSessionStates = useMemo(() => (
     __DEV__ ? applyDevAnonymousOverrides(siteSessionStates, devAnonymousOverrides) : siteSessionStates
   ), [devAnonymousOverrides, siteSessionStates]);
@@ -583,6 +585,17 @@ export function AppRoot() {
   }, [devAnonymousOverrides.linuxdo]);
   const toggleDevAnonymousOverride = useCallback((site: SessionSite) => {
     if (!__DEV__) {
+      return;
+    }
+    if (site === 'yaohuo') {
+      const enabled = !yaohuoCredentialSuppressedRef.current;
+      yaohuoCredentialSuppressedRef.current = enabled;
+      if (enabled) {
+        yaohuoLoginPanelRequestRef.current += 1;
+        checkingRequestIdRef.current += 1;
+        yaohuoWebViewRef.current?.stopLoading();
+      }
+      setDevAnonymousOverrides((current) => ({ ...current, yaohuo: enabled }));
       return;
     }
     setDevAnonymousOverrides((current) => ({
@@ -609,22 +622,28 @@ export function AppRoot() {
   }, [devAnonymousOverrides.nodeseek, loadStoredNodeSeekCookieForSource]);
   const clearNodeSeekLoginState = useCallback(async () => {
     setNodeSeekMediaCookieHeader('');
-    await clearStoredNodeSeekLoginState();
+    const cleared = await clearStoredNodeSeekLoginState();
+    if (!cleared && nodeSeekWebViewCookieHeaderRef.current) {
+      setNodeSeekMediaCookieHeader(nodeSeekWebViewCookieHeaderRef.current);
+    }
+    return cleared;
   }, [clearStoredNodeSeekLoginState]);
   const clearNodeSeekLoginCookiesOnly = useCallback(async (options?: Parameters<typeof clearStoredNodeSeekLoginCookiesOnly>[0]) => {
     setNodeSeekMediaCookieHeader('');
-    await clearStoredNodeSeekLoginCookiesOnly(options);
+    const result = await clearStoredNodeSeekLoginCookiesOnly(options);
     const cookieHeader = nodeSeekWebViewCookieHeaderRef.current;
     if (cookieHeader) {
       setNodeSeekMediaCookieHeader(cookieHeader);
     }
+    return result;
   }, [clearStoredNodeSeekLoginCookiesOnly]);
-  const loadYaohuoCookieForSource = useCallback((source: FeedSource | Source, options?: Parameters<typeof loadStoredYaohuoCookieForSource>[1]) => {
-    if (__DEV__ && isDevAnonymousSource(source, 'yaohuo', devAnonymousOverrides)) {
-      return Promise.resolve(undefined);
+  const loadYaohuoCookieForSource = useCallback(async (source: FeedSource | Source, options?: Parameters<typeof loadStoredYaohuoCookieForSource>[1]) => {
+    if (__DEV__ && isDevAnonymousSource(source, 'yaohuo', { yaohuo: yaohuoCredentialSuppressedRef.current })) {
+      return undefined;
     }
-    return loadStoredYaohuoCookieForSource(source, options);
-  }, [devAnonymousOverrides.yaohuo, loadStoredYaohuoCookieForSource]);
+    const cookie = await loadStoredYaohuoCookieForSource(source, options);
+    return yaohuoCredentialSuppressedRef.current ? undefined : cookie;
+  }, [loadStoredYaohuoCookieForSource]);
   const libraryRecords = useMemo(
     () => sortedRecords(libraryTab === 'history' ? readerData.history : readerData.favorites),
     [libraryTab, readerData.favorites, readerData.history]
@@ -677,13 +696,17 @@ export function AppRoot() {
     topicImageDeriver,
     topicReplies
   }), [debouncedCommentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
-  const nodeSeekCurrentUserForTopicActions = siteSessionViewModels.nodeseek.currentUser || (topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined);
+  const nodeSeekTopicCurrentUser = nodeSeekTopicCurrentUserForSession(
+    siteSessionViewModels.nodeseek,
+    topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined
+  );
+  const nodeSeekCurrentUserForTopicActions = siteSessionViewModels.nodeseek.currentUser || nodeSeekTopicCurrentUser;
   const displayReplies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, effectiveNodeSeekUserId),
     [effectiveNodeSeekUserId, filteredReplies, nodeSeekCurrentUserForTopicActions]
   );
   useEffect(() => {
-    const currentUser = topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined;
+    const currentUser = nodeSeekTopicCurrentUser;
     const userId = Number(currentUser?.id);
     if (!currentUser || !Number.isInteger(userId) || userId <= 0) {
       return;
@@ -696,7 +719,7 @@ export function AppRoot() {
       currentUser,
       at: new Date().toISOString()
     });
-  }, [topicDetail?.currentUser, topicDetail?.source, updateNodeSeekSession]);
+  }, [nodeSeekTopicCurrentUser, updateNodeSeekSession]);
   useEffect(() => {
     if (topicDetail?.source !== 'nodeseek') {
       return;
@@ -772,11 +795,18 @@ export function AppRoot() {
   }, [handleClearCredentialLoginIntent]);
 
   const changeYaohuoLoginPanel = useCallback((visible: boolean) => {
+    if (visible && yaohuoCredentialSuppressedRef.current) {
+      notify('妖火临时匿名测试已开启，请关闭测试后再打开登录页。');
+      return false;
+    }
     if (visible) {
       const requestId = yaohuoLoginPanelRequestRef.current + 1;
       yaohuoLoginPanelRequestRef.current = requestId;
       setLoadingYaohuoLoginPage(true);
-      void restoreSavedYaohuoCookiesToWebView()
+      void restoreSavedYaohuoCookiesToWebView({
+        isCurrent: () => yaohuoLoginPanelRequestRef.current === requestId
+          && !yaohuoCredentialSuppressedRef.current
+      })
         .catch(() => undefined)
         .finally(() => {
           if (yaohuoLoginPanelRequestRef.current !== requestId) {
@@ -785,10 +815,17 @@ export function AppRoot() {
           setShowYaohuoLoginPanel(true);
           yaohuoWebViewRef.current?.reload();
         });
-      return;
+      return true;
     }
     closeYaohuoLoginPanel();
-  }, [closeYaohuoLoginPanel, restoreSavedYaohuoCookiesToWebView]);
+    return true;
+  }, [closeYaohuoLoginPanel, notify, restoreSavedYaohuoCookiesToWebView]);
+
+  useEffect(() => {
+    if (__DEV__ && devAnonymousOverrides.yaohuo && showYaohuoLoginPanel) {
+      closeYaohuoLoginPanel();
+    }
+  }, [closeYaohuoLoginPanel, devAnonymousOverrides.yaohuo, showYaohuoLoginPanel]);
 
   const changeNodeSeekLoginPanel = useCallback((visible: boolean) => {
     nodeSeekLoginPanelRequestRef.current += 1;
@@ -827,6 +864,7 @@ export function AppRoot() {
     changeNodeSeekLoginPanel,
     checkingRequestIdRef,
     closeYaohuoLoginPanel,
+    fetcher: forumFetchWithWebViewFallback,
     linuxDoClearanceBeforeVerifyRef,
     linuxDoDismissedVerificationTopicKeyRef,
     linuxDoPanelClosingSessionRef,
@@ -896,8 +934,10 @@ export function AppRoot() {
     refreshLinuxDoLevel
   } = useAccountController({
     checkingRequestIdRef,
+    clearNodeSeekLoginCookiesOnly,
     clearNodeSeekLoginState,
     clearYaohuoLoginState,
+    currentNodeSeekCredentialGeneration,
     currentYaohuoCredentialGeneration,
     forumFetchWithWebViewFallback,
     linuxDoLevelRequestIdRef,
@@ -926,6 +966,7 @@ export function AppRoot() {
     updateYaohuoSession,
     webLoginDetectedRef,
     webViewRef,
+    yaohuoCredentialSuppressedRef,
     yaohuoLoginPanelRequestRef,
     yaohuoWebViewRef
   });
@@ -951,6 +992,7 @@ export function AppRoot() {
   const sourceGateway = useMemo(() => createSourceGateway({
     clearYaohuoLoginState,
     fetcher: forumFetchWithWebViewFallback,
+    isYaohuoCredentialSuppressed: () => yaohuoCredentialSuppressedRef.current,
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current
@@ -984,7 +1026,8 @@ export function AppRoot() {
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
-    sourceGateway
+    sourceGateway,
+    yaohuoCredentialSuppressed: Boolean(__DEV__ && devAnonymousOverrides.yaohuo)
   });
 
   const {
@@ -1056,16 +1099,21 @@ export function AppRoot() {
     refreshAccountStatus,
     statusBusy
   } = useAccountStatusController({
+    clearNodeSeekLoginCookiesOnly,
     clearYaohuoLoginState,
+    currentNodeSeekCredentialGeneration,
     currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
     fetcher: forumFetchWithWebViewFallback,
     linuxDoUserAgentRef: linuxDoWebViewUserAgentRef,
     loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
+    loadYaohuoCookieForSource,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
     resetLinuxDoLevelState,
-    saveNodeSeekCookieHeader
+    saveNodeSeekCookieHeader,
+    yaohuoCredentialSuppressed: Boolean(__DEV__ && devAnonymousOverrides.yaohuo),
+    yaohuoCredentialSuppressedRef
   });
   useEffect(() => {
     if (!readerDataLoaded || accountStatusInitialRefreshRef.current) {
@@ -1299,6 +1347,7 @@ export function AppRoot() {
     currentNodeSeekCredentialGeneration,
     fetcher: networkProxyFetcher,
     linuxDoWebViewUserAgentRef,
+    loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     nodeSeekWebViewUserAgentRef,
     ensureNodeImageApiKey,
@@ -1313,7 +1362,8 @@ export function AppRoot() {
     siteSessionStates: effectiveSiteSessionStates,
     topicActionRequestOwnerRef,
     topicSession,
-    updateLinuxDoSession
+    updateLinuxDoSession,
+    yaohuoCredentialSuppressedRef
   });
 
   const pageDiagnosticStateRef = useRef('');
@@ -2132,11 +2182,11 @@ export function AppRoot() {
   ), [userProps]);
 
   const handleMainTabPress = useCallback((targetScreen: keyof MainTabParamList) => {
-    if (screen === targetScreen) {
+    if (screenRef.current === targetScreen) {
       requestTabScrollToTop(targetScreen);
     }
     changeScreen(targetScreen);
-  }, [changeScreen, requestTabScrollToTop, screen]);
+  }, [changeScreen, requestTabScrollToTop]);
 
   return (
     <GestureHandlerRootView style={styles.screen}>

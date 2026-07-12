@@ -23,7 +23,9 @@ import {
 } from '../diagnostics';
 import {
   finishAbortableRequest,
-  isCanceledRequest,
+  interruptedRequestDiagnostic,
+  isSilentRequestInterruption,
+  isSupersededRequest,
   sourceLabel,
   startAbortableRequest
 } from '../appUtils';
@@ -42,6 +44,7 @@ import {
   remoteSearchSort,
   remoteSearchActionForSource,
   snapshotSearchFilters,
+  stopSearchGroupLoadingMore,
   type RemoteSearchAction,
   type RemoteSearchSourceResult,
   type SearchRunOptions
@@ -237,7 +240,7 @@ export function useSearchController({
       }
       return remoteSearchResult(group);
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isSilentRequestInterruption(error)) {
         throw error;
       }
       const sourceError = sourceErrorFromUnknown(source, error);
@@ -303,7 +306,19 @@ export function useSearchController({
       : requestFilters[(sourceOverride || requestSearchSource) as Source];
     const requestFilter = requestSearchSource === 'all' ? undefined : activeFilter;
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
-    const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    const isLatestSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    const isCurrentSearchRequest = () => isLatestSearchRequest() && !controller.signal.aborted;
+    const finishInterruptedSearchRequest = () => {
+      const interruption = interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted);
+      if (!interruption) {
+        return false;
+      }
+      finishTrace(interruption.outcome, {
+        source: sourceOverride || requestSearchSource,
+        reason: interruption.reason
+      });
+      return true;
+    };
     const activeSources = sourceOverride
       ? [sourceOverride]
       : requestSearchSource === 'all'
@@ -330,6 +345,7 @@ export function useSearchController({
       setSearchGroups(nextGroups);
     }
     setSearchBusy(true);
+    let canceledCurrentRequest = false;
     try {
       addRecentSearch(query);
       const resultsBySource: Partial<Record<Source, RemoteSearchSourceResult>> = {};
@@ -357,11 +373,7 @@ export function useSearchController({
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
       }));
-      if (!isCurrentSearchRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-          source: sourceOverride || requestSearchSource,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
-        });
+      if (finishInterruptedSearchRequest()) {
         return;
       }
       const nextGroups = searchGroupsRef.current.map((group) => (
@@ -403,13 +415,26 @@ export function useSearchController({
         finishTrace('success', { source: sourceOverride || requestSearchSource, itemCount: resultCount });
       }
     } catch (error) {
-      if (isCanceledRequest(error)) {
-        finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
+      if (isSilentRequestInterruption(error)) {
+        const wasCurrent = isLatestSearchRequest();
+        const stale = isSupersededRequest(error) || !isLatestSearchRequest();
+        if (wasCurrent) {
+          canceledCurrentRequest = true;
+          searchRequestIdRef.current += 1;
+          controller.abort();
+          const nextGroups = searchGroupsRef.current.map((group) => (
+            activeSources.includes(group.source) ? { ...group, loading: false, loadingMore: false } : group
+          ));
+          searchGroupsRef.current = nextGroups;
+          setSearchGroups(nextGroups);
+        }
+        finishTrace(stale ? 'stale' : 'canceled', {
           source: sourceOverride || requestSearchSource,
-          reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
+          reason: stale ? 'superseded' : 'canceled'
         });
-      } else if (!isCurrentSearchRequest()) {
-        finishTrace('stale', { source: sourceOverride || requestSearchSource, reason: 'superseded' });
+      } else if (interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted)) {
+        const interruption = interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted)!;
+        finishTrace(interruption.outcome, { source: sourceOverride || requestSearchSource, reason: interruption.reason });
       } else {
         const failureSource = sourceOverride || requestSearchSource;
         const sourceError = sourceErrorFromUnknown(failureSource, error);
@@ -442,12 +467,13 @@ export function useSearchController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentSearchRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        const interruption = interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted);
+        finishTrace(interruption?.outcome || 'failure', {
           source: sourceOverride || requestSearchSource,
-          reason: isCurrentSearchRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: interruption?.reason || 'unknown'
         });
       }
-      if (isCurrentSearchRequest()) {
+      if (isLatestSearchRequest() || canceledCurrentRequest) {
         setSearchBusy(false);
       }
       finishAbortableRequest(searchAbortRef, controller);
@@ -510,18 +536,23 @@ export function useSearchController({
     const controller = startAbortableRequest(searchAbortRef);
     const requestId = ++searchRequestIdRef.current;
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, ownerKey);
-    const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    const isLatestSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    const isCurrentSearchRequest = () => isLatestSearchRequest() && !controller.signal.aborted;
+    const finishInterruptedSearchRequest = () => {
+      const interruption = interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted);
+      if (!interruption) {
+        return false;
+      }
+      finishTrace(interruption.outcome, { source, reason: interruption.reason });
+      return true;
+    };
     setSearchBusy(true);
     try {
       const result = await runRemoteSearchSource(source, query, page, controller.signal, sort, activeFilter, {
         isCurrent: () => isCurrentSearchRequest(),
         trace
       });
-      if (!isCurrentSearchRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-          source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
-        });
+      if (finishInterruptedSearchRequest()) {
         return;
       }
       const data = groupFromRemoteSearchResult(result);
@@ -586,13 +617,21 @@ export function useSearchController({
         });
       }
     } catch (error) {
-      if (isCanceledRequest(error)) {
-        finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
+      if (isSilentRequestInterruption(error)) {
+        const requestLatest = isLatestSearchRequest();
+        if (requestLatest) {
+          const nextGroups = stopSearchGroupLoadingMore(searchGroupsRef.current, source);
+          searchGroupsRef.current = nextGroups;
+          setSearchGroups(nextGroups);
+        }
+        const stale = isSupersededRequest(error) || !requestLatest;
+        finishTrace(stale ? 'stale' : 'canceled', {
           source,
-          reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
+          reason: stale ? 'superseded' : 'canceled'
         });
-      } else if (!isCurrentSearchRequest()) {
-        finishTrace('stale', { source, reason: 'superseded' });
+      } else if (interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted)) {
+        const interruption = interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted)!;
+        finishTrace(interruption.outcome, { source, reason: interruption.reason });
       } else {
         const sourceError = sourceErrorFromUnknown(source, error);
         const nextGroups = searchGroupsRef.current.map((group) => (
@@ -615,12 +654,13 @@ export function useSearchController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentSearchRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        const interruption = interruptedRequestDiagnostic(isLatestSearchRequest(), controller.signal.aborted);
+        finishTrace(interruption?.outcome || 'failure', {
           source,
-          reason: isCurrentSearchRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: interruption?.reason || 'unknown'
         });
       }
-      if (isCurrentSearchRequest()) {
+      if (isLatestSearchRequest()) {
         setSearchBusy(false);
       }
       finishAbortableRequest(searchAbortRef, controller);

@@ -28,6 +28,7 @@
 - App 支持 NodeSeek、linux.do、V2EX 和妖火；四站共享阅读主干，互动能力按原站真实支持范围提供。
 - App 的读取 controller 统一经 `src/sources/sourceGateway.ts` 进入来源层；写操作目前由 `src/app/useTopicActionsController.ts` 按 capability 调用各站 action client。
 - Cookie 和服务器代理配置只保存在 Android 本机安全存储，不进入备份 JSON；代理启用失败不能静默直连。
+- 三站确认登录失效时先持久化撤销标记；即使 WebView / SecureStore 清理失败，残留旧 Cookie 也不能恢复登录。标记只能由 App 内登录页重新确认有效登录后解除，其中 linux.do 还必须通过 `/session/current.json` 返回有效用户 id 和 username；匿名也可获取的 `/session/csrf` 不能作为登录证明。
 - `App.tsx`、`src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是稳定入口或兼容 facade。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
 - 模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认覆盖安装并 force-stop 后重启。

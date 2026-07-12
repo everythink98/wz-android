@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  canSubmitReplyToTopic,
   hasPendingOptimisticTopicAction,
   applyEditedReplyContent,
   isTopicScopedActionKey,
@@ -14,7 +15,7 @@ import {
   yaohuoFavoriteActionKey
 } from './topicActionControllerHelpers';
 import type { TopicSnapshot } from '../appTypes';
-import type { Reply, UserProfile } from '../types';
+import type { Reply, TopicDetail, UserProfile } from '../types';
 
 describe('topic action controller helpers', () => {
   it('uses different request keys for different non-optimistic actions on the same topic', () => {
@@ -39,6 +40,11 @@ describe('topic action controller helpers', () => {
   it('keeps NodeSeek edit replies separate from new replies', () => {
     expect(topicEditReplyActionKey('nodeseek:123', 9)).toBe('edit-reply:nodeseek:123:9');
     expect(topicEditReplyActionKey('nodeseek:123', 9)).not.toBe(topicReplyActionKey('nodeseek:123'));
+  });
+
+  it('does not allow replies to a locked topic', () => {
+    expect(canSubmitReplyToTopic({ source: 'nodeseek', locked: true } as TopicDetail)).toBe(false);
+    expect(canSubmitReplyToTopic({ source: 'nodeseek', locked: false } as TopicDetail)).toBe(true);
   });
 
   it('invalidates topic actions when leaving a topic for a user profile', () => {

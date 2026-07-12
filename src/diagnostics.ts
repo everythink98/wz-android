@@ -102,7 +102,7 @@ const stringFieldKeys = new Set([
   'route', 'routeKind', 'emptyReason', 'mutationReason', 'action', 'mode', 'flow',
   'requestType', 'credentialSource', 'parserVariant', 'transport', 'kind', 'screen',
   'section', 'protocol', 'eventType', 'result', 'level', 'queueState', 'csrfSource',
-  'userAgentSource', 'errorName', 'message', 'stack', 'topicRef', 'userRef', 'cursorRef'
+  'userAgentSource', 'trigger', 'errorName', 'message', 'stack', 'topicRef', 'userRef', 'cursorRef', 'parentTraceId'
 ]);
 const closedValues = (...values: string[]) => new Set(values);
 const operationValues = closedValues(
@@ -121,13 +121,14 @@ const operationValues = closedValues(
 );
 const sourceValues = closedValues('all', 'linuxdo', 'nodeseek', 'unknown', 'v2ex', 'yaohuo');
 const screenValues = closedValues('feed', 'library', 'more', 'search', 'topic', 'user', 'unknown');
+const appStateValues = closedValues('active', 'background', 'extension', 'inactive', 'unknown');
 const sessionStateValues = closedValues(
   'anonymous', 'expired', 'logged-in', 'verification-required', 'verified', 'verifying'
 );
 const stateValues = closedValues(
   ...sessionStateValues,
-  'active', 'applied', 'applying', 'busy', 'cache-unavailable', 'cached-detail-reused',
-  'cached-quote', 'cleared', 'collapsed', 'complete', 'confirmed', 'current', 'disabled',
+  'active', 'applied', 'applying', 'blocked', 'busy', 'cache-unavailable', 'cached-detail-reused',
+  'cached-quote', 'cleared', 'cleanup-skipped', 'collapsed', 'complete', 'confirmed', 'current', 'disabled',
   'document-picker', 'empty', 'empty-preview', 'error', 'failed', 'failure', 'fallback', 'feed-return',
   'file-readable', 'finish', 'image-auth-panel-closed', 'image-preview-closed',
   'incomplete-user', 'initial', 'installer-opened', 'linuxdo-panel-closed', 'load',
@@ -179,8 +180,8 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   variant: parserVariantValues,
   channel: closedValues('data', 'direct', 'managed', 'native', 'remote', 'unsupported', 'webview'),
   state: stateValues,
-  previousState: closedValues(...screenValues, ...sessionStateValues),
-  nextState: closedValues(...screenValues, ...sessionStateValues),
+  previousState: closedValues(...screenValues, ...sessionStateValues, ...appStateValues),
+  nextState: closedValues(...screenValues, ...sessionStateValues, ...appStateValues),
   owner: closedValues('account', 'feed', 'search', 'topic', 'user', 'write'),
   priority: closedValues('background', 'foreground', 'write'),
   store: closedValues('android-webview', 'cookie-manager', 'multi-store', 'secure-store'),
@@ -217,7 +218,8 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   level: closedValues('debug', 'error', 'info', 'warning'),
   queueState: closedValues('active', 'idle', 'queued'),
   csrfSource: closedValues('local-generated', 'none', 'session-endpoint'),
-  userAgentSource: closedValues('default', 'stored', 'webview')
+  userAgentSource: closedValues('default', 'stored', 'webview'),
+  trigger: closedValues('app-resume', 'timer')
 };
 const reasonValues = new Set<string>(DIAGNOSTIC_REASONS);
 const errorNameValues = closedValues(
@@ -234,7 +236,7 @@ const contentTypeValues = closedValues(
 );
 const numberFieldKeys = new Set([
   'status', 'byteCount', 'count', 'before', 'after', 'itemCount', 'candidateCount',
-  'validCount', 'droppedCount', 'partialErrorCount', 'beforeCount', 'afterCount',
+  'validCount', 'droppedCount', 'partialErrorCount', 'staleCount', 'beforeCount', 'afterCount',
   'missingFloorCount',
   'selectedCount', 'selectedOptionCount', 'contentLength', 'page', 'generation',
   'iteration', 'queueLength', 'replyCount', 'topicCount', 'floor', 'attempt',
@@ -348,7 +350,7 @@ export function withDiagnosticFetcher(trace: DiagnosticTrace, fetcher: Diagnosti
     } catch (error) {
       const finishedAt = Date.now();
       const reason = normalizeDiagnosticReason(error);
-      emit(trace, 'transport', reason === 'canceled' ? 'canceled' : 'failure', {
+      emit(trace, 'transport', reason === 'canceled' ? 'canceled' : reason === 'superseded' ? 'stale' : 'failure', {
         ...requestFields,
         state: 'failure',
         reason,
@@ -398,7 +400,7 @@ export function normalizeDiagnosticReason(error: unknown): DiagnosticReason {
   if (/duplicate|重复请求|重复操作/.test(text)) return 'duplicate';
   if (/not supported|unsupported|不支持/.test(text)) return 'unsupported';
   if (/stale|outdated|旧请求/.test(text)) return 'stale';
-  if (/superseded|replaced by newer|已被替代/.test(text)) return 'superseded';
+  if (/superseded|replaced by newer|已被替代|已被新请求替代/.test(text)) return 'superseded';
   if (/syntaxerror|invalid response|unexpected token|malformed|\bjson\b|\bparse\b|解析|响应格式/.test(text)) return 'invalid_response';
   if (/network request failed|failed to fetch|\bnetwork\b|\bdns\b|\bsocket\b|网络|连接失败/.test(text)) return 'network_error';
   if (/\bhttp\b.*\b[45]\d\d\b|\bstatus\b.*\b[45]\d\d\b/.test(text)) return 'http_error';
@@ -438,7 +440,7 @@ function emit(
   fields: DiagnosticFields,
   now: number
 ) {
-  if (!writer) {
+  if (!writer || (phase !== 'finish' && finishedTraces.has(trace))) {
     return;
   }
   const event: DiagnosticEvent = {
@@ -526,6 +528,7 @@ function safeStringField(key: string, value: string) {
   if (key === 'topicRef') return safeReference(value, 'topic');
   if (key === 'userRef') return safeReference(value, 'user');
   if (key === 'cursorRef') return safeReference(value, 'cursor');
+  if (key === 'parentTraceId') return /^trace-\d+$/.test(value) ? value : 'redacted';
   return categoricalFieldValues[key]?.has(value) ? value : 'redacted';
 }
 

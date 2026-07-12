@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Fetcher } from '../request';
+import type { NodeSeekDirectRecoveryEvent } from '../nodeseekFetchFallback';
 import { errorMessage } from '../appUtils';
 import {
   beginDiagnosticTrace,
@@ -230,7 +231,7 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
         nativeApplyFailed = true;
         throw new Error(applyErrorRef.current || '代理未生效。');
       } else {
-        finishDiagnosticTrace(trace, 'canceled', { isEnabled: enabled, reason: 'superseded' });
+        finishDiagnosticTrace(trace, 'stale', { isEnabled: enabled, reason: 'superseded' });
       }
     } catch (error) {
       if (pendingProxyApplyTraceRef.current === pendingTrace) {
@@ -366,15 +367,19 @@ export function useNetworkProxyController({ notify }: { notify: (message: string
     return fetch(input, init);
   }, [ensureNetworkProxyReady]);
 
-  const recoverNodeSeekNetwork = useCallback(async () => {
-    const trace = beginDiagnosticTrace('proxy', 'recover');
-    markDiagnosticStage(trace, 'apply', { channel: 'native', state: 'start' });
+  const recoverNodeSeekNetwork = useCallback(async (event?: NodeSeekDirectRecoveryEvent) => {
+    const trace = beginDiagnosticTrace('proxy', 'recover', {
+      source: 'nodeseek',
+      ...(event?.parentTraceId ? { parentTraceId: event.parentTraceId } : {}),
+      ...(event ? { reason: event.reason === 'direct-timeout' ? 'timeout' : 'network_error' } : {})
+    });
+    markDiagnosticStage(trace, 'apply', { source: 'nodeseek', channel: 'native', state: 'start' });
     try {
       const result = await recoverNativeNodeSeekNetwork();
-      finishDiagnosticTrace(trace, 'success');
+      finishDiagnosticTrace(trace, 'success', { source: 'nodeseek' });
       return result;
     } catch (error) {
-      finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      finishDiagnosticTrace(trace, 'failure', { source: 'nodeseek', reason: normalizeDiagnosticReason(error) });
       throw error;
     }
   }, []);

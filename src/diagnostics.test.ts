@@ -13,6 +13,7 @@ import {
   setDiagnosticWriter,
   withDiagnosticFetcher
 } from './diagnostics';
+import { REQUEST_SUPERSEDED_MESSAGE } from './request';
 
 function captureEvents() {
   const lines: string[] = [];
@@ -154,6 +155,37 @@ describe('diagnostic traces', () => {
     expect(JSON.stringify(events())).not.toMatch(/example\.com|private|token|ULTRA_FAKE_SECRET_9/);
   });
 
+  it('records a superseded transport as stale instead of failure', async () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('network', 'request');
+    const fetcher = withDiagnosticFetcher(trace, async () => {
+      throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+    });
+
+    await expect(fetcher('https://www.nodeseek.com/api/account/getInfo')).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+
+    expect(events().filter((event) => event.phase === 'transport').at(-1)).toEqual(expect.objectContaining({
+      state: 'failure',
+      outcome: 'stale',
+      reason: 'superseded'
+    }));
+  });
+
+  it('does not append a late transport failure after the trace finishes', async () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('feed', 'load');
+    const request = Promise.withResolvers<Response>();
+    const fetcher = withDiagnosticFetcher(trace, async () => request.promise);
+    const pending = fetcher('https://www.nodeseek.com/api/account/getInfo');
+    const failure = new Error(REQUEST_SUPERSEDED_MESSAGE);
+
+    finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
+    request.reject(failure);
+
+    await expect(pending).rejects.toBe(failure);
+    expect(events().map((event) => event.phase)).toEqual(['intent', 'transport', 'finish']);
+  });
+
   it('keeps safe stage summaries on the same trace and ignores stages after finish', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('topic', 'parse-topic');
@@ -175,6 +207,15 @@ describe('diagnostic traces', () => {
       droppedCount: 1,
       parserVariant: 'html-topic'
     }));
+  });
+
+  it('keeps blocked as a safe diagnostic state', () => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('feed', 'load');
+
+    markDiagnosticStage(trace, 'guard', { state: 'blocked' });
+
+    expect(events()[1]).toEqual(expect.objectContaining({ phase: 'guard', state: 'blocked' }));
   });
 
   it('upgrades a successful terminal event to the most severe hinted outcome', () => {
@@ -392,6 +433,7 @@ describe('diagnostic traces', () => {
     expect(normalizeDiagnosticReason(new Error('feature not supported'))).toBe('unsupported');
     expect(normalizeDiagnosticReason(new Error('share is not available'))).toBe('share_unavailable');
     expect(normalizeDiagnosticReason(new Error('refresh failed'))).toBe('refresh_failed');
+    expect(normalizeDiagnosticReason(new Error('请求已被新请求替代'))).toBe('superseded');
     expect(normalizeDiagnosticReason(new Error('备份文件过大'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new Error('备份格式不兼容'))).toBe('invalid_response');
     expect(normalizeDiagnosticReason(new Error('备份文件大小无法确认'))).toBe('storage_error');

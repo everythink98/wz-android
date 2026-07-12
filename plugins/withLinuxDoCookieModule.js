@@ -181,8 +181,8 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
   fun clearLinuxDoLoginCookies(expected: ReadableMap?, promise: Promise) {
     try {
       promise.resolve(clearLinuxDoLoginCookies(expected))
-    } catch (_: Exception) {
-      promise.resolve(false)
+    } catch (error: Exception) {
+      promise.reject("E_COOKIE_CLEAR", "linux.do Cookie cleanup failed", error)
     }
   }
 
@@ -224,6 +224,7 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
 
   private fun clearLinuxDoLoginCookies(expected: ReadableMap?): Boolean {
     val names = listOf("_t", "_forum_session")
+    val conditional = expected != null
     val expectedValues = mutableMapOf<String, String>()
     for (name in names) {
       if (expected?.hasKey(name) == true) {
@@ -236,21 +237,66 @@ class LinuxDoCookieModule(private val reactContext: ReactApplicationContext) : R
     var cleared = false
     try {
       val cookieManager = CookieManager.getInstance()
+      if (conditional) {
+        val currentValues = mutableMapOf<String, String>()
+        for (url in linuxDoCookieUrls) {
+          val currentHeader = cookieManager.getCookie(url)
+          for (name in names) {
+            val currentValue = cookieValueFromHeader(currentHeader, name)
+            if (currentValue != null) {
+              val previousValue = currentValues[name]
+              if (previousValue != null && previousValue != currentValue) {
+                return false
+              }
+              currentValues[name] = currentValue
+            }
+          }
+        }
+        for (name in names) {
+          if (currentValues[name] != expectedValues[name]) {
+            return false
+          }
+        }
+      }
       for (url in linuxDoCookieUrls) {
         for (name in names) {
-          val expectedValue = expectedValues[name]
-          if (expectedValue != null && cookieValueFromHeader(cookieManager.getCookie(url), name) != expectedValue) {
-            continue
-          }
           cookieManager.setCookie(url, "$name=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
           cookieManager.setCookie(url, "$name=; Domain=linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
           cookieManager.setCookie(url, "$name=; Domain=.linux.do; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0")
         }
       }
       cookieManager.flush()
+      if (conditional) {
+        var unchangedCookieRemains = false
+        var changedCookieAppeared = false
+        for (url in linuxDoCookieUrls) {
+          val currentHeader = cookieManager.getCookie(url)
+          for (name in names) {
+            val currentValue = cookieValueFromHeader(currentHeader, name) ?: continue
+            if (currentValue == expectedValues[name]) {
+              unchangedCookieRemains = true
+            } else {
+              changedCookieAppeared = true
+            }
+          }
+        }
+        if (changedCookieAppeared) {
+          return false
+        }
+        if (unchangedCookieRemains) {
+          throw IllegalStateException("linux.do login cookies remained after cleanup")
+        }
+      }
       cleared = true
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+      if (conditional) {
+        throw error
+      }
       cleared = false
+    }
+
+    if (conditional) {
+      return cleared
     }
 
     val dataDir = File(reactContext.applicationInfo.dataDir)

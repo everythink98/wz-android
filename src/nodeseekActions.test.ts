@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
@@ -13,8 +13,7 @@ describe('NodeSeek action request builders', () => {
   it('builds a reply request with a csrf token and the expected payload', () => {
     const request = buildNodeSeekReplyRequest({
       postId: '723704',
-      content: '  谢谢分享  ',
-      csrfToken: 'fixed-csrf-token'
+      content: '  谢谢分享  '
     });
 
     expect(request).toEqual({
@@ -23,7 +22,7 @@ describe('NodeSeek action request builders', () => {
       headers: {
         'content-type': 'application/json',
         referer: 'https://www.nodeseek.com/post-723704-1',
-        'csrf-token': 'fixed-csrf-token'
+        'csrf-token': expect.any(String)
       },
       body: JSON.stringify({
         content: '谢谢分享',
@@ -31,38 +30,42 @@ describe('NodeSeek action request builders', () => {
         postId: 723704
       })
     });
+    expect(request.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
   });
 
   it('rejects empty reply content', () => {
     expect(() => buildNodeSeekReplyRequest({
       postId: '723704',
-      content: '   ',
-      csrfToken: 'fixed-csrf-token'
+      content: '   '
     })).toThrow('请输入回复内容');
   });
 
-  it('generates a NodeSeek content request token when none is saved', () => {
-    const replyRequest = buildNodeSeekReplyRequest({
-      postId: '723704',
-      content: '谢谢分享',
-      csrfToken: ' '
-    });
+  it('generates a fresh NodeSeek content request token for every request', () => {
+    const random = vi.spyOn(Math, 'random');
+    try {
+      random.mockReturnValue(0);
+      const firstReply = buildNodeSeekReplyRequest({
+        postId: '723704',
+        content: '谢谢分享'
+      });
+      random.mockReturnValue(0.999);
+      const secondReply = buildNodeSeekReplyRequest({
+        postId: '723704',
+        content: '再次感谢'
+      });
 
-    const editRequest = buildNodeSeekEditReplyRequest({
-      commentId: '812345',
-      content: '更新后的内容',
-      csrfToken: ''
-    });
-
-    expect(replyRequest.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
-    expect(editRequest.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
+      expect(firstReply.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
+      expect(secondReply.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
+      expect(secondReply.headers['csrf-token']).not.toBe(firstReply.headers['csrf-token']);
+    } finally {
+      random.mockRestore();
+    }
   });
 
   it('prefixes NodeSeek floor replies with the original floor reference', () => {
     const request = buildNodeSeekReplyRequest({
       postId: '723704',
       content: '  谢谢分享  ',
-      csrfToken: 'fixed-csrf-token',
       replyTarget: {
         floor: 15,
         author: 'bob'
@@ -114,16 +117,16 @@ describe('NodeSeek action request builders', () => {
   });
 
   it('builds an edit request for an own NodeSeek comment', () => {
-    expect(buildNodeSeekEditReplyRequest({
+    const request = buildNodeSeekEditReplyRequest({
       commentId: '812345',
-      content: '  更新后的内容  ',
-      csrfToken: 'fixed-csrf-token'
-    })).toEqual({
+      content: '  更新后的内容  '
+    });
+    expect(request).toEqual({
       path: '/api/content/edit-comment',
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'csrf-token': 'fixed-csrf-token'
+        'csrf-token': expect.any(String)
       },
       body: JSON.stringify({
         commentId: 812345,
@@ -131,6 +134,7 @@ describe('NodeSeek action request builders', () => {
         mode: 'edit-comment'
       })
     });
+    expect(request.headers['csrf-token']).toMatch(/^[A-Za-z0-9]{16}$/);
   });
 
   it('rejects unsupported NodeSeek reaction removal requests', () => {

@@ -18,7 +18,7 @@ export type CredentialLoadOptions = {
   captureNodeSeekUserId?: (userId: number | null) => void;
   diagnosticTrace?: DiagnosticTrace;
 };
-export type CredentialClearOptions = { generation?: number; force?: boolean };
+export type CredentialClearOptions = { generation?: number; force?: boolean; isCurrent?: () => boolean };
 export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
@@ -361,6 +361,16 @@ export function isCredentialWriteCurrent(gate: CredentialWriteGate, generation: 
   return gate.generation === generation;
 }
 
+export async function waitForCredentialWrites(gate: CredentialWriteGate) {
+  while (true) {
+    const pending = gate.queue;
+    await pending.catch(() => undefined);
+    if (pending === gate.queue) {
+      return gate.generation;
+    }
+  }
+}
+
 export function advanceCredentialWriteGeneration(gate: CredentialWriteGate) {
   gate.generation += 1;
   return gate.generation;
@@ -379,6 +389,17 @@ export function replaceCredentialWrite<T>(
   gate: CredentialWriteGate,
   task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T
 ) {
+  return enqueueCredentialWriteForGeneration(gate, advanceCredentialWriteGeneration(gate), task);
+}
+
+export function replaceCredentialWriteForGeneration<T>(
+  gate: CredentialWriteGate,
+  generation: number,
+  task: ({ isCurrent }: { isCurrent: () => boolean }) => Promise<T> | T
+) {
+  if (!isCredentialWriteCurrent(gate, generation)) {
+    return Promise.resolve(undefined);
+  }
   return enqueueCredentialWriteForGeneration(gate, advanceCredentialWriteGeneration(gate), task);
 }
 

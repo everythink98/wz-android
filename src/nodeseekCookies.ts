@@ -10,7 +10,6 @@ export type NodeSeekAccessRecord = {
   cookieHeader: string;
   userAgent?: string;
   userId?: number;
-  csrfToken?: string;
   savedAt: string;
   source: 'webview';
 };
@@ -126,6 +125,13 @@ export function parseNodeSeekDocumentCookie(cookieHeader?: string) {
   return parsed;
 }
 
+export function buildNodeSeekSetCookieHeaders(cookieHeader: string) {
+  return Object.entries(filterPersistableNodeSeekCookies(parseNodeSeekDocumentCookie(cookieHeader)))
+    .map(([key, cookie]) => ({ name: cookie.name || key, value: cookie.value || '' }))
+    .filter(({ name, value }) => Boolean(name && value))
+    .map(({ name, value }) => `${name}=${value}; Domain=nodeseek.com; Path=/; Secure; HttpOnly; SameSite=Lax`);
+}
+
 export function canStoreNodeSeekCookieHeader(cookies: Record<string, NativeCookie>, verifiedByPage = false) {
   const cookieHeader = buildCookieHeader(cookies);
   if (!cookieHeader) {
@@ -154,10 +160,6 @@ export function removeNodeSeekLoginCookies(cookies: Record<string, NativeCookie>
 function positiveInteger(value: unknown) {
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isInteger(number) && number > 0 ? number : undefined;
-}
-
-function cleanString(value: unknown) {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function decodeNodeSeekPjwtPayload(token: string) {
@@ -191,24 +193,15 @@ export function nodeSeekCredentialUserId(currentCookies: Record<string, NativeCo
   return nodeSeekUserIdFromCookies(savedCookies) || positiveInteger(savedUserId) || null;
 }
 
-export function nodeSeekCsrfTokenFromHtml(html: string) {
-  const source = String(html || '');
-  const meta = source.match(/<meta\b(?=[^>]*\bname=["']csrf-token["'])(?=[^>]*\bcontent=["']([^"']+)["'])[^>]*>/i)
-    || source.match(/<meta\b(?=[^>]*\bcontent=["']([^"']+)["'])(?=[^>]*\bname=["']csrf-token["'])[^>]*>/i);
-  return cleanString(meta?.[1]);
-}
-
-export function nodeSeekAccessRecord(cookieHeader: string, userAgent?: string, userId?: number | null, csrfToken?: string | null): NodeSeekAccessRecord {
+export function nodeSeekAccessRecord(cookieHeader: string, userAgent?: string, userId?: number | null): NodeSeekAccessRecord {
   const cleanUserAgent = sanitizeNodeSeekUserAgent(userAgent);
   const cleanUserId = positiveInteger(userId);
-  const cleanCsrfToken = cleanString(csrfToken);
   return {
     cookieHeader,
     savedAt: new Date().toISOString(),
     source: 'webview',
     ...(cleanUserAgent ? { userAgent: cleanUserAgent } : {}),
-    ...(cleanUserId ? { userId: cleanUserId } : {}),
-    ...(cleanCsrfToken ? { csrfToken: cleanCsrfToken } : {})
+    ...(cleanUserId ? { userId: cleanUserId } : {})
   };
 }
 
@@ -226,8 +219,7 @@ export function parseNodeSeekAccessRecord(raw?: string | null): NodeSeekAccessRe
       savedAt: typeof parsed.savedAt === 'string' && parsed.savedAt ? parsed.savedAt : new Date(0).toISOString(),
       source: 'webview',
       ...(parsed.userAgent ? { userAgent: sanitizeNodeSeekUserAgent(parsed.userAgent) } : {}),
-      ...(positiveInteger(parsed.userId) ? { userId: positiveInteger(parsed.userId) } : {}),
-      ...(cleanString(parsed.csrfToken) ? { csrfToken: cleanString(parsed.csrfToken) } : {})
+      ...(positiveInteger(parsed.userId) ? { userId: positiveInteger(parsed.userId) } : {})
     };
   } catch {
     return null;

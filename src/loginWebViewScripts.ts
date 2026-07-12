@@ -10,7 +10,6 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
   const usernameLink = document.querySelector('a.Username[href*="/space/"], .Username a[href*="/space/"]');
   const usernameLinkId = stringFromValue(usernameLink?.getAttribute("href")).match(/\\/space\\/(\\d+)/i);
   const userId = numberFromValue(uidMatch && uidMatch[1]) || numberFromValue(usernameLinkId && usernameLinkId[1]);
-  const csrfToken = stringFromValue(document.querySelector('meta[name="csrf-token"]')?.getAttribute("content"));
   const hasAccountMarker = Boolean(userId)
     || Boolean(document.querySelector('a[href*="/api/account/signOut"], a[href*="/setting"], a[href*="/notification"]'));
   const hasGuestPath = /\\/(login|signin|sign-in|register|signup|sign-up)\\/?$/i.test(location.pathname || "");
@@ -23,7 +22,6 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
     loggedIn: status === "logged-in" ? true : status === "logged-out" ? false : undefined,
     userId,
     username: "",
-    csrfToken,
     userAgent: navigator.userAgent || "",
     cookie: document.cookie || ""
   }));

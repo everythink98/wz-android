@@ -1,5 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+type MockAppStateStatus = 'active' | 'background' | 'extension' | 'inactive' | 'unknown';
+
+const appStateMock = vi.hoisted(() => {
+  const listeners = new Set<(state: MockAppStateStatus) => void>();
+  const removers: Array<ReturnType<typeof vi.fn>> = [];
+  const appState = {
+    currentState: 'active' as MockAppStateStatus | null,
+    addEventListener: vi.fn((_event: 'change', listener: (state: MockAppStateStatus) => void) => {
+      listeners.add(listener);
+      const remove = vi.fn(() => listeners.delete(listener));
+      removers.push(remove);
+      return { remove };
+    })
+  };
+  return {
+    appState,
+    emit(state: MockAppStateStatus) {
+      appState.currentState = state;
+      for (const listener of [...listeners]) {
+        listener(state);
+      }
+    },
+    listenerCount: () => listeners.size,
+    removers,
+    reset() {
+      appState.currentState = 'active';
+      appState.addEventListener.mockClear();
+      listeners.clear();
+      removers.splice(0);
+    }
+  };
+});
+
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
     flush: vi.fn(async () => undefined),
@@ -15,6 +48,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 vi.mock('react-native', () => ({
+  AppState: appStateMock.appState,
   NativeModules: {
     LinuxDoCookieModule: {}
   }
@@ -117,6 +151,7 @@ function mockStoredLinuxDoLoginAccess(cookieHeader = 'cf_clearance=clearance; _t
 
 describe('Android local sources', () => {
   beforeEach(() => {
+    appStateMock.reset();
     vi.mocked(SecureStore.getItemAsync).mockReset();
     vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
   });
@@ -1815,6 +1850,56 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
+  it('refreshes the current linux.do reply stream when nocache is requested', async () => {
+    let topicReads = 0;
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
+      if (input.includes('/posts.json')) {
+        return json({
+          post_stream: {
+            posts: [
+              { id: 4, post_number: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
+              { id: 5, post_number: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
+            ]
+          }
+        });
+      }
+      topicReads += 1;
+      const stream = topicReads === 1 ? [1, 2, 3] : [1, 2, 3, 4, 5];
+      return json({
+        id: 901,
+        title: 'linux.do refreshed topic',
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream,
+          posts: [
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+            { id: 2, post_number: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' },
+            { id: 3, post_number: 3, username: 'reply 3', cooked: '<p>3</p>', created_at: '2026-05-20T00:03:00.000Z' }
+          ]
+        }
+      });
+    });
+
+    await getTopic({ source: 'linuxdo', id: '901', fetcher });
+    const replies = await getReplies({
+      source: 'linuxdo',
+      id: '901',
+      page: 2,
+      offset: 2,
+      limit: 2,
+      nocache: true,
+      fetcher
+    });
+
+    expect(replies.items.map((item) => item.floor)).toEqual([4, 5]);
+    const topicCalls = fetcher.mock.calls.filter(([input]) => String(input).includes('/t/901.json'));
+    expect(topicCalls).toHaveLength(2);
+    expect(topicCalls[1]?.[1]?.headers).toMatchObject({
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache'
+    });
+  });
+
   it('keeps linux.do quote author names from quote markup', async () => {
     const fetcher = vi.fn(async () => json({
       id: 910,
@@ -3215,6 +3300,319 @@ describe('Android local sources', () => {
     }
   });
 
+  it('keeps a NodeSeek direct timeout on its original wall-clock deadline after a short background pause', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-12T00:00:00.000Z'));
+    try {
+      let directSignal: AbortSignal | undefined;
+      const normalFetcher = vi.fn((_input: string, init?: RequestInit) => {
+        directSignal = init?.signal || undefined;
+        return new Promise<Response>(() => undefined);
+      });
+      const webViewFetcher = vi.fn(async () => html('<html>fallback</html>'));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-1-1');
+      appStateMock.emit('background');
+      vi.setSystemTime(new Date('2026-07-12T00:00:05.500Z'));
+      appStateMock.emit('active');
+
+      await vi.advanceTimersByTimeAsync(2_499);
+      expect(webViewFetcher).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(responsePromise).resolves.toBeInstanceOf(Response);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      expect(directSignal?.aborted).toBe(true);
+      expect(appStateMock.listenerCount()).toBe(0);
+      expect(appStateMock.removers.at(-1)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the NodeSeek direct deadline while AppState is still initializing', async () => {
+    vi.useFakeTimers();
+    try {
+      appStateMock.appState.currentState = null;
+      const normalFetcher = vi.fn(() => new Promise<Response>(() => undefined));
+      const webViewFetcher = vi.fn(async () => html('<html>fallback</html>'));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-3-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      await expect(responsePromise).resolves.toBeInstanceOf(Response);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      expect(appStateMock.listenerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the initializing NodeSeek deadline timer after the first active event and a direct success', async () => {
+    vi.useFakeTimers();
+    try {
+      appStateMock.appState.currentState = null;
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => { lines.push(line); });
+      const trace = beginDiagnosticTrace('topic', 'open');
+      const direct = Promise.withResolvers<Response>();
+      let directSignal: AbortSignal | undefined;
+      const webViewFetcher = vi.fn(async () => html('<html>fallback</html>'));
+      const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: vi.fn((_input: string, init?: RequestInit) => {
+          directSignal = init?.signal || undefined;
+          return direct.promise;
+        }),
+        webViewFetcher
+      });
+      const fetcher = withDiagnosticFetcher(trace, fallbackFetcher);
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-4-1');
+      appStateMock.emit('active');
+      await vi.advanceTimersByTimeAsync(0);
+      direct.resolve(html('<html>direct</html>'));
+      const response = await responsePromise;
+      finishDiagnosticTrace(trace, 'success');
+
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      await expect(response.text()).resolves.toContain('direct');
+      expect(webViewFetcher).not.toHaveBeenCalled();
+      expect(directSignal?.aborted).toBe(false);
+      expect(lines.map((line) => JSON.parse(line))).not.toEqual(expect.arrayContaining([
+        expect.objectContaining({ phase: 'transport', channel: 'direct', state: 'timeout' })
+      ]));
+      expect(appStateMock.listenerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let the initializing NodeSeek deadline timer trigger fallback in the background', async () => {
+    vi.useFakeTimers();
+    try {
+      appStateMock.appState.currentState = null;
+      let directSignal: AbortSignal | undefined;
+      const normalFetcher = vi.fn((_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        directSignal = init?.signal || undefined;
+        init?.signal?.addEventListener('abort', () => {
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        }, { once: true });
+      }));
+      const webViewFetcher = vi.fn(async () => html('<html>fallback</html>'));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-5-1');
+      appStateMock.emit('active');
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(5_000);
+      appStateMock.emit('background');
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(webViewFetcher).not.toHaveBeenCalled();
+      expect(directSignal?.aborted).toBe(false);
+
+      appStateMock.emit('active');
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(responsePromise).resolves.toBeInstanceOf(Response);
+      expect(webViewFetcher).toHaveBeenCalledTimes(1);
+      expect(directSignal?.aborted).toBe(true);
+      expect(appStateMock.listenerCount()).toBe(0);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back immediately on resume when the NodeSeek direct wall-clock deadline already passed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-12T00:00:00.000Z'));
+    try {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => { lines.push(line); });
+      const trace = beginDiagnosticTrace('topic', 'open');
+      let directSignal: AbortSignal | undefined;
+      const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: vi.fn((_input: string, init?: RequestInit) => {
+          directSignal = init?.signal || undefined;
+          return new Promise<Response>(() => undefined);
+        }),
+        webViewFetcher: vi.fn(async () => html('<html>fallback</html>'))
+      });
+      const fetcher = withDiagnosticFetcher(trace, fallbackFetcher);
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-943210-1');
+      vi.setSystemTime(new Date('2026-07-12T00:00:03.000Z'));
+      appStateMock.emit('background');
+      vi.setSystemTime(new Date('2026-07-12T00:00:08.500Z'));
+      appStateMock.emit('active');
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(responsePromise).resolves.toBeInstanceOf(Response);
+      finishDiagnosticTrace(trace, 'success');
+      expect(directSignal?.aborted).toBe(true);
+      expect(appStateMock.listenerCount()).toBe(0);
+
+      const events = lines.map((line) => JSON.parse(line));
+      expect(new Set(events.map((event) => event.traceId))).toEqual(new Set([trace.traceId]));
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          phase: 'guard',
+          channel: 'direct',
+          previousState: 'active',
+          nextState: 'background',
+          transportDurationMs: 3_000
+        }),
+        expect.objectContaining({
+          phase: 'guard',
+          channel: 'direct',
+          previousState: 'background',
+          nextState: 'active',
+          transportDurationMs: 8_500
+        }),
+        expect.objectContaining({
+          phase: 'transport',
+          channel: 'direct',
+          state: 'timeout',
+          reason: 'timeout',
+          trigger: 'app-resume',
+          timeoutMs: 8_000,
+          transportDurationMs: 8_500
+        }),
+        expect.objectContaining({ phase: 'transport', channel: 'webview', state: 'finish' })
+      ]));
+      expect(JSON.stringify(events)).not.toMatch(/943210|post-|https?:|cookie|token/i);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps NodeSeek AppState diagnostics active through the WebView fallback', async () => {
+    vi.useFakeTimers();
+    try {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => { lines.push(line); });
+      const trace = beginDiagnosticTrace('topic', 'open');
+      const fallback = Promise.withResolvers<Response>();
+      const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: vi.fn(() => new Promise<Response>(() => undefined)),
+        webViewFetcher: vi.fn(() => fallback.promise)
+      });
+      const fetcher = withDiagnosticFetcher(trace, fallbackFetcher);
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-943211-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      expect(appStateMock.listenerCount()).toBe(1);
+      appStateMock.emit('background');
+      appStateMock.emit('active');
+      fallback.resolve(html('<html>fallback</html>'));
+      await expect(responsePromise).resolves.toBeInstanceOf(Response);
+      finishDiagnosticTrace(trace, 'success');
+
+      const events = lines.map((line) => JSON.parse(line));
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ phase: 'guard', channel: 'webview', previousState: 'active', nextState: 'background' }),
+        expect.objectContaining({ phase: 'guard', channel: 'webview', previousState: 'background', nextState: 'active' })
+      ]));
+      expect(appStateMock.listenerCount()).toBe(0);
+      expect(appStateMock.removers.at(-1)).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(events)).not.toMatch(/943211|post-|https?:|cookie|token/i);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps NodeSeek AppState diagnostics active through a challenge fallback', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const fallback = Promise.withResolvers<Response>();
+    const webViewFetcher = vi.fn(() => fallback.promise);
+    const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+      appState: appStateMock.appState,
+      defaultFetcher: vi.fn(async () => new Response('<html><div class="cf-turnstile"></div></html>', {
+        status: 403,
+        headers: { 'cf-mitigated': 'challenge' }
+      })),
+      webViewFetcher
+    });
+    const fetcher = withDiagnosticFetcher(trace, fallbackFetcher);
+
+    const responsePromise = fetcher('https://www.nodeseek.com/post-943214-1');
+    await vi.waitFor(() => expect(webViewFetcher).toHaveBeenCalledTimes(1));
+
+    expect(appStateMock.listenerCount()).toBe(1);
+    appStateMock.emit('background');
+    appStateMock.emit('active');
+    fallback.resolve(html('<html>fallback</html>'));
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+    finishDiagnosticTrace(trace, 'success');
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'guard', channel: 'webview', previousState: 'active', nextState: 'background' }),
+      expect.objectContaining({ phase: 'guard', channel: 'webview', previousState: 'background', nextState: 'active' })
+    ]));
+    expect(appStateMock.listenerCount()).toBe(0);
+    expect(appStateMock.removers.at(-1)).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(events)).not.toMatch(/943214|post-|https?:|cookie|token/i);
+  });
+
+  it('keeps a completed NodeSeek direct response when the app resumes from background', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-12T00:00:00.000Z'));
+    try {
+      let resolveDirect: ((response: Response) => void) | undefined;
+      const normalFetcher = vi.fn(() => new Promise<Response>((resolve) => {
+        resolveDirect = resolve;
+      }));
+      const webViewFetcher = vi.fn(async () => html('<html>fallback</html>'));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: normalFetcher,
+        webViewFetcher
+      });
+
+      const responsePromise = fetcher('https://www.nodeseek.com/post-2-1');
+      appStateMock.emit('background');
+      vi.setSystemTime(new Date('2026-07-12T00:00:05.500Z'));
+      resolveDirect?.(html('<html>direct</html>'));
+      const response = await responsePromise;
+      appStateMock.emit('active');
+
+      await expect(response.text()).resolves.toContain('direct');
+      expect(webViewFetcher).not.toHaveBeenCalled();
+      expect(appStateMock.listenerCount()).toBe(0);
+      expect(appStateMock.removers.at(-1)).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('retries NodeSeek feed through the WebView fallback when normal fetch stalls', async () => {
     vi.useFakeTimers();
     try {
@@ -3291,6 +3689,278 @@ describe('Android local sources', () => {
       });
 
       expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps NodeSeek AppState diagnostics active until asynchronous recovery settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => { lines.push(line); });
+      const recovery = Promise.withResolvers<void>();
+      const recoverNodeSeekNetwork = vi.fn(() => recovery.promise);
+      const fallbackFetcher = createNodeSeekWebViewFallbackFetcher({
+        appState: appStateMock.appState,
+        defaultFetcher: vi.fn(() => new Promise<Response>(() => undefined)),
+        webViewFetcher: vi.fn(async () => html('<html>fallback</html>')),
+        recoverNodeSeekNetwork
+      });
+
+      const first = fallbackFetcher('https://www.nodeseek.com/post-943212-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await first;
+
+      const trace = beginDiagnosticTrace('topic', 'open');
+      const second = withDiagnosticFetcher(trace, fallbackFetcher)('https://www.nodeseek.com/post-943213-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await second;
+      await vi.waitFor(() => expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1));
+
+      expect(appStateMock.listenerCount()).toBe(1);
+      appStateMock.emit('background');
+      appStateMock.emit('active');
+      recovery.resolve();
+      await vi.waitFor(() => expect(appStateMock.listenerCount()).toBe(0));
+      finishDiagnosticTrace(trace, 'success');
+
+      const events = lines.map((line) => JSON.parse(line));
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({ phase: 'guard', channel: 'native', previousState: 'active', nextState: 'background' }),
+        expect.objectContaining({ phase: 'guard', channel: 'native', previousState: 'background', nextState: 'active' })
+      ]));
+      expect(appStateMock.removers.at(-1)).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(events)).not.toMatch(/94321[23]|post-|https?:|cookie|token/i);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a late fallback from the recovered NodeSeek epoch trigger another recovery', async () => {
+    const lines: string[] = [];
+    const slowFallback = Promise.withResolvers<Response>();
+    const recovery = Promise.withResolvers<void>();
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const normalFetcher = vi.fn(async () => {
+      throw new TypeError('Network request failed');
+    });
+    const webViewFetcher = vi.fn(() => (
+      webViewFetcher.mock.calls.length === 1
+        ? slowFallback.promise
+        : Promise.resolve(html('<html>fallback response</html>'))
+    ));
+    const recoverNodeSeekNetwork = vi.fn(() => recovery.promise);
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher,
+      recoverNodeSeekNetwork
+    });
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
+
+    const slow = diagnosticFetcher('https://www.nodeseek.com/post-30-1');
+    await vi.waitFor(() => expect(webViewFetcher).toHaveBeenCalledTimes(1));
+    const second = diagnosticFetcher('https://www.nodeseek.com/post-31-1');
+    const third = diagnosticFetcher('https://www.nodeseek.com/post-32-1');
+    await Promise.all([second, third]);
+    await vi.waitFor(() => expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1));
+    expect(recoverNodeSeekNetwork).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'direct-error',
+      parentTraceId: trace.traceId
+    }));
+
+    recovery.resolve();
+    await recovery.promise;
+    await Promise.resolve();
+    slowFallback.resolve(html('<html>late fallback response</html>'));
+    await slow;
+    await diagnosticFetcher('https://www.nodeseek.com/post-33-1');
+    await Promise.resolve();
+
+    expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+    expect(lines.map((line) => JSON.parse(line)).filter(({ state }) => state === 'recovery-mode')).toEqual([
+      expect.objectContaining({ traceId: trace.traceId, reason: 'network_error' })
+    ]);
+    finishDiagnosticTrace(trace, 'success');
+  });
+
+  it('does not log a second NodeSeek recovery-mode event while recovery is already running', async () => {
+    const lines: string[] = [];
+    const recovery = Promise.withResolvers<void>();
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const recoverNodeSeekNetwork = vi.fn(() => recovery.promise);
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: vi.fn(async () => {
+        throw new TypeError('Network request failed');
+      }),
+      webViewFetcher: vi.fn(async () => html('<html>fallback response</html>')),
+      recoverNodeSeekNetwork
+    });
+    const trace = beginDiagnosticTrace('topic', 'open');
+    const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
+
+    await diagnosticFetcher('https://www.nodeseek.com/post-40-1');
+    await diagnosticFetcher('https://www.nodeseek.com/post-41-1');
+    await vi.waitFor(() => expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1));
+    await diagnosticFetcher('https://www.nodeseek.com/post-42-1');
+    await diagnosticFetcher('https://www.nodeseek.com/post-43-1');
+
+    expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+    expect(lines.map((line) => JSON.parse(line)).filter(({ state }) => state === 'recovery-mode')).toEqual([
+      expect.objectContaining({ traceId: trace.traceId, reason: 'network_error' })
+    ]);
+    recovery.resolve();
+    finishDiagnosticTrace(trace, 'success');
+  });
+
+  it('does not block later NodeSeek direct requests on a recovery task that never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const lines: string[] = [];
+      setDiagnosticWriter((line) => { lines.push(line); });
+      let directCalls = 0;
+      const normalFetcher = vi.fn(() => {
+        directCalls += 1;
+        return directCalls <= 2
+          ? new Promise<Response>(() => undefined)
+          : Promise.resolve(html('<html>third direct response</html>'));
+      });
+      const webViewFetcher = vi.fn(async () => html('<html>fallback response</html>'));
+      const recoverNodeSeekNetwork = vi.fn(() => new Promise<never>(() => undefined));
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher,
+        recoverNodeSeekNetwork
+      });
+
+      const firstTrace = beginDiagnosticTrace('topic', 'open');
+      const first = withDiagnosticFetcher(firstTrace, fetcher)('https://www.nodeseek.com/post-10-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await first;
+      finishDiagnosticTrace(firstTrace, 'success');
+      const secondTrace = beginDiagnosticTrace('topic', 'open');
+      const second = withDiagnosticFetcher(secondTrace, fetcher)('https://www.nodeseek.com/post-11-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await second;
+      finishDiagnosticTrace(secondTrace, 'success');
+      expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+
+      const third = await fetcher('https://www.nodeseek.com/post-12-1');
+
+      await expect(third.text()).resolves.toContain('third direct response');
+      expect(normalFetcher).toHaveBeenCalledTimes(3);
+      expect(webViewFetcher).toHaveBeenCalledTimes(2);
+      const recoveryEvents = lines
+        .map((line) => JSON.parse(line))
+        .filter((event) => event.traceId === secondTrace.traceId && event.state === 'recovery-mode');
+      expect(recoveryEvents).toEqual([
+        expect.objectContaining({
+          phase: 'transport',
+          channel: 'direct',
+          attempt: 2,
+          reason: 'timeout'
+        })
+      ]);
+      expect(JSON.stringify(recoveryEvents)).not.toMatch(/post-|https?:|cookie|token/i);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not recover NodeSeek when a direct success separates two fallback completions', async () => {
+    const firstFallback = Promise.withResolvers<Response>();
+    let directCalls = 0;
+    const normalFetcher = vi.fn(async () => {
+      directCalls += 1;
+      if (directCalls === 2) {
+        return html('<html>direct success</html>');
+      }
+      throw new Error('direct failed');
+    });
+    const webViewFetcher = vi.fn(() => (
+      webViewFetcher.mock.calls.length === 1
+        ? firstFallback.promise
+        : Promise.resolve(html('<html>later fallback</html>'))
+    ));
+    const recoverNodeSeekNetwork = vi.fn(async () => undefined);
+    const fetcher = createNodeSeekWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher,
+      recoverNodeSeekNetwork
+    });
+
+    const first = fetcher('https://www.nodeseek.com/post-15-1');
+    await vi.waitFor(() => expect(webViewFetcher).toHaveBeenCalledTimes(1));
+    await fetcher('https://www.nodeseek.com/post-16-1');
+    firstFallback.resolve(html('<html>first fallback</html>'));
+    await first;
+    await fetcher('https://www.nodeseek.com/post-17-1');
+    await Promise.resolve();
+
+    expect(recoverNodeSeekNetwork).not.toHaveBeenCalled();
+  });
+
+  it('keeps the NodeSeek WebView fallback result when recovery throws synchronously', async () => {
+    vi.useFakeTimers();
+    try {
+      const normalFetcher = vi.fn(() => new Promise<Response>(() => undefined));
+      const webViewFetcher = vi.fn(async () => html('<html>fallback response</html>'));
+      const recoverNodeSeekNetwork = vi.fn(() => {
+        throw new Error('recovery failed');
+      });
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher,
+        recoverNodeSeekNetwork
+      });
+
+      const first = fetcher('https://www.nodeseek.com/post-13-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await first;
+      const second = fetcher('https://www.nodeseek.com/post-14-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+
+      await expect(second).resolves.toBeInstanceOf(Response);
+      expect(recoverNodeSeekNetwork).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets NodeSeek recovery failures after a successful direct response', async () => {
+    vi.useFakeTimers();
+    try {
+      let directCalls = 0;
+      const normalFetcher = vi.fn(() => {
+        directCalls += 1;
+        return directCalls === 2
+          ? Promise.resolve(html('<html>direct response</html>'))
+          : new Promise<Response>(() => undefined);
+      });
+      const webViewFetcher = vi.fn(async () => html('<html>fallback response</html>'));
+      const recoverNodeSeekNetwork = vi.fn(async () => undefined);
+      const fetcher = createNodeSeekWebViewFallbackFetcher({
+        defaultFetcher: normalFetcher,
+        webViewFetcher,
+        recoverNodeSeekNetwork
+      });
+
+      const first = fetcher('https://www.nodeseek.com/post-20-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await first;
+      await fetcher('https://www.nodeseek.com/post-21-1');
+      const third = fetcher('https://www.nodeseek.com/post-22-1');
+      await vi.advanceTimersByTimeAsync(8_000);
+      await third;
+
+      expect(normalFetcher).toHaveBeenCalledTimes(3);
+      expect(webViewFetcher).toHaveBeenCalledTimes(2);
+      expect(recoverNodeSeekNetwork).not.toHaveBeenCalled();
     } finally {
       vi.clearAllTimers();
       vi.useRealTimers();

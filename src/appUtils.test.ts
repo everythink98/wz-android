@@ -3,7 +3,10 @@ import {
   finishAbortableRequest,
   forumAccessRequirementText,
   isCanceledRequest,
+  interruptedRequestDiagnostic,
   isLinuxDoCloudflareError,
+  isSilentRequestInterruption,
+  isSupersededRequest,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
   parseForumTopicLink,
@@ -13,7 +16,7 @@ import {
   topicListDisplayTime,
   topicListDisplayTimeText
 } from './appUtils';
-import { REQUEST_CANCELED_MESSAGE } from './request';
+import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE } from './request';
 
 describe('Android app utils', () => {
   it('formats source labels and canceled request errors', () => {
@@ -23,6 +26,21 @@ describe('Android app utils', () => {
     expect(sourceLabel('yaohuo')).toBe('妖火');
     expect(sourceLabel('v2ex')).toBe('V2EX');
     expect(isCanceledRequest(new Error(REQUEST_CANCELED_MESSAGE))).toBe(true);
+  });
+
+  it('keeps superseded distinct from cancellation while treating both as silent interruptions', () => {
+    const superseded = new Error(REQUEST_SUPERSEDED_MESSAGE);
+
+    expect(isCanceledRequest(superseded)).toBe(false);
+    expect(isSupersededRequest(superseded)).toBe(true);
+    expect(isSilentRequestInterruption(superseded)).toBe(true);
+    expect(isSilentRequestInterruption(new Error(REQUEST_CANCELED_MESSAGE))).toBe(true);
+  });
+
+  it('classifies replacement before explicit abort for request diagnostics', () => {
+    expect(interruptedRequestDiagnostic(false, true)).toEqual({ outcome: 'stale', reason: 'superseded' });
+    expect(interruptedRequestDiagnostic(true, true)).toEqual({ outcome: 'canceled', reason: 'canceled' });
+    expect(interruptedRequestDiagnostic(true, false)).toBeNull();
   });
 
   it('formats level access requirements with explicit Lv labels for lists', () => {

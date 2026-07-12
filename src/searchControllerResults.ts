@@ -93,6 +93,10 @@ export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
   return result.group;
 }
 
+export function stopSearchGroupLoadingMore(groups: SearchGroup[], source: Source) {
+  return groups.map((group) => group.source === source ? { ...group, loadingMore: false } : group);
+}
+
 export function firstRemoteSearchAction(results: RemoteSearchSourceResult[]) {
   return results.find((result) => result.kind === 'action-required')?.action;
 }

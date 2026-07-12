@@ -74,7 +74,7 @@ async function fetchLinuxDoThroughWebView(
       reason
     });
     if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
+        finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : reason === 'superseded' ? 'stale' : 'failure', {
         source: 'linuxdo',
         channel: 'webview',
         reason
@@ -111,7 +111,7 @@ async function fetchLinuxDoWebViewOnly(webViewFetcher: Fetcher, url: string, ini
     const reason = normalizeDiagnosticReason(error);
     markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'failure', reason });
     if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : 'failure', {
+        finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : reason === 'superseded' ? 'stale' : 'failure', {
         source: 'linuxdo',
         channel: 'webview',
         reason

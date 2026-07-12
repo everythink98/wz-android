@@ -20,14 +20,6 @@ vi.mock('expo-document-picker', () => ({
   getDocumentAsync: vi.fn()
 }));
 
-vi.mock('expo-secure-store', () => ({
-  getItemAsync: vi.fn(async () => JSON.stringify({
-    cookieHeader: 'session=fake-credential',
-    savedAt: '2026-07-10T00:00:00.000Z',
-    source: 'webview'
-  }))
-}));
-
 vi.mock('../nodeseekActionClient', () => ({
   runNodeSeekAction: actionMocks.runNodeSeekAction
 }));
@@ -50,7 +42,11 @@ vi.mock('../linuxdoCookieBridge', () => ({
   summarizeLinuxDoCookies: vi.fn(() => ({ names: [] }))
 }));
 
-import { clearLinuxDoAccessForGeneration } from '../linuxdoCookieBridge';
+import {
+  clearLinuxDoAccessForGeneration,
+  currentLinuxDoAccessGeneration,
+  loadLinuxDoAccess
+} from '../linuxdoCookieBridge';
 import { createRequestOwner } from '../requestOwnership';
 import { createSiteSessionStates } from '../siteSessionState';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
@@ -58,25 +54,36 @@ import type { Fetcher } from '../request';
 import type { Source, TopicDetail } from '../types';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
 import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
+import type { CredentialLoadOptions } from './sessionControllerHelpers';
 import { useTopicActionsController } from './useTopicActionsController';
 import type { TopicSessionController } from './useTopicSessionController';
 
 function createTopicActionController({
   applyUpdate = vi.fn(),
+  clearYaohuoLoginState = vi.fn(async () => undefined),
   completeSubmission = vi.fn(),
+  currentNodeSeekCredentialGeneration = () => 1,
   fetcher = vi.fn(),
+  loadNodeSeekCookieForSource,
   notify = vi.fn(),
   refreshTopicReplies = vi.fn(async () => undefined),
   replyContent = '',
-  source = 'nodeseek'
+  showYaohuoLogin = vi.fn(),
+  source = 'nodeseek',
+  yaohuoCredentialSuppressedRef = { current: false }
 }: {
   applyUpdate?: ReturnType<typeof vi.fn>;
+  clearYaohuoLoginState?: Parameters<typeof useTopicActionsController>[0]['clearYaohuoLoginState'];
   completeSubmission?: ReturnType<typeof vi.fn>;
+  currentNodeSeekCredentialGeneration?: () => number;
   fetcher?: Fetcher;
+  loadNodeSeekCookieForSource?: (source: 'nodeseek', options?: CredentialLoadOptions) => Promise<string | undefined>;
   notify?: (message: string) => void;
   refreshTopicReplies?: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
   replyContent?: string;
+  showYaohuoLogin?: Parameters<typeof useTopicActionsController>[0]['showYaohuoLogin'];
   source?: Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
+  yaohuoCredentialSuppressedRef?: { current: boolean };
 } = {}) {
   const detail: TopicDetail = {
     source,
@@ -102,11 +109,15 @@ function createTopicActionController({
   const controller = useTopicActionsController({
     actionAbortRef: { current: null },
     clearNodeSeekLoginCookiesOnly: vi.fn(async () => undefined),
-    clearYaohuoLoginState: vi.fn(async () => undefined),
-    currentNodeSeekCredentialGeneration: () => 1,
+    clearYaohuoLoginState,
+    currentNodeSeekCredentialGeneration,
     ensureNodeImageApiKey: vi.fn(async () => null),
     fetcher,
     linuxDoWebViewUserAgentRef: { current: 'ua' },
+    loadNodeSeekCookieForSource: loadNodeSeekCookieForSource || vi.fn(async (_source, options) => {
+      options?.captureGeneration?.(currentNodeSeekCredentialGeneration());
+      return 'session=fake-credential';
+    }),
     loadYaohuoCookieForSource: vi.fn(async () => source === 'yaohuo' ? 'sidyaohuo=fake-credential' : undefined),
     nodeSeekWebViewUserAgentRef: { current: 'ua' },
     notify,
@@ -116,7 +127,7 @@ function createTopicActionController({
     setActionBusy: vi.fn(),
     setOptimisticTopicActions: vi.fn(),
     showLinuxDoLogin: vi.fn(),
-    showYaohuoLogin: vi.fn(),
+    showYaohuoLogin,
     siteSessionStates,
     topicActionRequestOwnerRef: { current: createRequestOwner('topic') },
     topicSession: {
@@ -137,17 +148,194 @@ function createTopicActionController({
         }
       }
     } as unknown as TopicSessionController,
-    updateLinuxDoSession: vi.fn()
+    updateLinuxDoSession: vi.fn(),
+    yaohuoCredentialSuppressedRef
   });
-  return { applyUpdate, completeSubmission, controller, detail, optimisticTopicActionsRef };
+  return { applyUpdate, clearYaohuoLoginState, completeSubmission, controller, detail, optimisticTopicActionsRef, showYaohuoLogin };
 }
 
 afterEach(() => {
   setDiagnosticWriter(null);
   vi.clearAllMocks();
+  vi.mocked(currentLinuxDoAccessGeneration).mockImplementation(() => 1);
+  vi.mocked(loadLinuxDoAccess).mockResolvedValue({
+    cookieHeader: '_t=fake-credential',
+    savedAt: '2026-07-12T00:00:00.000Z',
+    source: 'webview',
+    userAgent: 'ua'
+  });
 });
 
 describe('topic action auth guards', () => {
+  it('does not send a NodeSeek action after its credential generation changes during access loading', async () => {
+    const accessRead = Promise.withResolvers<string | undefined>();
+    let generation = 1;
+    const loadNodeSeekCookieForSource = vi.fn(async (_source: 'nodeseek', options?: CredentialLoadOptions) => {
+      options?.captureGeneration?.(generation);
+      return accessRead.promise;
+    });
+    const { controller } = createTopicActionController({
+      currentNodeSeekCredentialGeneration: () => generation,
+      loadNodeSeekCookieForSource,
+      replyContent: 'reply body'
+    });
+
+    const submit = controller.submitReply();
+    await vi.waitFor(() => expect(loadNodeSeekCookieForSource).toHaveBeenCalled());
+    generation += 1;
+    accessRead.resolve('session=old-login');
+    await submit;
+
+    expect(actionMocks.runNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it('does not send a NodeSeek action after credential loading observes a completed login clear', async () => {
+    const notify = vi.fn();
+    const { controller } = createTopicActionController({
+      loadNodeSeekCookieForSource: vi.fn(async (_source, options) => {
+        options?.captureGeneration?.(2);
+        return undefined;
+      }),
+      currentNodeSeekCredentialGeneration: () => 2,
+      notify,
+      replyContent: 'reply body'
+    });
+
+    await controller.submitReply();
+
+    expect(actionMocks.runNodeSeekAction).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('NodeSeek 登录已失效，请重新登录。');
+  });
+
+  it('does not send a reply for a locked topic', async () => {
+    const { controller, detail } = createTopicActionController({ replyContent: 'reply body' });
+    detail.locked = true;
+
+    await controller.submitReply();
+
+    expect(actionMocks.runNodeSeekAction).not.toHaveBeenCalled();
+  });
+
+  it('does not send a linux.do action after its credential generation changes during access loading', async () => {
+    let generation = 1;
+    vi.mocked(currentLinuxDoAccessGeneration).mockImplementation(() => generation);
+    vi.mocked(loadLinuxDoAccess).mockImplementationOnce(async () => {
+      generation = 2;
+      return {
+        cookieHeader: '_t=new-login',
+        savedAt: '2026-07-12T00:00:00.000Z',
+        source: 'webview' as const,
+        userAgent: 'ua'
+      };
+    });
+    const { controller } = createTopicActionController({
+      replyContent: '保留草稿',
+      source: 'linuxdo'
+    });
+
+    await controller.submitReply();
+
+    expect(actionMocks.runLinuxDoAction).not.toHaveBeenCalled();
+    expect(clearLinuxDoAccessForGeneration).not.toHaveBeenCalled();
+  });
+
+  it('keeps the yaohuo reply draft when the action result is unconfirmed', async () => {
+    actionMocks.runYaohuoAction.mockResolvedValueOnce({
+      ok: true,
+      message: '操作结果无法确认，请刷新原帖核对'
+    });
+    const notify = vi.fn();
+    const refreshTopicReplies = vi.fn(async () => undefined);
+    const { completeSubmission, controller } = createTopicActionController({
+      notify,
+      refreshTopicReplies,
+      replyContent: '需要保留的草稿',
+      source: 'yaohuo'
+    });
+
+    await controller.submitReply();
+
+    expect(completeSubmission).not.toHaveBeenCalled();
+    expect(refreshTopicReplies).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('操作结果无法确认，请刷新原帖核对');
+  });
+
+  it('keeps the yaohuo login-expired result when automatic cleanup fails', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    actionMocks.runYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效，请重新登录。'), {
+      source: 'yaohuo',
+      loginRequired: true,
+      reason: 'expired'
+    }));
+    const clearYaohuoLoginState = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const { completeSubmission, controller, showYaohuoLogin } = createTopicActionController({
+      clearYaohuoLoginState,
+      replyContent: '需要保留的草稿',
+      source: 'yaohuo'
+    });
+
+    await controller.submitReply();
+
+    expect(completeSubmission).not.toHaveBeenCalled();
+    expect(showYaohuoLogin).toHaveBeenCalledWith('妖火登录已失效，请重新登录。');
+    expect(lines.map((line) => JSON.parse(line))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'credential', state: 'error', reason: 'storage_error' }),
+      expect.objectContaining({ phase: 'finish', outcome: 'blocked', reason: 'login_required' })
+    ]));
+  });
+
+  it('drops a stale Yaohuo expiration after newer credentials supersede cleanup', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    actionMocks.runYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('旧妖火登录已失效'), {
+      source: 'yaohuo',
+      loginRequired: true,
+      reason: 'expired'
+    }));
+    const clearYaohuoLoginState = vi.fn(async () => false);
+    const { controller, showYaohuoLogin } = createTopicActionController({
+      clearYaohuoLoginState,
+      replyContent: '保留草稿',
+      source: 'yaohuo'
+    });
+
+    await controller.submitReply();
+
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+    expect(lines.map((line) => JSON.parse(line))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ phase: 'finish', outcome: 'stale', reason: 'superseded' })
+    ]));
+  });
+
+  it('does not clear Yaohuo credentials when anonymous mode starts during an action', async () => {
+    const action = Promise.withResolvers<never>();
+    const yaohuoCredentialSuppressedRef = { current: false };
+    actionMocks.runYaohuoAction.mockReturnValueOnce(action.promise);
+    const clearYaohuoLoginState = vi.fn(async () => undefined);
+    const { controller, showYaohuoLogin } = createTopicActionController({
+      clearYaohuoLoginState,
+      replyContent: '保留草稿',
+      source: 'yaohuo',
+      yaohuoCredentialSuppressedRef
+    });
+
+    const submit = controller.submitReply();
+    await vi.waitFor(() => expect(actionMocks.runYaohuoAction).toHaveBeenCalled());
+    yaohuoCredentialSuppressedRef.current = true;
+    action.reject(Object.assign(new Error('妖火登录已失效'), {
+      source: 'yaohuo',
+      loginRequired: true,
+      reason: 'expired'
+    }));
+    await submit;
+
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+  });
+
   it('marks linux.do expired only when an expired request clears stored access', async () => {
     vi.mocked(clearLinuxDoAccessForGeneration).mockResolvedValueOnce(null);
     const resetLinuxDoLevelState = vi.fn();
@@ -155,18 +343,55 @@ describe('topic action auth guards', () => {
 
     await clearExpiredLinuxDoLogin({
       error: new Error('linux.do 登录已失效，请重新登录。'),
-      generation: 3,
+      generation: 1,
       cookieHeader: 'cf_clearance=old; _t=old',
       resetLinuxDoLevelState,
       updateLinuxDoSession
     });
 
-    expect(clearLinuxDoAccessForGeneration).toHaveBeenCalledWith(3, 'cf_clearance=old; _t=old');
+    expect(clearLinuxDoAccessForGeneration).toHaveBeenCalledWith(1, 'cf_clearance=old; _t=old');
     expect(updateLinuxDoSession).toHaveBeenCalledWith({
       type: 'login-expired',
       message: 'linux.do 登录已失效，请重新登录。'
     });
     expect(resetLinuxDoLevelState).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps linux.do expired when automatic credential cleanup fails', async () => {
+    vi.mocked(clearLinuxDoAccessForGeneration).mockRejectedValueOnce(new Error('cleanup failed'));
+    const resetLinuxDoLevelState = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+
+    await expect(clearExpiredLinuxDoLogin({
+      error: new Error('linux.do 登录已失效，请重新登录。'),
+      generation: 1,
+      cookieHeader: 'cf_clearance=old; _t=old',
+      resetLinuxDoLevelState,
+      updateLinuxDoSession
+    })).rejects.toThrow('cleanup failed');
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith({
+      type: 'login-expired',
+      message: 'linux.do 登录已失效，请重新登录。'
+    });
+    expect(resetLinuxDoLevelState).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not apply an expired linux.do result after a newer credential generation exists', async () => {
+    const resetLinuxDoLevelState = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+
+    await expect(clearExpiredLinuxDoLogin({
+      error: new Error('旧请求已失效'),
+      generation: 0,
+      cookieHeader: '_t=old',
+      resetLinuxDoLevelState,
+      updateLinuxDoSession
+    })).resolves.toBe(false);
+
+    expect(clearLinuxDoAccessForGeneration).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(resetLinuxDoLevelState).not.toHaveBeenCalled();
   });
 
   it('traces an optimistic interaction through rollback without leaking action data', async () => {

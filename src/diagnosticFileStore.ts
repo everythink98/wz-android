@@ -241,13 +241,17 @@ async function readLog(name: string) {
   return file.exists ? file.text() : '';
 }
 
-export async function exportDiagnosticLog(metadata: DiagnosticExportMetadata) {
+export async function exportDiagnosticLog(
+  metadata: DiagnosticExportMetadata,
+  options: { onSnapshotReady?: () => void } = {}
+) {
   flushPendingDiagnosticLines();
   closeActiveLogHandle();
   const [previous, current] = await Promise.all([
     readLog(PREVIOUS_LOG_NAME),
     readLog(CURRENT_LOG_NAME)
   ]);
+  options.onSnapshotReady?.();
   const temporary = new File(Paths.cache, safeFileName('forum-reader-diagnostic', 'txt'));
   try {
     temporary.create({ overwrite: true });

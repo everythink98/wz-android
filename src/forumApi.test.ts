@@ -22,6 +22,7 @@ vi.mock('react-native', () => ({
 
 import { getCategories, getCurrentUserProfile, getFeed, getReplies, getReply, getTopic, getUserProfile, searchTopics } from './forumApi';
 import { browserFetchIntentFromInit } from './browserFetchIntent';
+import { REQUEST_SUPERSEDED_MESSAGE } from './request';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import * as SecureStore from 'expo-secure-store';
 
@@ -48,6 +49,14 @@ describe('Android local forum facade', () => {
         : null
     ));
   }
+
+  it('does not turn an aggregated superseded request into partial source errors', async () => {
+    const fetcher = vi.fn(async () => {
+      throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+    });
+
+    await expect(getCategories({ source: 'all', fetcher })).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+  });
 
   it('routes feed and categories to public source sites, not the project server', async () => {
     const fetcher = vi.fn(async (input: string) => {
@@ -506,6 +515,48 @@ describe('Android local forum facade', () => {
     expect(() => getCurrentUserProfile({ source: 'v2ex', fetcher })).toThrow('V2EX 不支持当前登录身份读取');
   });
 
+  it.each([
+    ['user profile', (fetcher: typeof fetch) => getUserProfile({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      fetcher,
+      yaohuoCookie: 'sidyaohuo=expired'
+    })],
+    ['current user', (fetcher: typeof fetch) => getCurrentUserProfile({
+      source: 'yaohuo',
+      fetcher,
+      yaohuoCookie: 'sidyaohuo=expired'
+    })]
+  ])('maps a Yaohuo 403 verification page while reading %s', async (_label, read) => {
+    const fetcher = vi.fn(async () => new Response('<div>访问验证 ImageCaptcha</div>', { status: 403 }));
+
+    await expect(read(fetcher as typeof fetch)).rejects.toMatchObject({
+      source: 'yaohuo',
+      loginRequired: true,
+      reason: 'verification'
+    });
+  });
+
+  it.each([
+    ['user profile', (fetcher: typeof fetch) => getUserProfile({
+      source: 'yaohuo',
+      id: '7',
+      username: '火友',
+      fetcher,
+      yaohuoCookie: 'sidyaohuo=expired'
+    })],
+    ['current user', (fetcher: typeof fetch) => getCurrentUserProfile({
+      source: 'yaohuo',
+      fetcher,
+      yaohuoCookie: 'sidyaohuo=expired'
+    })]
+  ])('keeps an ordinary Yaohuo 403 while reading %s as an HTTP error', async (_label, read) => {
+    const fetcher = vi.fn(async () => new Response('<div>请先登录网站</div>', { status: 403 }));
+
+    await expect(read(fetcher as typeof fetch)).rejects.toThrow('HTTP 403');
+  });
+
   it('falls back to the latest dynamic NodeSeek login id only when current account reading fails', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
@@ -527,6 +578,49 @@ describe('Android local forum facade', () => {
       username: '备用用户',
       topics: []
     });
+  });
+
+  it('preserves a NodeSeek current-account 401 without trying saved-id fallbacks', async () => {
+    const fetcher = vi.fn(async () => new Response('unauthorized', { status: 401 }));
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=expired',
+      nodeSeekUserId: 15105
+    })).rejects.toMatchObject({ status: 401 });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops NodeSeek current-account fallbacks after cancellation', async () => {
+    const fetcher = vi.fn(async () => {
+      throw new Error('请求已取消');
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=ok',
+      nodeSeekUserId: 15105
+    })).rejects.toThrow('请求已取消');
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops NodeSeek current-account fallbacks after a newer request supersedes it', async () => {
+    const fetcher = vi.fn(async () => {
+      throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+    });
+
+    await expect(getCurrentUserProfile({
+      source: 'nodeseek',
+      fetcher,
+      nodeSeekCookie: 'session=ok',
+      nodeSeekUserId: 15105
+    })).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it('does not read the fallback NodeSeek id when the current account endpoint succeeds', async () => {

@@ -37,6 +37,7 @@ import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
+import { canSubmitReplyToTopic } from '../../app/topicActionControllerHelpers';
 import { getLinuxDoEmojiUrls } from '../../localLinuxdo';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
@@ -297,10 +298,11 @@ export const TopicScreen = memo(function TopicScreen({
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
+  const canSubmitReply = canSubmitReplyToTopic(topic);
   const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
-  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
+  const canWrite = Boolean(canSubmitReply && (canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo));
   const replyTotalCount = item?.replyCount ?? replies.length;
   const listExtraData = useMemo(() => ({
     actionBusy,

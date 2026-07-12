@@ -46,6 +46,7 @@ interface LinuxDoOptions {
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
+  nocache?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -552,7 +553,7 @@ async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOpt
   }));
 }
 
-async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string) {
+async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string, nocache = false) {
   const access = await loadLinuxDoAccess();
   const accessSummary = linuxDoAccessSummary(access);
   return {
@@ -560,6 +561,7 @@ async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string
     Referer: referer,
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Discourse-Present': 'true',
+    ...(nocache ? { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } : {}),
     'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     'X-Requested-With': 'XMLHttpRequest',
@@ -583,7 +585,7 @@ async function fetchLinuxDoJson<T>(
     }
   }
   const response = await fetchWithTimeout(url.toString(), {
-    headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken)
+    headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken, options.nocache)
   }, options);
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
@@ -823,7 +825,7 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
 } = {}): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
-  let cached = page === 1 ? undefined : cachedTopicStream(id);
+  let cached = page === 1 || options.nocache ? undefined : cachedTopicStream(id);
   if (!cached) {
     const data = await topicData(id, options);
     cacheTopicStream(id, data);

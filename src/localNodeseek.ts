@@ -1,6 +1,6 @@
 import type { HTMLElement } from 'node-html-parser';
 import { withBrowserFetchIntent, type BrowserFetchIntent, type BrowserFetchOwner, type BrowserFetchPriority } from './browserFetchIntent';
-import { fetchWithTimeout, type Fetcher } from './request';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
 import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
@@ -773,7 +773,10 @@ async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
     return text;
   }
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw Object.assign(new Error(`HTTP ${response.status}`), {
+      status: response.status,
+      statusCode: response.status
+    });
   }
   return text;
 }
@@ -1741,7 +1744,10 @@ export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {
     if (user) {
       return user;
     }
-  } catch {
+  } catch (error) {
+    if (shouldStopNodeSeekCurrentUserFallback(error, requestOptions.signal)) {
+      throw error;
+    }
     // Fall back to the rendered home page below.
   }
   let lastError: unknown;
@@ -1752,6 +1758,9 @@ export async function getNodeSeekCurrentUserProfile(options: NodeSeekOptions = {
         return user;
       }
     } catch (error) {
+      if (shouldStopNodeSeekCurrentUserFallback(error, requestOptions.signal)) {
+        throw error;
+      }
       lastError = error;
     }
   }
@@ -1820,4 +1829,13 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
     isExpectedEmpty: candidateCount === 0,
     hasRepeatedCursor: nextPage === page
   });
+}
+
+function shouldStopNodeSeekCurrentUserFallback(error: unknown, signal?: AbortSignal) {
+  const value = error && typeof error === 'object' ? error as Record<string, unknown> : {};
+  const status = Number(value.status ?? value.statusCode) || 0;
+  return Boolean(signal?.aborted)
+    || (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE)
+    || (error instanceof Error && error.message === REQUEST_SUPERSEDED_MESSAGE)
+    || status === 401;
 }

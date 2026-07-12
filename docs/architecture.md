@@ -45,7 +45,9 @@
 - `sourceGateway` 内部仍转发到 `src/forumApi.ts` 和 `src/yaohuoApi.ts`；各站 action client 暂时是独立写入边界。
 - `src/forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
 - 新增读取调用方应使用 `sourceGateway`，不要在 `src/app/*Controller.ts` 里新增对旧读取来源文件的直接调用；新增写操作复用现有 action client，并按触及路径逐项收口。
-- 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复的 `canEdit`、`canDelete` 等权限仍以原站解析结果为准。
+- 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复是否允许编辑、删除等操作，只能由原站结构化字段、明确操作链接和当前对象所需的完整字段共同推导，不靠作者名或文案猜测，也不要求原站必须提供字面上的 `canEdit` / `canDelete` 字段。
+- 聚合读取按来源隔离凭据：基础来源请求不等待 NodeSeek 或妖火凭据检查才启动；任一站凭据读取失败只形成该站 partial error，用户取消仍是整次操作的终态。
+- NodeSeek 普通请求使用 8 秒绝对 wall-clock deadline。App 切后台时原请求继续进行；回到前台后若请求仍未完成且总耗时已越过 deadline，立即进入既有 WebView fallback。连续两次 direct fallback 后的网络恢复异步执行，不阻塞当前或后续请求；中间出现 direct 成功会中断失败连续性，迟到的并发 fallback 不得误触发恢复。
 
 ## 导航与状态边界
 
@@ -72,6 +74,8 @@
 - `src/app/useSessionController.ts` 只负责加载 Cookie 和会话事实；NodeSeek Cookie 加载只返回本次凭据里的 userId，不顺带读取个人资料。
 - `SiteSessionState` 是账号中心和登录弹层的唯一登录状态来源；NodeSeek 的 WebView userId 只在 session 已登录时补充身份，不能覆盖已失效、匿名或需要验证状态。
 - NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。确定未登录的 session event 会清理运行时身份提示，普通 `check-failed` 不会误判退出。
+- 启动恢复和账号刷新按站点独立读取安全存储；单站存储异常不能阻塞其他站恢复。已确认登录失效时会尝试清理对应 Cookie，但清理失败只记录诊断，原始“登录已失效”结果仍优先返回。NodeSeek、linux.do 与妖火都会先保存登录撤销标记，在 App 内页面重新确认有效登录前忽略 native 层或 SecureStore 残留的旧登录 Cookie；旧清理与新登录交错时，以当前 credential generation 为准，并把当前已保存 Cookie 补回 WebView。
+- Android WebView `CookieManager` 没有按旧值原子删除 Cookie 的公开 API。自动清理先比较清理开始时的完整登录 Cookie bundle；任一名称或值变化就整批跳过并保持撤销标记，写入过期 Cookie 后还要重读验证旧 bundle 确实消失，再由撤销标记保证 App fail-closed。linux.do 只有 App 内页面读取到登录 Cookie 并通过 `/session/current.json` 的当前用户检查后，才会恢复当前 Cookie 到 WebView 并解除标记；匿名也可获取的 `/session/csrf` 只用于写操作，不能证明登录有效，普通 hidden WebView 结果也不能解除标记。自动条件清理不得改写 WebView 私有 Cookies 数据库来绕开平台边界；手动清除登录仍保留既有的本机清理 fallback。
 - linux.do 验证弹层由 `src/app/LinuxDoVerifyModal.tsx` 和全局 modal host 承载。
 
 ## 服务器代理
@@ -91,7 +95,7 @@
 ## 回复写操作
 
 - `src/app/useTopicActionsController.ts` 负责回复、楼层回复、编辑、删除、图片上传和互动请求。
-- NodeSeek 编辑自己的回复使用原站真实评论 id 和真实 token；没有 token 时拒绝发送，不使用随机值。
+- NodeSeek 回复和编辑使用原站真实帖子 / 评论 id；请求头的 `csrf-token` 是每次请求在本机生成的 16 位字母数字随机值，不读取、保存或复用登录页 CSRF。
 - NodeSeek 图片上传通过 NodeImage；App 可从 NodeImage 授权页获取并缓存当前用户自己的 API Key，也保留手动粘贴备用入口。
 - linux.do 图片上传走原站 `/uploads.json`；妖火图片上传走图床并插入 UBB 图片标签。
 - 删除回复只在来源解析出明确权限时显示：linux.do 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。

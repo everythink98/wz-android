@@ -7,6 +7,7 @@ import {
   firstRemoteSearchAction,
   groupFromRemoteSearchResult,
   remoteSearchActionForSource,
+  stopSearchGroupLoadingMore,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
 
@@ -107,5 +108,17 @@ describe('search controller result helpers', () => {
       sort: 'relevance',
       visitedKey: 'nodeseek:codex:{"source":"nodeseek","category":"tech","sort":"replyTime"}'
     });
+  });
+
+  it('releases a source pagination spinner after a silent interruption', () => {
+    const groups = [
+      { source: 'nodeseek' as const, label: 'NodeSeek', items: [], loadingMore: true },
+      { source: 'v2ex' as const, label: 'V2EX', items: [], loadingMore: true }
+    ];
+
+    expect(stopSearchGroupLoadingMore(groups, 'nodeseek')).toEqual([
+      { source: 'nodeseek', label: 'NodeSeek', items: [], loadingMore: false },
+      groups[1]
+    ]);
   });
 });

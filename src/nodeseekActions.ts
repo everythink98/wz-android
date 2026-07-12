@@ -34,20 +34,13 @@ function randomNodeSeekContentToken() {
   return token;
 }
 
-function cleanCsrfToken(value: string) {
-  const token = String(value || '').trim();
-  return token || randomNodeSeekContentToken();
-}
-
 export function buildNodeSeekReplyRequest({
   postId,
   content,
-  csrfToken,
   replyTarget
 }: {
   postId: string | number;
   content: string;
-  csrfToken: string;
   replyTarget?: {
     floor?: string | number;
     author?: string;
@@ -58,7 +51,6 @@ export function buildNodeSeekReplyRequest({
     throw new Error('请输入回复内容');
   }
   const cleanPostId = cleanPositiveInteger(postId, '帖子 id');
-  const cleanCsrf = cleanCsrfToken(csrfToken);
   const targetFloor = replyTarget?.floor ? cleanPositiveInteger(replyTarget.floor, '楼层') : undefined;
   const targetAuthor = String(replyTarget?.author || '').trim();
   const finalContent = targetFloor
@@ -71,7 +63,7 @@ export function buildNodeSeekReplyRequest({
     headers: {
       'content-type': 'application/json',
       referer: `https://www.nodeseek.com/post-${cleanPostId}-1`,
-      'csrf-token': cleanCsrf
+      'csrf-token': randomNodeSeekContentToken()
     },
     body: JSON.stringify({
       content: finalContent,
@@ -83,24 +75,21 @@ export function buildNodeSeekReplyRequest({
 
 export function buildNodeSeekEditReplyRequest({
   commentId,
-  content,
-  csrfToken
+  content
 }: {
   commentId: string | number;
   content: string;
-  csrfToken: string;
 }): NodeSeekActionRequest {
   const cleanContent = content.trim();
   if (!cleanContent) {
     throw new Error('请输入回复内容');
   }
-  const cleanCsrf = cleanCsrfToken(csrfToken);
   return {
     path: '/api/content/edit-comment',
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'csrf-token': cleanCsrf
+      'csrf-token': randomNodeSeekContentToken()
     },
     body: JSON.stringify({
       commentId: cleanPositiveInteger(commentId, '评论 id'),

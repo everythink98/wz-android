@@ -24,7 +24,10 @@ export function isLinuxDoActionTopic(topic: TopicActionTopic | null): topic is T
 }
 
 export function canSubmitReplyToTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
-  return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo']);
+  if (!topic || !isActionSource(topic.source, ['nodeseek', 'linuxdo', 'yaohuo'])) {
+    return false;
+  }
+  return !('locked' in topic) || topic.locked !== true;
 }
 
 export function canVotePollOnTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {

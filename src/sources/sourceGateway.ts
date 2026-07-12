@@ -13,7 +13,8 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from '../yaohuoApi';
-import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
+import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from '../request';
+import { isSilentRequestInterruption, isSupersededRequest } from '../appUtils';
 import { sourceErrorFromUnknown } from '../sourceErrors';
 import {
   beginDiagnosticTrace,
@@ -23,6 +24,7 @@ import {
   normalizeDiagnosticReason,
   withDiagnosticFetcher,
   type DiagnosticFields,
+  type DiagnosticReason,
   type DiagnosticTrace
 } from '../diagnostics';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
@@ -140,16 +142,23 @@ type SourceGatewayCredentialLoadOptions = {
 };
 
 type SourceGatewayDependencies = {
-  clearYaohuoLoginState: (options?: { generation?: number }) => Promise<void>;
+  clearYaohuoLoginState: (options?: { generation?: number; isCurrent?: () => boolean }) => Promise<boolean | void>;
   fetcher: Fetcher;
+  isYaohuoCredentialSuppressed?: () => boolean;
   loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgent: () => string;
 };
 
+type NodeSeekReadCredentials = {
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
+  timeoutMs?: number;
+};
+
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
 type GetReplyOptions = Parameters<typeof getForumReply>[0];
-type ManagedReadKeys = 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie';
+type ManagedReadKeys = 'fetcher' | 'nodeSeekCookie' | 'nodeSeekCredentials' | 'nodeSeekUserAgent' | 'yaohuoCookie';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
 type ManagedSearchTopicsOptions = Omit<SearchTopicsOptions, ManagedReadKeys>;
@@ -201,37 +210,72 @@ function summarizeReadResult(result: unknown) {
   return summary satisfies DiagnosticFields;
 }
 
+function diagnosticReasonForSourceError(kind: ReturnType<typeof sourceErrorFromUnknown>['kind'], error: unknown): DiagnosticReason {
+  if (kind === 'login-required' || kind === 'login-expired') return 'login_required';
+  if (kind === 'verification-required') return 'verification_required';
+  if (kind === 'permission-denied') return 'permission_denied';
+  return normalizeDiagnosticReason(error);
+}
+
 export function createSourceGateway(dependencies: SourceGatewayDependencies) {
   const read = async <T>(source: FeedSource, operationName: string, operation: (credentials: {
     fetcher: Fetcher;
     nodeSeekCookie?: string;
+    nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
     nodeSeekUserAgent?: string;
+    timeoutMs?: number;
     yaohuoCookie?: string;
   }) => Promise<T>, context?: SourceGatewayReadContext) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
     let yaohuoGeneration: number | undefined;
     try {
-      const nodeSeekCookie = source === 'nodeseek' || source === 'all'
+      const nodeSeekCredentials = source === 'all'
+        ? dependencies.loadNodeSeekCookieForSource(source, { diagnosticTrace: trace }).then((nodeSeekCookie) => ({
+          nodeSeekCookie,
+          nodeSeekUserAgent: dependencies.nodeSeekUserAgent(),
+          timeoutMs: 0
+        }))
+        : undefined;
+      const nodeSeekCookie = source === 'nodeseek'
         ? await dependencies.loadNodeSeekCookieForSource(source, { diagnosticTrace: trace })
         : undefined;
-      const yaohuoCookie = source === 'yaohuo'
+      const yaohuoSuppressedBeforeLoad = source === 'yaohuo'
+        && dependencies.isYaohuoCredentialSuppressed?.() === true;
+      const loadedYaohuoCookie = source === 'yaohuo' && !yaohuoSuppressedBeforeLoad
         ? await dependencies.loadYaohuoCookieForSource(source, {
           captureGeneration: (generation) => { yaohuoGeneration = generation; },
           diagnosticTrace: trace
         })
         : undefined;
+      const yaohuoSuppressed = source === 'yaohuo'
+        && dependencies.isYaohuoCredentialSuppressed?.() === true;
+      const yaohuoCookie = yaohuoSuppressed ? undefined : loadedYaohuoCookie;
       markDiagnosticStage(trace, 'credential', {
         source,
-        hasCredential: Boolean(nodeSeekCookie?.trim() || yaohuoCookie?.trim())
+        ...(source === 'all'
+          ? { state: 'load' }
+          : yaohuoSuppressed
+          ? { state: 'disabled' }
+          : { hasCredential: Boolean(nodeSeekCookie?.trim() || yaohuoCookie?.trim()) })
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
+      const diagnosticFetcher = withDiagnosticFetcher(trace, dependencies.fetcher);
+      const fetcher: Fetcher = source === 'yaohuo' && !yaohuoCookie?.trim()
+        ? (input, init) => diagnosticFetcher(input, { ...init, credentials: 'omit' })
+        : diagnosticFetcher;
       const result = await operation({
-        fetcher: withDiagnosticFetcher(trace, dependencies.fetcher),
+        fetcher,
         nodeSeekCookie,
-        nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
+        nodeSeekCredentials,
+        nodeSeekUserAgent: source === 'nodeseek' ? dependencies.nodeSeekUserAgent() : undefined,
+        ...(source === 'nodeseek' ? { timeoutMs: 0 } : {}),
         yaohuoCookie
       });
+      if (source === 'yaohuo'
+        && yaohuoSuppressed !== (dependencies.isYaohuoCredentialSuppressed?.() === true)) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
       const summary = summarizeReadResult(result);
       markDiagnosticStage(trace, 'parse', { source, ...summary });
       const parseEmpty = summary.isParseEmpty === true;
@@ -254,18 +298,46 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       }
       return result;
     } catch (error) {
-      if (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE) {
+      if (isSilentRequestInterruption(error)) {
         if (ownsTrace) {
-          finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
+          const superseded = isSupersededRequest(error);
+          finishDiagnosticTrace(trace, superseded ? 'stale' : 'canceled', {
+            source,
+            reason: superseded ? 'superseded' : 'canceled'
+          });
         }
         throw error;
       }
       const sourceError = sourceErrorFromUnknown(source, error);
-      if (source === 'yaohuo' && sourceError.kind === 'login-expired' && context?.isCurrent?.() !== false) {
-        await dependencies.clearYaohuoLoginState({ generation: yaohuoGeneration });
+      if (source === 'yaohuo'
+        && sourceError.kind === 'login-expired'
+        && context?.isCurrent?.() !== false
+        && dependencies.isYaohuoCredentialSuppressed?.() !== true) {
+        try {
+          const cleared = await dependencies.clearYaohuoLoginState({
+            generation: yaohuoGeneration,
+            isCurrent: () => context?.isCurrent?.() !== false
+              && dependencies.isYaohuoCredentialSuppressed?.() !== true
+          });
+          if (cleared === false) {
+            throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+          }
+        } catch (cleanupError) {
+          if (isSilentRequestInterruption(cleanupError)) {
+            if (ownsTrace) {
+              const superseded = isSupersededRequest(cleanupError);
+              finishDiagnosticTrace(trace, superseded ? 'stale' : 'canceled', {
+                source: 'yaohuo',
+                reason: superseded ? 'superseded' : 'canceled'
+              });
+            }
+            throw cleanupError;
+          }
+          markDiagnosticStage(trace, 'credential', { source: 'yaohuo', state: 'error', reason: 'storage_error' });
+        }
       }
       if (ownsTrace) {
-        const reason = normalizeDiagnosticReason(error);
+        const reason = diagnosticReasonForSourceError(sourceError.kind, error);
         finishDiagnosticTrace(
           trace,
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied'
@@ -280,7 +352,13 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
 
   return {
     async hasYaohuoCredential() {
-      return Boolean((await dependencies.loadYaohuoCookieForSource('yaohuo'))?.trim());
+      if (dependencies.isYaohuoCredentialSuppressed?.() === true) {
+        return false;
+      }
+      const cookie = await dependencies.loadYaohuoCookieForSource('yaohuo');
+      return dependencies.isYaohuoCredentialSuppressed?.() === true
+        ? false
+        : Boolean(cookie?.trim());
     },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
       const source = options.source || 'all';

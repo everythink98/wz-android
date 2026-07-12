@@ -46,7 +46,7 @@ function actionMessage(html: string) {
   if (tip) {
     assertYaohuoActionSuccess(text);
   }
-  if (!tip && text.length > 80) {
+  if (!tip && (!text || text.length > 80)) {
     return '操作结果无法确认，请刷新原帖核对';
   }
   assertYaohuoActionSuccess(text);

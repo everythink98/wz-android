@@ -18,7 +18,9 @@ import {
 } from '../readerData';
 import {
   finishAbortableRequest,
-  isCanceledRequest,
+  interruptedRequestDiagnostic,
+  isSilentRequestInterruption,
+  isSupersededRequest,
   startAbortableRequest
 } from '../appUtils';
 import { nodeSeekUserIdFromValue } from '../userNavigation';
@@ -117,7 +119,6 @@ export function useUserController({
   const currentUserFollowed = Boolean((userProfile || selectedUser) && isUserFollowed(readerData, (userProfile || selectedUser) as UserProfile));
 
   const cancelUserRequests = useCallback(() => {
-    userRequestIdRef.current += 1;
     userAbortRef.current?.abort();
     setUserBusy(false);
     setUserLoadingMoreTopics(false);
@@ -199,7 +200,7 @@ export function useUserController({
     };
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${requestUser.source}:${requestUser.id || requestUser.username}:${nocache ? 'nocache' : 'cache'}`);
-    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const isLatestUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     setSelectedUser(requestUser);
     setUserProfile(null);
     setUserError(null);
@@ -211,6 +212,13 @@ export function useUserController({
     userVisitedTopicCursorsRef.current = new Set();
     userVisitedReplyCursorsRef.current = new Set();
     const controller = startAbortableRequest(userAbortRef);
+    const isCurrentUserRequest = () => isLatestUserRequest() && !controller.signal.aborted;
+    const finishInterruptedUserRequest = () => {
+      const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted);
+      if (!interruption) return false;
+      finishTrace(interruption.outcome, { source: requestUser.source, reason: interruption.reason });
+      return true;
+    };
     try {
       const profile = await sourceGateway.getUserProfile({
         source: requestUser.source,
@@ -218,11 +226,7 @@ export function useUserController({
         username: requestUser.username,
         signal: controller.signal
       }, { isCurrent: isCurrentUserRequest, trace });
-      if (!isCurrentUserRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-          source: requestUser.source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
-        });
+      if (finishInterruptedUserRequest()) {
         return;
       }
       markDiagnosticStage(trace, 'apply', {
@@ -244,13 +248,15 @@ export function useUserController({
         replyCount: profile.replies?.length || 0
       });
     } catch (error) {
-      if (isCanceledRequest(error)) {
-        finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
+      if (isSilentRequestInterruption(error)) {
+        const stale = isSupersededRequest(error) || !isLatestUserRequest();
+        finishTrace(stale ? 'stale' : 'canceled', {
           source: requestUser.source,
-          reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
+          reason: stale ? 'superseded' : 'canceled'
         });
-      } else if (!isCurrentUserRequest()) {
-        finishTrace('stale', { source: requestUser.source, reason: 'superseded' });
+      } else if (interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted)) {
+        const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted)!;
+        finishTrace(interruption.outcome, { source: requestUser.source, reason: interruption.reason });
       } else {
         const sourceError = sourceErrorFromUnknown(requestUser.source, error);
         handleUserSourceError({ error, source: requestUser.source });
@@ -262,12 +268,13 @@ export function useUserController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentUserRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted);
+        finishTrace(interruption?.outcome || 'failure', {
           source: requestUser.source,
-          reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: interruption?.reason || 'unknown'
         });
       }
-      if (isCurrentUserRequest()) {
+      if (isLatestUserRequest()) {
         setUserBusy(false);
         setUserLoadingMoreTopics(false);
         setUserLoadingMoreReplies(false);
@@ -306,8 +313,15 @@ export function useUserController({
     markDiagnosticStage(trace, 'guard', { source: current.source, state: 'load-more', hasCursor: true });
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more:${current.nextTopicsCursor}`);
-    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     const controller = startAbortableRequest(userAbortRef);
+    const isLatestUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const isCurrentUserRequest = () => isLatestUserRequest() && !controller.signal.aborted;
+    const finishInterruptedUserRequest = () => {
+      const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted);
+      if (!interruption) return false;
+      finishTrace(interruption.outcome, { source: current.source, reason: interruption.reason });
+      return true;
+    };
     userLoadingMoreTopicCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMoreTopics(true);
     setUserError(null);
@@ -320,11 +334,7 @@ export function useUserController({
         cursorType: 'topics',
         signal: controller.signal
       }, { isCurrent: isCurrentUserRequest, trace });
-      if (!isCurrentUserRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-          source: current.source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
-        });
+      if (finishInterruptedUserRequest()) {
         return;
       }
       const expectedAfterCount = mergeTopics(current.topics, nextProfile.topics).length;
@@ -357,13 +367,15 @@ export function useUserController({
         hasMore: Boolean(nextProfile.hasMoreTopics)
       });
     } catch (error) {
-      if (isCanceledRequest(error)) {
-        finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
+      if (isSilentRequestInterruption(error)) {
+        const stale = isSupersededRequest(error) || !isLatestUserRequest();
+        finishTrace(stale ? 'stale' : 'canceled', {
           source: current.source,
-          reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
+          reason: stale ? 'superseded' : 'canceled'
         });
-      } else if (!isCurrentUserRequest()) {
-        finishTrace('stale', { source: current.source, reason: 'superseded' });
+      } else if (interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted)) {
+        const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted)!;
+        finishTrace(interruption.outcome, { source: current.source, reason: interruption.reason });
       } else {
         const sourceError = sourceErrorFromUnknown(current.source, error);
         handleUserSourceError({ error, source: current.source });
@@ -375,12 +387,13 @@ export function useUserController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentUserRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted);
+        finishTrace(interruption?.outcome || 'failure', {
           source: current.source,
-          reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: interruption?.reason || 'unknown'
         });
       }
-      if (isCurrentUserRequest()) {
+      if (isLatestUserRequest()) {
         setUserLoadingMoreTopics(false);
         userLoadingMoreTopicCursorRef.current = null;
       }
@@ -420,8 +433,15 @@ export function useUserController({
     markDiagnosticStage(trace, 'guard', { source: current.source, state: 'load-more', hasCursor: true });
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more-replies:${current.nextRepliesCursor}`);
-    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
     const controller = startAbortableRequest(userAbortRef);
+    const isLatestUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const isCurrentUserRequest = () => isLatestUserRequest() && !controller.signal.aborted;
+    const finishInterruptedUserRequest = () => {
+      const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted);
+      if (!interruption) return false;
+      finishTrace(interruption.outcome, { source: current.source, reason: interruption.reason });
+      return true;
+    };
     userLoadingMoreReplyCursorRef.current = current.nextRepliesCursor;
     setUserLoadingMoreReplies(true);
     setUserError(null);
@@ -434,11 +454,7 @@ export function useUserController({
         cursorType: 'replies',
         signal: controller.signal
       }, { isCurrent: isCurrentUserRequest, trace });
-      if (!isCurrentUserRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-          source: current.source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
-        });
+      if (finishInterruptedUserRequest()) {
         return;
       }
       const expectedAfterCount = mergeUserReplies(current.replies || [], nextProfile.replies || []).length;
@@ -471,13 +487,15 @@ export function useUserController({
         hasMore: Boolean(nextProfile.hasMoreReplies)
       });
     } catch (error) {
-      if (isCanceledRequest(error)) {
-        finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
+      if (isSilentRequestInterruption(error)) {
+        const stale = isSupersededRequest(error) || !isLatestUserRequest();
+        finishTrace(stale ? 'stale' : 'canceled', {
           source: current.source,
-          reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
+          reason: stale ? 'superseded' : 'canceled'
         });
-      } else if (!isCurrentUserRequest()) {
-        finishTrace('stale', { source: current.source, reason: 'superseded' });
+      } else if (interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted)) {
+        const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted)!;
+        finishTrace(interruption.outcome, { source: current.source, reason: interruption.reason });
       } else {
         const sourceError = sourceErrorFromUnknown(current.source, error);
         handleUserSourceError({ error, source: current.source });
@@ -489,12 +507,13 @@ export function useUserController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentUserRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        const interruption = interruptedRequestDiagnostic(isLatestUserRequest(), controller.signal.aborted);
+        finishTrace(interruption?.outcome || 'failure', {
           source: current.source,
-          reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: interruption?.reason || 'unknown'
         });
       }
-      if (isCurrentUserRequest()) {
+      if (isLatestUserRequest()) {
         setUserLoadingMoreReplies(false);
         userLoadingMoreReplyCursorRef.current = null;
       }

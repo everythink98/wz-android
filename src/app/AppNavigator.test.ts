@@ -30,12 +30,17 @@ describe('AppNavigator', () => {
     expect(AppNavigator).toMatchObject({ $$typeof: Symbol.for('react.memo') });
   });
 
-  it('keeps main-tab state inside the navigator while publishing detail transitions', () => {
-    expect(shouldUpdateAppRootScreen('feed', 'more')).toBe(false);
-    expect(shouldUpdateAppRootScreen('search', 'library')).toBe(false);
+  it('publishes every route transition', () => {
+    expect(shouldUpdateAppRootScreen('feed', 'more')).toBe(true);
+    expect(shouldUpdateAppRootScreen('search', 'library')).toBe(true);
     expect(shouldUpdateAppRootScreen('more', 'topic')).toBe(true);
     expect(shouldUpdateAppRootScreen('topic', 'more')).toBe(true);
     expect(shouldUpdateAppRootScreen('topic', 'user')).toBe(true);
+  });
+
+  it('publishes a tab change before treating a repeated tab press as same-screen', () => {
+    expect(shouldUpdateAppRootScreen('feed', 'search')).toBe(true);
+    expect(shouldUpdateAppRootScreen('search', 'search')).toBe(false);
   });
 });
 

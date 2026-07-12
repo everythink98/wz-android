@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FeedResponse, FeedSource, Source } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
+import { REQUEST_SUPERSEDED_MESSAGE } from '../request';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -12,6 +13,16 @@ const forumMocks = vi.hoisted(() => ({
   getTopic: vi.fn(async ({ id, source }) => ({ source, id, title: '', author: '', url: '', createdAt: '', replyCount: 0, contentHtml: '', replies: [] })),
   getUserProfile: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
   searchTopics: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
+}));
+
+const yaohuoMocks = vi.hoisted(() => ({
+  checkYaohuoLoginDirect: vi.fn(),
+  getYaohuoFeedDirect: vi.fn(async (_options: {
+    yaohuoFetcher: (input: string, init?: RequestInit) => Promise<Response>;
+  }) => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  getYaohuoRepliesDirect: vi.fn(),
+  getYaohuoTopicDirect: vi.fn(),
+  searchYaohuoDirect: vi.fn()
 }));
 
 vi.mock('@react-native-cookies/cookies', () => ({
@@ -25,13 +36,7 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('react-native', () => ({ NativeModules: { LinuxDoCookieModule: {} } }));
 
 vi.mock('../forumApi', () => forumMocks);
-vi.mock('../yaohuoApi', () => ({
-  checkYaohuoLoginDirect: vi.fn(),
-  getYaohuoFeedDirect: vi.fn(),
-  getYaohuoRepliesDirect: vi.fn(),
-  getYaohuoTopicDirect: vi.fn(),
-  searchYaohuoDirect: vi.fn()
-}));
+vi.mock('../yaohuoApi', () => yaohuoMocks);
 
 import { createSourceGateway, getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './sourceGateway';
 
@@ -154,6 +159,27 @@ describe('source gateway read contract', () => {
       isParseEmpty: true
     });
     expect(events.at(-1)).toMatchObject({ phase: 'finish', outcome: 'failure', reason: 'parse_empty' });
+  });
+
+  it('uses the structured source classification for an owned HTTP auth failure trace', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => 'session=old'),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+    forumMocks.getFeed.mockRejectedValueOnce(Object.assign(new Error('request failed'), { status: 401 }));
+
+    await expect(gateway.getFeed({ source: 'nodeseek' })).rejects.toMatchObject({ kind: 'login-expired' });
+
+    expect(lines.map((line) => JSON.parse(line)).at(-1)).toMatchObject({
+      phase: 'finish',
+      outcome: 'blocked',
+      reason: 'login_required'
+    });
   });
 
   it('does not report a legal empty search page as parse-empty', async () => {
@@ -300,6 +326,47 @@ describe('source gateway read contract', () => {
     }));
   });
 
+  it('prevents React Native from attaching WebView cookies to an anonymous Yaohuo read', async () => {
+    const fetcher = vi.fn(async () => new Response(''));
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+    yaohuoMocks.getYaohuoFeedDirect.mockImplementationOnce(async ({ yaohuoFetcher }) => {
+      await yaohuoFetcher('https://www.yaohuo.me/bbs/book_list.aspx');
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+
+    await gateway.getFeed({ source: 'yaohuo' });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/book_list.aspx',
+      expect.objectContaining({ credentials: 'omit' })
+    );
+  });
+
+  it('does not expose a credential result after Yaohuo suppression starts during storage read', async () => {
+    const credential = Promise.withResolvers<string | undefined>();
+    let suppressed = false;
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      isYaohuoCredentialSuppressed: () => suppressed,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(() => credential.promise),
+      nodeSeekUserAgent: () => ''
+    });
+
+    const result = gateway.hasYaohuoCredential();
+    suppressed = true;
+    credential.resolve('sidyaohuo=real');
+
+    await expect(result).resolves.toBe(false);
+  });
+
   it('clears only the Yaohuo credential generation used by an expired user profile read', async () => {
     const clearYaohuoLoginState = vi.fn(async () => undefined);
     const loadYaohuoCookieForSource = vi.fn(async (
@@ -326,7 +393,56 @@ describe('source gateway read contract', () => {
       kind: 'login-expired',
       message: '妖火登录已失效'
     });
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith({ generation: 7 });
+    expect(clearYaohuoLoginState).toHaveBeenCalledWith(expect.objectContaining({ generation: 7 }));
+  });
+
+  it('keeps the original login-expired error when automatic Yaohuo cleanup fails', async () => {
+    const clearYaohuoLoginState = vi.fn(async () => {
+      throw new Error('cleanup failed');
+    });
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState,
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async (_source, options) => {
+        options?.captureGeneration?.(7);
+        return 'sidyaohuo=expired';
+      }),
+      nodeSeekUserAgent: () => ''
+    });
+    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
+      loginRequired: true,
+      reason: 'expired',
+      source: 'yaohuo'
+    }));
+
+    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
+      kind: 'login-expired',
+      message: '妖火登录已失效'
+    });
+    expect(clearYaohuoLoginState).toHaveBeenCalledWith(expect.objectContaining({ generation: 7 }));
+  });
+
+  it('drops an expired Yaohuo result when a newer credential operation supersedes cleanup', async () => {
+    const clearYaohuoLoginState = vi.fn(async () => false);
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState,
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async (_source, options) => {
+        options?.captureGeneration?.(7);
+        return 'sidyaohuo=expired';
+      }),
+      nodeSeekUserAgent: () => ''
+    });
+    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
+      loginRequired: true,
+      reason: 'expired',
+      source: 'yaohuo'
+    }));
+
+    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' }))
+      .rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
   });
 
   it('does not clear Yaohuo credentials for a stale expired read', async () => {
@@ -349,6 +465,54 @@ describe('source gateway read contract', () => {
       { isCurrent: () => false }
     )).rejects.toMatchObject({ kind: 'login-expired' });
     expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+  });
+
+  it('does not clear a real Yaohuo credential when anonymous mode starts during a read', async () => {
+    const read = Promise.withResolvers<never>();
+    let suppressed = false;
+    const clearYaohuoLoginState = vi.fn(async () => undefined);
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState,
+      fetcher: vi.fn(),
+      isYaohuoCredentialSuppressed: () => suppressed,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=real'),
+      nodeSeekUserAgent: () => ''
+    });
+    yaohuoMocks.getYaohuoFeedDirect.mockReturnValueOnce(read.promise);
+
+    const result = gateway.getFeed({ source: 'yaohuo' });
+    await vi.waitFor(() => expect(yaohuoMocks.getYaohuoFeedDirect).toHaveBeenCalled());
+    suppressed = true;
+    read.reject(Object.assign(new Error('妖火登录已失效'), {
+      loginRequired: true,
+      reason: 'expired',
+      source: 'yaohuo'
+    }));
+
+    await expect(result).rejects.toMatchObject({ kind: 'login-expired' });
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+  });
+
+  it('does not return an authenticated Yaohuo result after anonymous mode starts', async () => {
+    const read = Promise.withResolvers<{ items: []; errors: {}; hasMore: false; nextPage: null }>();
+    let suppressed = false;
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      isYaohuoCredentialSuppressed: () => suppressed,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=real'),
+      nodeSeekUserAgent: () => ''
+    });
+    yaohuoMocks.getYaohuoFeedDirect.mockReturnValueOnce(read.promise);
+
+    const result = gateway.getFeed({ source: 'yaohuo' });
+    await vi.waitFor(() => expect(yaohuoMocks.getYaohuoFeedDirect).toHaveBeenCalled());
+    suppressed = true;
+    read.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
+
+    await expect(result).rejects.toThrow('请求已取消');
   });
 
   it('keeps Yaohuo credentials while surfacing a verification-required user profile error', async () => {

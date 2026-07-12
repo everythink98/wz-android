@@ -1,6 +1,6 @@
 import { getLinuxDoCategories, getLinuxDoCurrentUserProfile, getLinuxDoFeed, getLinuxDoReplies, getLinuxDoReply, getLinuxDoTopic, getLinuxDoUserProfile, searchLinuxDo } from './localLinuxdo';
 import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
-import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
+import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn, isYaohuoVerificationRequiredHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
@@ -24,7 +24,7 @@ import type {
   V2exFeedFilter,
   UserProfile
 } from './types';
-import { fetchWithTimeout, type Fetcher } from './request';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from './request';
 import {
   annotateSourceDiagnosticSummary,
   copySourceDiagnosticSummary,
@@ -33,6 +33,16 @@ import {
 } from './sourceAdapterDiagnostics';
 
 const allFeedSources = ['nodeseek', 'linuxdo', 'v2ex'] as const satisfies readonly Source[];
+
+type NodeSeekReadCredentials = {
+  nodeSeekCookie?: string;
+  nodeSeekUserAgent?: string;
+  timeoutMs?: number;
+};
+
+function resolveNodeSeekOptions<T extends object>(options: T, credentials?: Promise<NodeSeekReadCredentials>) {
+  return credentials ? credentials.then((value) => ({ ...options, ...value })) : Promise.resolve(options);
+}
 
 function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>, sources: readonly Source[]) {
   const errors: SourceErrors = {};
@@ -44,6 +54,16 @@ function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors
     }
   });
   return errors;
+}
+
+function throwSilentInterruptionResult(results: Array<PromiseSettledResult<unknown>>) {
+  const interrupted = results.find((result) => result.status === 'rejected'
+    && result.reason instanceof Error
+    && (result.reason.message === REQUEST_CANCELED_MESSAGE
+      || result.reason.message === REQUEST_SUPERSEDED_MESSAGE));
+  if (interrupted?.status === 'rejected') {
+    throw interrupted.reason;
+  }
 }
 
 function sortByTime<T extends { createdAt: string; lastReplyAt?: string }>(items: T[]) {
@@ -197,6 +217,7 @@ export async function getFeed({
   nocache = false,
   fetcher,
   nodeSeekCookie,
+  nodeSeekCredentials,
   nodeSeekUserAgent,
   signal,
   timeoutMs
@@ -211,12 +232,14 @@ export async function getFeed({
   nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
+  nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
   nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
   const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
+    const nodeSeekOptions = resolveNodeSeekOptions(options, nodeSeekCredentials);
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
     const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
@@ -230,7 +253,7 @@ export async function getFeed({
     const v2exLimit = limit;
     const results = await Promise.allSettled([
       fetchedSources[0]
-        ? getNodeSeekFeed({ ...options, limit: adapterLimit, page: requestedPages.nodeseek })
+        ? nodeSeekOptions.then((resolved) => getNodeSeekFeed({ ...resolved, limit: adapterLimit, page: requestedPages.nodeseek }))
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null, nextCursor: null }),
       fetchedSources[1]
         ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: requestedPages.linuxdo })
@@ -239,6 +262,7 @@ export async function getFeed({
         ? getV2exFeed({ ...options, cursor: cursorState.sourceCursors?.v2ex, limit: v2exLimit, page: requestedPages.v2ex })
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null, nextCursor: cursorState.sourceCursors?.v2ex ?? null })
     ]);
+    throwSilentInterruptionResult(results);
     const items = sortByTime([
       ...bufferedItems,
       ...results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : [])
@@ -303,6 +327,7 @@ export async function getCategories({
   nocache = false,
   fetcher,
   nodeSeekCookie,
+  nodeSeekCredentials,
   nodeSeekUserAgent,
   signal,
   timeoutMs
@@ -311,19 +336,22 @@ export async function getCategories({
   nocache?: boolean;
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
+  nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
   nodeSeekUserAgent?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
   const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
+    const nodeSeekOptions = resolveNodeSeekOptions(options, nodeSeekCredentials);
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'];
     const results = await Promise.allSettled([
-      getNodeSeekCategories(options),
+      nodeSeekOptions.then((resolved) => getNodeSeekCategories(resolved)),
       getLinuxDoCategories(options),
       getV2exCategories(options),
       Promise.resolve(yaohuoCategoriesResponse())
     ]);
+    throwSilentInterruptionResult(results);
     const response = {
       items: results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []),
       errors: mergeErrors(results, sources)
@@ -503,12 +531,17 @@ export function getUserProfile({
         const safeUrl = requireYaohuoRequestUrl(pageUrl);
         const response = await fetchWithTimeout(safeUrl, { headers }, { fetcher, signal, timeoutMs });
         const html = await response.text();
+        const responseUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
+        if (isYaohuoVerificationRequiredHtml(html)) {
+          ensureYaohuoHtmlLoggedIn(html, responseUrl);
+        }
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
+        ensureYaohuoHtmlLoggedIn(html, responseUrl);
         return {
           html,
-          url: requireYaohuoRequestUrl(response.url || safeUrl, safeUrl)
+          url: responseUrl
         };
       };
       const readProfilePage = async (pageUrl: string) => {
@@ -685,7 +718,11 @@ export function getCurrentUserProfile({
       try {
         return await getNodeSeekCurrentUserProfile({ fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
       } catch (error) {
-        if (!nodeSeekUserId) {
+        if (!nodeSeekUserId
+          || signal?.aborted
+          || (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE)
+          || (error instanceof Error && error.message === REQUEST_SUPERSEDED_MESSAGE)
+          || sourceErrorFromUnknown('nodeseek', error).kind === 'login-expired') {
           throw error;
         }
         return getNodeSeekBasicUserProfile(String(nodeSeekUserId), { fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs });
@@ -707,9 +744,13 @@ export function getCurrentUserProfile({
         }
       }, { fetcher, signal, timeoutMs });
       const html = await response.text();
+      if (isYaohuoVerificationRequiredHtml(html)) {
+        ensureYaohuoHtmlLoggedIn(html, response.url);
+      }
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }
+      ensureYaohuoHtmlLoggedIn(html, response.url);
       const check = checkYaohuoLoginHtml(html, response.url);
       if (check.currentUser) {
         const profile = await getUserProfile({
@@ -739,6 +780,7 @@ export async function searchTopics({
   categories = [],
   fetcher,
   nodeSeekCookie,
+  nodeSeekCredentials,
   nodeSeekUserAgent,
   sort = 'relevance',
   filter,
@@ -752,6 +794,7 @@ export async function searchTopics({
   categories?: Category[];
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
+  nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
   nodeSeekUserAgent?: string;
   sort?: SearchSort;
   filter?: SourceSearchFilter;
@@ -762,12 +805,14 @@ export async function searchTopics({
   const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
   const options = { limit: adapterLimit, page, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
+    const nodeSeekOptions = resolveNodeSeekOptions(options, nodeSeekCredentials);
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
     const results = await Promise.allSettled([
-      searchNodeSeek(adapterQuery, options),
+      nodeSeekOptions.then((resolved) => searchNodeSeek(adapterQuery, resolved)),
       searchLinuxDo(adapterQuery, options),
       searchV2ex(adapterQuery, options)
     ]);
+    throwSilentInterruptionResult(results);
     const expression = parseSearchExpression(query);
     const response = {
       items: sortTopicsByCreatedAt(filterExcludedSearchItems(
