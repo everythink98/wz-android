@@ -326,9 +326,7 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       const diagnosticFetcher = withDiagnosticFetcher(trace, managedReadFetcher);
       const browserFetchIntent = browserFetchIntentForManagedRead(operationName);
       const fetcher: Fetcher = (input, init) => {
-        const requestInit = source === 'yaohuo' && !yaohuoCookie?.trim()
-          ? { ...init, credentials: 'omit' as const }
-          : { ...init };
+        const requestInit = { ...init, credentials: 'omit' as const };
         return diagnosticFetcher(
           input,
           isLinuxDoBrowserFetchUrl(String(input))

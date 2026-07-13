@@ -83,7 +83,9 @@ export function buildSearchListItems({
         }
         items.push({ type: 'groupError', group });
       }
-      continue;
+      if (!group.items.length) {
+        continue;
+      }
     }
     if (shouldRenderAuthNotice(group)) {
       items.push({ type: 'groupAuthNotice', group });
@@ -98,7 +100,7 @@ export function buildSearchListItems({
     if (!group.items.length) {
       items.push({ type: 'groupEmpty', group });
     }
-    if (group.hasMore && group.nextPage) {
+    if (!group.error && group.hasMore && group.nextPage) {
       items.push({ type: 'groupLoadMore', group, page: group.nextPage });
     }
   }

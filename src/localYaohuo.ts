@@ -149,12 +149,12 @@ function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
 }
 
 function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
-  const topicCount = profileStructuredStatValue(root, 'posts') || profileStatValue(text, '主题|帖子|贴子|发帖');
-  const replyCount = profileStructuredStatValue(root, 'replies') || profileStatValue(text, '回复|回帖');
+  const topicCount = profileStructuredStatValue(root, 'posts') ?? profileStatValue(text, '主题|帖子|贴子|发帖');
+  const replyCount = profileStructuredStatValue(root, 'replies') ?? profileStatValue(text, '回复|回帖');
   return {
-    topicCount: topicCount || undefined,
-    replyCount: replyCount || undefined,
-    postCount: topicCount && replyCount ? topicCount + replyCount : undefined
+    topicCount,
+    replyCount,
+    postCount: topicCount !== undefined && replyCount !== undefined ? topicCount + replyCount : undefined
   };
 }
 
@@ -164,23 +164,22 @@ function profileStructuredStatValue(root: ReturnType<typeof parseHtml>, classNam
     if (!classes.includes(className)) {
       continue;
     }
-    const value = parsePositiveInteger(elementText(element.querySelector('.value')));
-    if (value) {
-      return value;
+    const value = elementText(element.querySelector('.value')).replace(/,/g, '').trim();
+    if (!/^\d+$/.test(value)) {
+      return undefined;
     }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : undefined;
   }
-  return 0;
+  return undefined;
 }
 
 function profileStatValue(text: string, labels: string) {
   const pattern = new RegExp(`(?:^|[^\\d])(?:${labels})\\s*(?:[:：]?\\s*|[（(]\\s*)([\\d,]{1,6})(?!\\d)`, 'g');
   for (const match of text.matchAll(pattern)) {
-    const value = parsePositiveInteger(match[1]);
-    if (value) {
-      return value;
-    }
+    return parsePositiveInteger(match[1]);
   }
-  return 0;
+  return undefined;
 }
 
 function cleanYaohuoLevelLabel(value: unknown) {
@@ -894,13 +893,17 @@ export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: 
         .replace(/\s+/g, ' ')
         .trim();
       excerpt = textExcerpt(excerpt);
-      const replyIdentity = floor || createdAt
-        ? [topicId, floor || '', createdAt || ''].join(':')
+      const replyIdentity = floor
+        ? [topicId, floor, createdAt || ''].join(':')
+        : createdAt && excerpt
+          ? [topicId, createdAt, excerpt].join(':')
+          : createdAt
+            ? [topicId, createdAt].join(':')
         : excerpt
           ? `${topicId}:${excerpt}`
           : `${topicId}:row:${index}`;
       const topicDateIdentity = createdAt ? `${topicId}:${createdAt}` : '';
-      if (seen.has(replyIdentity) || (!floor && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
+      if (seen.has(replyIdentity) || (!floor && !excerpt && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
         return null;
       }
       seen.add(replyIdentity);

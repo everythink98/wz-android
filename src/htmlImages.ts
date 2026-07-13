@@ -227,7 +227,7 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '
     if (isNodeSeekHost(parsed.hostname)) {
       headers['User-Agent'] = String(nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
       const cookieHeader = String(nodeSeekCookieHeader || '').trim();
-      if (cookieHeader && !isPublicNodeSeekStaticMedia(parsed)) {
+      if (parsed.protocol === 'https:' && cookieHeader && !isPublicNodeSeekStaticMedia(parsed)) {
         headers.Cookie = cookieHeader;
       }
     }

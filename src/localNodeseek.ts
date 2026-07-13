@@ -562,6 +562,7 @@ function normalizeNodeSeekUserReply(raw: Record<string, unknown>, username: stri
   }
   const floor = parsePositiveInteger(raw.floor_id || raw.floor || raw.rank);
   const excerpt = textExcerpt(raw.text || raw.content || raw.markdown || raw.comment || '');
+  const createdAt = nodeSeekCreatedAt(raw);
   const topicUrl = safeNodeSeekTopicUrl(topicId, raw.url || `/post-${topicId}-1`);
   return {
     source: 'nodeseek',
@@ -575,6 +576,7 @@ function normalizeNodeSeekUserReply(raw: Record<string, unknown>, username: stri
     authorUrl: nodeSeekSpaceUrl(userId),
     ...(avatar ? { authorAvatar: avatar } : {}),
     ...(floor ? { floor } : {}),
+    ...(createdAt ? { createdAt } : {}),
     ...(excerpt ? { excerpt } : {})
   };
 }

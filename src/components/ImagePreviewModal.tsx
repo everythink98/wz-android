@@ -11,6 +11,8 @@ const EMPTY_PREVIEW_URLS: string[] = [];
 
 export function ImagePreviewModal({
   preview,
+  nodeSeekCookieHeader,
+  nodeSeekUserAgent,
   styles,
   theme,
   onClose,
@@ -20,6 +22,8 @@ export function ImagePreviewModal({
   onSelect
 }: {
   preview: ImagePreviewList | null;
+  nodeSeekCookieHeader?: string;
+  nodeSeekUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onClose: () => void;
@@ -49,7 +53,7 @@ export function ImagePreviewModal({
       return;
     }
     let canceled = false;
-    const headers = imageRequestHeadersForUrl(activeUri);
+    const headers = imageRequestHeadersForUrl(activeUri, nodeSeekCookieHeader, nodeSeekUserAgent);
     const onSuccess = (nextWidth: number, nextHeight: number) => {
       if (!canceled) {
         setImagePreviewResolution({ width: nextWidth, height: nextHeight });
@@ -68,7 +72,7 @@ export function ImagePreviewModal({
     return () => {
       canceled = true;
     };
-  }, [activeUri, height, width]);
+  }, [activeUri, height, nodeSeekCookieHeader, nodeSeekUserAgent, width]);
 
   const imagePreviewSize = useMemo(() => {
     if (!imagePreviewResolution?.width || !imagePreviewResolution.height) {
@@ -114,7 +118,7 @@ export function ImagePreviewModal({
             <ExpoImage
               contentFit="contain"
               recyclingKey={activeUri}
-              source={imageSourceFromUrl(activeUri)}
+              source={imageSourceFromUrl(activeUri, undefined, nodeSeekCookieHeader, nodeSeekUserAgent)}
               style={[styles.imagePreviewImage, imagePreviewSize]}
               onLoadStart={() => {
                 setImagePreviewLoading(true);
@@ -145,7 +149,7 @@ export function ImagePreviewModal({
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
             {thumbnailItems.map(({ url, index }) => (
               <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
-                <ExpoImage source={imageSourceFromUrl(url)} style={styles.imagePreviewThumbnailImage} contentFit="cover" />
+                <ExpoImage source={imageSourceFromUrl(url, undefined, nodeSeekCookieHeader, nodeSeekUserAgent)} style={styles.imagePreviewThumbnailImage} contentFit="cover" />
               </Pressable>
             ))}
           </ScrollView>

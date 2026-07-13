@@ -3,6 +3,7 @@ import { CommonActions, StackActions as RouterStackActions, StackRouter } from '
 
 const navigation = vi.hoisted(() => ({
   dispatch: vi.fn(),
+  getRootState: vi.fn(() => ({ routes: [] as Array<{ key: string; name: string }> })),
   isReady: vi.fn(() => true)
 }));
 
@@ -23,7 +24,7 @@ vi.mock('@react-navigation/native-stack', () => ({
 vi.mock('../components/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('../components/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 
-import { AppNavigator, navigateMainTab, shouldUpdateAppRootScreen } from './AppNavigator';
+import { AppNavigator, currentUserRouteKeys, navigateMainTab, shouldSaveActiveUserRoute, shouldUpdateAppRootScreen } from './AppNavigator';
 
 describe('AppNavigator', () => {
   it('skips parent-only rerenders when its navigation props are unchanged', () => {
@@ -42,6 +43,26 @@ describe('AppNavigator', () => {
     expect(shouldUpdateAppRootScreen('feed', 'search')).toBe(true);
     expect(shouldUpdateAppRootScreen('search', 'search')).toBe(false);
   });
+
+  it('retains only user route keys that still exist in the root stack', () => {
+    navigation.getRootState.mockReturnValue({
+      routes: [
+        { key: 'MainTabs-1', name: 'MainTabs' },
+        { key: 'User-A', name: 'User' },
+        { key: 'Topic-1', name: 'Topic' },
+        { key: 'User-B', name: 'User' }
+      ]
+    });
+
+    expect(currentUserRouteKeys()).toEqual(['User-A', 'User-B']);
+  });
+
+  it('does not save a user snapshot after that route has been popped', () => {
+    expect(shouldSaveActiveUserRoute('user', 'User-A', ['User-A'])).toBe(true);
+    expect(shouldSaveActiveUserRoute('user', 'User-B', ['User-A'])).toBe(false);
+    expect(shouldSaveActiveUserRoute('topic', 'User-A', ['User-A'])).toBe(false);
+  });
+
 });
 
 describe('navigateMainTab', () => {

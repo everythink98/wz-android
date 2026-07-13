@@ -151,6 +151,22 @@ function mockStoredLinuxDoLoginAccess(cookieHeader = 'cf_clearance=clearance; _t
 }
 
 describe('Android local sources', () => {
+  it('drops linux.do topics without titles and rejects invalid counts', async () => {
+    const fetcher = vi.fn(async () => json({
+      topic_list: {
+        topics: [
+          { id: 1, title: '', created_at: '2026-05-20T00:00:00.000Z', posts_count: 2 },
+          { id: 2, title: 'valid topic', created_at: '2026-05-20T00:00:00.000Z', posts_count: -4, views: 'invalid' }
+        ]
+      }
+    }));
+
+    const feed = await getFeed({ source: 'linuxdo', limit: 30, fetcher });
+
+    expect(feed.items).toHaveLength(1);
+    expect(feed.items[0]).toMatchObject({ id: '2', title: 'valid topic', replyCount: 0, viewCount: 0 });
+  });
+
   beforeEach(() => {
     appStateMock.reset();
     vi.mocked(SecureStore.getItemAsync).mockReset();
@@ -2299,6 +2315,27 @@ describe('Android local sources', () => {
       commentId: 2002,
       contentHtml: expect.stringContaining('visible reply')
     });
+  });
+
+  it('advances linux.do pagination by consumed embedded posts when a reply is deleted', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 903,
+      title: 'linux.do deleted reply pagination',
+      created_at: '2026-05-20T00:00:00.000Z',
+      post_stream: {
+        stream: [3001, 3002, 3003, 3004],
+        posts: [
+          { id: 3001, post_number: 1, username: 'alice', cooked: '<p>topic</p>', created_at: '2026-05-20T00:00:00.000Z' },
+          { id: 3002, post_number: 2, username: 'bob', cooked: '<p>visible</p>', created_at: '2026-05-20T00:01:00.000Z' },
+          { id: 3003, post_number: 3, username: 'carol', cooked: '<p>deleted</p>', created_at: '2026-05-20T00:02:00.000Z', deleted_at: '2026-05-20T00:03:00.000Z' }
+        ]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '903', fetcher });
+
+    expect(topic.replies).toHaveLength(1);
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: 2, replyNextOffset: 2 });
   });
 
   it('evicts least recently used linux.do reply streams after the cache limit', async () => {
@@ -5171,6 +5208,86 @@ describe('Android local sources', () => {
       nextPage: null
     });
     expect(fetcher.mock.calls.map((call) => call[0])).not.toContain('https://www.v2ex.com/api/replies/show.json?topic_id=812&page=2');
+  });
+
+  it('caps V2EX API replies and continues the same API page by offset', async () => {
+    const apiReplies = Array.from({ length: 35 }, (_, index) => ({
+      id: 9000 + index,
+      member: { username: `user${index + 1}` },
+      content_rendered: `<p>reply ${index + 1}</p>`,
+      created: 1780000000 + index
+    }));
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{ id: 815, title: 'V2EX long API detail', created: 1780000000, replies: 35, member: { username: 'neo' } }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json(apiReplies);
+      }
+      if (input === 'https://www.v2ex.com/t/815') {
+        return html('<a href="/t/815?p=2">下一页</a>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '815', fetcher });
+    const next = await getReplies({
+      source: 'v2ex',
+      id: '815',
+      page: topic.replyNextPage || 1,
+      offset: topic.replyNextOffset,
+      limit: 30,
+      fetcher
+    });
+
+    expect(topic.replies).toHaveLength(30);
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: 1, replyNextOffset: 30 });
+    expect(next.items).toHaveLength(5);
+    expect(next.items[0]).toMatchObject({ commentId: 9030 });
+    expect(next).toMatchObject({ hasMore: false, nextPage: null, nextOffset: null });
+    expect(sourceDiagnosticSummary(next)).toMatchObject({ hasRepeatedCursor: false });
+  });
+
+  it('keeps V2EX HTML next-page pagination when the API returns only part of the topic', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{ id: 816, title: 'V2EX partial API detail', created: 1780000000, replies: 25, member: { username: 'neo' } }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([{ id: 9101, member: { username: 'alice' }, content_rendered: '<p>first</p>', created: 1780000001 }]);
+      }
+      if (input === 'https://www.v2ex.com/t/816') {
+        return html('<div id="r_9101"><span class="no">1</span><div class="reply_content">first</div></div><a href="/t/816?p=2">下一页</a>');
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '816', fetcher });
+
+    expect(topic).toMatchObject({ replyHasMore: true, replyNextPage: 2, replyNextOffset: 0 });
+  });
+
+  it('merges replies found only in V2EX HTML when the non-empty API result is partial', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{ id: 817, title: 'V2EX same-page partial API', created: 1780000000, replies: 2, member: { username: 'neo' } }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([{ id: 9201, member: { username: 'alice' }, content_rendered: '<p>first</p>', created: 1780000001 }]);
+      }
+      if (input === 'https://www.v2ex.com/t/817') {
+        return html(`
+          <div id="r_9201"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_9202"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second only in html</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '817', fetcher });
+
+    expect(topic.replies.map((reply) => reply.commentId)).toEqual([9201, 9202]);
+    expect(topic).toMatchObject({ replyCount: 2, replyHasMore: false, replyNextPage: null });
   });
 
   it('keeps V2EX all feed pagination open through the recent HTML list', async () => {

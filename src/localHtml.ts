@@ -50,7 +50,10 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
   }
   let time = Number.NaN;
   if (typeof value === 'number') {
-    time = value > 10_000_000_000 ? value : value * 1000;
+    const magnitude = Math.abs(value);
+    if (Number.isFinite(value) && magnitude < 100_000_000_000_000) {
+      time = magnitude > 10_000_000_000 ? value : value * 1000;
+    }
   } else if (typeof value === 'string') {
     const text = value.trim();
     const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
@@ -60,7 +63,11 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
       ));
     time = Date.parse(normalized);
   }
-  return Number.isFinite(time) ? new Date(time).toISOString() : '';
+  if (!Number.isFinite(time)) {
+    return '';
+  }
+  const date = new Date(time);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : '';
 }
 
 export function decodeHtml(value: unknown) {
@@ -745,8 +752,9 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
 }
 
 export function parsePositiveInteger(value: unknown) {
-  const match = String(value || '').replace(/,/g, '').match(/\d+/);
-  return match ? Number(match[0]) : 0;
+  const match = String(value || '').replace(/,/g, '').match(/(?:^|[^\d-])(\d+)/);
+  const parsed = match ? Number(match[1]) : 0;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function accessRequirementFromLevel(value: unknown) {

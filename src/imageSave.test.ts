@@ -127,4 +127,29 @@ describe('image library saving', () => {
     );
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
   });
+
+  it('keeps NodeSeek credentials when saving a protected image', async () => {
+    const fetcher = vi.fn<Fetcher>(async () => new Response('image-bytes', {
+      headers: { 'content-type': 'image/jpeg' },
+      status: 200
+    }));
+
+    await saveImageUriToLibrary(
+      'https://www.nodeseek.com/api/attachments/123',
+      fetcher,
+      undefined,
+      'session=node',
+      'NodeSeek UA'
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/api/attachments/123',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: 'session=node',
+          'User-Agent': 'NodeSeek UA'
+        })
+      })
+    );
+  });
 });

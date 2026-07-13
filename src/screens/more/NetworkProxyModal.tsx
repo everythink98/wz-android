@@ -42,11 +42,11 @@ function draftFromProfile(profile: NetworkProxyProfile): Draft {
     host: profile.host,
     port: String(profile.port),
     username: profile.username || '',
-    password: profile.password || ''
+    password: profile.password ? '••••••••' : ''
   };
 }
 
-function profileFromDraft(draft: Draft) {
+function profileFromDraft(draft: Draft, password = draft.password) {
   return createNetworkProxyProfile({
     id: draft.id,
     name: draft.name,
@@ -54,7 +54,7 @@ function profileFromDraft(draft: Draft) {
     host: draft.host,
     port: Number(draft.port),
     username: draft.username,
-    password: draft.password
+    password
   });
 }
 
@@ -95,6 +95,7 @@ export function NetworkProxyModal({
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [draftMode, setDraftMode] = useState<'create' | 'edit' | null>(null);
   const [submitted, setSubmitted] = useState(false);
+  const [passwordEdited, setPasswordEdited] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, string>>({});
@@ -102,7 +103,11 @@ export function NetworkProxyModal({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [draftKeyboardInset, setDraftKeyboardInset] = useState(0);
   const switchProgress = useRef(new Animated.Value(proxyState.enabled ? 1 : 0)).current;
-  const draftProfile = useMemo(() => profileFromDraft(draft), [draft]);
+  const editingProfile = draft.id ? proxyState.profiles.find((profile) => profile.id === draft.id) : undefined;
+  const draftProfile = useMemo(() => profileFromDraft(
+    draft,
+    draftMode === 'edit' && !passwordEdited ? editingProfile?.password || '' : draft.password
+  ), [draft, draftMode, editingProfile?.password, passwordEdited]);
   const errors = useMemo(() => validateNetworkProxyProfile(draftProfile), [draftProfile]);
   const visibleErrors = submitted ? errors : {};
   const selecting = selectedIds.length > 0;
@@ -121,6 +126,7 @@ export function NetworkProxyModal({
       setDraft(emptyDraft);
       setDraftMode(null);
       setSubmitted(false);
+      setPasswordEdited(false);
       setBusy(false);
       setTestingId(null);
       setPendingEnabled(null);
@@ -188,6 +194,7 @@ export function NetworkProxyModal({
     setDraft(emptyDraft);
     setDraftMode(null);
     setSubmitted(false);
+    setPasswordEdited(false);
     setDraftKeyboardInset(0);
   };
 
@@ -206,6 +213,7 @@ export function NetworkProxyModal({
       setDraft(emptyDraft);
       setDraftMode(null);
       setSubmitted(false);
+      setPasswordEdited(false);
       setDraftKeyboardInset(0);
     });
   };
@@ -213,12 +221,14 @@ export function NetworkProxyModal({
   const openCreate = () => {
     setDraft(emptyDraft);
     setSubmitted(false);
+    setPasswordEdited(true);
     setDraftMode('create');
   };
 
   const openEdit = (profile: NetworkProxyProfile) => {
     setDraft(draftFromProfile(profile));
     setSubmitted(false);
+    setPasswordEdited(false);
     setDraftMode('edit');
   };
 
@@ -453,7 +463,27 @@ export function NetworkProxyModal({
               </View>
               <View style={proxyStyles.fieldRow}>
                 <ProxyInput label="用户名" value={draft.username} error={visibleErrors.username} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(username) => setDraft((current) => ({ ...current, username }))} />
-                <ProxyInput label="密码" value={draft.password} error={visibleErrors.password} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(password) => setDraft((current) => ({ ...current, password }))} />
+                <ProxyInput
+                  label="密码"
+                  value={draft.password}
+                  error={visibleErrors.password}
+                  styles={styles}
+                  theme={theme}
+                  autoCapitalize="none"
+                  placeholder={draftMode === 'edit' && editingProfile?.password ? '已保存，输入可替换' : '可空'}
+                  secureTextEntry
+                  style={proxyStyles.fieldMain}
+                  onFocus={() => {
+                    if (draftMode === 'edit' && !passwordEdited && editingProfile?.password) {
+                      setPasswordEdited(true);
+                      setDraft((current) => ({ ...current, password: '' }));
+                    }
+                  }}
+                  onChangeText={(password) => {
+                    setPasswordEdited(true);
+                    setDraft((current) => ({ ...current, password }));
+                  }}
+                />
               </View>
             </ViewportBoundedScrollView>
             <View style={styles.searchFilterActions}>
@@ -474,10 +504,12 @@ function ProxyInput({
   keyboardType,
   label,
   placeholder,
+  secureTextEntry,
   style,
   styles,
   theme,
   value,
+  onFocus,
   onChangeText
 }: {
   autoCapitalize?: 'none';
@@ -485,23 +517,30 @@ function ProxyInput({
   keyboardType?: 'number-pad';
   label: string;
   placeholder?: string;
+  secureTextEntry?: boolean;
   style?: object;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   value: string;
+  onFocus?: () => void;
   onChangeText: (value: string) => void;
 }) {
   return (
     <View style={[styles.stack, style]}>
       <Text style={styles.panelTitle}>{label}</Text>
       <TextInput
+        accessibilityLabel={label}
+        accessibilityValue={secureTextEntry ? { text: value ? '已填写' : '未填写' } : undefined}
         autoCapitalize={autoCapitalize}
+        autoComplete={secureTextEntry ? 'current-password' : undefined}
         autoCorrect={false}
         keyboardType={keyboardType}
         placeholder={placeholder || label}
         placeholderTextColor={theme.muted}
+        secureTextEntry={secureTextEntry}
         style={styles.input}
         value={value}
+        onFocus={onFocus}
         onChangeText={onChangeText}
       />
       {error ? <Text style={styles.errorText}>{error}</Text> : null}

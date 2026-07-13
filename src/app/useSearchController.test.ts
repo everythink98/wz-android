@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createNodeSeekRetrySearchOptions,
   createSearchMoreRequestSnapshot,
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
+  retrySearchHistoryWrite,
   firstRemoteSearchAction,
   groupFromRemoteSearchResult,
   remoteSearchActionForSource,
@@ -59,6 +60,16 @@ describe('search controller result helpers', () => {
     await Promise.all([first, second]);
 
     expect(writes).toEqual(['with A', 'without A']);
+  });
+
+  it('retries a transient search history write failure once', async () => {
+    const write = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary storage failure'))
+      .mockResolvedValueOnce(undefined);
+
+    await retrySearchHistoryWrite(write);
+
+    expect(write).toHaveBeenCalledTimes(2);
   });
 
   it('snapshots NodeSeek verification retry search inputs', () => {

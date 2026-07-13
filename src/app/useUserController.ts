@@ -31,6 +31,19 @@ import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Source, SourceErrorInfo, UserProfile, UserReplyActivity } from '../types';
 import type { Screen } from '../appTypes';
 
+type UserRouteSnapshot = {
+  selectedUser: UserProfile | null;
+  userProfile: UserProfile | null;
+  userError: SourceErrorInfo | null;
+  requestPending: boolean;
+  visitedTopicCursors: string[];
+  visitedReplyCursors: string[];
+};
+
+export function userRouteSnapshotNeedsReload(snapshot: Pick<UserRouteSnapshot, 'requestPending' | 'selectedUser' | 'userProfile' | 'userError'>) {
+  return snapshot.requestPending && Boolean(snapshot.selectedUser) && !snapshot.userProfile && !snapshot.userError;
+}
+
 function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
   const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
   const merged = [...existing];
@@ -105,6 +118,8 @@ export function useUserController({
   const userLoadingMoreReplyCursorRef = useRef<string | null>(null);
   const userVisitedTopicCursorsRef = useRef<Set<string>>(new Set());
   const userVisitedReplyCursorsRef = useRef<Set<string>>(new Set());
+  const userRouteSnapshotsRef = useRef(new Map<string, UserRouteSnapshot>());
+  const userRouteReloadRef = useRef<UserProfile | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userBusy, setUserBusy] = useState(false);
@@ -127,6 +142,44 @@ export function useUserController({
     userLoadingMoreReplyCursorRef.current = null;
     userVisitedTopicCursorsRef.current = new Set();
     userVisitedReplyCursorsRef.current = new Set();
+  }, []);
+
+  const saveUserRoute = useCallback((routeKey: string) => {
+    if (!routeKey) {
+      return;
+    }
+    userRouteSnapshotsRef.current.set(routeKey, {
+      selectedUser,
+      userProfile,
+      userError,
+      requestPending: userBusy && !userProfile,
+      visitedTopicCursors: [...userVisitedTopicCursorsRef.current],
+      visitedReplyCursors: [...userVisitedReplyCursorsRef.current]
+    });
+  }, [selectedUser, userBusy, userError, userProfile]);
+
+  const restoreUserRoute = useCallback((routeKey: string) => {
+    const snapshot = userRouteSnapshotsRef.current.get(routeKey);
+    if (!snapshot) {
+      return false;
+    }
+    cancelUserRequests();
+    setSelectedUser(snapshot.selectedUser);
+    setUserProfile(snapshot.userProfile);
+    setUserError(snapshot.userError);
+    userRouteReloadRef.current = userRouteSnapshotNeedsReload(snapshot) ? snapshot.selectedUser : null;
+    userVisitedTopicCursorsRef.current = new Set(snapshot.visitedTopicCursors);
+    userVisitedReplyCursorsRef.current = new Set(snapshot.visitedReplyCursors);
+    return true;
+  }, [cancelUserRequests]);
+
+  const retainUserRoutes = useCallback((routeKeys: string[]) => {
+    const retained = new Set(routeKeys);
+    for (const routeKey of userRouteSnapshotsRef.current.keys()) {
+      if (!retained.has(routeKey)) {
+        userRouteSnapshotsRef.current.delete(routeKey);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -170,6 +223,7 @@ export function useUserController({
   }, [notify, sessionViewModels, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
 
   const openUser = useCallback(async (user: UserProfile, nocache = false) => {
+    userRouteReloadRef.current = null;
     const trace = beginDiagnosticTrace('user', 'open', diagnosticUserFields(user));
     let traceFinished = false;
     const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
@@ -287,6 +341,15 @@ export function useUserController({
     onOpenUserScreen,
     sourceGateway
   ]);
+
+  useEffect(() => {
+    const user = userRouteReloadRef.current;
+    if (screen !== 'user' || userBusy || !user) {
+      return;
+    }
+    userRouteReloadRef.current = null;
+    void openUser(user);
+  }, [openUser, screen, userBusy]);
 
   const loadMoreUserTopics = useCallback(async () => {
     const current = userProfile;
@@ -534,6 +597,9 @@ export function useUserController({
     loadMoreUserReplies,
     loadMoreUserTopics,
     openUser,
+    retainUserRoutes,
+    restoreUserRoute,
+    saveUserRoute,
     selectedUser,
     userBusy,
     userError,

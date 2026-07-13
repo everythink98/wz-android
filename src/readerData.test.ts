@@ -14,6 +14,7 @@ import {
   recordHistory,
   removeFollowedUsers,
   removeRecords,
+  sanitizeImportedReaderData,
   sanitizeReaderData,
   toggleFavorite,
   toggleFollowedUser,
@@ -550,6 +551,25 @@ describe('Android reader data helpers', () => {
 
     expect(merged.favorites[key]?.topic.title).toBe('NodeSeek topic');
     expect(merged.deletedRecords.favorites[key]).toBeUndefined();
+  });
+
+  it('rejects the entire import when merge timestamps are far in the future without changing local sanitization', () => {
+    const key = topicKey(topic);
+    const value = {
+      ...createEmptyReaderData(),
+      favorites: {
+        [key]: { topic: { ...topic, createdAt: '9999-01-01T00:00:00.000Z' }, savedAt: '9999-01-01T00:00:00.000Z' }
+      },
+      deletedRecords: {
+        favorites: { [key]: '9999-01-01T00:00:00.000Z' },
+        history: {},
+        followedUsers: {}
+      }
+    };
+    const local = sanitizeReaderData(value);
+    expect(local.favorites[key]).toBeDefined();
+    expect(local.deletedRecords.favorites[key]).toBe('9999-01-01T00:00:00.000Z');
+    expect(() => sanitizeImportedReaderData(value)).toThrow('备份中的资料时间异常');
   });
 
   it('keeps yaohuo data in local Android backups', () => {

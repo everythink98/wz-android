@@ -28,7 +28,8 @@ describe('WebView proxy guard', () => {
     expect(globalModalHost).toContain('webViewBlockMessage={webViewBlockMessage}');
     expect(nodeImageAuthModal).toContain('webViewBlockMessage || controller.error');
     expect(htmlRenderingController).toContain('webViewBlockMessage');
-    expect(forumHtmlRendererProvider).toMatch(/\{webViewBlockMessage \? \([\s\S]*?\) : \(\s*<WebView/);
+    expect(forumHtmlRendererProvider).toContain(') : loaded && playbackActive ? (');
+    expect(forumHtmlRendererProvider.indexOf('{webViewBlockMessage ? (')).toBeLessThan(forumHtmlRendererProvider.indexOf('<WebView'));
     expect(morePanels).toContain('webViewBlockMessage || webViewError');
   });
 });

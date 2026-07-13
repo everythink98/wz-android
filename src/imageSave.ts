@@ -38,8 +38,8 @@ async function assertReadableImageFile(uri: string) {
   }
 }
 
-async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fetcher, trace: DiagnosticTrace) {
-  const headers = imageRequestHeadersForUrl(uri);
+async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fetcher, trace: DiagnosticTrace, nodeSeekCookieHeader: string, nodeSeekUserAgent: string) {
+  const headers = imageRequestHeadersForUrl(uri, nodeSeekCookieHeader, nodeSeekUserAgent);
   const response = await withDiagnosticFetcher(trace, fetcher)(uri, headers ? { headers } : undefined);
   assertDownloadedImage(response);
   markDiagnosticStage(trace, 'parse', { contentType: responseContentType(response) || 'unknown' });
@@ -47,7 +47,13 @@ async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fe
   await FileSystem.writeAsStringAsync(target, content, { encoding: FileSystem.EncodingType.Base64 });
 }
 
-export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetch, parentTrace?: DiagnosticTrace) {
+export async function saveImageUriToLibrary(
+  uri: string,
+  fetcher: Fetcher = fetch,
+  parentTrace?: DiagnosticTrace,
+  nodeSeekCookieHeader = '',
+  nodeSeekUserAgent = ''
+) {
   const dataImage = dataImageFileFromUrl(uri);
   const trace = parentTrace || beginDiagnosticTrace('media', 'save-image', {
     channel: dataImage ? 'data' : isHttpOrHttpsUrl(uri) ? 'remote' : 'unsupported'
@@ -75,7 +81,7 @@ export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetc
       if (dataImage) {
         await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
       } else {
-        await downloadImageWithFetcher(uri, target, fetcher, trace);
+        await downloadImageWithFetcher(uri, target, fetcher, trace, nodeSeekCookieHeader, nodeSeekUserAgent);
       }
       await assertReadableImageFile(savedUri);
       markDiagnosticStage(trace, 'parse', { state: 'file-readable' });

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEmptyReaderData, toggleFavorite, topicKey } from '../readerData';
 import { setDiagnosticWriter } from '../diagnostics';
 import type { Topic } from '../types';
-import { loadInitialReaderData, prepareReaderDataCommit, rollbackFailedReaderDataSave } from './useReaderDataController';
+import { loadInitialReaderData, prepareReaderDataCommit, readerDataAfterSettingsSave, rollbackFailedReaderDataSave } from './useReaderDataController';
 
 const topic: Topic = {
   source: 'nodeseek',
@@ -90,6 +90,20 @@ describe('reader data controller helpers', () => {
     const failed = toggleFavorite(firstOptimistic, secondTopic);
 
     expect(rollbackFailedReaderDataSave(failed, failed, firstOptimistic, persisted)).toBe(persisted);
+  });
+
+  it('does not mark superseded record changes as persisted after a settings-only save', () => {
+    const persisted = createEmptyReaderData();
+    const optimistic = toggleFavorite(persisted, topic);
+    const settingsOnly = {
+      ...optimistic,
+      settings: { ...optimistic.settings, theme: 'dark' as const }
+    };
+
+    const saved = readerDataAfterSettingsSave(persisted, settingsOnly);
+
+    expect(saved.favorites).toBe(persisted.favorites);
+    expect(saved.settings.theme).toBe('dark');
   });
 
   it('enters recovery mode from a failed load path', async () => {

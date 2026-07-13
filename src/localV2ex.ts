@@ -734,6 +734,21 @@ function v2exMemberActivityDate(text: string) {
     : mostRecentBeijingDateToIso(month, day, 0, 0);
 }
 
+function mergeV2exReplySources(apiReplies: Reply[], htmlReplies: Reply[]) {
+  if (!apiReplies.length) {
+    return htmlReplies;
+  }
+  const seenCommentIds = new Set(apiReplies.map((reply) => reply.commentId).filter((id): id is number => typeof id === 'number'));
+  const seenFloors = new Set(apiReplies.map((reply) => reply.floor).filter((floor): floor is number => typeof floor === 'number'));
+  return [
+    ...apiReplies,
+    ...htmlReplies.filter((reply) => (
+      !(typeof reply.commentId === 'number' && seenCommentIds.has(reply.commentId))
+      && !(typeof reply.floor === 'number' && seenFloors.has(reply.floor))
+    ))
+  ].sort((left, right) => (left.floor || Number.MAX_SAFE_INTEGER) - (right.floor || Number.MAX_SAFE_INTEGER));
+}
+
 function v2exMemberActivityDisplayTime(text: string) {
   return text.match(/^\s*(.+?)\s*回复了/)?.[1]?.trim() || '';
 }
@@ -991,6 +1006,7 @@ export async function getV2exUserProfile(id: string, username: string, options: 
 }
 
 export async function getV2exTopic(id: string, options: V2exOptions & { replyLimit?: number } = {}): Promise<TopicDetail> {
+  const replyLimit = options.replyLimit || 30;
   let detailHtmlFailed = false;
   const [topicData, replyResult, detailHtml] = await Promise.all([
     fetchJson<unknown[]>(`${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`, options),
@@ -1016,22 +1032,25 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
   if (!apiReplies.length && 'error' in replyResult && topic.replyCount > 0 && !htmlDetail?.replies.length) {
     throw replyResult.error instanceof Error ? replyResult.error : new Error(String(replyResult.error || 'V2EX 回复读取失败'));
   }
-  const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
-  const usesHtmlReplyFallback = !apiReplies.length && replies.length > 0;
-  const htmlReplyNextPage = usesHtmlReplyFallback ? nextV2exTopicPage(detailHtml, id, 1) : null;
+  const availableReplies = mergeV2exReplySources(apiReplies, htmlDetail?.replies || []);
+  const replies = availableReplies.slice(0, replyLimit);
+  const apiReplyNextOffset = apiReplies.length > replies.length ? replies.length : null;
+  const needsHtmlReplyPagination = availableReplies.length < topic.replyCount;
+  const htmlReplyNextPage = needsHtmlReplyPagination ? nextV2exTopicPage(detailHtml, id, 1) : null;
+  const replyNextPage = apiReplyNextOffset !== null ? 1 : htmlReplyNextPage;
   const result = {
     ...topic,
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
-    replyCount: usesHtmlReplyFallback ? Math.max(topic.replyCount, replies.length) : replies.length || topic.replyCount,
+    replyCount: Math.max(topic.replyCount, availableReplies.length),
     contentHtml: appendV2exSupplementHtml(
       apiContentHtml,
       htmlDetail?.supplementHtml || ''
     ),
     replies,
-    replyHasMore: Boolean(htmlReplyNextPage),
-    replyNextPage: htmlReplyNextPage,
-    replyNextOffset: htmlReplyNextPage ? 0 : null,
+    replyHasMore: Boolean(replyNextPage),
+    replyNextPage,
+    replyNextOffset: apiReplyNextOffset ?? (htmlReplyNextPage ? 0 : null),
     ...(!topic.accessRequirement && htmlAccessRequirement ? { accessRequirement: htmlAccessRequirement } : {})
   };
   const replyCandidates = 'data' in replyResult && Array.isArray(replyResult.data) ? replyResult.data.length : htmlDetail?.replies.length || 0;
@@ -1047,27 +1066,60 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
 
 export async function getV2exReplies(
   id: string,
-  options: V2exOptions & { page?: number } = {}
+  options: V2exOptions & { page?: number; limit?: number; offset?: number | null } = {}
 ): Promise<RepliesResponse> {
   const page = options.page || 1;
+  const limit = options.limit || 30;
+  const offset = options.offset || 0;
   const pageUrl = `${BASE_URL}/t/${encodeURIComponent(id)}${page > 1 ? `?p=${encodeURIComponent(String(page))}` : ''}`;
-  const html = await fetchText(pageUrl, options);
-  const items = parseV2exHtmlDetail(html).replies;
-  const nextPage = nextV2exTopicPage(html, id, page);
+  const [html, apiResult, topicResult] = await Promise.all([
+    fetchText(pageUrl, options),
+    page === 1
+      ? fetchJson<unknown[]>(`${BASE_URL}/api/replies/show.json?topic_id=${encodeURIComponent(id)}&page=1`, options)
+        .then((data) => ({ data }))
+        .catch((error: unknown) => ({ error }))
+      : Promise.resolve({ data: undefined }),
+    page === 1
+      ? fetchJson<unknown[]>(`${BASE_URL}/api/topics/show.json?id=${encodeURIComponent(id)}`, options)
+        .then((data) => ({ data }))
+        .catch(() => ({ data: undefined }))
+      : Promise.resolve({ data: undefined })
+  ]);
+  const htmlDetail = parseV2exHtmlDetail(html);
+  const apiReplies = 'data' in apiResult && Array.isArray(apiResult.data)
+    ? mergeV2exReplyMeta(apiResult.data.map(normalizeReply).filter(Boolean) as Reply[], htmlDetail)
+    : [];
+  const availableReplies = page === 1 ? mergeV2exReplySources(apiReplies, htmlDetail.replies) : htmlDetail.replies;
+  if (page === 1 && !availableReplies.length && 'error' in apiResult && apiResult.error) {
+    throw apiResult.error instanceof Error ? apiResult.error : new Error(String(apiResult.error));
+  }
+  const items = page === 1 ? availableReplies.slice(offset, offset + limit) : availableReplies;
+  const nextOffset = page === 1 && availableReplies.length > offset + items.length
+    ? offset + items.length
+    : null;
+  const rawTopic = Array.isArray(topicResult.data) && isRecord(topicResult.data[0]) ? topicResult.data[0] : undefined;
+  const rawReplyCount = Number(rawTopic?.replies);
+  const reportedReplyCount = Number.isSafeInteger(rawReplyCount) && rawReplyCount >= 0 ? rawReplyCount : undefined;
+  const needsHtmlReplyPagination = page > 1
+    || !availableReplies.length
+    || reportedReplyCount === undefined
+    || availableReplies.length < reportedReplyCount;
+  const htmlNextPage = needsHtmlReplyPagination ? nextV2exTopicPage(html, id, page) : null;
+  const nextPage = nextOffset !== null ? 1 : htmlNextPage;
   const hasMore = Boolean(nextPage);
   return annotateSourceDiagnosticSummary({
     items,
     hasMore,
     nextPage,
-    nextOffset: hasMore ? 0 : null
+    nextOffset: nextOffset ?? (htmlNextPage ? 0 : null)
   }, {
-    parserVariant: 'html-replies',
-    candidateCount: items.length,
+    parserVariant: apiReplies.length ? 'api-replies' : 'html-replies',
+    candidateCount: availableReplies.length,
     validCount: items.length,
-    droppedCount: 0,
+    droppedCount: Math.max(0, availableReplies.length - items.length),
     missingFloorCount: items.filter((reply) => !reply.floor).length,
     isExpectedEmpty: items.length === 0,
-    hasRepeatedCursor: nextPage === page
+    hasRepeatedCursor: nextPage === page && (nextOffset ?? 0) === offset
   });
 }
 

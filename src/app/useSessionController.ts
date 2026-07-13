@@ -47,7 +47,7 @@ import { clearCookieUrls } from '../cookieCleanup';
 import { NODESEEK_URL, YAOHUO_URL } from '../appUrls';
 import type { FeedSource, Source } from '../types';
 import { REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from '../request';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from '../nodeseekFetchFallback';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoBrowserFetchUrl, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
 import type { DirectTransportRecoveryEvent } from '../directWebViewFallback';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '../browserFetchIntent';
@@ -675,7 +675,7 @@ export function useSessionController({
 
   const nodeSeekFetchWithWebView: Fetcher = useCallback(async (input, init) => {
     const url = String(input);
-    if (!isNodeSeekRequestUrl(url)) {
+    if (!isNodeSeekBrowserFetchUrl(url)) {
       return defaultFetcher(input, init);
     }
     const cookie = requestHeaderValue(init?.headers, 'cookie');

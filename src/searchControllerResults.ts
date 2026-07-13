@@ -114,3 +114,11 @@ export function enqueueSearchHistoryWrite(queue: SearchHistoryWriteQueue, task: 
   queue.current = run.then(() => undefined, () => undefined);
   return run;
 }
+
+export async function retrySearchHistoryWrite(task: () => Promise<void>) {
+  try {
+    await task();
+  } catch {
+    await task();
+  }
+}

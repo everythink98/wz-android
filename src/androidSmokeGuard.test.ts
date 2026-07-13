@@ -51,9 +51,10 @@ describe('Android release smoke guards', () => {
     const bootstrapOpenIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs()]");
     const clearLogsIndex = smokeScript.indexOf("['logs', 'clear', '--restart'");
     const coldStartIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
-    expect(bootstrapOpenIndex).toBeGreaterThan(installIndex);
+    expect(bootstrapOpenIndex).toBeGreaterThan(bootIndex);
     expect(clearLogsIndex).toBeGreaterThan(bootstrapOpenIndex);
-    expect(coldStartIndex).toBeGreaterThan(clearLogsIndex);
+    expect(installIndex).toBeGreaterThan(clearLogsIndex);
+    expect(coldStartIndex).toBeGreaterThan(installIndex);
     expect(smokeScript).not.toContain("...deviceSelectionArgs(), '--relaunch'");
     const coldStartGraceIndex = smokeScript.indexOf("['wait', '60000', '--session', smokeSession, '--platform', 'android']");
     const coldStartReadyIndex = smokeScript.indexOf("waitFor('id=\"feed-topic-first\"', 60_000);");

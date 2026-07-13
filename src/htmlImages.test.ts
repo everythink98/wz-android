@@ -162,6 +162,7 @@ describe('Android HTML image preview helpers', () => {
 
   it('keeps NodeSeek cookies for media URLs that may require login', () => {
     expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBe('uid=1');
+    expect(imageRequestHeadersForUrl('http://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBeUndefined();
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {

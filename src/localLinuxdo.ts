@@ -148,7 +148,8 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     return null;
   }
   const id = normalizeTopicId(raw.id);
-  if (!id) {
+  const title = decodeHtml(raw.unicode_title || raw.title || '').trim();
+  if (!id || !title) {
     return null;
   }
   const createdAt = toIsoString(raw.created_at) || new Date().toISOString();
@@ -165,7 +166,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   return {
     source: 'linuxdo',
     id,
-    title: decodeHtml(raw.unicode_title || raw.title || ''),
+    title,
     author: authorName,
     authorId: authorName || undefined,
     authorAvatar,
@@ -175,8 +176,8 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     url: `${BASE_URL}/t/${raw.slug || id}/${id}`,
     createdAt,
     lastReplyAt,
-    replyCount: Number(raw.posts_count ? Math.max(Number(raw.posts_count) - 1, 0) : 0),
-    viewCount: Number(raw.views || 0),
+    replyCount: Math.max((nonNegativeNumber(raw.posts_count) || 0) - 1, 0),
+    viewCount: nonNegativeNumber(raw.views) || 0,
     excerpt: textExcerpt(raw.excerpt || ''),
     ...(tags.length ? { tags } : {}),
     ...(raw.closed === true ? { closed: true } : {}),
@@ -784,13 +785,14 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     throw new Error('linux.do 主题不存在');
   }
   const replyLimit = options.replyLimit || 30;
+  const embeddedReplyCount = Math.min(replyPosts.length, replyLimit);
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
   const replies = await hydrateEditableReplyContent(
-    replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[],
+    replyPosts.slice(0, embeddedReplyCount).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[],
     options
   );
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
-  const replyHasMore = totalPosts > replies.length + 1;
+  const replyHasMore = totalPosts > embeddedReplyCount + 1;
   const polls = normalizeDiscoursePolls(firstPost);
   const firstPostReactions = reactionSummary(isRecord(firstPost) ? firstPost.reactions : undefined);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
@@ -802,7 +804,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,
-    replyNextOffset: replyHasMore ? replies.length : null,
+    replyNextOffset: replyHasMore ? embeddedReplyCount : null,
     ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
     ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
     ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
@@ -894,22 +896,29 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
     }
   }
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const guessed = stream[floor - 1];
-  if (!guessed) {
+  const candidateIds = stream.slice(0, Math.min(floor, stream.length));
+  if (!candidateIds.length) {
     throw new Error('引用楼层未找到');
   }
-  const posts = await fetchPosts(id, [guessed], options);
-  const post = posts.find((item) => isRecord(item) && item.post_number === floor);
+  let post: unknown;
+  let candidateCount = 0;
+  let missingFloorCount = 0;
+  for (let end = candidateIds.length; end > 0 && !post; end -= 50) {
+    const posts = await fetchPosts(id, candidateIds.slice(Math.max(0, end - 50), end), options);
+    candidateCount += posts.length;
+    missingFloorCount += posts.filter((item) => isRecord(item) && !parsePositiveInteger(item.post_number)).length;
+    post = posts.find((item) => isRecord(item) && item.post_number === floor);
+  }
   const reply = normalizePost(post, floor - 1, id, floor);
   if (!reply) {
     throw new Error('引用楼层未找到');
   }
   return annotateSourceDiagnosticSummary(reply, {
     parserVariant: 'fetched-reply',
-    candidateCount: posts.length,
+    candidateCount,
     validCount: 1,
-    droppedCount: Math.max(0, posts.length - 1),
-    missingFloorCount: posts.filter((item) => isRecord(item) && !parsePositiveInteger(item.post_number)).length
+    droppedCount: Math.max(0, candidateCount - 1),
+    missingFloorCount
   });
 }
 

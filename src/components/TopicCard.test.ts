@@ -51,4 +51,16 @@ describe('topicCardPropsAreEqual', () => {
       }
     })).toBe(false);
   });
+
+  it.each([
+    ['url', 'https://yaohuo.me/bbs-67.html'],
+    ['categoryId', 'tea-house'],
+    ['authorId', 'user-2'],
+    ['authorUrl', 'https://yaohuo.me/user-2']
+  ] as const)('re-renders when the navigation field %s changes', (field, value) => {
+    expect(topicCardPropsAreEqual(props, {
+      ...props,
+      topic: { ...topic, [field]: value }
+    })).toBe(false);
+  });
 });

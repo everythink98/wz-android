@@ -73,6 +73,19 @@ export function previousTopicRouteKey() {
   return previousRoute?.name === 'Topic' ? previousRoute.key : null;
 }
 
+export function currentUserRouteKeys() {
+  if (!navigationRef.isReady()) {
+    return [];
+  }
+  return navigationRef.getRootState().routes
+    .filter((route) => route.name === 'User')
+    .map((route) => route.key);
+}
+
+export function shouldSaveActiveUserRoute(previousScreen: Screen, activeRouteKey: string | null, liveRouteKeys: string[]) {
+  return previousScreen === 'user' && Boolean(activeRouteKey && liveRouteKeys.includes(activeRouteKey));
+}
+
 export function navigateAppScreen(screen: Screen) {
   if (!navigationRef.isReady()) {
     return false;

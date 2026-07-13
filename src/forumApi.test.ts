@@ -503,6 +503,31 @@ describe('Android local forum facade', () => {
     });
   });
 
+  it('finds a linux.do quoted floor when deleted posts make stream indexes sparse', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/t/42.json')) {
+        return new Response(JSON.stringify({
+          id: 42,
+          title: 'linux.do',
+          created_at: '2026-05-20T00:00:00.000Z',
+          post_stream: { stream: [100, 102], posts: [] }
+        }));
+      }
+      const ids = new URL(input).searchParams.getAll('post_ids[]');
+      return new Response(JSON.stringify({
+        post_stream: {
+          posts: ids.includes('102')
+            ? [{ id: 102, post_number: 3, username: 'carol', cooked: '<p>quoted</p>', created_at: '2026-05-20T00:02:00.000Z' }]
+            : []
+        }
+      }));
+    });
+
+    const reply = await getReply({ source: 'linuxdo', id: '42', floor: 3, fetcher });
+
+    expect(reply).toMatchObject({ author: 'carol', floor: 3 });
+  });
+
   it('does not use a V2EX topic page query as the member reply cursor', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/api/members/show.json')) {
@@ -1297,6 +1322,32 @@ describe('Android local forum facade', () => {
     expect(nodeseek.topics[0].lastReplyAt).toBe('');
     expect(calls).not.toContain('nodeseek.com/post-101-1');
     expect(calls).toContain('list-comments');
+  });
+
+  it('keeps NodeSeek user reply timestamps from list-comments', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/account/getInfo/48872?readme=1')) {
+        return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
+      }
+      if (input.includes('/api/content/list-discussions?uid=48872&page=1')) {
+        return new Response(JSON.stringify({ success: true, discussions: [] }));
+      }
+      if (input.includes('/api/content/list-comments?uid=48872&page=1')) {
+        return new Response(JSON.stringify({
+          success: true,
+          comments: [{ post_id: 101, title: 'NodeSeek topic', floor_id: 2, content: 'reply', created_at: '2026-05-22T16:06:25.000Z' }]
+        }));
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profile = await getUserProfile({ source: 'nodeseek', id: '48872', username: '我是ikun', fetcher });
+
+    expect(profile.replies?.[0]).toMatchObject({
+      topicId: '101',
+      floor: 2,
+      createdAt: '2026-05-22T16:06:25.000Z'
+    });
   });
 
   it('reads NodeSeek user profile JSON when hidden WebView wraps it in an HTML document', async () => {

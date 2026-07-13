@@ -14,7 +14,7 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { REPLY_PAGE_SIZE, replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
-import { shouldReuseCurrentTopicDetail } from '../topicSessionState';
+import { shouldPreserveTopicComposer, shouldReuseCurrentTopicDetail } from '../topicSessionState';
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
@@ -177,7 +177,7 @@ export function useTopicController({
     repliesRequestIdRef.current += 1;
     repliesAbortRef.current?.abort();
     replyVisitedPageKeysRef.current[nextTopicKey] = new Set();
-    topicCommands.beginLoad(topic, nextTopicKey);
+    topicCommands.beginLoad(topic, nextTopicKey, shouldPreserveTopicComposer(activeTopicKey, topic, nocache));
     if (!reopenExistingTopicScreen) {
       changeScreen('topic');
     }

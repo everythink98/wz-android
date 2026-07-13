@@ -1,21 +1,31 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, StyleSheet, View, type GestureResponderEvent } from 'react-native';
 import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { Maximize2, Play } from 'lucide-react-native';
 import type { ReaderTheme } from '../theme';
+import { useForumMediaPlaybackActive } from '../forumMediaPlayback';
 
 export function ForumContentVideo({ src, theme }: { src: string; theme: ReaderTheme }) {
   const videoRef = useRef<VideoView>(null);
   const player = useVideoPlayer({ uri: src });
+  const playbackActive = useForumMediaPlaybackActive();
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
+  useEffect(() => {
+    if (!playbackActive) {
+      player.pause();
+    }
+  }, [playbackActive, player]);
   const togglePlayback = useCallback(() => {
+    if (!playbackActive) {
+      return;
+    }
     if (isPlaying) {
       player.pause();
       return;
     }
     player.play();
-  }, [isPlaying, player]);
+  }, [isPlaying, playbackActive, player]);
   const enterFullscreen = useCallback((event: GestureResponderEvent) => {
     event.stopPropagation();
     void videoRef.current?.enterFullscreen();

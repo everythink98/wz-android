@@ -32,7 +32,7 @@ import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigationRef, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, currentUserRouteKeys, navigateAppScreen, navigationRef, previousTopicRouteKey, pushTopicRoute, shouldSaveActiveUserRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
@@ -152,6 +152,10 @@ export function AppRoot() {
   const linuxDoPendingReopenTaskRef = useRef<DeferredNavigationTask | null>(null);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
   const openUserRef = useRef<((user: UserProfile, nocache?: boolean) => Promise<void>) | null>(null);
+  const saveUserRouteRef = useRef<(routeKey: string) => void>(() => undefined);
+  const restoreUserRouteRef = useRef<(routeKey: string) => boolean>(() => false);
+  const retainUserRoutesRef = useRef<(routeKeys: string[]) => void>(() => undefined);
+  const activeUserRouteKeyRef = useRef<string | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
   const pendingNodeSeekTopicRetryRef = useRef<Topic | null>(null);
@@ -614,6 +618,8 @@ export function AppRoot() {
     fetcher: networkProxyFetcher,
     htmlParts: getTopicHtmlParts,
     inlineSizedImageUrls,
+    nodeSeekCookieHeader: nodeSeekMediaCookieHeader,
+    nodeSeekUserAgent: nodeSeekWebViewUserAgent,
     notify,
     topicImageDeriver
   });
@@ -1018,6 +1024,21 @@ export function AppRoot() {
       nextState: nextScreen,
       routeKind: routeKey ? 'stack' : 'tab'
     });
+    const liveUserRouteKeys = currentUserRouteKeys();
+    if (previousScreen === 'user') {
+      const activeUserRouteKey = activeUserRouteKeyRef.current;
+      if (shouldSaveActiveUserRoute(previousScreen, activeUserRouteKey, liveUserRouteKeys) && activeUserRouteKey) {
+        saveUserRouteRef.current(activeUserRouteKey);
+      }
+      activeUserRouteKeyRef.current = null;
+    }
+    if (nextScreen === 'user' && routeKey) {
+      activeUserRouteKeyRef.current = routeKey;
+      markDiagnosticStage(trace, 'apply', {
+        state: restoreUserRouteRef.current(routeKey) ? 'user-route-restored' : 'user-route-activated'
+      });
+    }
+    retainUserRoutesRef.current(liveUserRouteKeys);
     if (nextScreen === 'topic' && routeKey) {
       if (!restoreTopicRoute(routeKey)) {
         activateTopicRoute(routeKey);
@@ -1115,6 +1136,9 @@ export function AppRoot() {
   }, [changeScreen, readTopicBackStack, saveTopicRoute, topicSnapshot]);
 
   const pushTopicScreen = useCallback(() => {
+    if (screenRef.current === 'user' && activeUserRouteKeyRef.current) {
+      saveUserRouteRef.current(activeUserRouteKeyRef.current);
+    }
     const routeKey = currentTopicRouteKey();
     if (routeKey) {
       saveTopicRoute(routeKey);
@@ -1128,6 +1152,9 @@ export function AppRoot() {
     loadMoreUserReplies,
     loadMoreUserTopics,
     openUser,
+    restoreUserRoute,
+    retainUserRoutes,
+    saveUserRoute,
     selectedUser,
     userBusy,
     userError,
@@ -1552,6 +1579,11 @@ export function AppRoot() {
     webViewBlockMessage: networkProxyWebViewBlockMessage,
     yaohuoWebViewRef
   });
+  useLayoutEffect(() => {
+    saveUserRouteRef.current = saveUserRoute;
+    restoreUserRouteRef.current = restoreUserRoute;
+    retainUserRoutesRef.current = retainUserRoutes;
+  }, [restoreUserRoute, retainUserRoutes, saveUserRoute]);
   const requestLinuxDoCredentialFill = useCallback(() => {
     openAccountLogin('linuxdo', true);
   }, [openAccountLogin]);
@@ -2032,6 +2064,9 @@ export function AppRoot() {
   const renderUserScreen = useCallback(() => (
     <UserScreen {...userProps} />
   ), [userProps]);
+  const handleUserClosing = useCallback(() => {
+    flushDeferredNavigationTask();
+  }, [flushDeferredNavigationTask]);
 
   const handleMainTabPress = useCallback((targetScreen: keyof MainTabParamList) => {
     if (screenRef.current === targetScreen) {
@@ -2090,8 +2125,10 @@ export function AppRoot() {
               linuxDoWebViewUserAgent={linuxDoWebViewUserAgent}
               loadingLinuxDoPage={loadingLinuxDoPage}
               mountLinuxDoWebView={mountLinuxDoWebView}
-              nodeImageAuth={nodeImageAuth}
-              nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
+               nodeImageAuth={nodeImageAuth}
+               nodeSeekMediaCookieHeader={nodeSeekMediaCookieHeader}
+               nodeSeekMediaUserAgent={nodeSeekWebViewUserAgent}
+               nodeSeekWebViewUserAgent={nodeSeekWebViewUserAgent}
               resetLinuxDoWebView={resetLinuxDoWebView}
               savePreviewImage={savePreviewImage}
               selectPreviewImage={selectPreviewImage}
@@ -2122,7 +2159,7 @@ export function AppRoot() {
               onScreenChange={handleNavigationScreenChange}
               onTabPress={handleMainTabPress}
               onTopicClosing={flushDeferredNavigationTask}
-              onUserClosing={flushDeferredNavigationTask}
+              onUserClosing={handleUserClosing}
               />
               ) : null}
           </SafeAreaView>

@@ -287,7 +287,7 @@ export function useTopicSessionController({
     setTopicBusy(false);
   }, [invalidateTopicActionRequests]);
 
-  const beginTopicLoad = useCallback((topic: Topic, key: string) => {
+  const beginTopicLoad = useCallback((topic: Topic, key: string, preserveReplyComposer = false) => {
     invalidateTopicActionRequests(key);
     currentTopicKeyRef.current = key;
     setLoadingMoreReplies(false);
@@ -300,11 +300,13 @@ export function useTopicSessionController({
     setReplyHasMore(false);
     setReplyNextPage(null);
     setReplyNextOffset(null);
-    setReplyContent('');
-    setReplyFace('');
-    setReplyComposerOpen(false);
-    setReplyTarget(null);
-    setReplyEditTarget(null);
+    if (!preserveReplyComposer) {
+      setReplyContent('');
+      setReplyFace('');
+      setReplyComposerOpen(false);
+      setReplyTarget(null);
+      setReplyEditTarget(null);
+    }
     setReplyFilter('all');
     resetQuoteState();
     setTopicBusy(true);

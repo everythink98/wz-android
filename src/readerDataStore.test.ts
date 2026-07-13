@@ -158,7 +158,7 @@ describe('reader data store', () => {
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 
-  it('keeps valid sections without rewriting current-version data during load', async () => {
+  it('rejects a malformed current-version section without rewriting the stored data', async () => {
     const raw = JSON.stringify({
       ...createEmptyReaderData(),
       favorites: 'bad',
@@ -171,11 +171,25 @@ describe('reader data store', () => {
     });
     asyncStorage.__store.set('reader-data', raw);
 
-    const data = await loadReaderData();
+    await expect(loadReaderData()).rejects.toThrow('本机资料已损坏');
 
-    expect(data.history[topicKey(topic)]?.topic).toEqual(topic);
-    expect(data.favorites).toEqual({});
+    expect(asyncStorage.__store.get('reader-data')).toBe(raw);
     expect(AsyncStorage.setItem).not.toHaveBeenCalled();
     expect(AsyncStorage.setItem).not.toHaveBeenCalledWith('reader-data-corrupt-backup', raw);
+  });
+
+  it('rejects a malformed record inside an otherwise valid current-version section', async () => {
+    const raw = JSON.stringify({
+      ...createEmptyReaderData(),
+      favorites: {
+        [topicKey(topic)]: { topic, savedAt: 'not-a-date' }
+      }
+    });
+    asyncStorage.__store.set('reader-data', raw);
+
+    await expect(loadReaderData()).rejects.toThrow('本机资料已损坏');
+
+    expect(asyncStorage.__store.get('reader-data')).toBe(raw);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
   });
 });

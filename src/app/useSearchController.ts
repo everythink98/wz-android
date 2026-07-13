@@ -43,6 +43,7 @@ import {
   groupFromRemoteSearchResult,
   remoteSearchSort,
   remoteSearchActionForSource,
+  retrySearchHistoryWrite,
   snapshotSearchFilters,
   stopSearchGroupLoadingMore,
   type RemoteSearchAction,
@@ -141,9 +142,9 @@ export function useSearchController({
       return;
     }
     const nextRecentSearches = recentSearches;
-    void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () => (
+    void enqueueSearchHistoryWrite(recentSearchWriteQueueRef.current, () => retrySearchHistoryWrite(() => (
       AsyncStorage.setItem(SEARCH_HISTORY_STORAGE_KEY, JSON.stringify(nextRecentSearches))
-    ))
+    )))
       .then(() => {
         lastSavedRecentSearchesRef.current = nextRecentSearches;
       })

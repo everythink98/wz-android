@@ -22,7 +22,7 @@ import {
 import { useEvent } from 'expo';
 import { Image as ExpoImage } from 'expo-image';
 import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
-import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, ChevronUp, Play } from 'lucide-react-native';
 import { WebView } from 'react-native-webview';
 import {
   HTMLContentModel,
@@ -48,6 +48,7 @@ import type {
   HtmlTagsStyles
 } from '../../appTypes';
 import { ForumContentVideo } from '../../components/ForumContentVideo';
+import { useForumMediaPlaybackActive } from '../../forumMediaPlayback';
 import {
   FORUM_INLINE_MEDIA_LINE_TAG,
   FORUM_STICKER_ROW_TAG,
@@ -231,6 +232,7 @@ function ForumVideoStickerVideo({
   videoStyle: StyleProp<ViewStyle>;
 }) {
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
+  const playbackActive = useForumMediaPlaybackActive();
   const headerAccept = headers?.Accept || '';
   const headerCookie = headers?.Cookie || '';
   const headerReferer = headers?.Referer || '';
@@ -252,8 +254,14 @@ function ForumVideoStickerVideo({
     nextPlayer.loop = true;
     nextPlayer.muted = true;
     nextPlayer.keepScreenOnWhilePlaying = false;
-    nextPlayer.play();
   });
+  useEffect(() => {
+    if (playbackActive) {
+      player.play();
+    } else {
+      player.pause();
+    }
+  }, [playbackActive, player]);
   const status = useEvent(player, 'statusChange', { status: player.status }).status;
   useEffect(() => {
     setFirstFrameRendered(false);
@@ -342,13 +350,20 @@ const ReplyReferenceLinkRenderer: CustomMixedRenderer = (props) => {
 
 function VideoEmbedBlock({ embedUrl }: { embedUrl: string }) {
   const { styles, theme, webViewBlockMessage } = useForumHtmlRendererContext();
+  const [loaded, setLoaded] = useState(false);
+  const playbackActive = useForumMediaPlaybackActive();
+  useEffect(() => {
+    if (!playbackActive) {
+      setLoaded(false);
+    }
+  }, [playbackActive]);
   return (
     <View style={[embedStyles.videoFrame, { borderColor: theme.line, backgroundColor: theme.surface2 }]}>
       {webViewBlockMessage ? (
         <View style={embedStyles.blockedWebView}>
           <Text style={[styles.inlineForumImageText, { color: theme.muted }]}>{webViewBlockMessage}</Text>
         </View>
-      ) : (
+      ) : loaded && playbackActive ? (
         <WebView
           allowsFullscreenVideo
           domStorageEnabled
@@ -359,6 +374,16 @@ function VideoEmbedBlock({ embedUrl }: { embedUrl: string }) {
           setSupportMultipleWindows={false}
           style={embedStyles.webView}
         />
+      ) : (
+        <Pressable
+          accessibilityLabel="加载并播放嵌入视频"
+          accessibilityRole="button"
+          onPress={() => setLoaded(true)}
+          style={embedStyles.videoPlaceholder}
+        >
+          <Play color={theme.primaryStrong} fill={theme.primaryStrong} size={34} />
+          <Text style={[embedStyles.videoPlaceholderText, { color: theme.primaryStrong }]}>点击播放嵌入视频</Text>
+        </Pressable>
       )}
     </View>
   );
@@ -837,6 +862,8 @@ const embedStyles = StyleSheet.create({
   linkCardTitle: { fontSize: 16, fontWeight: '700', lineHeight: 22 },
   linkCardDescription: { fontSize: 14, lineHeight: 21, marginTop: 6 },
   videoFrame: { alignSelf: 'stretch', aspectRatio: 16 / 9, borderRadius: 8, borderWidth: StyleSheet.hairlineWidth, marginBottom: 12, marginTop: 8, overflow: 'hidden' },
+  videoPlaceholder: { alignItems: 'center', flex: 1, gap: 10, justifyContent: 'center', padding: 16 },
+  videoPlaceholderText: { fontSize: 15, fontWeight: '700' },
   webView: { flex: 1 },
   blockedWebView: { alignItems: 'center', flex: 1, justifyContent: 'center', padding: 12 }
 });

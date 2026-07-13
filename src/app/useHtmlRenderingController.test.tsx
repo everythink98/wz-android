@@ -57,6 +57,8 @@ vi.mock('react-native-render-html', () => ({
   useTNodeChildrenProps: vi.fn()
 }));
 
+vi.mock('../forumMediaPlayback', () => ({ useForumMediaPlaybackActive: () => true }));
+
 import { shouldShowPreviewImageLoading, shouldShowVideoStickerLoading } from './useHtmlRenderingController';
 
 describe('HTML topic image loading state', () => {

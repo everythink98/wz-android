@@ -108,6 +108,34 @@ describe('yaohuo reply parsing', () => {
     });
   });
 
+  it('keeps distinct meaningful replies that share a topic and minute without floors', () => {
+    const replies = parseYaohuoUserRepliesHtml(`
+      <div>火友 第一条回复。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+      <div>火友 第二条回复。 2026-05-20 10:30 <a href="/bbs-66.html">查看</a></div>
+    `, { id: '7', username: '火友' });
+
+    expect(replies.map((reply) => reply.excerpt)).toEqual(['第一条回复。', '第二条回复。']);
+    expect(new Set(replies.map((reply) => reply.id)).size).toBe(2);
+  });
+
+  it('preserves explicit zero profile counts', () => {
+    const profile = parseYaohuoUserProfileHtml(`
+      <div class="content">昵称:火友<br/>贴子(0).回复(3)</div>
+    `, { id: '7', username: '火友' });
+
+    expect(profile).toMatchObject({ topicCount: 0, replyCount: 3, postCount: 3 });
+  });
+
+  it('falls back to visible profile counts when structured statistics are malformed', () => {
+    const profile = parseYaohuoUserProfileHtml(`
+      <div class="uinfo-stat posts"><span class="value">未知</span></div>
+      <div class="uinfo-stat replies"><span class="value">--</span></div>
+      <div class="content">昵称:火友<br/>贴子(12).回复(34)</div>
+    `, { id: '7', username: '火友' });
+
+    expect(profile).toMatchObject({ topicCount: 12, replyCount: 34, postCount: 46 });
+  });
+
   it('keeps yaohuo user topic and reply display times identical to the source text', () => {
     const profile = parseYaohuoUserProfileHtml(`
       <div class="content">昵称:火友<br/>贴子(1).回复(1)</div>

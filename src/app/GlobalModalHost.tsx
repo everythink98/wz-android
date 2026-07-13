@@ -28,6 +28,8 @@ export function GlobalModalHost({
   loadingLinuxDoPage,
   mountLinuxDoWebView,
   nodeImageAuth,
+  nodeSeekMediaCookieHeader,
+  nodeSeekMediaUserAgent,
   nodeSeekWebViewUserAgent,
   resetLinuxDoWebView,
   checkLinuxDoCookie,
@@ -65,6 +67,8 @@ export function GlobalModalHost({
   loadingLinuxDoPage: boolean;
   mountLinuxDoWebView: boolean;
   nodeImageAuth: NodeImageAuthModalController;
+  nodeSeekMediaCookieHeader: string;
+  nodeSeekMediaUserAgent: string;
   nodeSeekWebViewUserAgent: string;
   resetLinuxDoWebView: () => void;
   checkLinuxDoCookie: () => void;
@@ -124,6 +128,8 @@ export function GlobalModalHost({
         webViewBlockMessage={webViewBlockMessage}
       />
       <ImagePreviewModal
+        nodeSeekCookieHeader={nodeSeekMediaCookieHeader}
+        nodeSeekUserAgent={nodeSeekMediaUserAgent}
         preview={imagePreview}
         styles={styles}
         theme={theme}

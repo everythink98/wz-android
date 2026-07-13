@@ -2,6 +2,7 @@ import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, 
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type ViewToken,
   Pressable,
   Text,
   View
@@ -16,6 +17,7 @@ import { createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatu
 import { AppButton, EmptyText, IconButton, LoadingState, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
 import { ForumContentVideo } from '../../components/ForumContentVideo';
+import { ForumMediaPlaybackProvider } from '../../forumMediaPlayback';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
@@ -196,10 +198,20 @@ export const TopicScreen = memo(function TopicScreen({
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
   const canWrite = Boolean(canSubmitReply && (canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo));
   const replyTotalCount = item?.replyCount ?? replies.length;
+  const [visibleReplyKeys, setVisibleReplyKeys] = useState<ReadonlySet<string>>(() => new Set());
   const listExtraData = useMemo(() => ({
     actionBusy,
-    quoteStateVersion
-  }), [actionBusy, quoteStateVersion]);
+    quoteStateVersion,
+    visibleReplyKeys
+  }), [actionBusy, quoteStateVersion, visibleReplyKeys]);
+  const onViewableReplyItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const next = new Set(viewableItems
+      .map((token) => (token.item as TopicListItem | undefined)?.key)
+      .filter((key): key is string => Boolean(key)));
+    setVisibleReplyKeys((current) => (
+      current.size === next.size && [...current].every((key) => next.has(key)) ? current : next
+    ));
+  }, []);
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
@@ -393,6 +405,7 @@ export const TopicScreen = memo(function TopicScreen({
     }
 
     return renderTopicListItemFrame(
+      <ForumMediaPlaybackProvider active={visibleReplyKeys.has(listItem.key)}>
       <View style={[styles.replyListItem, topicColumnStyle]}>
         <MemoizedReplyItem
           actionBusy={actionBusy}
@@ -426,6 +439,7 @@ export const TopicScreen = memo(function TopicScreen({
           onOpenUser={onOpenUser}
         />
       </View>
+      </ForumMediaPlaybackProvider>
     );
   }, [
     actionBusy,
@@ -455,7 +469,8 @@ export const TopicScreen = memo(function TopicScreen({
     theme,
     togglePollSelection,
     topicBaseUrl,
-    topicColumnStyle
+    topicColumnStyle,
+    visibleReplyKeys
   ]);
 
   if (!item) {
@@ -654,6 +669,7 @@ export const TopicScreen = memo(function TopicScreen({
           onEndReached={handleReplyEndReached}
           onScrollBeginDrag={armReplyAutoLoad}
           onMomentumScrollBegin={armReplyAutoLoad}
+          onViewableItemsChanged={onViewableReplyItemsChanged}
           extraData={listExtraData}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}

@@ -25,7 +25,8 @@ vi.mock('expo-video', () => ({
 vi.mock('lucide-react-native', () => ({
   ChevronDown: 'ChevronDown',
   ChevronRight: 'ChevronRight',
-  ChevronUp: 'ChevronUp'
+  ChevronUp: 'ChevronUp',
+  Play: 'Play'
 }));
 vi.mock('react-native-render-html', () => ({
   HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
@@ -44,6 +45,7 @@ vi.mock('react-native-render-html', () => ({
   useTNodeChildrenProps: vi.fn()
 }));
 vi.mock('../../components/ForumContentVideo', () => ({ ForumContentVideo: 'ForumContentVideo' }));
+vi.mock('../../forumMediaPlayback', () => ({ useForumMediaPlaybackActive: () => true }));
 
 import { FORUM_TERMINAL_REPORT_TAG } from '../../localHtml';
 import { getForumHtmlRenderers } from './ForumHtmlRendererProvider';

@@ -34,6 +34,7 @@ npm run smoke:android
 - `npm run release:android` 会先执行测试、严格无用代码检查和版本一致性检查；严格检查已包含 TypeScript 编译检查。
 - 当前 release APK 必须使用正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`、`WZ_ANDROID_SMOKE_DEVICE` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`。
 - `expo.extra.releaseTrustAnchorSha256` 是安装包内的初始正式证书信任锚，禁止修改或随签名轮换；轮换时只更新表示当前证书的 `releaseSignerSha256`。
+- 轮换正式签名时还必须配置 `WZ_ANDROID_SIGNING_LINEAGE_PATH`，指向由 Android `apksigner rotate` 生成、从 `releaseTrustAnchorSha256` 延续到新 signer 的 lineage 文件；非轮换发布不需要该变量。
 - 正式 APK 不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`；开发签名只用于不上传的 smoke APK。
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。

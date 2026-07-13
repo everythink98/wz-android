@@ -93,6 +93,21 @@ describe('Android release packaging guards', () => {
     expect(releaseScript).toContain('verifyExpectedReleaseSigner(signerSha256);');
   });
 
+  it('verifies the APK signer lineage against the immutable trust anchor', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const lineageInspector = readProjectFile('scripts', 'InspectApkLineage.java');
+
+    expect(releaseScript).toContain('expectedReleaseTrustAnchorSha256');
+    expect(releaseScript).toContain('verifyReleaseSignerLineage(releaseApkPath, signerSha256);');
+    expect(lineageInspector).toContain('result.isVerified()');
+    expect(lineageInspector).toContain('result.getSigningCertificateLineage()');
+    expect(lineageInspector).toContain('getCertificatesInLineage()');
+    expect(releaseScript).toContain('WZ_ANDROID_SIGNING_LINEAGE_PATH');
+    expect(releaseScript).toContain("'--lineage', lineagePath");
+    expect(releaseScript).toContain('signReleaseApkWithLineage(releaseApkPath);');
+    expect(releaseScript).toContain('signReleaseApkWithLineage(builtSmokeApkPath);');
+  });
+
   it('does not print apksigner certificate output after a successful check', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
 

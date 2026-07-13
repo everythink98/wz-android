@@ -25,6 +25,8 @@ export type ReaderDataMutationReason =
   | 'library-topic-removed'
   | 'settings-updated';
 
+let readerDataSaveBarrier: Promise<void> = Promise.resolve();
+
 function prepareSettingsOnlyCommit(current: ReaderData, updated: ReaderData) {
   if (
     updated.version !== current.version ||
@@ -82,6 +84,10 @@ export function rollbackFailedReaderDataSave(
   return latest === failed ? lastPersisted : latest;
 }
 
+export function readerDataAfterSettingsSave(lastPersisted: ReaderData, next: ReaderData): ReaderData {
+  return { ...lastPersisted, settings: next.settings };
+}
+
 export async function loadInitialReaderData({
   isActive,
   load = loadReaderData,
@@ -135,6 +141,7 @@ export function useReaderDataController({
   const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
   const lastPersistedReaderDataJsonRef = useRef(JSON.stringify(readerData));
   const saveQueueRef = useRef(Promise.resolve());
+  const instanceActiveRef = useRef(true);
 
   if (readerDataStateRef.current !== readerData) {
     readerDataStateRef.current = readerData;
@@ -155,7 +162,7 @@ export function useReaderDataController({
     });
     markDiagnosticStage(trace, 'guard', { state: 'queued' });
     readerDataRef.current = next;
-    const saveTask = saveQueueRef.current
+    const saveTask = readerDataSaveBarrier
       .catch(() => undefined)
       .then(waitForNextSaveTurn)
       .then((): Promise<{ nextJson: string | null; saved: ReaderData }> | null => {
@@ -168,7 +175,10 @@ export function useReaderDataController({
           state: 'started'
         });
         if (options?.mutationReason === 'settings-updated' && previous && isSettingsOnlyCommit(previous, next)) {
-          return saveReaderSettings(next.settings).then(() => ({ nextJson: null, saved: next }));
+          return saveReaderSettings(next.settings).then(() => ({
+            nextJson: null,
+            saved: readerDataAfterSettingsSave(lastPersistedReaderDataRef.current, next)
+          }));
         }
         const nextJson: string | null = JSON.stringify(next);
         return saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson)
@@ -179,6 +189,10 @@ export function useReaderDataController({
           return;
         }
         const { nextJson, saved } = result;
+        if (!instanceActiveRef.current) {
+          finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
+          return;
+        }
         lastPersistedReaderDataRef.current = saved;
         if (nextJson !== null) {
           lastPersistedReaderDataJsonRef.current = nextJson;
@@ -197,6 +211,10 @@ export function useReaderDataController({
         finishDiagnosticTrace(trace, 'success', { count: readerDataRecordCount(saved) });
       })
       .catch((error) => {
+        if (!instanceActiveRef.current) {
+          finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
+          throw error;
+        }
         if (previous) {
           const latestBeforeRollback = readerDataRef.current;
           const projectedRollback = rollbackFailedReaderDataSave(
@@ -223,6 +241,7 @@ export function useReaderDataController({
         throw error;
       });
     saveQueueRef.current = saveTask;
+    readerDataSaveBarrier = saveTask.then(() => undefined, () => undefined);
     return saveTask;
   }, [notify]);
 
@@ -284,23 +303,25 @@ export function useReaderDataController({
 
   useEffect(() => {
     let active = true;
-    void loadInitialReaderData({
-      isActive: () => active,
-      notify,
-      onLoadFailed: () => {
-        readerDataWriteSuspendedRef.current = true;
-      },
-      onLoaded: (savedReaderData) => {
-        readerDataRef.current = savedReaderData;
-        lastPersistedReaderDataRef.current = savedReaderData;
-        lastPersistedReaderDataJsonRef.current = JSON.stringify(savedReaderData);
-        setReaderData(savedReaderData);
-        readerDataLoadedRef.current = true;
-        setReaderDataLoaded(true);
-      }
-    });
+    instanceActiveRef.current = true;
+    void readerDataSaveBarrier.catch(() => undefined).then(() => loadInitialReaderData({
+        isActive: () => active,
+        notify,
+        onLoadFailed: () => {
+          readerDataWriteSuspendedRef.current = true;
+        },
+        onLoaded: (savedReaderData) => {
+          readerDataRef.current = savedReaderData;
+          lastPersistedReaderDataRef.current = savedReaderData;
+          lastPersistedReaderDataJsonRef.current = JSON.stringify(savedReaderData);
+          setReaderData(savedReaderData);
+          readerDataLoadedRef.current = true;
+          setReaderDataLoaded(true);
+        }
+      }));
     return () => {
       active = false;
+      instanceActiveRef.current = false;
     };
   }, [notify]);
 

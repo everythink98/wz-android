@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FeedResponse, FeedSource, Source } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, REQUEST_TIMEOUT_MESSAGE } from '../request';
+import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, REQUEST_TIMEOUT_MESSAGE, type Fetcher } from '../request';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
   getCurrentUserProfile: vi.fn(),
-  getFeed: vi.fn(async (_options?: { signal?: AbortSignal }): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  getFeed: vi.fn(async (_options?: { fetcher?: Fetcher; signal?: AbortSignal }): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getReplies: vi.fn(async () => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(),
   getTopic: vi.fn(async ({ id, source }) => ({ source, id, title: '', author: '', url: '', createdAt: '', replyCount: 0, contentHtml: '', replies: [] })),
@@ -469,6 +469,33 @@ describe('source gateway read contract', () => {
     expect(fetcher).toHaveBeenCalledWith(
       'https://www.yaohuo.me/bbs/book_list.aspx',
       expect.objectContaining({ credentials: 'omit' })
+    );
+  });
+
+  it('prevents React Native from replacing an explicit NodeSeek cookie from its CookieJar', async () => {
+    const fetcher = vi.fn(async () => new Response(''));
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher,
+      loadNodeSeekCookieForSource: vi.fn(async () => 'session=node'),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => 'NodeSeek UA'
+    });
+    forumMocks.getFeed.mockImplementationOnce(async (options) => {
+      await options!.fetcher!('https://www.nodeseek.com/api/topics', {
+        headers: { Cookie: 'session=node' }
+      });
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+
+    await gateway.getFeed({ source: 'nodeseek' });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/api/topics',
+      expect.objectContaining({
+        credentials: 'omit',
+        headers: { Cookie: 'session=node' }
+      })
     );
   });
 

@@ -9,6 +9,16 @@ function readSource(...parts: string[]) {
 }
 
 describe('network proxy modal guard', () => {
+  it('never renders a saved proxy password as plain text', () => {
+    const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
+
+    expect(source).toMatch(/<ProxyInput\s+label="密码"[\s\S]*?secureTextEntry/);
+    expect(source).toContain('secureTextEntry={secureTextEntry}');
+    expect(source).toContain("accessibilityValue={secureTextEntry ? { text: value ? '已填写' : '未填写' } : undefined}");
+    expect(source).toContain("password: profile.password ? '••••••••' : ''");
+    expect(source).not.toContain("password: profile.password || ''");
+  });
+
   it('keeps latency testing on the status hit area without selecting the row', () => {
     const source = readSource('src', 'screens', 'more', 'NetworkProxyModal.tsx');
 

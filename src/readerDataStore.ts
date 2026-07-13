@@ -16,6 +16,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+function hasMalformedReaderDataSection(value: Record<string, unknown>) {
+  if (['favorites', 'history', 'followedUsers', 'deletedRecords'].some((key) => value[key] !== undefined && !isRecord(value[key]))) {
+    return true;
+  }
+  const deletedRecords = value.deletedRecords;
+  return isRecord(deletedRecords) && ['favorites', 'history', 'followedUsers']
+    .some((key) => deletedRecords[key] !== undefined && !isRecord(deletedRecords[key]));
+}
+
+function readerDataSanitizationDroppedEntries(raw: Record<string, unknown>, clean: ReaderData) {
+  for (const key of ['favorites', 'history', 'followedUsers'] as const) {
+    const section = raw[key];
+    if (isRecord(section) && Object.keys(section).length !== Object.keys(clean[key]).length) {
+      return true;
+    }
+  }
+  if (isRecord(raw.deletedRecords)) {
+    for (const key of ['favorites', 'history', 'followedUsers'] as const) {
+      const section = raw.deletedRecords[key];
+      if (isRecord(section) && Object.keys(section).length !== Object.keys(clean.deletedRecords[key]).length) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function settingsFromStorage(raw: string | null, fallback: ReaderSettings) {
   if (!raw) {
     return fallback;
@@ -46,7 +73,13 @@ export async function loadReaderData() {
     if (!isRecord(parsed) || parsed.version !== readerDataVersion) {
       throw new Error('本机资料版本不受支持；为防止覆盖，未自动重置。');
     }
+    if (hasMalformedReaderDataSection(parsed)) {
+      throw new Error('本机资料已损坏；为防止覆盖，未自动重置。');
+    }
     clean = sanitizeReaderData(parsed);
+    if (readerDataSanitizationDroppedEntries(parsed, clean)) {
+      throw new Error('本机资料已损坏；为防止覆盖，未自动重置。');
+    }
   }
   return {
     ...clean,
