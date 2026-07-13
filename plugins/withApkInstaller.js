@@ -43,17 +43,22 @@ class ApkInstallerModule(private val reactContext: ReactApplicationContext) : Re
         promise.reject("apk_invalid", "APK 文件无法识别。")
         return
       }
-      val signerSha256 = apkSignerSha256(packageInfo)
-      if (signerSha256 == null) {
+      val signerHistorySha256 = apkSignerHistorySha256(packageInfo)
+      if (signerHistorySha256 == null) {
         promise.reject("apk_signature_missing", "APK 签名无法识别。")
         return
       }
+      val signerSha256 = signerHistorySha256.last()
+      val signerHistory = Arguments.createArray()
+      signerHistorySha256.forEach { signerHistory.pushString(it) }
       val result = Arguments.createMap()
       result.putString("sha256", fileSha256(file))
       result.putString("packageName", packageInfo.packageName)
       result.putString("versionName", packageInfo.versionName ?: "")
       result.putDouble("versionCode", apkVersionCode(packageInfo).toDouble())
       result.putString("signerSha256", signerSha256)
+      result.putArray("signerHistorySha256", signerHistory)
+      result.putBoolean("signerHistoryVerified", Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
       promise.resolve(result)
     } catch (error: Exception) {
       promise.reject("apk_inspect_failed", error.message ?: "无法校验 APK。", error)
@@ -110,22 +115,21 @@ class ApkInstallerModule(private val reactContext: ReactApplicationContext) : Re
     }
 
   @Suppress("DEPRECATION")
-  private fun apkSignatures(packageInfo: PackageInfo): Array<Signature> {
+  private fun apkSignerHistory(packageInfo: PackageInfo): List<Signature>? {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-      val signingInfo = packageInfo.signingInfo ?: return emptyArray()
-      return if (signingInfo.hasMultipleSigners()) {
-        signingInfo.apkContentsSigners
-      } else {
-        signingInfo.signingCertificateHistory
+      val signingInfo = packageInfo.signingInfo ?: return null
+      if (signingInfo.hasMultipleSigners()) {
+        return null
       }
+      val history = signingInfo.signingCertificateHistory?.toList().orEmpty()
+      return history.ifEmpty { null }
     }
-    return packageInfo.signatures ?: emptyArray()
+    val currentSigner = packageInfo.signatures?.singleOrNull() ?: return null
+    return listOf(currentSigner)
   }
 
-  private fun apkSignerSha256(packageInfo: PackageInfo): String? {
-    val firstSignature = apkSignatures(packageInfo).firstOrNull() ?: return null
-    return sha256Hex(firstSignature.toByteArray())
-  }
+  private fun apkSignerHistorySha256(packageInfo: PackageInfo): List<String>? =
+    apkSignerHistory(packageInfo)?.map { sha256Hex(it.toByteArray()) }
 
   private fun fileSha256(file: File): String {
     val digest = MessageDigest.getInstance("SHA-256")

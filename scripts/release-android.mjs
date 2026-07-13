@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { assertCleanWorktree } from './release-guards.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
@@ -243,6 +244,7 @@ function verifySmokeEnv() {
   }
 }
 
+assertCleanWorktree({ rootDir, phase: '发布前' });
 loadReleaseEnvFile();
 verifyReleaseSigningEnv();
 verifySmokeEnv();
@@ -255,9 +257,10 @@ run('npm', ['test']);
 run('npm', ['run', 'test:docs']);
 run('npm', ['run', 'check:docs']);
 run('npm', ['run', 'check:unused']);
-run('node', ['scripts/check-version.mjs']);
+run('node', ['scripts/check-version.mjs', '--release']);
 
 run('node', ['scripts/generate-adaptive-icon.mjs']);
+assertCleanWorktree({ rootDir, phase: 'adaptive icon 生成后' });
 run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);
 
 run(

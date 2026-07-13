@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   buildLinuxDoLevelProfileFromSummary,
-  getLinuxDoLevelProfile
+  getLinuxDoLevelProfile,
+  isLinuxDoLoginExpiredError
 } from './linuxdoLevel';
 
 vi.mock('@react-native-async-storage/async-storage', () => {
@@ -139,7 +140,11 @@ describe('linux.do level profile', () => {
       if (input === 'https://linux.do/my/summary.json') {
         return new Response(JSON.stringify({
           user_summary: {
-            user: { username: 'alice', trust_level: 2 },
+            user: {
+              username: 'alice',
+              trust_level: 2,
+              bio_raw: 'Example response: enable javascript and cookies'
+            },
             days_visited: 40,
             likes_given: 10,
             likes_received: 8,
@@ -371,6 +376,100 @@ describe('linux.do level profile', () => {
       source: 'linuxdo',
       reason: 'cloudflare'
     });
+  });
+
+  it('classifies HTTP 401 as an expired linux.do login without retrying another endpoint', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['not logged in'] }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' }
+    }));
+
+    const error = await getLinuxDoLevelProfile({
+      cookieHeader: '_t=expired',
+      fetcher
+    }).catch((caught) => caught);
+
+    expect(isLinuxDoLoginExpiredError(error)).toBe(true);
+    expect(error).toMatchObject({
+      source: 'linuxdo',
+      reason: 'expired',
+      loginRequired: true,
+      status: 401
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies a readable anonymous current-session response as an expired login', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://linux.do/my/summary.json') {
+        return new Response('{}', {
+          status: 500,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (input === 'https://linux.do/session/current.json') {
+        return new Response(JSON.stringify({ current_user: null }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const error = await getLinuxDoLevelProfile({
+      cookieHeader: '_t=expired',
+      fetcher
+    }).catch((caught) => caught);
+
+    expect(isLinuxDoLoginExpiredError(error)).toBe(true);
+    expect(error).toMatchObject({
+      source: 'linuxdo',
+      reason: 'expired',
+      loginRequired: true
+    });
+  });
+
+  it.each([
+    ['empty object', {}],
+    ['error object', { error: 'session unavailable' }],
+    ['current user without a username', { current_user: { id: 7 } }]
+  ])('keeps %s as a malformed session response instead of expiring credentials', async (_label, sessionPayload) => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input === 'https://linux.do/my/summary.json') {
+        return new Response('{}', {
+          status: 500,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (input === 'https://linux.do/session/current.json') {
+        return new Response(JSON.stringify(sessionPayload), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const error = await getLinuxDoLevelProfile({
+      cookieHeader: '_t=valid',
+      fetcher
+    }).catch((caught) => caught);
+
+    expect(isLinuxDoLoginExpiredError(error)).toBe(false);
+    expect(error).not.toMatchObject({ loginRequired: true });
+  });
+
+  it('does not classify HTTP 403 as an expired login', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['forbidden'] }), {
+      status: 403,
+      headers: { 'content-type': 'application/json' }
+    }));
+
+    const error = await getLinuxDoLevelProfile({
+      cookieHeader: '_t=valid',
+      fetcher
+    }).catch((caught) => caught);
+
+    expect(isLinuxDoLoginExpiredError(error)).toBe(false);
+    expect(error).not.toMatchObject({ loginRequired: true });
   });
 
   it('uses the current session trust level when my summary omits it', async () => {

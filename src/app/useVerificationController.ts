@@ -23,7 +23,12 @@ import { checkLinuxDoLoginAccess } from '../sources/sourceGateway';
 import { topicKey } from '../readerData';
 import type { Topic, TopicDetail } from '../types';
 import { errorMessage } from '../appUtils';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
+import { linuxDoWebViewProbeScript } from '../loginWebViewScripts';
+import {
+  createWebViewMessageSession,
+  parseTrustedWebViewMessage,
+  type WebViewMessageSession
+} from '../webViewMessageGuard';
 import type { Screen } from '../appTypes';
 import type { SiteSessionEvent } from '../siteSessionState';
 import type { Fetcher } from '../request';
@@ -41,6 +46,7 @@ import {
 const LINUXDO_CLEARANCE_DETECT_TIMEOUT_MS = 5000;
 const LINUXDO_CLEARANCE_DETECT_INTERVAL_MS = 500;
 const LINUXDO_PANEL_CLOSE_SETTLE_MS = 350;
+const LINUXDO_MESSAGE_ORIGINS = ['https://linux.do'];
 
 export type DeferredNavigationTask = ReturnType<typeof InteractionManager.runAfterInteractions>;
 type Ref<T> = MutableRefObject<T>;
@@ -136,6 +142,24 @@ export function useVerificationController({
 }) {
   const linuxDoVerificationTraceRef = useRef<DiagnosticTrace | null>(null);
   const linuxDoTerminalWebViewSessionRef = useRef<number | null>(null);
+  const linuxDoMessageSessionRef = useRef<{
+    webViewSession: number;
+    session: WebViewMessageSession;
+  }>({
+    webViewSession: linuxDoWebViewSessionRef.current,
+    session: createWebViewMessageSession('linuxdo-verification')
+  });
+
+  const currentLinuxDoMessageSession = useCallback(() => {
+    const webViewSession = linuxDoWebViewSessionRef.current;
+    if (linuxDoMessageSessionRef.current.webViewSession !== webViewSession) {
+      linuxDoMessageSessionRef.current = {
+        webViewSession,
+        session: createWebViewMessageSession('linuxdo-verification')
+      };
+    }
+    return linuxDoMessageSessionRef.current.session;
+  }, [linuxDoWebViewSessionRef]);
 
   const finishLinuxDoVerificationTrace = useCallback((
     trace: DiagnosticTrace,
@@ -577,12 +601,22 @@ export function useVerificationController({
     if (!showLinuxDoPanelRef.current) {
       return;
     }
+    const data = parseTrustedWebViewMessage(event.nativeEvent, {
+      allowedTypes: ['linuxdo-webview'],
+      trustedOrigins: LINUXDO_MESSAGE_ORIGINS,
+      ...currentLinuxDoMessageSession()
+    }) as ({
+      type: 'linuxdo-webview';
+      userAgent?: string;
+      cookie?: string;
+    } & Record<string, unknown>) | null;
+    if (!data) {
+      return;
+    }
+    if (typeof data.userAgent !== 'string' || typeof data.cookie !== 'string') {
+      return;
+    }
     try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        userAgent?: string;
-        cookie?: string;
-      };
       const trace = linuxDoVerificationTraceRef.current;
       if (trace) {
         markDiagnosticStage(trace, 'parse', {
@@ -618,6 +652,7 @@ export function useVerificationController({
       // Ignore unrelated messages from the page.
     }
   }, [
+    currentLinuxDoMessageSession,
     linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewSessionRef,
     linuxDoWebViewUserAgentRef,
@@ -636,7 +671,7 @@ export function useVerificationController({
         state: 'started'
       });
     }
-    linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+    linuxDoWebViewRef.current?.injectJavaScript(linuxDoWebViewProbeScript(currentLinuxDoMessageSession()));
     await new Promise((resolve) => setTimeout(resolve, 250));
     if (trace && linuxDoVerificationTraceRef.current === trace) {
       markDiagnosticStage(trace, 'transport', {
@@ -645,7 +680,7 @@ export function useVerificationController({
         state: 'complete'
       });
     }
-  }, [linuxDoWebViewRef]);
+  }, [currentLinuxDoMessageSession, linuxDoWebViewRef]);
 
   const readCurrentLinuxDoCookies = useCallback(async () => {
     await probeLinuxDoPage();
@@ -904,6 +939,9 @@ export function useVerificationController({
     closeLinuxDoPanel,
     handleLinuxDoCloudflareForTopic,
     handleLinuxDoMessage,
+    get linuxDoWebViewProbeScript() {
+      return linuxDoWebViewProbeScript(currentLinuxDoMessageSession());
+    },
     refreshLinuxDoClearanceState,
     rememberLinuxDoClearanceBeforeVerify,
     resetLinuxDoWebView,

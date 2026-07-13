@@ -19,11 +19,13 @@
 | `src/app/AppRoot.tsx` | App 根组件，组合控制器、主题、导航、Provider、全局弹层、隐藏 WebView 和页面参数 |
 | `src/app/useDeferredNavigationTask.ts` | AppRoot 的延迟导航时机，避免把 `InteractionManager` 细节留在根组件里 |
 | `src/app/use*Controller.ts` | 首页、搜索、详情、用户、账号、会话、验证、备份等运行逻辑 |
+| `src/app/useNodeImageAuthController.ts`、`src/app/NodeImageAuthModal.tsx` | NodeImage 授权的单飞请求、会话归属、Key 保存与 WebView UI；旧授权的迟到结果不能结束新授权 |
 | `src/sources/sourceGateway.ts` | App 统一来源读取入口，隐藏四站读取 adapter 差异 |
 | `src/forumApi.ts`、`src/yaohuoApi.ts` | 当前读取实现，位于 `sourceGateway` 后面 |
 | 站点 action client | 当前写入实现，由 `useTopicActionsController` 按来源和 capability 调用 |
 | `src/screens/` | 首页、搜索、收藏、更多、用户页和详情页导出入口 |
 | `src/screens/topic/` | 详情页主体、详情页 helper 和详情页局部组件 |
+| `src/screens/topic/ForumHtmlRendererProvider.tsx` | 模块级稳定 HTML renderer 类型、topic 生命周期 Provider 与 renderer 动态上下文 |
 | `src/screens/more/` | More 页账号中心、备份、外观、状态检查等局部面板 |
 | `src/screens/library/` | 收藏页列表模型与列表 key helper |
 | `src/components/` | 通用控件、主题卡片、图片预览和底部导航 |
@@ -33,6 +35,8 @@
 | `src/themeCore.ts` | 主题类型、颜色、字号和样式辅助函数 |
 | `src/themeStyles.ts`、`src/themeParts.ts` | `createStyles` 和拆分后的样式分组 |
 | `src/local*.ts` | 四站本机来源读取与解析 |
+| `src/beijingDate.ts`、`src/forumHosts.ts` | 跨站共享的北京时间解析和论坛 host 判定原语 |
+| `src/webViewMessageGuard.ts` | 登录 / 验证 WebView 消息的 exact-origin、消息类型、会话和 nonce 校验 |
 | `plugins/` | Expo config plugin，持久化 Android 原生配置；服务器代理原生模块由 `plugins/withNetworkProxyModule.js` 生成 |
 | `scripts/` | 文档检查、Android smoke、release 打包与版本检查脚本 |
 
@@ -47,7 +51,7 @@
 - 新增读取调用方应使用 `sourceGateway`，不要在 `src/app/*Controller.ts` 里新增对旧读取来源文件的直接调用；新增写操作复用现有 action client，并按触及路径逐项收口。
 - 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复是否允许编辑、删除等操作，只能由原站结构化字段、明确操作链接和当前对象所需的完整字段共同推导，不靠作者名或文案猜测，也不要求原站必须提供字面上的 `canEdit` / `canDelete` 字段。
 - 聚合读取按来源隔离凭据：基础来源请求不等待 NodeSeek 或妖火凭据检查才启动；任一站凭据读取失败只形成该站 partial error，用户取消仍是整次操作的终态。
-- NodeSeek 普通请求使用 8 秒绝对 wall-clock deadline。App 切后台时原请求继续进行；回到前台后若请求仍未完成且总耗时已越过 deadline，立即进入既有 WebView fallback。连续两次 direct fallback 后的网络恢复异步执行，不阻塞当前或后续请求；中间出现 direct 成功会中断失败连续性，迟到的并发 fallback 不得误触发恢复。
+- 四站受保护的内容读取共用 `src/directWebViewFallback.ts` 的 direct deadline、取消和诊断骨架，但故障策略保持站点原有边界。direct 通道使用 8 秒绝对 wall-clock deadline；App 切后台时原请求继续进行，回到前台后若仍 pending 且总耗时已越过 deadline 就立即处理。NodeSeek 继续进入既有 WebView fallback，连续两次可读、非 challenge 的 fallback 后异步恢复通用 OkHttp connection pool。linux.do、V2EX（含 SOV2EX 搜索）和妖火遇普通 timeout / network error 时先经全局 single-flight 恢复 connection pool，再只重试一次 direct；第二次失败直接返回，V2EX 和妖火绝不因此进入 WebView，linux.do 也只有既有 Cloudflare challenge 和未登录站外搜索使用隐藏 WebView。只有 managed GET / HEAD 可自动重试，写操作仍走 raw direct 且不得自动重放。四站单站 managed read 的 30 秒预算覆盖凭据读取和全部串行 adapter 请求，只累计前台 active 时间；聚合读取按来源各自计时，单站超时只形成该站 partial error。
 
 ## 导航与状态边界
 
@@ -72,6 +76,7 @@
 - `src/app/useAccountStatusController.ts` 负责 `refreshAccountStatus`；`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
 - `src/app/useAccountController.ts` 负责 NodeSeek、linux.do、妖火登录 / 验证页检测、Cookie 保存 / 清理和 linux.do 等级读取。
 - `src/app/useSessionController.ts` 只负责加载 Cookie 和会话事实；NodeSeek Cookie 加载只返回本次凭据里的 userId，不顺带读取个人资料。
+- NodeSeek 登录、linux.do 验证和 NodeImage 授权的 `postMessage` 只接受当前 WebView 生命周期生成的 session / nonce，并同时校验 exact HTTPS origin 和消息类型。nonce 由 Android 原生安全随机源生成；旧 WebView、子 frame 或相似域名的消息不能推进当前会话。
 - `SiteSessionState` 是账号中心和登录弹层的唯一登录状态来源；NodeSeek 的 WebView userId 只在 session 已登录时补充身份，不能覆盖已失效、匿名或需要验证状态。
 - NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。确定未登录的 session event 会清理运行时身份提示，普通 `check-failed` 不会误判退出。
 - 启动恢复和账号刷新按站点独立读取安全存储；单站存储异常不能阻塞其他站恢复。已确认登录失效时会尝试清理对应 Cookie，但清理失败只记录诊断，原始“登录已失效”结果仍优先返回。NodeSeek、linux.do 与妖火都会先保存登录撤销标记，在 App 内页面重新确认有效登录前忽略 native 层或 SecureStore 残留的旧登录 Cookie；旧清理与新登录交错时，以当前 credential generation 为准，并把当前已保存 Cookie 补回 WebView。
@@ -82,6 +87,7 @@
 
 - 代理配置保存在 Android 安全存储，不进入备份 JSON。
 - 启用代理后，App 请求和 WebView 都必须等代理成功应用；代理应用失败时阻止相关网络请求，不能静默回退直连。
+- 原生代理在 JS 状态尚未应用、监听线程异常、持久化配置不可解析或健康检查失败时保持 fail-closed；只有 SecureStore 明确无记录才表示未配置。direct / blocked / 用户代理状态切换都同步轮换 OkHttp connection pool，WebView 应用或清除代理失败时改挂本机 dead proxy，不能清除 override 后直连。监听器 fatal 只由当前 active 或已登记 candidate server 认领，已停用 server 的迟到回调不得改写新状态。JS 在每次受管请求前读取同步状态快照；读取失败后仅在新代理状态成功持久化并重新应用 native 状态后解除阻断。网络连接池恢复是独立于代理开关的通用能力，不记录目标域名。
 - Android 原生代理模块由 `plugins/withNetworkProxyModule.js` 写入生成目录，并通过 `app.json` 的 plugin 列表持久化。
 - 本地开发地址 `localhost`、`127.*`、`10.0.2.2` 和 `::1` 不走代理。
 
@@ -90,7 +96,10 @@
 - `src/screens/TopicScreen.tsx` 是兼容入口，继续导出 `TopicScreen` 和 `TopicListItem`。
 - `src/screens/topic/TopicScreenBody.tsx` 承载详情页主体，组合详情内容、回复列表、楼层搜索、操作菜单和回复框。
 - `src/screens/topic/topicScreenHelpers.ts` 承载详情页纯辅助逻辑，例如回复 key、状态徽标和权限提示识别。
+- `src/screens/topic/ReplyControls.tsx` 在 FlashList 数据之外持有评论查找输入并局部 debounce；输入焦点和每次按键不再成为列表行生命周期的一部分。
+- `src/screens/topic/ReplyComposerSheet.tsx` 持有当前回复草稿，父 session 只在 blur、收起、目标切换、图片插入和提交边界同步；selection 只保存在 ref，不以受控值回写 IME。
 - `src/screens/topic/ReplyItem.tsx`、`src/screens/topic/ReplyComposer.tsx`、`src/screens/topic/TopicActionBar.tsx`、`src/screens/topic/TopicContentBlock.tsx`、`src/screens/topic/TopicMenu.tsx`、`src/screens/topic/TopicPolls.tsx` 分别承载详情页局部 UI。
+- HTML renderer 的组件类型必须保持模块级恒定；回复、点赞、缓存刷新等同 topic 数据更新只更新 Provider context，不能重建 renderer 类型。只有 `source:id` 变化才重置 details、terminal tab、视频和图片等 topic-scoped renderer 状态。
 
 ## 回复写操作
 

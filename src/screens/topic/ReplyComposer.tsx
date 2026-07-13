@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Pressable, Text, View } from 'react-native';
 import { BottomSheetFlatList, BottomSheetTextInput } from '@gorhom/bottom-sheet';
 import { Image as ExpoImage } from 'expo-image';
@@ -44,6 +44,7 @@ export function ReplyComposer({
   focusSignal,
   onReplyComposerOpenChange,
   onReplyContentChange,
+  onReplyContentCommit,
   onReplyFaceChange,
   onSubmitReply,
   onUploadReplyImage
@@ -60,18 +61,17 @@ export function ReplyComposer({
   focusSignal?: number;
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
+  onReplyContentCommit: () => void;
   onReplyFaceChange: (value: string) => void;
-  onSubmitReply: () => void;
-  onUploadReplyImage?: () => void;
+  onSubmitReply: (content: string) => void;
+  onUploadReplyImage?: () => void | Promise<void>;
 }) {
   const inputRef = useRef<ReplyComposerInputHandle | null>(null);
   const inputFocusedRef = useRef(false);
-  const [selection, setSelection] = useState({ start: replyContent.length, end: replyContent.length });
   const [activeAccessory, setActiveAccessory] = useState<ReplyComposerAccessory | null>(null);
   const [activeNodeSeekStickerCategory, setActiveNodeSeekStickerCategory] = useState(NODESEEK_STICKER_CATEGORIES[0]?.label || '');
-  const selectionRef = useRef(selection);
+  const selectionRef = useRef({ start: replyContent.length, end: replyContent.length });
   const replyContentRef = useRef(replyContent);
-  replyContentRef.current = replyContent;
   const toolbarItems = replyComposerToolbarItems(source);
   const linuxDoEmojiItems = useMemo(() => linuxDoEmojiCatalogFromUrlMap(linuxDoEmojiUrls), [linuxDoEmojiUrls]);
   const selectedFaceLabel = YAOHUO_FACE_ITEMS.find((item) => item.value === replyFace)?.label;
@@ -88,8 +88,11 @@ export function ReplyComposer({
       return;
     }
     selectionRef.current = nextSelection;
-    setSelection(nextSelection);
   }, []);
+  const changeContent = useCallback((content: string) => {
+    replyContentRef.current = content;
+    onReplyContentChange(content);
+  }, [onReplyContentChange]);
   const focusInputAtSelection = useCallback((nextSelection?: { start: number; end: number }) => {
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -107,21 +110,24 @@ export function ReplyComposer({
     const nextSelection = { start: start + value.length, end: start + value.length };
     const nextContent = replaceReplyComposerSelection(content, selectionRef.current, value);
     replyContentRef.current = nextContent;
-    onReplyContentChange(nextContent);
+    changeContent(nextContent);
     updateSelection(nextSelection);
     if (focusAfterInsert) {
       focusInputAtSelection(nextSelection);
     }
-  }, [focusInputAtSelection, onReplyContentChange, updateSelection]);
+  }, [changeContent, focusInputAtSelection, updateSelection]);
   const applyFormat = (action: ReplyComposerFormatAction) => {
     setActiveAccessory(null);
     if (action === 'image' && onUploadReplyImage) {
-      onUploadReplyImage();
+      void onUploadReplyImage();
       return;
     }
-    onReplyContentChange(applyReplyComposerFormat({ action, content: replyContent, selection: selectionRef.current, source }));
+    changeContent(applyReplyComposerFormat({ action, content: replyContentRef.current, selection: selectionRef.current, source }));
     refocusInputAfterToolbarAction();
   };
+  useLayoutEffect(() => {
+    replyContentRef.current = replyContent;
+  }, [replyContent]);
   useEffect(() => {
     const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
       if (inputFocusedRef.current) {
@@ -139,6 +145,7 @@ export function ReplyComposer({
   };
   const handleBlur = () => {
     inputFocusedRef.current = false;
+    onReplyContentCommit();
   };
   useEffect(() => {
     const nextSelection = {
@@ -287,9 +294,8 @@ export function ReplyComposer({
         }}
         style={[styles.input, styles.replyInput]}
         value={replyContent}
-        selection={selection}
         onBlur={handleBlur}
-        onChangeText={onReplyContentChange}
+        onChangeText={changeContent}
         onFocus={handleFocus}
         onSelectionChange={(event) => {
           updateSelection(event.nativeEvent.selection);
@@ -301,7 +307,7 @@ export function ReplyComposer({
       />
       <View style={styles.replyComposerActions}>
         <AppButton label={replyEditTarget ? '取消编辑' : replyTarget ? '取消楼层回复' : '收起回复'} variant="ghost" styles={styles} disabled={actionBusy} onPress={() => onReplyComposerOpenChange(false)} />
-        <AppButton label={submitLabel} variant={replyContent.trim() ? 'primary' : 'default'} styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={onSubmitReply} />
+        <AppButton label={submitLabel} variant={replyContent.trim() ? 'primary' : 'default'} styles={styles} disabled={actionBusy || !replyContent.trim()} onPress={() => onSubmitReply(replyContentRef.current)} />
       </View>
     </View>
   );

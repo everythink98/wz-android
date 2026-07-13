@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeHtml, sanitizeContentHtml, textContentFromHtml } from './localHtml';
+import { decodeHtml, escapeHtmlAttribute, escapeHtmlText, sanitizeContentHtml, textContentFromHtml } from './localHtml';
 
 describe('Android local HTML helpers', () => {
+  it('escapes text and attributes through distinct shared primitives', () => {
+    expect(escapeHtmlText(`A&B <tag> "quoted" 'single'`)).toBe(`A&amp;B &lt;tag&gt; "quoted" 'single'`);
+    expect(escapeHtmlAttribute(`A&B <tag> "quoted" 'single'`)).toBe('A&amp;B &lt;tag&gt; &quot;quoted&quot; &#39;single&#39;');
+  });
+
   it('extracts visible text without script or style contents', () => {
     expect(textContentFromHtml('<style>.x{color:red}</style><p>A&nbsp;B<br>C</p><script>alert(1)</script>')).toBe('A B C');
   });

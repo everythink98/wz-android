@@ -59,6 +59,7 @@ import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -836,6 +837,120 @@ describe('Android local sources', () => {
     expect(topic.replyNextOffset).toBe(1);
     expect(replies.items.map((item) => item.author)).toEqual(['reply 2', 'reply 3']);
     expect(replies.items.map((item) => item.floor)).toEqual([2, 3]);
+  });
+
+  it('offsets rendered NodeSeek replies without floor markers before merging embedded metadata', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          {
+            poster: { name: 'reply 31', isMe: true },
+            content: '<p>embedded reply 31</p>',
+            markdown: 'editable reply 31',
+            upvoteCount: 7
+          },
+          {
+            poster: { name: 'reply 32' },
+            content: '<p>embedded reply 32</p>',
+            markdown: 'reply 32',
+            likeCount: 3
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${payload}</script>
+      <h1>NodeSeek topic</h1>
+      <div id="0" class="content-item">
+        <a class="author-name">op</a>
+        <article class="post-content"><p>body</p></article>
+      </div>
+      <li class="content-item">
+        <a class="author-name">reply 31</a>
+        <article class="post-content"><p>rendered reply 31</p></article>
+      </li>
+      <li class="content-item">
+        <a class="author-name">reply 32</a>
+        <article class="post-content"><p>rendered reply 32</p></article>
+      </li>
+    `));
+
+    const replies = await getNodeSeekReplies('723704', {
+      fetcher,
+      page: 2,
+      offset: 30,
+      limit: 20
+    });
+
+    expect(replies.items.map((reply) => reply.floor)).toEqual([31, 32]);
+    expect(replies.items[0]).toMatchObject({
+      canEdit: true,
+      contentMarkdown: 'editable reply 31',
+      upvoteCount: 7
+    });
+    expect(sourceDiagnosticSummary(replies)).toMatchObject({ missingFloorCount: 2 });
+  });
+
+  it('matches identity-less rendered NodeSeek replies to embedded rows by origin order', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 723704,
+        title: 'NodeSeek topic',
+        comments: [
+          {
+            floorIndex: 32,
+            commentId: 3200,
+            poster: { name: 'embedded reply 32', isMe: true },
+            markdown: 'editable reply 32',
+            upvoteCount: 7
+          },
+          {
+            floorIndex: 33,
+            commentId: 3300,
+            poster: { name: 'embedded reply 33' },
+            markdown: 'reply 33',
+            likeCount: 3
+          }
+        ]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async () => html(`
+      <script>${payload}</script>
+      <h1>NodeSeek topic</h1>
+      <div id="0" class="content-item">
+        <a class="author-name">op</a>
+        <article class="post-content"><p>body</p></article>
+      </div>
+      <li class="content-item">
+        <a class="author-name">rendered reply 32</a>
+        <article class="post-content"><p>rendered reply 32</p></article>
+      </li>
+      <li class="content-item">
+        <a class="author-name">rendered reply 33</a>
+        <article class="post-content"><p>rendered reply 33</p></article>
+      </li>
+    `));
+
+    const replies = await getNodeSeekReplies('723704', {
+      fetcher,
+      page: 2,
+      offset: 30,
+      limit: 20
+    });
+
+    expect(replies.items.map((reply) => reply.floor)).toEqual([32, 33]);
+    expect(replies.items.map((reply) => reply.commentId)).toEqual([3200, 3300]);
+    expect(replies.items[0]).toMatchObject({
+      canEdit: true,
+      contentMarkdown: 'editable reply 32',
+      upvoteCount: 7
+    });
+    expect(replies.items[1]).toMatchObject({
+      contentMarkdown: 'reply 33',
+      likeCount: 3
+    });
   });
 
   it('does not fill normal NodeSeek replies from following origin pages', async () => {
@@ -5010,6 +5125,54 @@ describe('Android local sources', () => {
     });
   });
 
+  it('keeps V2EX HTML fallback reply pagination available after the legacy API fails', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 812,
+          title: 'V2EX long fallback detail',
+          url: 'https://www.v2ex.com/t/812',
+          created: 1780000000,
+          replies: 25,
+          member: { username: 'neo' },
+          content_rendered: '<p>detail body</p>'
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        throw new Error('legacy replies unavailable');
+      }
+      if (input === 'https://www.v2ex.com/t/812') {
+        return html(`
+          <div id="r_7201"><span class="no">1</span><strong><a href="/member/alice">alice</a></strong><div class="reply_content">first</div></div>
+          <div id="r_7202"><span class="no">2</span><strong><a href="/member/bob">bob</a></strong><div class="reply_content">second</div></div>
+          <a href="/t/812?p=2">下一页</a>
+        `);
+      }
+      if (input === 'https://www.v2ex.com/t/812?p=2') {
+        return html(`
+          <div id="r_7225"><span class="no">25</span><strong><a href="/member/carol">carol</a></strong><div class="reply_content">last</div></div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '812', fetcher });
+    const next = await getReplies({ source: 'v2ex', id: '812', page: topic.replyNextPage || 2, fetcher });
+
+    expect(topic).toMatchObject({
+      replyCount: 25,
+      replyHasMore: true,
+      replyNextPage: 2
+    });
+    expect(topic.replies).toHaveLength(2);
+    expect(next).toMatchObject({
+      items: [expect.objectContaining({ commentId: 7225, floor: 25 })],
+      hasMore: false,
+      nextPage: null
+    });
+    expect(fetcher.mock.calls.map((call) => call[0])).not.toContain('https://www.v2ex.com/api/replies/show.json?topic_id=812&page=2');
+  });
+
   it('keeps V2EX all feed pagination open through the recent HTML list', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.v2ex.com/?tab=all') {
@@ -5223,6 +5386,43 @@ describe('Android local sources', () => {
     expect(url.searchParams.get('sortBy')).toBe('postTime');
     expect(url.searchParams.has('sort')).toBe(false);
     expect(url.searchParams.has('order')).toBe(false);
+  });
+
+  it('rejects off-site Google links that merely contain a NodeSeek-looking topic path', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <html>
+        <head><title>site:nodeseek.com test - Google Search</title></head>
+        <body><a href="https://evil.example/post-999-1"><h3>off-site fake result</h3></a></body>
+      </html>
+    `));
+
+    const result = await searchTopics({ source: 'nodeseek', query: 'test', fetcher });
+
+    expect(result.items).toEqual([]);
+  });
+
+  it('keeps readable linux.do topic JSON containing Cloudflare documentation text', async () => {
+    const fetcher = vi.fn(async () => json({
+      id: 42,
+      title: 'Cloudflare documentation',
+      created_at: '2026-05-21T00:00:00.000Z',
+      posts_count: 1,
+      post_stream: {
+        stream: [1],
+        posts: [{
+          id: 1,
+          post_number: 1,
+          username: 'alice',
+          cooked: '<p>Example response: enable javascript and cookies</p>',
+          created_at: '2026-05-21T00:00:00.000Z'
+        }]
+      }
+    }));
+
+    const topic = await getTopic({ source: 'linuxdo', id: '42', fetcher });
+
+    expect(topic.title).toBe('Cloudflare documentation');
+    expect(topic.contentHtml).toContain('enable javascript and cookies');
   });
 
   it('tags linux.do Cloudflare topic errors so the app can open verification', async () => {

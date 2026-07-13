@@ -1,14 +1,11 @@
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import {
+  createDirectWebViewFallbackFetcher,
+  type DirectTransportAppState,
+  type DirectTransportRecoveryEvent
+} from './directWebViewFallback';
 import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import type { Fetcher } from './request';
-import {
-  beginDiagnosticTrace,
-  diagnosticTraceForRequest,
-  finishDiagnosticTrace,
-  markDiagnosticStage,
-  normalizeDiagnosticReason,
-  registerDiagnosticContextFetcher
-} from './diagnostics';
 
 export function isLinuxDoRequestUrl(input: string) {
   try {
@@ -31,124 +28,38 @@ export function isLinuxDoBrowserFetchUrl(input: string) {
   return isLinuxDoRequestUrl(input) || isLinuxDoGoogleSearchUrl(input);
 }
 
-async function fetchLinuxDoThroughWebView(
-  webViewFetcher: Fetcher,
-  url: string,
-  init: RequestInit | undefined,
-  directStatus: number
-) {
-  const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', 'transport-fallback', {
-    source: 'linuxdo',
-    reason: 'verification_required'
-  });
-  markDiagnosticStage(trace, 'transport', {
-    source: 'linuxdo',
-    channel: 'direct',
-    state: 'fallback',
-    reason: 'verification_required',
-    status: directStatus
-  });
-  try {
-    const response = await webViewFetcher(url, init);
-    markDiagnosticStage(trace, 'transport', {
-      source: 'linuxdo',
-      channel: 'webview',
-      state: 'finish',
-      status: response.status
-    });
-    if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
-        source: 'linuxdo',
-        channel: 'webview',
-        ...(response.ok ? {} : { reason: 'http_error' })
-      });
-    }
-    return response;
-  } catch (error) {
-    const reason = normalizeDiagnosticReason(error);
-    markDiagnosticStage(trace, 'transport', {
-      source: 'linuxdo',
-      channel: 'webview',
-      state: 'failure',
-      reason
-    });
-    if (!inheritedTrace) {
-        finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : reason === 'superseded' ? 'stale' : 'failure', {
-        source: 'linuxdo',
-        channel: 'webview',
-        reason
-      });
-    }
-    throw error;
+async function isLinuxDoChallenge(response: Response) {
+  if (isCloudflareChallengeResponse(response)) {
+    return true;
   }
-}
-
-async function fetchLinuxDoWebViewOnly(webViewFetcher: Fetcher, url: string, init?: RequestInit) {
-  const inheritedTrace = diagnosticTraceForRequest(init);
-  const trace = inheritedTrace || beginDiagnosticTrace('source', 'webview-transport', {
-    source: 'linuxdo',
-    channel: 'webview'
+  const contentType = response.headers.get('content-type') || '';
+  return !response.ok && /html/i.test(contentType) && isCloudflareChallengeResponse({
+    status: response.status,
+    headers: response.headers,
+    bodyText: await response.clone().text()
   });
-  markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'start' });
-  try {
-    const response = await webViewFetcher(url, init);
-    markDiagnosticStage(trace, 'transport', {
-      source: 'linuxdo',
-      channel: 'webview',
-      state: 'finish',
-      status: response.status
-    });
-    if (!inheritedTrace) {
-      finishDiagnosticTrace(trace, response.ok ? 'success' : 'failure', {
-        source: 'linuxdo',
-        channel: 'webview',
-        ...(response.ok ? {} : { reason: 'http_error' })
-      });
-    }
-    return response;
-  } catch (error) {
-    const reason = normalizeDiagnosticReason(error);
-    markDiagnosticStage(trace, 'transport', { source: 'linuxdo', channel: 'webview', state: 'failure', reason });
-    if (!inheritedTrace) {
-        finishDiagnosticTrace(trace, reason === 'canceled' ? 'canceled' : reason === 'superseded' ? 'stale' : 'failure', {
-        source: 'linuxdo',
-        channel: 'webview',
-        reason
-      });
-    }
-    throw error;
-  }
 }
 
 export function createLinuxDoWebViewFallbackFetcher({
+  appState,
   defaultFetcher = fetch,
+  recoverNetworkConnectionPool,
   webViewFetcher
 }: {
+  appState?: DirectTransportAppState;
   defaultFetcher?: Fetcher;
+  recoverNetworkConnectionPool?: (event: DirectTransportRecoveryEvent) => Promise<unknown> | unknown;
   webViewFetcher: Fetcher;
 }): Fetcher {
-  return registerDiagnosticContextFetcher(async (input, init) => {
-    const url = String(input);
-    if (isLinuxDoGoogleSearchUrl(url)) {
-      return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
-    }
-    const response = await defaultFetcher(input, init);
-    if (!isLinuxDoRequestUrl(url)) {
-      return response;
-    }
-    if (isCloudflareChallengeResponse(response)) {
-      return fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status);
-    }
-    const contentType = response.headers.get('content-type') || '';
-    const shouldInspectBody = !response.ok && /html/i.test(contentType);
-    if (shouldInspectBody && isCloudflareChallengeResponse({
-      status: response.status,
-      headers: response.headers,
-      bodyText: await response.clone().text()
-    })) {
-      return fetchLinuxDoThroughWebView(webViewFetcher, url, init, response.status);
-    }
-    return response;
+  return createDirectWebViewFallbackFetcher({
+    appState,
+    defaultFetcher,
+    directFailureStrategy: 'recover-and-retry-direct',
+    inspectChallenge: isLinuxDoChallenge,
+    isDirectRequestUrl: isLinuxDoRequestUrl,
+    isWebViewOnlyUrl: isLinuxDoGoogleSearchUrl,
+    recoverNetworkConnectionPool,
+    source: 'linuxdo',
+    webViewFetcher
   });
 }

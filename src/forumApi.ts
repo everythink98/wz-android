@@ -2,7 +2,7 @@ import { getLinuxDoCategories, getLinuxDoCurrentUserProfile, getLinuxDoFeed, get
 import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentUserProfile, getNodeSeekFeed, getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile, searchNodeSeek } from './localNodeseek';
 import { checkYaohuoLoginHtml, ensureYaohuoHtmlLoggedIn, isYaohuoVerificationRequiredHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
-import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
+import { getV2exCategories, getV2exFeed, getV2exReplies, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
 import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
 import { sourceErrorFromUnknown } from './sourceErrors';
@@ -24,9 +24,15 @@ import type {
   V2exFeedFilter,
   UserProfile
 } from './types';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from './request';
 import {
-  annotateSourceDiagnosticSummary,
+  fetchWithTimeout,
+  REQUEST_CANCELED_MESSAGE,
+  REQUEST_SUPERSEDED_MESSAGE,
+  withOperationDeadline,
+  type OperationDeadlineAppState,
+  type Fetcher
+} from './request';
+import {
   copySourceDiagnosticSummary,
   mergeSourceDiagnosticSummaries,
   sourceDiagnosticSummary
@@ -42,6 +48,18 @@ type NodeSeekReadCredentials = {
 
 function resolveNodeSeekOptions<T extends object>(options: T, credentials?: Promise<NodeSeekReadCredentials>) {
   return credentials ? credentials.then((value) => ({ ...options, ...value })) : Promise.resolve(options);
+}
+
+function runManagedSourceRead<T>(
+  appState: OperationDeadlineAppState | undefined,
+  timeoutMs: number | undefined,
+  signal: AbortSignal | undefined,
+  operation: (managedSignal: AbortSignal | undefined) => Promise<T>
+) {
+  if (!timeoutMs) {
+    return operation(signal);
+  }
+  return withOperationDeadline(operation, { appState, signal, timeoutMs });
 }
 
 function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>, sources: readonly Source[]) {
@@ -219,6 +237,9 @@ export async function getFeed({
   nodeSeekCookie,
   nodeSeekCredentials,
   nodeSeekUserAgent,
+  linuxDoTimeoutMs,
+  managedReadAppState,
+  managedReadTimeoutMs,
   signal,
   timeoutMs
 }: {
@@ -234,10 +255,14 @@ export async function getFeed({
   nodeSeekCookie?: string;
   nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
   nodeSeekUserAgent?: string;
+  linuxDoTimeoutMs?: number;
+  managedReadAppState?: OperationDeadlineAppState;
+  managedReadTimeoutMs?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
   const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const linuxDoOptions = { ...options, timeoutMs: linuxDoTimeoutMs ?? timeoutMs };
   if (source === 'all') {
     const nodeSeekOptions = resolveNodeSeekOptions(options, nodeSeekCredentials);
     const cursorState = decodeAllFeedCursor(cursor);
@@ -253,13 +278,31 @@ export async function getFeed({
     const v2exLimit = limit;
     const results = await Promise.allSettled([
       fetchedSources[0]
-        ? nodeSeekOptions.then((resolved) => getNodeSeekFeed({ ...resolved, limit: adapterLimit, page: requestedPages.nodeseek }))
+        ? runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => (
+          nodeSeekOptions.then((resolved) => getNodeSeekFeed({
+            ...resolved,
+            limit: adapterLimit,
+            page: requestedPages.nodeseek,
+            signal: managedSignal
+          }))
+        ))
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.nodeseek ?? null, nextCursor: null }),
       fetchedSources[1]
-        ? getLinuxDoFeed({ ...options, limit: adapterLimit, page: requestedPages.linuxdo })
+        ? runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => getLinuxDoFeed({
+          ...linuxDoOptions,
+          limit: adapterLimit,
+          page: requestedPages.linuxdo,
+          signal: managedSignal
+        }))
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null, nextCursor: null }),
       fetchedSources[2]
-        ? getV2exFeed({ ...options, cursor: cursorState.sourceCursors?.v2ex, limit: v2exLimit, page: requestedPages.v2ex })
+        ? runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => getV2exFeed({
+          ...options,
+          cursor: cursorState.sourceCursors?.v2ex,
+          limit: v2exLimit,
+          page: requestedPages.v2ex,
+          signal: managedSignal
+        }))
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null, nextCursor: cursorState.sourceCursors?.v2ex ?? null })
     ]);
     throwSilentInterruptionResult(results);
@@ -317,7 +360,7 @@ export async function getFeed({
     : linuxDoFilter;
   return pickSource(source, {
     nodeseek: () => getNodeSeekFeed({ ...options, feedFilter: feedFilter as NodeSeekFeedFilter | undefined }),
-    linuxdo: () => getLinuxDoFeed({ ...options, linuxDoFilter: effectiveLinuxDoFilter }),
+    linuxdo: () => getLinuxDoFeed({ ...linuxDoOptions, linuxDoFilter: effectiveLinuxDoFilter }),
     v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined })
   });
 }
@@ -329,6 +372,9 @@ export async function getCategories({
   nodeSeekCookie,
   nodeSeekCredentials,
   nodeSeekUserAgent,
+  linuxDoTimeoutMs,
+  managedReadAppState,
+  managedReadTimeoutMs,
   signal,
   timeoutMs
 }: {
@@ -338,17 +384,29 @@ export async function getCategories({
   nodeSeekCookie?: string;
   nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
   nodeSeekUserAgent?: string;
+  linuxDoTimeoutMs?: number;
+  managedReadAppState?: OperationDeadlineAppState;
+  managedReadTimeoutMs?: number;
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
   const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const linuxDoOptions = { ...options, timeoutMs: linuxDoTimeoutMs ?? timeoutMs };
   if (source === 'all') {
     const nodeSeekOptions = resolveNodeSeekOptions(options, nodeSeekCredentials);
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'];
     const results = await Promise.allSettled([
-      nodeSeekOptions.then((resolved) => getNodeSeekCategories(resolved)),
-      getLinuxDoCategories(options),
-      getV2exCategories(options),
+      runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => (
+        nodeSeekOptions.then((resolved) => getNodeSeekCategories({ ...resolved, signal: managedSignal }))
+      )),
+      runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => getLinuxDoCategories({
+        ...linuxDoOptions,
+        signal: managedSignal
+      })),
+      runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => getV2exCategories({
+        ...options,
+        signal: managedSignal
+      })),
       Promise.resolve(yaohuoCategoriesResponse())
     ]);
     throwSilentInterruptionResult(results);
@@ -371,7 +429,7 @@ export async function getCategories({
   }
   return pickSource(source, {
     nodeseek: () => getNodeSeekCategories(options),
-    linuxdo: () => getLinuxDoCategories(options),
+    linuxdo: () => getLinuxDoCategories(linuxDoOptions),
     v2ex: () => getV2exCategories(options)
   });
 }
@@ -434,13 +492,7 @@ export function getReplies({
   return pickSource<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),
-    v2ex: async (): Promise<RepliesResponse> => annotateSourceDiagnosticSummary({ items: [], hasMore: false, nextPage: null }, {
-      parserVariant: 'unsupported-replies',
-      candidateCount: 0,
-      validCount: 0,
-      droppedCount: 0,
-      isExpectedEmpty: true
-    })
+    v2ex: () => getV2exReplies(id, options)
   });
 }
 
@@ -782,6 +834,9 @@ export async function searchTopics({
   nodeSeekCookie,
   nodeSeekCredentials,
   nodeSeekUserAgent,
+  linuxDoTimeoutMs,
+  managedReadAppState,
+  managedReadTimeoutMs,
   sort = 'relevance',
   filter,
   signal,
@@ -796,6 +851,9 @@ export async function searchTopics({
   nodeSeekCookie?: string;
   nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
   nodeSeekUserAgent?: string;
+  linuxDoTimeoutMs?: number;
+  managedReadAppState?: OperationDeadlineAppState;
+  managedReadTimeoutMs?: number;
   sort?: SearchSort;
   filter?: SourceSearchFilter;
   signal?: AbortSignal;
@@ -804,13 +862,22 @@ export async function searchTopics({
   const adapterQuery = positiveSearchQuery(query);
   const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
   const options = { limit: adapterLimit, page, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const linuxDoOptions = { ...options, timeoutMs: linuxDoTimeoutMs ?? timeoutMs };
   if (source === 'all') {
     const nodeSeekOptions = resolveNodeSeekOptions(options, nodeSeekCredentials);
     const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
     const results = await Promise.allSettled([
-      nodeSeekOptions.then((resolved) => searchNodeSeek(adapterQuery, resolved)),
-      searchLinuxDo(adapterQuery, options),
-      searchV2ex(adapterQuery, options)
+      runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => (
+        nodeSeekOptions.then((resolved) => searchNodeSeek(adapterQuery, { ...resolved, signal: managedSignal }))
+      )),
+      runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => searchLinuxDo(adapterQuery, {
+        ...linuxDoOptions,
+        signal: managedSignal
+      })),
+      runManagedSourceRead(managedReadAppState, managedReadTimeoutMs, signal, (managedSignal) => searchV2ex(adapterQuery, {
+        ...options,
+        signal: managedSignal
+      }))
     ]);
     throwSilentInterruptionResult(results);
     const expression = parseSearchExpression(query);
@@ -844,7 +911,7 @@ export async function searchTopics({
       activeFilter?.source === 'linuxdo'
         ? buildLinuxDoSearchQuery(adapterQuery, activeFilter, categories)
         : adapterQuery,
-      options
+      linuxDoOptions
     ),
     v2ex: () => searchV2ex(adapterQuery, {
       ...options,

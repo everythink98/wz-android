@@ -5,7 +5,6 @@ import { LINUXDO_URL } from '../appUrls';
 import type { LoginNavigationRequest } from '../appTypes';
 import { AppButton } from '../components/AppControls';
 import { LoginWebViewModal } from '../components/LoginWebViewModal';
-import { LINUXDO_WEBVIEW_PROBE_SCRIPT } from '../loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '../loginFormAdapters';
 import type { SiteSessionViewModel } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
@@ -22,6 +21,7 @@ export function LinuxDoVerifyModal({
   linuxDoSession,
   linuxDoWebViewError,
   linuxDoWebViewKey,
+  linuxDoWebViewProbeScript,
   linuxDoWebViewRef,
   linuxDoWebViewUserAgent,
   mountLinuxDoWebView,
@@ -49,6 +49,7 @@ export function LinuxDoVerifyModal({
   linuxDoSession: SiteSessionViewModel;
   linuxDoWebViewError: string;
   linuxDoWebViewKey: number;
+  linuxDoWebViewProbeScript: string;
   linuxDoWebViewRef: RefObject<WebView | null>;
   linuxDoWebViewUserAgent: string;
   mountLinuxDoWebView: boolean;
@@ -122,7 +123,7 @@ export function LinuxDoVerifyModal({
           thirdPartyCookiesEnabled
           setSupportMultipleWindows={false}
           userAgent={linuxDoWebViewUserAgent}
-          injectedJavaScript={LINUXDO_WEBVIEW_PROBE_SCRIPT}
+          injectedJavaScript={linuxDoWebViewProbeScript}
           onLoadProgress={(event) => {
             if (event.nativeEvent.progress >= 0.8) {
               markLinuxDoPageReady();
@@ -133,7 +134,7 @@ export function LinuxDoVerifyModal({
             if (!('code' in event.nativeEvent)) {
               onSetLinuxDoWebViewError('', linuxDoWebViewKey, credentialAttempt);
             }
-            linuxDoWebViewRef.current?.injectJavaScript(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+            linuxDoWebViewRef.current?.injectJavaScript(linuxDoWebViewProbeScript);
             if (loginFormMode) {
               linuxDoWebViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.linuxdo.probeScript(credentialAttempt));
             }

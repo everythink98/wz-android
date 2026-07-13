@@ -13,8 +13,19 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from '../yaohuoApi';
-import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from '../request';
+import {
+  REQUEST_CANCELED_MESSAGE,
+  REQUEST_SUPERSEDED_MESSAGE,
+  withOperationDeadline,
+  type OperationDeadlineAppState,
+  type Fetcher
+} from '../request';
+import { withBrowserFetchIntent, type BrowserFetchIntent } from '../browserFetchIntent';
 import { isSilentRequestInterruption, isSupersededRequest } from '../appUtils';
+import { isLinuxDoBrowserFetchUrl } from '../linuxdoFetchFallback';
+import { createDirectRecoveryFetcher, type DirectTransportRecoveryEvent } from '../directWebViewFallback';
+import { isV2exHost } from '../localV2exHelpers';
+import { isYaohuoRequestUrl } from '../localYaohuoHelpers';
 import { sourceErrorFromUnknown } from '../sourceErrors';
 import {
   beginDiagnosticTrace,
@@ -36,6 +47,7 @@ export {
 } from '../linuxdoActionClient';
 export {
   getLinuxDoLevelProfile,
+  isLinuxDoLoginExpiredError,
   type LinuxDoLevelProfile
 } from '../linuxdoLevel';
 export {
@@ -141,13 +153,17 @@ type SourceGatewayCredentialLoadOptions = {
   diagnosticTrace?: DiagnosticTrace;
 };
 
+const MANAGED_READ_TIMEOUT_MS = 30_000;
+
 type SourceGatewayDependencies = {
+  appState?: OperationDeadlineAppState;
   clearYaohuoLoginState: (options?: { generation?: number; isCurrent?: () => boolean }) => Promise<boolean | void>;
   fetcher: Fetcher;
   isYaohuoCredentialSuppressed?: () => boolean;
   loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgent: () => string;
+  recoverNetworkConnectionPool?: (event: DirectTransportRecoveryEvent) => Promise<unknown> | unknown;
 };
 
 type NodeSeekReadCredentials = {
@@ -158,7 +174,7 @@ type NodeSeekReadCredentials = {
 
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
 type GetReplyOptions = Parameters<typeof getForumReply>[0];
-type ManagedReadKeys = 'fetcher' | 'nodeSeekCookie' | 'nodeSeekCredentials' | 'nodeSeekUserAgent' | 'yaohuoCookie';
+type ManagedReadKeys = 'fetcher' | 'linuxDoTimeoutMs' | 'managedReadAppState' | 'managedReadTimeoutMs' | 'nodeSeekCookie' | 'nodeSeekCredentials' | 'nodeSeekUserAgent' | 'yaohuoCookie';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
 type ManagedSearchTopicsOptions = Omit<SearchTopicsOptions, ManagedReadKeys>;
@@ -166,10 +182,24 @@ type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
 type ManagedGetReplyOptions = Omit<GetReplyOptions, 'fetcher'>;
 type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie'>;
+type ManagedReadOperation = 'getCategories' | 'getFeed' | 'getReplies' | 'getReply' | 'getTopic' | 'getUserProfile' | 'searchTopics';
 export type SourceGatewayReadContext = {
   isCurrent?: () => boolean;
   trace?: DiagnosticTrace;
 };
+
+function browserFetchIntentForManagedRead(operation: ManagedReadOperation): BrowserFetchIntent {
+  if (operation === 'getFeed' || operation === 'getCategories') {
+    return { owner: 'feed', priority: 'background', cancelable: true };
+  }
+  if (operation === 'searchTopics') {
+    return { owner: 'search', priority: 'foreground', cancelable: true };
+  }
+  if (operation === 'getUserProfile') {
+    return { owner: 'user', priority: 'foreground', cancelable: true };
+  }
+  return { owner: 'topic', priority: 'foreground', cancelable: true };
+}
 
 function summarizeReadResult(result: unknown) {
   const value = result && typeof result === 'object' ? result as Record<string, unknown> : {};
@@ -218,18 +248,48 @@ function diagnosticReasonForSourceError(kind: ReturnType<typeof sourceErrorFromU
 }
 
 export function createSourceGateway(dependencies: SourceGatewayDependencies) {
-  const read = async <T>(source: FeedSource, operationName: string, operation: (credentials: {
+  const managedReadFetcher = dependencies.recoverNetworkConnectionPool
+    ? createDirectRecoveryFetcher({
+      appState: dependencies.appState,
+      defaultFetcher: createDirectRecoveryFetcher({
+        appState: dependencies.appState,
+        defaultFetcher: dependencies.fetcher,
+        isDirectRequestUrl: isYaohuoRequestUrl,
+        recoverNetworkConnectionPool: dependencies.recoverNetworkConnectionPool,
+        source: 'yaohuo'
+      }),
+      isDirectRequestUrl: (input) => {
+        try {
+          const url = new URL(input);
+          const host = url.hostname.toLowerCase();
+          return url.protocol === 'https:'
+            && !url.username
+            && !url.password
+            && (isV2exHost(host) || host === 'sov2ex.com' || host.endsWith('.sov2ex.com'));
+        } catch {
+          return false;
+        }
+      },
+      recoverNetworkConnectionPool: dependencies.recoverNetworkConnectionPool,
+      source: 'v2ex'
+    })
+    : dependencies.fetcher;
+  const read = async <T>(source: FeedSource, operationName: ManagedReadOperation, operation: (credentials: {
     fetcher: Fetcher;
+    linuxDoTimeoutMs?: number;
+    managedReadAppState?: OperationDeadlineAppState;
+    managedReadTimeoutMs?: number;
     nodeSeekCookie?: string;
     nodeSeekCredentials?: Promise<NodeSeekReadCredentials>;
     nodeSeekUserAgent?: string;
+    signal?: AbortSignal;
     timeoutMs?: number;
     yaohuoCookie?: string;
-  }) => Promise<T>, context?: SourceGatewayReadContext) => {
+  }) => Promise<T>, context?: SourceGatewayReadContext, parentSignal?: AbortSignal) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
     let yaohuoGeneration: number | undefined;
-    try {
+    const executeRead = async (managedSignal?: AbortSignal) => {
       const nodeSeekCredentials = source === 'all'
         ? dependencies.loadNodeSeekCookieForSource(source, { diagnosticTrace: trace }).then((nodeSeekCookie) => ({
           nodeSeekCookie,
@@ -248,6 +308,9 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
           diagnosticTrace: trace
         })
         : undefined;
+      if (managedSignal?.aborted) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
       const yaohuoSuppressed = source === 'yaohuo'
         && dependencies.isYaohuoCredentialSuppressed?.() === true;
       const yaohuoCookie = yaohuoSuppressed ? undefined : loadedYaohuoCookie;
@@ -260,18 +323,44 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
           : { hasCredential: Boolean(nodeSeekCookie?.trim() || yaohuoCookie?.trim()) })
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
-      const diagnosticFetcher = withDiagnosticFetcher(trace, dependencies.fetcher);
-      const fetcher: Fetcher = source === 'yaohuo' && !yaohuoCookie?.trim()
-        ? (input, init) => diagnosticFetcher(input, { ...init, credentials: 'omit' })
-        : diagnosticFetcher;
+      const diagnosticFetcher = withDiagnosticFetcher(trace, managedReadFetcher);
+      const browserFetchIntent = browserFetchIntentForManagedRead(operationName);
+      const fetcher: Fetcher = (input, init) => {
+        const requestInit = source === 'yaohuo' && !yaohuoCookie?.trim()
+          ? { ...init, credentials: 'omit' as const }
+          : { ...init };
+        return diagnosticFetcher(
+          input,
+          isLinuxDoBrowserFetchUrl(String(input))
+            ? withBrowserFetchIntent(requestInit, browserFetchIntent)
+            : requestInit
+        );
+      };
       const result = await operation({
         fetcher,
+        ...((source === 'all' || source === 'linuxdo')
+          ? { linuxDoTimeoutMs: MANAGED_READ_TIMEOUT_MS }
+          : {}),
+        ...(source === 'all'
+          ? {
+            managedReadAppState: dependencies.appState,
+            managedReadTimeoutMs: MANAGED_READ_TIMEOUT_MS
+          }
+          : {}),
         nodeSeekCookie,
         nodeSeekCredentials,
         nodeSeekUserAgent: source === 'nodeseek' ? dependencies.nodeSeekUserAgent() : undefined,
-        ...(source === 'nodeseek' ? { timeoutMs: 0 } : {}),
+        signal: managedSignal,
+        ...(source === 'nodeseek'
+          ? { timeoutMs: 0 }
+          : source === 'linuxdo'
+          ? { timeoutMs: MANAGED_READ_TIMEOUT_MS }
+          : {}),
         yaohuoCookie
       });
+      if (managedSignal?.aborted) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
       if (source === 'yaohuo'
         && yaohuoSuppressed !== (dependencies.isYaohuoCredentialSuppressed?.() === true)) {
         throw new Error(REQUEST_CANCELED_MESSAGE);
@@ -297,6 +386,19 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         hintDiagnosticOutcome(trace, 'partial', { source });
       }
       return result;
+    };
+
+    try {
+      if (parentSignal?.aborted) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
+      return source === 'all'
+        ? await executeRead(parentSignal)
+        : await withOperationDeadline(executeRead, {
+          appState: dependencies.appState,
+          signal: parentSignal,
+          timeoutMs: MANAGED_READ_TIMEOUT_MS
+        });
     } catch (error) {
       if (isSilentRequestInterruption(error)) {
         if (ownsTrace) {
@@ -351,57 +453,55 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
   };
 
   return {
-    async hasYaohuoCredential() {
-      if (dependencies.isYaohuoCredentialSuppressed?.() === true) {
-        return false;
-      }
-      const cookie = await dependencies.loadYaohuoCookieForSource('yaohuo');
-      return dependencies.isYaohuoCredentialSuppressed?.() === true
-        ? false
-        : Boolean(cookie?.trim());
-    },
     getCategories(options: ManagedGetCategoriesOptions = {}, context?: SourceGatewayReadContext) {
       const source = options.source || 'all';
       return read(source, 'getCategories', (credentials) => getForumCategories({
         ...options,
         ...credentials
-      }), context);
+      }), context, options.signal);
     },
     getFeed(options: ManagedGetFeedOptions, context?: SourceGatewayReadContext) {
       return read(options.source, 'getFeed', (credentials) => getFeed({
         ...options,
         ...credentials
-      }), context);
+      }), context, options.signal);
+    },
+    getFeedIfCredentialed(options: ManagedGetFeedOptions & { source: 'yaohuo' }, context?: SourceGatewayReadContext) {
+      return read(options.source, 'getFeed', (credentials) => credentials.yaohuoCookie?.trim()
+        ? getFeed({ ...options, ...credentials })
+        : Promise.resolve(null), context, options.signal);
     },
     searchTopics(options: ManagedSearchTopicsOptions, context?: SourceGatewayReadContext) {
       return read(options.source, 'searchTopics', (credentials) => searchTopics({
         ...options,
         ...credentials
-      }), context);
+      }), context, options.signal);
     },
     getTopic(options: ManagedGetTopicOptions, context?: SourceGatewayReadContext) {
       return read(options.source, 'getTopic', (credentials) => getTopic({
         ...options,
         ...credentials
-      }), context);
+      }), context, options.signal);
     },
     getReplies(options: ManagedGetRepliesOptions, context?: SourceGatewayReadContext) {
       return read(options.source, 'getReplies', (credentials) => getReplies({
         ...options,
         ...credentials
-      }), context);
+      }), context, options.signal);
     },
     getReply(options: ManagedGetReplyOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getReply', ({ fetcher }) => getForumReply({
+      return read(options.source, 'getReply', ({ fetcher, signal, timeoutMs }) => getForumReply({
         ...options,
-        fetcher
-      }), context);
+        fetcher,
+        signal,
+        timeoutMs
+      }), context, options.signal);
     },
     getUserProfile(options: ManagedGetUserProfileOptions, context?: SourceGatewayReadContext) {
       return read(options.source, 'getUserProfile', (credentials) => getUserProfile({
         ...options,
         ...credentials
-      }), context);
+      }), context, options.signal);
     }
   };
 }

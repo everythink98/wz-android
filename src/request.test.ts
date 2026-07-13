@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE } from './request';
+import {
+  fetchWithTimeout,
+  REQUEST_CANCELED_MESSAGE,
+  REQUEST_SUPERSEDED_MESSAGE,
+  REQUEST_TIMEOUT_MESSAGE,
+  withOperationDeadline
+} from './request';
 
-const REQUEST_TIMEOUT_MESSAGE = '请求超时，请稍后重试';
 
 describe('Android request helpers', () => {
   it('passes an abort signal to the fetcher', async () => {
@@ -75,6 +80,18 @@ describe('Android request helpers', () => {
     await expect(request).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
   });
 
+  it('does not call the fetcher when its signal is already canceled', async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn(async () => new Response('{}'));
+    controller.abort();
+
+    await expect(fetchWithTimeout('https://example.com/feed.json', {}, {
+      fetcher,
+      signal: controller.signal
+    })).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('cleans timers and abort listeners when the fetcher throws synchronously', async () => {
     vi.useFakeTimers();
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
@@ -94,6 +111,109 @@ describe('Android request helpers', () => {
       expect(signal.removeEventListener).toHaveBeenCalledWith('abort', expect.any(Function));
     } finally {
       clearTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('bounds a whole multi-stage operation instead of restarting the budget for each request', async () => {
+    vi.useFakeTimers();
+    const stages: AbortSignal[] = [];
+
+    try {
+      const operation = withOperationDeadline(async (signal) => {
+        stages.push(signal);
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+        stages.push(signal);
+        await new Promise<void>(() => undefined);
+        return 'late';
+      }, { timeoutMs: 1000 });
+
+      await vi.advanceTimersByTimeAsync(999);
+      expect(stages).toHaveLength(2);
+      expect(stages[0]?.aborted).toBe(false);
+
+      const assertion = expect(operation).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await assertion;
+      expect(stages[0]?.aborted).toBe(true);
+      expect(stages[1]).toBe(stages[0]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps caller cancellation distinct from an operation deadline', async () => {
+    const controller = new AbortController();
+    let childSignal: AbortSignal | undefined;
+    const operation = withOperationDeadline(async (signal) => {
+      childSignal = signal;
+      return new Promise<never>(() => undefined);
+    }, { signal: controller.signal, timeoutMs: 30_000 });
+
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(operation).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    expect(childSignal?.aborted).toBe(true);
+  });
+
+  it('does not start an operation when its caller is already canceled', async () => {
+    const controller = new AbortController();
+    const operation = vi.fn(async () => 'unexpected');
+    controller.abort();
+
+    await expect(withOperationDeadline(operation, {
+      signal: controller.signal,
+      timeoutMs: 1000
+    })).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it('does not rewrite a superseded operation as a cancellation', async () => {
+    await expect(withOperationDeadline(async () => {
+      throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+    }, { timeoutMs: 1000 })).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+  });
+
+  it('counts only foreground-active time toward an operation deadline', async () => {
+    vi.useFakeTimers();
+    type AppStateStatus = 'active' | 'background' | 'extension' | 'inactive' | 'unknown';
+    const listeners = new Set<(state: AppStateStatus) => void>();
+    const appState = {
+      currentState: 'active' as AppStateStatus | null,
+      addEventListener: vi.fn((_event: 'change', listener: (state: AppStateStatus) => void) => {
+        listeners.add(listener);
+        return { remove: () => listeners.delete(listener) };
+      })
+    };
+    const emit = (state: AppStateStatus) => {
+      appState.currentState = state;
+      for (const listener of [...listeners]) listener(state);
+    };
+
+    try {
+      let settled = false;
+      const outcome = withOperationDeadline(async () => new Promise<never>(() => undefined), {
+        appState,
+        timeoutMs: 1000
+      }).finally(() => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(400);
+      emit('background');
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled).toBe(false);
+
+      emit('active');
+      await vi.advanceTimersByTimeAsync(599);
+      expect(settled).toBe(false);
+      const assertion = expect(outcome).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+      await vi.advanceTimersByTimeAsync(1);
+      await assertion;
+      expect(listeners).toHaveLength(0);
+    } finally {
+      vi.clearAllTimers();
       vi.useRealTimers();
     }
   });

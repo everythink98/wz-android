@@ -3,6 +3,7 @@ import { Alert, Animated, Easing, Keyboard, Modal, Pressable, ScrollView, StyleS
 import { ArrowLeft, Check, Info, Trash2, X } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppButton, EmptyText, SettingRail } from '../../components/AppControls';
+import { ViewportBoundedScrollView } from '../../components/ViewportBoundedScrollView';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import {
   createNetworkProxyProfile,
@@ -434,7 +435,7 @@ export function NetworkProxyModal({
             <View style={styles.searchFilterHeader}>
               <Text style={styles.searchFilterTitle}>{draftMode === 'edit' ? '编辑代理' : '新增代理'}</Text>
             </View>
-            <ScrollView style={styles.searchFilterBody} contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]} keyboardShouldPersistTaps="handled">
+            <ViewportBoundedScrollView contentContainerStyle={[styles.searchFilterBodyInner, proxyStyles.sheetBody]} keyboardShouldPersistTaps="handled">
               <SettingRail
                 title="类型"
                 items={[
@@ -454,7 +455,7 @@ export function NetworkProxyModal({
                 <ProxyInput label="用户名" value={draft.username} error={visibleErrors.username} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(username) => setDraft((current) => ({ ...current, username }))} />
                 <ProxyInput label="密码" value={draft.password} error={visibleErrors.password} styles={styles} theme={theme} autoCapitalize="none" placeholder="可空" style={proxyStyles.fieldMain} onChangeText={(password) => setDraft((current) => ({ ...current, password }))} />
               </View>
-            </ScrollView>
+            </ViewportBoundedScrollView>
             <View style={styles.searchFilterActions}>
               <AppButton compact label="取消" variant="ghost" styles={styles} disabled={busy} onPress={closeDraft} />
               <AppButton compact label={busy ? '保存中' : '确定'} variant="primary" styles={styles} disabled={busy} onPress={saveDraft} />

@@ -2,7 +2,7 @@ import type { HTMLElement } from 'node-html-parser';
 import { withBrowserFetchIntent, type BrowserFetchIntent, type BrowserFetchOwner, type BrowserFetchPriority } from './browserFetchIntent';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from './request';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT, hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from './nodeseekCookies';
-import { googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
+import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage, isGoogleSiteSearchResponse } from './googleSearchFallback';
 import type { NodeSeekSearchFilter } from './searchFilters';
 import type { Category, FeedResponse, NodeSeekFeedFilter, RepliesResponse, Reply, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
@@ -587,7 +587,22 @@ function embeddedTopics(data: Record<string, unknown>) {
   ].filter(isRecord).map((topic) => normalizeTopic(topic)).filter(Boolean) as Topic[];
 }
 
-function nodeSeekSearchTopicUrl(id: string, href: string) {
+function nodeSeekSearchTopicUrl(id: string, href: string, requireNodeSeekHost = false) {
+  if (requireNodeSeekHost) {
+    try {
+      const target = new URL(googleResultTargetUrl(href));
+      const targetId = target.pathname.match(/^\/post-(\d+)-\d+\/?$/i)?.[1];
+      return target.protocol === 'https:'
+        && !target.username
+        && !target.password
+        && isNodeSeekHost(target.hostname)
+        && targetId === id
+        ? nodeSeekTopicUrl(id)
+        : '';
+    } catch {
+      return '';
+    }
+  }
   try {
     const url = new URL(href, BASE_URL);
     return safeNodeSeekTopicUrl(id, url.searchParams.get('q') || href);
@@ -596,7 +611,7 @@ function nodeSeekSearchTopicUrl(id: string, href: string) {
   }
 }
 
-function parseHtmlTopics(html: string) {
+function parseHtmlTopics(html: string, requireNodeSeekHost = false) {
   const root = parseHtml(html);
   const renderedItems: Topic[] = [];
   for (const row of root.querySelectorAll('li.post-list-item')) {
@@ -607,7 +622,8 @@ function parseHtmlTopics(html: string) {
       continue;
     }
     const title = elementText(link.querySelector('h3')) || elementText(link);
-    if (!title) {
+    const topicUrl = nodeSeekSearchTopicUrl(id, href, requireNodeSeekHost);
+    if (!title || !topicUrl) {
       continue;
     }
     const authorLink = row.querySelector('.info-author a[href*="/space/"]');
@@ -628,7 +644,7 @@ function parseHtmlTopics(html: string) {
       authorUrl: authorLink?.getAttribute('href') ? absoluteUrl(authorLink.getAttribute('href'), BASE_URL) : undefined,
       categoryId,
       category: categoryName,
-      url: nodeSeekSearchTopicUrl(id, href),
+      url: topicUrl,
       createdAt: lastReplyAt || new Date().toISOString(),
       lastReplyAt: lastReplyAt || new Date().toISOString(),
       replyCount: integerFromElement(row.querySelector('.info-comments-count')),
@@ -649,7 +665,8 @@ function parseHtmlTopics(html: string) {
     const href = link.getAttribute('href') || '';
     const id = href.match(/post-(\d+)/)?.[1];
     const title = elementText(link.querySelector('h3')) || elementText(link);
-    if (!id || !title || seen.has(id)) {
+    const topicUrl = id ? nodeSeekSearchTopicUrl(id, href, requireNodeSeekHost) : '';
+    if (!id || !title || !topicUrl || seen.has(id)) {
       continue;
     }
     seen.add(id);
@@ -661,7 +678,7 @@ function parseHtmlTopics(html: string) {
       id,
       title,
       author: '',
-      url: nodeSeekSearchTopicUrl(id, href),
+      url: topicUrl,
       createdAt: new Date().toISOString(),
       lastReplyAt: new Date().toISOString(),
       replyCount: parsePositiveInteger(text.match(/回复\s*(\d+)/)?.[1]),
@@ -672,9 +689,9 @@ function parseHtmlTopics(html: string) {
   return items;
 }
 
-function parseNodeSeekSearchTopics(html: string) {
+function parseNodeSeekSearchTopics(html: string, requireNodeSeekHost = false) {
   const embedded = extractNodeSeekEmbeddedData(html);
-  const renderedItems = parseHtmlTopics(html);
+  const renderedItems = parseHtmlTopics(html, requireNodeSeekHost);
   const root = parseHtml(html);
   const hasSearchSurface = Boolean(root.querySelector('form[action*="/search"], input[name="q"], .post-list, .empty-state, .notice, .alert'));
   const seen = new Set<string>();
@@ -947,9 +964,25 @@ export async function getNodeSeekCategories(options: NodeSeekOptions = {}) {
   });
 }
 
-function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }) {
+type NodeSeekReplyIdentity = {
+  commentId?: number;
+  floor?: number;
+};
+
+function nodeSeekReplyRecords(comments: unknown[], skipFirst: boolean, start = 0) {
   const source = skipFirst ? comments.slice(1) : comments;
-  return source.slice(start).filter(isRecord).map((comment, index) => {
+  return source.slice(start).filter(isRecord);
+}
+
+function nodeSeekReplyIdentities(comments: unknown[], skipFirst: boolean, start = 0): NodeSeekReplyIdentity[] {
+  return nodeSeekReplyRecords(comments, skipFirst, start).map((comment) => ({
+    commentId: optionalInteger(comment.commentId),
+    floor: optionalInteger(comment.floorIndex ?? comment.floor)
+  }));
+}
+
+function normalizeReplies(comments: unknown[], { skipFirst, start = 0, floorOffset = 0 }: { skipFirst: boolean; start?: number; floorOffset?: number }) {
+  return nodeSeekReplyRecords(comments, skipFirst, start).map((comment, index) => {
     const poster = isRecord(comment.poster) ? comment.poster : {};
     const authorId = nodeSeekEmbeddedUserId(poster);
     const authorUrl = absoluteUrl(poster.profile, BASE_URL) || (authorId ? nodeSeekSpaceUrl(authorId) : undefined);
@@ -1051,7 +1084,12 @@ function normalizePostData(data: Record<string, unknown>, id: string, url: strin
   };
 }
 
-function mergeRenderedNodeSeekReply(rendered: Reply, embedded?: Reply): Reply {
+function mergeRenderedNodeSeekReply(
+  rendered: Reply,
+  embedded?: Reply,
+  renderedIdentity: NodeSeekReplyIdentity = {},
+  embeddedIdentity: NodeSeekReplyIdentity = {}
+): Reply {
   if (!embedded) {
     return rendered;
   }
@@ -1061,7 +1099,8 @@ function mergeRenderedNodeSeekReply(rendered: Reply, embedded?: Reply): Reply {
     author: rendered.author || embedded.author,
     contentHtml: rendered.contentHtml || embedded.contentHtml,
     createdAt: rendered.createdAt || embedded.createdAt,
-    commentId: rendered.commentId ?? embedded.commentId,
+    floor: renderedIdentity.floor ?? embeddedIdentity.floor ?? rendered.floor ?? embedded.floor,
+    commentId: renderedIdentity.commentId ?? embeddedIdentity.commentId ?? rendered.commentId ?? embedded.commentId,
     upvoteCount: rendered.upvoteCount ?? embedded.upvoteCount,
     likeCount: rendered.likeCount ?? embedded.likeCount,
     dislikeCount: rendered.dislikeCount ?? embedded.dislikeCount,
@@ -1076,20 +1115,71 @@ function mergeRenderedNodeSeekReply(rendered: Reply, embedded?: Reply): Reply {
   };
 }
 
-function matchingEmbeddedNodeSeekReply(reply: Reply, embeddedReplies: Reply[]) {
-  return embeddedReplies.find((item) => (
-    reply.commentId && item.commentId
-      ? item.commentId === reply.commentId
-      : Boolean(reply.floor && item.floor === reply.floor)
-  ));
+function matchingEmbeddedNodeSeekReplyIndex(
+  identity: NodeSeekReplyIdentity,
+  embeddedIdentities: NodeSeekReplyIdentity[],
+  reservedIndexes: Set<number>
+) {
+  if (identity.commentId !== undefined) {
+    const commentIndex = embeddedIdentities.findIndex((embeddedIdentity, index) => (
+      !reservedIndexes.has(index) && embeddedIdentity.commentId === identity.commentId
+    ));
+    if (commentIndex >= 0) {
+      return commentIndex;
+    }
+  }
+  return identity.floor === undefined
+    ? -1
+    : embeddedIdentities.findIndex((embeddedIdentity, index) => (
+      !reservedIndexes.has(index) && embeddedIdentity.floor === identity.floor
+    ));
 }
 
-function mergeRenderedNodeSeekTopic(rendered: TopicDetail, embedded?: TopicDetail): TopicDetail {
+function mergeRenderedNodeSeekReplies(
+  renderedReplies: Reply[],
+  renderedIdentities: NodeSeekReplyIdentity[],
+  embeddedReplies: Reply[],
+  embeddedIdentities: NodeSeekReplyIdentity[]
+) {
+  const reservedIndexes = new Set<number>();
+  const strongMatches = renderedIdentities.map((identity) => {
+    const index = matchingEmbeddedNodeSeekReplyIndex(identity, embeddedIdentities, reservedIndexes);
+    if (index >= 0) {
+      reservedIndexes.add(index);
+    }
+    return index;
+  });
+  return renderedReplies.map((reply, index) => {
+    const identity = renderedIdentities[index] || {};
+    let embeddedIndex = strongMatches[index] ?? -1;
+    if (embeddedIndex < 0
+      && identity.commentId === undefined
+      && identity.floor === undefined
+      && index < embeddedReplies.length
+      && !reservedIndexes.has(index)) {
+      embeddedIndex = index;
+      reservedIndexes.add(index);
+    }
+    return mergeRenderedNodeSeekReply(
+      reply,
+      embeddedIndex >= 0 ? embeddedReplies[embeddedIndex] : undefined,
+      identity,
+      embeddedIndex >= 0 ? embeddedIdentities[embeddedIndex] : undefined
+    );
+  });
+}
+
+function mergeRenderedNodeSeekTopic(
+  rendered: TopicDetail,
+  renderedReplyIdentities: NodeSeekReplyIdentity[],
+  embedded?: TopicDetail,
+  embeddedReplyIdentities: NodeSeekReplyIdentity[] = []
+): TopicDetail {
   if (!embedded) {
     return rendered;
   }
   const replies = rendered.replies.length
-    ? rendered.replies.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embedded.replies)))
+    ? mergeRenderedNodeSeekReplies(rendered.replies, renderedReplyIdentities, embedded.replies, embeddedReplyIdentities)
     : embedded.replies;
   return {
     ...embedded,
@@ -1151,13 +1241,13 @@ function renderedNodeSeekAvatar(element: HTMLElement | null | undefined) {
   );
 }
 
-function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number], fallback: number) {
+function renderedNodeSeekFloor(element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number]) {
   const linkFloor = parsePositiveInteger(elementText(element.querySelector('.floor-link')));
   if (linkFloor) {
     return linkFloor;
   }
   const id = String(element.getAttribute('id') || '');
-  return /^\d+$/.test(id) ? Number(id) : fallback;
+  return /^\d+$/.test(id) ? Number(id) : undefined;
 }
 
 function renderedNodeSeekReactionItem(element: HTMLElement | null | undefined, keywords: string[]) {
@@ -1265,7 +1355,18 @@ function nodeSeekRestrictedNotice(root: ReturnType<typeof parseHtml>) {
   return '';
 }
 
-function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 30): TopicDetail | null {
+type RenderedNodeSeekTopicParse = {
+  topic: TopicDetail;
+  missingFloorCount: number;
+  replyIdentities: NodeSeekReplyIdentity[];
+};
+
+function parseRenderedNodeSeekTopicHtml(
+  html: string,
+  id: string,
+  replyLimit = 30,
+  floorOffset = 0
+): RenderedNodeSeekTopicParse | null {
   const root = parseHtml(html);
   const firstContentItem = root.querySelector('.content-item');
   const restrictedNotice = nodeSeekRestrictedNotice(root);
@@ -1295,11 +1396,19 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     return Boolean(replyContent?.innerHTML && row !== firstContentItem);
   });
+  let missingFloorCount = 0;
+  const replyIdentities: NodeSeekReplyIdentity[] = [];
   const allReplies = replyRows.map((row, index) => {
     const replyContent = row.querySelector('.post-content, .comment-content, .reply-content, .content');
     const authorHref = row.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
     const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
     const authorLevelLabel = renderedNodeSeekRoleLabel(row);
+    const floor = renderedNodeSeekFloor(row);
+    const commentId = renderedNodeSeekCommentId(row);
+    replyIdentities.push({ floor, commentId });
+    if (floor === undefined) {
+      missingFloorCount += 1;
+    }
     return {
       author: renderedNodeSeekAuthor(row),
       authorAvatar: renderedNodeSeekAvatar(row),
@@ -1308,8 +1417,8 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
       ...(authorLevelLabel ? { authorLevelLabel } : {}),
       contentHtml: sanitizeContentHtml(replyContent?.innerHTML || '', BASE_URL),
       createdAt: renderedNodeSeekTime(row.querySelector('time')) || createdAt,
-      floor: renderedNodeSeekFloor(row, index + 1),
-      commentId: renderedNodeSeekCommentId(row),
+      floor: floor ?? floorOffset + index + 1,
+      commentId,
       upvoteCount: renderedNodeSeekReactionCount(row, ['点赞', 'good-one', 'upvote']),
       likeCount: renderedNodeSeekReactionCount(row, ['加鸡腿', 'chicken-leg']),
       dislikeCount: renderedNodeSeekReactionCount(row, ['反对', 'bad-one', 'oppose', 'dislike']),
@@ -1327,7 +1436,7 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
   const authorHref = authorContainer?.querySelector('a[href*="/space/"]')?.getAttribute('href') || '';
   const authorId = authorHref.match(/\/space\/(\d+)/)?.[1];
   const authorLevelLabel = renderedNodeSeekRoleLabel(authorContainer);
-  return {
+  const topic: TopicDetail = {
     source: 'nodeseek',
     id,
     title,
@@ -1359,21 +1468,29 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     replyNextPage: allReplies.length > replyLimit ? 1 : null,
     replyNextOffset: allReplies.length > replyLimit ? replies.length : null
   };
+  return { topic, missingFloorCount, replyIdentities: replyIdentities.slice(0, replyLimit) };
 }
 
 async function fetchTopicHtml(id: string, page: number, options: NodeSeekOptions) {
   return fetchNodeSeekText(nodeSeekTopicPagePath(id, page), nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground'));
 }
 
-async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions) {
+async function fetchTopicPageData(id: string, page: number, options: NodeSeekOptions, floorOffset = 0) {
   const html = await fetchTopicHtml(id, page, options);
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
-  const rendered = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER);
+  const renderedParse = parseRenderedNodeSeekTopicHtml(html, id, Number.MAX_SAFE_INTEGER, floorOffset);
+  const rendered = renderedParse?.topic || null;
   if (!postData && !rendered) {
     throw new Error('NodeSeek 主题解析失败');
   }
-  return { html, postData, rendered };
+  return {
+    html,
+    postData,
+    rendered,
+    renderedMissingFloorCount: renderedParse?.missingFloorCount || 0,
+    renderedReplyIdentities: renderedParse?.replyIdentities || []
+  };
 }
 
 export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { replyLimit?: number } = {}) {
@@ -1382,10 +1499,17 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   const embedded = extractNodeSeekEmbeddedData(html);
   const postData = embedded && isRecord(embedded.postData) ? embedded.postData : null;
   const currentUser = embedded ? findNodeSeekCurrentUser(embedded) : null;
-  const rendered = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
+  const renderedParse = parseRenderedNodeSeekTopicHtml(html, id, options.replyLimit || 30);
+  const rendered = renderedParse?.topic || null;
   if (rendered) {
+    const embeddedComments = postData ? arrayField(postData.comments) : [];
     const embeddedTopic = postData ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30) : undefined;
-    const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
+    const topic = mergeRenderedNodeSeekTopic(
+      rendered,
+      renderedParse?.replyIdentities || [],
+      embeddedTopic,
+      nodeSeekReplyIdentities(embeddedComments, true).slice(0, options.replyLimit || 30)
+    );
     const polls = mergeNodeSeekPolls(
       topic.polls,
       await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions)
@@ -1401,7 +1525,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       candidateCount: 1 + Math.max(rendered.replies.length, Math.max(0, comments.length - 1)),
       validCount: 1 + result.replies.length,
       droppedCount: Math.max(0, Math.max(rendered.replies.length, Math.max(0, comments.length - 1)) - result.replies.length),
-      missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
+      missingFloorCount: renderedParse?.missingFloorCount || 0
     });
   }
   if (postData) {
@@ -1490,20 +1614,28 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
   const requestOptions = nodeSeekOptionsWithBrowserIntent(options, 'topic', 'foreground');
   const page = options.page || 1;
   const limit = options.limit || 30;
-  const { html, postData, rendered } = await fetchTopicPageData(id, page, requestOptions);
   const hasOffset = typeof options.offset === 'number' && options.offset >= 0;
   const offset = hasOffset ? options.offset as number : 0;
   const floorOffset = hasOffset ? offset : ((page - 1) * limit);
+  const { html, postData, rendered, renderedMissingFloorCount, renderedReplyIdentities } = await fetchTopicPageData(
+    id,
+    page,
+    requestOptions,
+    page <= 1 ? 0 : floorOffset
+  );
   if (rendered && (rendered.replies.length || !postData)) {
-    const renderedSource = page <= 1 ? rendered.replies : rendered.replies.map((reply, index) => ({
-      ...reply,
-      floor: reply.floor ?? floorOffset + index + 1
-    }));
+    const renderedSource = rendered.replies;
+    const embeddedComments = postData ? arrayField(postData.comments) : [];
     const embeddedReplies = postData
-      ? normalizeReplies(arrayField(postData.comments), { skipFirst: page <= 1, floorOffset: page <= 1 ? 0 : floorOffset })
+      ? normalizeReplies(embeddedComments, { skipFirst: page <= 1, floorOffset: page <= 1 ? 0 : floorOffset })
       : [];
     const source = embeddedReplies.length
-      ? renderedSource.map((reply) => mergeRenderedNodeSeekReply(reply, matchingEmbeddedNodeSeekReply(reply, embeddedReplies)))
+      ? mergeRenderedNodeSeekReplies(
+        renderedSource,
+        renderedReplyIdentities,
+        embeddedReplies,
+        nodeSeekReplyIdentities(embeddedComments, page <= 1)
+      )
       : renderedSource;
     const items = page <= 1 ? source.slice(offset, offset + limit) : source;
     const consumed = offset + items.length;
@@ -1519,7 +1651,7 @@ export async function getNodeSeekReplies(id: string, options: NodeSeekRepliesOpt
     const annotated = annotateNodeSeekReplies(result, {
       parserVariant: 'rendered-replies',
       candidateCount: renderedSource.length,
-      missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length,
+      missingFloorCount: renderedMissingFloorCount,
       offset,
       page
     });
@@ -1801,7 +1933,7 @@ export async function searchNodeSeek(query: string, options: NodeSeekOptions & {
       (html.match(/<a\b[^>]*href=["'][^"']*post-/gi) || []).length,
       embedded ? arrayField(embedded.rotateTopics).length + arrayField(embedded.topicList).length + arrayField(embedded.posts).length : 0
     );
-    items = parseNodeSeekSearchTopics(html);
+    items = parseNodeSeekSearchTopics(html, parserVariant === 'google-search');
     if (isIncompleteNodeSeekSearchPage(html, items)) {
       throw new Error('NodeSeek 搜索页结果没有加载完成，请重试');
     }

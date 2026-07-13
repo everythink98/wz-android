@@ -8,9 +8,11 @@ vi.mock('react', () => ({
 
 const mocks = vi.hoisted(() => ({
   clearLinuxDoAccess: vi.fn(async () => null),
+  clearLinuxDoAccessForGeneration: vi.fn(async () => null),
   currentLinuxDoAccessGeneration: vi.fn(() => 1),
   checkYaohuoLogin: vi.fn(),
   getLinuxDoLevelProfile: vi.fn(),
+  loadLinuxDoAccess: vi.fn(async () => null as { cookieHeader: string; userAgent?: string } | null),
   readNodeSeekCookiesFromStores: vi.fn(),
   cookieFlush: vi.fn(),
   cookieGet: vi.fn()
@@ -53,16 +55,27 @@ vi.mock('../yaohuoCookies', () => ({
 
 vi.mock('../linuxdoCookieBridge', () => ({
   clearLinuxDoAccess: mocks.clearLinuxDoAccess,
+  clearLinuxDoAccessForGeneration: mocks.clearLinuxDoAccessForGeneration,
   currentLinuxDoAccessGeneration: mocks.currentLinuxDoAccessGeneration,
-  linuxDoAccessSummary: () => ({ hasClearance: false, loggedIn: false }),
-  loadLinuxDoAccess: vi.fn(async () => null),
+  linuxDoAccessSummary: (access: { cookieHeader?: string } | null) => ({
+    hasClearance: false,
+    loggedIn: Boolean(access?.cookieHeader)
+  }),
+  loadLinuxDoAccess: mocks.loadLinuxDoAccess,
   parseLinuxDoDocumentCookie: () => ({}),
   summarizeLinuxDoCookies: () => ({ names: [] })
 }));
 
 vi.mock('../sources/sourceGateway', () => ({
   checkYaohuoLogin: mocks.checkYaohuoLogin,
-  getLinuxDoLevelProfile: mocks.getLinuxDoLevelProfile
+  getLinuxDoLevelProfile: mocks.getLinuxDoLevelProfile,
+  isLinuxDoLoginExpiredError: (error: unknown) => Boolean(
+    error
+    && typeof error === 'object'
+    && (error as { source?: unknown }).source === 'linuxdo'
+    && (error as { reason?: unknown }).reason === 'expired'
+    && (error as { loginRequired?: unknown }).loginRequired === true
+  )
 }));
 
 import { setDiagnosticWriter, type DiagnosticEvent, type DiagnosticTrace } from '../diagnostics';
@@ -112,6 +125,23 @@ function createController(overrides: Partial<Parameters<typeof useAccountControl
   });
 }
 
+function nodeSeekLoginEvent(
+  controller: ReturnType<typeof useAccountController>,
+  payload: Record<string, unknown>,
+  url = 'https://www.nodeseek.com/'
+) {
+  const sessionJson = controller.nodeSeekLoginProbeScript.match(/const messageSession = (\{[^;]+\});/)?.[1];
+  if (!sessionJson) {
+    throw new Error('NodeSeek probe script is missing its message session.');
+  }
+  return {
+    nativeEvent: {
+      data: JSON.stringify({ ...payload, ...JSON.parse(sessionJson) }),
+      url
+    }
+  } as never;
+}
+
 afterEach(() => {
   setDiagnosticWriter(null);
   vi.clearAllMocks();
@@ -151,9 +181,7 @@ describe('visible account WebView diagnostics', () => {
     ) => 'NODESEEK_SAVED_COOKIE_SECRET');
     const controller = createController({ nodeSeekCurrentUserId: 9487, saveNodeSeekCookieHeader });
 
-    controller.handleLoginMessage({
-      nativeEvent: {
-        data: JSON.stringify({
+    controller.handleLoginMessage(nodeSeekLoginEvent(controller, {
           type: 'nodeseek-login',
           loggedIn: true,
           userId: 9487,
@@ -161,9 +189,7 @@ describe('visible account WebView diagnostics', () => {
           userAgent: 'PRIVATE_USER_AGENT_SECRET',
           cookie: 'NODESEEK_WEBVIEW_COOKIE_SECRET',
           html: '<html>PRIVATE_HTML</html>'
-        })
-      }
-    } as never);
+    }));
     const pending = controller.checkLogin();
     await vi.advanceTimersByTimeAsync(250);
     await pending;
@@ -189,11 +215,13 @@ describe('visible account WebView diagnostics', () => {
     expect(saveNodeSeekCookieHeader.mock.calls[0]?.[1]).not.toHaveProperty('csrfToken');
     expect(lines.join('')).not.toMatch(/PRIVATE_NODESEEK_COOKIE_NAME|NODESEEK_NATIVE_COOKIE_SECRET|PRIVATE_CSRF_SECRET|PRIVATE_USER_AGENT_SECRET|NODESEEK_WEBVIEW_COOKIE_SECRET|PRIVATE_HTML|9487/);
 
-    controller.handleLoginMessage({
-      nativeEvent: {
-        data: JSON.stringify({ type: 'nodeseek-login', loggedIn: true, userId: 9999 })
-      }
-    } as never);
+    controller.handleLoginMessage(nodeSeekLoginEvent(controller, {
+      type: 'nodeseek-login',
+      loggedIn: true,
+      userId: 9999,
+      userAgent: 'PRIVATE_USER_AGENT_SECRET',
+      cookie: 'NODESEEK_WEBVIEW_COOKIE_SECRET'
+    }));
     const changedAccount = controller.checkLogin();
     await vi.advanceTimersByTimeAsync(250);
     await changedAccount;
@@ -211,17 +239,79 @@ describe('visible account WebView diagnostics', () => {
     });
 
     const check = controller.checkLogin();
-    controller.handleLoginMessage({
-      nativeEvent: {
-        data: JSON.stringify({ type: 'nodeseek-login', loggedIn: false, cookie: '' })
-      }
-    } as never);
+    controller.handleLoginMessage(nodeSeekLoginEvent(controller, {
+      type: 'nodeseek-login',
+      loggedIn: false,
+      userAgent: '',
+      cookie: ''
+    }));
     await vi.advanceTimersByTimeAsync(250);
     await check;
 
     expect(clearNodeSeekLoginCookiesOnly).toHaveBeenCalledWith({ generation: 8 });
     expect(mocks.readNodeSeekCookiesFromStores).not.toHaveBeenCalled();
     expect(saveNodeSeekCookieHeader).not.toHaveBeenCalled();
+  });
+
+  it('ignores forged NodeSeek login messages from a child frame or stale panel session', () => {
+    const clearNodeSeekLoginCookiesOnly = vi.fn(async () => undefined);
+    const updateNodeSeekSession = vi.fn();
+    const controller = createController({ clearNodeSeekLoginCookiesOnly, updateNodeSeekSession });
+
+    controller.handleLoginMessage(nodeSeekLoginEvent(controller, {
+      type: 'nodeseek-login',
+      loggedIn: false,
+      userAgent: '',
+      cookie: ''
+    }, 'https://www.nodeseek.com.evil.test/'));
+    controller.handleLoginMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'nodeseek-login',
+          loggedIn: false,
+          userAgent: '',
+          cookie: '',
+          sessionId: 'stale-panel',
+          nonce: '00000000000000000000000000000000'
+        }),
+        url: 'https://www.nodeseek.com/'
+      }
+    } as never);
+
+    expect(clearNodeSeekLoginCookiesOnly).not.toHaveBeenCalled();
+    expect(updateNodeSeekSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects a message minted by the previous NodeSeek WebView load', () => {
+    const clearNodeSeekLoginCookiesOnly = vi.fn(async () => undefined);
+    const updateNodeSeekSession = vi.fn();
+    const controller = createController({ clearNodeSeekLoginCookiesOnly, updateNodeSeekSession });
+    const previousLoadMessage = nodeSeekLoginEvent(controller, {
+      type: 'nodeseek-login',
+      loggedIn: false,
+      userAgent: '',
+      cookie: ''
+    });
+
+    controller.recordNodeSeekLoginWebViewState('start');
+    controller.handleLoginMessage(previousLoadMessage);
+
+    expect(clearNodeSeekLoginCookiesOnly).not.toHaveBeenCalled();
+    expect(updateNodeSeekSession).not.toHaveBeenCalled();
+  });
+
+  it('ignores a current NodeSeek logout message when its probe payload is incomplete', () => {
+    const clearNodeSeekLoginCookiesOnly = vi.fn(async () => undefined);
+    const updateNodeSeekSession = vi.fn();
+    const controller = createController({ clearNodeSeekLoginCookiesOnly, updateNodeSeekSession });
+
+    controller.handleLoginMessage(nodeSeekLoginEvent(controller, {
+      type: 'nodeseek-login',
+      loggedIn: false
+    }));
+
+    expect(clearNodeSeekLoginCookiesOnly).not.toHaveBeenCalled();
+    expect(updateNodeSeekSession).not.toHaveBeenCalled();
   });
 
   it('links Yaohuo cookie detection, server confirmation, and save with one sanitized terminal trace', async () => {
@@ -520,5 +610,144 @@ describe('visible account WebView diagnostics', () => {
     controller.recordYaohuoLoginWebViewState('timeout', 8);
 
     expect(onLoginWebViewFailure).toHaveBeenCalledWith('yaohuo', 8, 'timeout');
+  });
+});
+
+describe('linux.do level session recovery', () => {
+  it('does not use access loaded after another credential generation takes ownership', async () => {
+    const loaded = Promise.withResolvers<{ cookieHeader: string }>();
+    let generation = 20;
+    mocks.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
+    mocks.loadLinuxDoAccess.mockReturnValueOnce(loaded.promise);
+    const setLinuxDoLevelError = vi.fn();
+    const setLinuxDoLevelProfile = vi.fn();
+    const controller = createController({ setLinuxDoLevelError, setLinuxDoLevelProfile });
+
+    const refresh = controller.refreshLinuxDoLevel();
+    generation = 21;
+    loaded.resolve({ cookieHeader: '_t=old' });
+    await refresh;
+
+    expect(mocks.getLinuxDoLevelProfile).not.toHaveBeenCalled();
+    expect(setLinuxDoLevelProfile).not.toHaveBeenCalled();
+    expect(setLinuxDoLevelError).not.toHaveBeenCalledWith(expect.stringContaining('登录'));
+  });
+
+  it('does not let an expired response from credential A clear newer credential B', async () => {
+    const level = Promise.withResolvers<never>();
+    let generation = 30;
+    mocks.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
+    mocks.loadLinuxDoAccess.mockResolvedValueOnce({ cookieHeader: '_t=credential-a' });
+    mocks.getLinuxDoLevelProfile.mockReturnValueOnce(level.promise);
+    const setLinuxDoLevelError = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+    const controller = createController({ setLinuxDoLevelError, updateLinuxDoSession });
+
+    const refresh = controller.refreshLinuxDoLevel();
+    await vi.waitFor(() => expect(mocks.getLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
+    generation = 31;
+    level.reject(Object.assign(new Error('credential A expired'), {
+      source: 'linuxdo',
+      reason: 'expired',
+      loginRequired: true,
+      status: 401
+    }));
+    await refresh;
+
+    expect(mocks.clearLinuxDoAccessForGeneration).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(setLinuxDoLevelError).not.toHaveBeenCalledWith('credential A expired');
+  });
+
+  it('does not let a successful response from credential A overwrite credential B', async () => {
+    const level = Promise.withResolvers<{ username: string }>();
+    let generation = 40;
+    mocks.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
+    mocks.loadLinuxDoAccess.mockResolvedValueOnce({ cookieHeader: '_t=credential-a' });
+    mocks.getLinuxDoLevelProfile.mockReturnValueOnce(level.promise);
+    const notify = vi.fn();
+    const setLinuxDoLevelProfile = vi.fn();
+    const controller = createController({ notify, setLinuxDoLevelProfile });
+
+    const refresh = controller.refreshLinuxDoLevel();
+    await vi.waitFor(() => expect(mocks.getLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
+    generation = 41;
+    level.resolve({ username: 'credential-a-user' });
+    await refresh;
+
+    expect(setLinuxDoLevelProfile).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('linux.do 等级已更新。');
+  });
+
+  it('generation-safely clears a definitely expired login and updates the visible session', async () => {
+    mocks.loadLinuxDoAccess.mockResolvedValueOnce({ cookieHeader: '_t=expired', userAgent: 'test-agent' });
+    mocks.currentLinuxDoAccessGeneration.mockReturnValue(7);
+    mocks.getLinuxDoLevelProfile.mockRejectedValueOnce(Object.assign(new Error('linux.do 登录已失效，请重新登录'), {
+      source: 'linuxdo',
+      reason: 'expired',
+      loginRequired: true,
+      status: 401
+    }));
+    const resetLinuxDoLevelState = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+    const setLinuxDoLevelProfile = vi.fn();
+    const controller = createController({
+      resetLinuxDoLevelState,
+      setLinuxDoLevelProfile,
+      updateLinuxDoSession
+    });
+
+    await controller.refreshLinuxDoLevel();
+
+    expect(mocks.clearLinuxDoAccessForGeneration).toHaveBeenCalledWith(7, '_t=expired');
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'login-expired',
+      message: 'linux.do 登录已失效，请重新登录'
+    }));
+    expect(resetLinuxDoLevelState).toHaveBeenCalledTimes(1);
+    expect(setLinuxDoLevelProfile).toHaveBeenCalledWith(null);
+  });
+
+  it('does not clear a newer login when the credential generation advances during level refresh', async () => {
+    const level = Promise.withResolvers<never>();
+    let generation = 11;
+    mocks.loadLinuxDoAccess.mockResolvedValueOnce({ cookieHeader: '_t=stale' });
+    mocks.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
+    mocks.getLinuxDoLevelProfile.mockReturnValueOnce(level.promise);
+    const expired = Object.assign(new Error('expired'), {
+      source: 'linuxdo',
+      reason: 'expired',
+      loginRequired: true
+    });
+    const updateLinuxDoSession = vi.fn();
+    const controller = createController({ updateLinuxDoSession });
+
+    const refresh = controller.refreshLinuxDoLevel();
+    await vi.waitFor(() => expect(mocks.getLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
+    generation = 12;
+    level.reject(expired);
+    await refresh;
+
+    expect(mocks.clearLinuxDoAccessForGeneration).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps the saved login for an ordinary permission error', async () => {
+    mocks.loadLinuxDoAccess.mockResolvedValueOnce({ cookieHeader: '_t=valid' });
+    mocks.currentLinuxDoAccessGeneration.mockReturnValue(3);
+    mocks.getLinuxDoLevelProfile.mockRejectedValueOnce(Object.assign(new Error('无权读取'), {
+      source: 'linuxdo',
+      reason: 'permission',
+      status: 403
+    }));
+    const updateLinuxDoSession = vi.fn();
+    const setLinuxDoLevelError = vi.fn();
+    const controller = createController({ setLinuxDoLevelError, updateLinuxDoSession });
+
+    await controller.refreshLinuxDoLevel();
+
+    expect(mocks.clearLinuxDoAccessForGeneration).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(setLinuxDoLevelError).toHaveBeenLastCalledWith('无权读取');
   });
 });

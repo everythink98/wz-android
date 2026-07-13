@@ -41,9 +41,20 @@ vi.mock('lucide-react-native', () => ({
 }));
 
 vi.mock('react-native-render-html', () => ({
+  HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
+  HTMLElementModel: { fromCustomModel: vi.fn((model) => model) },
+  RenderHTMLConfigProvider: 'RenderHTMLConfigProvider',
+  TChildrenRenderer: 'TChildrenRenderer',
+  TRenderEngineProvider: 'TRenderEngineProvider',
+  defaultHTMLElementModels: {
+    details: { extend: vi.fn((model) => model) },
+    summary: { extend: vi.fn((model) => model) }
+  },
   getNativePropsForTNode: vi.fn(() => ({})),
+  useContentWidth: vi.fn(),
   useIMGElementProps: vi.fn(),
-  useIMGElementState: vi.fn()
+  useIMGElementState: vi.fn(),
+  useTNodeChildrenProps: vi.fn()
 }));
 
 import { shouldShowPreviewImageLoading, shouldShowVideoStickerLoading } from './useHtmlRenderingController';

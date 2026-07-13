@@ -1,6 +1,15 @@
 // @vitest-environment-options {"url":"https://www.nodeimage.com/"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NODEIMAGE_API_KEY_PROBE_SCRIPT, NODESEEK_LOGIN_PROBE_SCRIPT, nodeImageApiKeyProbeScript } from './loginWebViewScripts';
+import {
+  linuxDoWebViewProbeScript,
+  nodeImageApiKeyProbeScript,
+  nodeSeekLoginProbeScript
+} from './loginWebViewScripts';
+
+const MESSAGE_SESSION = {
+  sessionId: 'probe-test-session',
+  nonce: '0123456789abcdef0123456789abcdef'
+};
 
 async function runNodeSeekLoginProbe(url: string, html: string, fetchMock: typeof fetch = vi.fn(async () => new Response('{}')) as unknown as typeof fetch) {
   window.history.pushState(null, '', url);
@@ -16,7 +25,7 @@ async function runNodeSeekLoginProbe(url: string, html: string, fetchMock: typeo
   });
   vi.stubGlobal('fetch', fetchMock);
 
-  window.eval(NODESEEK_LOGIN_PROBE_SCRIPT);
+  window.eval(nodeSeekLoginProbeScript(MESSAGE_SESSION));
 
   await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
   return JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
@@ -42,6 +51,7 @@ describe('NodeSeek login WebView probe script', () => {
 
     expect(payload).toMatchObject({
       type: 'nodeseek-login',
+      ...MESSAGE_SESSION,
       status: 'logged-in',
       loggedIn: true,
       userId: 54874
@@ -111,7 +121,28 @@ describe('NodeSeek login WebView probe script', () => {
   });
 });
 
-function runNodeImageApiKeyProbe(html: string, fetchMock: typeof fetch, script = NODEIMAGE_API_KEY_PROBE_SCRIPT) {
+describe('linux.do WebView probe script', () => {
+  it('binds every message to the active native panel session', () => {
+    const postMessage = vi.fn();
+    Object.defineProperty(window, 'ReactNativeWebView', {
+      configurable: true,
+      value: { postMessage }
+    });
+
+    window.eval(linuxDoWebViewProbeScript(MESSAGE_SESSION));
+
+    expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toMatchObject({
+      type: 'linuxdo-webview',
+      ...MESSAGE_SESSION
+    });
+  });
+});
+
+function runNodeImageApiKeyProbe(
+  html: string,
+  fetchMock: typeof fetch,
+  script = nodeImageApiKeyProbeScript(null, MESSAGE_SESSION)
+) {
   window.history.pushState(null, '', '/');
   document.body.innerHTML = html;
   const postMessage = vi.fn();
@@ -133,6 +164,20 @@ describe('NodeImage API key WebView probe script', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps JavaScript line separators escaped in injected auth data', () => {
+    const script = nodeImageApiKeyProbeScript({
+      data: `line${String.fromCodePoint(0x2028)}separator`,
+      wtf: `paragraph${String.fromCodePoint(0x2029)}separator`,
+      sign: '</script>'
+    }, MESSAGE_SESSION);
+
+    expect(script).toContain('line\\u2028separator');
+    expect(script).toContain('paragraph\\u2029separator');
+    expect(script).not.toContain(String.fromCodePoint(0x2028));
+    expect(script).not.toContain(String.fromCodePoint(0x2029));
+    expect(script).not.toContain('</script>');
+  });
+
   it('posts the current NodeImage API key response from the authorized page', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ api_key: ' secret ' }), { status: 200 })) as unknown as typeof fetch;
     const postMessage = runNodeImageApiKeyProbe('', fetchMock);
@@ -144,7 +189,8 @@ describe('NodeImage API key WebView probe script', () => {
     }));
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
-      data: { api_key: ' secret ' }
+      data: { api_key: ' secret ' },
+      ...MESSAGE_SESSION
     });
   });
 
@@ -156,7 +202,8 @@ describe('NodeImage API key WebView probe script', () => {
 
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
-      apiKey: 'dom-secret'
+      apiKey: 'dom-secret',
+      ...MESSAGE_SESSION
     });
   });
 
@@ -183,14 +230,15 @@ describe('NodeImage API key WebView probe script', () => {
       data: 'auth-data',
       wtf: 'auth-wtf',
       sign: 'auth-sign'
-    }));
+    }, MESSAGE_SESSION));
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(JSON.parse(postMessage.mock.calls[0]?.[0] || '{}')).toEqual({
       type: 'nodeimage-api-key',
-      data: { api_key: ' verified-secret ' }
+      data: { api_key: ' verified-secret ' },
+      ...MESSAGE_SESSION
     });
   });
 });

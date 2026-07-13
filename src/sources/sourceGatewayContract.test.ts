@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FeedResponse, FeedSource, Source } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { REQUEST_SUPERSEDED_MESSAGE } from '../request';
+import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, REQUEST_TIMEOUT_MESSAGE } from '../request';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
   getCurrentUserProfile: vi.fn(),
-  getFeed: vi.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  getFeed: vi.fn(async (_options?: { signal?: AbortSignal }): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getReplies: vi.fn(async () => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(),
   getTopic: vi.fn(async ({ id, source }) => ({ source, id, title: '', author: '', url: '', createdAt: '', replyCount: 0, contentHtml: '', replies: [] })),
@@ -18,6 +18,7 @@ const forumMocks = vi.hoisted(() => ({
 const yaohuoMocks = vi.hoisted(() => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(async (_options: {
+    signal?: AbortSignal;
     yaohuoFetcher: (input: string, init?: RequestInit) => Promise<Response>;
   }) => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getYaohuoRepliesDirect: vi.fn(),
@@ -125,6 +126,129 @@ describe('source gateway read contract', () => {
     ]);
     finishDiagnosticTrace(trace, 'success');
     expect(lines.map((line) => JSON.parse(line).phase).filter((phase) => phase === 'finish')).toHaveLength(1);
+  });
+
+  it.each<Exclude<FeedSource, 'all'>>(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'])(
+    'ends a hung %s managed read at the shared operation deadline',
+    async (source) => {
+      vi.useFakeTimers();
+      let operationSignal: AbortSignal | undefined;
+      const pendingRead = (options?: { signal?: AbortSignal }) => {
+        operationSignal = options?.signal;
+        return new Promise<never>(() => undefined);
+      };
+      if (source === 'yaohuo') {
+        yaohuoMocks.getYaohuoFeedDirect.mockImplementationOnce(pendingRead);
+      } else {
+        forumMocks.getFeed.mockImplementationOnce(pendingRead);
+      }
+      const gateway = createSourceGateway({
+        clearYaohuoLoginState: vi.fn(async () => undefined),
+        fetcher: vi.fn(),
+        loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+        loadYaohuoCookieForSource: vi.fn(async () => source === 'yaohuo' ? 'sidyaohuo=valid' : undefined),
+        nodeSeekUserAgent: () => ''
+      });
+
+      try {
+        let settled = false;
+        const outcome = gateway.getFeed({ source })
+          .then(() => undefined, (error: unknown) => error)
+          .finally(() => { settled = true; });
+
+        await vi.advanceTimersByTimeAsync(29_999);
+        expect(settled).toBe(false);
+        expect(operationSignal?.aborted).toBe(false);
+
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(outcome).resolves.toMatchObject({ message: REQUEST_TIMEOUT_MESSAGE });
+        expect(operationSignal?.aborted).toBe(true);
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    }
+  );
+
+  it('finishes exactly one timeout trace even when the adapter ignores abort forever', async () => {
+    vi.useFakeTimers();
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    forumMocks.getFeed.mockImplementationOnce(async () => new Promise<never>(() => undefined));
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    try {
+      const outcome = gateway.getFeed({ source: 'v2ex' });
+      const assertion = expect(outcome).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+
+      const terminal = lines
+        .map((line) => JSON.parse(line))
+        .filter(({ phase }) => phase === 'finish');
+      expect(terminal).toEqual([
+        expect.objectContaining({ outcome: 'failure', reason: 'timeout' })
+      ]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not start a late adapter after credential loading outlives the deadline', async () => {
+    vi.useFakeTimers();
+    const credential = Promise.withResolvers<string | undefined>();
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(() => credential.promise),
+      nodeSeekUserAgent: () => ''
+    });
+
+    try {
+      const outcome = gateway.getFeed({ source: 'yaohuo' });
+      const assertion = expect(outcome).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+
+      credential.resolve('sidyaohuo=late');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(yaohuoMocks.getYaohuoFeedDirect).not.toHaveBeenCalled();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps caller abort distinct from the managed operation deadline', async () => {
+    const controller = new AbortController();
+    let operationSignal: AbortSignal | undefined;
+    forumMocks.getFeed.mockImplementationOnce(async (options?: { signal?: AbortSignal }) => {
+      operationSignal = options?.signal;
+      return new Promise<never>(() => undefined);
+    });
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    const outcome = gateway.getFeed({ source: 'v2ex', signal: controller.signal });
+    await vi.waitFor(() => expect(operationSignal).toBeDefined());
+    controller.abort();
+
+    await expect(outcome).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
+    expect(operationSignal?.aborted).toBe(true);
   });
 
   it('classifies an unexpected HTTP-success parse-empty adapter result as a failure', async () => {
@@ -360,11 +484,11 @@ describe('source gateway read contract', () => {
       nodeSeekUserAgent: () => ''
     });
 
-    const result = gateway.hasYaohuoCredential();
+    const result = gateway.getFeedIfCredentialed({ source: 'yaohuo' });
     suppressed = true;
     credential.resolve('sidyaohuo=real');
 
-    await expect(result).resolves.toBe(false);
+    await expect(result).resolves.toBeNull();
   });
 
   it('clears only the Yaohuo credential generation used by an expired user profile read', async () => {

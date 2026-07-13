@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   CURRENT_ANDROID_PACKAGE,
+  CURRENT_RELEASE_TRUST_ANCHOR_SHA256,
   GITHUB_LATEST_RELEASE_URL,
   UPDATE_APK_NAME,
   UPDATE_MANIFEST_NAME,
@@ -14,7 +15,9 @@ import {
 import appConfig from '../app.json';
 
 const apkSha256 = 'a'.repeat(64);
-const signerSha256 = 'b'.repeat(64);
+const signerSha256 = CURRENT_RELEASE_TRUST_ANCHOR_SHA256;
+const rotatedSignerSha256 = 'b'.repeat(64);
+const attackerSignerSha256 = 'c'.repeat(64);
 const [major, minor, patch] = appConfig.expo.version.split('.').map(Number);
 const newerVersion = `${major}.${minor}.${patch + 1}`;
 const newerTag = `v${newerVersion}`;
@@ -43,14 +46,26 @@ function release(tagName: string, assets = [
   };
 }
 
-function manifest(versionName = newerVersion) {
+function manifest(versionName = newerVersion, signer = signerSha256) {
   return {
     apkName: UPDATE_APK_NAME,
     sha256: apkSha256,
     packageName: CURRENT_ANDROID_PACKAGE,
     versionName,
     versionCode: newerVersionCode,
-    signerSha256
+    signerSha256: signer
+  };
+}
+
+function inspection(
+  manifestValue = manifest(),
+  signerHistorySha256: string[] = [String(manifestValue.signerSha256)],
+  signerHistoryVerified = true
+) {
+  return {
+    ...manifestValue,
+    signerHistorySha256,
+    signerHistoryVerified
   };
 }
 
@@ -177,7 +192,7 @@ describe('app update release parsing', () => {
   it('does not install a downloaded APK when inspection does not match the manifest', async () => {
     const installer = {
       inspectApk: vi.fn(async () => ({
-        ...manifest(),
+        ...inspection(),
         sha256: 'c'.repeat(64)
       })),
       installApk: vi.fn()
@@ -189,9 +204,9 @@ describe('app update release parsing', () => {
     expect(installer.installApk).not.toHaveBeenCalled();
   });
 
-  it('installs a downloaded APK only after inspection matches the manifest', async () => {
+  it('accepts a pre-Android-9 inspection when its only platform-visible signer is the built-in trust anchor', async () => {
     const installer = {
-      inspectApk: vi.fn(async () => manifest()),
+      inspectApk: vi.fn(async () => inspection(manifest(), [signerSha256], false)),
       installApk: vi.fn(async () => true)
     };
     const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
@@ -199,5 +214,69 @@ describe('app update release parsing', () => {
     await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).resolves.toBe(true);
 
     expect(installer.installApk).toHaveBeenCalledWith('file:///cache/wz.apk');
+  });
+
+  it('keeps pre-Android-9 updates working after a logical signer rotation when the APK remains anchored for that platform', async () => {
+    const rotatedManifest = manifest(newerVersion, rotatedSignerSha256);
+    const installer = {
+      inspectApk: vi.fn(async () => inspection(
+        { ...rotatedManifest, signerSha256 },
+        [signerSha256],
+        false
+      )),
+      installApk: vi.fn(async () => true)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), rotatedManifest);
+
+    await expect(installVerifiedApk(installer, 'file:///cache/rotated-pre-p.apk', update!)).resolves.toBe(true);
+    expect(installer.installApk).toHaveBeenCalledWith('file:///cache/rotated-pre-p.apk');
+  });
+
+  it('rejects a pre-Android-9 APK whose only platform-visible signer is not the built-in trust anchor', async () => {
+    const attackerManifest = manifest(newerVersion, attackerSignerSha256);
+    const installer = {
+      inspectApk: vi.fn(async () => inspection(attackerManifest, [attackerSignerSha256], false)),
+      installApk: vi.fn(async () => true)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), attackerManifest);
+
+    await expect(installVerifiedApk(installer, 'file:///cache/evil-pre-p.apk', update!)).rejects.toThrow('APK 签名信任链校验失败');
+    expect(installer.installApk).not.toHaveBeenCalled();
+  });
+
+  it('rejects an attacker-controlled manifest and APK that are self-consistent but not anchored', async () => {
+    const attackerManifest = manifest(newerVersion, attackerSignerSha256);
+    const installer = {
+      inspectApk: vi.fn(async () => inspection(attackerManifest, [attackerSignerSha256])),
+      installApk: vi.fn(async () => true)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), attackerManifest);
+
+    await expect(installVerifiedApk(installer, 'file:///cache/evil.apk', update!)).rejects.toThrow('APK 签名信任链校验失败');
+    expect(installer.installApk).not.toHaveBeenCalled();
+  });
+
+  it('accepts a rotated current signer when verified history starts at the immutable trust anchor', async () => {
+    const rotatedManifest = manifest(newerVersion, rotatedSignerSha256);
+    const installer = {
+      inspectApk: vi.fn(async () => inspection(rotatedManifest, [signerSha256, rotatedSignerSha256])),
+      installApk: vi.fn(async () => true)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), rotatedManifest);
+
+    await expect(installVerifiedApk(installer, 'file:///cache/rotated.apk', update!)).resolves.toBe(true);
+    expect(installer.installApk).toHaveBeenCalledWith('file:///cache/rotated.apk');
+  });
+
+  it('requires the immutable trust anchor to be the original certificate in verified rotation history', async () => {
+    const rotatedManifest = manifest(newerVersion, rotatedSignerSha256);
+    const installer = {
+      inspectApk: vi.fn(async () => inspection(rotatedManifest, [attackerSignerSha256, signerSha256, rotatedSignerSha256])),
+      installApk: vi.fn(async () => true)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), rotatedManifest);
+
+    await expect(installVerifiedApk(installer, 'file:///cache/wrong-origin.apk', update!)).rejects.toThrow('APK 签名信任链校验失败');
+    expect(installer.installApk).not.toHaveBeenCalled();
   });
 });

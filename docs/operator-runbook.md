@@ -29,8 +29,11 @@ npm run smoke:android
 - 服务器代理配置不进入备份 JSON，只保存在 Android 安全存储。
 - `android/` 是生成目录，不作为长期配置来源。
 - 发布版本号以 `app.json` 和 `package*.json` 为准；每次发布递增 `expo.android.versionCode`。
+- release 会从完整 Git tag 历史读取最近版本；新版本的 `versionCode` 必须单调递增，同一已发布版本不能由新提交重复发布。shallow clone 必须先补齐 tags。
+- `npm run release:android` 要求发布前和 adaptive icon 生成后两次 git 工作区均干净；生成器若改写被跟踪资源会立即中止，不能把未提交内容混入 APK。
 - `npm run release:android` 会先执行测试、严格无用代码检查和版本一致性检查；严格检查已包含 TypeScript 编译检查。
 - 当前 release APK 必须使用正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`、`WZ_ANDROID_SMOKE_DEVICE` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`。
+- `expo.extra.releaseTrustAnchorSha256` 是安装包内的初始正式证书信任锚，禁止修改或随签名轮换；轮换时只更新表示当前证书的 `releaseSignerSha256`。
 - 正式 APK 不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`；开发签名只用于不上传的 smoke APK。
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。

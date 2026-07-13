@@ -264,7 +264,6 @@ export function useTopicActionsController({
       composer: topicComposer
     }
   } = topicSession;
-  const appendReplyMarkup = topicComposer.appendMarkup;
   const applyTopicActionUpdate = topicActions.applyUpdate;
   const completeReplySubmission = topicComposer.completeSubmission;
   const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);
@@ -873,11 +872,12 @@ export function useTopicActionsController({
     }
   }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runOptimisticActionQueue, setOptimisticTopicActionState]);
 
-  const submitReply = useCallback(async () => {
+  const submitReply = useCallback(async (composerContent?: string) => {
+    const submittedReplyContent = composerContent ?? replyContent;
     const actionSource = topicDetail?.source || selectedTopic?.source;
     const diagnosticTrace = beginDiagnosticTrace('reply', replyEditTarget ? 'edit' : 'submit', {
       ...(actionSource ? { source: actionSource } : {}),
-      contentLength: replyContent.length
+      contentLength: submittedReplyContent.length
     });
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
     if (!canSubmitReplyToTopic(detail)) {
@@ -885,7 +885,7 @@ export function useTopicActionsController({
       return;
     }
     const requestTopicKey = topicKey(detail);
-    if (!replyContent.trim()) {
+    if (!submittedReplyContent.trim()) {
       notify('请输入回复内容');
       finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
       return;
@@ -902,12 +902,12 @@ export function useTopicActionsController({
         const requestOwner = startTopicActionRequest(actionKey);
         const submitted = isNodeSeekActionTopic(detail)
           ? await runNodeSeekRequest(
-            () => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent }),
+            () => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: submittedReplyContent }),
             '回复已更新',
             { owner: requestOwner, diagnosticTrace }
           )
           : await runLinuxDoRequest(
-            () => buildLinuxDoEditReplyRequest({ postId: replyEditTarget.commentId, content: replyContent }),
+            () => buildLinuxDoEditReplyRequest({ postId: replyEditTarget.commentId, content: submittedReplyContent }),
             '回复已更新',
             { owner: requestOwner, diagnosticTrace }
           );
@@ -918,7 +918,7 @@ export function useTopicActionsController({
           }
           const editedReplyContent = {
             commentId: replyEditTarget.commentId,
-            contentMarkdown: replyContent
+            contentMarkdown: submittedReplyContent
           };
           completeReplySubmission({ editedReplyContent, source: detail.source });
           markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
@@ -947,7 +947,7 @@ export function useTopicActionsController({
           (cookieHeader) => buildYaohuoReplyRequest({
             topicId: detail.id,
             classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-            content: replyContent,
+            content: submittedReplyContent,
             face: replyFace,
             sid: extractYaohuoSid(cookieHeader),
             replyFloor: replyTarget?.floor,
@@ -971,7 +971,7 @@ export function useTopicActionsController({
         const submitted = await runLinuxDoRequest(
           () => buildLinuxDoReplyRequest({
             topicId: detail.id,
-            content: replyContent,
+            content: submittedReplyContent,
             replyToPostNumber: replyTarget?.floor
           }),
           '回复已提交',
@@ -989,7 +989,7 @@ export function useTopicActionsController({
         return;
       }
       const submitted = await runNodeSeekRequest(
-        () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget }),
+        () => buildNodeSeekReplyRequest({ postId: detail.id, content: submittedReplyContent, replyTarget }),
         '回复已提交',
         { owner: requestOwner, diagnosticTrace }
       );
@@ -1119,7 +1119,7 @@ export function useTopicActionsController({
 
     markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
     const actionKey = `${topicReplyActionKey(topicKey(detail))}:image`;
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
+    return runSingleNonIdempotentTopicAction(actionKey, async () => {
       const requestOwner = startTopicActionRequest(actionKey);
       let nodeSeekApiKey: string | null = null;
       if (isNodeSeekActionTopic(detail)) {
@@ -1230,9 +1230,9 @@ export function useTopicActionsController({
           return;
         }
         const markup = replyImageMarkupForSource(detail.source, imageUrl, file.name);
-        appendReplyMarkup(markup);
         markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', markupApplied: true });
         notify('图片已插入');
+        return markup;
       } catch (error) {
         const reason = isSupersededRequest(error)
           ? 'superseded'
@@ -1247,7 +1247,7 @@ export function useTopicActionsController({
         }
       }
     }, diagnosticTrace);
-  }, [appendReplyMarkup, ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
+  }, [ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const diagnosticTrace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });

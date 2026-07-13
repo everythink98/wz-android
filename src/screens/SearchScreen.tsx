@@ -25,6 +25,7 @@ import { androidRipple, createStyles, type ReaderTheme } from '../theme';
 import { AppButton, EmptyText, LoadingState, PillRail, TOUCH_HIT_SLOP } from '../components/AppControls';
 import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
+import { ViewportBoundedScrollView } from '../components/ViewportBoundedScrollView';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
 
@@ -248,7 +249,7 @@ function SearchFilterSheet({
               <X size={18} color={theme.muted} strokeWidth={2} />
             </Pressable>
           </View>
-          <ScrollView style={styles.searchFilterBody} contentContainerStyle={styles.searchFilterBodyInner} keyboardShouldPersistTaps="handled">
+          <ViewportBoundedScrollView contentContainerStyle={styles.searchFilterBodyInner} keyboardShouldPersistTaps="handled">
             {draftFilter.source === 'v2ex' ? (
               <>
                 <FilterChoiceGroup
@@ -380,7 +381,7 @@ function SearchFilterSheet({
                 onChange={(value) => updateDraft({ category: value })}
               />
             ) : null}
-          </ScrollView>
+          </ViewportBoundedScrollView>
           <View style={styles.searchFilterActions}>
             <AppButton compact label="重置" variant="ghost" styles={styles} onPress={resetDraft} />
             <AppButton compact label="确认筛选" variant="primary" styles={styles} onPress={applyDraft} />

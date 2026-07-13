@@ -58,6 +58,50 @@ describe('Android local forum facade', () => {
     await expect(getCategories({ source: 'all', fetcher })).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
   });
 
+  it.each([
+    ['nodeseek', 'nodeseek.com'],
+    ['linuxdo', 'linux.do'],
+    ['v2ex', 'v2ex.com']
+  ] as const)('isolates a %s operation deadline inside an aggregate feed', async (source, stalledHost) => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn(async (input: string) => {
+        if (input.includes(stalledHost)) {
+          return new Promise<Response>(() => undefined);
+        }
+        if (input.includes('nodeseek.com')) {
+          return new Response(`<script>${nodeSeekPayload}</script>`);
+        }
+        if (input.includes('v2ex.com')) {
+          return new Response('');
+        }
+        return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      });
+      const outcome = getFeed({
+        source: 'all',
+        fetcher,
+        managedReadTimeoutMs: 1000,
+        timeoutMs: 0
+      });
+
+      await vi.advanceTimersByTimeAsync(999);
+      let settled = false;
+      void outcome.finally(() => { settled = true; });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(outcome).resolves.toMatchObject({
+        errors: { [source]: expect.any(Object) }
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it('routes feed and categories to public source sites, not the project server', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com')) {
@@ -345,7 +389,7 @@ describe('Android local forum facade', () => {
       authorUrl: 'https://www.v2ex.com/member/neo',
       category: '分享创造',
       floor: 4,
-      createdAt: '2026-05-20T00:00:00.000Z',
+      createdAt: '2026-05-19T16:00:00.000Z',
       displayTimeText: '5 月 20 日'
     });
     expect(yaohuo.replies?.[0]).toMatchObject({
@@ -459,6 +503,70 @@ describe('Android local forum facade', () => {
     });
   });
 
+  it('does not use a V2EX topic page query as the member reply cursor', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/members/show.json')) {
+        return new Response(JSON.stringify({ id: 9, username: 'neo' }));
+      }
+      if (input === 'https://www.v2ex.com/member/neo/replies?p=7') {
+        return new Response(`
+          <div class="dock_area">
+            5 月 20 日回复了 alice 创建的主题 › 分享创造 ›
+            <a href="/t/1085021?p=8#reply31">topic on page 8</a>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profile = await getUserProfile({
+      source: 'v2ex',
+      id: 'neo',
+      username: 'neo',
+      cursor: '7',
+      cursorType: 'replies',
+      fetcher
+    });
+
+    expect(profile.hasMoreReplies).toBe(false);
+    expect(profile.nextRepliesCursor).toBeNull();
+  });
+
+  it('keeps explicit and inferred V2EX member activity dates on the correct Beijing calendar day', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-02T04:00:00.000Z'));
+    try {
+      const fetcher = vi.fn(async (input: string) => {
+        if (input.includes('/api/members/show.json')) {
+          return new Response(JSON.stringify({ id: 9, username: 'neo' }));
+        }
+        if (input === 'https://www.v2ex.com/member/neo/replies?p=2') {
+          return new Response(`
+            <div class="dock_area">2010 年 4 月 27 日回复了 alice 创建的主题 › 分享创造 › <a href="/t/121#reply4">old topic</a></div>
+            <div class="dock_area">12 月 31 日回复了 bob 创建的主题 › 问与答 › <a href="/t/122#reply8">previous year topic</a></div>
+          `);
+        }
+        throw new Error(`unexpected ${input}`);
+      });
+
+      const profile = await getUserProfile({
+        source: 'v2ex',
+        id: 'neo',
+        username: 'neo',
+        cursor: '2',
+        cursorType: 'replies',
+        fetcher
+      });
+
+      expect(profile.replies?.map((reply) => reply.createdAt)).toEqual([
+        '2010-04-26T16:00:00.000Z',
+        '2025-12-30T16:00:00.000Z'
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reads current logged-in users for account status without V2EX', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input === 'https://www.nodeseek.com/api/account/getInfo?readme=1') {
@@ -473,7 +581,8 @@ describe('Android local forum facade', () => {
             username: 'alice',
             name: 'Alice',
             avatar_template: '/user_avatar/linux.do/alice/{size}/1_2.png',
-            trust_level: 2
+            trust_level: 2,
+            bio_raw: 'Example response: enable javascript and cookies'
           }
         }));
       }

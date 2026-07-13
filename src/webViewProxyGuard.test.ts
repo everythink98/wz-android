@@ -13,7 +13,9 @@ describe('WebView proxy guard', () => {
     const appRoot = readSource('src', 'app', 'AppRoot.tsx');
     const hiddenBrowserHost = readSource('src', 'app', 'HiddenBrowserHost.tsx');
     const globalModalHost = readSource('src', 'app', 'GlobalModalHost.tsx');
+    const nodeImageAuthModal = readSource('src', 'app', 'NodeImageAuthModal.tsx');
     const htmlRenderingController = readSource('src', 'app', 'useHtmlRenderingController.tsx');
+    const forumHtmlRendererProvider = readSource('src', 'screens', 'topic', 'ForumHtmlRendererProvider.tsx');
     const morePanels = readSource('src', 'screens', 'more', 'MorePanels.tsx');
 
     expect(appRoot).toContain('const networkProxyWebViewBlockMessage =');
@@ -23,8 +25,10 @@ describe('WebView proxy guard', () => {
     expect(hiddenBrowserHost).toContain('blockedMessage');
     expect(hiddenBrowserHost).toContain('!blockedMessage && nodeSeekBrowserFetchRequest');
     expect(hiddenBrowserHost).toContain('!blockedMessage && linuxDoBrowserFetchRequest');
-    expect(globalModalHost).toContain('webViewBlockMessage || nodeImageAuthError');
-    expect(htmlRenderingController).toContain('webViewBlockMessage ? (');
+    expect(globalModalHost).toContain('webViewBlockMessage={webViewBlockMessage}');
+    expect(nodeImageAuthModal).toContain('webViewBlockMessage || controller.error');
+    expect(htmlRenderingController).toContain('webViewBlockMessage');
+    expect(forumHtmlRendererProvider).toMatch(/\{webViewBlockMessage \? \([\s\S]*?\) : \(\s*<WebView/);
     expect(morePanels).toContain('webViewBlockMessage || webViewError');
   });
 });

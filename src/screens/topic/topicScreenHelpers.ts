@@ -2,7 +2,6 @@ import type { AccessRequirement, Reply, Topic } from '../../types';
 import { accessRequirementFromNoticeText, textContentFromHtml } from '../../localHtml';
 
 export type TopicListItem =
-  | { type: 'replyControls'; key: string }
   | { type: 'emptyReplies'; key: string }
   | { type: 'reply'; key: string; reply: Reply; replyFloor: number };
 
@@ -19,11 +18,11 @@ function slowModeLabel(seconds: number) {
 }
 
 function getReplyKey(reply: Reply) {
-  if (typeof reply.floor === 'number') {
-    return `reply-floor-${reply.floor}`;
-  }
   if (typeof reply.commentId === 'number') {
     return `reply-comment-${reply.commentId}`;
+  }
+  if (typeof reply.floor === 'number') {
+    return `reply-floor-${reply.floor}`;
   }
   const seed = [
     reply.authorId || '',
@@ -77,20 +76,31 @@ export function isAccessNoticeHtml(html: string, accessRequirement?: AccessRequi
 
 export function buildReplyListItems({
   canShowReplies,
-  replyItems,
+  replies,
   topicShowsAccessNotice
 }: {
   canShowReplies: boolean;
-  replyItems: TopicListItem[];
+  replies: Reply[];
   topicShowsAccessNotice: boolean;
 }): TopicListItem[] {
   if (!canShowReplies || topicShowsAccessNotice) {
     return [];
   }
-  return [
-    { type: 'replyControls', key: 'reply-controls' },
-    ...(replyItems.length ? replyItems : [{ type: 'emptyReplies', key: 'empty-replies' } as TopicListItem])
-  ];
+  if (!replies.length) {
+    return [{ type: 'emptyReplies', key: 'empty-replies' }];
+  }
+  const keyCounts = new Map<string, number>();
+  return replies.map((reply) => {
+    const baseKey = getReplyKey(reply);
+    const count = (keyCounts.get(baseKey) || 0) + 1;
+    keyCounts.set(baseKey, count);
+    return {
+      type: 'reply',
+      key: count === 1 ? baseKey : `${baseKey}-duplicate-${count}`,
+      reply,
+      replyFloor: reply.floor ?? 0
+    };
+  });
 }
 
 export {

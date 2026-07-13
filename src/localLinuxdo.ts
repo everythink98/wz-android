@@ -588,27 +588,35 @@ async function fetchLinuxDoJson<T>(
     headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken, options.nocache)
   }, options);
   const text = await response.text();
-  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-    throw new LinuxDoCloudflareError();
-  }
   let data: unknown = {};
+  let bodyIsReadable = !text;
   if (text) {
     try {
       data = JSON.parse(text);
+      bodyIsReadable = true;
     } catch {
-      if (!response.ok) {
-        const bodyMessage = textContentFromHtml(text);
-        const accessRequirement = accessRequirementFromText(bodyMessage);
-        const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
-        const error = new Error(message);
-        Object.assign(error, {
-          status: response.status,
-          ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
-        });
-        throw error;
-      }
-      throw new Error('linux.do 返回内容格式不正确');
+      bodyIsReadable = false;
     }
+  }
+  if (isCloudflareChallengeResponse(
+    { status: response.status, headers: response.headers, bodyText: text },
+    { bodyIsReadable }
+  )) {
+    throw new LinuxDoCloudflareError();
+  }
+  if (text && !bodyIsReadable) {
+    if (!response.ok) {
+      const bodyMessage = textContentFromHtml(text);
+      const accessRequirement = accessRequirementFromText(bodyMessage);
+      const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
+      const error = new Error(message);
+      Object.assign(error, {
+        status: response.status,
+        ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
+      });
+      throw error;
+    }
+    throw new Error('linux.do 返回内容格式不正确');
   }
   if (!response.ok) {
     const message = linuxDoErrorText(data, `HTTP ${response.status}`);
@@ -1193,13 +1201,21 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
     }
   }, options);
   const text = await response.text();
-  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
-    throw new LinuxDoCloudflareError();
-  }
   let data: unknown = {};
+  let bodyIsReadable = !text;
   try {
     data = text ? JSON.parse(text) : {};
+    bodyIsReadable = true;
   } catch {
+    bodyIsReadable = false;
+  }
+  if (isCloudflareChallengeResponse(
+    { status: response.status, headers: response.headers, bodyText: text },
+    { bodyIsReadable }
+  )) {
+    throw new LinuxDoCloudflareError();
+  }
+  if (!bodyIsReadable) {
     throw new Error('linux.do 当前用户返回内容格式不正确');
   }
   if (!response.ok) {

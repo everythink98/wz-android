@@ -377,13 +377,11 @@ export function useFeedController({
       const shouldStartAggregatedBaseFeed = source === 'all' && shouldFetchAggregatedBaseFeed({
         page,
         cursor,
-        hasYaohuoCookie: true,
+        hasYaohuoCookie: false,
         retryWithoutCursor: Boolean(requestBaseState.baseFeedRetryPending)
       });
       const eagerBasePromise = shouldStartAggregatedBaseFeed ? getAggregatedBaseFeed() : undefined;
       void eagerBasePromise?.catch(() => undefined);
-      let hasYaohuoCredential = false;
-      let yaohuoCredentialFailure: { reason: unknown } | null = null;
       if (source === 'all') {
         if (yaohuoCredentialSuppressed) {
           markDiagnosticStage(trace, 'credential', {
@@ -391,31 +389,26 @@ export function useFeedController({
             state: 'disabled',
             hasCredential: false
           });
-        } else try {
-          hasYaohuoCredential = await sourceGateway.hasYaohuoCredential();
-          markDiagnosticStage(trace, 'credential', {
-            source: 'yaohuo',
-            state: 'success',
-            hasCredential: hasYaohuoCredential
-          });
-        } catch (error) {
-          if (isSilentRequestInterruption(error)) {
-            throw error;
-          }
-          markDiagnosticStage(trace, 'credential', {
-            source: 'yaohuo',
-            state: 'error',
-            reason: 'storage_error',
-            hasCredential: false
-          });
-          yaohuoCredentialFailure = { reason: error };
         }
       }
       if (finishInterruptedFeedRequest()) {
         return;
       }
       let finalErrors: SourceErrors = {};
-      if (source === 'all' && (hasYaohuoCredential || yaohuoCredentialFailure)) {
+      if (source === 'all') {
+        const yaohuoPromise = yaohuoCredentialSuppressed
+          ? Promise.resolve(null)
+          : sourceGateway.getFeedIfCredentialed({
+            source: 'yaohuo',
+            page,
+            limit: 30,
+            signal: controller.signal
+          }, { isCurrent: isCurrentFeedRequest, trace });
+        const [yaohuoResult] = await Promise.allSettled([yaohuoPromise]);
+        if (yaohuoResult.status === 'rejected' && isSilentRequestInterruption(yaohuoResult.reason)) {
+          throw yaohuoResult.reason;
+        }
+        const hasYaohuoCredential = yaohuoResult.status === 'fulfilled' && yaohuoResult.value !== null;
         const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({
           page,
           cursor,
@@ -425,22 +418,11 @@ export function useFeedController({
         const basePromise = shouldFetchBaseFeed
           ? eagerBasePromise || getAggregatedBaseFeed()
           : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-        const yaohuoPromise = hasYaohuoCredential
-          ? sourceGateway.getFeed({
-            source: 'yaohuo',
-            page,
-            limit: 30,
-            signal: controller.signal
-          }, { isCurrent: isCurrentFeedRequest, trace })
-          : Promise.reject(yaohuoCredentialFailure?.reason);
-        const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
+        const [baseResult] = await Promise.allSettled([basePromise]);
         if (baseResult.status === 'rejected' && isSilentRequestInterruption(baseResult.reason)) {
           throw baseResult.reason;
         }
-        if (yaohuoResult.status === 'rejected' && isSilentRequestInterruption(yaohuoResult.reason)) {
-          throw yaohuoResult.reason;
-        }
-        if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
+        if (baseResult.status === 'rejected' && !hasYaohuoCredential) {
           throw baseResult.reason;
         }
         if (finishInterruptedFeedRequest()) {
@@ -450,16 +432,18 @@ export function useFeedController({
           ...current,
           [requestSource]: {
             ...current[requestSource],
-            baseFeedRetryPending: baseResult.status === 'rejected' && yaohuoResult.status === 'fulfilled'
+            baseFeedRetryPending: baseResult.status === 'rejected' && hasYaohuoCredential
           }
         }));
         finalErrors = {
           ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: sourceErrorFromUnknown('all', baseResult.reason) }),
-          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
+          ...(yaohuoResult.status === 'fulfilled'
+            ? (yaohuoResult.value?.errors || {})
+            : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
         };
         const splitResponse = mergedFeedResponseAfterSplitFetch([
           ...(baseResult.status === 'fulfilled' ? [baseResult.value] : []),
-          ...(yaohuoResult.status === 'fulfilled' ? [yaohuoResult.value] : [])
+          ...(yaohuoResult.status === 'fulfilled' && yaohuoResult.value ? [yaohuoResult.value] : [])
         ], finalErrors, isLoadMore);
         if (splitResponse) {
           applyFeedResponse(splitResponse);
@@ -478,19 +462,17 @@ export function useFeedController({
         applyFeedResponse(data);
         finalErrors = data.errors || {};
       } else {
-        const data = source === 'all' && eagerBasePromise
-          ? await eagerBasePromise
-          : await sourceGateway.getFeed({
-            source,
-            page,
-            cursor,
-            limit: 30,
-            category: category || undefined,
-            feedFilter: requestFeedFilter,
-            linuxDoFilter: requestSource === 'linuxdo' ? requestFeedFilter as LinuxDoFeedFilter | undefined : undefined,
-            nocache,
-            signal: controller.signal
-          }, { isCurrent: isCurrentFeedRequest, trace });
+        const data = await sourceGateway.getFeed({
+          source,
+          page,
+          cursor,
+          limit: 30,
+          category: category || undefined,
+          feedFilter: requestFeedFilter,
+          linuxDoFilter: requestSource === 'linuxdo' ? requestFeedFilter as LinuxDoFeedFilter | undefined : undefined,
+          nocache,
+          signal: controller.signal
+        }, { isCurrent: isCurrentFeedRequest, trace });
         if (finishInterruptedFeedRequest()) {
           return;
         }

@@ -67,6 +67,7 @@ import {
   withDiagnosticFetcher
 } from '../diagnostics';
 import { REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from '../request';
+import { withBrowserFetchIntent } from '../browserFetchIntent';
 import { saveLinuxDoAccess } from '../linuxdoCookieBridge';
 import { useSessionController } from './useSessionController';
 
@@ -86,7 +87,12 @@ afterEach(() => {
   vi.mocked(CookieManager.flush).mockImplementation(async () => undefined);
 });
 
-function createTestSessionController(defaultFetcher: Fetcher = vi.fn(), setWebLoginUserId = vi.fn(), notify = vi.fn()) {
+function createTestSessionController(
+  defaultFetcher: Fetcher = vi.fn(),
+  setWebLoginUserId = vi.fn(),
+  notify = vi.fn(),
+  recoverNetworkConnectionPool = vi.fn(async () => undefined)
+) {
   return useSessionController({
     defaultFetcher,
     linuxDoBrowserWebViewRef: { current: null },
@@ -97,6 +103,7 @@ function createTestSessionController(defaultFetcher: Fetcher = vi.fn(), setWebLo
     nodeSeekWebViewCookieHeaderRef: { current: '' },
     nodeSeekWebViewUserAgentRef: { current: '' },
     notify,
+    recoverNetworkConnectionPool,
     setLinuxDoWebViewCookieHeader: vi.fn(),
     setLinuxDoWebViewUserAgent: vi.fn(),
     setNodeSeekWebViewUserAgent: vi.fn(),
@@ -106,6 +113,38 @@ function createTestSessionController(defaultFetcher: Fetcher = vi.fn(), setWebLo
 }
 
 describe('session controller helpers', () => {
+  it.each([
+    ['yaohuo', 'https://www.yaohuo.me/bbs/book_list.aspx?siteid=1000'],
+    ['v2ex', 'https://www.v2ex.com/api/topics/latest.json'],
+    ['v2ex', 'https://www.sov2ex.com/api/search?q=reader']
+  ] as const)('leaves %s managed-read recovery to sourceGateway', async (_source, url) => {
+    const defaultFetcher = vi.fn(async () => { throw new TypeError('Network request failed'); });
+    const recoverNetworkConnectionPool = vi.fn(async () => undefined);
+    const controller = createTestSessionController(defaultFetcher, vi.fn(), vi.fn(), recoverNetworkConnectionPool);
+
+    await expect(controller.forumFetchWithWebViewFallback(url)).rejects.toThrow('Network request failed');
+    expect(defaultFetcher).toHaveBeenCalledTimes(1);
+    expect(recoverNetworkConnectionPool).not.toHaveBeenCalled();
+  });
+
+  it('does not replay a forum write even when its URL is a managed-read host', async () => {
+    const defaultFetcher = vi.fn(async () => { throw new TypeError('Network request failed'); });
+    const recoverNetworkConnectionPool = vi.fn(async () => undefined);
+    const controller = createTestSessionController(
+      defaultFetcher,
+      vi.fn(),
+      vi.fn(),
+      recoverNetworkConnectionPool
+    );
+
+    await expect(controller.forumFetchWithWebViewFallback('https://www.yaohuo.me/bbs/write.aspx', {
+      method: 'POST'
+    })).rejects.toThrow('Network request failed');
+
+    expect(defaultFetcher).toHaveBeenCalledTimes(1);
+    expect(recoverNetworkConnectionPool).not.toHaveBeenCalled();
+  });
+
   it('restores other site sessions when one credential store fails', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
@@ -1052,6 +1091,63 @@ describe('session controller helpers', () => {
       expect.objectContaining({ phase: 'guard', channel: 'webview', state: 'queued' }),
       expect.objectContaining({ phase: 'parse', channel: 'webview', status: 200 })
     ]));
+  });
+
+  it('lets a foreground linux.do topic preempt an active background feed fallback', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const backgroundUrl = 'https://linux.do/latest.json';
+    const foregroundUrl = 'https://linux.do/t/42.json';
+    const background = controller.forumFetchWithWebViewFallback(backgroundUrl, withBrowserFetchIntent({}, {
+      owner: 'feed', priority: 'background', cancelable: true
+    }));
+    await vi.waitFor(() => expect(lines.map((line) => JSON.parse(line))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'linuxdo', channel: 'webview', state: 'active' })
+    ])));
+    const foreground = controller.forumFetchWithWebViewFallback(foregroundUrl, withBrowserFetchIntent({}, {
+      owner: 'topic', priority: 'foreground', cancelable: true
+    }));
+
+    await expect(background).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+    await controller.completeLinuxDoBrowserFetch({ id: 2, url: foregroundUrl, body: '{}' });
+    await expect(foreground).resolves.toBeInstanceOf(Response);
+  });
+
+  it('does not let a linux.do foreground read preempt a noncancelable request', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const writeUrl = 'https://linux.do/t/41.json';
+    const foregroundUrl = 'https://linux.do/t/42.json';
+    const write = controller.forumFetchWithWebViewFallback(writeUrl, withBrowserFetchIntent({}, {
+      owner: 'write', priority: 'write', cancelable: false
+    }));
+    await vi.waitFor(() => expect(lines.map((line) => JSON.parse(line))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'linuxdo', channel: 'webview', state: 'active' })
+    ])));
+    const writeTraceId = lines.map((line) => JSON.parse(line)).find((event) => (
+      event.source === 'linuxdo' && event.owner === 'write'
+    ))?.traceId;
+    const foreground = controller.forumFetchWithWebViewFallback(foregroundUrl, withBrowserFetchIntent({}, {
+      owner: 'topic', priority: 'foreground', cancelable: true
+    }));
+    await vi.waitFor(() => expect(lines.map((line) => JSON.parse(line))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'linuxdo', owner: 'topic', priority: 'foreground' })
+    ])));
+    expect(lines.map((line) => JSON.parse(line)).filter((event) => (
+      event.traceId === writeTraceId && event.phase === 'finish'
+    ))).toEqual([]);
+    await controller.completeLinuxDoBrowserFetch({ id: 1, url: writeUrl, body: '{}' });
+    await expect(write).resolves.toBeInstanceOf(Response);
+    await controller.completeLinuxDoBrowserFetch({ id: 2, url: foregroundUrl, body: '{}' });
+    await expect(foreground).resolves.toBeInstanceOf(Response);
   });
 
   it('records a queued WebView request replaced by a newer request as stale without notifying the user', async () => {

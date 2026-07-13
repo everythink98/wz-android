@@ -51,7 +51,7 @@ object NetworkProxyRuntime {
   private val lock = Any()
   private val selector = NetworkProxySelector()
   private val blockedProxy = Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", BLOCKED_PROXY_PORT))
-  @Volatile private var localProxy: Proxy? = null
+  @Volatile private var localProxy: Proxy? = blockedProxy
   @Volatile private var connectionPool = ConnectionPool()
   private var installed = false
 
@@ -75,29 +75,49 @@ object NetworkProxyRuntime {
   }
 
   fun setLocalProxyPort(port: Int?) {
-    localProxy = if (port == null) {
+    val next = if (port == null) {
       Log.i(LOG_TAG, "disabled app proxy")
       null
     } else {
-      Log.i(LOG_TAG, "enabled app proxy on 127.0.0.1:" + port)
+      Log.i(LOG_TAG, "enabled app proxy")
       Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port))
     }
+    replaceLocalProxy(next)
   }
 
   fun blockNetworkRequests() {
     Log.w(LOG_TAG, "blocked app requests while proxy switches")
-    localProxy = blockedProxy
+    replaceLocalProxy(blockedProxy)
   }
 
-  fun recoverNodeSeekNetwork() {
+  private fun replaceLocalProxy(next: Proxy?) {
     val previous = synchronized(lock) {
-      val current = connectionPool
-      connectionPool = ConnectionPool()
-      current
+      if (localProxy == next) {
+        null
+      } else {
+        localProxy = next
+        rotateConnectionPoolLocked()
+      }
+    }
+    previous?.evictAll()
+  }
+
+  private fun rotateConnectionPoolLocked(): ConnectionPool {
+    val previous = connectionPool
+    connectionPool = ConnectionPool()
+    return previous
+  }
+
+  fun recoverNetworkConnectionPool() {
+    val previous = synchronized(lock) {
+      rotateConnectionPoolLocked()
     }
     previous.evictAll()
-    Log.w(LOG_TAG, "recovered NodeSeek network connection pool")
+    Log.w(LOG_TAG, "recovered app network connection pool")
   }
+
+  @Deprecated("Use recoverNetworkConnectionPool")
+  fun recoverNodeSeekNetwork() = recoverNetworkConnectionPool()
 
   private fun applyClientState(builder: OkHttpClient.Builder) {
     builder.proxySelector(selector)
@@ -105,6 +125,7 @@ object NetworkProxyRuntime {
   }
 
   fun currentLocalProxy(): Proxy? = localProxy
+  fun isBlockingRequests(): Boolean = localProxy === blockedProxy
 }
 
 class NetworkProxySelector : ProxySelector() {
@@ -123,7 +144,6 @@ class NetworkProxySelector : ProxySelector() {
     if (proxy == null) {
       return delegate?.select(uri)?.toMutableList() ?: mutableListOf(Proxy.NO_PROXY)
     }
-    Log.i(LOG_TAG, "select proxy for " + (uri?.scheme ?: "unknown") + "://" + targetHost + " via " + proxy.address())
     return mutableListOf(proxy)
   }
 
@@ -132,16 +152,22 @@ class NetworkProxySelector : ProxySelector() {
   }
 }
 
-class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
+class LocalNetworkProxyServer(
+  private val upstream: NetworkProxyProfile,
+  private val onFatal: (LocalNetworkProxyServer, String) -> Unit = { _, _ -> }
+) {
   private val serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
   private val executor = Executors.newCachedThreadPool()
   @Volatile private var running = true
+  @Volatile private var fatalMessage: String? = null
 
   val port: Int
     get() = serverSocket.localPort
 
+  fun failureMessage(): String? = fatalMessage
+
   fun start() {
-    Log.i(LOG_TAG, "local proxy listening on 127.0.0.1:" + port + " upstream=" + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
+    Log.i(LOG_TAG, "local proxy started")
     executor.execute {
       while (running) {
         try {
@@ -151,11 +177,13 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
           }
         } catch (_: SocketException) {
           if (running) {
+            reportFatal("本机代理监听异常，网络已阻断")
             break
           }
         } catch (_: IOException) {
           if (running) {
-            continue
+            reportFatal("本机代理监听异常，网络已阻断")
+            break
           }
         }
       }
@@ -164,12 +192,21 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
 
   fun stop() {
     running = false
-    Log.i(LOG_TAG, "local proxy stopped on 127.0.0.1:" + port)
+    Log.i(LOG_TAG, "local proxy stopped")
     try {
       serverSocket.close()
     } catch (_: IOException) {
     }
     executor.shutdownNow()
+  }
+
+  private fun reportFatal(message: String) {
+    if (!running) {
+      return
+    }
+    running = false
+    fatalMessage = message
+    onFatal(this, message)
   }
 
   private fun handleClient(client: Socket) {
@@ -186,7 +223,6 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
         val method = parts[0].uppercase(Locale.US)
         if (method == "CONNECT") {
           val target = parseHostPort(parts[1], 443)
-          Log.i(LOG_TAG, "tunnel CONNECT " + target.host + ":" + target.port + " via " + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
           val remote = connectToTarget(target)
           local.getOutputStream().write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n".toByteArray(HEADER_CHARSET))
           local.soTimeout = 0
@@ -195,7 +231,6 @@ class LocalNetworkProxyServer(private val upstream: NetworkProxyProfile) {
         }
 
         val target = targetFromHttpRequest(parts[1], header)
-        Log.i(LOG_TAG, "proxy " + method + " " + target.host + ":" + target.port + " via " + upstream.protocol + "://" + upstream.host + ":" + upstream.port)
         val remote = if (upstream.protocol == "http") {
           connectPlain(upstream.host, upstream.port)
         } else {
@@ -579,6 +614,14 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+private data class NetworkProxyStatusSnapshot(
+  val ok: Boolean,
+  val port: Int?,
+  val message: String?
+)
+
+private const val BLOCKED_WEBVIEW_PROXY_PORT = 9
+
 class NetworkProxyModule(private val reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
   private val worker = Executors.newSingleThreadExecutor()
 
@@ -587,38 +630,31 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
   @ReactMethod
   fun applyProxy(profile: ReadableMap?, promise: Promise) {
     worker.execute {
+      var nextServer: LocalNetworkProxyServer? = null
       try {
         NetworkProxyRuntime.install(reactContext)
         if (profile == null) {
-          replaceServer(null)
           clearWebViewProxy()
+          replaceServer(null)
           promise.resolve(statusMap(true, null))
           return@execute
         }
         val parsed = parseProfile(profile)
-        val nextServer = LocalNetworkProxyServer(parsed)
-        nextServer.start()
-        blockServer()
-        try {
-          applyWebViewProxy(nextServer.port)
-          replaceServer(nextServer)
-          promise.resolve(statusMap(true, nextServer.port))
-        } catch (error: Exception) {
-          nextServer.stop()
-          blockServer()
-          try {
-            clearWebViewProxy()
-          } catch (_: Exception) {
-          }
-          promise.reject("proxy_apply_failed", error.message ?: "代理启动失败", error)
+        val createdServer = LocalNetworkProxyServer(parsed) { failed, message ->
+          failServer(failed, message)
         }
+        nextServer = createdServer
+        stageServer(createdServer)
+        createdServer.start()
+        blockServer()
+        applyWebViewProxy(createdServer.port)
+        replaceServer(createdServer)
+        promise.resolve(statusMap(true, createdServer.port))
       } catch (error: Exception) {
-        if (profile != null) {
-          blockServer()
-          try {
-            clearWebViewProxy()
-          } catch (_: Exception) {
-          }
+        blockServer("代理启动失败，网络已阻断", nextServer)
+        try {
+          blockWebViewRequests()
+        } catch (_: Exception) {
         }
         promise.reject("proxy_apply_failed", error.message ?: "代理启动失败", error)
       }
@@ -642,17 +678,26 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     }
   }
 
-  @ReactMethod
-  fun recoverNodeSeekNetwork(promise: Promise) {
-    worker.execute {
-      try {
-        NetworkProxyRuntime.install(reactContext)
-        NetworkProxyRuntime.recoverNodeSeekNetwork()
-        promise.resolve(statusMap(true, null))
-      } catch (error: Exception) {
-        promise.reject("network_recover_failed", error.message ?: "请求通道恢复失败", error)
-      }
+  private fun recoverConnectionPool(promise: Promise) {
+    try {
+      NetworkProxyRuntime.install(reactContext)
+      NetworkProxyRuntime.recoverNetworkConnectionPool()
+      promise.resolve(statusMap(true, null))
+    } catch (error: Exception) {
+      promise.reject("network_recover_failed", error.message ?: "请求通道恢复失败", error)
     }
+  }
+
+  @ReactMethod
+  fun recoverNetworkConnectionPool(promise: Promise) = recoverConnectionPool(promise)
+
+  @ReactMethod
+  fun recoverNodeSeekNetwork(promise: Promise) = recoverConnectionPool(promise)
+
+  @ReactMethod
+  fun getStatus(promise: Promise) {
+    val status = statusSnapshot()
+    promise.resolve(statusMap(status.ok, status.port, status.message))
   }
 
   private fun parseProfile(profile: ReadableMap): NetworkProxyProfile {
@@ -703,38 +748,122 @@ class NetworkProxyModule(private val reactContext: ReactApplicationContext) : Re
     ProxyController.getInstance().clearProxyOverride({ runnable -> runnable.run() }) {
       latch.countDown()
     }
-    latch.await(10, TimeUnit.SECONDS)
+    if (!latch.await(10, TimeUnit.SECONDS)) {
+      throw IllegalStateException("WebView 代理清除超时")
+    }
   }
 
-  private fun statusMap(ok: Boolean, port: Int?) = Arguments.createMap().apply {
+  private fun blockWebViewRequests() {
+    applyWebViewProxy(BLOCKED_WEBVIEW_PROXY_PORT)
+  }
+
+  private fun statusMap(ok: Boolean, port: Int?, message: String? = null) = Arguments.createMap().apply {
     putBoolean("ok", ok)
     if (port != null) {
       putDouble("port", port.toDouble())
+    }
+    if (message != null) {
+      putString("message", message)
     }
   }
 
   companion object {
     private val serverLock = Any()
     private var server: LocalNetworkProxyServer? = null
+    private var candidateServer: LocalNetworkProxyServer? = null
+    private var serverFailure: String? = null
 
-    private fun replaceServer(next: LocalNetworkProxyServer?) {
-      val previous: LocalNetworkProxyServer?
-      synchronized(serverLock) {
-        previous = server
-        server = next
-        NetworkProxyRuntime.setLocalProxyPort(next?.port)
+    private fun stageServer(next: LocalNetworkProxyServer) {
+      val previous = synchronized(serverLock) {
+        val current = candidateServer
+        candidateServer = next
+        current
       }
-      previous?.stop()
+      if (previous !== next) {
+        previous?.stop()
+      }
     }
 
-    private fun blockServer() {
-      val previous: LocalNetworkProxyServer?
+    private fun replaceServer(next: LocalNetworkProxyServer?) {
+      var previous: LocalNetworkProxyServer? = null
+      var discardedCandidate: LocalNetworkProxyServer? = null
+      synchronized(serverLock) {
+        if (next != null) {
+          next.failureMessage()?.let { throw IllegalStateException(it) }
+          if (candidateServer !== next) {
+            throw IllegalStateException(serverFailure ?: "代理服务在生效前失效")
+          }
+        } else {
+          discardedCandidate = candidateServer
+        }
+        previous = server
+        server = next
+        candidateServer = null
+        serverFailure = null
+        NetworkProxyRuntime.setLocalProxyPort(next?.port)
+      }
+      if (previous !== next) {
+        previous?.stop()
+      }
+      if (discardedCandidate !== previous) {
+        discardedCandidate?.stop()
+      }
+    }
+
+    private fun blockServer(
+      message: String? = null,
+      discardCandidate: LocalNetworkProxyServer? = null
+    ) {
+      var previous: LocalNetworkProxyServer? = null
+      var discardedCandidate: LocalNetworkProxyServer? = null
       synchronized(serverLock) {
         previous = server
         server = null
+        if (discardCandidate != null && candidateServer === discardCandidate) {
+          discardedCandidate = candidateServer
+          candidateServer = null
+        }
+        serverFailure = message
         NetworkProxyRuntime.blockNetworkRequests()
       }
       previous?.stop()
+      if (discardedCandidate !== previous) {
+        discardedCandidate?.stop()
+      }
+    }
+
+    private fun failServer(failed: LocalNetworkProxyServer, message: String) {
+      var previous: LocalNetworkProxyServer? = null
+      synchronized(serverLock) {
+        if (server === failed || candidateServer === failed) {
+          previous = server
+          server = null
+          if (candidateServer === failed) {
+            candidateServer = null
+          }
+          serverFailure = message
+          NetworkProxyRuntime.blockNetworkRequests()
+        }
+      }
+      if (previous !== failed) {
+        previous?.stop()
+      }
+      failed.stop()
+    }
+
+    private fun statusSnapshot(): NetworkProxyStatusSnapshot = synchronized(serverLock) {
+      val failure = serverFailure
+      val current = server
+      when {
+        failure != null -> NetworkProxyStatusSnapshot(false, null, failure)
+        current != null -> NetworkProxyStatusSnapshot(true, current.port, null)
+        NetworkProxyRuntime.isBlockingRequests() -> NetworkProxyStatusSnapshot(
+          false,
+          null,
+          "代理状态尚未应用，网络已阻断"
+        )
+        else -> NetworkProxyStatusSnapshot(true, null, null)
+      }
     }
   }
 }

@@ -83,7 +83,7 @@ function matchesConfigUrl(config: LoginFormConfig, url: string) {
   }
 }
 
-function safeInjectedJson(value: unknown) {
+export function safeInjectedJson(value: unknown) {
   return JSON.stringify(value)
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')

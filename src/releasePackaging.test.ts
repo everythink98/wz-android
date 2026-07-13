@@ -13,13 +13,28 @@ describe('Android release packaging guards', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const testIndex = releaseScript.indexOf("run('npm', ['test']);");
     const unusedIndex = releaseScript.indexOf("run('npm', ['run', 'check:unused']);");
-    const versionIndex = releaseScript.indexOf("run('node', ['scripts/check-version.mjs']);");
+    const versionIndex = releaseScript.indexOf("run('node', ['scripts/check-version.mjs', '--release']);");
     const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);");
 
     expect(testIndex).toBeGreaterThanOrEqual(0);
     expect(unusedIndex).toBeGreaterThan(testIndex);
     expect(versionIndex).toBeGreaterThan(unusedIndex);
     expect(prebuildIndex).toBeGreaterThan(versionIndex);
+  });
+
+  it('requires a clean worktree before release and after generating the tracked icon', () => {
+    const releaseScript = readProjectFile('scripts', 'release-android.mjs');
+    const firstGuard = releaseScript.indexOf("assertCleanWorktree({ rootDir, phase: '发布前' });");
+    const tests = releaseScript.indexOf("run('npm', ['test']);");
+    const icon = releaseScript.indexOf("run('node', ['scripts/generate-adaptive-icon.mjs']);");
+    const secondGuard = releaseScript.indexOf("assertCleanWorktree({ rootDir, phase: 'adaptive icon 生成后' });");
+    const prebuild = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);");
+
+    expect(firstGuard).toBeGreaterThanOrEqual(0);
+    expect(firstGuard).toBeLessThan(tests);
+    expect(secondGuard).toBeGreaterThan(icon);
+    expect(secondGuard).toBeLessThan(prebuild);
+    expect(releaseScript).toContain("run('node', ['scripts/check-version.mjs', '--release']);");
   });
 
   it('keeps version truth in config instead of duplicating it in stable docs', () => {
@@ -73,6 +88,7 @@ describe('Android release packaging guards', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
 
     expect(app.expo.extra.releaseSignerSha256).toBe('6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66');
+    expect(app.expo.extra.releaseTrustAnchorSha256).toBe('6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66');
     expect(releaseScript).toContain('expectedReleaseSignerSha256');
     expect(releaseScript).toContain('verifyExpectedReleaseSigner(signerSha256);');
   });
@@ -102,6 +118,26 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('GET_SIGNING_CERTIFICATES');
   });
 
+  it('returns one current signer and its verified rotation history on every supported Android version', () => {
+    const plugin = readProjectFile('plugins', 'withApkInstaller.js');
+
+    expect(plugin).toContain('PackageManager.GET_SIGNATURES');
+    expect(plugin).toContain('packageInfo.signatures?.singleOrNull()');
+    expect(plugin).toContain('signingInfo.hasMultipleSigners()');
+    expect(plugin).toContain('signingInfo.signingCertificateHistory');
+    expect(plugin).toContain('signerHistorySha256.last()');
+    expect(plugin).toContain('result.putArray("signerHistorySha256", signerHistory)');
+    expect(plugin).toContain('result.putBoolean("signerHistoryVerified", Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)');
+    expect(plugin).not.toContain('apk_signature_unsupported');
+  });
+
+  it('documents the release trust anchor as immutable across signer rotations', () => {
+    const runbook = readProjectFile('docs', 'operator-runbook.md');
+
+    expect(runbook).toContain('releaseTrustAnchorSha256');
+    expect(runbook).toMatch(/releaseTrustAnchorSha256[^\n]*(?:不可|禁止)[^\n]*(?:修改|轮换)/);
+  });
+
   it('keeps the Android network proxy module enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
@@ -113,10 +149,21 @@ describe('Android release packaging guards', () => {
     expect(plugin).toContain('ProxyController');
     expect(plugin).toContain('OkHttpClientProvider.setOkHttpClientFactory');
     expect(plugin).toContain('NetworkingModule.setCustomClientBuilder');
+    expect(plugin).toContain('fun recoverNetworkConnectionPool(promise: Promise)');
+    expect(plugin).toContain('fun recoverNetworkConnectionPool()');
     expect(plugin).toContain('fun recoverNodeSeekNetwork(promise: Promise)');
     expect(plugin).toContain('fun recoverNodeSeekNetwork()');
+    const recoverBody = plugin.slice(
+      plugin.indexOf('private fun recoverConnectionPool'),
+      plugin.indexOf('fun recoverNetworkConnectionPool(promise: Promise)')
+    );
+    expect(recoverBody).not.toContain('worker.execute');
     expect(plugin).toContain('connectionPool = ConnectionPool()');
     expect(plugin).toContain('evictAll()');
+    expect(plugin).toContain('private fun replaceLocalProxy(next: Proxy?)');
+    expect(plugin).toContain('replaceLocalProxy(next)');
+    expect(plugin).toContain('replaceLocalProxy(blockedProxy)');
+    expect(plugin).toContain('rotateConnectionPoolLocked()');
     expect(plugin).not.toContain('cancelAll()');
     expect(plugin).not.toContain('builder.dispatcher');
     expect(plugin).toContain('androidx.webkit:webkit:1.14.0');
@@ -124,19 +171,75 @@ describe('Android release packaging guards', () => {
 
   it('keeps network proxy failures closed instead of falling back to direct network', () => {
     const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
-    const startIndex = plugin.indexOf('nextServer.start()');
+    const startIndex = plugin.indexOf('createdServer.start()');
     const blockIndex = plugin.indexOf('blockServer()', startIndex);
-    const applyIndex = plugin.indexOf('applyWebViewProxy(nextServer.port)');
+    const applyIndex = plugin.indexOf('applyWebViewProxy(createdServer.port)');
+    const disableIndex = plugin.indexOf('if (profile == null)');
+    const clearDisabledWebViewIndex = plugin.indexOf('clearWebViewProxy()', disableIndex);
+    const restoreDirectRuntimeIndex = plugin.indexOf('replaceServer(null)', disableIndex);
 
     expect(plugin).toContain('fun blockNetworkRequests()');
-    expect(plugin).toContain('private fun blockServer()');
+    expect(plugin).toContain('private fun blockServer(');
+    expect(plugin).toContain('message: String? = null,');
+    expect(plugin).toContain('discardCandidate: LocalNetworkProxyServer? = null');
     expect(plugin).toContain('blockServer()');
     expect(plugin.match(/local\.soTimeout = 0/g)?.length).toBeGreaterThanOrEqual(2);
     expect(plugin).not.toContain('latch.await(5, TimeUnit.MINUTES)');
     expect(startIndex).toBeGreaterThanOrEqual(0);
     expect(blockIndex).toBeGreaterThan(startIndex);
     expect(applyIndex).toBeGreaterThan(blockIndex);
+    expect(clearDisabledWebViewIndex).toBeGreaterThan(disableIndex);
+    expect(clearDisabledWebViewIndex).toBeLessThan(restoreDirectRuntimeIndex);
     expect(plugin).not.toContain('replaceServer(null)\n          try {\n            clearWebViewProxy()');
+    expect(plugin).toContain('private const val BLOCKED_WEBVIEW_PROXY_PORT = 9');
+    expect(plugin).toContain('private fun blockWebViewRequests()');
+    expect(plugin.match(/blockWebViewRequests\(\)/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(plugin).not.toContain('blockServer("代理启动失败，网络已阻断")\n          try {\n            clearWebViewProxy()');
+  });
+
+  it('blocks app network from process startup until JavaScript explicitly applies proxy state', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(plugin).toContain('@Volatile private var localProxy: Proxy? = blockedProxy');
+    expect(plugin).toContain('fun isBlockingRequests(): Boolean = localProxy === blockedProxy');
+  });
+
+  it('does not write request targets or upstream proxy addresses to Android logs', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(plugin).not.toContain('select proxy for ');
+    expect(plugin).not.toContain('tunnel CONNECT ');
+    expect(plugin).not.toContain('proxy " + method');
+    expect(plugin).not.toContain('upstream=');
+    expect(plugin).not.toContain('local proxy listening on 127.0.0.1:');
+  });
+
+  it('fails closed and exposes a diagnostic status when the local proxy listener dies', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+
+    expect(plugin).toContain('onFatal: (LocalNetworkProxyServer, String) -> Unit');
+    expect(plugin).toContain('reportFatal("本机代理监听异常，网络已阻断")');
+    expect(plugin).toContain('private fun failServer(failed: LocalNetworkProxyServer, message: String)');
+    expect(plugin).toContain('private var candidateServer: LocalNetworkProxyServer? = null');
+    expect(plugin).toContain('server === failed || candidateServer === failed');
+    expect(plugin).not.toContain('server === failed || server == null');
+    expect(plugin.indexOf('stageServer(createdServer)')).toBeLessThan(plugin.indexOf('createdServer.start()'));
+    expect(plugin).toContain('blockServer("代理启动失败，网络已阻断", nextServer)');
+    expect(plugin).toMatch(/failServer[\s\S]*NetworkProxyRuntime\.blockNetworkRequests\(\)/);
+    expect(plugin).toContain('fun getStatus(promise: Promise)');
+    expect(plugin).toContain('putString("message", message)');
+  });
+
+  it('reads proxy health synchronously instead of queueing behind long proxy tests', () => {
+    const plugin = readProjectFile('plugins', 'withNetworkProxyModule.js');
+    const getStatusBody = plugin.slice(
+      plugin.indexOf('fun getStatus(promise: Promise)'),
+      plugin.indexOf('private fun parseProfile')
+    );
+
+    expect(getStatusBody).toContain('val status = statusSnapshot()');
+    expect(getStatusBody).toContain('promise.resolve(statusMap(status.ok, status.port, status.message))');
+    expect(getStatusBody).not.toContain('worker.execute');
   });
 
   it('rejects invalid IPv4 literals before encoding SOCKS5 addresses', () => {

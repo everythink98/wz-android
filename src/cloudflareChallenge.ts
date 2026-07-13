@@ -18,10 +18,16 @@ function isCloudflareChallengeBody(body: string) {
   return CHALLENGE_BODY_MARKERS.some((marker) => text.includes(marker));
 }
 
-export function isCloudflareChallengeResponse(response: Pick<Response, 'status' | 'headers'> & { bodyText?: string }) {
+export function isCloudflareChallengeResponse(
+  response: Pick<Response, 'status' | 'headers'> & { bodyText?: string },
+  { bodyIsReadable = false }: { bodyIsReadable?: boolean } = {}
+) {
   const mitigated = response.headers?.get?.('cf-mitigated') || response.headers?.get?.('CF-Mitigated');
   if (mitigated && /challenge/i.test(mitigated)) {
     return true;
+  }
+  if (bodyIsReadable) {
+    return false;
   }
   if (typeof response.bodyText === 'string') {
     return isCloudflareChallengeBody(response.bodyText);

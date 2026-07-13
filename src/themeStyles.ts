@@ -3,12 +3,11 @@ import { type ReaderSettings } from './readerData';
 import { createNavigationStyles, createPanelStyles, createTopicStyles } from './themeParts';
 import { alphaColor, fontFamilyValue, LINK_COLOR, type ReaderTheme } from './themeCore';
 
-export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windowHeight: number) {
+export function createStyles(theme: ReaderTheme, settings: ReaderSettings) {
   const fontScale = settings.fontScale;
   const titleFontScale = Math.min(fontScale, 1.12);
   const listFontScale = Math.max(0.9, Math.min(settings.fontScale, 1.08) * 0.96);
   const densityPadding = settings.listDensity === 'compact' ? 11 : settings.listDensity === 'loose' ? 16 : 14;
-  const loginWebViewHeight = Math.min(480, Math.max(320, Math.round(windowHeight * 0.58)));
   const appFontFamily = fontFamilyValue(settings.fontFamily);
   const linkColor = theme.dark ? theme.primary : LINK_COLOR;
   const topicRowBackground = theme.surface;
@@ -875,9 +874,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '700',
       lineHeight: 22
     },
-    searchFilterBody: {
-      maxHeight: Math.max(320, Math.round(windowHeight * 0.58))
-    },
     searchFilterBodyInner: {
       gap: 14,
       paddingBottom: 4
@@ -1494,14 +1490,6 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     loginPanel: {
       gap: 10
-    },
-    webViewShell: {
-      height: loginWebViewHeight,
-      overflow: 'hidden',
-      borderColor: theme.line,
-      borderRadius: radiusMd,
-      borderWidth: StyleSheet.hairlineWidth,
-      backgroundColor: theme.surface
     },
     loginWebViewModal: {
       flex: 1,

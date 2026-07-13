@@ -47,8 +47,9 @@ import { clearCookieUrls } from '../cookieCleanup';
 import { NODESEEK_URL, YAOHUO_URL } from '../appUrls';
 import type { FeedSource, Source } from '../types';
 import { REQUEST_SUPERSEDED_MESSAGE, type Fetcher } from '../request';
-import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl, type NodeSeekDirectRecoveryEvent } from '../nodeseekFetchFallback';
+import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
 import { createLinuxDoWebViewFallbackFetcher, isLinuxDoBrowserFetchUrl, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
+import type { DirectTransportRecoveryEvent } from '../directWebViewFallback';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '../browserFetchIntent';
 import { errorMessage } from '../appUtils';
 import {
@@ -265,7 +266,7 @@ export function useSessionController({
   nodeSeekWebViewCookieHeaderRef,
   nodeSeekWebViewUserAgentRef,
   notify,
-  recoverNodeSeekNetwork,
+  recoverNetworkConnectionPool,
   setLinuxDoWebViewCookieHeader,
   setLinuxDoWebViewUserAgent,
   setNodeSeekWebViewUserAgent,
@@ -281,7 +282,7 @@ export function useSessionController({
   nodeSeekWebViewCookieHeaderRef: MutableRef<string>;
   nodeSeekWebViewUserAgentRef: MutableRef<string>;
   notify: (message: string) => void;
-  recoverNodeSeekNetwork?: (event: NodeSeekDirectRecoveryEvent) => Promise<unknown> | unknown;
+  recoverNetworkConnectionPool?: (event: DirectTransportRecoveryEvent) => Promise<unknown> | unknown;
   setLinuxDoWebViewCookieHeader: Dispatch<SetStateAction<string>>;
   setLinuxDoWebViewUserAgent: Dispatch<SetStateAction<string>>;
   setNodeSeekWebViewUserAgent: Dispatch<SetStateAction<string>>;
@@ -916,7 +917,8 @@ export function useSessionController({
       enqueueLatestBrowserFetchRequest({
         queueRef: linuxDoBrowserFetchQueueRef,
         request,
-        message: REQUEST_SUPERSEDED_MESSAGE
+        message: REQUEST_SUPERSEDED_MESSAGE,
+        shouldKeepQueuedRequest: shouldKeepQueuedBrowserFetchRequest
       });
       markDiagnosticStage(diagnosticTrace, 'guard', {
         source: 'linuxdo',
@@ -924,21 +926,29 @@ export function useSessionController({
         state: 'queued',
         queueLength: linuxDoBrowserFetchQueueRef.current.length
       });
+      preemptActiveBrowserFetchRequest({
+        currentRef: linuxDoBrowserFetchCurrentRef,
+        request,
+        message: REQUEST_SUPERSEDED_MESSAGE,
+        rejectCurrent: rejectLinuxDoBrowserFetch
+      });
       startNextLinuxDoBrowserFetch();
     });
-  }, [defaultFetcher, linuxDoBrowserFetchIdRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
+  }, [defaultFetcher, linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchIdRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetch, startNextLinuxDoBrowserFetch]);
 
   const nodeSeekFetchWithWebViewFallback = useMemo(() => createNodeSeekWebViewFallbackFetcher({
     appState: AppState,
     defaultFetcher,
-    recoverNodeSeekNetwork,
+    recoverNetworkConnectionPool,
     webViewFetcher: nodeSeekFetchWithWebView
-  }), [defaultFetcher, nodeSeekFetchWithWebView, recoverNodeSeekNetwork]);
+  }), [defaultFetcher, nodeSeekFetchWithWebView, recoverNetworkConnectionPool]);
 
   const forumFetchWithWebViewFallback = useMemo(() => createLinuxDoWebViewFallbackFetcher({
+    appState: AppState,
     defaultFetcher: nodeSeekFetchWithWebViewFallback,
+    recoverNetworkConnectionPool,
     webViewFetcher: linuxDoFetchWithWebView
-  }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback]);
+  }), [linuxDoFetchWithWebView, nodeSeekFetchWithWebViewFallback, recoverNetworkConnectionPool]);
 
   const loadNodeSeekCookieForSource = useCallback(async (source: FeedSource | Source, options?: CredentialLoadOptions) => {
     if (source !== 'all' && source !== 'nodeseek') {

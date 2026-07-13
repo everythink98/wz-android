@@ -24,6 +24,7 @@ import { createSourceGateway, getFeed, getReplies, getTopic, getUserProfile, sea
 import { setDiagnosticWriter } from '../diagnostics';
 import { createNodeSeekWebViewFallbackFetcher } from '../nodeseekFetchFallback';
 import { REQUEST_SUPERSEDED_MESSAGE } from '../request';
+import { browserFetchIntentFromInit } from '../browserFetchIntent';
 import type { Topic } from '../types';
 
 afterEach(() => {
@@ -31,6 +32,47 @@ afterEach(() => {
 });
 
 describe('source gateway reads', () => {
+  it('returns no optional Yaohuo feed without starting its adapter when no credential exists', async () => {
+    const fetcher = vi.fn();
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await expect(gateway.getFeedIfCredentialed({ source: 'yaohuo' })).resolves.toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['v2ex', (gateway: ReturnType<typeof createSourceGateway>) => gateway.getFeed({ source: 'v2ex' }), '[]'],
+    ['yaohuo', (gateway: ReturnType<typeof createSourceGateway>) => gateway.getFeedIfCredentialed({ source: 'yaohuo' }), '<div class="listdata"><a href="/bbs-123.html">妖火主题</a>/alice/阅1/05-20 10:00</div>']
+  ] as const)('owns %s direct recovery inside the managed gateway', async (source, read, body) => {
+    let attempt = 0;
+    const fetcher = vi.fn(async () => {
+      attempt += 1;
+      if (attempt === 1) {
+        throw new TypeError('Network request failed');
+      }
+      return new Response(body, { headers: { 'Content-Type': source === 'v2ex' ? 'application/json' : 'text/html' } });
+    });
+    const recoverNetworkConnectionPool = vi.fn(async () => undefined);
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => source === 'yaohuo' ? 'sidyaohuo=secret' : undefined),
+      nodeSeekUserAgent: () => '',
+      recoverNetworkConnectionPool
+    });
+
+    await expect(read(gateway)).resolves.toBeTruthy();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(recoverNetworkConnectionPool).toHaveBeenCalledWith(expect.objectContaining({ source }));
+  });
+
   it.each([
     ['feed', (gateway: ReturnType<typeof createSourceGateway>) => gateway.getFeed({ source: 'all', limit: 10 })],
     ['categories', (gateway: ReturnType<typeof createSourceGateway>) => gateway.getCategories({ source: 'all' })],
@@ -131,6 +173,7 @@ describe('source gateway reads', () => {
         `))
       });
       const gateway = createSourceGateway({
+        appState,
         clearYaohuoLoginState: vi.fn(async () => undefined),
         fetcher: fallbackFetcher,
         loadNodeSeekCookieForSource: vi.fn(async () => undefined),
@@ -155,6 +198,152 @@ describe('source gateway reads', () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
+  });
+
+  it('keeps the managed linux.do transport-recovery budget bounded at 30 seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = createSourceGateway({
+        clearYaohuoLoginState: vi.fn(async () => undefined),
+        fetcher: vi.fn(() => new Promise<Response>(() => undefined)),
+        loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+        loadYaohuoCookieForSource: vi.fn(async () => undefined),
+        nodeSeekUserAgent: () => ''
+      });
+      let settled = false;
+      const outcome = gateway.getFeed({ source: 'linuxdo', limit: 10 })
+        .then(() => undefined, (error: unknown) => error)
+        .finally(() => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(outcome).resolves.toMatchObject({ message: '请求超时，请稍后重试' });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('uses one 30 second budget across sequential linux.do adapter requests', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: string[] = [];
+      const fetcher = vi.fn((input: string, init?: RequestInit) => {
+        const url = String(input);
+        calls.push(url);
+        if (url.includes('/t/42.json')) {
+          return new Promise<Response>((resolve) => {
+            setTimeout(() => resolve(new Response(JSON.stringify({
+              id: 42,
+              title: 'bounded topic',
+              category_id: 999,
+              created_at: '2026-07-13T00:00:00.000Z',
+              last_posted_at: '2026-07-13T00:00:00.000Z',
+              posts_count: 1,
+              post_stream: {
+                posts: [{
+                  id: 1,
+                  post_number: 1,
+                  username: 'reader',
+                  cooked: '<p>body</p>',
+                  created_at: '2026-07-13T00:00:00.000Z'
+                }],
+                stream: [1]
+              }
+            }), { headers: { 'content-type': 'application/json' } })), 20_000);
+          });
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          }, { once: true });
+        });
+      });
+      const gateway = createSourceGateway({
+        clearYaohuoLoginState: vi.fn(async () => undefined),
+        fetcher,
+        loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+        loadYaohuoCookieForSource: vi.fn(async () => undefined),
+        nodeSeekUserAgent: () => ''
+      });
+      let settled = false;
+      const outcome = gateway.getTopic({ source: 'linuxdo', id: '42' })
+        .then(() => undefined, (error: unknown) => error)
+        .finally(() => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(calls.some((url) => url.endsWith('/site.json'))).toBe(true);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(outcome).resolves.toMatchObject({ message: '请求超时，请稍后重试' });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the 30 second linux.do budget isolated inside aggregate reads', async () => {
+    vi.useFakeTimers();
+    try {
+      const gateway = createSourceGateway({
+        clearYaohuoLoginState: vi.fn(async () => undefined),
+        fetcher: vi.fn((input: string) => String(input).includes('linux.do')
+          ? new Promise<Response>(() => undefined)
+          : Promise.resolve(new Response('[]', { headers: { 'content-type': 'application/json' } }))),
+        loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+        loadYaohuoCookieForSource: vi.fn(async () => undefined),
+        nodeSeekUserAgent: () => ''
+      });
+      let settled = false;
+      const outcome = gateway.getFeed({ source: 'all', limit: 10 })
+        .finally(() => { settled = true; });
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      await expect(outcome).resolves.toMatchObject({
+        errors: { linuxdo: expect.any(Object) }
+      });
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    [
+      'background feed',
+      (gateway: ReturnType<typeof createSourceGateway>) => gateway.getFeed({ source: 'linuxdo', limit: 10 }),
+      { owner: 'feed', priority: 'background', cancelable: true }
+    ],
+    [
+      'foreground topic',
+      (gateway: ReturnType<typeof createSourceGateway>) => gateway.getTopic({ source: 'linuxdo', id: '42' }),
+      { owner: 'topic', priority: 'foreground', cancelable: true }
+    ]
+  ] as const)('marks managed linux.do %s reads with WebView queue intent', async (_name, read, expectedIntent) => {
+    const intents: unknown[] = [];
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(async (input, init) => {
+        if (String(input).includes('linux.do')) {
+          intents.push(browserFetchIntentFromInit(init));
+        }
+        throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+      }),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await expect(read(gateway)).rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+
+    expect(intents).toEqual([expectedIntent]);
   });
 
   it('reads the yaohuo feed through the shared getFeed interface', async () => {

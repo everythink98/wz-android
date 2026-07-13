@@ -541,7 +541,7 @@ describe('linux.do Cloudflare helpers', () => {
     expect(pluginSource).toContain('changedCookieAppeared');
     expect(pluginSource).toContain('unchangedCookieRemains');
     expect(pluginSource).toContain('linux.do login cookies remained after cleanup');
-    expect(pluginSource).toContain('if (conditional) {\n      return cleared');
+    expect(pluginSource).toMatch(/if \(conditional\) \{\r?\n\s+return cleared/);
   });
 
   it('supports React Native dynamic imports that expose NativeModules on default', () => {

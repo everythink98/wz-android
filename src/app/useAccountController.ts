@@ -30,12 +30,23 @@ import {
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError
 } from '../appUtils';
-import { checkYaohuoLogin, getLinuxDoLevelProfile, type LinuxDoLevelProfile } from '../sources/sourceGateway';
+import {
+  checkYaohuoLogin,
+  getLinuxDoLevelProfile,
+  isLinuxDoLoginExpiredError,
+  type LinuxDoLevelProfile
+} from '../sources/sourceGateway';
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
-import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
+import { nodeSeekLoginProbeScript } from '../loginWebViewScripts';
+import {
+  createWebViewMessageSession,
+  parseTrustedWebViewMessage,
+  type WebViewMessageSession
+} from '../webViewMessageGuard';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
+import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -50,6 +61,11 @@ const YAOHUO_COOKIE_URLS = [YAOHUO_URL];
 
 type Ref<T> = MutableRefObject<T>;
 export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout';
+
+const NODESEEK_LOGIN_MESSAGE_ORIGINS = [
+  'https://www.nodeseek.com',
+  'https://nodeseek.com'
+];
 
 export function useAccountController({
   checkingRequestIdRef,
@@ -138,6 +154,25 @@ export function useAccountController({
   const yaohuoTerminalRequestRef = useRef<number | null>(null);
   const wasYaohuoLoginPanelVisibleRef = useRef(false);
   const observedYaohuoLoginPanelRequestRef = useRef(yaohuoLoginPanelRequestRef.current);
+  const nodeSeekMessageSessionRef = useRef<{
+    panelRequestId: number;
+    session: WebViewMessageSession;
+  }>({
+    panelRequestId: nodeSeekLoginPanelRequestRef.current,
+    session: createWebViewMessageSession('nodeseek-login')
+  });
+
+  const currentNodeSeekMessageSession = useCallback(() => {
+    const panelRequestId = nodeSeekLoginPanelRequestRef.current;
+    if (nodeSeekMessageSessionRef.current.panelRequestId !== panelRequestId) {
+      nodeSeekMessageSessionRef.current = {
+        panelRequestId,
+        session: createWebViewMessageSession('nodeseek-login')
+      };
+    }
+    return nodeSeekMessageSessionRef.current.session;
+  }, [nodeSeekLoginPanelRequestRef]);
+  const nodeSeekProbeScript = nodeSeekLoginProbeScript(currentNodeSeekMessageSession());
 
   const finishNodeSeekLoginTrace = useCallback((
     trace: DiagnosticTrace,
@@ -252,6 +287,12 @@ export function useAccountController({
 
   const recordNodeSeekLoginWebViewState = useCallback((state: LoginWebViewDiagnosticState, attempt = 0) => {
     const requestId = nodeSeekLoginPanelRequestRef.current;
+    if (state === 'start') {
+      nodeSeekMessageSessionRef.current = {
+        panelRequestId: requestId,
+        session: createWebViewMessageSession('nodeseek-login')
+      };
+    }
     if (state === 'start' && nodeSeekTerminalRequestRef.current === requestId) {
       nodeSeekTerminalRequestRef.current = null;
     } else if (nodeSeekTerminalRequestRef.current === requestId) {
@@ -271,7 +312,7 @@ export function useAccountController({
       channel: 'webview',
       state: state === 'start' ? 'started' : 'ready'
     });
-  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, onLoginWebViewFailure]);
+  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, nodeSeekLoginPanelRequestRef, onLoginWebViewFailure]);
 
   const recordYaohuoLoginWebViewState = useCallback((state: LoginWebViewDiagnosticState, attempt = 0) => {
     const requestId = yaohuoLoginPanelRequestRef.current;
@@ -297,14 +338,28 @@ export function useAccountController({
   }, [currentYaohuoLoginTrace, finishYaohuoLoginTrace, onLoginWebViewFailure]);
 
   const handleLoginMessage = useCallback((event: WebViewMessageEvent) => {
+    const data = parseTrustedWebViewMessage(event.nativeEvent, {
+      allowedTypes: ['nodeseek-login'],
+      trustedOrigins: NODESEEK_LOGIN_MESSAGE_ORIGINS,
+      ...currentNodeSeekMessageSession()
+    }) as ({
+      type: 'nodeseek-login';
+      loggedIn?: boolean;
+      userId?: number | null;
+      userAgent?: string;
+      cookie?: string;
+    } & Record<string, unknown>) | null;
+    if (!data) {
+      return;
+    }
+    if (
+      typeof data.loggedIn !== 'boolean'
+      || typeof data.userAgent !== 'string'
+      || typeof data.cookie !== 'string'
+    ) {
+      return;
+    }
     try {
-      const data = JSON.parse(event.nativeEvent.data) as {
-        type?: string;
-        loggedIn?: boolean;
-        userId?: number | null;
-        userAgent?: string;
-        cookie?: string;
-      };
       if (data.type === 'nodeseek-login') {
         if (nodeSeekTerminalRequestRef.current !== nodeSeekLoginPanelRequestRef.current) {
           const trace = currentNodeSeekLoginTrace('open');
@@ -357,6 +412,7 @@ export function useAccountController({
     }
   }, [
     currentNodeSeekLoginTrace,
+    currentNodeSeekMessageSession,
     clearNodeSeekLoginCookiesOnly,
     currentNodeSeekCredentialGeneration,
     nodeSeekWebViewCookieHeaderRef,
@@ -377,7 +433,7 @@ export function useAccountController({
     });
     nodeSeekLoginPageStatusRef.current = 'unknown';
     webLoginDetectedRef.current = false;
-    webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
+    webViewRef.current?.injectJavaScript(nodeSeekLoginProbeScript(currentNodeSeekMessageSession()));
     await new Promise((resolve) => setTimeout(resolve, 250));
     if (nodeSeekLoginTraceRef.current?.trace === trace) {
       markDiagnosticStage(trace, 'transport', {
@@ -386,7 +442,7 @@ export function useAccountController({
         state: 'complete'
       });
     }
-  }, [currentNodeSeekLoginTrace, webLoginDetectedRef, webViewRef]);
+  }, [currentNodeSeekLoginTrace, currentNodeSeekMessageSession, webLoginDetectedRef, webViewRef]);
 
   const readCurrentNodeSeekCookies = useCallback(async (diagnosticTrace?: DiagnosticTrace) => {
     await probeLoginPage();
@@ -766,10 +822,16 @@ export function useAccountController({
 
   const refreshLinuxDoLevel = useCallback(async () => {
     const requestId = ++linuxDoLevelRequestIdRef.current;
+    const accessGeneration = currentLinuxDoAccessGeneration();
+    let accessCookieHeader: string | undefined;
     setLinuxDoLevelBusy(true);
     setLinuxDoLevelError('');
     try {
       const access = await loadLinuxDoAccess();
+      if (accessGeneration !== currentLinuxDoAccessGeneration()) {
+        return;
+      }
+      accessCookieHeader = access?.cookieHeader;
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
         setLinuxDoLevelProfile(null);
         setLinuxDoLevelError('请先完成 linux.do 登录 / 验证。');
@@ -780,19 +842,46 @@ export function useAccountController({
         userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
         fetcher: forumFetchWithWebViewFallback
       });
-      if (requestId !== linuxDoLevelRequestIdRef.current) {
+      if (
+        requestId !== linuxDoLevelRequestIdRef.current
+        || accessGeneration !== currentLinuxDoAccessGeneration()
+      ) {
         return;
       }
       setLinuxDoLevelProfile(profile);
       notify('linux.do 等级已更新。');
     } catch (error) {
-      if (requestId !== linuxDoLevelRequestIdRef.current) {
+      if (
+        requestId !== linuxDoLevelRequestIdRef.current
+        || accessGeneration !== currentLinuxDoAccessGeneration()
+      ) {
         return;
       }
       if (isLinuxDoCloudflareError(error)) {
         setLinuxDoLevelProfile(null);
         setLinuxDoLevelError('linux.do 等级读取需要完成 Cloudflare 验证');
         showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
+        return;
+      }
+      if (isLinuxDoLoginExpiredError(error)) {
+        try {
+          const cleared = await clearExpiredLinuxDoLogin({
+            error,
+            generation: accessGeneration,
+            cookieHeader: accessCookieHeader,
+            resetLinuxDoLevelState,
+            updateLinuxDoSession
+          });
+          if (!cleared || requestId !== linuxDoLevelRequestIdRef.current) {
+            return;
+          }
+        } catch {
+          if (requestId !== linuxDoLevelRequestIdRef.current) {
+            return;
+          }
+        }
+        setLinuxDoLevelProfile(null);
+        setLinuxDoLevelError(errorMessage(error));
         return;
       }
       setLinuxDoLevelError(errorMessage(error));
@@ -806,10 +895,12 @@ export function useAccountController({
     linuxDoLevelRequestIdRef,
     linuxDoWebViewUserAgentRef,
     notify,
+    resetLinuxDoLevelState,
     setLinuxDoLevelBusy,
     setLinuxDoLevelError,
     setLinuxDoLevelProfile,
-    showLinuxDoVerification
+    showLinuxDoVerification,
+    updateLinuxDoSession
   ]);
 
   return {
@@ -819,6 +910,7 @@ export function useAccountController({
     clearLogin,
     clearYaohuoLogin,
     handleLoginMessage,
+    nodeSeekLoginProbeScript: nodeSeekProbeScript,
     recordNodeSeekLoginWebViewState,
     recordYaohuoLoginWebViewState,
     rememberVisibleNodeSeekCookies,

@@ -60,11 +60,17 @@
 | 更多页 / 外观 / 更新 | 单一账号中心按 NodeSeek、linux.do、妖火排列且只显示一站详情；顶部区分待处理、网站登录和自动填入数量；原主页、登录 / 验证、检测、清除登录、刷新网页、签到、NodeImage 和等级入口均保留；进入 More 页不自动刷新；测试工具独立；代理、备份、诊断、外观和更新行为不变 | `src/app/accountStatusHelpers.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/siteSessionState.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/networkProxy.test.ts`、`src/webViewProxyGuard.test.ts`、`src/appUpdate.test.ts`、`src/releasePackaging.test.ts` |
 | 发布 / 安装 | 版本号一致；release 先跑测试、文档和无用代码检查；正式签名有效；按设备 ABI 覆盖安装签名 APK；只读 smoke 通过；敏感文件不提交 | `src/releasePackaging.test.ts`、`src/androidSmokeGuard.test.ts`、`npm run release:android` |
 
+- HTML renderer 身份测试必须证明同一 topic 的详情 clone、回复加载和互动结果不会改变 renderer 组件类型；模拟器至少检查图片不重新 loading、`details` / 引用折叠和 terminal tab 状态不复位。
+- 回复草稿测试覆盖每键只更新 composer 局部状态、blur / 收起后同步、图片异步返回时追加到最新草稿、提交使用显式内容，以及不向 TextInput 回写受控 selection。评论查找应在筛选结果变化和列表回收时保持输入焦点。
+- 登录 / 验证 WebView 消息必须同时覆盖 exact origin、当前 session / nonce、允许的 type；相似域、旧 WebView 会话、旧授权异步完成和缺字段消息全部忽略。生产 nonce 不允许回退到 `Math.random`。
+- 发布测试覆盖 tag 历史中的 versionCode 单调性、dirty worktree 两道门禁、当前 signer 与 manifest 双向匹配、不可变 trust anchor 和 Android verified signer lineage；攻击者自洽替换 manifest 与 APK 仍必须失败。
+- 代理安全存储只有 `null` 表示从未配置；空串、损坏 JSON 或不可恢复 schema 必须保持 native / WebView fail-closed。代理 apply / disable 失败时 WebView 必须指向 dead loopback proxy，不能 clear override 后直连；direct / blocked / 用户代理切换要轮换连接池。active 与 candidate listener 的 fatal ownership 必须隔离，旧 listener 的迟到回调不能重新阻断已成功 disable 的状态；存储读取失败后的首次成功保存必须强制重新应用 native 状态，不能永久卡在 failed。
+
 ## 来源隔离、后台与刷新语义
 
 - 聚合首页、分类和搜索不能先等待 NodeSeek 或妖火凭据再启动不依赖该凭据的来源；单站安全存储失败只产生该站 partial error。用户取消必须保持整次操作取消，不能降级成 partial success；加载更多遇到任一站失败仍不得混入半页结果，静默取消或被新请求替代后不得残留 `loadingMore`。
 - 启动恢复和账号刷新按站点独立读取凭据；单站 SecureStore 异常不能阻塞其他站会话恢复。已确认登录失效后的 Cookie 清理是 best-effort，清理失败只记录 `storage_error`，不得把原始登录失效改写成普通存储错误。NodeSeek、linux.do 与妖火清理失败后，native 层或 SecureStore 残留的旧登录 Cookie 不得复活登录；只有 App 内页面明确确认的新登录能解除对应撤销标记。linux.do 还必须由 `/session/current.json` 返回带有效 id 与 username 的当前用户；匿名也能成功的 `/session/csrf` 不能作为登录检查，单纯再次读到旧 `_t` / `_forum_session` 也不能解除标记。旧清理已触及 WebView 后若被新 credential generation 替代，必须补回当前保存的三站 Cookie；任一 native Cookie 写入返回 `false` 不能记为成功。自动清理比较完整旧 Cookie bundle，任一名称或值变化必须整批跳过并保持 fail-closed；写入过期 Cookie 后要重读验证旧 bundle 已消失。Android WebView 不提供按旧值原子删除的公开 API，自动条件清理不得用私有 Cookies 数据库写入作为替代。
-- NodeSeek direct fetch 的 deadline 是从请求开始计算的 8 秒绝对 wall-clock 时间。切后台时请求继续；回前台后，已完成的请求正常返回，仍 pending 且总耗时超过 8 秒的请求立即 WebView fallback。连续两次 direct fallback 后的网络恢复必须异步执行，不能拖住当前结果或后续请求；direct 成功会清零连续失败，较早请求迟到的 fallback 结果不能跨过这次成功继续计数。
+- 四站 managed GET / HEAD direct fetch 的 deadline 都是从请求开始计算的 8 秒绝对 wall-clock 时间。切后台时请求继续；回前台后，已完成的请求正常返回，仍 pending 且总耗时超过 8 秒的请求立即处理。caller 已 abort 或请求已 supersede 时禁止恢复、重试或 fallback。NodeSeek 保持既有 WebView fallback；连续两次可读、非 challenge 的 fallback 后异步恢复通用连接池，direct 成功会清零连续失败，迟到结果不能跨 epoch 继续计数。linux.do、V2EX / SOV2EX 和妖火的普通超时 / 网络错误只允许“全局 single-flight 恢复连接池 + direct 重试一次”，第二次失败必须终止；V2EX、妖火不得改走 WebView，linux.do 只有 Cloudflare challenge 与既有未登录站外搜索可使用隐藏 WebView。HTTP / 解析 / 登录错误不得触发 transport recovery。写请求不得自动重放。四站单站 managed read 使用覆盖凭据和全部串行 adapter 请求的 30 秒前台 active-time 总预算；聚合读取每站独立计时，单站 timeout 保留其他站结果。
 - NodeSeek 当前用户的确定 401、用户取消和已取消 signal 不得继续请求主页、设置页或使用旧 userId；普通网络错误和非鉴权解析失败才允许沿既有 fallback 继续。
 - linux.do `nocache` 读取必须同时发送 no-cache headers，并绕过当前 topic stream 内存缓存；普通读取仍复用缓存。
 
@@ -75,7 +81,7 @@ npm test -- src/localSources.test.ts src/forumApi.test.ts src/sources/sourceGate
 npm run typecheck
 ```
 
-NodeSeek 后台专项只读验收：开始一次真实 NodeSeek 列表、搜索或详情读取后切后台约 5～6 秒再返回。若后台期间请求已完成，结果应直接显示；若仍 pending，只有从请求开始累计超过 8 秒才进入 fallback。检查同一 `traceId` 的 AppState、timeout trigger、direct / WebView 阶段和唯一 `finish`，日志不得包含 URL、Cookie、token、主题或用户真实标识。不能为制造超时修改生产常量或注入真实写请求。
+四站后台专项只读验收：开始一次真实列表、搜索或详情读取后切后台约 5～6 秒再返回。若后台期间请求已完成，结果应直接显示；若仍 pending，只有单次 direct 从请求开始累计超过 8 秒才处理，而 30 秒 operation budget 不消耗后台时间。NodeSeek 检查 direct / WebView fallback；linux.do、V2EX 和妖火检查 connection-pool recovery / direct retry。核对同一 `traceId` 的 AppState、timeout trigger 和唯一 `finish`；日志不得包含 URL、Cookie、token、主题或用户真实标识。不能为制造超时修改生产常量或注入真实写请求。
 
 ## 妖火响应与验证语义
 

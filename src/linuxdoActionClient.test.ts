@@ -32,7 +32,10 @@ describe('linux.do action client', () => {
         });
       }
       if (input === 'https://linux.do/post_actions') {
-        return new Response(JSON.stringify({ success: true }), {
+        return new Response(JSON.stringify({
+          success: true,
+          cooked: '<p>Example response: enable javascript and cookies</p>'
+        }), {
           headers: { 'content-type': 'application/json' }
         });
       }

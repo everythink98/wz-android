@@ -1,5 +1,10 @@
-export const NODESEEK_LOGIN_PROBE_SCRIPT = `
+import { safeInjectedJson } from './loginFormAdapters';
+import type { WebViewMessageSession } from './webViewMessageGuard';
+
+export function nodeSeekLoginProbeScript(session: WebViewMessageSession) {
+  return `
 (() => {
+  const messageSession = ${safeInjectedJson(session)};
   const numberFromValue = (value) => {
     const number = Number(value);
     return Number.isInteger(number) && number > 0 ? number : null;
@@ -23,22 +28,30 @@ export const NODESEEK_LOGIN_PROBE_SCRIPT = `
     userId,
     username: "",
     userAgent: navigator.userAgent || "",
-    cookie: document.cookie || ""
+    cookie: document.cookie || "",
+    sessionId: messageSession.sessionId,
+    nonce: messageSession.nonce
   }));
 })();
 true;
 `;
+}
 
-export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
+export function linuxDoWebViewProbeScript(session: WebViewMessageSession) {
+  return `
 (() => {
+  const messageSession = ${safeInjectedJson(session)};
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "linuxdo-webview",
     userAgent: navigator.userAgent || "",
-    cookie: document.cookie || ""
+    cookie: document.cookie || "",
+    sessionId: messageSession.sessionId,
+    nonce: messageSession.nonce
   }));
 })();
 true;
 `;
+}
 
 const NODEIMAGE_API_BASE_URL = 'https://api.nodeimage.com';
 
@@ -48,16 +61,21 @@ export type NodeImageAuthPayload = {
   sign: unknown;
 };
 
-export function nodeImageApiKeyProbeScript(authPayload?: NodeImageAuthPayload | null) {
+export function nodeImageApiKeyProbeScript(
+  authPayload: NodeImageAuthPayload | null | undefined,
+  session: WebViewMessageSession
+) {
   const payloadScript = authPayload
     ? `window.__wzNodeImageAuthPayload = ${safeInjectedJson(authPayload)};`
     : '';
-  return `${payloadScript}\n${NODEIMAGE_API_KEY_PROBE_SCRIPT}`;
+  return `${payloadScript}\n${nodeImageApiKeyProbeBody(session)}`;
 }
 
-export const NODEIMAGE_API_KEY_PROBE_SCRIPT = `
+function nodeImageApiKeyProbeBody(session: WebViewMessageSession) {
+  return `
 (() => {
-  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+  const messageSession = ${safeInjectedJson(session)};
+  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(Object.assign({}, payload, messageSession)));
   const nodeImageApiBaseUrl = "${NODEIMAGE_API_BASE_URL}";
   const host = String(location.hostname || "").toLowerCase();
   const isNodeSeekConnectPage = () => {
@@ -165,7 +183,4 @@ export const NODEIMAGE_API_KEY_PROBE_SCRIPT = `
 })();
 true;
 `;
-
-function safeInjectedJson(value: unknown) {
-  return JSON.stringify(value).replace(/</g, '\\u003c');
 }

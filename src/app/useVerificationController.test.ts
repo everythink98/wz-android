@@ -67,6 +67,7 @@ function createController() {
     injectJavaScript: vi.fn(),
     stopLoading: vi.fn()
   });
+  const linuxDoWebViewCookieHeaderRef = ref('');
   const onLoginWebViewFailure = vi.fn();
   const controller = useVerificationController({
     cancelLinuxDoPendingReopenTask: vi.fn(),
@@ -85,7 +86,7 @@ function createController() {
     linuxDoRequireFreshClearanceRef: ref(false),
     linuxDoVerifiedRetryTopicKeyRef: ref<string | null>(null),
     linuxDoWebViewCookieHeader: '',
-    linuxDoWebViewCookieHeaderRef: ref(''),
+    linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewMountTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
@@ -115,7 +116,24 @@ function createController() {
     updateLinuxDoSession: vi.fn(),
     updateNodeSeekSession: vi.fn()
   });
-  return { controller, linuxDoWebViewSessionRef, onLoginWebViewFailure };
+  return { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewSessionRef, onLoginWebViewFailure };
+}
+
+function linuxDoMessageEvent(
+  controller: ReturnType<typeof useVerificationController>,
+  payload: Record<string, unknown>,
+  url = 'https://linux.do/latest'
+) {
+  const sessionJson = controller.linuxDoWebViewProbeScript.match(/const messageSession = (\{[^;]+\});/)?.[1];
+  if (!sessionJson) {
+    throw new Error('linux.do probe script is missing its message session.');
+  }
+  return {
+    nativeEvent: {
+      data: JSON.stringify({ ...payload, ...JSON.parse(sessionJson) }),
+      url
+    }
+  } as never;
 }
 
 afterEach(() => {
@@ -145,16 +163,12 @@ describe('linux.do visible verification diagnostics', () => {
 
     controller.changeLinuxDoPanel(true);
     await vi.advanceTimersByTimeAsync(80);
-    controller.handleLinuxDoMessage({
-      nativeEvent: {
-        data: JSON.stringify({
+    controller.handleLinuxDoMessage(linuxDoMessageEvent(controller, {
           type: 'linuxdo-webview',
           cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
           userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET',
           html: '<html>PRIVATE_WEBVIEW_HTML</html>'
-        })
-      }
-    } as never, linuxDoWebViewSessionRef.current);
+    }), linuxDoWebViewSessionRef.current);
     const pending = controller.checkLinuxDoCookie();
     await vi.advanceTimersByTimeAsync(250);
     await pending;
@@ -182,6 +196,43 @@ describe('linux.do visible verification diagnostics', () => {
       options?.diagnosticTrace?.traceId === parentEvents[0].traceId
     ))).toBe(true);
     expect(lines.join('')).not.toMatch(/COOKIE_VALUE_SECRET|CLEARANCE_VALUE_SECRET|PRIVATE_COOKIE_NAME|WEBVIEW_MESSAGE_COOKIE_SECRET|WEBVIEW_MESSAGE_USER_AGENT_SECRET|PRIVATE_WEBVIEW_HTML/);
+  });
+
+  it('ignores forged linux.do WebView messages from an untrusted origin or stale nonce', () => {
+    const { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewSessionRef } = createController();
+    controller.changeLinuxDoPanel(true);
+
+    controller.handleLinuxDoMessage(linuxDoMessageEvent(controller, {
+      type: 'linuxdo-webview',
+      cookie: 'forged'
+    }, 'https://linux.do.evil.test/'), linuxDoWebViewSessionRef.current);
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          cookie: 'stale',
+          sessionId: 'stale-panel',
+          nonce: '00000000000000000000000000000000'
+        }),
+        url: 'https://linux.do/latest'
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+
+    expect(linuxDoWebViewCookieHeaderRef.current).toBe('');
+  });
+
+  it('ignores a trusted linux.do WebView message whose probe payload is incomplete', () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewSessionRef } = createController();
+    controller.changeLinuxDoPanel(true);
+
+    controller.handleLinuxDoMessage(linuxDoMessageEvent(controller, {
+      type: 'linuxdo-webview'
+    }), linuxDoWebViewSessionRef.current);
+
+    expect(linuxDoWebViewCookieHeaderRef.current).toBe('');
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).filter(({ phase }) => phase === 'parse')).toHaveLength(0);
   });
 
   it('does not let revoked residual linux.do cookies clear the marker without a remote login confirmation', async () => {

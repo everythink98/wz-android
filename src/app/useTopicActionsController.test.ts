@@ -143,7 +143,6 @@ function createTopicActionController({
       commands: {
         actions: { applyUpdate },
         composer: {
-          appendMarkup: vi.fn(),
           completeSubmission
         }
       }
@@ -167,6 +166,16 @@ afterEach(() => {
 });
 
 describe('topic action auth guards', () => {
+  it('submits the composer-local draft instead of a stale route snapshot', async () => {
+    actionMocks.runNodeSeekAction.mockResolvedValueOnce({});
+    const { controller } = createTopicActionController({ replyContent: 'stale route draft' });
+
+    await controller.submitReply('current local draft');
+
+    const request = actionMocks.runNodeSeekAction.mock.calls[0]?.[0]?.request;
+    expect(JSON.parse(String(request?.body))).toMatchObject({ content: 'current local draft' });
+  });
+
   it('does not send a NodeSeek action after its credential generation changes during access loading', async () => {
     const accessRead = Promise.withResolvers<string | undefined>();
     let generation = 1;

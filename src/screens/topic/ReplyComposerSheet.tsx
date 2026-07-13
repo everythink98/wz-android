@@ -11,6 +11,7 @@ import type { LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { createStyles, type ReaderTheme } from '../../theme';
 import type { Source } from '../../types';
 import { ReplyComposer } from './ReplyComposer';
+import { replyComposerDraftSessionKey, replyComposerDraftWithUploadedMarkup } from './replyComposerDraft';
 
 export function ReplyComposerSheet({
   actionBusy,
@@ -42,13 +43,20 @@ export function ReplyComposerSheet({
   onReplyComposerOpenChange: (open: boolean) => void;
   onReplyContentChange: (value: string) => void;
   onReplyFaceChange: (value: string) => void;
-  onSubmitReply: () => void;
-  onUploadReplyImage?: () => void;
+  onSubmitReply: (content: string) => void | Promise<void>;
+  onUploadReplyImage?: () => Promise<string | null | undefined>;
 }) {
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const bottomSheetRef = useRef<BottomSheet>(null);
   const [focusSignal, setFocusSignal] = useState(0);
+  const [draftContent, setDraftContent] = useState(replyContent);
+  const draftContentRef = useRef(replyContent);
+  const externalContentRef = useRef(replyContent);
+  const visibleRef = useRef(visible);
+  const editingRef = useRef(Boolean(replyEditTarget));
+  const draftSessionKey = replyComposerDraftSessionKey(replyTarget, replyEditTarget);
+  const draftSessionKeyRef = useRef(draftSessionKey);
   const maxDynamicContentSize = Math.round(height * 0.58);
   const renderBackdrop = useCallback((props: BottomSheetBackdropProps) => (
     <BottomSheetBackdrop
@@ -59,10 +67,24 @@ export function ReplyComposerSheet({
       pressBehavior="close"
     />
   ), [theme.dark]);
+  const replaceDraft = useCallback((content: string) => {
+    draftContentRef.current = content;
+    setDraftContent(content);
+  }, []);
+  const commitDraft = useCallback(() => {
+    const content = draftContentRef.current;
+    if (content === externalContentRef.current) {
+      return content;
+    }
+    externalContentRef.current = content;
+    onReplyContentChange(content);
+    return content;
+  }, [onReplyContentChange]);
   const close = useCallback(() => {
     Keyboard.dismiss();
+    commitDraft();
     onReplyComposerOpenChange(false);
-  }, [onReplyComposerOpenChange]);
+  }, [commitDraft, onReplyComposerOpenChange]);
   const handleReplyComposerOpenChange = useCallback((open: boolean) => {
     if (open) {
       onReplyComposerOpenChange(true);
@@ -74,6 +96,65 @@ export function ReplyComposerSheet({
     styles.replyComposerBottomSheetContent,
     { paddingBottom: Math.max(10, insets.bottom + 10) }
   ], [insets.bottom, styles.replyComposerBottomSheetContent]);
+
+  const handleDraftChange = useCallback((content: string) => {
+    replaceDraft(content);
+  }, [replaceDraft]);
+  const handleSubmitReply = useCallback((content: string) => {
+    replaceDraft(content);
+    if (content !== externalContentRef.current) {
+      externalContentRef.current = content;
+      onReplyContentChange(content);
+    }
+    void onSubmitReply(content);
+  }, [onReplyContentChange, onSubmitReply, replaceDraft]);
+  const handleUploadReplyImage = useCallback(async () => {
+    const markup = await onUploadReplyImage?.();
+    if (!markup) {
+      return;
+    }
+    const nextContent = replyComposerDraftWithUploadedMarkup(draftContentRef.current, markup);
+    replaceDraft(nextContent);
+    externalContentRef.current = nextContent;
+    onReplyContentChange(nextContent);
+  }, [onReplyContentChange, onUploadReplyImage, replaceDraft]);
+
+  useEffect(() => {
+    externalContentRef.current = replyContent;
+    replaceDraft(replyContent);
+  }, [replyContent, replaceDraft]);
+  useEffect(() => {
+    if (draftSessionKeyRef.current === draftSessionKey) {
+      return;
+    }
+    const previousWasEdit = editingRef.current;
+    draftSessionKeyRef.current = draftSessionKey;
+    editingRef.current = Boolean(replyEditTarget);
+    if (replyEditTarget) {
+      externalContentRef.current = replyEditTarget.contentMarkdown;
+      replaceDraft(replyEditTarget.contentMarkdown);
+    } else if (previousWasEdit) {
+      externalContentRef.current = replyContent;
+      replaceDraft(replyContent);
+    } else if (visible) {
+      commitDraft();
+    }
+  }, [commitDraft, draftSessionKey, replyContent, replyEditTarget, replaceDraft, visible]);
+  useEffect(() => {
+    const wasVisible = visibleRef.current;
+    if (visible) {
+      editingRef.current = Boolean(replyEditTarget);
+      if (!wasVisible) {
+        replaceDraft(replyContent);
+      }
+    } else if (!visible && wasVisible) {
+      if (!editingRef.current) {
+        commitDraft();
+      }
+      editingRef.current = false;
+    }
+    visibleRef.current = visible;
+  }, [commitDraft, replyContent, replyEditTarget, replaceDraft, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -113,7 +194,7 @@ export function ReplyComposerSheet({
           actionBusy={actionBusy}
           focusSignal={focusSignal}
           linuxDoEmojiUrls={linuxDoEmojiUrls}
-          replyContent={replyContent}
+          replyContent={draftContent}
           replyFace={replyFace}
           replyEditTarget={replyEditTarget}
           replyTarget={replyTarget}
@@ -121,10 +202,11 @@ export function ReplyComposerSheet({
           styles={styles}
           theme={theme}
           onReplyComposerOpenChange={handleReplyComposerOpenChange}
-          onReplyContentChange={onReplyContentChange}
+          onReplyContentChange={handleDraftChange}
+          onReplyContentCommit={commitDraft}
           onReplyFaceChange={onReplyFaceChange}
-          onSubmitReply={onSubmitReply}
-          onUploadReplyImage={onUploadReplyImage}
+          onSubmitReply={handleSubmitReply}
+          onUploadReplyImage={onUploadReplyImage ? handleUploadReplyImage : undefined}
         />
       </BottomSheetView>
     </BottomSheet>

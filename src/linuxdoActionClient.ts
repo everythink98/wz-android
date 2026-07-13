@@ -59,7 +59,20 @@ function linuxDoActionError(data: Record<string, unknown>, status: number) {
 
 async function readJsonResponse(response: Response) {
   const text = await response.text();
-  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+  let data: Record<string, unknown> = {};
+  let bodyIsReadable = !text;
+  if (text) {
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+      bodyIsReadable = true;
+    } catch {
+      bodyIsReadable = false;
+    }
+  }
+  if (isCloudflareChallengeResponse(
+    { status: response.status, headers: response.headers, bodyText: text },
+    { bodyIsReadable }
+  )) {
     const error = new Error('linux.do 需要完成 Cloudflare 验证');
     Object.assign(error, {
       source: 'linuxdo',
@@ -67,17 +80,13 @@ async function readJsonResponse(response: Response) {
     });
     throw error;
   }
-  if (!text) {
-    return {};
-  }
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
+  if (!bodyIsReadable) {
     if (!response.ok) {
       throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
     }
     throw new Error('linux.do 返回内容格式不正确');
   }
+  return data;
 }
 
 async function getCsrfToken({

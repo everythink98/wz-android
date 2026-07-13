@@ -1,6 +1,7 @@
 import Anser from 'anser';
 import { parse, type HTMLElement } from 'node-html-parser';
 import { accessRequirementLevelValue } from './appUtils';
+import { isNodeSeekHost } from './forumHosts';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
 import type { AccessRequirement } from './types';
 
@@ -214,19 +215,17 @@ function removeForumImageMetadata(root: HTMLElement) {
   });
 }
 
-function escapeHtmlAttribute(value: string) {
-  return value
+export function escapeHtmlText(value: unknown) {
+  return String(value || '')
     .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
 
-function escapeHtmlText(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+export function escapeHtmlAttribute(value: unknown) {
+  return escapeHtmlText(value)
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function oneboxText(node: HTMLElement | null | undefined, maxLength: number) {
@@ -300,11 +299,6 @@ function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
     }
     node.replaceWith(`<iframe src="${escapeHtmlAttribute(embedUrl)}" allowfullscreen="true"></iframe>`);
   });
-}
-
-function isNodeSeekHost(hostname: string) {
-  const host = hostname.toLowerCase();
-  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 function nodeSeekStickerPngUrl(value: unknown, baseUrl: string) {
