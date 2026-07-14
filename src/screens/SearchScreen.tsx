@@ -643,6 +643,7 @@ export const SearchScreen = memo(function SearchScreen({
         variant="tabs"
         items={feedSourceItems}
         value={searchSource}
+        testIDPrefix="search-source"
         styles={styles}
         onChange={changeSearchSource}
       />

@@ -4,24 +4,28 @@
 
 1. 阅读 `AGENTS.md` 和 `README.md`，确认仓库规则、产品范围与开发入口。
 2. 阅读 `docs/product-charter.md`，确认目标用户、核心旅程、非目标和功能准入标准。
-3. 阅读 `docs/architecture.md` 与 `docs/operator-runbook.md`，确认 module seam、数据边界和操作命令。
-4. 阅读 `docs/testing-standard.md`，按改动旅程选择验证；需要模拟器时再读本机的 `docs/emulator-baseline.md`。
-5. 本机存在 `memory/MEMORY.md` 时，按索引读取与任务相关的已确认事实；它不是仓库内共享规范，不能覆盖用户最新要求或当前代码。
-6. 运行 `npm install`、`npm test`、`npm run typecheck`、`npm run check:unused` 和 `node scripts/check-docs.mjs`。
+3. 阅读 `docs/product-map.md`，按稳定能力 ID 了解完整功能、用户入口、代码入口和回归范围。
+4. 阅读 `docs/regression-corpus.md`，确认触及的共享 seam 是否已有逃逸事故和强制 oracle。
+5. 阅读 `docs/architecture.md` 与 `docs/operator-runbook.md`，确认 module seam、数据边界和操作命令。
+6. 阅读 `docs/testing-standard.md`，按能力 ID 选择验证；需要模拟器时只读取与当前 Git revision、版本和 APK 身份匹配的本机 `docs/emulator-baseline.md`。
+7. 本机存在 `memory/MEMORY.md` 时，按索引读取与任务相关的已确认事实；它只是补充，不能覆盖用户最新要求、当前代码或运行结果。
+8. 运行 `npm install`、`npm test`、`npm run test:ui`、`npm run typecheck`、`npm run check:unused` 和 `npm run check:docs`。
 
 ## 事实源边界
 
 | 内容 | 事实源 |
 | --- | --- |
 | 产品取舍与新功能准入 | `docs/product-charter.md` |
+| 现有功能、用户入口、能力 ID 和共享回归范围 | `docs/product-map.md` |
+| 历史逃逸问题、精确 oracle 和最低可靠测试层 | `docs/regression-corpus.md` |
 | 当前 module、interface、数据和原生配置边界 | `docs/architecture.md` |
 | 自动测试、模拟器与真实写操作规则 | `docs/testing-standard.md` |
 | 构建、签名、发布与设备 smoke 操作 | `docs/operator-runbook.md` |
 | 待处理技术债务 | `docs/code-cleanup-map.md` |
 | 当前版本与可运行事实 | 代码、配置和实际运行结果 |
-| 本机账号、模拟器与原站取证事实 | `memory/` 与 `docs/emulator-baseline.md`，均不进入 Git |
+| 本机补充事实、模拟器与原站取证事实 | `memory/` 与 `docs/emulator-baseline.md`，均不进入 Git |
 
-文档或记忆与用户要求、代码或运行结果冲突时，以对应的最新事实为准，并在交付中指出差异。不要把版本号、Release hash 或登录状态复制到稳定文档中长期维护。
+文档或记忆与用户要求、代码或运行结果冲突时，以对应的最新事实为准，并在交付中指出差异。模拟器记录只有在 Git revision、App 版本和 APK 身份与当前对象匹配时才能作为基线；不要把版本号、Release hash 或登录状态复制到稳定文档中长期维护。
 
 ## 当前不可破坏边界
 
@@ -35,6 +39,7 @@
 
 ## 按旅程定位
 
+- 先在 `docs/product-map.md` 选择受影响能力 ID；如果触及共享 seam，按地图展开关联能力，不能只回归最初入口。
 - 启动、首页、搜索：`src/app/AppRoot.tsx`、对应 controller、`src/feedLogic.ts` 与 `src/feedCategoryRail.ts`。
 - 来源读取：`src/sources/sourceGateway.ts` 及其后的读取实现；互动写入：`src/app/useTopicActionsController.ts` 及各站 action client。
 - 详情与返回：Topic controller、`src/topicSessionState.ts`、`src/screens/TopicScreen.tsx` 与 `src/screens/topic/`。

@@ -22,11 +22,22 @@
 
 - 当前项目是独立 Android App；命令和发布流程见 `package.json` 与 `docs/operator-runbook.md`。
 - 项目背景读 `README.md`；接手或确认边界读 `docs/handoff.md`；结构、目录职责和数据边界读 `docs/architecture.md`。
-- 测试标准见 `docs/testing-standard.md`；需要模拟器时读取 `docs/emulator-baseline.md` 中最新且与当前功能相关的基线。
+- 现有产品功能、用户入口、能力 ID 和共享回归范围见 `docs/product-map.md`；开发前选择受影响能力 ID，交付时按 ID 报告验证结果。
+- 已逃逸问题、精确失败 oracle 和最低可靠测试层见 `docs/regression-corpus.md`；命中事故 seam 时必须执行对应回归。
+- 测试标准见 `docs/testing-standard.md`；需要模拟器时只读取与当前 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录，不能按日期判断当前基线。
 - 已确认项目事实先读 `memory/MEMORY.md`，再按索引读取相关记忆；主要事实在 `memory/project.md`。
-- 产品目标以用户最新明确要求为准；当前事实以代码和运行结果为准；项目级执行约束以本文件为准；`docs/` 和 `memory/` 只作上下文与补充。
+- 产品目标以用户最新明确要求为准；当前事实以代码和运行结果为准；项目级执行约束以本文件为准；产品能力以 tracked 的 `docs/product-map.md` 为共享索引，`memory/` 只作本机补充。
 - 文档或记忆与用户要求、代码或运行结果不一致时，以对应的最新事实为准，并在最终回复中说明相关差异。
 - 只读取当前任务需要的文档、记忆和代码。
+
+## AI 回归协议
+
+- 开发前记录 Git revision 和 dirty 状态，从产品地图选择直接影响的能力 ID；触及共享 seam 时展开关联 ID，并列出必须保持的用户行为。
+- 修复 bug 时先建立能在修复前失败的最小行为测试；不得用源码字符串、App 能启动或 Smoke 通过代替用户可见 oracle。
+- 依次选择最低可靠证据层：Vitest 固定确定性逻辑，Jest/RNTL 固定渲染行为，agent-device MCP 探索真实 App，tracked Replay 重复关键旅程，App 内 Live 验证动态来源与获授权写入。
+- MCP 与 Replay 不互相替代：MCP 用于探索和定位，Replay 只保存经过审查的稳定入口、断言和返回路径。
+- 交付按能力 ID 分别报告 `STATIC_PASS`、`UNIT_PASS`、`UI_PASS`、`DEVICE_REPLAY_PASS`、`LIVE_PASS`、`APK_SANITY`、`NOT_VERIFIED` 或 `BLOCKED_BY_ENV`；不得用笼统的 Smoke 绿灯宣称功能完整通过。
+- 新的逃逸 bug 在同一修复中增加一个 `REG-*` 条目和一个最低可靠测试；代码、tracked 产品地图、回归语料库、测试和 Replay 必须能一起回退。
 
 ## 工作与安全
 
@@ -35,6 +46,7 @@
 - 未经用户明确要求，不执行破坏性 Git 操作，不提交、合并或发布。
 - 不得输出 Cookie、token、明文密码等敏感值；不得提交 `.env.release.local`、keystore、截图、UI dump、log、临时 bundle、数据库、生成目录或 release 产物。
 - `android/` 是生成目录；原生配置通过 `app.json` 和 `plugins/` 持久化。
+- 启动 Metro、watcher、Gradle、agent-device、录屏或其他长驻子进程前记录 PID/设备进程基线；正常结束、失败和中断都只清理由本任务新建的进程与工具 scratch。不得把共享 MCP、模拟器或 ADB 当作残留进程关闭。
 - 涉及第三方库、框架或平台行为，且该外部行为不确定或相关的首个可证伪假设失败时，先查官方资料；官方资料不足时，再按需查 GitHub issues/discussions 和成熟项目用法。
 - 检索应围绕具体库、组件、现象和当前实现，结论应落实到方案；没有依据时说明检索范围、证据缺口和下一步所需证据。
 - 修复 bug 时先确认复现方式、受影响路径、必须保留的能力和验收标准，再定位根因并验证可证伪假设；不得继续叠加猜测式规则。
@@ -57,4 +69,5 @@
 - 涉及签名、版本、原生构建配置、发布脚本或正式发布时，运行 `npm run release:android`。
 - 相关验证失败且仍有安全、可证伪、在当前权限内的修复路径时继续修复；没有此类路径时停止修改。
 - 无法验证或完成时，报告已确认事实、尝试方案、失败原因、证据缺口、未验证范围及剩余选择和代价；未获授权的高风险验证属于明确边界，不算代码失败。
+- 最终交付前复查本任务启动的本机与设备侧进程已回到基线；无法安全确认归属的进程不强杀，记录 PID、命令行、父进程和遗留原因。
 - 最终交付前完成相关验证；只有验证通过或遇到真实阻碍时才回报结果。

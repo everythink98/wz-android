@@ -3,7 +3,9 @@
 ## 文档职责
 
 - `docs/product-charter.md` 定义产品目标、核心旅程和取舍标准。
-- 本文只记录当前 module、interface、数据和原生配置边界，不维护版本号或登录状态。
+- `docs/product-map.md` 定义现有能力、用户入口、能力 ID 和共享回归范围。
+- `docs/regression-corpus.md` 记录历史逃逸问题、精确 oracle 和最低可靠测试层。
+- 本文只回答这些能力“怎么实现”：记录当前 module、interface、数据和原生配置边界，不重复完整功能清单，也不维护版本号或登录状态。
 - `docs/testing-standard.md` 定义验收，`docs/operator-runbook.md` 定义开发与发布操作。
 - `memory/` 与 `docs/emulator-baseline.md` 保存本机事实，不进入 Git，也不作为共享架构规范。
 
@@ -91,7 +93,7 @@
 ## 回复写操作
 
 - `src/app/useTopicActionsController.ts` 负责回复、楼层回复、编辑、删除、图片上传和互动请求。
-- NodeSeek 编辑自己的回复使用原站真实评论 id 和真实 token；没有 token 时拒绝发送，不使用随机值。
+- NodeSeek 编辑自己的回复使用原站真实评论 id；当前回复和编辑请求未传 token 时，由 `src/nodeseekActions.ts` 生成 16 位 `csrf-token`。
 - NodeSeek 图片上传通过 NodeImage；App 可从 NodeImage 授权页获取并缓存当前用户自己的 API Key，也保留手动粘贴备用入口。
 - linux.do 图片上传走原站 `/uploads.json`；妖火图片上传走图床并插入 UBB 图片标签。
 - 删除回复只在来源解析出明确权限时显示：linux.do 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。

@@ -4,7 +4,9 @@
 
 测试必须证明“功能没有被改坏”，不是证明 App 能打开。影响运行逻辑、类型或构建的改动至少执行相关自动测试和 `npm run typecheck`；纯文档或注释改动只核对内容、引用和一致性。涉及页面流程、登录态、真实来源结果或交互时，还必须做模拟器验收。
 
-当前自动测试使用 `Vitest + jsdom`，主要覆盖数据规则、来源解析、请求构造、状态计算和源码边界；没有覆盖率基线。发布候选另用 `agent-device` 执行本机只读 Android smoke，它是发布闸门，不替代按功能选择的模拟器专项验收。
+开发前先在 `docs/product-map.md` 选择直接受影响的能力 ID；触及共享 seam 时按地图展开关联 ID。交付时逐个 ID 报告自动测试、模拟器路径、真实写操作、已恢复状态和未验证范围。
+
+当前确定性测试使用 `Vitest + jsdom` 覆盖数据规则、来源解析、请求构造和状态计算；少量 `Jest + React Native Testing Library` 测试负责用户可见渲染行为。agent-device MCP 用于探索真实 App，tracked `.ad` Replay 用于重复关键旅程。没有覆盖率百分比基线，测试价值以能否拦住明确的用户行为回归判断。
 
 ## 判断原则
 
@@ -13,13 +15,32 @@
 - 搜索、首页、详情、回复、用户页和互动结果必须按对象检查实际存在且适用的关键字段和状态，具体字段以功能标准为准，不能只看列表有内容。
 - 登录、Cookie、验证、备份、发布和安装属于高风险功能；只跑 UI 不算通过。
 - 只打开 App、看首页显示、截图留存，都不算完整测试。
-- 优化代码前先看 `docs/emulator-baseline.md`；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异。
+- 优化代码前只使用与当前 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异，不能以记录日期较新代替身份匹配。
 - 登录和验证网页必须从 App 的 `更多 -> 账号中心` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
 - 用户提供 NodeSeek、linux.do、V2EX 或妖火主题链接用于效果验证或排障时，先解析来源和主题 id，再用模拟器 App 内详情页验证；不得用 Chrome 或桌面浏览器代替。该内部验证流程不代表产品需要支持外部链接直达。
 - 新增或修改依赖登录态的能力时，必须从 App 内原站同类页面核实字段、权限、入口和请求；未登录页面、桌面浏览器、第三方客户端、作者名或猜测的 API 不能作为依据。必要时可通过 WebView 调试查看 DOM、全局数据、已加载 JS 和 network，但不得输出 Cookie、token 或含敏感信息的截图、UI dump；临时取证文件只能保留在本机且不得提交。
 - 单一账号、页面或当前已加载 JS/API 中没有对应入口或行为，不足以证明原站不支持。证据不足时不得猜测实现或新增入口，也不得据此移除或隐藏已有能力；应说明证据缺口。
 - “全面测试”默认不授权真实发布、回复、编辑、删除、上传、点赞、投票或收藏切换；这些写操作只用自动测试、请求构造、权限显示和只读入口检查覆盖。
 - 确实需要真实写操作验收时，必须先得到用户明确同意。发帖、回复、编辑和删除只作用于本次新建、中文且贴合原帖主题的临时内容，完成后清理并刷新确认；点赞和收藏切换完成后恢复原状态；投票等不可逆操作，以及无法清理的上传，必须针对具体对象或残留风险单独取得同意。
+
+## 证据分层与工具职责
+
+| 结果 | 必须来自 | 不能证明 |
+| --- | --- | --- |
+| `STATIC_PASS` | 文档、TypeScript、unused、React Doctor changed-lines | 功能在设备上可用 |
+| `UNIT_PASS` | Vitest 行为测试 | React Native 实际渲染或当天原站结果 |
+| `UI_PASS` | Jest/RNTL 通过 role、label、text 或稳定 `testID` 验证的渲染行为 | Native/WebView 和真实网络行为 |
+| `DEVICE_REPLAY_PASS` | `.ad` 在匹配的 App/APK/设备/会话执行成功 | 未包含在脚本里的能力或真实写入 |
+| `LIVE_PASS` | App 内真实来源或获授权写操作的可观察结果 | 其他 revision、APK、账号或日期 |
+| `APK_SANITY` | 覆盖安装、启动、日志窗口且无崩溃、ANR、RedBox | 业务功能完整正确 |
+| `NOT_VERIFIED` | 已识别但缺少足够证据 | 不得改写为“应该可用” |
+| `BLOCKED_BY_ENV` | 签名、设备、登录态或来源阻碍且不能安全改变环境 | 不等于代码失败 |
+
+- MCP 是探索、诊断和录制入口；Replay 是经过审查后进入仓库的稳定旅程，二者不互相替代。
+- tracked Replay 只能使用稳定 `testID`、accessibility label、role 和稳定文案；禁止坐标、临时引用、动态标题和固定实时数量。
+- Replay 默认 retries 为 0；诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
+- React Doctor 只扫描新增行并阻断新增 error；它是静态建议，不替代任何行为测试。
+- 历史逃逸事故及负向控制见 `docs/regression-corpus.md`。
 
 ## 诊断日志完成标准
 
@@ -58,18 +79,30 @@
 | 登录 / 验证 / Cookie / 凭据 | `SiteSessionState` 是三站唯一登录状态来源；Cookie 与保存凭据互不删除；账号密码仅进 SecureStore；填入前后都校验可信 URL、路径和字段，触发输入事件但不提交；检查登录态和诊断不泄露敏感值；页面提示区分未登录、失效、验证和普通失败 | `src/siteSessionState.test.ts`、`src/app/sessionControllerHelpers.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/nodeseekCookies.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/appSecurity.test.ts` |
 | 问题诊断 | Release 常驻入口可生成 UTF-8 JSON Lines 并打开系统分享；日志轮转和导出不阻塞业务；临时分享文件随后删除；所有字段经过白名单和脱敏；页面提示显示问题附截图、内容特例附原帖链接 | `src/diagnostics.test.ts`、`src/diagnosticFileStore.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/app/useReaderDataController.test.ts`、`src/imageSave.test.ts` |
 | 更多页 / 外观 / 更新 | 单一账号中心按 NodeSeek、linux.do、妖火排列且只显示一站详情；顶部区分待处理、网站登录和自动填入数量；原主页、登录 / 验证、检测、清除登录、刷新网页、签到、NodeImage 和等级入口均保留；进入 More 页不自动刷新；测试工具独立；代理、备份、诊断、外观和更新行为不变 | `src/app/accountStatusHelpers.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/siteSessionState.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/networkProxy.test.ts`、`src/webViewProxyGuard.test.ts`、`src/appUpdate.test.ts`、`src/releasePackaging.test.ts` |
-| 发布 / 安装 | 版本号一致；release 先跑测试、文档和无用代码检查；正式签名有效；按设备 ABI 覆盖安装签名 APK；只读 smoke 通过；敏感文件不提交 | `src/releasePackaging.test.ts`、`src/androidSmokeGuard.test.ts`、`npm run release:android` |
+| 发布 / 安装 | 版本号一致；release 先跑测试、文档和无用代码检查；正式签名有效；按设备 ABI 覆盖安装签名 APK；`APK_SANITY` 与 `DEVICE_REPLAY_PASS` 分别通过；敏感文件不提交 | `src/releasePackaging.test.ts`、`src/androidSmokeGuard.test.ts`、`npm run release:android` |
 
-## 文档与发布候选 smoke
+## 文档、UI、Replay 与发布候选
 
 稳定 Markdown 改动运行：
 
 ```powershell
 node --test scripts/check-docs.test.mjs
 node scripts/check-docs.mjs
+npm run test:ui
+npm run check:react
 ```
 
-检查器验证已跟踪 Markdown 与稳定文档中的相对链接、反引号仓库路径；本机专用的 `docs/emulator-baseline.md` 不要求在干净 checkout 中存在。
+检查器验证已跟踪 Markdown 与稳定文档中的相对链接、反引号仓库路径、能力 ID、回归语料库引用和用户身份认证术语；本机专用的 `docs/emulator-baseline.md` 不要求在干净 checkout 中存在。
+
+在已安装当前目标构建、设备身份明确且不需要覆盖安装时运行只读 Replay；必须同时指定用来核对设备 `base.apk` SHA-256 的目标 APK：
+
+```powershell
+$env:WZ_ANDROID_TEST_DEVICE = 'WZ Pixel API 35'
+$env:WZ_ANDROID_TEST_APK = 'C:\path\to\current.apk'
+npm run test:device
+```
+
+`test:device` 先核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。证据拉回后只终止本条 Replay 新增的本机 daemon，并只清理明确设备上路径匹配 agent-device 录屏前缀的进程/scratch；不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。动态结果只断言状态、来源和可打开性，不固定主题标题或数量。
 
 发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
@@ -77,7 +110,7 @@ node scripts/check-docs.mjs
 npm run smoke:android
 ```
 
-通过标准：覆盖安装且不清 App 数据；冷启动、四个底部 Tab、Tab 重选和 More 页可用；首页可打开详情与作者用户页并正确返回；搜索必须返回可打开结果，并完成 `搜索 → 详情 → 作者用户页 → 用户主题嵌套详情 → 原路返回搜索`；本机必须预先保留至少一条收藏，完成 `收藏 → 详情 → 作者用户页 → 原路返回收藏`。缺少搜索结果、用户主题或收藏基线均判定失败，不降级为跳过。日志中没有本次流程产生的崩溃、ANR 或 RedBox。实时来源只检查必要字段和可打开性，不固定结果数量。smoke 全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
+通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；冷启动与日志窗口没有本次流程产生的崩溃、ANR 或 RedBox，形成 `APK_SANITY`；随后执行 tracked Replay，形成独立的 `DEVICE_REPLAY_PASS`。缺少搜索结果、用户主题、收藏基线、页面 readiness 或 APK 身份均判定失败，不降级为跳过。全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
 
 ## 搜索验收
 
@@ -186,7 +219,7 @@ npm run typecheck
 
 - 发送失败或上传失败后，同一个回复框还能继续点击和编辑。
 - NodeSeek 图片上传使用用户自己的 NodeImage Key；无 Key 时自动打开 App 内授权页；已有 Key 时不重复授权；401 / 403 后只刷新一次 Key 再重试。
-- NodeSeek 回复 / 编辑必须使用登录页或详情页保存的真实 token；没有 token 时拒绝发送并提示重新检测登录，不允许随机 token。
+- NodeSeek 回复 / 编辑必须使用真实 post/comment id；当前请求未传 token 时由 `src/nodeseekActions.ts` 生成 16 位 `csrf-token`，自动测试必须固定该请求契约。
 - NodeSeek 自己的回复只有同时有评论 id 和原始正文时才显示编辑；只隐藏自己的点赞 / 鸡腿 / 反对，不展示点了会失败的编辑入口。
 - 取消编辑或系统返回关闭编辑框后，编辑正文不能残留成普通回复草稿。
 - NodeSeek 详情必须保留原站渲染后的 at、楼层链接、表情 / sticker 和签名显示，不得因为编辑源数据回退成纯文本。

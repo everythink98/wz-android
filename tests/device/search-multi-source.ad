@@ -1,0 +1,37 @@
+context platform=android
+context timeout=240000
+context retries=0
+env APP_ID=com.wz.reader
+
+open ${APP_ID} --relaunch
+wait id="feed-list-ready-all" 60000
+press id="main-tab-search"
+wait id="search-query" 10000
+
+press id="search-source-linuxdo"
+wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+fill id="search-query" codex-linuxdo
+is text id="search-query" codex-linuxdo
+press id="search-submit"
+keyboard dismiss
+wait id="search-complete" 60000
+is text id="search-query" codex-linuxdo
+
+press id="search-source-nodeseek"
+wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
+fill id="search-query" codex-nodeseek
+is text id="search-query" codex-nodeseek
+press id="search-submit"
+keyboard dismiss
+wait id="search-complete" 60000
+is text id="search-query" codex-nodeseek
+
+press id="search-source-yaohuo"
+wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
+fill id="search-query" codex-yaohuo
+is text id="search-query" codex-yaohuo
+press id="search-submit"
+keyboard dismiss
+wait id="search-complete" 60000
+is text id="search-query" codex-yaohuo
+close

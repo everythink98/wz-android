@@ -219,7 +219,7 @@ async function save(
   if (protection === 'device' && input.allowUnprotected !== true) {
     throw new CredentialVaultError(
       'biometric-unavailable',
-      '当前设备无法使用身份安全识别，请确认后再使用本机加密保存'
+      '当前设备无法使用用户身份认证，请确认后再使用本机加密保存'
     );
   }
 

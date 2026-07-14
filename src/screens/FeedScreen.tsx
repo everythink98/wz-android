@@ -277,6 +277,7 @@ export const FeedScreen = memo(function FeedScreen({
     }
     return (
       <FlashList
+        testID={!busy ? `feed-list-ready-${feedSource}` : undefined}
         ref={listRef}
         style={styles.content}
         contentContainerStyle={styles.feedListContentInner}
@@ -318,6 +319,7 @@ export const FeedScreen = memo(function FeedScreen({
     feedHasMore,
     feedItems,
     feedPage,
+    feedSource,
     handleScroll,
     handleScrollBeginDrag,
     loadingMore,
@@ -338,6 +340,7 @@ export const FeedScreen = memo(function FeedScreen({
           variant="tabs"
           items={feedSourceItems}
           value={feedSource}
+          testIDPrefix="feed-source"
           styles={styles}
           onChange={changeFeedSourceValue}
         />

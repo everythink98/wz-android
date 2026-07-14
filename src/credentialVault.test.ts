@@ -109,7 +109,8 @@ describe('credential vault', () => {
       account: 'alice',
       password: 'secret'
     })).rejects.toMatchObject({
-      code: 'biometric-unavailable'
+      code: 'biometric-unavailable',
+      message: '当前设备无法使用用户身份认证，请确认后再使用本机加密保存'
     });
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
 

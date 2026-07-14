@@ -2,9 +2,17 @@
 
 ## 事实源
 
-- 产品取舍以 `docs/product-charter.md` 为准，结构和数据边界以 `docs/architecture.md` 为准。
+- 产品取舍以 `docs/product-charter.md` 为准，现有能力与共享回归范围以 `docs/product-map.md` 为准，历史逃逸问题以 `docs/regression-corpus.md` 为准，结构和数据边界以 `docs/architecture.md` 为准。
 - 功能验收以 `docs/testing-standard.md` 为准；本机模拟器的可变基线记录在 `docs/emulator-baseline.md`，不进入 Git。
 - 当前版本从 `package.json` 与 `app.json` 读取，不在本手册重复维护。
+
+## 开发与交付流程
+
+1. 开发前从 `docs/product-map.md` 选择直接受影响的能力 ID；触及共享 seam 时展开关联 ID。
+2. 检查 `docs/regression-corpus.md` 是否已有相同 seam 的逃逸事故；有则把精确 oracle 加入必跑项。
+3. 沿地图确认用户入口、行为契约、代码入口、自动测试和模拟器路径，再做最小完整改动。
+4. 按 `docs/testing-standard.md` 执行相关自动测试与模拟器验收；真实写操作单独判断授权和恢复方式。
+5. 交付时逐个能力 ID 和证据层报告结果、最终恢复状态和未验证范围；用户可见能力或回归范围改变时同步更新产品地图。
 
 ## 标准命令
 
@@ -13,18 +21,28 @@ npm install
 npm test
 npm run typecheck
 npm run check:unused
-node scripts/check-docs.mjs
+npm run test:ui
+npm run test:docs
+npm run check:docs
+npm run check:react
 npm run android
 npm run release:android
 npm run smoke:android
 ```
 
-`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它要求本机已有 `agent-device >= 0.14.0`，并且必须通过 `WZ_ANDROID_SMOKE_DEVICE` 明确指定唯一的登录态设备；脚本不会自动选择其他设备。`npm run release:android` 先生成正式签名的 arm64 APK，再把同一份 x86_64 Release 代码另存为开发签名 smoke APK；正式上传仍只使用 arm64 APK 和 manifest，smoke APK 不上传。
+`npm run test:device` 要求通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。Replay 会在证据拉回后按 PID 差分终止本条新增 daemon，并清理该设备上 agent-device 自己的录屏进程/scratch，防止长期运行耗尽空间；清理边界固定在工具录屏路径，不停止 MCP，也不触碰 App 数据或用户文件。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载或清数据。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
+
+## 工具进程收口
+
+- 启动 Metro、watcher、Gradle、agent-device 或录屏前先记录匹配进程 PID；命令正常结束、失败或中断后，只终止本次新增 PID。共享 MCP、模拟器和 ADB 保持运行，除非用户明确要求关闭。
+- Replay 优先走 `npm run test:device`。手工 agent-device 探索结束后先执行 `agent-device close --platform android`，再核对没有本次新增的 `internal/daemon.js`、工具路径 `screenrecord` 和 `agent-device-recording-*` scratch；证据已拉回本机后才清设备 scratch。
+- 本次任务启动了 Gradle daemon 且后续不再构建时，执行 `android\gradlew.bat --stop`。有意保留 Metro 或其他服务时，交付必须说明 PID、端口和保留原因。
+- 最终进程数必须回到任务开始基线；无法确认归属时不强杀，记录命令行、父 PID 和阻碍。
 
 ## 检查重点
 
 - 功能验证按 `docs/testing-standard.md` 执行；只打开 App 不算完整测试。
-- 当前模拟器功能基线记录在 `docs/emulator-baseline.md`；优化代码前后按基线对照，不能用“能打开 App”代替验收。
+- 当前模拟器功能基线记录在 `docs/emulator-baseline.md`；只使用 Git revision、App 版本和 APK 身份匹配的记录，不能按日期猜测，也不能用“能打开 App”代替验收。
 - NodeSeek、linux.do 和妖火 Cookie 不进入备份 JSON。
 - 服务器代理配置不进入备份 JSON，只保存在 Android 安全存储。
 - `android/` 是生成目录，不作为长期配置来源。
@@ -47,8 +65,8 @@ npm run smoke:android
 
 ## Android 验证
 
-- 改动前先在 `docs/testing-standard.md` 找到对应功能标准；交付时说明执行过的自动测试和模拟器验收，无法验证的范围必须写清楚。
-- 需要模拟器验收时，对照 `docs/emulator-baseline.md` 记录同条件差异；登录 / 验证网页必须从 App 内账号入口打开，不用 Chrome 代替。
+- 改动前先在 `docs/product-map.md` 选择能力 ID，再到 `docs/testing-standard.md` 找到对应功能标准；交付时按 ID 说明执行过的自动测试和模拟器验收，无法验证的范围必须写清楚。
+- 需要模拟器验收时，只对照 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录；登录 / 验证网页必须从 App 内账号入口打开，不用 Chrome 代替。
 - 涉及首页、搜索、收藏和用户页长列表时，运行相关体验 / 性能测试和 `npm run typecheck`。
 - 涉及首页来源、分类、单站排序或分页缓存时，至少运行 `npm test -- src/feedLogic.test.ts src/feedCategoryRail.test.ts src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`，并在模拟器检查对应单站筛选。
 - 涉及登录、验证、Cookie、写操作、详情返回或来源解析时，运行相关来源 / 安全 / 体验测试和 `npm run typecheck`。
@@ -62,7 +80,7 @@ npm run smoke:android
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。
 - 发布候选依次通过文档引用检查、完整自动测试、typecheck、unused、版本一致性、正式签名构建与 signer 校验，再由同代码的开发签名 x86_64 APK 在唯一登录态设备上完成只读 smoke。
-- `npm run smoke:android` 使用覆盖安装保留 App 数据，检查冷启动、四个底部 Tab、Tab 重选、首页和 More 页；严格完成 `搜索 → 详情 → 作者用户页 → 用户主题嵌套详情 → 原路返回搜索` 与 `收藏 → 详情 → 作者用户页 → 原路返回收藏`，并检查崩溃、ANR 和 RedBox 迹象。搜索无结果、用户页无可打开主题或本机没有预留收藏基线都会使 smoke 失败，不会降级为跳过。
+- `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分只检查安装、冷启动、前台包名、Feed readiness 及日志窗口中的崩溃、ANR、RedBox，输出 `APK_SANITY`。Feed/Search/Library/账号与四站旅程由 tracked `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
 - 实时来源只断言关键字段存在且结果可打开，不固定结果数量；本批次触及某个来源时，再按 `docs/testing-standard.md` 做该来源的登录态或原站专项验收。
 - smoke 不执行回复、编辑、删除、上传、点赞、投票、收藏切换、清除登录或其他真实写操作。
 - smoke 通过后才上传 `app-arm64-v8a-release.apk` 与 `release-manifest.json`；发布说明记录 APK SHA-256，不记录签名 SHA-256。

@@ -140,4 +140,36 @@ describe('topic session state', () => {
     removeTopicRouteSnapshot(store, 'Topic-route-b');
     expect(readTopicRouteSnapshot(store, 'Topic-route-b')).toBeUndefined();
   });
+
+  it('restores reply filters, pagination, draft and scroll state from a route snapshot', () => {
+    const store = createTopicRouteSessionStore();
+    const session: TopicSession = {
+      ...createEmptyTopicSession(topic('6')),
+      replyHasMore: true,
+      replyNextPage: 4,
+      replyNextOffset: 60,
+      commentQuery: '关键字',
+      replyFilter: 'author',
+      replyContent: '尚未发送的草稿',
+      replyComposerOpen: true,
+      scrollY: 960
+    };
+
+    saveTopicRouteSnapshot(store, 'Topic-route-visible-state', snapshotFromTopicSession(session));
+    const snapshot = readTopicRouteSnapshot(store, 'Topic-route-visible-state');
+    if (!snapshot) {
+      throw new Error('Topic route snapshot was not saved');
+    }
+
+    expect(topicSessionFromSnapshot(snapshot)).toMatchObject({
+      replyHasMore: true,
+      replyNextPage: 4,
+      replyNextOffset: 60,
+      commentQuery: '关键字',
+      replyFilter: 'author',
+      replyContent: '尚未发送的草稿',
+      replyComposerOpen: true,
+      scrollY: 960
+    });
+  });
 });

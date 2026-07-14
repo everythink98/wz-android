@@ -1,0 +1,18 @@
+context platform=android
+context timeout=180000
+context retries=0
+env APP_ID=com.wz.reader
+
+open ${APP_ID} --relaunch
+wait id="feed-list-ready-all" 60000
+press id="main-tab-more"
+wait text="关于阅坛" 10000
+press label="展开账号中心"
+wait id="account-site-nodeseek" 10000
+wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
+press label="检测或重新登录"
+wait 15000
+is visible id="nodeseek-login-webview-ready"
+back --system
+wait label="收起账号中心" 10000
+close

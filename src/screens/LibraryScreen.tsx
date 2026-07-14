@@ -187,7 +187,9 @@ export const LibraryScreen = memo(function LibraryScreen({
     return (
       <View style={styles.libraryItem}>
         <MemoizedTopicCard
-          testID={libraryTab === 'favorites' && record === filteredRecords[0] ? 'library-favorite-first' : undefined}
+          testID={record === filteredRecords[0]
+            ? libraryTab === 'favorites' ? 'library-favorite-first' : libraryTab === 'history' ? 'library-history-first' : undefined
+            : undefined}
           readerState={libraryTab === 'favorites' ? { ...readerState, favorite: false, read: false } : readerState}
           styles={styles}
           theme={theme}
@@ -198,9 +200,9 @@ export const LibraryScreen = memo(function LibraryScreen({
       </View>
     );
   }, [filteredRecords, libraryTab, onOpenTopic, renderTopicTrailingAction, styles, theme, topicStateIndex]);
-  const renderUserItem = useCallback(({ item }: { item: FollowedUserRecord }) => (
+  const renderUserItem = useCallback(({ index, item }: { index: number; item: FollowedUserRecord }) => (
     <View style={styles.libraryUserRow}>
-      <Pressable accessibilityRole="button" style={[styles.menuButton, styles.libraryUserButton]} onPress={() => onOpenUser(item.user)}>
+      <Pressable testID={index === 0 ? 'library-user-first' : undefined} accessibilityRole="button" style={[styles.menuButton, styles.libraryUserButton]} onPress={() => onOpenUser(item.user)}>
         <View style={styles.menuIcon}>
           <Text style={styles.replyAvatarText}>{avatarInitial(item.user.displayName || item.user.username)}</Text>
         </View>
@@ -225,6 +227,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         variant="tabs"
         items={LIBRARY_TAB_ITEMS}
         value={libraryTab}
+        testIDPrefix="library-tab"
         styles={styles}
         onChange={changeLibraryTab}
       />
@@ -232,6 +235,7 @@ export const LibraryScreen = memo(function LibraryScreen({
         variant="subtabs"
         items={LIBRARY_SOURCE_ITEMS}
         value={sourceFilter}
+        testIDPrefix="library-source"
         styles={styles}
         onChange={changeSourceFilter}
       />
@@ -269,7 +273,9 @@ export const LibraryScreen = memo(function LibraryScreen({
 
   return (
     <FlashList
-      testID={loaded && libraryTab === 'favorites' ? 'library-favorites-ready' : undefined}
+      testID={loaded
+        ? libraryTab === 'favorites' ? 'library-favorites-ready' : libraryTab === 'users' ? 'library-users-ready' : 'library-history-ready'
+        : undefined}
       accessibilityLabel={loaded && libraryTab === 'favorites'
         ? filteredRecords.length ? '收藏列表，已加载，有收藏' : '收藏列表，已加载，没有收藏'
         : '收藏列表'}

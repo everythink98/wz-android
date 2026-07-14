@@ -283,8 +283,8 @@ function CredentialEditor({
     } catch (error) {
       if (error instanceof CredentialVaultError && error.code === 'biometric-unavailable' && !allowUnprotected) {
         Alert.alert(
-          '无法使用身份安全识别',
-          '继续后将使用 Android 本机加密保存，但填入时不会再次进行身份安全识别。',
+          '无法使用用户身份认证',
+          '继续后将使用 Android 本机加密保存，但填入时不会再次进行用户身份认证。',
           [
             { text: '取消', style: 'cancel' },
             { text: '继续保存', onPress: () => { void persist(true); } }
@@ -332,7 +332,7 @@ function CredentialEditor({
             {view.credential.state === 'invalidated'
               ? '需要重新设置'
               : view.credential.hasCredential
-              ? `已设置 · ${view.credential.protection === 'biometric' ? '身份识别保护' : 'Android 本机加密'}`
+              ? `已设置 · ${view.credential.protection === 'biometric' ? '用户身份认证' : 'Android 本机加密'}`
               : '未设置，登录失效时可快速填入'}
           </Text>
         </View>
@@ -514,8 +514,9 @@ export function AccountCenterPanel({
             return (
               <Pressable
                 key={view.site}
+                testID={`account-site-${view.site}`}
                 accessibilityRole="tab"
-                accessibilityLabel={`${view.label}，${view.statusLabel}`}
+                accessibilityLabel={`${view.label}，${view.statusLabel}${selected ? '，已选择' : ''}`}
                 accessibilityState={{ selected }}
                 android_ripple={androidRipple(theme.primarySoft)}
                 style={({ pressed }) => [

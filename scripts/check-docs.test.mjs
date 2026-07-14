@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { findBrokenDocReferences } from './check-docs.mjs';
+import { findBrokenDocReferences, findKnowledgeContractErrors } from './check-docs.mjs';
 
 const temporaryDirectories = [];
 
@@ -82,4 +82,67 @@ test('reports a broken repository path inside a fenced test command', async () =
 
   assert.equal(errors.length, 1);
   assert.match(errors[0], /docs\/guide\.md:2.*src\/missing\.test\.ts/);
+});
+
+async function createKnowledgeFixture({ productMap, regressionCorpus = '', source = 'export {};\n' }) {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'wz-knowledge-contract-'));
+  temporaryDirectories.push(rootDir);
+  await mkdir(path.join(rootDir, 'docs'));
+  await mkdir(path.join(rootDir, 'src'));
+  await writeFile(path.join(rootDir, 'docs', 'product-map.md'), productMap);
+  await writeFile(path.join(rootDir, 'docs', 'regression-corpus.md'), regressionCorpus);
+  await writeFile(path.join(rootDir, 'src', 'screen.tsx'), source);
+  return rootDir;
+}
+
+test('reports duplicate capability definitions in the product map', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `FEED-01` | first |',
+      '| `FEED-01` | duplicate |',
+      '## 四站能力矩阵'
+    ].join('\n')
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /FEED-01.*重复定义/);
+});
+
+test('reports regression entries that reference an unknown capability', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `FEED-01` | first |',
+      '## 四站能力矩阵'
+    ].join('\n'),
+    regressionCorpus: '`REG-FEED-001` protects `FEED-99`.\n'
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /FEED-99.*不存在/);
+});
+
+test('does not parse a REG id as a product capability id', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `FEED-01` | first |',
+      '## 四站能力矩阵'
+    ].join('\n'),
+    regressionCorpus: '`REG-FEED-001` protects `FEED-01`.\n'
+  });
+
+  assert.deepEqual(findKnowledgeContractErrors(rootDir), []);
+});
+
+test('reports retired user-facing authentication terms in source files', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `ACCOUNT-01` | first |',
+      '## 四站能力矩阵'
+    ].join('\n'),
+    source: "export const label = '身份识别保护';\n"
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /src\/screen\.tsx:1.*身份识别保护/);
 });
