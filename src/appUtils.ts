@@ -1,5 +1,5 @@
 import { type MutableRefObject } from 'react';
-import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE } from './request';
+import { REQUEST_CANCELED_MESSAGE } from './request';
 import type { AccessRequirement, FeedSource, Source, Topic, UserProfile } from './types';
 
 export function sourceLabel(source: Source | FeedSource) {
@@ -296,24 +296,6 @@ export function errorMessage(error: unknown) {
 
 export function isCanceledRequest(error: unknown) {
   return error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE;
-}
-
-export function isSupersededRequest(error: unknown) {
-  return error instanceof Error && error.message === REQUEST_SUPERSEDED_MESSAGE;
-}
-
-export function isSilentRequestInterruption(error: unknown) {
-  return isCanceledRequest(error) || isSupersededRequest(error);
-}
-
-export function interruptedRequestDiagnostic(isLatest: boolean, aborted: boolean) {
-  if (!isLatest) {
-    return { outcome: 'stale' as const, reason: 'superseded' as const };
-  }
-  if (aborted) {
-    return { outcome: 'canceled' as const, reason: 'canceled' as const };
-  }
-  return null;
 }
 
 export function startAbortableRequest(ref: MutableRefObject<AbortController | null>) {

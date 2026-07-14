@@ -1,7 +1,6 @@
 import { fetchWithTimeout, type Fetcher } from './request';
 import type { LinuxDoActionRequest } from './linuxdoActions';
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
-import { normalizeDiagnosticReason } from './diagnostics';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
   canStoreLinuxDoLogin,
@@ -59,20 +58,7 @@ function linuxDoActionError(data: Record<string, unknown>, status: number) {
 
 async function readJsonResponse(response: Response) {
   const text = await response.text();
-  let data: Record<string, unknown> = {};
-  let bodyIsReadable = !text;
-  if (text) {
-    try {
-      data = JSON.parse(text) as Record<string, unknown>;
-      bodyIsReadable = true;
-    } catch {
-      bodyIsReadable = false;
-    }
-  }
-  if (isCloudflareChallengeResponse(
-    { status: response.status, headers: response.headers, bodyText: text },
-    { bodyIsReadable }
-  )) {
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     const error = new Error('linux.do 需要完成 Cloudflare 验证');
     Object.assign(error, {
       source: 'linuxdo',
@@ -80,13 +66,17 @@ async function readJsonResponse(response: Response) {
     });
     throw error;
   }
-  if (!bodyIsReadable) {
+  if (!text) {
+    return {};
+  }
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
     if (!response.ok) {
       throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
     }
     throw new Error('linux.do 返回内容格式不正确');
   }
-  return data;
 }
 
 async function getCsrfToken({
@@ -180,30 +170,7 @@ export async function checkLinuxDoLoginAccess({
     };
   }
   try {
-    const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/current.json`, {
-      headers: {
-        ...LINUXDO_ACTION_HEADERS,
-        Cookie: cleanCookie,
-        'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
-      }
-    }, { fetcher, signal, timeoutMs });
-    const data = await readJsonResponse(response);
-    if (response.status === 401 || response.status === 404) {
-      throw linuxDoLoginRequiredError();
-    }
-    if (!response.ok) {
-      throw new Error(`linux.do 请求失败：HTTP ${response.status}`);
-    }
-    const currentUser = data.current_user && typeof data.current_user === 'object'
-      ? data.current_user as Record<string, unknown>
-      : data.user && typeof data.user === 'object'
-        ? data.user as Record<string, unknown>
-        : data;
-    const userId = Number(currentUser.id);
-    const username = typeof currentUser.username === 'string' ? currentUser.username.trim() : '';
-    if (!Number.isInteger(userId) || userId <= 0 || !username) {
-      throw new Error('linux.do 登录状态响应不完整');
-    }
+    await getCsrfToken({ cookieHeader: cleanCookie, fetcher, signal, timeoutMs, userAgent });
     return {
       ok: true,
       message: '登录可用'
@@ -221,10 +188,7 @@ export async function checkLinuxDoLoginAccess({
     }
     return {
       ok: false,
-      message: error instanceof Error ? error.message : 'linux.do 会话检查失败',
-      reason: error instanceof Error && error.message === 'linux.do 登录状态响应不完整'
-        ? 'invalid_response' as const
-        : normalizeDiagnosticReason(error)
+      message: error instanceof Error ? error.message : 'linux.do 登录检查失败'
     };
   }
 }

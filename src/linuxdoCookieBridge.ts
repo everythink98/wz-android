@@ -1,13 +1,7 @@
 import CookieManager from '@react-native-cookies/cookies';
 import * as SecureStore from 'expo-secure-store';
 import { NativeModules } from 'react-native';
-import {
-  createCredentialWriteGate,
-  enqueueCredentialWriteForGeneration,
-  replaceCredentialWrite,
-  replaceCredentialWriteForGeneration,
-  waitForCredentialWrites
-} from './app/sessionControllerHelpers';
+import { createCredentialWriteGate, enqueueCredentialWriteForGeneration, replaceCredentialWrite } from './app/sessionControllerHelpers';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -15,7 +9,6 @@ import {
   markDiagnosticStage,
   type DiagnosticTrace
 } from './diagnostics';
-import { REQUEST_SUPERSEDED_MESSAGE } from './request';
 
 interface LinuxDoNativeCookie {
   name?: string;
@@ -43,14 +36,12 @@ type LinuxDoCookieModule = {
 type LinuxDoCookieStoreReader = () => Promise<Record<string, LinuxDoNativeCookie>>;
 
 const LINUXDO_ACCESS_STORAGE_KEY = 'linuxdo-clearance';
-const LINUXDO_LOGIN_REVOCATION_STORAGE_KEY = 'linuxdo-login-revoked';
 const LINUXDO_COOKIE_URLS = ['https://linux.do/latest', 'https://linux.do', 'https://www.linux.do/latest', 'https://www.linux.do'];
 const LINUXDO_COOKIE_READ_TIMEOUT_MS = 1500;
 const LINUXDO_ACCESS_COOKIE_NAMES = ['cf_clearance', '_t', '_forum_session'] as const;
 const LINUXDO_LOGIN_COOKIE_NAMES = ['_t', '_forum_session'] as const;
 const linuxDoAccessWriteGate = createCredentialWriteGate();
 let linuxDoDevAnonymousOverride = false;
-let linuxDoLoginRevokedInMemory = false;
 
 export function setLinuxDoDevAnonymousOverride(enabled: boolean) {
   linuxDoDevAnonymousOverride = enabled;
@@ -312,107 +303,21 @@ function linuxDoLoginCookiesMatch(currentHeader: string | undefined, expectedHea
 
 async function clearLinuxDoLoginCookiesFromWebView(expectedHeader?: string) {
   const module = await linuxDoAndroidCookieModule();
-  if (!module?.clearLinuxDoLoginCookies) {
-    throw new Error('linux.do 原生 Cookie 清理模块不可用');
+  if (module?.clearLinuxDoLoginCookies) {
+    await module.clearLinuxDoLoginCookies(linuxDoLoginCookieValues(expectedHeader)).catch(() => false);
   }
-  const cleared = await module.clearLinuxDoLoginCookies(
-    expectedHeader === undefined ? undefined : linuxDoLoginCookieValues(expectedHeader)
-  );
-  if (!cleared) {
-    throw new Error(expectedHeader === undefined
-      ? 'linux.do WebView 登录 Cookie 清理失败'
-      : REQUEST_SUPERSEDED_MESSAGE);
-  }
-  await CookieManager.flush();
+  await CookieManager.flush().catch(() => undefined);
 }
 
-async function readLinuxDoLoginRevocation() {
-  return linuxDoLoginRevokedInMemory
-    || (await SecureStore.getItemAsync(LINUXDO_LOGIN_REVOCATION_STORAGE_KEY)) === '1';
-}
-
-function linuxDoAccessWithoutLogin(access: LinuxDoAccess | null) {
-  if (!access) {
-    return null;
-  }
-  const cookieHeader = buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(parseLinuxDoDocumentCookie(access.cookieHeader)));
-  return cookieHeader ? { ...access, cookieHeader } : null;
-}
-
-async function restoreLinuxDoLoginCookiesToWebView(access: LinuxDoAccess, isCurrent: () => boolean) {
-  const cookies = parseLinuxDoDocumentCookie(access.cookieHeader);
-  const headers = LINUXDO_LOGIN_COOKIE_NAMES.flatMap((name) => {
-    const value = cookies[name]?.value;
-    return value
-      ? [`${name}=${value}; Domain=linux.do; Path=/; Secure; HttpOnly; SameSite=Lax`]
-      : [];
-  });
-  for (const url of LINUXDO_COOKIE_URLS) {
-    for (const header of headers) {
-      if (!isCurrent()) {
-        return false;
-      }
-      if (!await CookieManager.setFromResponse(url, header)) {
-        throw new Error('linux.do WebView Cookie 存储失败');
-      }
-    }
-  }
-  if (headers.length && isCurrent()) {
-    await CookieManager.flush();
-  }
-  return isCurrent();
-}
-
-async function saveLinuxDoAccessWithGate(
-  cookieHeader: string,
-  userAgent?: string,
-  { verifiedLogin = false }: { verifiedLogin?: boolean } = {}
-) {
+async function saveLinuxDoAccessWithGate(cookieHeader: string, userAgent?: string) {
   const access = linuxDoAccessFromHeader(cookieHeader, userAgent);
   return replaceCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
-    const loginRevoked = await readLinuxDoLoginRevocation();
-    if (!isCurrent()) {
-      return null;
-    }
-    const effectiveAccess = loginRevoked && !verifiedLogin ? linuxDoAccessWithoutLogin(access) : access;
-    if (!effectiveAccess) {
-      await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-      return null;
-    }
-    const saved = await writeLinuxDoAccess(effectiveAccess, isCurrent);
-    if (!saved || !isCurrent()) {
-      return null;
-    }
-    if (verifiedLogin && canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(saved.cookieHeader))) {
-      if (loginRevoked && !await restoreLinuxDoLoginCookiesToWebView(saved, isCurrent)) {
-        return null;
-      }
-      await SecureStore.deleteItemAsync(LINUXDO_LOGIN_REVOCATION_STORAGE_KEY);
-      if (!isCurrent()) {
-        return null;
-      }
-      linuxDoLoginRevokedInMemory = false;
-    }
-    return saved;
+    return writeLinuxDoAccess(access, isCurrent);
   });
 }
 
-export async function saveLinuxDoAccess(
-  cookieHeader: string,
-  userAgent?: string,
-  options?: { verifiedLogin?: boolean }
-) {
-  return saveLinuxDoAccessWithGate(cookieHeader, userAgent, options);
-}
-
-export async function isLinuxDoLoginRevoked() {
-  while (true) {
-    const generation = await waitForCredentialWrites(linuxDoAccessWriteGate);
-    const revoked = await readLinuxDoLoginRevocation();
-    if (generation === linuxDoAccessWriteGate.generation) {
-      return revoked;
-    }
-  }
+export async function saveLinuxDoAccess(cookieHeader: string, userAgent?: string) {
+  return saveLinuxDoAccessWithGate(cookieHeader, userAgent);
 }
 
 export function currentLinuxDoAccessGeneration() {
@@ -422,12 +327,7 @@ export function currentLinuxDoAccessGeneration() {
 export async function saveLinuxDoAccessForGeneration(generation: number, cookieHeader: string, userAgent?: string) {
   const access = linuxDoAccessFromHeader(cookieHeader, userAgent);
   return enqueueCredentialWriteForGeneration(linuxDoAccessWriteGate, generation, async ({ isCurrent }) => {
-    const loginRevoked = await readLinuxDoLoginRevocation();
-    if (!isCurrent()) {
-      return null;
-    }
-    const effectiveAccess = loginRevoked ? linuxDoAccessWithoutLogin(access) : access;
-    return effectiveAccess ? writeLinuxDoAccess(effectiveAccess, isCurrent) : null;
+    return writeLinuxDoAccess(access, isCurrent);
   });
 }
 
@@ -435,18 +335,12 @@ export async function loadLinuxDoAccess() {
   if (linuxDoDevAnonymousOverride) {
     return null;
   }
-  const generation = await waitForCredentialWrites(linuxDoAccessWriteGate);
-  if (linuxDoDevAnonymousOverride) {
+  const generation = linuxDoAccessWriteGate.generation;
+  const access = await readStoredLinuxDoAccess();
+  if (generation !== linuxDoAccessWriteGate.generation) {
     return null;
   }
-  const [access, loginRevoked] = await Promise.all([
-    readStoredLinuxDoAccess(),
-    readLinuxDoLoginRevocation()
-  ]);
-  if (linuxDoDevAnonymousOverride || generation !== linuxDoAccessWriteGate.generation) {
-    return null;
-  }
-  return loginRevoked ? linuxDoAccessWithoutLogin(access) : access;
+  return access;
 }
 
 async function clearLinuxDoAccessWithWriter(
@@ -459,78 +353,31 @@ async function clearLinuxDoAccessWithWriter(
       return { access: null, cleared: false };
     }
     if (!linuxDoLoginCookiesMatch(savedAccess?.cookieHeader, expectedHeader)) {
-      throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+      return { access: savedAccess, cleared: false };
     }
-    linuxDoLoginRevokedInMemory = true;
-    let revocationPersistenceError: unknown;
-    try {
-      await SecureStore.setItemAsync(LINUXDO_LOGIN_REVOCATION_STORAGE_KEY, '1');
-      linuxDoLoginRevokedInMemory = false;
-    } catch (error) {
-      revocationPersistenceError = error;
-    }
-    if (!isCurrent()) {
-      return { access: null, cleared: false };
-    }
-    const expectedWebViewHeader = expectedHeader;
     const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoLoginCookies(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
-    let access: LinuxDoAccess | null;
     if (remainingHeader) {
-      access = await writeLinuxDoAccess(linuxDoAccessFromHeader(remainingHeader, savedAccess?.userAgent), isCurrent);
-    } else {
-      await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-      access = null;
+      const access = await writeLinuxDoAccess(linuxDoAccessFromHeader(remainingHeader, savedAccess?.userAgent), isCurrent);
+      return { access, cleared: Boolean(access) };
     }
-    if (!isCurrent()) {
-      return { access, cleared: false };
-    }
-    await clearLinuxDoLoginCookiesFromWebView(expectedWebViewHeader);
-    if (revocationPersistenceError) {
-      throw revocationPersistenceError;
-    }
-    return { access, cleared: isCurrent() };
+    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
+    return { access: null, cleared: isCurrent() };
   });
-  if (!result && expectedHeader !== undefined) {
-    throw new Error(REQUEST_SUPERSEDED_MESSAGE);
+  if (result?.cleared) {
+    await clearLinuxDoLoginCookiesFromWebView(expectedHeader);
   }
   return result ? result.access : loadLinuxDoAccess();
 }
 
 export async function clearLinuxDoAccess() {
-  const trace = beginDiagnosticTrace('credential', 'clear', { source: 'linuxdo' });
-  let cleanupGeneration: number | undefined;
-  try {
-    const cleanup = clearLinuxDoAccessWithWriter(
-      (task) => replaceCredentialWrite(linuxDoAccessWriteGate, task)
-    );
-    cleanupGeneration = currentLinuxDoAccessGeneration();
-    const access = await cleanup;
-    if (cleanupGeneration !== currentLinuxDoAccessGeneration()) {
-      finishDiagnosticTrace(trace, 'stale', { source: 'linuxdo', reason: 'stale' });
-      return access;
-    }
-    markDiagnosticStage(trace, 'apply', {
-      source: 'linuxdo',
-      hasCredential: Boolean(access?.cookieHeader),
-      state: 'cleared'
-    });
-    finishDiagnosticTrace(trace, 'success', { source: 'linuxdo' });
-    return access;
-  } catch (error) {
-    finishDiagnosticTrace(
-      trace,
-      cleanupGeneration !== undefined && cleanupGeneration !== currentLinuxDoAccessGeneration() ? 'stale' : 'failure',
-      cleanupGeneration !== undefined && cleanupGeneration !== currentLinuxDoAccessGeneration()
-        ? { source: 'linuxdo', reason: 'stale' }
-        : { source: 'linuxdo', reason: 'storage_error' }
-    );
-    throw error;
-  }
+  return clearLinuxDoAccessWithWriter(
+    (task) => replaceCredentialWrite(linuxDoAccessWriteGate, task)
+  );
 }
 
 export async function clearLinuxDoAccessForGeneration(generation: number, expectedHeader?: string) {
   return clearLinuxDoAccessWithWriter(
-    (task) => replaceCredentialWriteForGeneration(linuxDoAccessWriteGate, generation, task),
+    (task) => enqueueCredentialWriteForGeneration(linuxDoAccessWriteGate, generation, task),
     expectedHeader
   );
 }
@@ -540,19 +387,14 @@ export async function clearLinuxDoSavedAccess() {
 }
 
 export async function clearLinuxDoSavedClearance() {
-  const access = await replaceCredentialWrite(linuxDoAccessWriteGate, async ({ isCurrent }) => {
-    const savedAccess = await readStoredLinuxDoAccess();
-    if (!isCurrent()) {
-      return undefined;
-    }
-    const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoClearanceCookie(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
-    if (remainingHeader) {
-      return writeLinuxDoAccess(linuxDoAccessFromHeader(remainingHeader, savedAccess?.userAgent), isCurrent);
-    }
-    await SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY);
-    return isCurrent() ? null : undefined;
-  });
-  return access === undefined ? loadLinuxDoAccess() : access;
+  const savedAccess = await loadLinuxDoAccess();
+  const remainingHeader = buildLinuxDoCookieHeader(removeLinuxDoClearanceCookie(parseLinuxDoDocumentCookie(savedAccess?.cookieHeader || '')));
+  if (remainingHeader) {
+    await saveLinuxDoAccessWithGate(remainingHeader, savedAccess?.userAgent);
+  } else {
+    await replaceCredentialWrite(linuxDoAccessWriteGate, () => SecureStore.deleteItemAsync(LINUXDO_ACCESS_STORAGE_KEY));
+  }
+  return loadLinuxDoAccess();
 }
 
 export async function clearLinuxDoWebViewClearance() {

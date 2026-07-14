@@ -36,7 +36,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps scrollable content and user profiles clear of the Android status bar', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings);
+    const styles = createStyles(theme, settings, 800);
 
     expect(styles.statusBarScrim).toMatchObject({
       position: 'absolute',
@@ -103,7 +103,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps reply action buttons tappable without forcing a wrapped row', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings) as Record<string, Record<string, unknown>>;
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.replyActionRow.flexWrap).toBeUndefined();
     expect(styles.replyCompactActionButton.flexBasis).toBe(0);
@@ -115,7 +115,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings) as Record<string, Record<string, unknown>>;
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.appearanceSegmentedControl.flex).toBe(1);
     expect(styles.appearanceSegment.flex).toBe(1);
@@ -128,7 +128,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps reply composer actions grouped at the bottom edge', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings) as Record<string, Record<string, unknown>>;
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
 
     expect(styles.replyComposerActions).toMatchObject({
       alignItems: 'center',
@@ -140,7 +140,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps reply references readable without turning them into badges', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings);
+    const styles = createStyles(theme, settings, 800);
 
     expect(styles.htmlMentionLink.color).toBe(LINK_COLOR);
     expect(styles.htmlReplyReferenceMentionText.color).toBe(LINK_COLOR);
@@ -153,7 +153,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps required dividers and hidden WebView boundaries intact', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings);
+    const styles = createStyles(theme, settings, 800);
 
     expect(styles.feedFixedHeader.borderBottomWidth).toBe(StyleSheet.hairlineWidth);
     expect(styles.hiddenBrowserWebViewHost).toMatchObject({
@@ -174,7 +174,7 @@ describe('Android reader theme safety rails', () => {
 
   it('lets the bottom tab navigator own bottom safe-area spacing', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings);
+    const styles = createStyles(theme, settings, 800);
 
     expect('height' in styles.nav).toBe(false);
     expect('paddingBottom' in styles.nav).toBe(false);
@@ -182,7 +182,7 @@ describe('Android reader theme safety rails', () => {
 
   it('keeps selected bottom navigation in the accent color without a capsule background', () => {
     const theme = createTheme(settings);
-    const styles = createStyles(theme, settings) as Record<string, Record<string, unknown> | undefined>;
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown> | undefined>;
 
     expect(styles.navIconPill?.backgroundColor).toBeUndefined();
     expect(styles.navIconPillActive).toBeUndefined();

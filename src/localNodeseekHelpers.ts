@@ -1,6 +1,5 @@
 import { Buffer } from 'buffer';
 import type { HTMLElement } from 'node-html-parser';
-import { isNodeSeekHost } from './forumHosts';
 import type { Topic, TopicDetail } from './types';
 import {
   absoluteUrl,
@@ -12,7 +11,6 @@ import {
 } from './localHtml';
 
 export const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
-export { isNodeSeekHost } from './forumHosts';
 
 export function nodeSeekTopicUrl(id: string) {
   return `${NODESEEK_BASE_URL}/post-${id}-1`;
@@ -80,6 +78,11 @@ export function withNodeSeekReplyPagination(topic: TopicDetail, html: string, id
     };
   }
   return topic;
+}
+
+export function isNodeSeekHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 export function safeNodeSeekTopicUrl(id: string, rawUrl?: unknown) {

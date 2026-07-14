@@ -79,15 +79,6 @@ describe('reader JSON backup', () => {
     expect(JSON.stringify(imported)).not.toContain('secret');
   });
 
-  it('rejects a future-dated backup atomically instead of silently dropping records', () => {
-    const local = createEmptyReaderData();
-    const remote = createEmptyReaderData();
-    remote.deletedRecords.history['nodeseek:1'] = '9999-01-01T00:00:00.000Z';
-
-    expect(() => importReaderBackupJson(local, JSON.stringify(remote))).toThrow('备份中的资料时间异常');
-    expect(local.deletedRecords.history).toEqual({});
-  });
-
   it('imports current backups using only active Android fields', () => {
     const local = createEmptyReaderData();
     const remote = {

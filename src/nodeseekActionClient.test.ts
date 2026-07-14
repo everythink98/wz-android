@@ -74,14 +74,14 @@ describe('runNodeSeekAction', () => {
 
     await runNodeSeekAction({
       cookieHeader: 'session=abc',
-      request: buildNodeSeekReplyRequest({ postId: 801061, content: '测试回复' }),
+      request: buildNodeSeekReplyRequest({ postId: 801061, content: '测试回复', csrfToken: 'fixed-csrf-token' }),
       fetcher
     });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith('https://www.nodeseek.com/api/content/new-comment', expect.objectContaining({
       headers: expect.objectContaining({
-        'csrf-token': expect.stringMatching(/^[A-Za-z0-9]{16}$/),
+        'csrf-token': 'fixed-csrf-token',
         'x-csrf-challenge': 'simple-token'
       })
     }));

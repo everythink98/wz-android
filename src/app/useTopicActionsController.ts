@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as SecureStore from 'expo-secure-store';
 import {
   buildNodeSeekAttendanceRequest,
   buildNodeSeekCollectionRequest,
@@ -43,7 +44,14 @@ import type { Reply, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
 import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
-import { hasNodeSeekLoginCookie, parseNodeSeekDocumentCookie } from '../nodeseekCookies';
+import {
+  DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+  NODESEEK_ACCESS_STORAGE_KEY,
+  NODESEEK_COOKIE_STORAGE_KEY,
+  NODESEEK_USER_AGENT_STORAGE_KEY,
+  nodeSeekAccessRecord,
+  parseNodeSeekAccessRecord
+} from '../nodeseekCookies';
 import type { RequestOwner } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import {
@@ -63,12 +71,7 @@ import {
   type TopicActionRun,
   type TopicActionRunMap
 } from '../topicActionRequestOwners';
-import {
-  errorMessage,
-  isCanceledRequest,
-  isSilentRequestInterruption,
-  isSupersededRequest
-} from '../appUtils';
+import { errorMessage, isCanceledRequest } from '../appUtils';
 import { canUseLinuxDoLike } from '../linuxdoPermissions';
 import {
   normalizeReplyImageAsset,
@@ -208,6 +211,18 @@ function topicDeleteReplyActionKey(topicKeyValue: string, reply: Reply) {
   return `delete-reply:${topicKeyValue}:${reply.commentId ?? reply.deletePath ?? reply.floor ?? 'reply'}`;
 }
 
+async function loadNodeSeekActionAccess() {
+  const savedAccess = parseNodeSeekAccessRecord(await SecureStore.getItemAsync(NODESEEK_ACCESS_STORAGE_KEY));
+  if (savedAccess) {
+    return savedAccess;
+  }
+  const [cookieHeader, userAgent] = await Promise.all([
+    SecureStore.getItemAsync(NODESEEK_COOKIE_STORAGE_KEY),
+    SecureStore.getItemAsync(NODESEEK_USER_AGENT_STORAGE_KEY)
+  ]);
+  return cookieHeader ? nodeSeekAccessRecord(cookieHeader, userAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT) : null;
+}
+
 export function useTopicActionsController({
   actionAbortRef,
   clearNodeSeekLoginCookiesOnly,
@@ -215,7 +230,6 @@ export function useTopicActionsController({
   currentNodeSeekCredentialGeneration,
   fetcher,
   linuxDoWebViewUserAgentRef,
-  loadNodeSeekCookieForSource,
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
   ensureNodeImageApiKey,
@@ -230,16 +244,14 @@ export function useTopicActionsController({
   siteSessionStates,
   topicActionRequestOwnerRef,
   topicSession,
-  updateLinuxDoSession,
-  yaohuoCredentialSuppressedRef
+  updateLinuxDoSession
 }: {
   actionAbortRef: Ref<{ abort: () => void; abortAll: () => void } | null>;
-  clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<unknown>;
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean | void>;
+  clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   currentNodeSeekCredentialGeneration: () => number;
   fetcher: Fetcher;
   linuxDoWebViewUserAgentRef: Ref<string>;
-  loadNodeSeekCookieForSource: (source: 'nodeseek', options?: CredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
@@ -255,7 +267,6 @@ export function useTopicActionsController({
   topicActionRequestOwnerRef: Ref<RequestOwner>;
   topicSession: TopicSessionController;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
-  yaohuoCredentialSuppressedRef: Ref<boolean>;
 }) {
   const {
     state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic, topicDetail, topicReplies },
@@ -264,6 +275,7 @@ export function useTopicActionsController({
       composer: topicComposer
     }
   } = topicSession;
+  const appendReplyMarkup = topicComposer.appendMarkup;
   const applyTopicActionUpdate = topicActions.applyUpdate;
   const completeReplySubmission = topicComposer.completeSubmission;
   const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);
@@ -407,27 +419,12 @@ export function useTopicActionsController({
       markDiagnosticStage(diagnosticTrace, 'credential', { source: 'nodeseek', state: 'load' });
     }
     const run = startActionRun(actionKey, busy, topicScoped);
-    let nodeSeekGeneration = currentNodeSeekCredentialGeneration();
+    const nodeSeekGeneration = currentNodeSeekCredentialGeneration();
     try {
-      const cookieHeader = await loadNodeSeekCookieForSource('nodeseek', {
-        captureGeneration: (generation) => { nodeSeekGeneration = generation; },
-        diagnosticTrace
-      });
-      if (nodeSeekGeneration !== currentNodeSeekCredentialGeneration()
-        || !isCurrentActionRun(run)
-        || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
+      const access = await loadNodeSeekActionAccess();
+      if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
         if (diagnosticTrace) {
           finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'nodeseek', reason: 'stale' });
-        }
-        return false;
-      }
-      if (!cookieHeader?.trim() || !hasNodeSeekLoginCookie(parseNodeSeekDocumentCookie(cookieHeader))) {
-        notify(actionMessage('NodeSeek 登录已失效，请重新登录。', options.restoreOnFailure));
-        if (diagnosticTrace) {
-          markDiagnosticStage(diagnosticTrace, 'credential', { source: 'nodeseek', hasCredential: false, reason: 'login_required' });
-          if (!options.deferDiagnosticFailure) {
-            finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: 'nodeseek', reason: 'login_required' });
-          }
         }
         return false;
       }
@@ -436,18 +433,18 @@ export function useTopicActionsController({
         markDiagnosticStage(diagnosticTrace, 'credential', {
           source: 'nodeseek',
           state: 'ready',
-          hasCredential: true,
+          hasCredential: Boolean(access?.cookieHeader),
           credentialSource: 'secure-store',
           ...actionRequestDiagnosticFields('nodeseek', request)
         });
         markDiagnosticStage(diagnosticTrace, 'transport', { source: 'nodeseek', state: 'start' });
       }
       await runNodeSeekAction({
-        cookieHeader,
+        cookieHeader: access?.cookieHeader || '',
         fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher,
         request,
         signal: run.controller.signal,
-        userAgent: nodeSeekWebViewUserAgentRef.current
+        userAgent: access?.userAgent || nodeSeekWebViewUserAgentRef.current
       });
       if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
         if (diagnosticTrace) {
@@ -463,9 +460,9 @@ export function useTopicActionsController({
       }
       return true;
     } catch (error) {
-      if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner)) || isSilentRequestInterruption(error)) {
+      if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner)) || isCanceledRequest(error)) {
         if (diagnosticTrace) {
-          const reason = isSupersededRequest(error) ? 'superseded' : isCanceledRequest(error) ? 'canceled' : 'stale';
+          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
           finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'nodeseek', reason });
         }
         return false;
@@ -475,29 +472,10 @@ export function useTopicActionsController({
         markDiagnosticStage(diagnosticTrace, 'transport', { source: 'nodeseek', state: 'failure', reason: diagnosticReason });
       }
       if (isNodeSeekLoginRequiredError(error)) {
-        let cleanupCurrent = nodeSeekGeneration === currentNodeSeekCredentialGeneration();
-        let cleanupGeneration: number | undefined;
-        try {
-          if (cleanupCurrent) {
-            const cleanup = clearNodeSeekLoginCookiesOnly({ generation: nodeSeekGeneration });
-            cleanupGeneration = currentNodeSeekCredentialGeneration();
-            await cleanup;
-            cleanupCurrent = cleanupGeneration === currentNodeSeekCredentialGeneration();
-          }
-        } catch {
-          cleanupCurrent = cleanupGeneration === undefined
-            ? cleanupCurrent
-            : cleanupGeneration === currentNodeSeekCredentialGeneration();
-          if (diagnosticTrace && cleanupCurrent) {
-            markDiagnosticStage(diagnosticTrace, 'credential', { source: 'nodeseek', state: 'error', reason: 'storage_error' });
-          }
-        }
-        if (!cleanupCurrent || !isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
+        await clearNodeSeekLoginCookiesOnly({ generation: nodeSeekGeneration });
+        if (!isCurrentActionRun(run) || (requestOwner && !isCurrentTopicActionRequest(requestOwner))) {
           if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', {
-              source: 'nodeseek',
-              reason: cleanupCurrent ? 'stale' : 'superseded'
-            });
+            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'nodeseek', reason: 'stale' });
           }
           return false;
         }
@@ -510,7 +488,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, busy);
     }
-  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadNodeSeekCookieForSource, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+  }, [canUseNodeSeekActions, clearNodeSeekLoginCookiesOnly, currentNodeSeekCredentialGeneration, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runYaohuoRequest = useCallback(async (
     requestFactory: (cookieHeader: string) => YaohuoActionRequest,
@@ -518,10 +496,6 @@ export function useTopicActionsController({
     options: ActionRunOptions = {}
   ) => {
     const diagnosticTrace = options.diagnosticTrace;
-    if (yaohuoCredentialSuppressedRef.current) {
-      failDiagnosticActionRequest(options, 'yaohuo', 'credential', 'blocked', 'missing_credential');
-      return false;
-    }
     if (!canUseYaohuoActions) {
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
         if (diagnosticTrace) {
@@ -545,7 +519,7 @@ export function useTopicActionsController({
         captureGeneration: (generation) => { yaohuoGeneration = generation; },
         diagnosticTrace
       });
-      if (yaohuoCredentialSuppressedRef.current || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
         if (diagnosticTrace) {
           finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
         }
@@ -573,7 +547,7 @@ export function useTopicActionsController({
         request,
         signal: run.controller.signal
       });
-      if (yaohuoCredentialSuppressedRef.current || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
         if (diagnosticTrace) {
           finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
         }
@@ -589,9 +563,9 @@ export function useTopicActionsController({
       }
       return resultConfirmed ? result : false;
     } catch (error) {
-      if (yaohuoCredentialSuppressedRef.current || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isSilentRequestInterruption(error)) {
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
         if (diagnosticTrace) {
-          const reason = isSupersededRequest(error) ? 'superseded' : isCanceledRequest(error) ? 'canceled' : 'stale';
+          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
           finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'yaohuo', reason });
         }
         return false;
@@ -599,26 +573,10 @@ export function useTopicActionsController({
       const diagnosticReason = normalizeDiagnosticReason(error);
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
         if ((error as { reason?: unknown }).reason === 'expired') {
-          let cleanupCurrent = true;
-          try {
-            const cleared = await clearYaohuoLoginState({
-              generation: yaohuoGeneration,
-              isCurrent: () => !yaohuoCredentialSuppressedRef.current
-                && isCurrentActionRun(run)
-                && isCurrentTopicActionRequest(requestOwner)
-            });
-            cleanupCurrent = cleared !== false;
-          } catch {
+          await clearYaohuoLoginState({ generation: yaohuoGeneration });
+          if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
             if (diagnosticTrace) {
-              markDiagnosticStage(diagnosticTrace, 'credential', { source: 'yaohuo', state: 'error', reason: 'storage_error' });
-            }
-          }
-          if (!cleanupCurrent || yaohuoCredentialSuppressedRef.current || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-            if (diagnosticTrace) {
-              finishDiagnosticTrace(diagnosticTrace, 'stale', {
-                source: 'yaohuo',
-                reason: cleanupCurrent ? 'stale' : 'superseded'
-              });
+              finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'yaohuo', reason: 'stale' });
             }
             return false;
           }
@@ -633,7 +591,7 @@ export function useTopicActionsController({
     } finally {
       finishActionRun(run, true);
     }
-  }, [canUseYaohuoActions, clearYaohuoLoginState, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, yaohuoCredentialSuppressedRef]);
+  }, [canUseYaohuoActions, clearYaohuoLoginState, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
   const runLinuxDoRequest = useCallback(async (
     requestFactory: () => LinuxDoActionRequest,
@@ -667,9 +625,7 @@ export function useTopicActionsController({
       linuxDoGeneration = currentLinuxDoAccessGeneration();
       const access = await loadLinuxDoAccess();
       linuxDoAccessCookieHeader = access?.cookieHeader;
-      if (linuxDoGeneration !== currentLinuxDoAccessGeneration()
-        || !isCurrentActionRun(run)
-        || !isCurrentTopicActionRequest(requestOwner)) {
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
         if (diagnosticTrace) {
           finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'linuxdo', reason: 'stale' });
         }
@@ -714,29 +670,19 @@ export function useTopicActionsController({
       }
       return result ?? true;
     } catch (error) {
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isSilentRequestInterruption(error)) {
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
         if (diagnosticTrace) {
-          const reason = isSupersededRequest(error) ? 'superseded' : isCanceledRequest(error) ? 'canceled' : 'stale';
+          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
           finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'linuxdo', reason });
         }
         return false;
       }
       const diagnosticReason = normalizeDiagnosticReason(error);
       if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        let cleanupCurrent = true;
-        try {
-          cleanupCurrent = await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
-        } catch {
+        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
+        if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
           if (diagnosticTrace) {
-            markDiagnosticStage(diagnosticTrace, 'credential', { source: 'linuxdo', state: 'error', reason: 'storage_error' });
-          }
-        }
-        if (!cleanupCurrent || !isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-          if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', {
-              source: 'linuxdo',
-              reason: cleanupCurrent ? 'stale' : 'superseded'
-            });
+            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'linuxdo', reason: 'stale' });
           }
           return false;
         }
@@ -872,12 +818,11 @@ export function useTopicActionsController({
     }
   }, [isCurrentTopicActionRequest, optimisticTopicActionsRef, runOptimisticActionQueue, setOptimisticTopicActionState]);
 
-  const submitReply = useCallback(async (composerContent?: string) => {
-    const submittedReplyContent = composerContent ?? replyContent;
+  const submitReply = useCallback(async () => {
     const actionSource = topicDetail?.source || selectedTopic?.source;
     const diagnosticTrace = beginDiagnosticTrace('reply', replyEditTarget ? 'edit' : 'submit', {
       ...(actionSource ? { source: actionSource } : {}),
-      contentLength: submittedReplyContent.length
+      contentLength: replyContent.length
     });
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
     if (!canSubmitReplyToTopic(detail)) {
@@ -885,7 +830,7 @@ export function useTopicActionsController({
       return;
     }
     const requestTopicKey = topicKey(detail);
-    if (!submittedReplyContent.trim()) {
+    if (!replyContent.trim()) {
       notify('请输入回复内容');
       finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
       return;
@@ -902,12 +847,12 @@ export function useTopicActionsController({
         const requestOwner = startTopicActionRequest(actionKey);
         const submitted = isNodeSeekActionTopic(detail)
           ? await runNodeSeekRequest(
-            () => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: submittedReplyContent }),
+            () => buildNodeSeekEditReplyRequest({ commentId: replyEditTarget.commentId, content: replyContent, csrfToken: '' }),
             '回复已更新',
             { owner: requestOwner, diagnosticTrace }
           )
           : await runLinuxDoRequest(
-            () => buildLinuxDoEditReplyRequest({ postId: replyEditTarget.commentId, content: submittedReplyContent }),
+            () => buildLinuxDoEditReplyRequest({ postId: replyEditTarget.commentId, content: replyContent }),
             '回复已更新',
             { owner: requestOwner, diagnosticTrace }
           );
@@ -918,7 +863,7 @@ export function useTopicActionsController({
           }
           const editedReplyContent = {
             commentId: replyEditTarget.commentId,
-            contentMarkdown: submittedReplyContent
+            contentMarkdown: replyContent
           };
           completeReplySubmission({ editedReplyContent, source: detail.source });
           markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
@@ -947,7 +892,7 @@ export function useTopicActionsController({
           (cookieHeader) => buildYaohuoReplyRequest({
             topicId: detail.id,
             classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID,
-            content: submittedReplyContent,
+            content: replyContent,
             face: replyFace,
             sid: extractYaohuoSid(cookieHeader),
             replyFloor: replyTarget?.floor,
@@ -971,7 +916,7 @@ export function useTopicActionsController({
         const submitted = await runLinuxDoRequest(
           () => buildLinuxDoReplyRequest({
             topicId: detail.id,
-            content: submittedReplyContent,
+            content: replyContent,
             replyToPostNumber: replyTarget?.floor
           }),
           '回复已提交',
@@ -989,7 +934,7 @@ export function useTopicActionsController({
         return;
       }
       const submitted = await runNodeSeekRequest(
-        () => buildNodeSeekReplyRequest({ postId: detail.id, content: submittedReplyContent, replyTarget }),
+        () => buildNodeSeekReplyRequest({ postId: detail.id, content: replyContent, replyTarget, csrfToken: '' }),
         '回复已提交',
         { owner: requestOwner, diagnosticTrace }
       );
@@ -1119,7 +1064,7 @@ export function useTopicActionsController({
 
     markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
     const actionKey = `${topicReplyActionKey(topicKey(detail))}:image`;
-    return runSingleNonIdempotentTopicAction(actionKey, async () => {
+    await runSingleNonIdempotentTopicAction(actionKey, async () => {
       const requestOwner = startTopicActionRequest(actionKey);
       let nodeSeekApiKey: string | null = null;
       if (isNodeSeekActionTopic(detail)) {
@@ -1230,24 +1175,18 @@ export function useTopicActionsController({
           return;
         }
         const markup = replyImageMarkupForSource(detail.source, imageUrl, file.name);
+        appendReplyMarkup(markup);
         markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', markupApplied: true });
         notify('图片已插入');
-        return markup;
       } catch (error) {
-        const reason = isSupersededRequest(error)
-          ? 'superseded'
-          : isCanceledRequest(error) ? 'canceled' : normalizeDiagnosticReason(error);
-        finishDiagnosticTrace(
-          diagnosticTrace,
-          reason === 'superseded' ? 'stale' : reason === 'canceled' ? 'canceled' : 'failure',
-          { source: detail.source, reason }
-        );
-        if (!isSilentRequestInterruption(error) && isCurrentTopicActionRequest(requestOwner)) {
+        const reason = isCanceledRequest(error) ? 'canceled' : normalizeDiagnosticReason(error);
+        finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'failure', { source: detail.source, reason });
+        if (!isCanceledRequest(error) && isCurrentTopicActionRequest(requestOwner)) {
           notify(errorMessage(error));
         }
       }
     }, diagnosticTrace);
-  }, [ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
+  }, [appendReplyMarkup, ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const diagnosticTrace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });

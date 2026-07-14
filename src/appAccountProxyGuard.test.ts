@@ -13,6 +13,6 @@ describe('account proxy guard', () => {
     const source = readSource('src', 'app', 'useAccountController.ts');
 
     expect(source).toContain('yaohuoFetcher: forumFetchWithWebViewFallback');
-    expect(source).toContain('}, [checkingRequestIdRef, clearYaohuoLoginState, currentYaohuoCredentialGeneration, currentYaohuoLoginTrace, finishYaohuoLoginTrace, forumFetchWithWebViewFallback, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession, yaohuoCredentialSuppressedRef]);');
+    expect(source).toContain('}, [checkingRequestIdRef, clearYaohuoLoginState, currentYaohuoCredentialGeneration, currentYaohuoLoginTrace, finishYaohuoLoginTrace, forumFetchWithWebViewFallback, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);');
   });
 });

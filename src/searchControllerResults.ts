@@ -93,10 +93,6 @@ export function groupFromRemoteSearchResult(result: RemoteSearchSourceResult) {
   return result.group;
 }
 
-export function stopSearchGroupLoadingMore(groups: SearchGroup[], source: Source) {
-  return groups.map((group) => group.source === source ? { ...group, loadingMore: false } : group);
-}
-
 export function firstRemoteSearchAction(results: RemoteSearchSourceResult[]) {
   return results.find((result) => result.kind === 'action-required')?.action;
 }
@@ -113,12 +109,4 @@ export function enqueueSearchHistoryWrite(queue: SearchHistoryWriteQueue, task: 
   const run = queue.current.catch(() => undefined).then(task);
   queue.current = run.then(() => undefined, () => undefined);
   return run;
-}
-
-export async function retrySearchHistoryWrite(task: () => Promise<void>) {
-  try {
-    await task();
-  } catch {
-    await task();
-  }
 }

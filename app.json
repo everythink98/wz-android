@@ -2,7 +2,7 @@
   "expo": {
     "name": "阅坛 Android",
     "slug": "wz-android",
-    "version": "1.3.63",
+    "version": "1.3.62",
     "icon": "./assets/icon.png",
     "orientation": "portrait",
     "platforms": [
@@ -11,12 +11,11 @@
     "newArchEnabled": true,
     "userInterfaceStyle": "light",
     "extra": {
-      "releaseSignerSha256": "6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66",
-      "releaseTrustAnchorSha256": "6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66"
+      "releaseSignerSha256": "6cb2f2a6034e18b7b82315e46e515b909817b9a211ee0f02c3c39224ef5bdd66"
     },
     "android": {
       "package": "com.wz.reader",
-      "versionCode": 67,
+      "versionCode": 66,
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.READ_MEDIA_AUDIO",

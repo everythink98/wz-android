@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertVersionState } from './release-guards.mjs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,17 +20,6 @@ if (version !== appVersion) {
 }
 if (!Number.isInteger(versionCode) || versionCode < 1) {
   errors.push(`app.json Android versionCode 必须是正整数，当前为 ${versionCode}`);
-}
-if (!errors.length) {
-  try {
-    assertVersionState({
-      rootDir,
-      current: { version, versionCode },
-      releaseCandidate: process.argv.includes('--release')
-    });
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error));
-  }
 }
 
 if (errors.length) {

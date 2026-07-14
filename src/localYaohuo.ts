@@ -1,11 +1,9 @@
 import type { HTMLElement } from 'node-html-parser';
-import { beijingClock, beijingDateToIso, mostRecentBeijingDateToIso, type BeijingClock } from './beijingDate';
 import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   absoluteUrl,
   accessRequirementFromText,
   elementText,
-  escapeHtmlText,
   hasRenderableHtmlContent,
   parseHtml,
   parsePositiveInteger,
@@ -28,6 +26,8 @@ import { normalizeYaohuoReplyDeletePath } from './yaohuoActions';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 
 const categoryNames = new Map(YAOHUO_CATEGORIES.map((category) => [category.id, category.name]));
+const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
+type YaohuoClock = { year: number; month: number; day: number; nowMs: number };
 
 export function isYaohuoLoginRequiredHtml(html: string, responseUrl = '') {
   const visibleText = textContentFromHtml(html);
@@ -58,25 +58,37 @@ export function ensureYaohuoHtmlLoggedIn(html: string, responseUrl = '') {
   }
 }
 
-function parseYaohuoDate(value: unknown, now = beijingClock()) {
+function currentYaohuoClock(): YaohuoClock {
+  const nowMs = Date.now();
+  const beijingNow = new Date(nowMs + BEIJING_OFFSET_MS);
+  return {
+    year: beijingNow.getUTCFullYear(),
+    month: beijingNow.getUTCMonth() + 1,
+    day: beijingNow.getUTCDate(),
+    nowMs
+  };
+}
+
+function parseYaohuoDate(value: unknown, now = currentYaohuoClock()) {
   const text = String(value || '').trim();
   const full = yaohuoFullDateText(text);
   const partial = yaohuoPartialDateText(text);
   const relative = parseYaohuoRelativeDate(text, now);
   const fullParts = full.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/)?.slice(1);
   const partialParts = partial.match(/(\d{1,2})[-/](\d{1,2})\s+(\d{1,2}):(\d{1,2})/)?.slice(1);
+  const parts = fullParts || (partialParts ? [String(now.year), ...partialParts] : null);
   if (relative) {
     return relative;
   }
-  if (fullParts) {
-    const [year, month, day, hour, minute] = fullParts.map(Number);
-    return beijingDateToIso(year, month, day, hour, minute);
-  }
-  if (!partialParts) {
+  if (!parts) {
     return '';
   }
-  const [month, day, hour, minute] = partialParts.map(Number);
-  return mostRecentBeijingDateToIso(month, day, hour, minute, now.nowMs);
+  let [year, month, day, hour, minute] = parts.map(Number);
+  if (!full && month > now.month) {
+    year -= 1;
+  }
+  const date = beijingDateToIso(year, month, day, hour, minute);
+  return date || '';
 }
 
 function yaohuoFullDateText(text: string) {
@@ -98,7 +110,12 @@ function yaohuoDisplayTimeText(text: string) {
   return yaohuoFullDateText(text) || yaohuoPartialDateText(text) || yaohuoRelativeDateText(text);
 }
 
-function parseYaohuoRelativeDate(text: string, now: BeijingClock) {
+function beijingDateToIso(year: number, month: number, day: number, hour: number, minute: number) {
+  const date = new Date(Date.UTC(year, month - 1, day, hour - 8, minute));
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+}
+
+function parseYaohuoRelativeDate(text: string, now: YaohuoClock) {
   const numericRelative = text.match(/^(\d{1,4})\s*(分钟|小时|天)前$/);
   if (/^(刚刚|刚才)$/.test(text)) {
     return new Date(now.nowMs).toISOString();
@@ -149,12 +166,12 @@ function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
 }
 
 function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
-  const topicCount = profileStructuredStatValue(root, 'posts') ?? profileStatValue(text, '主题|帖子|贴子|发帖');
-  const replyCount = profileStructuredStatValue(root, 'replies') ?? profileStatValue(text, '回复|回帖');
+  const topicCount = profileStructuredStatValue(root, 'posts') || profileStatValue(text, '主题|帖子|贴子|发帖');
+  const replyCount = profileStructuredStatValue(root, 'replies') || profileStatValue(text, '回复|回帖');
   return {
-    topicCount,
-    replyCount,
-    postCount: topicCount !== undefined && replyCount !== undefined ? topicCount + replyCount : undefined
+    topicCount: topicCount || undefined,
+    replyCount: replyCount || undefined,
+    postCount: topicCount && replyCount ? topicCount + replyCount : undefined
   };
 }
 
@@ -164,22 +181,23 @@ function profileStructuredStatValue(root: ReturnType<typeof parseHtml>, classNam
     if (!classes.includes(className)) {
       continue;
     }
-    const value = elementText(element.querySelector('.value')).replace(/,/g, '').trim();
-    if (!/^\d+$/.test(value)) {
-      return undefined;
+    const value = parsePositiveInteger(elementText(element.querySelector('.value')));
+    if (value) {
+      return value;
     }
-    const parsed = Number(value);
-    return Number.isSafeInteger(parsed) ? parsed : undefined;
   }
-  return undefined;
+  return 0;
 }
 
 function profileStatValue(text: string, labels: string) {
   const pattern = new RegExp(`(?:^|[^\\d])(?:${labels})\\s*(?:[:：]?\\s*|[（(]\\s*)([\\d,]{1,6})(?!\\d)`, 'g');
   for (const match of text.matchAll(pattern)) {
-    return parsePositiveInteger(match[1]);
+    const value = parsePositiveInteger(match[1]);
+    if (value) {
+      return value;
+    }
   }
-  return undefined;
+  return 0;
 }
 
 function cleanYaohuoLevelLabel(value: unknown) {
@@ -234,7 +252,7 @@ function parseListItem(
   element: ReturnType<ReturnType<typeof parseHtml>['querySelectorAll']>[number],
   fallbackClassId?: string,
   fallbackCreatedAt = new Date().toISOString(),
-  now = beijingClock()
+  now = currentYaohuoClock()
 ) {
   const link = element.querySelectorAll('a[href]').find((item) => {
     const href = item.getAttribute('href') || '';
@@ -344,7 +362,7 @@ export function parseYaohuoListHtml(html: string, {
   const seen = new Set<string>();
   const items: Topic[] = [];
   const fallbackCreatedAt = new Date().toISOString();
-  const now = beijingClock();
+  const now = currentYaohuoClock();
   for (const row of rows) {
     const item = parseListItem(row, classId, fallbackCreatedAt, now) as Topic | null;
     if (item && !seen.has(item.id)) {
@@ -533,6 +551,15 @@ function appendYaohuoPostContent(contentHtml: string, root: ReturnType<typeof pa
   const followingContent = collectFollowingYaohuoPostContent(mainContent);
   const extraHtml = followingContent.length ? followingContent : collectYaohuoDownloadContent(root, mainContent);
   return [contentHtml, ...extraHtml].filter((part) => hasRenderableHtmlContent(part)).join('\n');
+}
+
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function readableYaohuoActivityText(value: unknown) {
@@ -893,17 +920,13 @@ export function parseYaohuoUserRepliesHtml(html: string, { id, username, url }: 
         .replace(/\s+/g, ' ')
         .trim();
       excerpt = textExcerpt(excerpt);
-      const replyIdentity = floor
-        ? [topicId, floor, createdAt || ''].join(':')
-        : createdAt && excerpt
-          ? [topicId, createdAt, excerpt].join(':')
-          : createdAt
-            ? [topicId, createdAt].join(':')
+      const replyIdentity = floor || createdAt
+        ? [topicId, floor || '', createdAt || ''].join(':')
         : excerpt
           ? `${topicId}:${excerpt}`
           : `${topicId}:row:${index}`;
       const topicDateIdentity = createdAt ? `${topicId}:${createdAt}` : '';
-      if (seen.has(replyIdentity) || (!floor && !excerpt && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
+      if (seen.has(replyIdentity) || (!floor && topicDateIdentity && seenTopicDates.has(topicDateIdentity))) {
         return null;
       }
       seen.add(replyIdentity);

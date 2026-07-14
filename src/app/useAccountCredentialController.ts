@@ -50,7 +50,7 @@ export function useAccountCredentialController({
   changeLinuxDoPanel: (visible: boolean) => boolean;
   changeNodeSeekLoginPanel: (visible: boolean) => void;
   changeScreen: (screen: 'more') => void;
-  changeYaohuoLoginPanel: (visible: boolean) => boolean;
+  changeYaohuoLoginPanel: (visible: boolean) => void;
   linuxDoWebViewRef: WebViewRef;
   notify: (message: string) => void;
   openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
@@ -119,28 +119,6 @@ export function useAccountCredentialController({
     }
   }, [finishCredentialFillTrace]);
 
-  const blockCredentialFillForWebView = useCallback(() => {
-    const current = credentialFillTraceRef.current;
-    if (!current) {
-      return;
-    }
-    markDiagnosticStage(current.trace, 'guard', {
-      site: current.site,
-      state: 'failure',
-      reason: 'network_error'
-    });
-    finishCredentialFillTrace(current.site, 'blocked', { reason: 'network_error' }, current.trace);
-    if (credentialLoginSiteRef.current === current.site) {
-      credentialLoginSiteRef.current = null;
-      setCredentialLoginSite(null);
-      setCredentialFillAttempt(null);
-    }
-    if (pendingCredentialFillSiteRef.current === current.site) {
-      pendingCredentialFillSiteRef.current = null;
-      setPendingCredentialFillSite(null);
-    }
-  }, [finishCredentialFillTrace]);
-
   const finishCredentialFillForLoginFailure = useCallback((
     site: SessionSite,
     attempt: number,
@@ -165,12 +143,6 @@ export function useAccountCredentialController({
     void reloadCredentialSummaries();
   }, [reloadCredentialSummaries]);
 
-  useEffect(() => {
-    if (webViewBlockMessage) {
-      blockCredentialFillForWebView();
-    }
-  }, [blockCredentialFillForWebView, webViewBlockMessage]);
-
   const openAccountLogin = useCallback((site: SessionSite, fill: boolean) => {
     const previousSite = credentialLoginSiteRef.current;
     if (previousSite && previousSite !== site) {
@@ -185,7 +157,7 @@ export function useAccountCredentialController({
       changeNodeSeekLoginPanel(true);
     } else if (site === 'yaohuo') {
       setYaohuoLoginPrompt('');
-      opened = changeYaohuoLoginPanel(true);
+      changeYaohuoLoginPanel(true);
     } else {
       opened = changeLinuxDoPanel(true);
     }
@@ -216,15 +188,18 @@ export function useAccountCredentialController({
     setPendingCredentialFillSite(site);
     setCredentialFillAttempt({ site, attempt });
     if (webViewBlockMessage) {
-      blockCredentialFillForWebView();
+      markDiagnosticStage(trace, 'guard', { site, state: 'failure', reason: 'network_error' });
+      finishCredentialFillTrace(site, 'blocked', { reason: 'network_error' }, trace);
+      pendingCredentialFillSiteRef.current = null;
+      setPendingCredentialFillSite(null);
     }
   }, [
     changeLinuxDoPanel,
     changeNodeSeekLoginPanel,
     changeScreen,
     changeYaohuoLoginPanel,
-    blockCredentialFillForWebView,
     clearCredentialLoginIntent,
+    finishCredentialFillTrace,
     setYaohuoLoginPrompt,
     webViewBlockMessage
   ]);

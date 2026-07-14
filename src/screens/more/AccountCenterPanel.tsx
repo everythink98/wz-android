@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Alert, Keyboard, KeyboardAvoidingView, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '../../credentialVault';
 import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
 import type { UserProfile } from '../../types';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, ExpandablePanel, IconButton, triggerPressFeedback } from '../../components/AppControls';
-import { ViewportBoundedScrollView } from '../../components/ViewportBoundedScrollView';
 import {
   accountCenterSummary,
   createSiteAccountViews,
@@ -372,7 +371,8 @@ function CredentialEditor({
                 <Text style={styles.meta}>{view.label}</Text>
               </View>
             </View>
-            <ViewportBoundedScrollView
+            <ScrollView
+              style={styles.searchFilterBody}
               contentContainerStyle={styles.searchFilterBodyInner}
               keyboardShouldPersistTaps="always"
             >
@@ -407,7 +407,7 @@ function CredentialEditor({
                   onChangeText={setPassword}
                 />
               </View>
-            </ViewportBoundedScrollView>
+            </ScrollView>
             <View style={styles.searchFilterActions}>
               {view.credential.state !== 'missing' ? (
                 <AppButton compact label="删除" variant="danger" styles={styles} disabled={busy} onPress={confirmDelete} />

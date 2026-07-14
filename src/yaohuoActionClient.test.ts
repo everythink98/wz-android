@@ -115,16 +115,6 @@ describe('runYaohuoAction', () => {
     expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
   });
 
-  it.each(['', '  \n  '])('does not confirm a blank yaohuo action response', async (body) => {
-    const result = await runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
-      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
-      fetcher: vi.fn(async () => htmlResponse(body))
-    });
-
-    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
-  });
-
   it('keeps short yaohuo action text when no tip wrapper exists', async () => {
     const fetcher = vi.fn(async () => htmlResponse('<html>收藏成功</html>'));
 
@@ -203,7 +193,7 @@ describe('runYaohuoAction', () => {
     })).rejects.toThrow('请求超时，请稍后重试');
   });
 
-  it('classifies yaohuo login, verification, and generic HTTP responses', async () => {
+  it('surfaces login and captcha pages as a relogin flow', async () => {
     const loginFetcher = vi.fn(async () => htmlResponse('<html>请先登录网站</html>', 200, 'https://www.yaohuo.me/waplogin.aspx?siteid=1000'));
     await expect(runYaohuoAction({
       cookieHeader: 'sidyaohuo=secret',
@@ -214,7 +204,7 @@ describe('runYaohuoAction', () => {
       reason: 'expired'
     });
 
-    const captchaFetcher = vi.fn(async () => htmlResponse('<script>window.CAPTCHA_CONFIG={}</script><div>访问验证</div>', 403));
+    const captchaFetcher = vi.fn(async () => htmlResponse('<script>window.CAPTCHA_CONFIG={}</script><div>访问验证</div>'));
     await expect(runYaohuoAction({
       cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
@@ -223,12 +213,5 @@ describe('runYaohuoAction', () => {
       loginRequired: true,
       reason: 'verification'
     });
-
-    const forbiddenFetcher = vi.fn(async () => htmlResponse('<h1>Forbidden</h1>', 403));
-    await expect(runYaohuoAction({
-      cookieHeader: 'sidyaohuo=secret',
-      request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
-      fetcher: forbiddenFetcher
-    })).rejects.toThrow('妖火请求失败：HTTP 403');
   });
 });

@@ -1,7 +1,6 @@
 import Anser from 'anser';
 import { parse, type HTMLElement } from 'node-html-parser';
 import { accessRequirementLevelValue } from './appUtils';
-import { isNodeSeekHost } from './forumHosts';
 import { bilibiliEmbedUrlFromUrl, nsEmbedFromUrl } from './nsVideoEmbeds';
 import type { AccessRequirement } from './types';
 
@@ -50,10 +49,7 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
   }
   let time = Number.NaN;
   if (typeof value === 'number') {
-    const magnitude = Math.abs(value);
-    if (Number.isFinite(value) && magnitude < 100_000_000_000_000) {
-      time = magnitude > 10_000_000_000 ? value : value * 1000;
-    }
+    time = value > 10_000_000_000 ? value : value * 1000;
   } else if (typeof value === 'string') {
     const text = value.trim();
     const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)
@@ -63,11 +59,7 @@ export function toIsoString(value: unknown, defaultTimezone = '') {
       ));
     time = Date.parse(normalized);
   }
-  if (!Number.isFinite(time)) {
-    return '';
-  }
-  const date = new Date(time);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : '';
+  return Number.isFinite(time) ? new Date(time).toISOString() : '';
 }
 
 export function decodeHtml(value: unknown) {
@@ -222,17 +214,19 @@ function removeForumImageMetadata(root: HTMLElement) {
   });
 }
 
-export function escapeHtmlText(value: unknown) {
-  return String(value || '')
+function escapeHtmlAttribute(value: string) {
+  return value
     .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
 
-export function escapeHtmlAttribute(value: unknown) {
-  return escapeHtmlText(value)
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function oneboxText(node: HTMLElement | null | undefined, maxLength: number) {
@@ -306,6 +300,11 @@ function sanitizeNsVideoImages(root: HTMLElement, baseUrl: string) {
     }
     node.replaceWith(`<iframe src="${escapeHtmlAttribute(embedUrl)}" allowfullscreen="true"></iframe>`);
   });
+}
+
+function isNodeSeekHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 function nodeSeekStickerPngUrl(value: unknown, baseUrl: string) {
@@ -752,9 +751,8 @@ export function sanitizeContentHtml(html: unknown, baseUrl: string) {
 }
 
 export function parsePositiveInteger(value: unknown) {
-  const match = String(value || '').replace(/,/g, '').match(/(?:^|[^\d-])(\d+)/);
-  const parsed = match ? Number(match[1]) : 0;
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+  const match = String(value || '').replace(/,/g, '').match(/\d+/);
+  return match ? Number(match[0]) : 0;
 }
 
 function accessRequirementFromLevel(value: unknown) {

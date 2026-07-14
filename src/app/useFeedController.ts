@@ -24,9 +24,7 @@ import {
 import {
   errorMessage,
   finishAbortableRequest,
-  interruptedRequestDiagnostic,
-  isSilentRequestInterruption,
-  isSupersededRequest,
+  isCanceledRequest,
   sourceLabel,
   startAbortableRequest
 } from '../appUtils';
@@ -112,8 +110,7 @@ export function useFeedController({
   showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
-  sourceGateway,
-  yaohuoCredentialSuppressed = false
+  sourceGateway
 }: {
   notify: (message: string) => void;
   readerData: ReaderData;
@@ -122,7 +119,6 @@ export function useFeedController({
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
-  yaohuoCredentialSuppressed?: boolean;
 }) {
   const feedRequestIdRef = useRef(0);
   const feedRequestOwnerRef = useRef(createRequestOwner('feed'));
@@ -174,9 +170,11 @@ export function useFeedController({
         nocache: true,
         signal: controller.signal
       }, { isCurrent: isCurrentCategoriesRequest, trace });
-      const interruption = interruptedRequestDiagnostic(isLatestCategoriesRequest(), controller.signal.aborted);
-      if (interruption) {
-        finishTrace(interruption.outcome, { source, reason: interruption.reason });
+      if (!isCurrentCategoriesRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       if (source !== 'all' && !data.items.length) {
@@ -208,23 +206,23 @@ export function useFeedController({
       }
       finishTrace('success', { source, itemCount: data.items.length });
     } catch (error) {
-      if (isSilentRequestInterruption(error)) {
-        const stale = isSupersededRequest(error) || !isLatestCategoriesRequest();
-        finishTrace(stale ? 'stale' : 'canceled', {
+      if (isCanceledRequest(error)) {
+        finishTrace(isLatestCategoriesRequest() ? 'canceled' : 'stale', {
           source,
-          reason: stale ? 'superseded' : 'canceled'
+          reason: isLatestCategoriesRequest() ? 'canceled' : 'superseded'
         });
-      } else if (interruptedRequestDiagnostic(isLatestCategoriesRequest(), controller.signal.aborted)) {
-        const interruption = interruptedRequestDiagnostic(isLatestCategoriesRequest(), controller.signal.aborted)!;
-        finishTrace(interruption.outcome, { source, reason: interruption.reason });
+      } else if (!isCurrentCategoriesRequest()) {
+        finishTrace('stale', { source, reason: 'superseded' });
       } else {
         notify(errorMessage(error));
         finishTrace('failure', { source, reason: normalizeDiagnosticReason(error) });
       }
     } finally {
       if (!traceFinished) {
-        const interruption = interruptedRequestDiagnostic(isLatestCategoriesRequest(), controller.signal.aborted);
-        finishTrace(interruption?.outcome || 'failure', { source, reason: interruption?.reason || 'unknown' });
+        finishTrace(isCurrentCategoriesRequest() ? 'failure' : 'stale', {
+          source,
+          reason: isCurrentCategoriesRequest() ? 'unknown' : 'superseded'
+        });
       }
       finishAbortableRequest(categoriesAbortRef, controller);
     }
@@ -288,16 +286,7 @@ export function useFeedController({
     const controller = startAbortableRequest(feedAbortRef);
     const requestId = ++feedRequestIdRef.current;
     const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
-    const isLatestFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
-    const isCurrentFeedRequest = () => isLatestFeedRequest() && !controller.signal.aborted;
-    const finishInterruptedFeedRequest = () => {
-      const interruption = interruptedRequestDiagnostic(isLatestFeedRequest(), controller.signal.aborted);
-      if (!interruption) {
-        return false;
-      }
-      finishTrace(interruption.outcome, { source: requestSource, reason: interruption.reason });
-      return true;
-    };
+    const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
     feedSourceRequestIdRef.current[requestSource] = requestId;
     markDiagnosticStage(trace, 'guard', {
       source: requestSource,
@@ -364,51 +353,16 @@ export function useFeedController({
           };
         });
       };
-      const getAggregatedBaseFeed = () => sourceGateway.getFeed({
-        source: 'all',
-        page,
-        cursor,
-        limit: 30,
-        category: category || undefined,
-        feedFilter: requestFeedFilter,
-        nocache,
-        signal: controller.signal
-      }, { isCurrent: isCurrentFeedRequest, trace });
-      const shouldStartAggregatedBaseFeed = source === 'all' && shouldFetchAggregatedBaseFeed({
-        page,
-        cursor,
-        hasYaohuoCookie: false,
-        retryWithoutCursor: Boolean(requestBaseState.baseFeedRetryPending)
-      });
-      const eagerBasePromise = shouldStartAggregatedBaseFeed ? getAggregatedBaseFeed() : undefined;
-      void eagerBasePromise?.catch(() => undefined);
-      if (source === 'all') {
-        if (yaohuoCredentialSuppressed) {
-          markDiagnosticStage(trace, 'credential', {
-            source: 'yaohuo',
-            state: 'disabled',
-            hasCredential: false
-          });
-        }
-      }
-      if (finishInterruptedFeedRequest()) {
+      const hasYaohuoCredential = source === 'all' ? await sourceGateway.hasYaohuoCredential() : false;
+      if (!isCurrentFeedRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       let finalErrors: SourceErrors = {};
-      if (source === 'all') {
-        const yaohuoPromise = yaohuoCredentialSuppressed
-          ? Promise.resolve(null)
-          : sourceGateway.getFeedIfCredentialed({
-            source: 'yaohuo',
-            page,
-            limit: 30,
-            signal: controller.signal
-          }, { isCurrent: isCurrentFeedRequest, trace });
-        const [yaohuoResult] = await Promise.allSettled([yaohuoPromise]);
-        if (yaohuoResult.status === 'rejected' && isSilentRequestInterruption(yaohuoResult.reason)) {
-          throw yaohuoResult.reason;
-        }
-        const hasYaohuoCredential = yaohuoResult.status === 'fulfilled' && yaohuoResult.value !== null;
+      if (source === 'all' && hasYaohuoCredential) {
         const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({
           page,
           cursor,
@@ -416,34 +370,54 @@ export function useFeedController({
           retryWithoutCursor: Boolean(requestBaseState.baseFeedRetryPending)
         });
         const basePromise = shouldFetchBaseFeed
-          ? eagerBasePromise || getAggregatedBaseFeed()
+          ? sourceGateway.getFeed({
+            source,
+            page,
+            cursor,
+            limit: 30,
+          category: category || undefined,
+          feedFilter: requestFeedFilter,
+            nocache,
+            signal: controller.signal
+          }, { isCurrent: isCurrentFeedRequest, trace })
           : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-        const [baseResult] = await Promise.allSettled([basePromise]);
-        if (baseResult.status === 'rejected' && isSilentRequestInterruption(baseResult.reason)) {
+        const yaohuoPromise = sourceGateway.getFeed({
+          source: 'yaohuo',
+          page,
+          limit: 30,
+          signal: controller.signal
+        }, { isCurrent: isCurrentFeedRequest, trace });
+        const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
+        if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
           throw baseResult.reason;
         }
-        if (baseResult.status === 'rejected' && !hasYaohuoCredential) {
+        if (yaohuoResult.status === 'rejected' && isCanceledRequest(yaohuoResult.reason)) {
+          throw yaohuoResult.reason;
+        }
+        if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
           throw baseResult.reason;
         }
-        if (finishInterruptedFeedRequest()) {
+        if (!isCurrentFeedRequest()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: requestSource,
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
           return;
         }
         setFeedStates((current) => ({
           ...current,
           [requestSource]: {
             ...current[requestSource],
-            baseFeedRetryPending: baseResult.status === 'rejected' && hasYaohuoCredential
+            baseFeedRetryPending: baseResult.status === 'rejected' && yaohuoResult.status === 'fulfilled'
           }
         }));
         finalErrors = {
           ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: sourceErrorFromUnknown('all', baseResult.reason) }),
-          ...(yaohuoResult.status === 'fulfilled'
-            ? (yaohuoResult.value?.errors || {})
-            : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
+          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
         };
         const splitResponse = mergedFeedResponseAfterSplitFetch([
           ...(baseResult.status === 'fulfilled' ? [baseResult.value] : []),
-          ...(yaohuoResult.status === 'fulfilled' && yaohuoResult.value ? [yaohuoResult.value] : [])
+          ...(yaohuoResult.status === 'fulfilled' ? [yaohuoResult.value] : [])
         ], finalErrors, isLoadMore);
         if (splitResponse) {
           applyFeedResponse(splitResponse);
@@ -456,7 +430,11 @@ export function useFeedController({
           category: category || undefined,
           signal: controller.signal
         }, { isCurrent: isCurrentFeedRequest, trace });
-        if (finishInterruptedFeedRequest()) {
+        if (!isCurrentFeedRequest()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: requestSource,
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
           return;
         }
         applyFeedResponse(data);
@@ -473,16 +451,21 @@ export function useFeedController({
           nocache,
           signal: controller.signal
         }, { isCurrent: isCurrentFeedRequest, trace });
-        if (finishInterruptedFeedRequest()) {
+        if (!isCurrentFeedRequest()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: requestSource,
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
           return;
         }
+        applyFeedResponse(data);
         finalErrors = data.errors || {};
-        const response = mergedFeedResponseAfterSplitFetch([data], finalErrors, isLoadMore);
-        if (response) {
-          applyFeedResponse(response);
-        }
       }
-      if (finishInterruptedFeedRequest()) {
+      if (!isCurrentFeedRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
         return;
       }
       const errors = Object.entries(finalErrors);
@@ -531,15 +514,13 @@ export function useFeedController({
         });
       }
     } catch (error) {
-      if (isSilentRequestInterruption(error)) {
-        const stale = isSupersededRequest(error) || !isLatestFeedRequest();
-        finishTrace(stale ? 'stale' : 'canceled', {
+      if (isCanceledRequest(error)) {
+        finishTrace(isCurrentFeedRequest() ? 'canceled' : 'stale', {
           source: requestSource,
-          reason: stale ? 'superseded' : 'canceled'
+          reason: isCurrentFeedRequest() ? 'canceled' : 'superseded'
         });
-      } else if (interruptedRequestDiagnostic(isLatestFeedRequest(), controller.signal.aborted)) {
-        const interruption = interruptedRequestDiagnostic(isLatestFeedRequest(), controller.signal.aborted)!;
-        finishTrace(interruption.outcome, { source: requestSource, reason: interruption.reason });
+      } else if (!isCurrentFeedRequest()) {
+        finishTrace('stale', { source: requestSource, reason: 'superseded' });
       } else {
         const sourceError = sourceErrorFromUnknown(requestSource, error);
         const reason = diagnosticReasonForSourceError(sourceError);
@@ -574,10 +555,9 @@ export function useFeedController({
       }
     } finally {
       if (!traceFinished) {
-        const interruption = interruptedRequestDiagnostic(isLatestFeedRequest(), controller.signal.aborted);
-        finishTrace(interruption?.outcome || 'failure', {
+        finishTrace(isCurrentFeedRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
           source: requestSource,
-          reason: interruption?.reason || 'unknown'
+          reason: isCurrentFeedRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
         });
       }
       const isLatestForFeedSource = feedSourceRequestIdRef.current[requestSource] === requestId;
@@ -591,7 +571,7 @@ export function useFeedController({
           }
         }));
       }
-      if (isLatestFeedRequest()) {
+      if (isCurrentFeedRequest()) {
         setFeedBusy(false);
         feedLoadingRef.current = false;
       }
@@ -606,8 +586,7 @@ export function useFeedController({
     showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
-    sourceGateway,
-    yaohuoCredentialSuppressed
+    sourceGateway
   ]);
 
   const loadFeedRef = useRef(loadFeed);

@@ -1,10 +1,20 @@
-import { elementText, escapeHtmlAttribute, escapeHtmlText, parseHtml } from './localHtml';
-import { isNodeSeekHost } from './forumHosts';
+import { elementText, parseHtml } from './localHtml';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
 const FORUM_USER_MENTION_CLASS = 'forum-user-mention';
 const NODESEEK_MENTION_CLASS = 'forum-mention-link';
 const NODESEEK_FLOOR_CLASS = 'forum-floor-link';
+
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeHtmlAttribute(value: string) {
+  return escapeHtmlText(value).replace(/"/g, '&quot;');
+}
 
 function addHtmlClass(attributes: string, className: string) {
   if (new RegExp(`\\b${className}\\b`).test(attributes)) {
@@ -42,6 +52,11 @@ function markForumUserMentions(html: string) {
         ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`
         : match
     ));
+}
+
+function isNodeSeekHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === 'nodeseek.com' || host.endsWith('.nodeseek.com');
 }
 
 function nodeSeekUrlFromHref(href: string | undefined, baseUrl?: string) {

@@ -117,7 +117,16 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     return stateWithCookieFacts(state, event);
   }
   if (event.type === 'login-detected') {
-    return stateWithCookieFacts(state, { ...event, loggedIn: true });
+    const currentUser = currentUserForSite(state.site, event.currentUser, true);
+    return {
+      ...state,
+      status: 'logged-in',
+      cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary),
+      isVerifying: false,
+      currentUser,
+      lastVerifiedAt: event.at || state.lastVerifiedAt,
+      lastError: undefined
+    };
   }
   if (event.type === 'verification-required') {
     return {
@@ -137,7 +146,16 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
     };
   }
   if (event.type === 'verification-succeeded') {
-    return stateWithCookieFacts(state, { ...event, hasVerification: true });
+    const currentUser = currentUserForSite(state.site, event.currentUser, event.loggedIn);
+    return {
+      ...state,
+      status: event.loggedIn ? 'logged-in' : 'verified',
+      cookieSummary: cleanCookieSummary(event.cookieSummary || state.cookieSummary),
+      isVerifying: false,
+      currentUser,
+      lastVerifiedAt: event.at,
+      lastError: undefined
+    };
   }
   if (event.type === 'login-expired') {
     return {
@@ -220,10 +238,6 @@ export function createSiteSessionViewModel(state: SiteSessionState): SiteSession
 
 export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUserId: number | null) {
   return state.isLoggedIn ? webLoginUserId : null;
-}
-
-export function nodeSeekTopicCurrentUserForSession(state: SiteSessionViewModel, currentUser?: UserProfile) {
-  return state.isLoggedIn && currentUser?.source === 'nodeseek' ? currentUser : undefined;
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {

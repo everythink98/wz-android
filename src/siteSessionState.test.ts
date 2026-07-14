@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   createSiteSessionViewModels,
   applyDevAnonymousOverrides,
-  nodeSeekTopicCurrentUserForSession,
   nodeSeekUserIdForSession,
   reduceSiteSessionState,
   createSiteSessionStates,
@@ -130,50 +129,6 @@ describe('site session state', () => {
     });
   });
 
-  it('keeps a confirmed identity when a successful session recheck omits currentUser', () => {
-    const linuxDoCurrentUser: UserProfile = {
-      source: 'linuxdo',
-      id: '98',
-      username: 'everythink98',
-      url: 'https://linux.do/u/everythink98',
-      topics: []
-    };
-    const yaohuoCurrentUser: UserProfile = {
-      source: 'yaohuo',
-      id: '45245',
-      username: '45245',
-      url: 'https://yaohuo.me/bbs/book_view.aspx?id=45245',
-      topics: []
-    };
-
-    const linuxDoRechecked = reduceSiteSessionState({
-      site: 'linuxdo',
-      status: 'logged-in',
-      cookieSummary: ['_t'],
-      isVerifying: false,
-      currentUser: linuxDoCurrentUser
-    }, {
-      type: 'verification-succeeded',
-      cookieSummary: ['_t', '_forum_session'],
-      loggedIn: true,
-      at: '2026-07-12T01:00:00.000Z'
-    });
-    const yaohuoRechecked = reduceSiteSessionState({
-      site: 'yaohuo',
-      status: 'logged-in',
-      cookieSummary: ['sidyaohuo'],
-      isVerifying: false,
-      currentUser: yaohuoCurrentUser
-    }, {
-      type: 'login-detected',
-      cookieSummary: ['sidyaohuo'],
-      at: '2026-07-12T01:00:00.000Z'
-    });
-
-    expect(linuxDoRechecked.currentUser).toEqual(linuxDoCurrentUser);
-    expect(yaohuoRechecked.currentUser).toEqual(yaohuoCurrentUser);
-  });
-
   it('builds UI view models from canonical session state without separate login booleans', () => {
     const viewModels = createSiteSessionViewModels(createSiteSessionStates({
       nodeseek: {
@@ -246,35 +201,6 @@ describe('site session state', () => {
       }
     })).nodeseek, 123)).toBeNull();
     expect(nodeSeekUserIdForSession(createSiteSessionViewModels(createSiteSessionStates()).nodeseek, 123)).toBeNull();
-  });
-
-  it('rejects a topic current user while the NodeSeek session is expired', () => {
-    const currentUser: UserProfile = {
-      source: 'nodeseek',
-      id: '48872',
-      username: 'stale-user',
-      url: 'https://www.nodeseek.com/space/48872',
-      topics: []
-    };
-    const expired = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'expired',
-        cookieSummary: [],
-        isVerifying: false
-      }
-    })).nodeseek;
-    const loggedIn = createSiteSessionViewModels(createSiteSessionStates({
-      nodeseek: {
-        site: 'nodeseek',
-        status: 'logged-in',
-        cookieSummary: ['session'],
-        isVerifying: false
-      }
-    })).nodeseek;
-
-    expect(nodeSeekTopicCurrentUserForSession(expired, currentUser)).toBeUndefined();
-    expect(nodeSeekTopicCurrentUserForSession(loggedIn, currentUser)).toBe(currentUser);
   });
 
   it('moves login detection, verification success, expiry, and clearing through one reducer', () => {

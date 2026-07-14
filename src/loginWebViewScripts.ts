@@ -1,10 +1,5 @@
-import { safeInjectedJson } from './loginFormAdapters';
-import type { WebViewMessageSession } from './webViewMessageGuard';
-
-export function nodeSeekLoginProbeScript(session: WebViewMessageSession) {
-  return `
+export const NODESEEK_LOGIN_PROBE_SCRIPT = `
 (() => {
-  const messageSession = ${safeInjectedJson(session)};
   const numberFromValue = (value) => {
     const number = Number(value);
     return Number.isInteger(number) && number > 0 ? number : null;
@@ -15,6 +10,7 @@ export function nodeSeekLoginProbeScript(session: WebViewMessageSession) {
   const usernameLink = document.querySelector('a.Username[href*="/space/"], .Username a[href*="/space/"]');
   const usernameLinkId = stringFromValue(usernameLink?.getAttribute("href")).match(/\\/space\\/(\\d+)/i);
   const userId = numberFromValue(uidMatch && uidMatch[1]) || numberFromValue(usernameLinkId && usernameLinkId[1]);
+  const csrfToken = stringFromValue(document.querySelector('meta[name="csrf-token"]')?.getAttribute("content"));
   const hasAccountMarker = Boolean(userId)
     || Boolean(document.querySelector('a[href*="/api/account/signOut"], a[href*="/setting"], a[href*="/notification"]'));
   const hasGuestPath = /\\/(login|signin|sign-in|register|signup|sign-up)\\/?$/i.test(location.pathname || "");
@@ -27,31 +23,24 @@ export function nodeSeekLoginProbeScript(session: WebViewMessageSession) {
     loggedIn: status === "logged-in" ? true : status === "logged-out" ? false : undefined,
     userId,
     username: "",
+    csrfToken,
     userAgent: navigator.userAgent || "",
-    cookie: document.cookie || "",
-    sessionId: messageSession.sessionId,
-    nonce: messageSession.nonce
+    cookie: document.cookie || ""
   }));
 })();
 true;
 `;
-}
 
-export function linuxDoWebViewProbeScript(session: WebViewMessageSession) {
-  return `
+export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
 (() => {
-  const messageSession = ${safeInjectedJson(session)};
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "linuxdo-webview",
     userAgent: navigator.userAgent || "",
-    cookie: document.cookie || "",
-    sessionId: messageSession.sessionId,
-    nonce: messageSession.nonce
+    cookie: document.cookie || ""
   }));
 })();
 true;
 `;
-}
 
 const NODEIMAGE_API_BASE_URL = 'https://api.nodeimage.com';
 
@@ -61,21 +50,16 @@ export type NodeImageAuthPayload = {
   sign: unknown;
 };
 
-export function nodeImageApiKeyProbeScript(
-  authPayload: NodeImageAuthPayload | null | undefined,
-  session: WebViewMessageSession
-) {
+export function nodeImageApiKeyProbeScript(authPayload?: NodeImageAuthPayload | null) {
   const payloadScript = authPayload
     ? `window.__wzNodeImageAuthPayload = ${safeInjectedJson(authPayload)};`
     : '';
-  return `${payloadScript}\n${nodeImageApiKeyProbeBody(session)}`;
+  return `${payloadScript}\n${NODEIMAGE_API_KEY_PROBE_SCRIPT}`;
 }
 
-function nodeImageApiKeyProbeBody(session: WebViewMessageSession) {
-  return `
+export const NODEIMAGE_API_KEY_PROBE_SCRIPT = `
 (() => {
-  const messageSession = ${safeInjectedJson(session)};
-  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(Object.assign({}, payload, messageSession)));
+  const post = (payload) => window.ReactNativeWebView.postMessage(JSON.stringify(payload));
   const nodeImageApiBaseUrl = "${NODEIMAGE_API_BASE_URL}";
   const host = String(location.hostname || "").toLowerCase();
   const isNodeSeekConnectPage = () => {
@@ -183,4 +167,7 @@ function nodeImageApiKeyProbeBody(session: WebViewMessageSession) {
 })();
 true;
 `;
+
+function safeInjectedJson(value: unknown) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
 }

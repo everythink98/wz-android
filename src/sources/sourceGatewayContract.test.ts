@@ -2,28 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FeedResponse, FeedSource, Source } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
-import { REQUEST_CANCELED_MESSAGE, REQUEST_SUPERSEDED_MESSAGE, REQUEST_TIMEOUT_MESSAGE, type Fetcher } from '../request';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
   getCurrentUserProfile: vi.fn(),
-  getFeed: vi.fn(async (_options?: { fetcher?: Fetcher; signal?: AbortSignal }): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  getFeed: vi.fn(async (): Promise<FeedResponse> => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
   getReplies: vi.fn(async () => ({ items: [], hasMore: false, nextPage: null })),
   getReply: vi.fn(),
   getTopic: vi.fn(async ({ id, source }) => ({ source, id, title: '', author: '', url: '', createdAt: '', replyCount: 0, contentHtml: '', replies: [] })),
   getUserProfile: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
   searchTopics: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
-}));
-
-const yaohuoMocks = vi.hoisted(() => ({
-  checkYaohuoLoginDirect: vi.fn(),
-  getYaohuoFeedDirect: vi.fn(async (_options: {
-    signal?: AbortSignal;
-    yaohuoFetcher: (input: string, init?: RequestInit) => Promise<Response>;
-  }) => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
-  getYaohuoRepliesDirect: vi.fn(),
-  getYaohuoTopicDirect: vi.fn(),
-  searchYaohuoDirect: vi.fn()
 }));
 
 vi.mock('@react-native-cookies/cookies', () => ({
@@ -37,7 +25,13 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('react-native', () => ({ NativeModules: { LinuxDoCookieModule: {} } }));
 
 vi.mock('../forumApi', () => forumMocks);
-vi.mock('../yaohuoApi', () => yaohuoMocks);
+vi.mock('../yaohuoApi', () => ({
+  checkYaohuoLoginDirect: vi.fn(),
+  getYaohuoFeedDirect: vi.fn(),
+  getYaohuoRepliesDirect: vi.fn(),
+  getYaohuoTopicDirect: vi.fn(),
+  searchYaohuoDirect: vi.fn()
+}));
 
 import { createSourceGateway, getFeed, getReplies, getTopic, getUserProfile, searchTopics } from './sourceGateway';
 
@@ -128,129 +122,6 @@ describe('source gateway read contract', () => {
     expect(lines.map((line) => JSON.parse(line).phase).filter((phase) => phase === 'finish')).toHaveLength(1);
   });
 
-  it.each<Exclude<FeedSource, 'all'>>(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'])(
-    'ends a hung %s managed read at the shared operation deadline',
-    async (source) => {
-      vi.useFakeTimers();
-      let operationSignal: AbortSignal | undefined;
-      const pendingRead = (options?: { signal?: AbortSignal }) => {
-        operationSignal = options?.signal;
-        return new Promise<never>(() => undefined);
-      };
-      if (source === 'yaohuo') {
-        yaohuoMocks.getYaohuoFeedDirect.mockImplementationOnce(pendingRead);
-      } else {
-        forumMocks.getFeed.mockImplementationOnce(pendingRead);
-      }
-      const gateway = createSourceGateway({
-        clearYaohuoLoginState: vi.fn(async () => undefined),
-        fetcher: vi.fn(),
-        loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-        loadYaohuoCookieForSource: vi.fn(async () => source === 'yaohuo' ? 'sidyaohuo=valid' : undefined),
-        nodeSeekUserAgent: () => ''
-      });
-
-      try {
-        let settled = false;
-        const outcome = gateway.getFeed({ source })
-          .then(() => undefined, (error: unknown) => error)
-          .finally(() => { settled = true; });
-
-        await vi.advanceTimersByTimeAsync(29_999);
-        expect(settled).toBe(false);
-        expect(operationSignal?.aborted).toBe(false);
-
-        await vi.advanceTimersByTimeAsync(1);
-        await expect(outcome).resolves.toMatchObject({ message: REQUEST_TIMEOUT_MESSAGE });
-        expect(operationSignal?.aborted).toBe(true);
-      } finally {
-        vi.clearAllTimers();
-        vi.useRealTimers();
-      }
-    }
-  );
-
-  it('finishes exactly one timeout trace even when the adapter ignores abort forever', async () => {
-    vi.useFakeTimers();
-    const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
-    forumMocks.getFeed.mockImplementationOnce(async () => new Promise<never>(() => undefined));
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher: vi.fn(),
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async () => undefined),
-      nodeSeekUserAgent: () => ''
-    });
-
-    try {
-      const outcome = gateway.getFeed({ source: 'v2ex' });
-      const assertion = expect(outcome).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
-      await vi.advanceTimersByTimeAsync(30_000);
-      await assertion;
-
-      const terminal = lines
-        .map((line) => JSON.parse(line))
-        .filter(({ phase }) => phase === 'finish');
-      expect(terminal).toEqual([
-        expect.objectContaining({ outcome: 'failure', reason: 'timeout' })
-      ]);
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not start a late adapter after credential loading outlives the deadline', async () => {
-    vi.useFakeTimers();
-    const credential = Promise.withResolvers<string | undefined>();
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher: vi.fn(),
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(() => credential.promise),
-      nodeSeekUserAgent: () => ''
-    });
-
-    try {
-      const outcome = gateway.getFeed({ source: 'yaohuo' });
-      const assertion = expect(outcome).rejects.toThrow(REQUEST_TIMEOUT_MESSAGE);
-      await vi.advanceTimersByTimeAsync(30_000);
-      await assertion;
-
-      credential.resolve('sidyaohuo=late');
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(yaohuoMocks.getYaohuoFeedDirect).not.toHaveBeenCalled();
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
-
-  it('keeps caller abort distinct from the managed operation deadline', async () => {
-    const controller = new AbortController();
-    let operationSignal: AbortSignal | undefined;
-    forumMocks.getFeed.mockImplementationOnce(async (options?: { signal?: AbortSignal }) => {
-      operationSignal = options?.signal;
-      return new Promise<never>(() => undefined);
-    });
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher: vi.fn(),
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async () => undefined),
-      nodeSeekUserAgent: () => ''
-    });
-
-    const outcome = gateway.getFeed({ source: 'v2ex', signal: controller.signal });
-    await vi.waitFor(() => expect(operationSignal).toBeDefined());
-    controller.abort();
-
-    await expect(outcome).rejects.toThrow(REQUEST_CANCELED_MESSAGE);
-    expect(operationSignal?.aborted).toBe(true);
-  });
-
   it('classifies an unexpected HTTP-success parse-empty adapter result as a failure', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
@@ -283,27 +154,6 @@ describe('source gateway read contract', () => {
       isParseEmpty: true
     });
     expect(events.at(-1)).toMatchObject({ phase: 'finish', outcome: 'failure', reason: 'parse_empty' });
-  });
-
-  it('uses the structured source classification for an owned HTTP auth failure trace', async () => {
-    const lines: string[] = [];
-    setDiagnosticWriter((line) => { lines.push(line); });
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher: vi.fn(),
-      loadNodeSeekCookieForSource: vi.fn(async () => 'session=old'),
-      loadYaohuoCookieForSource: vi.fn(async () => undefined),
-      nodeSeekUserAgent: () => ''
-    });
-    forumMocks.getFeed.mockRejectedValueOnce(Object.assign(new Error('request failed'), { status: 401 }));
-
-    await expect(gateway.getFeed({ source: 'nodeseek' })).rejects.toMatchObject({ kind: 'login-expired' });
-
-    expect(lines.map((line) => JSON.parse(line)).at(-1)).toMatchObject({
-      phase: 'finish',
-      outcome: 'blocked',
-      reason: 'login_required'
-    });
   });
 
   it('does not report a legal empty search page as parse-empty', async () => {
@@ -450,74 +300,6 @@ describe('source gateway read contract', () => {
     }));
   });
 
-  it('prevents React Native from attaching WebView cookies to an anonymous Yaohuo read', async () => {
-    const fetcher = vi.fn(async () => new Response(''));
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher,
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async () => undefined),
-      nodeSeekUserAgent: () => ''
-    });
-    yaohuoMocks.getYaohuoFeedDirect.mockImplementationOnce(async ({ yaohuoFetcher }) => {
-      await yaohuoFetcher('https://www.yaohuo.me/bbs/book_list.aspx');
-      return { items: [], errors: {}, hasMore: false, nextPage: null };
-    });
-
-    await gateway.getFeed({ source: 'yaohuo' });
-
-    expect(fetcher).toHaveBeenCalledWith(
-      'https://www.yaohuo.me/bbs/book_list.aspx',
-      expect.objectContaining({ credentials: 'omit' })
-    );
-  });
-
-  it('prevents React Native from replacing an explicit NodeSeek cookie from its CookieJar', async () => {
-    const fetcher = vi.fn(async () => new Response(''));
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher,
-      loadNodeSeekCookieForSource: vi.fn(async () => 'session=node'),
-      loadYaohuoCookieForSource: vi.fn(async () => undefined),
-      nodeSeekUserAgent: () => 'NodeSeek UA'
-    });
-    forumMocks.getFeed.mockImplementationOnce(async (options) => {
-      await options!.fetcher!('https://www.nodeseek.com/api/topics', {
-        headers: { Cookie: 'session=node' }
-      });
-      return { items: [], errors: {}, hasMore: false, nextPage: null };
-    });
-
-    await gateway.getFeed({ source: 'nodeseek' });
-
-    expect(fetcher).toHaveBeenCalledWith(
-      'https://www.nodeseek.com/api/topics',
-      expect.objectContaining({
-        credentials: 'omit',
-        headers: { Cookie: 'session=node' }
-      })
-    );
-  });
-
-  it('does not expose a credential result after Yaohuo suppression starts during storage read', async () => {
-    const credential = Promise.withResolvers<string | undefined>();
-    let suppressed = false;
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher: vi.fn(),
-      isYaohuoCredentialSuppressed: () => suppressed,
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(() => credential.promise),
-      nodeSeekUserAgent: () => ''
-    });
-
-    const result = gateway.getFeedIfCredentialed({ source: 'yaohuo' });
-    suppressed = true;
-    credential.resolve('sidyaohuo=real');
-
-    await expect(result).resolves.toBeNull();
-  });
-
   it('clears only the Yaohuo credential generation used by an expired user profile read', async () => {
     const clearYaohuoLoginState = vi.fn(async () => undefined);
     const loadYaohuoCookieForSource = vi.fn(async (
@@ -544,56 +326,7 @@ describe('source gateway read contract', () => {
       kind: 'login-expired',
       message: '妖火登录已失效'
     });
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith(expect.objectContaining({ generation: 7 }));
-  });
-
-  it('keeps the original login-expired error when automatic Yaohuo cleanup fails', async () => {
-    const clearYaohuoLoginState = vi.fn(async () => {
-      throw new Error('cleanup failed');
-    });
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState,
-      fetcher: vi.fn(),
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async (_source, options) => {
-        options?.captureGeneration?.(7);
-        return 'sidyaohuo=expired';
-      }),
-      nodeSeekUserAgent: () => ''
-    });
-    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
-
-    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' })).rejects.toMatchObject({
-      kind: 'login-expired',
-      message: '妖火登录已失效'
-    });
-    expect(clearYaohuoLoginState).toHaveBeenCalledWith(expect.objectContaining({ generation: 7 }));
-  });
-
-  it('drops an expired Yaohuo result when a newer credential operation supersedes cleanup', async () => {
-    const clearYaohuoLoginState = vi.fn(async () => false);
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState,
-      fetcher: vi.fn(),
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async (_source, options) => {
-        options?.captureGeneration?.(7);
-        return 'sidyaohuo=expired';
-      }),
-      nodeSeekUserAgent: () => ''
-    });
-    forumMocks.getUserProfile.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
-
-    await expect(gateway.getUserProfile({ source: 'yaohuo', id: '7' }))
-      .rejects.toThrow(REQUEST_SUPERSEDED_MESSAGE);
+    expect(clearYaohuoLoginState).toHaveBeenCalledWith({ generation: 7 });
   });
 
   it('does not clear Yaohuo credentials for a stale expired read', async () => {
@@ -616,54 +349,6 @@ describe('source gateway read contract', () => {
       { isCurrent: () => false }
     )).rejects.toMatchObject({ kind: 'login-expired' });
     expect(clearYaohuoLoginState).not.toHaveBeenCalled();
-  });
-
-  it('does not clear a real Yaohuo credential when anonymous mode starts during a read', async () => {
-    const read = Promise.withResolvers<never>();
-    let suppressed = false;
-    const clearYaohuoLoginState = vi.fn(async () => undefined);
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState,
-      fetcher: vi.fn(),
-      isYaohuoCredentialSuppressed: () => suppressed,
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=real'),
-      nodeSeekUserAgent: () => ''
-    });
-    yaohuoMocks.getYaohuoFeedDirect.mockReturnValueOnce(read.promise);
-
-    const result = gateway.getFeed({ source: 'yaohuo' });
-    await vi.waitFor(() => expect(yaohuoMocks.getYaohuoFeedDirect).toHaveBeenCalled());
-    suppressed = true;
-    read.reject(Object.assign(new Error('妖火登录已失效'), {
-      loginRequired: true,
-      reason: 'expired',
-      source: 'yaohuo'
-    }));
-
-    await expect(result).rejects.toMatchObject({ kind: 'login-expired' });
-    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
-  });
-
-  it('does not return an authenticated Yaohuo result after anonymous mode starts', async () => {
-    const read = Promise.withResolvers<{ items: []; errors: {}; hasMore: false; nextPage: null }>();
-    let suppressed = false;
-    const gateway = createSourceGateway({
-      clearYaohuoLoginState: vi.fn(async () => undefined),
-      fetcher: vi.fn(),
-      isYaohuoCredentialSuppressed: () => suppressed,
-      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
-      loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=real'),
-      nodeSeekUserAgent: () => ''
-    });
-    yaohuoMocks.getYaohuoFeedDirect.mockReturnValueOnce(read.promise);
-
-    const result = gateway.getFeed({ source: 'yaohuo' });
-    await vi.waitFor(() => expect(yaohuoMocks.getYaohuoFeedDirect).toHaveBeenCalled());
-    suppressed = true;
-    read.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-
-    await expect(result).rejects.toThrow('请求已取消');
   });
 
   it('keeps Yaohuo credentials while surfacing a verification-required user profile error', async () => {

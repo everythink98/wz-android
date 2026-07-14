@@ -10,7 +10,6 @@ export const CURRENT_ANDROID_PACKAGE = String(appConfig.expo.android.package);
 export const CURRENT_ANDROID_VERSION_CODE = Number(appConfig.expo.android.versionCode);
 export const CURRENT_EXPO_VERSION = String(packageConfig.dependencies.expo).replace(/^[^\d]*/, '');
 export const CURRENT_REACT_NATIVE_VERSION = String(packageConfig.dependencies['react-native']).replace(/^[^\d]*/, '');
-export const CURRENT_RELEASE_TRUST_ANCHOR_SHA256 = String(appConfig.expo.extra.releaseTrustAnchorSha256).trim().toLowerCase();
 const GITHUB_RELEASE_APK_HOST = 'github.com';
 const GITHUB_RELEASE_APK_PATH_PREFIX = '/everythink98/wz-android/releases/download/';
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
@@ -41,8 +40,6 @@ export type ApkInspection = {
   versionName?: unknown;
   versionCode?: unknown;
   signerSha256?: unknown;
-  signerHistorySha256?: unknown;
-  signerHistoryVerified?: unknown;
 };
 
 export type ApkInstaller = {
@@ -226,20 +223,9 @@ function normalizedInspectionSha(value: unknown) {
   return cleanSha256(value);
 }
 
-function normalizedInspectionSignerHistory(value: unknown) {
-  if (!Array.isArray(value) || !value.length) {
-    return null;
-  }
-  const history = value.map(normalizedInspectionSha);
-  return history.every((digest): digest is string => Boolean(digest)) ? history : null;
-}
-
 function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: ApkInspection) {
   const sha256 = normalizedInspectionSha(inspection.sha256);
   const signerSha256 = normalizedInspectionSha(inspection.signerSha256);
-  const signerHistorySha256 = normalizedInspectionSignerHistory(inspection.signerHistorySha256);
-  const signerHistoryVerified = inspection.signerHistoryVerified === true;
-  const trustAnchorSha256 = cleanSha256(CURRENT_RELEASE_TRUST_ANCHOR_SHA256);
   const versionCode = typeof inspection.versionCode === 'number' ? inspection.versionCode : Number(inspection.versionCode);
   if (inspection.packageName !== update.packageName) {
     throw new Error('APK 包名不匹配。');
@@ -250,25 +236,8 @@ function assertDownloadedApkMatchesUpdate(update: AppUpdateInfo, inspection: Apk
   if (sha256 !== update.sha256) {
     throw new Error('APK 文件校验失败。');
   }
-  if (!signerHistorySha256 || !signerSha256 || !trustAnchorSha256) {
-    throw new Error('APK 签名信任链校验失败。');
-  }
-  if (signerHistoryVerified) {
-    if (
-      signerSha256 !== update.signerSha256
-      || signerHistorySha256[signerHistorySha256.length - 1] !== signerSha256
-      || signerHistorySha256[0] !== trustAnchorSha256
-    ) {
-      throw new Error('APK 签名信任链校验失败。');
-    }
-    return;
-  }
-  if (
-    signerHistorySha256.length !== 1
-    || signerHistorySha256[0] !== signerSha256
-    || signerSha256 !== trustAnchorSha256
-  ) {
-    throw new Error('APK 签名信任链校验失败。');
+  if (signerSha256 !== update.signerSha256) {
+    throw new Error('APK 签名校验失败。');
   }
 }
 

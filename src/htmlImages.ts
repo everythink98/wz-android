@@ -1,5 +1,4 @@
-import { decodeHtml, escapeHtmlAttribute, escapeHtmlText, FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
-import { isNodeSeekHost } from './forumHosts';
+import { FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 
 export interface ImagePreviewList {
@@ -64,7 +63,7 @@ function extractImagePreviewEntriesFromHtml(html: string): ImagePreviewEntry[] {
 }
 
 export function isPreviewableImageUrl(url: unknown): boolean {
-  const clean = String(url || '').trim();
+  const clean = decodeHtmlAttribute(url).trim();
   if (!clean) {
     return false;
   }
@@ -190,7 +189,7 @@ export function flowInlineImagesInMixedParagraphs(html: string) {
 }
 
 export function isHttpOrHttpsUrl(url: unknown): boolean {
-  const clean = String(url || '').trim();
+  const clean = decodeHtmlAttribute(url).trim();
   if (!clean) {
     return false;
   }
@@ -203,7 +202,7 @@ export function isHttpOrHttpsUrl(url: unknown): boolean {
 }
 
 export function normalizeImagePreviewUrl(url: string): string {
-  const clean = String(url || '').trim();
+  const clean = decodeHtmlAttribute(url).trim();
   if (/^(?:https?:|data:)/i.test(clean)) {
     return clean;
   }
@@ -214,7 +213,7 @@ export function normalizeImagePreviewUrl(url: string): string {
 }
 
 export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '', nodeSeekUserAgent = DEFAULT_NODESEEK_ANDROID_USER_AGENT): Record<string, string> | undefined {
-  const clean = normalizeImagePreviewUrl(String(url || ''));
+  const clean = normalizeImagePreviewUrl(decodeHtmlAttribute(url));
   try {
     const parsed = new URL(clean);
     if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !isKnownForumImageHost(parsed.hostname)) {
@@ -227,7 +226,7 @@ export function imageRequestHeadersForUrl(url: unknown, nodeSeekCookieHeader = '
     if (isNodeSeekHost(parsed.hostname)) {
       headers['User-Agent'] = String(nodeSeekUserAgent || '').trim() || DEFAULT_NODESEEK_ANDROID_USER_AGENT;
       const cookieHeader = String(nodeSeekCookieHeader || '').trim();
-      if (parsed.protocol === 'https:' && cookieHeader && !isPublicNodeSeekStaticMedia(parsed)) {
+      if (cookieHeader && !isPublicNodeSeekStaticMedia(parsed)) {
         headers.Cookie = cookieHeader;
       }
     }
@@ -256,7 +255,7 @@ export function imageSourceFromUrl(url: string, source?: unknown, nodeSeekCookie
 }
 
 export function dataImageFileFromUrl(url: unknown): { base64: string; extension: string } | null {
-  const clean = String(url || '').trim();
+  const clean = decodeHtmlAttribute(url).trim();
   const match = clean.match(/^data:image\/(png|jpe?g|gif|webp|avif);base64,([\s\S]+)$/i);
   if (!match) {
     return null;
@@ -328,14 +327,14 @@ function imagePreviewEntryFromAttributes(attributes: Record<string, string | und
 }
 
 function isAllowedPreviewImageSource(url: string) {
-  const clean = String(url || '').trim();
+  const clean = decodeHtmlAttribute(url).trim();
   return Boolean(clean)
     && (isHttpOrHttpsUrl(clean) || clean.startsWith('/') || clean.startsWith('//') || isPreviewableImageUrl(clean))
     && (!/^data:image\//i.test(clean) || isAllowedDataImageUrl(clean));
 }
 
 function firstAllowedPreviewImageSource(urls: string[]) {
-  return urls.map((url) => String(url || '').trim()).find(isAllowedPreviewImageSource) || '';
+  return urls.map((url) => decodeHtmlAttribute(url).trim()).find(isAllowedPreviewImageSource) || '';
 }
 
 function splitSrcsetCandidates(srcset: string) {
@@ -364,7 +363,7 @@ function splitSrcsetCandidates(srcset: string) {
 
 function srcsetImageUrls(srcset: string) {
   return splitSrcsetCandidates(srcset)
-    .map((candidate) => (candidate.trim().split(/\s+/)[0] || '').trim())
+    .map((candidate) => decodeHtmlAttribute(candidate.trim().split(/\s+/)[0] || '').trim())
     .filter(isAllowedPreviewImageSource);
 }
 
@@ -373,7 +372,7 @@ function bestSrcsetImageUrl(srcset: string) {
   let bestScore = -1;
   splitSrcsetCandidates(srcset).forEach((candidate, index) => {
     const parts = candidate.trim().split(/\s+/);
-    const url = String(parts.shift() || '').trim();
+    const url = decodeHtmlAttribute(parts.shift() || '').trim();
     if (!isAllowedPreviewImageSource(url)) {
       return;
     }
@@ -389,8 +388,19 @@ function bestSrcsetImageUrl(srcset: string) {
   return bestUrl;
 }
 
-function decodeRawHtmlAttribute(value: unknown): string {
-  return decodeHtml(value);
+function decodeHtmlAttribute(value: unknown): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCharCode(Number.parseInt(code, 16)));
 }
 
 function uniqueStrings(items: string[]): string[] {
@@ -410,10 +420,19 @@ function imageAttributesFromText(value: string): Record<string, string> {
   const pattern = /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
   let match = pattern.exec(value);
   while (match) {
-    attributes[match[1].toLowerCase()] = decodeRawHtmlAttribute(match[2] || match[3] || match[4] || '');
+    attributes[match[1].toLowerCase()] = match[2] || match[3] || match[4] || '';
     match = pattern.exec(value);
   }
   return attributes;
+}
+
+function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function paragraphHasTextOutsideImages(html: string) {
@@ -720,10 +739,10 @@ function inlineMixedStickerMediaHtml(html: string) {
 function stickerFallbackAttributesText(attributes: Record<string, string | undefined>, src: string) {
   const names = ['class', 'alt', 'title', 'width', 'height'];
   return [
-    `src="${escapeHtmlAttribute(src)}"`,
+    `src="${escapeHtmlText(src)}"`,
     ...names.map((name) => {
       const value = attributeValue(attributes, name);
-      return value ? `${name}="${escapeHtmlAttribute(value)}"` : '';
+      return value ? `${name}="${escapeHtmlText(value)}"` : '';
     })
   ].filter(Boolean).join(' ');
 }
@@ -812,7 +831,7 @@ function safeTagName(value: unknown) {
 }
 
 function attributeValue(attributes: Record<string, string | undefined>, name: string) {
-  return String(attributes[name] || attributes[name.toLowerCase()] || '').trim();
+  return decodeHtmlAttribute(attributes[name] || attributes[name.toLowerCase()] || '').trim();
 }
 
 function isInlineForumImageAttributes(attributes: Record<string, string | undefined>) {
@@ -935,6 +954,11 @@ function safeImageScale(scale: number) {
 function isKnownForumImageHost(hostname: string) {
   const normalized = hostname.toLowerCase();
   return IMAGE_REQUEST_HEADER_HOSTS.some((host) => normalized === host || normalized.endsWith(`.${host}`));
+}
+
+function isNodeSeekHost(hostname: string) {
+  const normalized = hostname.toLowerCase();
+  return normalized === 'nodeseek.com' || normalized.endsWith('.nodeseek.com');
 }
 
 function isPublicNodeSeekStaticMedia(url: URL) {

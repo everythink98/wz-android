@@ -9,7 +9,6 @@ const proxyMocks = vi.hoisted(() => ({
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
   useEffect: (effect: () => void | (() => void)) => { effect(); },
-  useLayoutEffect: (effect: () => void) => { effect(); },
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value }),
   useState: <T,>(initial: T | (() => T)) => [
@@ -115,22 +114,6 @@ describe('network proxy controller guard', () => {
 
     expect(guard.indexOf("applyStatusRef.current === 'failed'")).toBeLessThan(guard.indexOf('if (!current.enabled)'));
     expect(guard).toContain("throw new Error(applyErrorRef.current || '代理状态不确定，请重新应用代理设置。');");
-  });
-
-  it('keeps native startup blocking active when persisted proxy settings cannot be read', () => {
-    const source = readSource('src', 'app', 'useNetworkProxyController.ts');
-    const loadFlow = source.slice(
-      source.indexOf("const trace = beginDiagnosticTrace('proxy', 'load')"),
-      source.indexOf('const replaceProxyState')
-    );
-
-    expect(loadFlow).toContain('proxyLoadFailedRef.current = true;');
-    expect(loadFlow).toContain("setApplyState('failed', message);");
-    expect(loadFlow).toContain('if (!loaded || proxyLoadFailedRef.current)');
-    expect(loadFlow).not.toContain("applyNetworkProxy(null)");
-    expect(source).toContain('proxyLoadFailedRef.current = false;');
-    expect(source).toContain('setApplyRevision((revision) => revision + 1);');
-    expect(source).toContain('[applyKey, applyRevision, loaded, notify, proxyState.enabled, setApplyState]');
   });
 
   it('delays main content until the saved proxy state is applied', () => {

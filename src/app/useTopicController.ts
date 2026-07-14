@@ -9,12 +9,11 @@ import {
 import { isSameReply, mergeReplies, removeReply } from '../feedLogic';
 import {
   finishAbortableRequest,
-  isSilentRequestInterruption,
-  isSupersededRequest,
+  isCanceledRequest,
   startAbortableRequest
 } from '../appUtils';
 import { REPLY_PAGE_SIZE, replyCountAfterNewReplySubmit, replyLoadMoreLimit, replyRefreshTarget } from '../androidFeatureHelpers';
-import { shouldPreserveTopicComposer, shouldReuseCurrentTopicDetail } from '../topicSessionState';
+import { shouldReuseCurrentTopicDetail } from '../topicSessionState';
 import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
 import { isCurrentTopicLoadRequest, isCurrentTopicRepliesRequest } from '../topicRequestState';
 import { topicWithAuthorFallback } from '../userNavigation';
@@ -32,6 +31,7 @@ import {
   normalizeDiagnosticReason
 } from '../diagnostics';
 
+const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
 
 type MutableRef<T> = { current: T };
@@ -177,7 +177,7 @@ export function useTopicController({
     repliesRequestIdRef.current += 1;
     repliesAbortRef.current?.abort();
     replyVisitedPageKeysRef.current[nextTopicKey] = new Set();
-    topicCommands.beginLoad(topic, nextTopicKey, shouldPreserveTopicComposer(activeTopicKey, topic, nocache));
+    topicCommands.beginLoad(topic, nextTopicKey);
     if (!reopenExistingTopicScreen) {
       changeScreen('topic');
     }
@@ -189,7 +189,7 @@ export function useTopicController({
         topic,
         nocache,
         signal: controller.signal,
-        timeoutMs: topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
+        timeoutMs: topic.source === 'nodeseek' ? NODESEEK_DETAIL_TIMEOUT_MS : topic.source === 'linuxdo' ? LINUXDO_DETAIL_TIMEOUT_MS : undefined
       }, { isCurrent: isCurrentTopicRequest, trace });
       if (!isCurrentTopicRequest()) {
         finishDiagnosticTrace(trace, 'stale', { source: topic.source, reason: 'stale' });
@@ -218,13 +218,6 @@ export function useTopicController({
       });
     } catch (error) {
       if (isCurrentTopicRequest()) {
-        if (isSilentRequestInterruption(error)) {
-          const superseded = isSupersededRequest(error);
-          finishDiagnosticTrace(trace, superseded ? 'stale' : 'canceled', {
-            reason: superseded ? 'superseded' : 'canceled'
-          });
-          return;
-        }
         const sourceError = sourceErrorFromUnknown(topic.source, error);
         const message = sourceError.message;
         topicCommands.failLoad(sourceError);
@@ -247,8 +240,12 @@ export function useTopicController({
           }
           return;
         }
-        finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
-        notify(message);
+        if (isCanceledRequest(error)) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+        } else {
+          finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+          notify(message);
+        }
       } else {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
       }
@@ -432,11 +429,8 @@ export function useTopicController({
           onNodeSeekTopicVerificationRequired(sourceError.message);
           return false;
         }
-        if (isSilentRequestInterruption(error)) {
-          const superseded = isSupersededRequest(error);
-          finishRefreshTrace(superseded ? 'stale' : 'canceled', {
-            reason: superseded ? 'superseded' : 'canceled'
-          });
+        if (isCanceledRequest(error)) {
+          finishRefreshTrace('canceled', { reason: 'canceled' });
         } else {
           finishRefreshTrace('failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
@@ -574,11 +568,8 @@ export function useTopicController({
           onNodeSeekTopicVerificationRequired(sourceError.message);
           return;
         }
-        if (isSilentRequestInterruption(error)) {
-          const superseded = isSupersededRequest(error);
-          finishDiagnosticTrace(trace, superseded ? 'stale' : 'canceled', {
-            reason: superseded ? 'superseded' : 'canceled'
-          });
+        if (isCanceledRequest(error)) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
         } else {
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
@@ -687,11 +678,8 @@ export function useTopicController({
           await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
           return;
         }
-        if (isSilentRequestInterruption(error)) {
-          const superseded = isSupersededRequest(error);
-          finishDiagnosticTrace(trace, superseded ? 'stale' : 'canceled', {
-            reason: superseded ? 'superseded' : 'canceled'
-          });
+        if (isCanceledRequest(error)) {
+          finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
         } else {
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);

@@ -14,13 +14,10 @@ import {
   NETWORK_PROXY_STORAGE_KEY,
   applyNetworkProxy,
   createNetworkProxyProfile,
-  getNetworkProxyStatus,
-  loadNetworkProxyState,
   networkProxyModuleFromReactNativeImport,
   networkProxySummary,
   normalizeNetworkProxyState,
   removeNetworkProxyProfile,
-  recoverNetworkConnectionPool,
   recoverNodeSeekNetwork,
   saveNetworkProxyState,
   testNetworkProxy,
@@ -141,61 +138,7 @@ describe('network proxy settings', () => {
     expect(testProxy).toHaveBeenCalledWith(socksProfile);
   });
 
-  it('treats only a missing proxy record as an unconfigured direct connection', async () => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(null);
-
-    await expect(loadNetworkProxyState()).resolves.toEqual({
-      enabled: false,
-      activeId: null,
-      profiles: []
-    });
-  });
-
-  it('loads a complete persisted proxy record without weakening it', async () => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
-      enabled: true,
-      activeId: socksProfile.id,
-      profiles: [socksProfile]
-    }));
-
-    await expect(loadNetworkProxyState()).resolves.toEqual({
-      enabled: true,
-      activeId: socksProfile.id,
-      profiles: [socksProfile]
-    });
-  });
-
-  it.each([
-    '',
-    '{broken',
-    '{}',
-    JSON.stringify({ enabled: true, activeId: 'missing', profiles: [] }),
-    JSON.stringify({ enabled: false, activeId: null, profiles: [{ ...socksProfile, port: '1080' }] })
-  ])('rejects a nonempty corrupt proxy record instead of silently enabling direct network', async (raw) => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(raw);
-
-    await expect(loadNetworkProxyState()).rejects.toThrow();
-  });
-
-  it('uses the generic native connection-pool recovery hook', async () => {
-    const recover = vi.fn().mockResolvedValue({ ok: true });
-    const legacyRecover = vi.fn().mockResolvedValue({ ok: true });
-    const module = networkProxyModuleFromReactNativeImport({
-      NativeModules: {
-        NetworkProxyModule: {
-          recoverNetworkConnectionPool: recover,
-          recoverNodeSeekNetwork: legacyRecover
-        }
-      }
-    });
-
-    await expect(recoverNetworkConnectionPool(module)).resolves.toEqual({ ok: true });
-
-    expect(recover).toHaveBeenCalledTimes(1);
-    expect(legacyRecover).not.toHaveBeenCalled();
-  });
-
-  it('keeps the legacy NodeSeek recovery bridge compatible with old native builds', async () => {
+  it('exposes a best-effort NodeSeek network recovery hook from the native module', async () => {
     const recover = vi.fn().mockResolvedValue({ ok: true });
     const module = networkProxyModuleFromReactNativeImport({
       NativeModules: { NetworkProxyModule: { recoverNodeSeekNetwork: recover } }
@@ -204,25 +147,5 @@ describe('network proxy settings', () => {
     await expect(recoverNodeSeekNetwork(module)).resolves.toEqual({ ok: true });
 
     expect(recover).toHaveBeenCalledTimes(1);
-  });
-
-  it('exposes a fail-closed native proxy health status to JavaScript', async () => {
-    const getStatus = vi.fn().mockResolvedValue({
-      ok: false,
-      message: '本机代理监听异常，网络已阻断'
-    });
-    const module = networkProxyModuleFromReactNativeImport({
-      NativeModules: { NetworkProxyModule: { getStatus } }
-    });
-
-    await expect(getNetworkProxyStatus(module)).resolves.toEqual({
-      ok: false,
-      message: '本机代理监听异常，网络已阻断'
-    });
-    expect(getStatus).toHaveBeenCalledTimes(1);
-    await expect(getNetworkProxyStatus(undefined)).resolves.toEqual({
-      ok: false,
-      message: '当前安装包不支持代理状态检查。'
-    });
   });
 });

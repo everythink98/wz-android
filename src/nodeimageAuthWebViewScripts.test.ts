@@ -1,11 +1,6 @@
 // @vitest-environment-options {"url":"https://www.nodeseek.com/connect?target=NodeImage"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { nodeImageApiKeyProbeScript } from './loginWebViewScripts';
-
-const MESSAGE_SESSION = {
-  sessionId: 'nodeimage-auth-test',
-  nonce: 'abcdef0123456789abcdef0123456789'
-};
+import { NODEIMAGE_API_KEY_PROBE_SCRIPT } from './loginWebViewScripts';
 
 describe('NodeImage auth WebView script on NodeSeek Connect', () => {
   afterEach(() => {
@@ -28,7 +23,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    window.eval(nodeImageApiKeyProbeScript(null, MESSAGE_SESSION));
+    window.eval(NODEIMAGE_API_KEY_PROBE_SCRIPT);
 
     await vi.waitFor(() => expect(postMessage).toHaveBeenCalledTimes(1));
 
@@ -39,8 +34,7 @@ describe('NodeImage auth WebView script on NodeSeek Connect', () => {
       type: 'nodeimage-auth-data',
       data: 'auth-data',
       wtf: 'auth-wtf',
-      sign: 'auth-sign',
-      ...MESSAGE_SESSION
+      sign: 'auth-sign'
     });
   });
 });

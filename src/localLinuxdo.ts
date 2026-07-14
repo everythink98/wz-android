@@ -46,7 +46,6 @@ interface LinuxDoOptions {
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
-  nocache?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -148,8 +147,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     return null;
   }
   const id = normalizeTopicId(raw.id);
-  const title = decodeHtml(raw.unicode_title || raw.title || '').trim();
-  if (!id || !title) {
+  if (!id) {
     return null;
   }
   const createdAt = toIsoString(raw.created_at) || new Date().toISOString();
@@ -166,7 +164,7 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   return {
     source: 'linuxdo',
     id,
-    title,
+    title: decodeHtml(raw.unicode_title || raw.title || ''),
     author: authorName,
     authorId: authorName || undefined,
     authorAvatar,
@@ -176,8 +174,8 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
     url: `${BASE_URL}/t/${raw.slug || id}/${id}`,
     createdAt,
     lastReplyAt,
-    replyCount: Math.max((nonNegativeNumber(raw.posts_count) || 0) - 1, 0),
-    viewCount: nonNegativeNumber(raw.views) || 0,
+    replyCount: Number(raw.posts_count ? Math.max(Number(raw.posts_count) - 1, 0) : 0),
+    viewCount: Number(raw.views || 0),
     excerpt: textExcerpt(raw.excerpt || ''),
     ...(tags.length ? { tags } : {}),
     ...(raw.closed === true ? { closed: true } : {}),
@@ -554,7 +552,7 @@ async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOpt
   }));
 }
 
-async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string, nocache = false) {
+async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string) {
   const access = await loadLinuxDoAccess();
   const accessSummary = linuxDoAccessSummary(access);
   return {
@@ -562,7 +560,6 @@ async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string
     Referer: referer,
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Discourse-Present': 'true',
-    ...(nocache ? { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } : {}),
     'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     'X-Requested-With': 'XMLHttpRequest',
@@ -586,38 +583,30 @@ async function fetchLinuxDoJson<T>(
     }
   }
   const response = await fetchWithTimeout(url.toString(), {
-    headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken, options.nocache)
+    headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken)
   }, options);
   const text = await response.text();
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+    throw new LinuxDoCloudflareError();
+  }
   let data: unknown = {};
-  let bodyIsReadable = !text;
   if (text) {
     try {
       data = JSON.parse(text);
-      bodyIsReadable = true;
     } catch {
-      bodyIsReadable = false;
+      if (!response.ok) {
+        const bodyMessage = textContentFromHtml(text);
+        const accessRequirement = accessRequirementFromText(bodyMessage);
+        const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
+        const error = new Error(message);
+        Object.assign(error, {
+          status: response.status,
+          ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
+        });
+        throw error;
+      }
+      throw new Error('linux.do 返回内容格式不正确');
     }
-  }
-  if (isCloudflareChallengeResponse(
-    { status: response.status, headers: response.headers, bodyText: text },
-    { bodyIsReadable }
-  )) {
-    throw new LinuxDoCloudflareError();
-  }
-  if (text && !bodyIsReadable) {
-    if (!response.ok) {
-      const bodyMessage = textContentFromHtml(text);
-      const accessRequirement = accessRequirementFromText(bodyMessage);
-      const message = accessRequirement ? bodyMessage : `HTTP ${response.status}`;
-      const error = new Error(message);
-      Object.assign(error, {
-        status: response.status,
-        ...(accessRequirement ? { source: 'linuxdo', accessRequirement } : {})
-      });
-      throw error;
-    }
-    throw new Error('linux.do 返回内容格式不正确');
   }
   if (!response.ok) {
     const message = linuxDoErrorText(data, `HTTP ${response.status}`);
@@ -785,14 +774,13 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     throw new Error('linux.do 主题不存在');
   }
   const replyLimit = options.replyLimit || 30;
-  const embeddedReplyCount = Math.min(replyPosts.length, replyLimit);
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
   const replies = await hydrateEditableReplyContent(
-    replyPosts.slice(0, embeddedReplyCount).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[],
+    replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[],
     options
   );
   const totalPosts = stream.length || Number(data.posts_count || posts.length);
-  const replyHasMore = totalPosts > embeddedReplyCount + 1;
+  const replyHasMore = totalPosts > replies.length + 1;
   const polls = normalizeDiscoursePolls(firstPost);
   const firstPostReactions = reactionSummary(isRecord(firstPost) ? firstPost.reactions : undefined);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
@@ -804,7 +792,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,
-    replyNextOffset: replyHasMore ? embeddedReplyCount : null,
+    replyNextOffset: replyHasMore ? replies.length : null,
     ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
     ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
     ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
@@ -835,7 +823,7 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
 } = {}): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
-  let cached = page === 1 || options.nocache ? undefined : cachedTopicStream(id);
+  let cached = page === 1 ? undefined : cachedTopicStream(id);
   if (!cached) {
     const data = await topicData(id, options);
     cacheTopicStream(id, data);
@@ -896,29 +884,22 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
     }
   }
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
-  const candidateIds = stream.slice(0, Math.min(floor, stream.length));
-  if (!candidateIds.length) {
+  const guessed = stream[floor - 1];
+  if (!guessed) {
     throw new Error('引用楼层未找到');
   }
-  let post: unknown;
-  let candidateCount = 0;
-  let missingFloorCount = 0;
-  for (let end = candidateIds.length; end > 0 && !post; end -= 50) {
-    const posts = await fetchPosts(id, candidateIds.slice(Math.max(0, end - 50), end), options);
-    candidateCount += posts.length;
-    missingFloorCount += posts.filter((item) => isRecord(item) && !parsePositiveInteger(item.post_number)).length;
-    post = posts.find((item) => isRecord(item) && item.post_number === floor);
-  }
+  const posts = await fetchPosts(id, [guessed], options);
+  const post = posts.find((item) => isRecord(item) && item.post_number === floor);
   const reply = normalizePost(post, floor - 1, id, floor);
   if (!reply) {
     throw new Error('引用楼层未找到');
   }
   return annotateSourceDiagnosticSummary(reply, {
     parserVariant: 'fetched-reply',
-    candidateCount,
+    candidateCount: posts.length,
     validCount: 1,
-    droppedCount: Math.max(0, candidateCount - 1),
-    missingFloorCount
+    droppedCount: Math.max(0, posts.length - 1),
+    missingFloorCount: posts.filter((item) => isRecord(item) && !parsePositiveInteger(item.post_number)).length
   });
 }
 
@@ -1210,21 +1191,13 @@ export async function getLinuxDoCurrentUserProfile(options: LinuxDoCurrentUserOp
     }
   }, options);
   const text = await response.text();
-  let data: unknown = {};
-  let bodyIsReadable = !text;
-  try {
-    data = text ? JSON.parse(text) : {};
-    bodyIsReadable = true;
-  } catch {
-    bodyIsReadable = false;
-  }
-  if (isCloudflareChallengeResponse(
-    { status: response.status, headers: response.headers, bodyText: text },
-    { bodyIsReadable }
-  )) {
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
     throw new LinuxDoCloudflareError();
   }
-  if (!bodyIsReadable) {
+  let data: unknown = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
     throw new Error('linux.do 当前用户返回内容格式不正确');
   }
   if (!response.ok) {

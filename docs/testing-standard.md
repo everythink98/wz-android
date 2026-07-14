@@ -23,12 +23,12 @@
 
 ## 诊断日志完成标准
 
-新增或修改用户可感知的功能时，诊断链是完成标准的一部分。每次公共操作至少写入 `intent`、一个能区分失败阶段的关键事件，以及唯一 `finish`；controller、gateway、传输和状态应用必须复用同一个 `traceId`，`finish` 后不得再追加迟到的传输或状态事件。日志写入、轮转或导出失败不得改变产品行为。
+新增或修改用户可感知的功能时，诊断链是完成标准的一部分。每次公共操作至少写入 `intent`、一个能区分失败阶段的关键事件，以及唯一 `finish`；controller、gateway、传输和状态应用必须复用同一个 `traceId`。日志写入、轮转或导出失败不得改变产品行为。
 
 | 链路 | 必须可判断 | 禁止记录 | 自动验证重点 |
 | --- | --- | --- | --- |
 | 首页 / 分类 / 搜索 / 详情 / 回复 / 用户页 | 用户触发或分页门禁、credential 是否存在、direct / WebView 通道、HTTP 元数据、解析数量、partial、合并前后数量、stale / cancel / apply | 搜索词、标题、作者、正文、真实 topic / user / cursor、URL path / query | 同一 `traceId` 的 start / 阶段 / 唯一终态；HTTP 200 解析为空、partial source failure、重复 cursor、旧请求丢弃 |
-| 回复 / 编辑 / 删除 / 互动 / 投票 / 上传 | 权限门禁、credential / request token / CSRF 来源枚举、请求阶段、乐观更新、rollback、本地 commit、成功后刷新是否失败 | Cookie、token、CSRF / API Key 值、正文、真实目标 ID、投票选项内容、上传文件名 / 路径 / URL | 重复写、缺 credential、乐观回滚、写成功但刷新失败、授权刷新；正文只断言长度，投票只断言选择数量 |
+| 回复 / 编辑 / 删除 / 互动 / 投票 / 上传 | 权限门禁、credential / CSRF 来源枚举、请求阶段、乐观更新、rollback、本地 commit、成功后刷新是否失败 | Cookie、token、CSRF / API Key 值、正文、真实目标 ID、投票选项内容、上传文件名 / 路径 / URL | 重复写、缺 credential、乐观回滚、写成功但刷新失败、授权刷新；正文只断言长度，投票只断言选择数量 |
 | Session / Cookie / WebView / 代理 | generation、store 空 / timeout / error、会话状态迁移、WebView 队列与 renderer gone、代理 load / apply / save 状态 | Cookie 名称和值、header、WebView HTML / message、代理地址 / 账号 / 密码 | stale generation、fallback / timeout、代理 apply 失败、日志中无伪造 secret |
 | 本机资料 / 备份 / 更新 / 图片 / 导航 | save queue、superseded、persist、rollback、备份取消 / 解析 / 合并、更新检查 / 下载 / 校验、图片权限 / 下载 / MediaLibrary、route / snapshot / back 决策 | 任意对象序列化、备份内容、文件名 / 路径、图片 URL、页面内容 | 保存失败回滚、损坏 / 超限备份、分享取消、更新失败、权限失败、复杂返回链 |
 | 导出与隐私 | 两份 1 MiB 轮转、旧到新 JSON Lines、固定元数据头、系统分享、临时文件删除 | 未列入白名单的任意字段 | 伪造 secret、ID、标题、正文、URL、路径贯穿写入和导出后均不存在；日志故障静默降级 |
@@ -52,49 +52,13 @@
 | 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；楼层引用和图片预览可用；返回后上一层详情状态保留 | `src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts` |
 | 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
 | 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
-| 互动 / 写操作 | 未登录时不发送；登录后按来源携带正确 Cookie、request token、CSRF 或 sid；成功后本地状态不重复计数；失败或结果无法确认时保留草稿并回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
+| 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
 | 用户页 | 四站用户资料、头像、发帖数 / 回帖数、主题列表、回复列表、分页游标正确；主题和回复的来源、分类、标题、作者、时间、楼层、摘要按原站支持范围显示；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/localYaohuo.test.ts`、`src/yaohuoApi.test.ts`、`src/screens/user/userScreenItems.test.ts`、`src/components/TopicCard.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupImportFile.test.ts`、`src/backupOperation.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
 | 登录 / 验证 / Cookie / 凭据 | `SiteSessionState` 是三站唯一登录状态来源；Cookie 与保存凭据互不删除；账号密码仅进 SecureStore；填入前后都校验可信 URL、路径和字段，触发输入事件但不提交；检查登录态和诊断不泄露敏感值；页面提示区分未登录、失效、验证和普通失败 | `src/siteSessionState.test.ts`、`src/app/sessionControllerHelpers.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/nodeseekCookies.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/appSecurity.test.ts` |
 | 问题诊断 | Release 常驻入口可生成 UTF-8 JSON Lines 并打开系统分享；日志轮转和导出不阻塞业务；临时分享文件随后删除；所有字段经过白名单和脱敏；页面提示显示问题附截图、内容特例附原帖链接 | `src/diagnostics.test.ts`、`src/diagnosticFileStore.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/app/useReaderDataController.test.ts`、`src/imageSave.test.ts` |
 | 更多页 / 外观 / 更新 | 单一账号中心按 NodeSeek、linux.do、妖火排列且只显示一站详情；顶部区分待处理、网站登录和自动填入数量；原主页、登录 / 验证、检测、清除登录、刷新网页、签到、NodeImage 和等级入口均保留；进入 More 页不自动刷新；测试工具独立；代理、备份、诊断、外观和更新行为不变 | `src/app/accountStatusHelpers.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/siteSessionState.test.ts`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/networkProxy.test.ts`、`src/webViewProxyGuard.test.ts`、`src/appUpdate.test.ts`、`src/releasePackaging.test.ts` |
 | 发布 / 安装 | 版本号一致；release 先跑测试、文档和无用代码检查；正式签名有效；按设备 ABI 覆盖安装签名 APK；只读 smoke 通过；敏感文件不提交 | `src/releasePackaging.test.ts`、`src/androidSmokeGuard.test.ts`、`npm run release:android` |
-
-- HTML renderer 身份测试必须证明同一 topic 的详情 clone、回复加载和互动结果不会改变 renderer 组件类型；模拟器至少检查图片不重新 loading、`details` / 引用折叠和 terminal tab 状态不复位。
-- 回复草稿测试覆盖每键只更新 composer 局部状态、blur / 收起后同步、图片异步返回时追加到最新草稿、提交使用显式内容，以及不向 TextInput 回写受控 selection。评论查找应在筛选结果变化和列表回收时保持输入焦点。
-- 登录 / 验证 WebView 消息必须同时覆盖 exact origin、当前 session / nonce、允许的 type；相似域、旧 WebView 会话、旧授权异步完成和缺字段消息全部忽略。生产 nonce 不允许回退到 `Math.random`。
-- 发布测试覆盖 tag 历史中的 versionCode 单调性、dirty worktree 两道门禁、当前 signer 与 manifest 双向匹配、不可变 trust anchor 和 Android verified signer lineage；攻击者自洽替换 manifest 与 APK 仍必须失败。
-- 代理安全存储只有 `null` 表示从未配置；空串、损坏 JSON 或不可恢复 schema 必须保持 native / WebView fail-closed。代理 apply / disable 失败时 WebView 必须指向 dead loopback proxy，不能 clear override 后直连；direct / blocked / 用户代理切换要轮换连接池。active 与 candidate listener 的 fatal ownership 必须隔离，旧 listener 的迟到回调不能重新阻断已成功 disable 的状态；存储读取失败后的首次成功保存必须强制重新应用 native 状态，不能永久卡在 failed。
-
-## 来源隔离、后台与刷新语义
-
-- 聚合首页、分类和搜索不能先等待 NodeSeek 或妖火凭据再启动不依赖该凭据的来源；单站安全存储失败只产生该站 partial error。用户取消必须保持整次操作取消，不能降级成 partial success；加载更多遇到任一站失败仍不得混入半页结果，静默取消或被新请求替代后不得残留 `loadingMore`。
-- 启动恢复和账号刷新按站点独立读取凭据；单站 SecureStore 异常不能阻塞其他站会话恢复。已确认登录失效后的 Cookie 清理是 best-effort，清理失败只记录 `storage_error`，不得把原始登录失效改写成普通存储错误。NodeSeek、linux.do 与妖火清理失败后，native 层或 SecureStore 残留的旧登录 Cookie 不得复活登录；只有 App 内页面明确确认的新登录能解除对应撤销标记。linux.do 还必须由 `/session/current.json` 返回带有效 id 与 username 的当前用户；匿名也能成功的 `/session/csrf` 不能作为登录检查，单纯再次读到旧 `_t` / `_forum_session` 也不能解除标记。旧清理已触及 WebView 后若被新 credential generation 替代，必须补回当前保存的三站 Cookie；任一 native Cookie 写入返回 `false` 不能记为成功。自动清理比较完整旧 Cookie bundle，任一名称或值变化必须整批跳过并保持 fail-closed；写入过期 Cookie 后要重读验证旧 bundle 已消失。Android WebView 不提供按旧值原子删除的公开 API，自动条件清理不得用私有 Cookies 数据库写入作为替代。
-- 四站 managed GET / HEAD direct fetch 的 deadline 都是从请求开始计算的 8 秒绝对 wall-clock 时间。切后台时请求继续；回前台后，已完成的请求正常返回，仍 pending 且总耗时超过 8 秒的请求立即处理。caller 已 abort 或请求已 supersede 时禁止恢复、重试或 fallback。NodeSeek 保持既有 WebView fallback；连续两次可读、非 challenge 的 fallback 后异步恢复通用连接池，direct 成功会清零连续失败，迟到结果不能跨 epoch 继续计数。linux.do、V2EX / SOV2EX 和妖火的普通超时 / 网络错误只允许“全局 single-flight 恢复连接池 + direct 重试一次”，第二次失败必须终止；V2EX、妖火不得改走 WebView，linux.do 只有 Cloudflare challenge 与既有未登录站外搜索可使用隐藏 WebView。HTTP / 解析 / 登录错误不得触发 transport recovery。写请求不得自动重放。四站单站 managed read 使用覆盖凭据和全部串行 adapter 请求的 30 秒前台 active-time 总预算；聚合读取每站独立计时，单站 timeout 保留其他站结果。
-- NodeSeek 当前用户的确定 401、用户取消和已取消 signal 不得继续请求主页、设置页或使用旧 userId；普通网络错误和非鉴权解析失败才允许沿既有 fallback 继续。
-- linux.do `nocache` 读取必须同时发送 no-cache headers，并绕过当前 topic stream 内存缓存；普通读取仍复用缓存。
-
-常用自动测试：
-
-```powershell
-npm test -- src/localSources.test.ts src/forumApi.test.ts src/sources/sourceGateway.test.ts src/sources/sourceGatewayContract.test.ts src/app/sessionControllerHelpers.test.ts src/app/useAccountStatusController.test.ts
-npm run typecheck
-```
-
-四站后台专项只读验收：开始一次真实列表、搜索或详情读取后切后台约 5～6 秒再返回。若后台期间请求已完成，结果应直接显示；若仍 pending，只有单次 direct 从请求开始累计超过 8 秒才处理，而 30 秒 operation budget 不消耗后台时间。NodeSeek 检查 direct / WebView fallback；linux.do、V2EX 和妖火检查 connection-pool recovery / direct retry。核对同一 `traceId` 的 AppState、timeout trigger 和唯一 `finish`；日志不得包含 URL、Cookie、token、主题或用户真实标识。不能为制造超时修改生产常量或注入真实写请求。
-
-## 妖火响应与验证语义
-
-- 写请求 HTTP 200 但响应正文为空或只有空白时，结果是“无法确认”，不是成功；不得清空回复草稿或自动刷新，用户可以刷新原帖核对后重试。
-- 响应包含妖火已确认的访问验证标记时，无论 HTTP 状态是否为 2xx，都映射为 `verification-required` 并保留 Cookie；普通 403 没有验证标记时仍是 HTTP 错误，不能伪装成验证状态。
-- 已确认登录失效时才尝试清理 Cookie；清理失败不覆盖原始登录失效提示。开发版 `测试工具 -> 妖火` 临时匿名必须让读取和写操作看不到保存的 Cookie，但不能删除 Cookie，关闭开关或重启后恢复。
-
-常用自动测试：
-
-```powershell
-npm test -- src/yaohuoApi.test.ts src/yaohuoActionClient.test.ts src/app/useTopicActionsController.test.ts src/app/useAccountController.test.ts src/app/useAccountStatusController.test.ts src/sources/sourceGatewayContract.test.ts
-npm run typecheck
-```
 
 ## 文档与发布候选 smoke
 
@@ -222,7 +186,7 @@ npm run typecheck
 
 - 发送失败或上传失败后，同一个回复框还能继续点击和编辑。
 - NodeSeek 图片上传使用用户自己的 NodeImage Key；无 Key 时自动打开 App 内授权页；已有 Key 时不重复授权；401 / 403 后只刷新一次 Key 再重试。
-- NodeSeek 回复 / 编辑使用原站真实帖子 / 评论 id；请求头 `csrf-token` 每次在本机生成 16 位字母数字随机值。登录 WebView 不采集、不保存、不复用页面 CSRF；测试断言长度、字符集和每次重新生成，不固定具体值。
+- NodeSeek 回复 / 编辑必须使用登录页或详情页保存的真实 token；没有 token 时拒绝发送并提示重新检测登录，不允许随机 token。
 - NodeSeek 自己的回复只有同时有评论 id 和原始正文时才显示编辑；只隐藏自己的点赞 / 鸡腿 / 反对，不展示点了会失败的编辑入口。
 - 取消编辑或系统返回关闭编辑框后，编辑正文不能残留成普通回复草稿。
 - NodeSeek 详情必须保留原站渲染后的 at、楼层链接、表情 / sticker 和签名显示，不得因为编辑源数据回退成纯文本。

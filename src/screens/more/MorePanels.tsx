@@ -17,6 +17,7 @@ import type { SiteSessionViewModel } from '../../siteSessionState';
 import { createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, MenuButton, triggerPressFeedback } from '../../components/AppControls';
 import { LoginWebViewModal } from '../../components/LoginWebViewModal';
+import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../../loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '../../loginFormAdapters';
 import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
 
@@ -52,7 +53,6 @@ export function NodeSeekLoginPanel({
   credentialFillPending,
   credentialSaved,
   nodeSeekSession,
-  nodeSeekLoginProbeScript,
   nodeImageApiKeyBusy,
   nodeImageApiKeySaved,
   loginFormMode,
@@ -84,7 +84,6 @@ export function NodeSeekLoginPanel({
   credentialFillPending: boolean;
   credentialSaved: boolean;
   nodeSeekSession: SiteSessionViewModel;
-  nodeSeekLoginProbeScript: string;
   nodeImageApiKeyBusy: boolean;
   nodeImageApiKeySaved: boolean;
   loginFormMode: boolean;
@@ -240,7 +239,7 @@ export function NodeSeekLoginPanel({
               thirdPartyCookiesEnabled
               setSupportMultipleWindows={false}
               userAgent={nodeSeekWebViewUserAgent}
-              injectedJavaScript={nodeSeekLoginProbeScript}
+              injectedJavaScript={NODESEEK_LOGIN_PROBE_SCRIPT}
               onLoadEnd={(event) => {
                 onSetLoadingLoginPage(false);
                 if ('code' in event.nativeEvent) {
@@ -248,6 +247,7 @@ export function NodeSeekLoginPanel({
                 }
                 onWebViewState('ready', credentialAttempt);
                 setWebViewError('');
+                webViewRef.current?.injectJavaScript(NODESEEK_LOGIN_PROBE_SCRIPT);
                 if (loginFormMode) {
                   webViewRef.current?.injectJavaScript(LOGIN_FORM_ADAPTERS.nodeseek.probeScript(credentialAttempt));
                 }

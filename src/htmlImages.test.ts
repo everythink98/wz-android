@@ -24,32 +24,6 @@ describe('Android HTML image preview helpers', () => {
     ]);
   });
 
-  it('preserves the DOM-decoded layer of signed image URLs through preview and headers', () => {
-    const parsedUrl = 'https://www.nodeseek.com/api/attachments/signed.png?token=one&amp;expires=two';
-    const html = '<img src="https://www.nodeseek.com/api/attachments/signed.png?token=one&amp;amp;expires=two">';
-    const catalog = createImagePreviewCatalog([html]);
-    const preview = imagePreviewListFromCatalog(catalog, parsedUrl);
-
-    expect(extractImageUrlsFromHtml(html)).toEqual([parsedUrl]);
-    expect(preview).toEqual({ urls: [parsedUrl], index: 0 });
-    expect(imageRequestHeadersForUrl(preview.urls[0], 'uid=1')).toMatchObject({
-      Referer: 'https://www.nodeseek.com',
-      Cookie: 'uid=1'
-    });
-  });
-
-  it('lets the HTML parser decode image entities once and preserves the parsed URL downstream', () => {
-    expect(extractImageUrlsFromHtml('<img src="https://cdn.example.com/a.png?caption=&amp;lt;script&amp;gt;">')).toEqual([
-      'https://cdn.example.com/a.png?caption=&lt;script&gt;'
-    ]);
-    expect(extractImageUrlsFromHtml('<img src="https://cdn.example.com/&#x1F600;.png">')).toEqual([
-      'https://cdn.example.com/😀.png'
-    ]);
-    expect(normalizeImagePreviewUrl('https://cdn.example.com/a.png?caption=&lt;script&gt;')).toBe(
-      'https://cdn.example.com/a.png?caption=&lt;script&gt;'
-    );
-  });
-
   it('prefers original lightbox image URLs over optimized inline image URLs', () => {
     const html = '<div class="lightbox-wrapper"><a class="lightbox" href="https://cdn.example.com/original.png"><img src="https://cdn.example.com/optimized.png" alt="photo"></a></div>';
 
@@ -162,7 +136,6 @@ describe('Android HTML image preview helpers', () => {
 
   it('keeps NodeSeek cookies for media URLs that may require login', () => {
     expect(imageRequestHeadersForUrl('https://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBe('uid=1');
-    expect(imageRequestHeadersForUrl('http://www.nodeseek.com/api/attachments/123', 'uid=1')?.Cookie).toBeUndefined();
   });
 
   it('builds a de-duplicated preview list and keeps tapped image position', () => {

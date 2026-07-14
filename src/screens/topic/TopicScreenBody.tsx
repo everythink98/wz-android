@@ -2,28 +2,41 @@ import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, 
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  type ViewToken,
   Pressable,
+  ScrollView,
   Text,
+  TextInput,
   View
 } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
-import { BookMarked, ChevronLeft, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp } from 'lucide-react-native';
+import {
+  HTMLContentModel,
+  HTMLElementModel,
+  RenderHTMLConfigProvider,
+  TChildrenRenderer,
+  TRenderEngineProvider,
+  defaultHTMLElementModels,
+  useTNodeChildrenProps,
+  type CustomBlockRenderer
+} from 'react-native-render-html';
+import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
-import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
+import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
+import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
+import { FORUM_INLINE_MEDIA_LINE_TAG, FORUM_STICKER_ROW_TAG, FORUM_STICKER_TAG, INLINE_FORUM_IMAGE_TAG } from '../../htmlImages';
+import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../../localHtml';
+import { FORUM_REPLY_REFERENCE_TAG } from '../../topicContentHtml';
 import { forumVideoBlockFromHtml, splitTopicContentHtml } from '../../topicContentSplit';
-import { createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
-import { AppButton, EmptyText, IconButton, LoadingState, triggerPressFeedback } from '../../components/AppControls';
+import { androidRipple, createStyles, replyContextBadgeStyle, sourceBadgeColorStyle, topicStatusBadgeColorStyle, topicStatusBadgeTextColorStyle, topicTagColorStyle, topicTagTextColorStyle, type ReaderTheme } from '../../theme';
+import { AppButton, EmptyText, IconButton, LoadingState, PillRail, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
 import { ForumContentVideo } from '../../components/ForumContentVideo';
-import { ForumMediaPlaybackProvider } from '../../forumMediaPlayback';
 import { TOPIC_DETAIL_LIST_PERFORMANCE_PROPS } from '../../components/listPerformance';
 import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
-import { canSubmitReplyToTopic } from '../../app/topicActionControllerHelpers';
 import { getLinuxDoEmojiUrls } from '../../localLinuxdo';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
@@ -33,16 +46,108 @@ import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
-import { ReplyControls } from './ReplyControls';
-import { ForumHtmlRendererProvider, type ForumHtmlRendererContextValue } from './ForumHtmlRendererProvider';
 import { TopicMenu } from './TopicMenu';
-import { buildReplyListItems, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
+import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
 
 type TopicContentItem =
   | { type: 'content'; key: string; html: string }
   | { type: 'contentVideo'; key: string; src: string }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
 export type { TopicListItem };
+
+const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
+const HTML_CUSTOM_ELEMENT_MODELS = {
+  details: defaultHTMLElementModels.details.extend({
+    contentModel: HTMLContentModel.mixed
+  }),
+  summary: defaultHTMLElementModels.summary.extend({
+    contentModel: HTMLContentModel.mixed
+  }),
+  [INLINE_FORUM_IMAGE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: INLINE_FORUM_IMAGE_TAG,
+    contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
+  [FORUM_STICKER_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_STICKER_TAG,
+    contentModel: HTMLContentModel.textual,
+    isOpaque: true
+  }),
+  [FORUM_STICKER_ROW_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_STICKER_ROW_TAG,
+    contentModel: HTMLContentModel.mixed,
+    isOpaque: false
+  }),
+  [FORUM_INLINE_MEDIA_LINE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_INLINE_MEDIA_LINE_TAG,
+    contentModel: HTMLContentModel.mixed,
+    isOpaque: false
+  }),
+  [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_REPLY_REFERENCE_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [FORUM_LINK_CARD_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_LINK_CARD_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [FORUM_TERMINAL_REPORT_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_TERMINAL_REPORT_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: false
+  }),
+  [FORUM_TERMINAL_TAB_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_TERMINAL_TAB_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: false
+  }),
+  [FORUM_VIDEO_STICKER_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_VIDEO_STICKER_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [FORUM_VIDEO_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: FORUM_VIDEO_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  iframe: HTMLElementModel.fromCustomModel({
+    tagName: 'iframe',
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  })
+};
+
+function htmlTagName(tnode: unknown) {
+  const tagName = ((tnode as { tagName?: string }).tagName || '').toLowerCase();
+  return tagName || domNodeTagName((tnode as { domNode?: unknown }).domNode);
+}
+function domNodeTagName(node: unknown) {
+  const record = node as { name?: unknown; tagName?: unknown };
+  return String(record?.name || record?.tagName || '').toLowerCase();
+}
+function domNodeTextContent(node: unknown): string {
+  if (!node || typeof node !== 'object') {
+    return '';
+  }
+  const record = node as { children?: unknown; data?: unknown };
+  const ownText = typeof record.data === 'string' ? record.data : '';
+  const childText = Array.isArray(record.children) ? record.children.map(domNodeTextContent).join('') : '';
+  return `${ownText}${childText}`;
+}
+
+function detailsSummaryTextFromDom(tnode: unknown) {
+  const domNode = (tnode as { domNode?: { children?: unknown[] } }).domNode;
+  const summaryNode = Array.isArray(domNode?.children) ? domNode.children.find((child) => domNodeTagName(child) === 'summary') : undefined;
+  return domNodeTextContent(summaryNode).replace(/\s+/g, ' ').trim();
+}
+
+function hasHtmlClass(tnode: unknown, className: string) {
+  const classValue = ((tnode as { attributes?: Record<string, string | undefined> }).attributes?.class || '');
+  return classValue.split(/\s+/).includes(className);
+}
 
 function topicListItemKey(item: TopicListItem) {
   return item.key;
@@ -61,7 +166,7 @@ export const TopicScreen = memo(function TopicScreen({
   htmlBaseStyle,
   htmlClassesStyles,
   htmlIgnoredStyles,
-  htmlRendererContext,
+  htmlRenderers,
   htmlRenderersProps,
   htmlTagsStyles,
   expandedQuotes,
@@ -129,7 +234,7 @@ export const TopicScreen = memo(function TopicScreen({
   htmlBaseStyle: HtmlBaseStyle;
   htmlClassesStyles: HtmlClassesStyles;
   htmlIgnoredStyles: HtmlIgnoredStyles;
-  htmlRendererContext: ForumHtmlRendererContextValue;
+  htmlRenderers: HtmlRenderers;
   htmlRenderersProps: HtmlRenderersProps;
   htmlTagsStyles: HtmlTagsStyles;
   expandedQuotes: Record<string, boolean>;
@@ -180,8 +285,8 @@ export const TopicScreen = memo(function TopicScreen({
   onRefreshWholeTopic: () => void;
   onVerifyLinuxDo: () => void;
   onVerifyNodeSeek: () => void;
-  onSubmitReply: (content: string) => void | Promise<void>;
-  onUploadReplyImage: () => Promise<string | null | undefined>;
+  onSubmitReply: () => void;
+  onUploadReplyImage: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
   onToggleFavorite: (topic: Topic) => void;
@@ -192,26 +297,16 @@ export const TopicScreen = memo(function TopicScreen({
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
-  const canSubmitReply = canSubmitReplyToTopic(topic);
   const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
-  const canWrite = Boolean(canSubmitReply && (canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo));
+  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
   const replyTotalCount = item?.replyCount ?? replies.length;
-  const [visibleReplyKeys, setVisibleReplyKeys] = useState<ReadonlySet<string>>(() => new Set());
   const listExtraData = useMemo(() => ({
     actionBusy,
     quoteStateVersion,
-    visibleReplyKeys
-  }), [actionBusy, quoteStateVersion, visibleReplyKeys]);
-  const onViewableReplyItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken[] }) => {
-    const next = new Set(viewableItems
-      .map((token) => (token.item as TopicListItem | undefined)?.key)
-      .filter((key): key is string => Boolean(key)));
-    setVisibleReplyKeys((current) => (
-      current.size === next.size && [...current].every((key) => next.has(key)) ? current : next
-    ));
-  }, []);
+    replyComposerOpen
+  }), [actionBusy, quoteStateVersion, replyComposerOpen]);
   const itemSource = topic?.source;
   const topicBaseUrl = topic?.url || item?.url;
   const detailTopicStateKey = topic ? `${topic.source}:${topic.id}` : item ? `${item.source}:${item.id}` : '';
@@ -310,6 +405,12 @@ export const TopicScreen = memo(function TopicScreen({
         })
       : []
   ), [topic, topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicShowsAccessNotice]);
+  const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
+    type: 'reply',
+    key: getReplyKey(reply),
+    reply,
+    replyFloor: reply.floor ?? 0
+  })), [replies]);
   const canWriteTopicPollSource = Boolean(
     topic
     && (
@@ -325,9 +426,9 @@ export const TopicScreen = memo(function TopicScreen({
   ));
   const replyListItems = useMemo(() => buildReplyListItems({
     canShowReplies,
-    replies,
+    replyItems,
     topicShowsAccessNotice
-  }), [canShowReplies, replies, topicShowsAccessNotice]);
+  }), [canShowReplies, replyItems, topicShowsAccessNotice]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -351,6 +452,105 @@ export const TopicScreen = memo(function TopicScreen({
     setTopicMenuOpen(false);
     action();
   }, []);
+  const topicHtmlRenderers = useMemo<HtmlRenderers>(() => {
+    const QuoteAsideRenderer: CustomBlockRenderer = (props) => {
+      const [expanded, setExpanded] = useState(false);
+      const tchildrenProps = useTNodeChildrenProps(props);
+      const { TDefaultRenderer, ...defaultRendererProps } = props;
+      if (!hasHtmlClass(props.tnode, 'quote')) {
+        return <TDefaultRenderer {...defaultRendererProps} />;
+      }
+
+      const quoteTitleChildren = props.tnode.children.filter((child) => htmlTagName(child) === 'div' && hasHtmlClass(child, 'title'));
+      const quoteHeaderChildren = quoteTitleChildren.length ? quoteTitleChildren : props.tnode.children.slice(0, 1);
+      const quoteBodyChildren = props.tnode.children.filter((child) => !quoteHeaderChildren.includes(child));
+      const StateIcon = expanded ? ChevronUp : ChevronDown;
+
+      return (
+        <View style={styles.quoteBox}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            android_ripple={androidRipple(theme.primarySoft)}
+            disabled={!quoteBodyChildren.length}
+            style={styles.quotePanelHeader}
+            onPress={() => setExpanded((value) => !value)}
+          >
+            <View style={styles.quoteAuthorSummary}>
+              <TChildrenRenderer {...tchildrenProps} tchildren={quoteHeaderChildren} />
+            </View>
+            {quoteBodyChildren.length ? (
+              <View style={styles.quotePanelState}>
+                <Text style={styles.quotePanelStateText}>{expanded ? '收起' : '展开'}</Text>
+                <View style={styles.quotePanelStateIcon}>
+                  <StateIcon size={16} color={theme.primary} strokeWidth={1.9} />
+                </View>
+              </View>
+            ) : null}
+          </Pressable>
+          {expanded && quoteBodyChildren.length ? (
+            <View style={[styles.quoteBody, styles.quotePanelBody]}>
+              <TChildrenRenderer {...tchildrenProps} tchildren={quoteBodyChildren} />
+            </View>
+          ) : null}
+        </View>
+      );
+    };
+    const DetailsRenderer: CustomBlockRenderer = (props) => {
+      const [expanded, setExpanded] = useState(props.tnode.attributes?.open !== undefined);
+      const tchildrenProps = useTNodeChildrenProps(props);
+      const summaryNode = props.tnode.children.find((child) => htmlTagName(child) === 'summary');
+      const summaryChildren = ((summaryNode as { children?: typeof props.tnode.children } | undefined)?.children || []);
+      const detailSummaryText = detailsSummaryTextFromDom(props.tnode);
+      const detailBodyChildren = props.tnode.children.filter((child) => child !== summaryNode);
+      const StateIcon = expanded ? ChevronDown : ChevronRight;
+
+      return (
+        <View style={styles.detailsPanel}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            android_ripple={androidRipple(theme.primarySoft)}
+            style={styles.detailsPanelHeader}
+            onPress={() => setExpanded((value) => !value)}
+          >
+            <View style={styles.detailsPanelIcon}>
+              <StateIcon size={18} color={theme.ink} strokeWidth={2.1} />
+            </View>
+            <View style={styles.detailsPanelSummary}>
+              {summaryChildren.length ? (
+                <TChildrenRenderer {...tchildrenProps} tchildren={summaryChildren} />
+              ) : detailSummaryText ? (
+                <Text style={styles.detailsPanelSummaryText}>{detailSummaryText}</Text>
+              ) : (
+                <Text style={styles.detailsPanelSummaryText}>详情</Text>
+              )}
+            </View>
+          </Pressable>
+          {expanded && detailBodyChildren.length ? (
+            <View style={styles.detailsPanelBody}>
+              <TChildrenRenderer {...tchildrenProps} tchildren={detailBodyChildren} />
+            </View>
+          ) : null}
+        </View>
+      );
+    };
+    const SummaryRenderer: CustomBlockRenderer = () => null;
+    const TableRenderer: CustomBlockRenderer = (props) => {
+      const { TDefaultRenderer, ...defaultRendererProps } = props;
+      if (htmlTagName(props.tnode) !== 'table') {
+        return <TDefaultRenderer {...defaultRendererProps} />;
+      }
+      return (
+        <ScrollView horizontal style={styles.htmlTableScroll} contentContainerStyle={styles.htmlTableScrollContent}>
+          <View style={styles.htmlTableFrame}>
+            <TDefaultRenderer {...defaultRendererProps} />
+          </View>
+        </ScrollView>
+      );
+    };
+    return { ...htmlRenderers, aside: QuoteAsideRenderer, details: DetailsRenderer, summary: SummaryRenderer, table: TableRenderer };
+  }, [htmlRenderers, styles, theme.ink, theme.primary, theme.primarySoft]);
   const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string) => (
     <View key={key} style={styles.topicListItemFrame}>{children}</View>
   ), [styles]);
@@ -396,6 +596,47 @@ export const TopicScreen = memo(function TopicScreen({
   }
 
   const renderReplyItem = useCallback<ListRenderItem<TopicListItem>>(({ item: listItem }) => {
+    if (listItem.type === 'replyControls') {
+      return renderTopicListItemFrame(
+        <View style={[styles.replyHeader, topicColumnStyle]}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>回复列表 <Text style={styles.countText}>{replyTotalCount} 条</Text></Text>
+            {canWrite ? (
+              <AppButton
+                label={replyComposerOpen ? '收起回复' : '写回复'}
+                variant={replyComposerOpen ? 'ghost' : 'default'}
+                styles={styles}
+                onPress={() => onReplyComposerOpenChange(!replyComposerOpen)}
+              />
+            ) : null}
+          </View>
+          <PillRail
+            variant="subtabs"
+            items={[
+              { value: 'all', label: '全部' },
+              { value: 'author', label: '只看楼主' },
+              { value: 'images', label: '只看带图' },
+              { value: 'newest', label: '倒序' }
+            ]}
+            value={replyFilter}
+            styles={styles}
+            onChange={(value) => onReplyFilterChange(value as ReplyFilter)}
+          />
+          {unreadReplyCount > 0 ? <Text style={styles.noticeText}>新增 {unreadReplyCount} 条回复</Text> : null}
+          <View style={styles.searchRow}>
+            <TextInput
+              style={[styles.input, styles.flex]}
+              value={commentQuery}
+              onChangeText={onCommentQueryChange}
+              placeholder="评论内查找"
+              placeholderTextColor={theme.muted}
+            />
+            {commentQuery ? <IconButton icon={X} label="清空查找" styles={styles} theme={theme} onPress={() => onCommentQueryChange('')} /> : null}
+          </View>
+        </View>
+      );
+    }
+
     if (listItem.type === 'emptyReplies') {
       return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
@@ -405,7 +646,6 @@ export const TopicScreen = memo(function TopicScreen({
     }
 
     return renderTopicListItemFrame(
-      <ForumMediaPlaybackProvider active={visibleReplyKeys.has(listItem.key)}>
       <View style={[styles.replyListItem, topicColumnStyle]}>
         <MemoizedReplyItem
           actionBusy={actionBusy}
@@ -439,11 +679,11 @@ export const TopicScreen = memo(function TopicScreen({
           onOpenUser={onOpenUser}
         />
       </View>
-      </ForumMediaPlaybackProvider>
     );
   }, [
     actionBusy,
     canWrite,
+    commentQuery,
     contentWidth,
     expandedQuotes,
     inlineSizedImageUrls,
@@ -453,9 +693,12 @@ export const TopicScreen = memo(function TopicScreen({
     loadingQuotedFloors,
     linuxDoEmojiUrls,
     newReplyFloorStart,
+    onCommentQueryChange,
     onDeleteReply,
     onEditReply,
     onInteract,
+    onReplyComposerOpenChange,
+    onReplyFilterChange,
     onReplyToFloor,
     onToggleQuotedFloor,
     onOpenUser,
@@ -463,14 +706,16 @@ export const TopicScreen = memo(function TopicScreen({
     pollSelections,
     renderTopicListItemFrame,
     itemSource,
+    replyComposerOpen,
     replyHighlightQuery,
+    replyFilter,
     repliesByFloor,
+    replyTotalCount,
     styles,
     theme,
     togglePollSelection,
     topicBaseUrl,
-    topicColumnStyle,
-    visibleReplyKeys
+    topicColumnStyle
   ]);
 
   if (!item) {
@@ -614,36 +859,19 @@ export const TopicScreen = memo(function TopicScreen({
         </View>,
         'topic-actions'
       ) : null}
-      {canShowReplies && !topicShowsAccessNotice ? (
-        <ReplyControls
-          key={detailTopicStateKey}
-          canWrite={canWrite}
-          commentQuery={commentQuery}
-          contentWidth={contentWidth}
-          replyComposerOpen={replyComposerOpen}
-          replyFilter={replyFilter}
-          replyTotalCount={replyTotalCount}
-          styles={styles}
-          theme={theme}
-          unreadReplyCount={unreadReplyCount}
-          onCommentQueryChange={onCommentQueryChange}
-          onReplyComposerOpenChange={onReplyComposerOpenChange}
-          onReplyFilterChange={onReplyFilterChange}
-        />
-      ) : null}
     </View>
   );
 
   return (
-    <ForumHtmlRendererProvider
-      context={htmlRendererContext}
-      htmlBaseStyle={htmlBaseStyle}
-      htmlClassesStyles={htmlClassesStyles}
-      htmlIgnoredStyles={htmlIgnoredStyles}
-      htmlRenderersProps={htmlRenderersProps}
-      htmlTagsStyles={htmlTagsStyles}
-      topicKey={detailTopicStateKey}
-    >
+    <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} classesStyles={htmlClassesStyles} customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
+      <RenderHTMLConfigProvider
+        renderers={topicHtmlRenderers}
+        renderersProps={htmlRenderersProps}
+        defaultTextProps={{ selectable: true }}
+        enableExperimentalBRCollapsing
+        enableExperimentalGhostLinesPrevention
+        enableExperimentalMarginCollapsing
+      >
         <View style={styles.topicScreenRoot}>
         <View style={styles.topicTopBar}>
           <IconButton icon={ChevronLeft} compact ghost label="返回" styles={styles} theme={theme} onPress={onBack} />
@@ -669,7 +897,6 @@ export const TopicScreen = memo(function TopicScreen({
           onEndReached={handleReplyEndReached}
           onScrollBeginDrag={armReplyAutoLoad}
           onMomentumScrollBegin={armReplyAutoLoad}
-          onViewableItemsChanged={onViewableReplyItemsChanged}
           extraData={listExtraData}
           {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
           ListHeaderComponent={listHeader}
@@ -713,6 +940,7 @@ export const TopicScreen = memo(function TopicScreen({
           onUploadReplyImage={replyImageUploadSupported(topic?.source) ? onUploadReplyImage : undefined}
         />
         </View>
-    </ForumHtmlRendererProvider>
+      </RenderHTMLConfigProvider>
+    </TRenderEngineProvider>
   );
 });

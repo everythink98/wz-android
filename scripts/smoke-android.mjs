@@ -254,6 +254,7 @@ async function main() {
 
   runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
   bootSelectedDevice();
+  runAgentDevice(['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs()]);
 
   let opened = false;
   let logging = false;
@@ -264,7 +265,6 @@ async function main() {
     runAgentDevice(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android']);
     logging = true;
     runAgentDevice(['logs', 'mark', 'wz-smoke-start', '--session', smokeSession, '--platform', 'android']);
-    runAgentDevice(['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs()]);
     runAgentDevice(['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']);
     runAgentDevice(['wait', '60000', '--session', smokeSession, '--platform', 'android']);
     waitFor('id="feed-topic-first"', 60_000);

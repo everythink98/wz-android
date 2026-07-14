@@ -31,8 +31,6 @@ export function useImagePreviewController({
   fetcher,
   htmlParts,
   inlineSizedImageUrls,
-  nodeSeekCookieHeader,
-  nodeSeekUserAgent,
   notify,
   topicImageDeriver
 }: {
@@ -40,8 +38,6 @@ export function useImagePreviewController({
   fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
-  nodeSeekCookieHeader?: string;
-  nodeSeekUserAgent?: string;
   notify: (message: string) => void;
   topicImageDeriver: TopicImageDeriver;
 }) {
@@ -104,7 +100,7 @@ export function useImagePreviewController({
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
-      await saveImageUriToLibrary(uri, fetcher, trace, nodeSeekCookieHeader, nodeSeekUserAgent);
+      await saveImageUriToLibrary(uri, fetcher, trace);
       markDiagnosticStage(trace, 'apply', { state: 'saved' });
       finishDiagnosticTrace(trace, 'success');
       notify('图片已保存');
@@ -113,7 +109,7 @@ export function useImagePreviewController({
       finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
       notify(errorMessage(error));
     }
-  }, [beforeSave, fetcher, imagePreview, nodeSeekCookieHeader, nodeSeekUserAgent, notify]);
+  }, [beforeSave, fetcher, imagePreview, notify]);
 
   return {
     closeImagePreview,

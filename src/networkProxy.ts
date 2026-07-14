@@ -31,9 +31,6 @@ export type NetworkProxyStatus = {
 
 export type NativeNetworkProxyModule = {
   applyProxy?: (profile: NetworkProxyProfile | null) => Promise<NetworkProxyStatus>;
-  getStatus?: () => Promise<NetworkProxyStatus>;
-  recoverNetworkConnectionPool?: () => Promise<NetworkProxyStatus>;
-  /** @deprecated Kept for compatibility with previously generated native builds. */
   recoverNodeSeekNetwork?: () => Promise<NetworkProxyStatus>;
   testProxy?: (profile: NetworkProxyProfile) => Promise<NetworkProxyStatus>;
 };
@@ -103,53 +100,6 @@ export function normalizeNetworkProxyState(value: unknown): NetworkProxyState {
   return {
     enabled: Boolean(input.enabled && hasActive),
     activeId: hasActive ? activeId : null,
-    profiles
-  };
-}
-
-function parseStoredNetworkProxyState(raw: string): NetworkProxyState {
-  const value = JSON.parse(raw) as unknown;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('代理设置存储格式无效');
-  }
-  const input = value as Record<string, unknown>;
-  if (typeof input.enabled !== 'boolean'
-    || (input.activeId !== null && typeof input.activeId !== 'string')
-    || !Array.isArray(input.profiles)
-    || input.profiles.length > MAX_NETWORK_PROXY_PROFILES) {
-    throw new Error('代理设置存储格式无效');
-  }
-  const profiles = input.profiles.map((value) => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new Error('代理设置存储格式无效');
-    }
-    const profile = value as Record<string, unknown>;
-    if (typeof profile.id !== 'string'
-      || typeof profile.name !== 'string'
-      || (profile.protocol !== 'http' && profile.protocol !== 'socks5')
-      || typeof profile.host !== 'string'
-      || typeof profile.port !== 'number'
-      || !Number.isInteger(profile.port)
-      || (profile.username !== undefined && typeof profile.username !== 'string')
-      || (profile.password !== undefined && typeof profile.password !== 'string')) {
-      throw new Error('代理设置存储格式无效');
-    }
-    const clean = cleanProfile(profile);
-    if (!clean || hasNetworkProxyProfileErrors(clean)) {
-      throw new Error('代理设置存储格式无效');
-    }
-    return clean;
-  });
-  const ids = new Set(profiles.map(({ id }) => id));
-  const activeId = cleanText(input.activeId);
-  if (ids.size !== profiles.length
-    || (activeId && !ids.has(activeId))
-    || (input.enabled && !activeId)) {
-    throw new Error('代理设置存储格式无效');
-  }
-  return {
-    enabled: input.enabled,
-    activeId: activeId || null,
     profiles
   };
 }
@@ -227,10 +177,14 @@ function networkProxyNativeModule() {
 
 export async function loadNetworkProxyState() {
   const raw = await SecureStore.getItemAsync(NETWORK_PROXY_STORAGE_KEY);
-  if (raw === null) {
+  if (!raw) {
     return createEmptyNetworkProxyState();
   }
-  return parseStoredNetworkProxyState(raw);
+  try {
+    return normalizeNetworkProxyState(JSON.parse(raw));
+  } catch {
+    return createEmptyNetworkProxyState();
+  }
 }
 
 export async function saveNetworkProxyState(state: NetworkProxyState) {
@@ -253,38 +207,15 @@ export async function applyNetworkProxy(profile: NetworkProxyProfile | null, mod
   return result;
 }
 
-export async function getNetworkProxyStatus(module = networkProxyNativeModule()) {
-  if (!module?.getStatus) {
-    return {
-      ok: false,
-      message: '当前安装包不支持代理状态检查。'
-    } satisfies NetworkProxyStatus;
-  }
-  const result = await module.getStatus();
-  return result?.ok
-    ? result
-    : {
-        ok: false,
-        message: result?.message || '代理异常，网络已阻断。'
-      } satisfies NetworkProxyStatus;
-}
-
-export async function recoverNetworkConnectionPool(module = networkProxyNativeModule()) {
-  if (!module?.recoverNetworkConnectionPool && !module?.recoverNodeSeekNetwork) {
+export async function recoverNodeSeekNetwork(module = networkProxyNativeModule()) {
+  if (!module?.recoverNodeSeekNetwork) {
     return { ok: true } satisfies NetworkProxyStatus;
   }
-  const result = module.recoverNetworkConnectionPool
-    ? await module.recoverNetworkConnectionPool()
-    : await module.recoverNodeSeekNetwork!();
+  const result = await module.recoverNodeSeekNetwork();
   if (!result?.ok) {
     throw new Error(result?.message || '请求通道恢复失败');
   }
   return result;
-}
-
-/** @deprecated Use recoverNetworkConnectionPool. */
-export async function recoverNodeSeekNetwork(module = networkProxyNativeModule()) {
-  return recoverNetworkConnectionPool(module);
 }
 
 export async function testNetworkProxy(profile: NetworkProxyProfile, module = networkProxyNativeModule()) {

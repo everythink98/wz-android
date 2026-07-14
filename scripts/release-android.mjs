@@ -2,8 +2,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { assertCleanWorktree } from './release-guards.mjs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const androidDir = path.join(rootDir, 'android');
@@ -14,10 +13,8 @@ const developmentKeystorePath = path.join(androidDir, 'app', 'debug.keystore');
 const releaseManifestFileName = 'release-manifest.json';
 const releaseManifestPath = path.join(path.dirname(releaseApkPath), releaseManifestFileName);
 const releaseEnvPath = path.join(rootDir, '.env.release.local');
-const apkLineageInspectorPath = path.join(rootDir, 'scripts', 'InspectApkLineage.java');
 const appConfig = JSON.parse(readFileSync(path.join(rootDir, 'app.json'), 'utf8'));
 const expectedReleaseSignerSha256 = cleanSha256(appConfig.expo?.extra?.releaseSignerSha256);
-const expectedReleaseTrustAnchorSha256 = cleanSha256(appConfig.expo?.extra?.releaseTrustAnchorSha256);
 const requiredSigningEnv = [
   'WZ_ANDROID_KEYSTORE_PATH',
   'WZ_ANDROID_KEYSTORE_PASSWORD',
@@ -148,33 +145,6 @@ function signDevelopmentSmokeApk(inputPath, outputPath) {
   ]);
 }
 
-function signReleaseApkWithLineage(apkPath) {
-  if (expectedReleaseSignerSha256 === expectedReleaseTrustAnchorSha256) {
-    return;
-  }
-  const lineagePath = process.env.WZ_ANDROID_SIGNING_LINEAGE_PATH;
-  const apkSignerJar = findApkSignerJar();
-  if (!lineagePath || !existsSync(lineagePath) || !apkSignerJar) {
-    console.error('签名轮换需要 WZ_ANDROID_SIGNING_LINEAGE_PATH 指向有效的 apksigner lineage 文件。');
-    process.exit(1);
-  }
-  const outputPath = `${apkPath}.lineage-signed`;
-  run('java', [
-    '-jar', apkSignerJar,
-    'sign',
-    '--ks', process.env.WZ_ANDROID_KEYSTORE_PATH,
-    '--ks-key-alias', process.env.WZ_ANDROID_KEY_ALIAS,
-    '--ks-pass', 'env:WZ_ANDROID_KEYSTORE_PASSWORD',
-    '--key-pass', 'env:WZ_ANDROID_KEY_PASSWORD',
-    '--lineage', lineagePath,
-    '--out', outputPath,
-    apkPath
-  ]);
-  copyFileSync(outputPath, apkPath);
-  rmSync(outputPath, { force: true });
-  rmSync(`${outputPath}.idsig`, { force: true });
-}
-
 function cleanSha256(value) {
   const clean = String(value || '').replace(/:/g, '').trim().toLowerCase();
   return /^[a-f0-9]{64}$/.test(clean) ? clean : '';
@@ -265,29 +235,6 @@ function verifyReleaseSigningEnv() {
   }
 }
 
-function verifyReleaseSignerLineage(apkPath, signerSha256) {
-  if (!expectedReleaseTrustAnchorSha256) {
-    console.error('app.json 缺少不可变的正式签名信任锚：expo.extra.releaseTrustAnchorSha256。');
-    process.exit(1);
-  }
-  const apkSignerJar = findApkSignerJar();
-  if (!apkSignerJar || !existsSync(apkLineageInspectorPath)) {
-    console.error('缺少 apksig 或签名 lineage 检查器。');
-    process.exit(1);
-  }
-  const output = runCapture('java', ['--class-path', apkSignerJar, apkLineageInspectorPath, apkPath]);
-  const current = /^current=([a-f0-9]{64})$/m.exec(output)?.[1];
-  const lineageVerified = /^lineage=true$/m.test(output);
-  const certificates = [...output.matchAll(/^certificate=([a-f0-9]{64})$/gm)].map((match) => match[1]);
-  if (current !== signerSha256
-    || certificates[0] !== expectedReleaseTrustAnchorSha256
-    || certificates[certificates.length - 1] !== signerSha256
-    || (signerSha256 !== expectedReleaseTrustAnchorSha256 && (!lineageVerified || certificates.length < 2))) {
-    console.error('release APK 的签名 lineage 未从固定 trust anchor 延续到当前 signer。');
-    process.exit(1);
-  }
-}
-
 function verifySmokeEnv() {
   const missing = requiredSmokeEnv.filter((name) => !process.env[name]);
   if (missing.length) {
@@ -296,7 +243,6 @@ function verifySmokeEnv() {
   }
 }
 
-assertCleanWorktree({ rootDir, phase: '发布前' });
 loadReleaseEnvFile();
 verifyReleaseSigningEnv();
 verifySmokeEnv();
@@ -309,10 +255,9 @@ run('npm', ['test']);
 run('npm', ['run', 'test:docs']);
 run('npm', ['run', 'check:docs']);
 run('npm', ['run', 'check:unused']);
-run('node', ['scripts/check-version.mjs', '--release']);
+run('node', ['scripts/check-version.mjs']);
 
 run('node', ['scripts/generate-adaptive-icon.mjs']);
-assertCleanWorktree({ rootDir, phase: 'adaptive icon 生成后' });
 run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);
 
 run(
@@ -336,15 +281,11 @@ run(
 );
 
 verifyReleaseApk(releaseApkPath);
-signReleaseApkWithLineage(releaseApkPath);
 const signerSha256 = verifyReleaseApkSignature(releaseApkPath);
 verifyExpectedReleaseSigner(signerSha256);
-verifyReleaseSignerLineage(releaseApkPath, signerSha256);
 verifyReleaseApk(builtSmokeApkPath);
-signReleaseApkWithLineage(builtSmokeApkPath);
 const builtSmokeSignerSha256 = verifyReleaseApkSignature(builtSmokeApkPath);
 verifyExpectedReleaseSigner(builtSmokeSignerSha256);
-verifyReleaseSignerLineage(builtSmokeApkPath, builtSmokeSignerSha256);
 signDevelopmentSmokeApk(builtSmokeApkPath, smokeApkPath);
 verifyReleaseApk(smokeApkPath);
 const smokeSignerSha256 = verifyReleaseApkSignature(smokeApkPath);

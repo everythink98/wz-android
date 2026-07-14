@@ -138,21 +138,6 @@ describe('Android search list items', () => {
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
   });
 
-  it('keeps already loaded topics visible after loading more fails', () => {
-    const groups: SearchGroup[] = [{
-      source: 'linuxdo',
-      label: 'linux.do',
-      items: [topic('1', 'linuxdo'), topic('2', 'linuxdo')],
-      error: '加载更多失败',
-      hasMore: true,
-      nextPage: 3
-    }];
-
-    const items = buildSearchListItems({ expandedGroups: { linuxdo: true }, groups });
-
-    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupError', 'topic', 'topic']);
-  });
-
   it('labels verification-required search groups separately from login limits', () => {
     const groups: SearchGroup[] = [{
       source: 'nodeseek',

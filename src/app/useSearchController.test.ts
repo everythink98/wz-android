@@ -1,14 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   createNodeSeekRetrySearchOptions,
   createSearchMoreRequestSnapshot,
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
-  retrySearchHistoryWrite,
   firstRemoteSearchAction,
   groupFromRemoteSearchResult,
   remoteSearchActionForSource,
-  stopSearchGroupLoadingMore,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
 
@@ -62,16 +60,6 @@ describe('search controller result helpers', () => {
     expect(writes).toEqual(['with A', 'without A']);
   });
 
-  it('retries a transient search history write failure once', async () => {
-    const write = vi.fn()
-      .mockRejectedValueOnce(new Error('temporary storage failure'))
-      .mockResolvedValueOnce(undefined);
-
-    await retrySearchHistoryWrite(write);
-
-    expect(write).toHaveBeenCalledTimes(2);
-  });
-
   it('snapshots NodeSeek verification retry search inputs', () => {
     const filters = {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
@@ -119,17 +107,5 @@ describe('search controller result helpers', () => {
       sort: 'relevance',
       visitedKey: 'nodeseek:codex:{"source":"nodeseek","category":"tech","sort":"replyTime"}'
     });
-  });
-
-  it('releases a source pagination spinner after a silent interruption', () => {
-    const groups = [
-      { source: 'nodeseek' as const, label: 'NodeSeek', items: [], loadingMore: true },
-      { source: 'v2ex' as const, label: 'V2EX', items: [], loadingMore: true }
-    ];
-
-    expect(stopSearchGroupLoadingMore(groups, 'nodeseek')).toEqual([
-      { source: 'nodeseek', label: 'NodeSeek', items: [], loadingMore: false },
-      groups[1]
-    ]);
   });
 });

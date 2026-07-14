@@ -88,29 +88,6 @@ export interface LinuxDoLevelProfile {
   fetchedAt: string;
 }
 
-export class LinuxDoLoginExpiredError extends Error {
-  readonly source = 'linuxdo' as const;
-  readonly reason = 'expired' as const;
-  readonly loginRequired = true as const;
-  readonly status?: number;
-
-  constructor(status?: number) {
-    super('linux.do 登录已失效，请重新登录');
-    this.name = 'LinuxDoLoginExpiredError';
-    this.status = status;
-  }
-}
-
-export function isLinuxDoLoginExpiredError(error: unknown): error is LinuxDoLoginExpiredError {
-  return Boolean(
-    error
-    && typeof error === 'object'
-    && (error as { source?: unknown }).source === 'linuxdo'
-    && (error as { reason?: unknown }).reason === 'expired'
-    && (error as { loginRequired?: unknown }).loginRequired === true
-  );
-}
-
 type LinuxDoSummaryInput = Record<string, unknown>;
 type LinuxDoSnapshot = {
   username: string;
@@ -457,30 +434,19 @@ async function fetchLinuxDoJson(path: string, options: LinuxDoRequestOptions) {
     timeoutMs: options.timeoutMs
   });
   const text = await response.text();
+  if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
+    throw linuxDoCloudflareError();
+  }
   let data: unknown = null;
-  let bodyIsReadable = !text;
   if (text) {
     try {
       data = JSON.parse(text);
-      bodyIsReadable = true;
     } catch {
-      bodyIsReadable = false;
+      if (!response.ok) {
+        throw new Error(`linux.do 等级数据读取失败：HTTP ${response.status}`);
+      }
+      throw new Error('linux.do 等级数据格式不正确');
     }
-  }
-  if (isCloudflareChallengeResponse(
-    { status: response.status, headers: response.headers, bodyText: text },
-    { bodyIsReadable }
-  )) {
-    throw linuxDoCloudflareError();
-  }
-  if (response.status === 401) {
-    throw new LinuxDoLoginExpiredError(response.status);
-  }
-  if (!bodyIsReadable) {
-    if (!response.ok) {
-      throw new Error(`linux.do 等级数据读取失败：HTTP ${response.status}`);
-    }
-    throw new Error('linux.do 等级数据格式不正确');
   }
   if (!response.ok) {
     throw new Error(`linux.do 等级数据读取失败：HTTP ${response.status}`);
@@ -532,16 +498,9 @@ function usernameFromCurrentUser(data: unknown) {
 
 async function fetchCurrentUser(options: LinuxDoRequestOptions) {
   const data = await fetchLinuxDoJson('/session/current.json', options);
-  if (
-    isRecord(data)
-    && Object.prototype.hasOwnProperty.call(data, 'current_user')
-    && data.current_user === null
-  ) {
-    throw new LinuxDoLoginExpiredError();
-  }
   const currentUser = usernameFromCurrentUser(data);
   if (!currentUser) {
-    throw new Error('linux.do 当前用户数据格式不正确，请稍后重试。');
+    throw new Error('无法读取当前 linux.do 用户名，请重新检测 linux.do 登录状态。');
   }
   return currentUser;
 }
@@ -603,10 +562,7 @@ export async function getLinuxDoLevelProfile({
   let currentUser: LinuxDoCurrentUser | null = null;
   try {
     data = await fetchLinuxDoJson('/my/summary.json', requestOptions);
-  } catch (error) {
-    if (isLinuxDoLoginExpiredError(error)) {
-      throw error;
-    }
+  } catch {
     currentUser = await fetchCurrentUser(requestOptions);
     data = await fetchLinuxDoJson(`/u/${encodeURIComponent(currentUser.username)}/summary.json`, requestOptions);
   }
@@ -614,10 +570,7 @@ export async function getLinuxDoLevelProfile({
   if (!currentUser && (!hasTrustLevel(summary) || !hasUsername(summary))) {
     try {
       currentUser = await fetchCurrentUser(requestOptions);
-    } catch (error) {
-      if (isLinuxDoLoginExpiredError(error)) {
-        throw error;
-      }
+    } catch {
       currentUser = null;
     }
   }

@@ -1,27 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeHtml, escapeHtmlAttribute, escapeHtmlText, parsePositiveInteger, sanitizeContentHtml, textContentFromHtml, toIsoString } from './localHtml';
+import { decodeHtml, sanitizeContentHtml, textContentFromHtml } from './localHtml';
 
 describe('Android local HTML helpers', () => {
-  it('rejects out-of-range numeric timestamps instead of throwing', () => {
-    expect(toIsoString(1_719_792_000)).toBe('2024-07-01T00:00:00.000Z');
-    expect(toIsoString(1_719_792_000_000)).toBe('2024-07-01T00:00:00.000Z');
-    expect(toIsoString(1_719_792_000_000_000)).toBe('');
-    expect(toIsoString(Number.POSITIVE_INFINITY)).toBe('');
-  });
-
-  it('accepts only safe positive integer fragments', () => {
-    expect(parsePositiveInteger('阅 1,234')).toBe(1234);
-    expect(parsePositiveInteger('-1')).toBe(0);
-    expect(parsePositiveInteger('楼层 -2')).toBe(0);
-    expect(parsePositiveInteger('999999999999999999999')).toBe(0);
-  });
-
-  it('escapes text and attributes through distinct shared primitives', () => {
-    expect(escapeHtmlText(`A&B <tag> "quoted" 'single'`)).toBe(`A&amp;B &lt;tag&gt; "quoted" 'single'`);
-    expect(escapeHtmlAttribute(`A&B <tag> "quoted" 'single'`)).toBe('A&amp;B &lt;tag&gt; &quot;quoted&quot; &#39;single&#39;');
-  });
-
   it('extracts visible text without script or style contents', () => {
     expect(textContentFromHtml('<style>.x{color:red}</style><p>A&nbsp;B<br>C</p><script>alert(1)</script>')).toBe('A B C');
   });

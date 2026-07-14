@@ -43,15 +43,11 @@ function sameAccessRequirement(left: Topic['accessRequirement'], right: Topic['a
 function sameTopicCardTopic(left: Topic, right: Topic) {
   return left.source === right.source
     && left.id === right.id
-    && left.url === right.url
     && left.title === right.title
     && left.author === right.author
-    && left.authorId === right.authorId
-    && left.authorUrl === right.authorUrl
     && left.authorAvatar === right.authorAvatar
     && left.authorLevelLabel === right.authorLevelLabel
     && left.category === right.category
-    && left.categoryId === right.categoryId
     && left.createdAt === right.createdAt
     && left.lastReplyAt === right.lastReplyAt
     && left.displayTimeText === right.displayTimeText

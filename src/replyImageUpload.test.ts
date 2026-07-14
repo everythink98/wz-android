@@ -220,6 +220,7 @@ describe('reply image upload helpers', () => {
     const request = buildNodeSeekReplyRequest({
       postId: '723704',
       content: draft,
+      csrfToken: 'fixed-csrf-token',
       replyTarget: {
         floor: 18,
         author: 'Butachi'

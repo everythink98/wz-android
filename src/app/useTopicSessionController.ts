@@ -3,6 +3,7 @@ import { createReplyTextIndexForQuery, filterRepliesByQuery } from '../androidFe
 import type { ReplyEditTarget, ReplyFilter, ReplyTarget, TopicSnapshot } from '../appTypes';
 import { isSameReply, removeReply } from '../feedLogic';
 import { topicKey } from '../readerData';
+import { appendReplyImageMarkup } from '../replyImageUpload';
 import {
   applyBookmarkToTopic,
   applyInteractionToReplies,
@@ -140,6 +141,7 @@ export function useTopicSessionController({
   const [replyContent, setReplyContent] = useState('');
   const [replyFace, setReplyFace] = useState('');
   const [commentQuery, setCommentQuery] = useState('');
+  const [debouncedCommentQuery, setDebouncedCommentQuery] = useState('');
   const [replyComposerOpen, setReplyComposerOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const [replyEditTarget, setReplyEditTarget] = useState<ReplyEditTarget | null>(null);
@@ -171,6 +173,11 @@ export function useTopicSessionController({
       return { ...current, replies: topicReplies };
     });
   }, [topicReplies]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedCommentQuery(commentQuery), 180);
+    return () => clearTimeout(timer);
+  }, [commentQuery]);
 
   const updateExpandedQuotes = useCallback((updater: (current: Record<string, boolean>) => Record<string, boolean>) => {
     expandedQuotesRef.current = updater(expandedQuotesRef.current);
@@ -269,6 +276,10 @@ export function useTopicSessionController({
     setReplyEditTarget(next.replyEditTarget);
   }, []);
 
+  const appendReplyMarkup = useCallback((markup: string) => {
+    setReplyContent((current) => appendReplyImageMarkup(current, markup));
+  }, []);
+
   const applyTopicActionUpdate = useCallback((update: TopicSessionActionUpdate) => {
     setTopicDetail((current) => topicDetailAfterActionUpdate(current, update));
     setTopicReplies((current) => topicRepliesAfterActionUpdate(current, update));
@@ -287,7 +298,7 @@ export function useTopicSessionController({
     setTopicBusy(false);
   }, [invalidateTopicActionRequests]);
 
-  const beginTopicLoad = useCallback((topic: Topic, key: string, preserveReplyComposer = false) => {
+  const beginTopicLoad = useCallback((topic: Topic, key: string) => {
     invalidateTopicActionRequests(key);
     currentTopicKeyRef.current = key;
     setLoadingMoreReplies(false);
@@ -300,13 +311,11 @@ export function useTopicSessionController({
     setReplyHasMore(false);
     setReplyNextPage(null);
     setReplyNextOffset(null);
-    if (!preserveReplyComposer) {
-      setReplyContent('');
-      setReplyFace('');
-      setReplyComposerOpen(false);
-      setReplyTarget(null);
-      setReplyEditTarget(null);
-    }
+    setReplyContent('');
+    setReplyFace('');
+    setReplyComposerOpen(false);
+    setReplyTarget(null);
+    setReplyEditTarget(null);
     setReplyFilter('all');
     resetQuoteState();
     setTopicBusy(true);
@@ -415,6 +424,7 @@ export function useTopicSessionController({
     setReplyNextOffset(session.replyNextOffset);
     setUnreadReplyCount(session.unreadReplyCount);
     setCommentQuery(session.commentQuery);
+    setDebouncedCommentQuery(session.commentQuery);
     setReplyFilter(session.replyFilter);
     setReplyContent(session.replyContent);
     setReplyFace(session.replyFace);
@@ -499,6 +509,7 @@ export function useTopicSessionController({
   return {
     state: {
       commentQuery,
+      debouncedCommentQuery,
       expandedQuotes: expandedQuotesRef.current,
       loadedQuotedReplies: loadedQuotedRepliesRef.current,
       loadingMoreReplies,
@@ -525,6 +536,7 @@ export function useTopicSessionController({
         applyUpdate: applyTopicActionUpdate
       },
       composer: {
+        appendMarkup: appendReplyMarkup,
         changeContent: setReplyContent,
         changeFace: setReplyFace,
         completeSubmission: completeReplySubmission,

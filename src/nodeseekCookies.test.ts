@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCookieHeader,
-  buildNodeSeekSetCookieHeaders,
   canStoreNodeSeekCookieHeader,
   hasNodeSeekLoginCookie,
   mergeNodeSeekCookies,
   nodeSeekBrowserCookieHeaderForPersistence,
+  nodeSeekAccessRecord,
   nodeSeekCredentialUserId,
+  nodeSeekCsrfTokenFromHtml,
   nodeSeekUserIdFromCookies,
   parseNodeSeekDocumentCookie,
   parseNodeSeekAccessRecord,
@@ -17,13 +18,6 @@ import {
 } from './nodeseekCookies';
 
 describe('NodeSeek cookie helpers', () => {
-  it('builds restorable Set-Cookie headers only for persisted NodeSeek credentials', () => {
-    expect(buildNodeSeekSetCookieHeaders('session=new-login; cf_clearance=new-clearance; analytics=skip')).toEqual([
-      'session=new-login; Domain=nodeseek.com; Path=/; Secure; HttpOnly; SameSite=Lax',
-      'cf_clearance=new-clearance; Domain=nodeseek.com; Path=/; Secure; HttpOnly; SameSite=Lax'
-    ]);
-  });
-
   it('detects a NodeSeek login cookie', () => {
     const cookies: Record<string, NativeCookie> = {
       session: {
@@ -246,7 +240,7 @@ describe('NodeSeek cookie helpers', () => {
     });
   });
 
-  it('ignores a legacy saved csrf token while parsing NodeSeek access', () => {
+  it('parses a combined NodeSeek access record with a normalized user agent', () => {
     expect(parseNodeSeekAccessRecord(JSON.stringify({
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15; wv) Version/4.0 Chrome/124 Mobile Safari/537.36',
@@ -258,9 +252,27 @@ describe('NodeSeek cookie helpers', () => {
       cookieHeader: 'session=abc',
       userAgent: 'Mozilla/5.0 (Linux; Android 15) Chrome/124 Mobile Safari/537.36',
       userId: 48872,
+      csrfToken: 'page-csrf',
       savedAt: '2026-06-21T00:00:00.000Z',
       source: 'webview'
     });
   });
 
+  it('stores a NodeSeek access csrf token separately from cookies', () => {
+    expect(nodeSeekAccessRecord(
+      'session=abc',
+      'Mozilla/5.0',
+      48872,
+      ' page-csrf '
+    )).toMatchObject({
+      cookieHeader: 'session=abc',
+      userId: 48872,
+      csrfToken: 'page-csrf'
+    });
+  });
+
+  it('reads NodeSeek csrf token from rendered page html', () => {
+    expect(nodeSeekCsrfTokenFromHtml('<html><head><meta name="csrf-token" content="page-csrf"></head></html>')).toBe('page-csrf');
+    expect(nodeSeekCsrfTokenFromHtml('<meta content="next-csrf" name="csrf-token">')).toBe('next-csrf');
+  });
 });

@@ -9,7 +9,6 @@ export const MAX_READER_STRING_LENGTH = 4096;
 export const FONT_SCALE_MIN = 0.85;
 export const FONT_SCALE_MAX = 1.4;
 export const FONT_SCALE_STEP = 0.05;
-const MAX_IMPORT_FUTURE_CLOCK_SKEW_MS = 24 * 60 * 60 * 1000;
 
 export interface TopicRecord {
   topic: Topic;
@@ -484,37 +483,6 @@ export function sanitizeReaderData(value: unknown): ReaderData {
 function dateValue(value: string | undefined) {
   const time = value ? Date.parse(value) : 0;
   return Number.isFinite(time) ? time : 0;
-}
-
-function importTimestampAllowed(value: string | undefined) {
-  const time = dateValue(value);
-  return time > 0 && time <= Date.now() + MAX_IMPORT_FUTURE_CLOCK_SKEW_MS;
-}
-
-export function sanitizeImportedReaderData(value: unknown): ReaderData {
-  const data = sanitizeReaderData(value);
-  const hasUnsafeFutureTimestamp = [
-    ...Object.values(data.favorites).map((record) => record.savedAt),
-    ...Object.values(data.history).map((record) => record.savedAt),
-    ...Object.values(data.followedUsers).map((record) => record.followedAt),
-    ...Object.values(data.deletedRecords.favorites),
-    ...Object.values(data.deletedRecords.history),
-    ...Object.values(data.deletedRecords.followedUsers)
-  ].some((timestamp) => !importTimestampAllowed(timestamp));
-  if (hasUnsafeFutureTimestamp) {
-    throw new Error('备份中的资料时间异常，请校准原设备时间后重新导出。');
-  }
-  return {
-    ...data,
-    favorites: { ...data.favorites },
-    history: { ...data.history },
-    followedUsers: { ...data.followedUsers },
-    deletedRecords: {
-      favorites: { ...data.deletedRecords.favorites },
-      history: { ...data.deletedRecords.history },
-      followedUsers: { ...data.deletedRecords.followedUsers }
-    }
-  };
 }
 
 function mergeTimedMap<T>(local: Record<string, T>, remote: Record<string, T>, getTime: (record: T) => string | undefined) {

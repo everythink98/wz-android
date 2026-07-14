@@ -89,10 +89,6 @@ export function createInactiveTopicSession(): TopicSession {
   };
 }
 
-export function shouldPreserveTopicComposer(currentTopicKey: string | null, nextTopic: Topic, nocache: boolean) {
-  return Boolean(nocache && currentTopicKey && currentTopicKey === topicKey(nextTopic));
-}
-
 export function createEmptyTopicSession(topic: Topic): TopicSession {
   return {
     ...createInactiveTopicSession(),

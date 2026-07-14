@@ -32,10 +32,7 @@ describe('linux.do action client', () => {
         });
       }
       if (input === 'https://linux.do/post_actions') {
-        return new Response(JSON.stringify({
-          success: true,
-          cooked: '<p>Example response: enable javascript and cookies</p>'
-        }), {
+        return new Response(JSON.stringify({ success: true }), {
           headers: { 'content-type': 'application/json' }
         });
       }
@@ -95,9 +92,7 @@ describe('linux.do action client', () => {
   });
 
   it('checks linux.do login access with the saved login cookies', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
-      current_user: { id: 123, username: 'safe-user' }
-    }), {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ csrf: 'csrf-token' }), {
       headers: { 'content-type': 'application/json' }
     }));
 
@@ -108,7 +103,7 @@ describe('linux.do action client', () => {
     });
 
     expect(result).toEqual({ ok: true, message: '登录可用' });
-    expect(fetcher).toHaveBeenCalledWith('https://linux.do/session/current.json', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('https://linux.do/session/csrf', expect.objectContaining({
       headers: expect.objectContaining({
         Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'User-Agent': 'LinuxDo WebView UA'
@@ -116,8 +111,8 @@ describe('linux.do action client', () => {
     }));
   });
 
-  it('marks linux.do login expired when the current-session endpoint is anonymous', async () => {
-    const fetcher = vi.fn(async () => new Response(null, { status: 404 }));
+  it('marks linux.do login expired when CSRF access is unauthorized', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请先登录'] }), { status: 401 }));
 
     const result = await checkLinuxDoLoginAccess({
       cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
@@ -128,56 +123,6 @@ describe('linux.do action client', () => {
       ok: false,
       loginRequired: true,
       message: 'linux.do 登录已失效，请重新登录'
-    });
-  });
-
-  it('does not treat a generic current-session 403 as expired login', async () => {
-    const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
-      fetcher: vi.fn(async () => new Response(JSON.stringify({ errors: ['forbidden'] }), { status: 403 }))
-    });
-
-    expect(result).toEqual({
-      ok: false,
-      message: 'linux.do 请求失败：HTTP 403',
-      reason: 'permission_denied'
-    });
-  });
-
-  it('does not mistake an anonymous CSRF response for a valid linux.do login', async () => {
-    const fetcher = vi.fn(async (input: string) => {
-      if (input.endsWith('/session/current.json')) {
-        return new Response(null, { status: 404 });
-      }
-      return new Response(JSON.stringify({ csrf: 'anonymous-csrf-token' }));
-    });
-
-    const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=expired',
-      fetcher
-    });
-
-    expect(result).toEqual({
-      ok: false,
-      loginRequired: true,
-      message: 'linux.do 登录已失效，请重新登录'
-    });
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(fetcher).not.toHaveBeenCalledWith('https://linux.do/session/csrf', expect.anything());
-  });
-
-  it('does not accept a malformed current-session payload as logged in', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ current_user: {} })));
-
-    const result = await checkLinuxDoLoginAccess({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
-      fetcher
-    });
-
-    expect(result).toEqual({
-      ok: false,
-      message: 'linux.do 登录状态响应不完整',
-      reason: 'invalid_response'
     });
   });
 });

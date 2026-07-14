@@ -3,7 +3,6 @@ import type { FeedResponse, RepliesResponse, SearchResponse, Topic, TopicDetail 
 import {
   checkYaohuoLoginHtml,
   ensureYaohuoHtmlLoggedIn,
-  isYaohuoVerificationRequiredHtml,
   parseYaohuoListHtml,
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
@@ -78,9 +77,6 @@ async function fetchYaohuoHtml(url: string, cookie: string, fetcher: Fetcher = f
   const response = await fetchWithTimeout(safeUrl, yaohuoRequestInit(cookie), { fetcher, ...options });
   const html = await response.text();
   const responseUrl = requireYaohuoRequestUrl(response.url || safeUrl, safeUrl);
-  if (isYaohuoVerificationRequiredHtml(html)) {
-    ensureYaohuoHtmlLoggedIn(html, responseUrl);
-  }
   if (!response.ok) {
     const error = new Error(`HTTP ${response.status}`);
     Object.assign(error, {

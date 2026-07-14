@@ -194,17 +194,6 @@ describe('diagnostic file store', () => {
     expect(boundary.files.has(boundary.shared[0].uri)).toBe(false);
   });
 
-  it('freezes the exported snapshot before announcing that snapshot is ready', async () => {
-    appendDiagnosticLogLine('{"sequence":"before-snapshot"}');
-
-    await exportDiagnosticLog(metadata, {
-      onSnapshotReady: () => appendDiagnosticLogLine('{"sequence":"after-snapshot"}')
-    });
-
-    expect(boundary.shared[0].content).toContain('before-snapshot');
-    expect(boundary.shared[0].content).not.toContain('after-snapshot');
-  });
-
   it('keeps two one-megabyte windows and exports the previous window before the current one', async () => {
     for (let sequence = 0; sequence < 540; sequence += 1) {
       appendDiagnosticLogLine(JSON.stringify({ padding: 'x'.repeat(4000), sequence }));

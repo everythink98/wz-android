@@ -7,7 +7,6 @@ import {
   readTopicRouteSnapshot,
   removeTopicRouteSnapshot,
   saveTopicRouteSnapshot,
-  shouldPreserveTopicComposer,
   shouldReuseCurrentTopicDetail,
   snapshotFromTopicSession,
   topicSessionFromSnapshot,
@@ -107,12 +106,6 @@ describe('topic session state', () => {
       },
       scrollY: 120
     });
-  });
-
-  it('preserves the reply composer only while refreshing the current topic', () => {
-    expect(shouldPreserveTopicComposer('nodeseek:1', topic('1'), true)).toBe(true);
-    expect(shouldPreserveTopicComposer('nodeseek:1', topic('2'), true)).toBe(false);
-    expect(shouldPreserveTopicComposer('nodeseek:1', topic('1'), false)).toBe(false);
   });
 
   it('does not restore transient errors or quote loading flags from snapshots', () => {

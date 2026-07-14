@@ -4,7 +4,7 @@ import {
   completeOptimisticAction,
   type OptimisticActionState
 } from '../topicActionState';
-import { clearLinuxDoAccess, clearLinuxDoAccessForGeneration, currentLinuxDoAccessGeneration, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
+import { clearLinuxDoAccess, clearLinuxDoAccessForGeneration, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { errorMessage } from '../appUtils';
 import type { SiteSessionEvent } from '../siteSessionState';
 
@@ -38,35 +38,15 @@ export async function clearExpiredLinuxDoLogin({
   resetLinuxDoLevelState: () => void;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
 }) {
-  if (generation !== undefined && generation !== currentLinuxDoAccessGeneration()) {
-    return false;
-  }
-  let cleanupGeneration: number | undefined;
-  let remainingAccess;
-  try {
-    const cleanup = generation === undefined
-      ? clearLinuxDoAccess()
-      : clearLinuxDoAccessForGeneration(generation, cookieHeader);
-    cleanupGeneration = currentLinuxDoAccessGeneration();
-    remainingAccess = await cleanup;
-  } catch (cleanupError) {
-    if (cleanupGeneration !== currentLinuxDoAccessGeneration()) {
-      return false;
-    }
-    updateLinuxDoSession({ type: 'login-expired', message: errorMessage(error) });
-    resetLinuxDoLevelState();
-    throw cleanupError;
-  }
-  if (cleanupGeneration !== currentLinuxDoAccessGeneration()) {
-    return false;
-  }
+  const remainingAccess = generation === undefined
+    ? await clearLinuxDoAccess()
+    : await clearLinuxDoAccessForGeneration(generation, cookieHeader);
   const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
   const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
   updateLinuxDoSession(remainingAccess?.cookieHeader
     ? { type: 'verification-succeeded', cookieSummary: remainingSummary.names, loggedIn: false, at: new Date().toISOString() }
     : { type: 'login-expired', message: errorMessage(error) });
   resetLinuxDoLevelState();
-  return true;
 }
 
 export async function runSingleTopicAction<T>({

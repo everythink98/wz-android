@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exportReaderBackupJson, importReaderBackupJson } from './readerBackup';
 import { createEmptyReaderData } from './readerData';
@@ -10,12 +8,6 @@ import { isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from './nodeseekFetch
 const fakeSecret = 'fixed-fake-secret-do-not-leak';
 
 describe('Android App security review guards', () => {
-  it('queues every allowed NodeSeek browser URL through the hidden WebView adapter', () => {
-    const source = readFileSync(path.resolve(__dirname, 'app', 'useSessionController.ts'), 'utf8');
-
-    expect(source).toContain('if (!isNodeSeekBrowserFetchUrl(url))');
-  });
-
   it('allows authenticated source requests only over HTTPS on expected hosts', () => {
     expect(isNodeSeekRequestUrl('https://www.nodeseek.com/search?q=test')).toBe(true);
     expect(isNodeSeekRequestUrl('http://www.nodeseek.com/search?q=test')).toBe(false);
