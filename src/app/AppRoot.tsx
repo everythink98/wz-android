@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   BackHandler,
@@ -117,18 +117,20 @@ type UserReturnTopic = {
 
 function useStableTopicLayoutDetail(topicDetail: TopicDetail | null) {
   const stableDetailRef = useRef(topicDetail);
-  if (
-    stableDetailRef.current !== topicDetail
-    && !hasSameYaohuoTopicLayout(stableDetailRef.current, topicDetail)
-  ) {
-    stableDetailRef.current = topicDetail;
-  }
-  return stableDetailRef.current;
+  const stableDetail = hasSameYaohuoTopicLayout(stableDetailRef.current, topicDetail)
+    ? stableDetailRef.current
+    : topicDetail;
+  useLayoutEffect(() => {
+    stableDetailRef.current = stableDetail;
+  }, [stableDetail]);
+  return stableDetail;
 }
 
 function useLatestCallback<Arguments extends unknown[], Result>(callback: (...args: Arguments) => Result) {
   const callbackRef = useRef(callback);
-  callbackRef.current = callback;
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
   return useCallback((...args: Arguments) => callbackRef.current(...args), []);
 }
 

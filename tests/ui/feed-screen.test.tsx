@@ -194,7 +194,18 @@ describe('Feed loading', () => {
 
   it('[REG-FEED-002] resets the rendered list position when the Feed filter changes', async () => {
     const nodeSeekTopic: Topic = { ...topic, source: 'nodeseek' };
-    const view = await render(renderFeed(false, [nodeSeekTopic], {
+    const nodeSeekItems = [nodeSeekTopic];
+    const callbacks = {
+      onCategoryChange: jest.fn(),
+      onFeedFilterChange: jest.fn(),
+      onFeedSourceChange: jest.fn(),
+      onLoadMore: jest.fn(),
+      onOpenTopic: jest.fn(),
+      onReadingFilterChange: jest.fn(),
+      onRefresh: jest.fn()
+    };
+    const view = await render(renderFeed(false, nodeSeekItems, {
+      ...callbacks,
       feedFilter: 'postTime',
       feedSource: 'nodeseek'
     }));
@@ -211,7 +222,8 @@ describe('Feed loading', () => {
     });
     expect(view.queryByTestId('mock-feed-first-visible')).toBeNull();
 
-    await view.rerender(renderFeed(false, [nodeSeekTopic], {
+    await view.rerender(renderFeed(false, nodeSeekItems, {
+      ...callbacks,
       feedFilter: 'replyTime',
       feedSource: 'nodeseek'
     }));

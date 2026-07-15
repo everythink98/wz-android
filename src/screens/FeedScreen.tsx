@@ -315,8 +315,10 @@ export const FeedScreen = memo(function FeedScreen({
     );
   }, [
     busy,
+    categoryFilter,
     completePendingFeedScrollReset,
     feedEmptyText,
+    feedFilter,
     feedHasMore,
     feedItems,
     feedPage,
@@ -327,6 +329,7 @@ export const FeedScreen = memo(function FeedScreen({
     onRefresh,
     pagerIndex,
     refreshing,
+    readingFilter,
     renderTopicItem,
     renderTopicSeparator,
     requestFeedLoadMore,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
 import { Image as ExpoImage } from 'expo-image';
@@ -248,10 +248,12 @@ export function useHtmlRenderingController({
   webViewBlockMessage: string;
 }) {
   const htmlTopicDetailRef = useRef(topicDetail);
-  if (htmlTopicDetailRef.current !== topicDetail && !hasSameYaohuoTopicLayout(htmlTopicDetailRef.current, topicDetail)) {
-    htmlTopicDetailRef.current = topicDetail;
-  }
-  const htmlTopicDetail = htmlTopicDetailRef.current;
+  const htmlTopicDetail = hasSameYaohuoTopicLayout(htmlTopicDetailRef.current, topicDetail)
+    ? htmlTopicDetailRef.current
+    : topicDetail;
+  useLayoutEffect(() => {
+    htmlTopicDetailRef.current = htmlTopicDetail;
+  }, [htmlTopicDetail]);
   const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({ topicKey: '', urls: {} });
   const emptyInlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [topicKey]);
   const inlineSizedImageUrls = inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
