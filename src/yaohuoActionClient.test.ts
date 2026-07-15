@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runYaohuoAction } from './yaohuoActionClient';
-import { buildYaohuoDeleteReplyRequest, buildYaohuoFavoriteRequest, buildYaohuoReplyRequest } from './yaohuoActions';
+import { buildYaohuoDeleteFavoriteRequest, buildYaohuoDeleteReplyRequest, buildYaohuoFavoriteRequest, buildYaohuoReplyRequest } from './yaohuoActions';
 
 function htmlResponse(body: string, status = 200, url = 'https://www.yaohuo.me/bbs/book_re.aspx') {
   const response = new Response(body, {
@@ -47,20 +47,70 @@ describe('runYaohuoAction', () => {
     expect(JSON.stringify(result)).not.toContain('secret');
   });
 
-  it('runs GET actions without a request body', async () => {
-    const fetcher = vi.fn(async () => htmlResponse('<html>收藏成功</html>'));
+  it('REG-WRITE-002 runs the live favorite action once and accepts its favorites-page redirect', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(`
+      <html>
+        <head><title>收藏夹</title></head>
+        <body>
+          <div class="modern-list-item">
+            <a href="/bbs-123.html" class="modern-list-item-title">测试主题</a>
+            <button data-fav-id="987" title="删除收藏"></button>
+          </div>
+          <div>我的收藏列表以及完整站点导航、分类和页脚内容。这个页面足够长，不能只靠短文本猜测操作结果。</div>
+          <div>收藏主题、站内公告、论坛入口和其他页面内容。</div>
+          <div>更多导航文字用于还原妖火当前线上收藏成功后的完整收藏夹页面。</div>
+        </body>
+      </html>
+    `, 200, 'https://www.yaohuo.me/bbs/favlist.aspx'));
 
-    await runYaohuoAction({
+    const result = await runYaohuoAction({
       cookieHeader: 'sidyaohuo=secret',
       request: buildYaohuoFavoriteRequest({ topicId: '123', classId: '177' }),
       fetcher
     });
 
+    expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith('https://www.yaohuo.me/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=123', expect.objectContaining({
       method: 'GET',
       body: undefined,
       signal: expect.any(AbortSignal)
     }));
+    expect(result.message).toBe('收藏成功');
+    expect(result.favoriteId).toBe(987);
+  });
+
+  it('REG-WRITE-003 confirms original favorite cancellation from the JSON response', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(
+      JSON.stringify({ success: true, message: '删除成功' }),
+      200,
+      'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987'
+    ));
+
+    const result = await runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }),
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
+      expect.objectContaining({ method: 'POST', body: undefined })
+    );
+    expect(result).toMatchObject({ ok: true, message: '已取消原站收藏' });
+  });
+
+  it('does not clear the favorite style when original cancellation is rejected', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(
+      JSON.stringify({ success: false, message: '删除失败' }),
+      200,
+      'https://www.yaohuo.me/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987'
+    ));
+
+    await expect(runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' }),
+      fetcher
+    })).rejects.toThrow('删除失败');
   });
 
   it('follows yaohuo reply delete confirmation links before reporting success', async () => {
@@ -115,8 +165,14 @@ describe('runYaohuoAction', () => {
     expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
   });
 
-  it('keeps short yaohuo action text when no tip wrapper exists', async () => {
-    const fetcher = vi.fn(async () => htmlResponse('<html>收藏成功</html>'));
+  it('does not treat a cross-origin favorites path as a successful favorite', async () => {
+    const fetcher = vi.fn(async () => htmlResponse(`
+      <html><body>
+        <div>这是其他来源返回的完整收藏夹页面，路径相同也不能作为妖火收藏成功的证据。</div>
+        <div>页面包含足够多的导航、列表和页脚文字，必须继续保持结果不确定。</div>
+        <div>不能因为最终路径名字相同就把外站页面当作妖火的成功跳转。</div>
+      </body></html>
+    `, 200, 'https://example.com/bbs/favlist.aspx'));
 
     const result = await runYaohuoAction({
       cookieHeader: 'sidyaohuo=secret',
@@ -124,7 +180,23 @@ describe('runYaohuoAction', () => {
       fetcher
     });
 
-    expect(result.message).toBe('收藏成功');
+    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
+  });
+
+  it('keeps short yaohuo action text when no tip wrapper exists', async () => {
+    const fetcher = vi.fn(async () => htmlResponse('<html>评论成功</html>'));
+
+    const result = await runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoReplyRequest({
+        topicId: '123',
+        classId: '177',
+        content: '谢谢分享'
+      }),
+      fetcher
+    });
+
+    expect(result.message).toBe('评论成功');
   });
 
   it('rejects short yaohuo failure tips', async () => {

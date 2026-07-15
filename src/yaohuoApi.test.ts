@@ -6,7 +6,7 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from './yaohuoApi';
-import { parseYaohuoCurrentUserHtml, parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
+import { parseYaohuoCurrentUserHtml, parseYaohuoFavoriteRecordId, parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
@@ -518,6 +518,58 @@ describe('Android direct yaohuo API', () => {
     expect(yaohuoFetcher).toHaveBeenNthCalledWith(2, 'https://www.yaohuo.me/bbs/book_re.aspx?id=123&classid=177&page=1', expect.any(Object));
     expect(detail.replyCount).toBe(1);
     expect(detail.replies[0]).toMatchObject({ author: 'bob', floor: 1 });
+  });
+
+  it('REG-WRITE-003 loads the original favorite record with the topic detail', async () => {
+    const topic: Topic = {
+      source: 'yaohuo',
+      id: '123',
+      title: '妖火帖子',
+      author: 'alice',
+      url: 'https://www.yaohuo.me/bbs-123.html',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      replyCount: 0,
+      categoryId: '177'
+    };
+    const yaohuoFetcher = vi.fn(async (input: string) => {
+      if (input.includes('/bbs/favlist.aspx')) {
+        return new Response(`
+          <div class="modern-list-item">
+            <a href="/bbs-123.html" class="modern-list-item-title">妖火帖子</a>
+            <button data-fav-id="987" title="删除收藏"></button>
+          </div>
+        `);
+      }
+      if (input.includes('/bbs/book_re.aspx')) {
+        return new Response('');
+      }
+      return new Response('<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div><a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>');
+    });
+
+    const detail = await getYaohuoTopicDirect({
+      topic,
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    const favoriteUrl = vi.mocked(yaohuoFetcher).mock.calls
+      .map(([input]) => String(input))
+      .find((input) => input.includes('/bbs/favlist.aspx'));
+    expect(favoriteUrl).toBeTruthy();
+    expect(new URL(favoriteUrl || '').searchParams.get('key')).toBe('妖火帖子');
+    expect(detail).toMatchObject({ bookmarked: true, bookmarkId: 987 });
+  });
+
+  it('matches favorite records by topic id instead of title alone', () => {
+    const html = `
+      <div class="modern-list-item">
+        <a href="/bbs-456.html" class="modern-list-item-title">同名主题</a>
+        <button data-fav-id="987" title="删除收藏"></button>
+      </div>
+    `;
+
+    expect(parseYaohuoFavoriteRecordId(html, '456')).toBe(987);
+    expect(parseYaohuoFavoriteRecordId(html, '123')).toBeUndefined();
   });
 
   it('does not send yaohuo cookies to an off-site topic url', async () => {

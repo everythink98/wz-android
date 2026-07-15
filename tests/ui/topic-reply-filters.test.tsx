@@ -5,9 +5,10 @@ import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail } from '../../src/types';
 import type { ReplyFilter } from '../../src/appTypes';
 import { filterTopicSessionReplies } from '../../src/app/useTopicSessionController';
+import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
 import { buildHtmlRenderingStyles } from '../../src/htmlRenderingStyles';
 import { createEmptyReaderData } from '../../src/readerData';
-import { TopicScreen } from '../../src/screens/topic/TopicScreenBody';
+import { TopicScreen, YaohuoFavoriteStateProvider } from '../../src/screens/topic/TopicScreenBody';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
 
@@ -51,6 +52,13 @@ jest.mock('@shopify/flash-list', () => {
   };
 });
 
+jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('expo-video', () => ({
+  VideoView: () => null,
+  useVideoPlayer: () => ({ pause: jest.fn(), play: jest.fn(), playing: false })
+}));
+jest.mock('react-native-webview', () => ({ WebView: () => null }));
+
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
   const Passthrough = ({ children }: { children?: React.ReactNode }) => ReactModule.createElement(ReactModule.Fragment, null, children);
@@ -88,7 +96,29 @@ jest.mock('lucide-react-native', () => {
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
 jest.mock('../../src/localLinuxdo', () => ({ getLinuxDoEmojiUrls: async () => ({}) }));
-jest.mock('../../src/screens/topic/TopicActionBar', () => ({ DetailActionButton: () => null }));
+jest.mock('../../src/screens/topic/TopicActionBar', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Pressable: NativePressable } = require('react-native') as typeof import('react-native');
+  return {
+    DetailActionButton: ({
+      accessibilityLabel,
+      active,
+      onPress,
+      tone
+    }: {
+      accessibilityLabel: string;
+      active?: boolean;
+      onPress: () => void;
+      tone?: string;
+    }) => ReactModule.createElement(NativePressable, {
+      accessibilityLabel,
+      accessibilityRole: 'button',
+      accessibilityState: { selected: Boolean(active) },
+      onPress,
+      testID: `detail-action-${tone || 'primary'}`
+    })
+  };
+});
 jest.mock('../../src/screens/topic/TopicContentBlock', () => ({ MemoizedTopicContentBlock: () => null }));
 jest.mock('../../src/screens/topic/TopicPolls', () => ({ TopicPolls: () => null }));
 jest.mock('../../src/screens/topic/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
@@ -113,6 +143,7 @@ const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const htmlStyles = buildHtmlRenderingStyles({ settings: readerData.settings, theme });
 const topicImageDeriver = createTopicImageDeriver();
+const noop = () => undefined;
 const sourceReplies: Reply[] = [
   { author: 'alice', contentHtml: '<p>first answer</p>', createdAt: '2026-07-14T00:01:00.000Z', floor: 1 },
   { author: 'bob', contentHtml: '<p>second needle</p><img src="https://img.example.com/2.png">', createdAt: '2026-07-14T00:02:00.000Z', floor: 2 },
@@ -131,29 +162,60 @@ const topic: TopicDetail = {
   replies: sourceReplies
 };
 
+function HtmlRendererIdentityHarness({
+  onRender,
+  selectedTopic,
+  topicDetail
+}: {
+  onRender: (renderers: object, rendererProps: object) => void;
+  selectedTopic: Topic;
+  topicDetail: TopicDetail;
+}) {
+  const rendering = useHtmlRenderingController({
+    onOpenExternalUrl: noop,
+    onOpenImagePreview: noop,
+    onOpenTopic: noop,
+    onOpenUser: noop,
+    selectedTopic,
+    settings: readerData.settings,
+    styles,
+    theme,
+    topicDetail,
+    topicKey: `${topicDetail.source}:${topicDetail.id}`,
+    webViewBlockMessage: ''
+  });
+  onRender(rendering.htmlRenderers, rendering.htmlRenderersProps);
+  return null;
+}
+
 function TopicFilterHarness({
   canUseNodeSeekActions = false,
+  canUseYaohuoActions = false,
   filteredCommentQuery,
   loadingMoreReplies = false,
   onLoadMoreReplies = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
   onReplyComposerOpenChange = jest.fn(),
   onToggleFavorite = jest.fn(),
+  onYaohuoFavorite = jest.fn(),
   onVerifyNodeSeek = jest.fn(),
   replyHasMore = false,
   selectedTopic = topic,
   topicDetail = topic,
   topicError = null,
   topicFavorite = false,
-  topicBusy = false
+  topicBusy = false,
+  yaohuoVisualBookmarked
 }: {
   canUseNodeSeekActions?: boolean;
+  canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
   loadingMoreReplies?: boolean;
   onLoadMoreReplies?: () => void;
   onRefreshWholeTopic?: () => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
   onToggleFavorite?: (topic: Topic) => void;
+  onYaohuoFavorite?: () => void;
   onVerifyNodeSeek?: () => void;
   replyHasMore?: boolean;
   selectedTopic?: Topic;
@@ -161,6 +223,7 @@ function TopicFilterHarness({
   topicError?: SourceErrorInfo | null;
   topicFavorite?: boolean;
   topicBusy?: boolean;
+  yaohuoVisualBookmarked?: boolean;
 } = {}) {
   const [commentQuery, setCommentQuery] = useState('');
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
@@ -177,11 +240,16 @@ function TopicFilterHarness({
 
   return (
     <View>
-      <TopicScreen
+      <YaohuoFavoriteStateProvider
+        bookmarked={yaohuoVisualBookmarked ?? Boolean(topicDetail?.bookmarked)}
+        onPress={onYaohuoFavorite}
+        topicKey={topicDetail ? `${topicDetail.source}:${topicDetail.id}` : ''}
+      >
+        <TopicScreen
         actionBusy={false}
         canUseLinuxDoActions={false}
         canUseNodeSeekActions={canUseNodeSeekActions}
-        canUseYaohuoActions={false}
+        canUseYaohuoActions={canUseYaohuoActions}
         commentQuery={commentQuery}
         contentWidth={720}
         expandedQuotes={{}}
@@ -244,8 +312,8 @@ function TopicFilterHarness({
         onVerifyLinuxDo={jest.fn()}
         onVerifyNodeSeek={onVerifyNodeSeek}
         onVotePoll={jest.fn()}
-        onYaohuoFavorite={jest.fn()}
       />
+      </YaohuoFavoriteStateProvider>
       <Text testID="active-filter">{replyFilter}</Text>
     </View>
   );
@@ -353,6 +421,124 @@ describe('Topic reply filters', () => {
       <TopicFilterHarness topicFavorite onToggleFavorite={onToggleFavorite} />
     );
     expect(view.getByLabelText('已收藏')).toBeTruthy();
+  });
+
+  it('REG-WRITE-003 exposes the confirmed yaohuo favorite as a yellow cancel action', async () => {
+    const onYaohuoFavorite = jest.fn<() => void>();
+    const yaohuoTopic: TopicDetail = {
+      ...topic,
+      source: 'yaohuo',
+      id: '123',
+      url: 'https://www.yaohuo.me/bbs-123.html',
+      bookmarked: true,
+      bookmarkId: 987
+    };
+    const view = await render(
+      <TopicFilterHarness
+        canUseYaohuoActions
+        onYaohuoFavorite={onYaohuoFavorite}
+        selectedTopic={yaohuoTopic}
+        topicDetail={yaohuoTopic}
+      />
+    );
+
+    const cancelButton = view.getByLabelText('取消原站收藏');
+    expect(cancelButton.props.accessibilityState.selected).toBe(true);
+    expect(cancelButton.props.testID).toBe('detail-action-favorite');
+    await fireEvent.press(cancelButton);
+    expect(onYaohuoFavorite).toHaveBeenCalledTimes(1);
+
+    const unfavoritedYaohuoTopic: TopicDetail = {
+      ...yaohuoTopic,
+      bookmarked: false,
+      bookmarkId: undefined
+    };
+    await view.rerender(
+      <TopicFilterHarness
+        canUseYaohuoActions
+        onYaohuoFavorite={onYaohuoFavorite}
+        selectedTopic={unfavoritedYaohuoTopic}
+        topicDetail={unfavoritedYaohuoTopic}
+      />
+    );
+    expect(view.getByLabelText('原站收藏').props.accessibilityState.selected).toBe(false);
+  });
+
+  it('[REG-WRITE-004] updates the yaohuo favorite button without replacing the topic layout detail', async () => {
+    const onYaohuoFavorite = jest.fn<() => void>();
+    const unfavoritedTopic: TopicDetail = {
+      ...topic,
+      source: 'yaohuo',
+      id: '123',
+      url: 'https://www.yaohuo.me/bbs-123.html',
+      bookmarked: false
+    };
+    const view = await render(
+      <TopicFilterHarness
+        canUseYaohuoActions
+        onYaohuoFavorite={onYaohuoFavorite}
+        selectedTopic={unfavoritedTopic}
+        topicDetail={unfavoritedTopic}
+        yaohuoVisualBookmarked={false}
+      />
+    );
+
+    await fireEvent.press(view.getByLabelText('原站收藏'));
+    expect(onYaohuoFavorite).toHaveBeenCalledTimes(1);
+    await view.rerender(
+      <TopicFilterHarness
+        canUseYaohuoActions
+        onYaohuoFavorite={onYaohuoFavorite}
+        selectedTopic={unfavoritedTopic}
+        topicDetail={unfavoritedTopic}
+        yaohuoVisualBookmarked
+      />
+    );
+
+    expect(view.getByLabelText('取消原站收藏').props.accessibilityState.selected).toBe(true);
+  });
+
+  it('[REG-WRITE-005] keeps HTML rendering inputs stable for yaohuo favorite and cancel confirmations', async () => {
+    const unbookmarkedTopic: TopicDetail = {
+      ...topic,
+      source: 'yaohuo',
+      id: '123',
+      url: 'https://www.yaohuo.me/bbs-123.html',
+      bookmarked: false
+    };
+    const onRender = jest.fn<(renderers: object, rendererProps: object) => void>();
+    const view = await render(
+      <HtmlRendererIdentityHarness
+        onRender={onRender}
+        selectedTopic={unbookmarkedTopic}
+        topicDetail={unbookmarkedTopic}
+      />
+    );
+    const initialRenderers = onRender.mock.calls.at(-1)?.[0];
+    const initialRendererProps = onRender.mock.calls.at(-1)?.[1];
+
+    const bookmarkedTopic: TopicDetail = { ...unbookmarkedTopic, bookmarked: true, bookmarkId: 987 };
+    await view.rerender(
+      <HtmlRendererIdentityHarness
+        onRender={onRender}
+        selectedTopic={unbookmarkedTopic}
+        topicDetail={bookmarkedTopic}
+      />
+    );
+
+    expect(onRender.mock.calls.at(-1)?.[0]).toBe(initialRenderers);
+    expect(onRender.mock.calls.at(-1)?.[1]).toBe(initialRendererProps);
+
+    await view.rerender(
+      <HtmlRendererIdentityHarness
+        onRender={onRender}
+        selectedTopic={unbookmarkedTopic}
+        topicDetail={{ ...bookmarkedTopic, bookmarked: false, bookmarkId: undefined }}
+      />
+    );
+
+    expect(onRender.mock.calls.at(-1)?.[0]).toBe(initialRenderers);
+    expect(onRender.mock.calls.at(-1)?.[1]).toBe(initialRendererProps);
   });
 
   it('updates visible replies for every filter and comment query', async () => {

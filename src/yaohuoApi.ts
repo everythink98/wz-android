@@ -4,6 +4,7 @@ import {
   checkYaohuoLoginHtml,
   ensureYaohuoHtmlLoggedIn,
   parseYaohuoListHtml,
+  parseYaohuoFavoriteRecordId,
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
@@ -199,21 +200,29 @@ export async function getYaohuoTopicDirect({
     url: topicPage.url
   });
 
-  const replies = await getYaohuoRepliesDirect({
-    id: detail.id || id,
-    categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
-    page: 1,
-    limit: replyLimit,
-    yaohuoCookie,
-    yaohuoFetcher,
-    signal,
-    timeoutMs
-  });
+  const [replies, favoritePage] = await Promise.all([
+    getYaohuoRepliesDirect({
+      id: detail.id || id,
+      categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
+      page: 1,
+      limit: replyLimit,
+      yaohuoCookie,
+      yaohuoFetcher,
+      signal,
+      timeoutMs
+    }),
+    fetchYaohuoHtml(yaohuoUrl('/bbs/favlist.aspx', {
+      key: detail.title || topic.title
+    }), cookie, yaohuoFetcher, { signal, timeoutMs })
+  ]);
+  const favoriteId = parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id);
 
   const result = {
     ...detail,
     categoryId: detail.categoryId || topic.categoryId,
     category: detail.category || topic.category,
+    bookmarked: Boolean(favoriteId),
+    bookmarkId: favoriteId,
     replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0, replies.items.length),
     replies: replies.items,
     replyHasMore: replies.hasMore,

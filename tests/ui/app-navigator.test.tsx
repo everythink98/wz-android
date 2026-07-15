@@ -7,6 +7,7 @@ import {
   AppNavigator,
   navigateAppScreen,
   navigationRef,
+  openReadingSettingsScreen,
   type MainTabParamList
 } from '../../src/app/AppNavigator';
 import { createEmptyReaderData } from '../../src/readerData';
@@ -43,6 +44,7 @@ describe('App navigator UI state', () => {
         renderFeedTab={() => <StatefulTab label="首页" />}
         renderLibraryTab={() => <StatefulTab label="收藏" />}
         renderMoreTab={() => <StatefulTab label="更多" />}
+        renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
         renderSearchTab={() => <StatefulTab label="搜索" />}
         renderTopicScreen={() => <Text>主题详情页面</Text>}
         renderUserScreen={() => <Text>用户详情页面</Text>}
@@ -94,7 +96,19 @@ describe('App navigator UI state', () => {
     expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
   });
 
-  it.failing('[REG-TOPIC-002] returns from topic reading settings without losing the topic route', async () => {
+  it('[REG-TOPIC-002] returns from topic reading settings without losing the topic route', async () => {
+    const StatefulTopic = () => {
+      const [value, setValue] = useState('');
+      return (
+        <View>
+          <Text>主题详情页面</Text>
+          <TextInput accessibilityLabel="主题阅读状态" value={value} onChangeText={setValue} />
+          <Pressable accessibilityRole="button" accessibilityLabel="阅读设置" onPress={openReadingSettingsScreen}>
+            <Text>阅读设置</Text>
+          </Pressable>
+        </View>
+      );
+    };
     const view = await render(
       <AppNavigator
         moreHasBadge={false}
@@ -102,15 +116,9 @@ describe('App navigator UI state', () => {
         renderFeedTab={() => <StatefulTab label="首页" />}
         renderLibraryTab={() => <StatefulTab label="收藏" />}
         renderMoreTab={() => <StatefulTab label="更多" />}
+        renderReadingSettingsScreen={() => <Text>阅读设置页面</Text>}
         renderSearchTab={() => <StatefulTab label="搜索" />}
-        renderTopicScreen={() => (
-          <View>
-            <Text>主题详情页面</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="阅读设置" onPress={() => navigateAppScreen('more')}>
-              <Text>阅读设置</Text>
-            </Pressable>
-          </View>
-        )}
+        renderTopicScreen={() => <StatefulTopic />}
         renderUserScreen={() => <Text>用户详情页面</Text>}
         styles={styles}
         theme={theme}
@@ -127,11 +135,18 @@ describe('App navigator UI state', () => {
       expect(navigateAppScreen('topic')).toBe(true);
     });
     await waitFor(() => expect(view.getByText('主题详情页面')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('主题阅读状态'), '保留筛选和位置');
 
     await fireEvent.press(view.getByLabelText('阅读设置'));
-    await waitFor(() => expect(view.getByText('更多页面')).toBeTruthy());
-    await fireEvent.press(view.getByTestId('main-tab-feed'));
+    await waitFor(() => expect(view.getByText('阅读设置页面')).toBeTruthy());
+    await act(async () => {
+      navigationRef.goBack();
+    });
 
-    await waitFor(() => expect(view.getByText('主题详情页面')).toBeTruthy());
+    await waitFor(() => {
+      expect(view.getByText('主题详情页面')).toBeTruthy();
+      expect(view.getByLabelText('主题阅读状态').props.value).toBe('保留筛选和位置');
+    });
   });
+
 });

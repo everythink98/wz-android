@@ -149,13 +149,13 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | --- | --- |
 | 能力 ID | `TOPIC-04`、`NAV-03` |
 | 用户症状 | 从主题右上菜单进入“阅读设置”后切回首页，原主题详情已经被弹出，用户回到首页列表而不是继续阅读原主题。 |
-| 触发条件 | 当前位于 Topic route，执行“阅读设置”；该入口展开 More 的外观面板并切换到 More tab，随后返回首页。 |
-| 根因 seam | `src/app/AppRoot.tsx` 的 `openReadingSettingsFromTopic` 复用 `changeScreen('more')`，而 `src/app/AppNavigator.tsx` 对 tab 目标执行 `popTo('MainTabs')`，直接移除了 Topic route。 |
-| 必须保持的行为 | 阅读设置入口仍打开 More 的外观面板；关闭或离开设置后能返回同一个主题详情、同一回复筛选和滚动上下文。普通底部 tab 导航是否退出详情仍保持其既有契约。 |
-| 精确失败 oracle | `tests/ui/app-navigator.test.tsx` 带 `REG-TOPIC-002` 的 `it.failing` 先进入 Topic，再通过“阅读设置”进入 More，切回首页后必须仍看到“主题详情页面”；当前实现精确失败在最后一步，只显示首页页面。 |
-| 最低可靠自动测试层 | 必须最终形成 `UI_PASS`：router 单元测试可以证明 `popTo` 的栈结果，但只有 RNTL 能证明用户经过可见入口后丢失了 Topic。当前 `it.failing` 只保存失败 oracle，不计作通过。 |
-| Replay 或真实验收路径 | Feed → Topic → 更多操作 → 阅读设置 → 返回首页；核对外观面板已展开，并且返回后仍是原 Topic。当前匹配 APK 已稳定复现为首页列表。 |
-| 负向验证方式 | 当前实现下最终 Topic 文案断言必须失败；修复后改为普通用例，再临时恢复 `changeScreen('more')` 的直接 `popTo` 路径时必须重新失败。 |
+| 触发条件 | 当前位于 Topic route，执行“阅读设置”，完成查看或调整后返回。修复前该入口展开 More 的外观面板并切换到 More tab，随后返回首页。 |
+| 根因 seam | `src/app/AppRoot.tsx` 的 `openReadingSettingsFromTopic` 曾复用 `changeScreen('more')`，而 `src/app/AppNavigator.tsx` 对 tab 目标执行 `popTo('MainTabs')`，直接移除了 Topic route。修复后改为 Topic 上方的 `ReadingSettings` 临时 stack route，并复用既有 `AppearancePanel`。 |
+| 必须保持的行为 | 阅读设置入口直接打开既有外观控件；关闭或离开设置后返回同一个主题详情、同一回复筛选和滚动上下文。普通底部 tab 导航是否退出详情仍保持其既有契约。 |
+| 精确失败 oracle | `tests/ui/app-navigator.test.tsx` 带 `REG-TOPIC-002` 的普通用例先进入 Topic 并写入可观察的阅读状态，再打开阅读设置并返回；断言仍为同一个 Topic 组件且状态未丢失。修复前用例精确失败为只显示首页页面。 |
+| 最低可靠自动测试层 | `UI_PASS`：router 单元测试只能证明栈动作，RNTL 普通用例证明用户经过可见入口返回后 Topic 组件及内部状态仍保留。 |
+| Replay 或真实验收路径 | Feed → Topic → 更多操作 → 阅读设置 → 系统或顶栏返回；核对外观控件可见，并且返回后仍是原 Topic、原筛选和原阅读位置。 |
+| 负向验证方式 | 临时恢复 `changeScreen('more')` 的直接 `popTo` 路径时，普通 UI 用例必须重新失败为 Topic 页面或内部状态丢失。 |
 | 明确不覆盖范围 | 外观各设置的切换、持久化与恢复由 `MORE-03` 验收；一般 tab 切换、Topic → User 嵌套返回仍由其他 NAV 测试负责。 |
 
 ## `REG-WRITE-001` 首次投票后参与人数未更新
@@ -172,6 +172,66 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 按 `tests/live/agent-live.md` 搜索精确关键词“投票”，打开真实 linux.do 投票 Topic；提交一次已授权投票后核对当前页面，再刷新或重新进入并与原站结果对照，不得为重试而再次投票。 |
 | 负向验证方式 | 临时移除参与人数增量，`REG-WRITE-001` 单元用例必须从期望 5 精确失败为收到 4；恢复后重跑。 |
 | 明确不覆盖范围 | 原站并发投票导致的动态总数变化、匿名或隐藏结果策略以及网络成功语义仍由 action client 与 App 内 Live 验收负责。 |
+
+## `REG-WRITE-002` 妖火收藏成功被误报为结果不明
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 在妖火主题点击“原站收藏”后，原站已经把主题加入收藏夹，但 App 丢失重定向证据并提示“操作结果无法确认”。 |
+| 触发条件 | 使用 App 内已检测并全局保存的妖火登录态，对尚未原站收藏的主题请求一次 `/bbs/Share.aspx?action=fav&siteid=1000&classid=...&id=...`；妖火完成写入后跳转到 `/bbs/favlist.aspx` 并返回完整收藏夹页面。 |
+| 根因 seam | `src/yaohuoActionClient.ts` 的请求 helper 只返回 HTML、丢弃最终 `Response.url`；通用解析器正确地拒绝从长页面文本猜测成功，却也无法知道该请求已经同源跳到收藏夹。旧开源代码中的二次表单流程与当前线上行为不一致。 |
+| 必须保持的行为 | 收藏只发送一次既有 GET，不增加二次 POST；业务操作继续读取登录检测时全局保存的 Cookie，不在每次收藏时重读 WebView；只有当前收藏请求最终跳到妖火同源 `/bbs/favlist.aspx` 时补充“收藏成功”，登录、验证、HTTP 失败、明确失败提示和其他长页面继续阻断或保持不确定。 |
+| 精确失败 oracle | `src/yaohuoActionClient.test.ts` 的 `REG-WRITE-002` 用例固定完整请求参数、恰好一次 GET、无 body、最终 URL 为同源收藏夹和结果文案“收藏成功”；修复前同一响应精确得到“操作结果无法确认，请刷新原帖核对”。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定单次请求、最终 URL 和保守解析；`LIVE_PASS` 使用全局保存的登录态证明未收藏主题经 App 操作一次后真实进入妖火收藏夹。 |
+| Replay 或真实验收路径 | App 内妖火 Topic → 原站收藏一次 → 更多 → 账号中心 → 妖火原站主页 → 我的 → 我的收藏；按标题或主题 id 核对目标存在。结果不明确时不得重投。 |
+| 负向验证方式 | 把最终 URL 改为原帖、普通列表或其他主机时不得返回“收藏成功”；登录页、访问验证页和明确失败提示仍必须失败；若增加第二次 fetch，单次请求断言必须失败。 |
+| 明确不覆盖范围 | 妖火投票、本机收藏、原站收藏分类管理、Cloudflare/访问验证和原站未来路由变更仍按各自能力与 Live 结果验收。 |
+
+## `REG-WRITE-003` 妖火收藏无法取消且页面不显示已收藏
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 妖火原站收藏成功后，App 详情页仍显示未收藏样式；再次点击仍执行添加，无法从 App 取消收藏；重新进入主题也不能恢复原站收藏状态。 |
+| 触发条件 | 已登录妖火并打开可收藏主题；原站收藏夹把帖子链接和独立的 `data-fav-id` 收藏记录 id 放在同一条目中，取消接口要求该记录 id，而不是帖子 id。 |
+| 根因 seam | `src/yaohuoActionClient.ts` 只返回成功文案并丢弃收藏记录 id；`src/app/useTopicActionsController.ts` 始终构造添加请求且不应用状态；`src/yaohuoApi.ts` 未读取原站收藏状态；`TopicScreenBody` 的妖火按钮未接入已有的 `bookmarked`/`favorite` 样式。 |
+| 必须保持的行为 | 主题加载使用已全局保存的登录态，对收藏列表做一次按标题过滤的只读查询，并按帖子 id 精确取得收藏记录 id；收藏仍只发送一次既有 GET，从同一次收藏夹响应取得记录 id，不增加第二次写请求；服务端确认后立即显示黄色“取消原站收藏”；取消只发送一次 `/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=<收藏记录id>` POST，并仅在 JSON `success: true` 后清除样式；不得在每次操作时重读 WebView Cookie。 |
+| 精确失败 oracle | `src/yaohuoApi.test.ts` 固定按标题查询但按帖子 id 匹配记录；`src/yaohuoActionClient.test.ts` 固定收藏响应返回记录 id、取消 POST 和失败 JSON 不误报；`src/app/useTopicActionsController.test.ts` 固定添加/取消后的 `bookmark` 补丁；`tests/ui/topic-reply-filters.test.tsx` 固定已收藏时按钮为选中、`favorite` 色调并显示“取消原站收藏”。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定请求、解析和状态补丁；`UI_PASS` 固定用户可见按钮状态与既有黄色样式接线；`LIVE_PASS` 证明 App 按钮、重新进入后的状态和妖火原站收藏夹一致。 |
+| Replay 或真实验收路径 | 选择可重新找到的妖火主题并记录初始状态；若已收藏，先在 App 取消并核对按钮与原站收藏夹均消失，再重新收藏恢复；若未收藏则反向操作。每一步只操作一次，重新进入主题核对，最终恢复初始状态。 |
+| 负向验证方式 | 把收藏条目的帖子 id 改为其他值时不得采用其记录 id；取消 JSON 为 `success: false` 或非 JSON 时不得清除激活状态；移除控制器状态补丁或 UI 的 `active`/`favorite` 接线时对应测试必须失败。 |
+| 明确不覆盖范围 | 妖火收藏分类管理、批量清空、原站未来 HTML/接口变更、访问验证和收藏列表服务不可用时的降级仍按 Live 结果单独处理。 |
+
+## `REG-WRITE-004` 妖火收藏触发整页忙碌闪动
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 在妖火主题点击收藏或取消收藏时，整页操作区会短暂变灰并闪动，而不是只更新收藏按钮。 |
+| 触发条件 | 妖火收藏进入统一请求 helper；请求开始和结束分别切换全局 `actionBusy`，该状态同时进入 Topic 列表 `extraData` 和所有操作按钮的禁用样式。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 的 `runYaohuoRequest` 把 busy 写死为全局 `true`，没有沿用 `ActionRunOptions.busy`；收藏请求因此无法选择已有的非全局忙碌路径。 |
+| 必须保持的行为 | 妖火收藏和取消请求使用 `busy: false`，服务端确认后只通过既有 `bookmark` 补丁更新收藏按钮；不得刷新主题、切换全局 `actionBusy` 或改变滚动位置；其他需要全局门禁的妖火写操作继续保持默认 busy。 |
+| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-WRITE-004` 断言收藏成功仍应用精确 `bookmark` 补丁，同时 `setActionBusy` 零调用；修复前精确收到 `true`、`false` 两次调用。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定控制器状态边界；`LIVE_PASS` 再确认真实请求期间页面不整体变灰、内容和滚动位置不跳动，只有收藏按钮在确认后改变。 |
+| Replay 或真实验收路径 | 按 `LIVE-WRITE-03` 记录初始状态后收藏或取消一次，观察请求期间页面其余内容和操作按钮，确认结果后核对收藏按钮及原站状态，最后恢复初始状态。 |
+| 负向验证方式 | 移除收藏调用的 `busy: false`，测试必须精确失败并记录全局 busy 的 `true`、`false` 调用；收藏协议或结果不确认时仍不得误切按钮状态。 |
+| 明确不覆盖范围 | Android 原生 ripple、网络耗时和成功提示自身的动画不属于整页 busy 闪动；服务端确认后正文被重新提交造成的独立闪烁由 `REG-WRITE-005` 覆盖。 |
+
+## `REG-WRITE-005` 妖火收藏确认后正文被重新提交并闪烁
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 点击妖火“原站收藏”或“取消原站收藏”后，最终滚动位置看似不变，但正文会在约 170 ms 内闪一下；含图正文会短暂退回灰色 loading 占位，单张操作前后截图容易漏掉。 |
+| 触发条件 | 妖火服务端确认后，本地用新 `TopicDetail` 对象应用只包含 `bookmarked`/`bookmarkId` 的补丁。布局使用的主题对象已经稳定，但 HTML 渲染输入或 Topic screen action callback 仍跟随原始对象换引用。 |
+| 根因 seam | `src/app/useHtmlRenderingController.tsx` 的链接处理曾直接依赖原始 `topicDetail`，导致 HTML renderer registry 重建；同时 `src/app/AppRoot.tsx` 传入 Topic screen 的多个 action callback 闭包随原始详情换引用，嵌在 route renderer 内的收藏 Context 又使整棵 Topic screen 被重新提交。FlashList/HTML 图片因此重新进入加载态。 |
+| 必须保持的行为 | 收藏确认只更新收藏按钮及成功提示；布局主题、筛选回复、HTML renderer 与 renderer props 在只改收藏字段时保持引用稳定；Topic screen 使用稳定 handler 转发到最新实现，收藏 Context 位于 route renderer 外侧。正文、图片、回复列表和滚动位置都不得重新提交或重载。 |
+| 精确失败 oracle | `tests/ui/topic-reply-filters.test.tsx` 的 `REG-WRITE-005` 对收藏与取消两个方向连续换入只含收藏字段差异的详情，断言 `htmlRenderers` 和 `htmlRenderersProps` 始终保持同一引用；修复前首先精确失败为 renderer 对象引用变化。真实可见 oracle 使用 30 fps 录屏逐帧检查：修复前收藏/取消确认曾分别出现约 50.0%/55.5% 正文像素变化和灰色图片占位，修复后同路径正文变化最高约 0.315%，只剩按钮与 Toast 局部动画。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定 bookmark-only 更新不会重建 HTML 渲染输入；React Native 原生图片和 FlashList 的瞬时重新提交仍必须用 `LIVE_PASS` 的 30 fps 录屏确认，最终截图不能替代。 |
+| Replay 或真实验收路径 | 按 `LIVE-WRITE-03` 在收藏按钮、正文图片和回复区同时可见的位置开始 30 fps 录屏，静置后只点击一次，持续到服务端确认后至少 1 秒；逐帧检查正文不得出现其他楼层、灰色占位或大面积明暗跳变。收藏和取消两个方向都验收，最后恢复初始状态。 |
+| 负向验证方式 | 临时恢复 HTML controller 对原始详情的依赖时，`REG-WRITE-005` UI 用例必须因 renderer 引用变化失败；临时改回随详情变化的 Topic handler/route 内收藏 Provider 时，30 fps 设备 oracle 必须重新捕获正文或图片的大面积重绘。 |
+| 明确不覆盖范围 | 收藏按钮 ripple、黄色选中样式和成功 Toast 的局部动画允许变化；首次进入主题时的正常图片加载、网络耗时、图片源自身更新和其他站点的互动状态由各自能力验收。 |
 
 ## `REG-TEST-001` Smoke 绿灯被当成功能完整通过
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildYaohuoDeleteFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
   buildYaohuoFavoriteRequest,
   buildYaohuoReplyRequest,
@@ -80,6 +81,14 @@ describe('yaohuo action request builders', () => {
     expect(buildYaohuoVoteRequest({ topicId: '123', classId: '177', voteId: '55' })).toMatchObject({
       path: '/bbs/book_view_toVote.aspx?siteid=1000&classid=177&vid=55&vpage=1&lpage=2&id=123',
       method: 'GET'
+    });
+  });
+
+  it('REG-WRITE-003 builds the original favorite-record delete request', () => {
+    expect(buildYaohuoDeleteFavoriteRequest({ favoriteId: '987' })).toEqual({
+      path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
+      method: 'POST',
+      headers: { accept: '*/*' }
     });
   });
 

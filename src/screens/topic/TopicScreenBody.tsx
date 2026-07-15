@@ -1,4 +1,4 @@
-import { memo, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, type ReactNode, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -47,7 +47,57 @@ import { MemoizedTopicContentBlock } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
+
 import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
+
+type YaohuoFavoriteState = {
+  bookmarked: boolean;
+  onPress: () => void;
+  topicKey: string;
+};
+
+const YaohuoFavoriteStateContext = createContext<YaohuoFavoriteState | null>(null);
+
+export function YaohuoFavoriteStateProvider({
+  bookmarked,
+  children,
+  onPress,
+  topicKey
+}: YaohuoFavoriteState & { children: ReactNode }) {
+  const value = useMemo(() => ({ bookmarked, onPress, topicKey }), [bookmarked, onPress, topicKey]);
+  return <YaohuoFavoriteStateContext.Provider value={value}>{children}</YaohuoFavoriteStateContext.Provider>;
+}
+
+function YaohuoFavoriteButton({
+  actionBusy,
+  fallbackBookmarked,
+  styles,
+  theme,
+  topicKey
+}: {
+  actionBusy: boolean;
+  fallbackBookmarked: boolean;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  topicKey: string;
+}) {
+  const favoriteState = useContext(YaohuoFavoriteStateContext);
+  const currentState = favoriteState?.topicKey === topicKey ? favoriteState : null;
+  const bookmarked = currentState?.bookmarked ?? fallbackBookmarked;
+  return (
+    <DetailActionButton
+      active={bookmarked}
+      tone="favorite"
+      accessibilityLabel={bookmarked ? '取消原站收藏' : '原站收藏'}
+      icon={BookMarked}
+      label="收藏"
+      styles={styles}
+      theme={theme}
+      disabled={actionBusy}
+      onPress={currentState?.onPress || (() => undefined)}
+    />
+  );
+}
 
 type TopicContentItem =
   | { type: 'content'; key: string; html: string }
@@ -203,7 +253,6 @@ export const TopicScreen = memo(function TopicScreen({
   onLinuxDoBookmark,
   onNodeSeekCollection,
   onShareTopic,
-  onYaohuoFavorite,
   onVotePoll,
   onLoadMoreReplies,
   onOpenOriginal,
@@ -271,7 +320,6 @@ export const TopicScreen = memo(function TopicScreen({
   onLinuxDoBookmark: () => void;
   onNodeSeekCollection: () => void;
   onShareTopic: () => void;
-  onYaohuoFavorite: () => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onLoadMoreReplies: () => void;
   onOpenOriginal: (url: string) => void;
@@ -850,7 +898,13 @@ export const TopicScreen = memo(function TopicScreen({
           ) : null}
           {canWriteYaohuo ? (
             <View style={styles.topicPrimaryActions}>
-              <DetailActionButton accessibilityLabel="原站收藏" icon={BookMarked} label="收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onYaohuoFavorite} />
+              <YaohuoFavoriteButton
+                actionBusy={actionBusy}
+                fallbackBookmarked={Boolean(topic?.bookmarked)}
+                styles={styles}
+                theme={theme}
+                topicKey={detailTopicStateKey}
+              />
             </View>
           ) : null}
           {canWriteLinuxDo ? (
@@ -885,32 +939,32 @@ export const TopicScreen = memo(function TopicScreen({
           </View>
         </View>
         <FlashList
-          ref={topicScrollRef}
-          accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
-          testID={topic ? 'topic-detail-loaded' : undefined}
-          style={[styles.content, styles.topicContent]}
-          contentContainerStyle={styles.topicContentInner}
-          data={replyListItems}
-          keyExtractor={topicListItemKey}
-          getItemType={topicListItemType}
-          keyboardShouldPersistTaps="always"
-          onMomentumScrollEnd={onTopicScroll}
-          onScrollEndDrag={onTopicScroll}
-          onEndReachedThreshold={0.55}
-          onEndReached={handleReplyEndReached}
-          onScrollBeginDrag={armReplyAutoLoad}
-          onMomentumScrollBegin={armReplyAutoLoad}
-          extraData={listExtraData}
-          {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
-          ListHeaderComponent={listHeader}
-          ListFooterComponent={canShowReplies && replyHasMore ? (
-            <View style={styles.topicListItemFrame}>
-              <View style={[styles.topicFooter, topicColumnStyle]}>
-                <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
+            ref={topicScrollRef}
+            accessibilityLabel={topic ? '主题详情，已加载' : '主题详情'}
+            testID={topic ? 'topic-detail-loaded' : undefined}
+            style={[styles.content, styles.topicContent]}
+            contentContainerStyle={styles.topicContentInner}
+            data={replyListItems}
+            keyExtractor={topicListItemKey}
+            getItemType={topicListItemType}
+            keyboardShouldPersistTaps="always"
+            onMomentumScrollEnd={onTopicScroll}
+            onScrollEndDrag={onTopicScroll}
+            onEndReachedThreshold={0.55}
+            onEndReached={handleReplyEndReached}
+            onScrollBeginDrag={armReplyAutoLoad}
+            onMomentumScrollBegin={armReplyAutoLoad}
+            extraData={listExtraData}
+            {...TOPIC_DETAIL_LIST_PERFORMANCE_PROPS}
+            ListHeaderComponent={listHeader}
+            ListFooterComponent={canShowReplies && replyHasMore ? (
+              <View style={styles.topicListItemFrame}>
+                <View style={[styles.topicFooter, topicColumnStyle]}>
+                  <AppButton label={loadingMoreReplies ? '正在加载...' : '加载更多回复'} styles={styles} disabled={loadingMoreReplies} onPress={requestReplyLoadMore} />
+                </View>
               </View>
-            </View>
-          ) : null}
-          renderItem={renderReplyItem}
+            ) : null}
+            renderItem={renderReplyItem}
         />
         <TopicMenu
           onOpenOriginal={onOpenOriginal}
