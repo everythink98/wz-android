@@ -18,4 +18,3 @@ wait id="feed-list-ready-all" 60000
 wait id="feed-topic-first" 10000
 is visible id="feed-topic-first"
 wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
-close

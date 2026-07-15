@@ -36,4 +36,3 @@ wait id="search-complete" 60000
 is text id="search-query" codex
 wait "id=\"search-source-v2ex\" label=\"V2EX，已选择\"" 10000
 wait label="打开搜索筛选，当前按时间" 10000
-close

@@ -33,7 +33,7 @@ import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { AppNavigator, currentTopicRouteKey, isReadingSettingsScreen, navigateAppScreen, navigationRef, openReadingSettingsScreen, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, isReadingSettingsScreen, navigateAppScreen, navigationRef, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
@@ -1548,8 +1548,8 @@ export function AppRoot() {
     changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     closeLinuxDoPanel();
-    openReadingSettingsScreen();
-  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel]);
+    openReadingSettingsFromCurrentTopic(saveTopicRoute);
+  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel, saveTopicRoute]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -2258,7 +2258,7 @@ export function AppRoot() {
             />
               {networkProxyContentReady ? (
               <YaohuoFavoriteStateProvider
-                bookmarked={Boolean(topicDetail?.source === 'yaohuo' && topicDetail.bookmarked)}
+                bookmarked={topicDetail?.source === 'yaohuo' ? topicDetail.bookmarked : undefined}
                 onPress={stableFavoriteOnYaohuoSite}
                 topicKey={topicDetail?.source === 'yaohuo' ? `${topicDetail.source}:${topicDetail.id}` : ''}
               >

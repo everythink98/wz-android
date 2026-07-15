@@ -277,6 +277,7 @@ export const FeedScreen = memo(function FeedScreen({
     }
     return (
       <FlashList
+        key={`${feedSource}|${categoryFilter}|${feedFilter ?? ''}|${readingFilter}`}
         testID={!busy ? `feed-list-ready-${feedSource}` : undefined}
         ref={listRef}
         style={styles.content}

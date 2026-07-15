@@ -51,16 +51,7 @@ function runAdb(args) {
   return String(result.stdout || '');
 }
 
-export function androidRecordingScratchCleanupArgs(deviceId) {
-  return [
-    '-s',
-    deviceId,
-    'shell',
-    'rm -f /sdcard/agent-device-recording-*.mp4 /sdcard/agent-device-recording-active.json /sdcard/agent-device-recording-active.json.tmp /data/local/tmp/agent-device-recording-*.mp4 /data/local/tmp/agent-device-recording-active.json /data/local/tmp/agent-device-recording-active.json.tmp'
-  ];
-}
-
-export function parseAndroidAgentDeviceRecorders(output) {
+function parseAndroidAgentDeviceRecorders(output) {
   return String(output).split(/\r?\n/).flatMap((line) => {
     const match = line.trim().match(/^(\d+)\s+.*\bscreenrecord\b.*(\/(?:sdcard|data\/local\/tmp)\/agent-device-recording-\d+\.mp4)(?:\s|$)/);
     return match ? [{ pid: match[1], remotePath: match[2] }] : [];
@@ -73,71 +64,105 @@ function agentDeviceRecorders(deviceId) {
   ]));
 }
 
-function localAgentDeviceDaemonPids() {
-  let result;
-  if (process.platform === 'win32') {
-    const query = [
-      "$ErrorActionPreference = 'Stop'",
-      "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'node.exe' -and $_.CommandLine -match 'agent-device' -and $_.CommandLine -match '[\\\\/]internal[\\\\/]daemon\\.js' -and $_.CommandLine -notmatch '\\bmcp\\b' } | ForEach-Object { $_.ProcessId }"
-    ].join('; ');
-    result = spawnSync('powershell.exe', [
-      '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', query
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  } else {
-    result = spawnSync('ps', ['-eo', 'pid=,args='], {
+const androidRecordingManifestPaths = [
+  '/sdcard/agent-device-recording-active.json',
+  '/data/local/tmp/agent-device-recording-active.json'
+];
+const androidRecordingScratchRoots = ['/sdcard', '/data/local/tmp'];
+
+export function parseAndroidRecordingScratchPaths(output, root) {
+  if (!androidRecordingScratchRoots.includes(root)) {
+    throw new Error(`不受支持的录屏 scratch 根目录：${root}`);
+  }
+  return String(output).split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((name) => /^(?:agent-device-recording-\d+\.mp4|agent-device-recording-active\.json(?:\.tmp)?)$/.test(name))
+    .map((name) => `${root}/${name}`);
+}
+
+function androidRecordingScratchPaths(deviceId) {
+  return androidRecordingScratchRoots.flatMap((root) => parseAndroidRecordingScratchPaths(
+    runAdb(['-s', deviceId, 'shell', 'ls', '-1', root]),
+    root
+  ));
+}
+
+function readAndroidRecordingManifests(deviceId) {
+  return androidRecordingManifestPaths.flatMap((manifestPath) => {
+    const result = spawnSync('adb', ['-s', deviceId, 'shell', 'cat', manifestPath], {
+      cwd: rootDir,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe']
     });
-  }
-  if (result.error || result.status !== 0) {
-    throw new Error(`无法读取 agent-device daemon 进程：${result.error?.message || String(result.stderr || '').trim()}`);
-  }
-  if (process.platform === 'win32') {
-    return new Set(String(result.stdout || '').match(/\d+/g)?.map(Number) || []);
-  }
-  return new Set(String(result.stdout || '').split(/\r?\n/).flatMap((line) => {
-    const match = line.match(/^\s*(\d+)\s+.*agent-device.*[\\/]internal[\\/]daemon\.js\b/);
-    return match && !/\bmcp\b/.test(line) ? [Number(match[1])] : [];
-  }));
-}
-
-function stopNewLocalAgentDeviceDaemons(previousPids) {
-  for (const pid of localAgentDeviceDaemonPids()) {
-    if (previousPids.has(pid) || pid === process.pid) {
-      continue;
+    if (result.error) {
+      throw new Error(`adb 启动失败：${result.error.message}`);
     }
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch (error) {
-      if (error?.code !== 'ESRCH') {
-        throw error;
-      }
+    return result.status === 0 && String(result.stdout || '').trim()
+      ? [{ manifestPath, text: String(result.stdout).trim() }]
+      : [];
+  });
+}
+
+function isAndroidRecordingPath(value) {
+  return typeof value === 'string'
+    && /^\/(?:sdcard|data\/local\/tmp)\/agent-device-recording-\d+\.mp4$/.test(value);
+}
+
+export function replayRecordingRecoverySession(manifestText, deviceId, replaySession) {
+  try {
+    const manifest = JSON.parse(manifestText);
+    const paths = [
+      manifest?.current?.remotePath,
+      manifest?.pending?.remotePath,
+      ...(Array.isArray(manifest?.chunks) ? manifest.chunks.map((chunk) => chunk?.remotePath) : [])
+    ].filter((value) => value !== undefined);
+    if (
+      manifest?.version !== 1
+      || manifest?.deviceId !== deviceId
+      || typeof manifest?.sessionName !== 'string'
+      || !manifest.sessionName.startsWith(`${replaySession}:test:`)
+      || typeof manifest?.recordingId !== 'string'
+      || paths.length === 0
+      || paths.some((recordingPath) => !isAndroidRecordingPath(recordingPath))
+    ) {
+      return undefined;
     }
+    return manifest.sessionName;
+  } catch {
+    return undefined;
   }
 }
 
-function delay(durationMs) {
-  return new Promise((resolve) => setTimeout(resolve, durationMs));
+function assertNoExistingAgentDeviceRecording(deviceId) {
+  if (
+    readAndroidRecordingManifests(deviceId).length > 0
+    || agentDeviceRecorders(deviceId).length > 0
+    || androidRecordingScratchPaths(deviceId).length > 0
+  ) {
+    throw new Error('BLOCKED_BY_ENV：设备已有无法归属于本次任务的 agent-device 录屏；未终止进程或删除 scratch。');
+  }
 }
 
-async function cleanupAgentDeviceRecordingScratch(deviceId) {
-  const recorders = agentDeviceRecorders(deviceId);
-  for (const recorder of recorders) {
-    runAdb(['-s', deviceId, 'shell', 'kill', '-2', recorder.pid]);
+function recoverOwnedReplayRecording(device, replaySession) {
+  const manifests = readAndroidRecordingManifests(device.id);
+  const recoverySessions = manifests.map(({ text }) => replayRecordingRecoverySession(text, device.id, replaySession));
+  if (recoverySessions.some((sessionName) => !sessionName)) {
+    throw new Error('设备存在不属于本次 Replay 的录屏 manifest；已保留进程和 scratch。');
   }
-  if (recorders.length > 0) {
-    await delay(750);
+  for (const sessionName of new Set(recoverySessions)) {
+    runAgentDevice([
+      'record', 'stop',
+      '--session', sessionName,
+      '--platform', 'android',
+      ...replayDeviceSelectionArgs(device)
+    ], { cwd: rootDir });
   }
-  const remainingRecorders = agentDeviceRecorders(deviceId);
-  for (const recorder of remainingRecorders) {
-    runAdb(['-s', deviceId, 'shell', 'kill', '-9', recorder.pid]);
-  }
-  if (remainingRecorders.length > 0) {
-    await delay(100);
-  }
-  runAdb(androidRecordingScratchCleanupArgs(deviceId));
-  if (agentDeviceRecorders(deviceId).length > 0) {
-    throw new Error('BLOCKED_BY_ENV：agent-device 录屏进程未能停止，未开始新的 Replay。');
+  if (
+    readAndroidRecordingManifests(device.id).length > 0
+    || agentDeviceRecorders(device.id).length > 0
+    || androidRecordingScratchPaths(device.id).length > 0
+  ) {
+    throw new Error('本次 Replay 的录屏恢复后仍有设备残留；已停止后续 Replay。');
   }
 }
 
@@ -165,7 +190,7 @@ export function matchingAndroidDevices(devices, selectedDevice) {
   ));
 }
 
-function resolveAndroidDevice(selectedDevice) {
+export function resolveAndroidDevice(selectedDevice) {
   const output = runAgentDevice(['devices', '--platform', 'android', '--json'], {
     capture: true,
     cwd: rootDir,
@@ -265,25 +290,13 @@ export async function runReplayBatch(replayFiles, executeReplay) {
   }
 }
 
-function closeDefaultReplaySession() {
-  try {
-    runAgentDevice(['close', '--platform', 'android'], {
-      capture: true,
-      cwd: rootDir,
-      echoCapture: false
-    });
-  } catch {
-    // Preserve the original Replay failure; this is best-effort tool cleanup only.
-  }
-}
-
 export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selectedValue } = {}) {
   const apkPath = resolveExpectedApkPath(apkValue);
   const selectedDevice = selectedDeviceName(selectedValue);
   assertAgentDeviceVersion(rootDir);
   const device = resolveAndroidDevice(selectedDevice);
   const identity = verifyInstalledApk({ apkPath, deviceId: device.id });
-  await cleanupAgentDeviceRecordingScratch(device.id);
+  assertNoExistingAgentDeviceRecording(device.id);
   const artifactsDir = path.join(rootDir, 'tmp', 'agent-device');
   mkdirSync(artifactsDir, { recursive: true });
   const replayFiles = listReplayFiles();
@@ -297,15 +310,16 @@ export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selec
   );
   await runReplayBatch(replayFiles, async (replayFile) => {
     const replayName = path.basename(replayFile, '.ad');
+    const replaySession = `wz-replay-${process.pid}-${replayName}`;
     const replayArtifactsDir = path.join(artifactsDir, replayName);
     const junitPath = path.join(artifactsDir, `${replayName}.junit.xml`);
     mkdirSync(replayArtifactsDir, { recursive: true });
-    const localDaemonPidsBefore = localAgentDeviceDaemonPids();
     let replayError;
     let cleanupError;
     try {
       runAgentDevice([
         'test', replayFile,
+        '--session', replaySession,
         ...replayDeviceSelectionArgs(device),
         '--timeout', '180000',
         '--retries', '0',
@@ -317,11 +331,9 @@ export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selec
       ], { cwd: rootDir });
     } catch (error) {
       replayError = error;
-      closeDefaultReplaySession();
     }
     try {
-      stopNewLocalAgentDeviceDaemons(localDaemonPidsBefore);
-      await cleanupAgentDeviceRecordingScratch(device.id);
+      recoverOwnedReplayRecording(device, replaySession);
     } catch (error) {
       cleanupError = error;
     }

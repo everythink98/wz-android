@@ -3,13 +3,14 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } from '../scripts/agent-device-runtime.mjs';
+import { runApkSanity } from '../scripts/smoke-android.mjs';
 import {
-  androidRecordingScratchCleanupArgs,
   listReplayFiles,
   matchingAndroidDevices,
   parseAgentDeviceList,
-  parseAndroidAgentDeviceRecorders,
+  parseAndroidRecordingScratchPaths,
   parseAndroidPackageInfo,
+  replayRecordingRecoverySession,
   ReplayCleanupError,
   replayDeviceSelectionArgs,
   runReplayBatch
@@ -22,12 +23,12 @@ function readProjectFile(...parts: string[]) {
 }
 
 describe('Android release evidence guards', () => {
-  it('requires a supported installed agent-device version', () => {
-    expect(MIN_AGENT_DEVICE_VERSION).toBe('0.14.0');
-    expect(isVersionSupported('0.13.9')).toBe(false);
-    expect(isVersionSupported('0.14.0-beta.1')).toBe(false);
-    expect(isVersionSupported('0.14.0')).toBe(true);
+  it('[REG-OPS-008] requires the first agent-device version that supports Replay recording and reporters', () => {
+    expect(MIN_AGENT_DEVICE_VERSION).toBe('0.19.0');
+    expect(isVersionSupported('0.18.9')).toBe(false);
+    expect(isVersionSupported('0.19.0-beta.1')).toBe(false);
     expect(isVersionSupported('0.19.0')).toBe(true);
+    expect(isVersionSupported('0.20.0')).toBe(true);
   });
 
   it('requires one explicitly selected device', () => {
@@ -55,21 +56,40 @@ describe('Android release evidence guards', () => {
     expect(matchingAndroidDevices(devices, 'WZ_Pixel_API_35')).toEqual(devices);
   });
 
-  it('limits device-side recording cleanup to agent-device scratch files', () => {
-    expect(androidRecordingScratchCleanupArgs('emulator-5554')).toEqual([
-      '-s',
-      'emulator-5554',
-      'shell',
-      'rm -f /sdcard/agent-device-recording-*.mp4 /sdcard/agent-device-recording-active.json /sdcard/agent-device-recording-active.json.tmp /data/local/tmp/agent-device-recording-*.mp4 /data/local/tmp/agent-device-recording-active.json /data/local/tmp/agent-device-recording-active.json.tmp'
-    ]);
-    expect(parseAndroidAgentDeviceRecorders([
-      ' 2321 screenrecord --bit-rate 8000000 /sdcard/agent-device-recording-1784023321348.mp4',
-      ' 2322 screenrecord /sdcard/user-recording.mp4',
-      ' 2323 screenrecord /data/local/tmp/agent-device-recording-1784023323941.mp4',
-      ' 2324 unrelated /sdcard/agent-device-recording-1784023332676.mp4'
-    ].join('\n'))).toEqual([
-      { pid: '2321', remotePath: '/sdcard/agent-device-recording-1784023321348.mp4' },
-      { pid: '2323', remotePath: '/data/local/tmp/agent-device-recording-1784023323941.mp4' }
+  it('recovers only recording manifests owned by the current Replay session', () => {
+    const sessionName = 'wz-replay-4321-search:test:suite:1-search:attempt-1';
+    const manifest = JSON.stringify({
+      version: 1,
+      sessionName,
+      recordingId: 'android-2321-1784023321348',
+      deviceId: 'emulator-5554',
+      startedAt: 1784023321348,
+      showTouches: true,
+      current: {
+        remotePid: '2321',
+        remotePath: '/sdcard/agent-device-recording-1784023321348.mp4',
+        startedAt: 1784023321348
+      },
+      chunks: [{ index: 1, remotePath: '/sdcard/agent-device-recording-1784023321348.mp4' }]
+    });
+
+    expect(replayRecordingRecoverySession(manifest, 'emulator-5554', 'wz-replay-4321-search')).toBe(sessionName);
+    expect(replayRecordingRecoverySession(manifest, 'emulator-5554', 'wz-replay-9999-search')).toBeUndefined();
+    expect(replayRecordingRecoverySession(manifest, 'emulator-5556', 'wz-replay-4321-search')).toBeUndefined();
+    expect(replayRecordingRecoverySession('{ malformed', 'emulator-5554', 'wz-replay-4321-search')).toBeUndefined();
+  });
+
+  it('[REG-OPS-007] treats active and atomic-temp recording manifests as occupied scratch', () => {
+    expect(parseAndroidRecordingScratchPaths([
+      'agent-device-recording-1784023321348.mp4',
+      'agent-device-recording-active.json',
+      'agent-device-recording-active.json.tmp',
+      'screenrecord-user.mp4',
+      'agent-device-recording-not-a-timestamp.mp4'
+    ].join('\n'), '/sdcard')).toEqual([
+      '/sdcard/agent-device-recording-1784023321348.mp4',
+      '/sdcard/agent-device-recording-active.json',
+      '/sdcard/agent-device-recording-active.json.tmp'
     ]);
   });
 
@@ -78,12 +98,13 @@ describe('Android release evidence guards', () => {
 
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
     const bootIndex = smokeScript.indexOf('bootSelectedDevice();');
-    const installIndex = smokeScript.indexOf("['install', appPackage, apkPath");
+    const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device });');
     expect(bootIndex).toBeGreaterThan(0);
-    expect(installIndex).toBeGreaterThan(bootIndex);
+    expect(sanityIndex).toBeGreaterThan(bootIndex);
+    expect(smokeScript).toContain("['install', appPackage, apkPath");
     expect(smokeScript).toContain("['logs', 'clear', '--restart'");
     expect(smokeScript).toContain("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
-    expect(smokeScript).toContain("waitFor('id=\"feed-list-ready-all\"', 60_000);");
+    expect(smokeScript).toContain("waitFor('id=\"feed-list-ready-all\"', 60_000, runAgentDeviceCommand);");
     expect(smokeScript).toContain("console.log('APK_SANITY');");
     expect(smokeScript).toContain('await runDeviceReplay({ apkPath, selectedDevice });');
     expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back|uninstall|reinstall)['"]/);
@@ -91,7 +112,60 @@ describe('Android release evidence guards', () => {
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
   });
 
-  it('keeps the seven tracked Replay journeys deterministic and read-only', () => {
+  it('[REG-OPS-005] captures the first post-install launch before it can fail', () => {
+    const marker = 'wz-apk-sanity-first-launch-test';
+    const events: string[] = [];
+    const runAgentDeviceCommand = (args: string[]) => {
+      events.push(`agent:${args.join(' ')}`);
+      return args[0] === 'appstate'
+        ? JSON.stringify({ data: { package: 'com.wz.reader' } })
+        : '';
+    };
+    const runAdbCommand = (args: string[]) => {
+      events.push(`adb:${args.join(' ')}`);
+      if (args.includes('date')) {
+        return '1784102400.000\n';
+      }
+      if (args.includes('logcat')) {
+        return [
+          `07-15 16:00:00.000  2000  2000 I WZ_APK_SANITY: ${marker}`,
+          '07-15 16:00:00.010  1000  1000 I ActivityManager: Start proc 4321:com.wz.reader/u0a123 for top-activity',
+          '07-15 16:00:00.020  4321  4321 E AndroidRuntime: FATAL EXCEPTION: main',
+          '07-15 16:00:00.021  4321  4321 E AndroidRuntime: Process: com.wz.reader, PID: 4321'
+        ].join('\n');
+      }
+      return '';
+    };
+    let failure: unknown;
+
+    try {
+      runApkSanity({
+        apkPath: 'candidate.apk',
+        device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+        marker,
+        runAdbCommand,
+        runAgentDeviceCommand,
+        verifySessionLog: () => undefined
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.some((error) => String(error).includes('Android 崩溃'))).toBe(true);
+    const installIndex = events.findIndex((event) => event.startsWith('agent:install '));
+    const timestampIndex = events.findIndex((event) => event.includes('shell date +%s.%3N'));
+    const markerIndex = events.findIndex((event) => event.includes('shell log -p i -t WZ_APK_SANITY'));
+    const firstOpenIndex = events.findIndex((event) => event.startsWith('agent:open '));
+    const dumpIndex = events.findIndex((event) => event.includes('logcat -d -v threadtime -T 1784102400.000'));
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(timestampIndex).toBeGreaterThan(installIndex);
+    expect(markerIndex).toBeGreaterThan(timestampIndex);
+    expect(firstOpenIndex).toBeGreaterThan(markerIndex);
+    expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
+  });
+
+  it('[REG-OPS-006] keeps the seven tracked Replay journeys deterministic and lets the test harness stop video', () => {
     const deviceDir = path.join(rootDir, 'tests', 'device');
     const expected = [
       'feed-topic-return.ad',
@@ -110,17 +184,37 @@ describe('Android release evidence guards', () => {
       expect(replay).toContain('context platform=android');
       expect(replay).toContain('context retries=0');
       expect(replay).toContain('open ${APP_ID} --relaunch');
-      expect(replay.trimEnd()).toMatch(/close$/);
+      expect(replay).not.toMatch(/^close\s*$/m);
       expect(replay).not.toMatch(/@[a-z]\d+/i);
       expect(replay).not.toMatch(/\b(?:press|click|swipe|longpress)\s+\d+\s+\d+/);
       expect(replay).not.toMatch(/(?:清除登录|退出登录|清空历史|取消收藏|取消关注|删除回复|提交回复|保存 Key|签到)/);
       expect(replay).not.toMatch(/^\s*(?:uninstall|reinstall|settings reset|shutdown)\b/m);
     }
     const nodeSeekReplay = readFileSync(path.join(deviceDir, 'nodeseek-session.ad'), 'utf8');
-    expect(nodeSeekReplay).toContain('wait 15000');
+    expect(nodeSeekReplay).toContain('wait id="nodeseek-login-webview-ready" 15000');
     expect(nodeSeekReplay).toContain('is visible id="nodeseek-login-webview-ready"');
+    expect(nodeSeekReplay).toContain('is hidden text="NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。"');
     expect(nodeSeekReplay).toContain('back --system');
-    expect(nodeSeekReplay).not.toContain('wait id="nodeseek-login-webview-ready"');
+    expect(nodeSeekReplay).not.toMatch(/^wait 15000$/m);
+
+    const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8');
+    expect(fourSourceReplay).toContain([
+      'wait id="feed-list-ready-nodeseek" 60000',
+      'wait id="feed-topic-first" 10000',
+      'scroll down',
+      'scroll down',
+      'wait label="回到顶部" 10000',
+      'press label="列表筛选"',
+      'press text="新评论"',
+      'wait id="feed-list-ready-nodeseek" 60000',
+      'wait id="feed-topic-first" 10000'
+    ].join('\n'));
+
+    const multiSourceSearchReplay = readFileSync(path.join(deviceDir, 'search-multi-source.ad'), 'utf8');
+    expect(multiSourceSearchReplay.match(/is visible id="search-result-first"/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay.match(/press id="search-result-first"/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay.match(/wait id="topic-detail-loaded" 60000/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay.match(/back --system/g)).toHaveLength(3);
   });
 
   it('continues independent Replay files and reports all failures together', async () => {
@@ -179,11 +273,15 @@ describe('Android release evidence guards', () => {
     expect(replayScript).toContain("'test', replayFile");
     expect(replayScript).toContain("'--retries', '0'");
     expect(replayScript).toContain("'--reporter', `junit:${junitPath}`");
-    expect(replayScript).toContain('closeDefaultReplaySession');
-    expect(replayScript).toContain("['close', '--platform', 'android']");
-    expect(replayScript).toContain('cleanupAgentDeviceRecordingScratch(device.id)');
-    expect(replayScript).toContain('localDaemonPidsBefore');
-    expect(replayScript).toContain('stopNewLocalAgentDeviceDaemons(localDaemonPidsBefore)');
+    expect(replayScript).toContain("'--session', replaySession");
+    expect(replayScript).toContain('assertNoExistingAgentDeviceRecording(device.id)');
+    expect(replayScript).toContain('androidRecordingScratchPaths(device.id)');
+    expect(replayScript).toContain('recoverOwnedReplayRecording(device, replaySession)');
+    expect(replayScript).toContain("'record', 'stop'");
+    expect(replayScript).not.toContain('closeDefaultReplaySession');
+    expect(replayScript).not.toContain("'shell', 'kill'");
+    expect(replayScript).not.toContain('rm -f /sdcard/agent-device-recording-');
+    expect(replayScript).not.toContain('stopNewLocalAgentDeviceDaemons');
     expect(replayScript).toContain("console.log('DEVICE_REPLAY_PASS');");
   });
 
@@ -216,7 +314,6 @@ describe('Android release evidence guards', () => {
     const accountCenter = readProjectFile('src', 'screens', 'more', 'AccountCenterPanel.tsx');
     expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
     const morePanels = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
-    expect(morePanels).toContain("testID={webViewReadyForReplay ? 'nodeseek-login-webview-ready' : undefined}");
     expect(morePanels).toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
     expect(morePanels).toContain('event.nativeEvent.data === NODESEEK_REPLAY_READY_MESSAGE');
     expect(morePanels.match(/setWebViewReadyForReplay\(true\)/g)).toHaveLength(1);

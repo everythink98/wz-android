@@ -134,7 +134,7 @@ export function NodeSeekLoginPanel({
       return undefined;
     }
     const timeout = setTimeout(() => {
-      webViewRef.current?.injectJavaScript(NODESEEK_REPLAY_READINESS_SCRIPT);
+      setWebViewReadyForReplay(false);
       onWebViewState('timeout', credentialAttempt);
       onSetLoadingLoginPage(false);
       setWebViewError('NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。');
@@ -232,7 +232,7 @@ export function NodeSeekLoginPanel({
           <View style={styles.actions}>
             {credentialSaved ? <AppButton label="填入已保存登录信息" styles={styles} disabled={credentialFillPending} onPress={onRequestCredentialFill} /> : null}
             <AppButton
-              testID={webViewReadyForReplay ? 'nodeseek-login-webview-ready' : undefined}
+              testID={webViewReadyForReplay && !webViewError && !webViewBlockMessage ? 'nodeseek-login-webview-ready' : undefined}
               label={checking ? '检测中' : '检测登录'}
               styles={styles}
               disabled={checking}

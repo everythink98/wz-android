@@ -25,7 +25,7 @@ vi.mock('@react-navigation/native-stack', () => ({
 vi.mock('../components/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('../components/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 
-import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigateMainTab, previousTopicRouteKey, shouldUpdateAppRootScreen } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigateMainTab, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, shouldUpdateAppRootScreen } from './AppNavigator';
 
 describe('AppNavigator', () => {
   it('skips parent-only rerenders when its navigation props are unchanged', () => {
@@ -144,6 +144,18 @@ describe('topic route keys', () => {
     });
     expect(currentTopicRouteKey()).toBeNull();
     expect(previousTopicRouteKey()).toBe('Topic-return');
+  });
+
+  it('[REG-TOPIC-002] saves the current Topic snapshot before opening reading settings', () => {
+    const events: string[] = [];
+    const saveTopicRoute = vi.fn(() => events.push('save'));
+    navigation.dispatch.mockImplementation(() => events.push('push'));
+    navigation.getCurrentRoute.mockReturnValue({ key: 'Topic-active', name: 'Topic' });
+
+    expect(openReadingSettingsFromCurrentTopic(saveTopicRoute)).toBe(true);
+
+    expect(saveTopicRoute).toHaveBeenCalledWith('Topic-active');
+    expect(events).toEqual(['save', 'push']);
   });
 });
 

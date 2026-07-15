@@ -16,7 +16,11 @@ import {
   YAOHUO_LOGIN_URL,
   requireYaohuoRequestUrl
 } from './localYaohuoHelpers';
-import { mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
+import {
+  annotateSourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries,
+  sourceDiagnosticSummary
+} from './sourceAdapterDiagnostics';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -213,25 +217,42 @@ export async function getYaohuoTopicDirect({
     }),
     fetchYaohuoHtml(yaohuoUrl('/bbs/favlist.aspx', {
       key: detail.title || topic.title
-    }), cookie, yaohuoFetcher, { signal, timeoutMs })
+    }), cookie, yaohuoFetcher, { signal, timeoutMs }).catch((error) => {
+      if (signal?.aborted) {
+        throw error;
+      }
+      return null;
+    })
   ]);
-  const favoriteId = parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id);
+  const favoriteId = favoritePage
+    ? parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id)
+    : undefined;
 
   const result = {
     ...detail,
     categoryId: detail.categoryId || topic.categoryId,
     category: detail.category || topic.category,
-    bookmarked: Boolean(favoriteId),
-    bookmarkId: favoriteId,
+    ...(favoritePage ? {
+      bookmarked: Boolean(favoriteId),
+      bookmarkId: favoriteId
+    } : {}),
     replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0, replies.items.length),
     replies: replies.items,
     replyHasMore: replies.hasMore,
     replyNextPage: replies.nextPage,
     replyNextOffset: replies.hasMore ? replies.items.length : null
   };
-  return mergeSourceDiagnosticSummaries(result, 'html-topic-with-replies', [detail, replies], {
+  const mergedResult = mergeSourceDiagnosticSummaries(result, 'html-topic-with-replies', [detail, replies], {
     validCount: 1 + replies.items.length
   });
+  const summary = sourceDiagnosticSummary(mergedResult);
+  return !favoritePage && summary
+    ? annotateSourceDiagnosticSummary(mergedResult, {
+      ...summary,
+      partialErrorCount: summary.partialErrorCount + 1,
+      hasDegradation: true
+    })
+    : mergedResult;
 }
 
 export async function getYaohuoRepliesDirect({

@@ -51,7 +51,7 @@ import { TopicMenu } from './TopicMenu';
 import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
 
 type YaohuoFavoriteState = {
-  bookmarked: boolean;
+  bookmarked?: boolean;
   onPress: () => void;
   topicKey: string;
 };
@@ -76,24 +76,25 @@ function YaohuoFavoriteButton({
   topicKey
 }: {
   actionBusy: boolean;
-  fallbackBookmarked: boolean;
+  fallbackBookmarked?: boolean;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   topicKey: string;
 }) {
   const favoriteState = useContext(YaohuoFavoriteStateContext);
   const currentState = favoriteState?.topicKey === topicKey ? favoriteState : null;
-  const bookmarked = currentState?.bookmarked ?? fallbackBookmarked;
+  const bookmarked = currentState ? currentState.bookmarked : fallbackBookmarked;
+  const stateKnown = bookmarked !== undefined;
   return (
     <DetailActionButton
-      active={bookmarked}
+      active={bookmarked === true}
       tone="favorite"
-      accessibilityLabel={bookmarked ? '取消原站收藏' : '原站收藏'}
+      accessibilityLabel={stateKnown ? bookmarked ? '取消原站收藏' : '原站收藏' : '原站收藏状态未加载'}
       icon={BookMarked}
-      label="收藏"
+      label={stateKnown ? '收藏' : '状态未知'}
       styles={styles}
       theme={theme}
-      disabled={actionBusy}
+      disabled={actionBusy || !stateKnown}
       onPress={currentState?.onPress || (() => undefined)}
     />
   );
@@ -900,7 +901,7 @@ export const TopicScreen = memo(function TopicScreen({
             <View style={styles.topicPrimaryActions}>
               <YaohuoFavoriteButton
                 actionBusy={actionBusy}
-                fallbackBookmarked={Boolean(topic?.bookmarked)}
+                fallbackBookmarked={topic?.bookmarked}
                 styles={styles}
                 theme={theme}
                 topicKey={detailTopicStateKey}

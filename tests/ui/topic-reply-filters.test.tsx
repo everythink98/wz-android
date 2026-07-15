@@ -98,25 +98,30 @@ jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: 
 jest.mock('../../src/localLinuxdo', () => ({ getLinuxDoEmojiUrls: async () => ({}) }));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
-  const { Pressable: NativePressable } = require('react-native') as typeof import('react-native');
+  const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
     DetailActionButton: ({
       accessibilityLabel,
       active,
+      disabled,
+      label,
       onPress,
       tone
     }: {
       accessibilityLabel: string;
       active?: boolean;
+      disabled?: boolean;
+      label: string;
       onPress: () => void;
       tone?: string;
     }) => ReactModule.createElement(NativePressable, {
       accessibilityLabel,
       accessibilityRole: 'button',
-      accessibilityState: { selected: Boolean(active) },
+      accessibilityState: { disabled: Boolean(disabled), selected: Boolean(active) },
+      disabled,
       onPress,
       testID: `detail-action-${tone || 'primary'}`
-    })
+    }, ReactModule.createElement(NativeText, null, label))
   };
 });
 jest.mock('../../src/screens/topic/TopicContentBlock', () => ({ MemoizedTopicContentBlock: () => null }));
@@ -241,7 +246,7 @@ function TopicFilterHarness({
   return (
     <View>
       <YaohuoFavoriteStateProvider
-        bookmarked={yaohuoVisualBookmarked ?? Boolean(topicDetail?.bookmarked)}
+        bookmarked={yaohuoVisualBookmarked ?? topicDetail?.bookmarked}
         onPress={onYaohuoFavorite}
         topicKey={topicDetail ? `${topicDetail.source}:${topicDetail.id}` : ''}
       >
@@ -462,6 +467,30 @@ describe('Topic reply filters', () => {
       />
     );
     expect(view.getByLabelText('原站收藏').props.accessibilityState.selected).toBe(false);
+  });
+
+  it('REG-WRITE-003 disables the yaohuo favorite action while its original state is unknown', async () => {
+    const onYaohuoFavorite = jest.fn<() => void>();
+    const yaohuoTopic: TopicDetail = {
+      ...topic,
+      source: 'yaohuo',
+      id: '123',
+      url: 'https://www.yaohuo.me/bbs-123.html'
+    };
+    const view = await render(
+      <TopicFilterHarness
+        canUseYaohuoActions
+        onYaohuoFavorite={onYaohuoFavorite}
+        selectedTopic={yaohuoTopic}
+        topicDetail={yaohuoTopic}
+      />
+    );
+
+    const unknownButton = view.getByLabelText('原站收藏状态未加载');
+    expect(unknownButton.props.accessibilityState.disabled).toBe(true);
+    expect(view.getByText('状态未知')).toBeTruthy();
+    await fireEvent.press(unknownButton);
+    expect(onYaohuoFavorite).not.toHaveBeenCalled();
   });
 
   it('[REG-WRITE-004] updates the yaohuo favorite button without replacing the topic layout detail', async () => {

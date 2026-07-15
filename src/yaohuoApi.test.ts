@@ -7,6 +7,7 @@ import {
   searchYaohuoDirect
 } from './yaohuoApi';
 import { parseYaohuoCurrentUserHtml, parseYaohuoFavoriteRecordId, parseYaohuoListHtml, parseYaohuoRepliesHtml, parseYaohuoSearchHtml, parseYaohuoTopicHtml } from './localYaohuo';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import type { Topic } from './types';
 
 describe('Android direct yaohuo API', () => {
@@ -558,6 +559,44 @@ describe('Android direct yaohuo API', () => {
     expect(favoriteUrl).toBeTruthy();
     expect(new URL(favoriteUrl || '').searchParams.get('key')).toBe('妖火帖子');
     expect(detail).toMatchObject({ bookmarked: true, bookmarkId: 987 });
+  });
+
+  it('REG-WRITE-003 keeps the topic readable when the favorite state is unavailable', async () => {
+    const topic: Topic = {
+      source: 'yaohuo',
+      id: '123',
+      title: '妖火帖子',
+      author: 'alice',
+      url: 'https://www.yaohuo.me/bbs-123.html',
+      createdAt: '2026-05-20T00:00:00.000Z',
+      replyCount: 0,
+      categoryId: '177'
+    };
+    const yaohuoFetcher = vi.fn(async (input: string) => {
+      if (input.includes('/bbs/favlist.aspx')) {
+        throw new Error('favorite list unavailable');
+      }
+      if (input.includes('/bbs/book_re.aspx')) {
+        return new Response('');
+      }
+      return new Response('<div class="content">[标题] 妖火帖子 (阅1) [时间] 2026-05-20 10:00</div><div class="bbscontent"><!--listS--><p>body</p><!--listE--></div><a href="/bbs/book_list.aspx?classid=177">妖火茶馆</a>');
+    });
+
+    const detail = await getYaohuoTopicDirect({
+      topic,
+      yaohuoCookie: 'sidyaohuo=secret',
+      yaohuoFetcher
+    });
+
+    expect(detail.contentHtml).toContain('body');
+    expect(detail.replies).toEqual([]);
+    expect(detail.bookmarked).toBeUndefined();
+    expect(detail.bookmarkId).toBeUndefined();
+    expect(sourceDiagnosticSummary(detail)).toMatchObject({
+      validCount: 1,
+      partialErrorCount: 1,
+      hasDegradation: true
+    });
   });
 
   it('matches favorite records by topic id instead of title alone', () => {

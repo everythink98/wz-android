@@ -110,6 +110,15 @@ export function openReadingSettingsScreen() {
   return true;
 }
 
+export function openReadingSettingsFromCurrentTopic(saveTopicRoute: (routeKey: string) => void) {
+  const routeKey = currentTopicRouteKey();
+  if (!routeKey) {
+    return false;
+  }
+  saveTopicRoute(routeKey);
+  return openReadingSettingsScreen();
+}
+
 export function isReadingSettingsScreen() {
   return navigationRef.getCurrentRoute()?.name === 'ReadingSettings';
 }

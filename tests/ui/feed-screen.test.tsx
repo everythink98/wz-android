@@ -11,30 +11,36 @@ import type { Category, FeedFilterState, FeedSource, SourceFeedFilter, Topic } f
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
-  const { ScrollView: NativeScrollView } = require('react-native') as typeof import('react-native');
+  const { ScrollView: NativeScrollView, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
     FlashList: ReactModule.forwardRef(function FlashList(
       { data, ListEmptyComponent, ListFooterComponent, onScroll, onScrollBeginDrag, refreshControl, testID }: {
         data: unknown[];
         ListEmptyComponent?: React.ReactNode;
         ListFooterComponent?: React.ReactNode;
-        onScroll?: (event: unknown) => void;
+        onScroll?: React.ComponentProps<typeof NativeScrollView>['onScroll'];
         onScrollBeginDrag?: () => void;
         refreshControl?: React.ReactNode;
         testID?: string;
       },
       ref: React.ForwardedRef<{ scrollToOffset: () => void }>
     ) {
+      const [offsetY, setOffsetY] = ReactModule.useState(0);
       ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
+      const handleScroll: React.ComponentProps<typeof NativeScrollView>['onScroll'] = (event) => {
+        setOffsetY(event.nativeEvent.contentOffset.y);
+        onScroll?.(event);
+      };
       return ReactModule.createElement(
         NativeScrollView,
         {
           accessibilityLabel: refreshControl ? '列表，支持下拉刷新' : '列表，无下拉刷新',
-          onScroll,
+          onScroll: handleScroll,
           onScrollBeginDrag,
           testID
         },
         refreshControl,
+        data.length > 0 && offsetY === 0 ? ReactModule.createElement(NativeView, { testID: 'mock-feed-first-visible' }) : null,
         data.length === 0 ? ListEmptyComponent : null,
         ListFooterComponent
       );
@@ -184,6 +190,33 @@ describe('Feed loading', () => {
     await view.rerender(renderFeed(false, [topic]));
 
     expect(view.getByLabelText('回到顶部')).toBeTruthy();
+  });
+
+  it('[REG-FEED-002] resets the rendered list position when the Feed filter changes', async () => {
+    const nodeSeekTopic: Topic = { ...topic, source: 'nodeseek' };
+    const view = await render(renderFeed(false, [nodeSeekTopic], {
+      feedFilter: 'postTime',
+      feedSource: 'nodeseek'
+    }));
+
+    expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
+    await act(async () => {
+      fireEvent.scroll(view.getByTestId('feed-list-ready-nodeseek'), {
+        nativeEvent: {
+          contentOffset: { y: 1200 },
+          contentSize: { height: 3000 },
+          layoutMeasurement: { height: 1000 }
+        }
+      });
+    });
+    expect(view.queryByTestId('mock-feed-first-visible')).toBeNull();
+
+    await view.rerender(renderFeed(false, [nodeSeekTopic], {
+      feedFilter: 'replyTime',
+      feedSource: 'nodeseek'
+    }));
+
+    expect(view.getByTestId('mock-feed-first-visible')).toBeTruthy();
   });
 
   it('requests each next page once and unlocks only after the page advances', async () => {

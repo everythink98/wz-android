@@ -40,4 +40,3 @@ wait label="选择备份文件恢复" 10000
 find "外观" click
 find "主题" exists
 find "字号" exists
-close

@@ -31,7 +31,7 @@ npm run release:android
 npm run smoke:android
 ```
 
-`npm run verify` 是确定性门禁，统一包含 Vitest、Jest/RNTL UI、文档测试与引用、typecheck、unused 和版本一致性。`npm run test:device` 要求通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。单个 Replay 零重试并在失败处停止；普通执行失败由外层继续其他独立文件并最终统一返回，任何清理失败则立即停止后续文件，因为此时已不能证明场景隔离；只有全部通过才输出 `DEVICE_REPLAY_PASS`。Replay 会在证据拉回后按 PID 差分终止本条新增 daemon，并清理该设备上 agent-device 自己的录屏进程/scratch，防止长期运行耗尽空间；清理边界固定在工具录屏路径，不停止 MCP，也不触碰 App 数据或用户文件。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载或清数据。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
+`npm run verify` 是确定性门禁，统一包含 Vitest、Jest/RNTL UI、文档测试与引用、typecheck、unused 和版本一致性。`npm run test:device` 要求可信安装为 `agent-device >= 0.19.0`，并通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。单个 Replay 使用唯一 session、零重试且不自行执行 `close`，由 test harness 先停止录屏再 cleanup session；普通执行失败由外层继续其他独立文件并最终统一返回，任何录屏隔离或恢复失败则立即停止后续文件。执行前发现既有 manifest、对应 `.tmp`、工具录屏进程或 orphan scratch 时只阻断并保留现场，正式 manifest 即使为空也按文件存在视为占用；执行后仅通过 manifest 中同时匹配本条 session/device 的 session 调用 `record stop`，不终止 daemon、不 wildcard 删除设备文件、不停止 MCP，也不触碰 App 数据或用户文件。只有全部通过才输出 `DEVICE_REPLAY_PASS`。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，覆盖安装后先读取设备 epoch，再在第一次启动前写入包级日志 marker；最终通过 logcat `-T` 只读取该时间之后的有界窗口，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载、清数据或清空全局 logcat。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
 
 ## Agent Live
 
@@ -44,7 +44,7 @@ npm run smoke:android
 ## 工具进程收口
 
 - 启动 Metro、watcher、Gradle、agent-device 或录屏前先记录匹配进程 PID；命令正常结束、失败或中断后，只终止本次新增 PID。共享 MCP、模拟器和 ADB 保持运行，除非用户明确要求关闭。
-- Replay 优先走 `npm run test:device`。手工 agent-device 探索结束后先执行 `agent-device close --platform android`，再核对没有本次新增的 `internal/daemon.js`、工具路径 `screenrecord` 和 `agent-device-recording-*` scratch；证据已拉回本机后才清设备 scratch。
+- Replay 优先走 `npm run test:device`，runner 只恢复当前唯一 session/device manifest 归属的录屏，不负责终止 daemon 或清理未知 scratch。手工 agent-device 探索结束后只关闭本次明确 session，再核对没有本次新增的工具路径 `screenrecord` 和 `agent-device-recording-*` scratch；无法证明归属的 daemon、进程或文件不强制清理并记录为阻碍。
 - 本次任务启动了 Gradle daemon 且后续不再构建时，执行 `android\gradlew.bat --stop`。有意保留 Metro 或其他服务时，交付必须说明 PID、端口和保留原因。
 - 最终进程数必须回到任务开始基线；无法确认归属时不强杀，记录命令行、父 PID 和阻碍。
 
@@ -90,7 +90,7 @@ npm run smoke:android
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。
 - 发布候选依次通过 `npm run verify`、正式签名构建与 signer 校验，再由同代码的开发签名 x86_64 APK 在唯一登录态设备上完成只读 smoke；最后按授权执行 `full` Agent Live。
-- `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分只检查安装、冷启动、前台包名、Feed readiness 及日志窗口中的崩溃、ANR、RedBox，输出 `APK_SANITY`。Feed/Search/Library/账号与四站旅程由 tracked `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
+- `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分在覆盖安装后先读取设备 epoch、再于第一次启动前写入唯一 logcat marker，通过 `logcat -T` 有界读取该时间之后的日志并以包名/PID 裁剪首次启动窗口，继续检查 session relaunch、前台包名、Feed readiness 及日志中的崩溃、ANR、RedBox，输出 `APK_SANITY`。它不清空全局 logcat。Feed/Search/Library/账号与四站旅程由 tracked `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
 - 实时来源只断言关键字段存在且结果可打开，不固定结果数量；本批次触及某个来源时，再按 `docs/testing-standard.md` 做该来源的登录态或原站专项验收。
 - smoke 不执行回复、编辑、删除、上传、点赞、投票、收藏切换、清除登录或其他真实写操作。
 - smoke 通过后才上传 `app-arm64-v8a-release.apk` 与 `release-manifest.json`；发布说明记录 APK SHA-256，不记录签名 SHA-256。

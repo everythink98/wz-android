@@ -1,10 +1,11 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertAgentDeviceVersion, deviceSelectionArgs, runAgentDevice, selectedDeviceName } from './agent-device-runtime.mjs';
-import { runDeviceReplay } from './run-device-replay.mjs';
+import { resolveAndroidDevice, runDeviceReplay } from './run-device-replay.mjs';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(scriptPath), '..');
@@ -26,16 +27,16 @@ function assertNoRuntimeFailure(output, source) {
   }
 }
 
-function waitFor(selector, timeout = 60_000) {
-  runAgentDevice(['wait', selector, String(timeout), '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+function waitFor(selector, timeout = 60_000, runAgentDeviceCommand = runAgentDevice) {
+  runAgentDeviceCommand(['wait', selector, String(timeout), '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
 }
 
 function appLogPath(output) {
   return output.split(/\r?\n/).map((line) => line.trim()).find((line) => /app\.log$/i.test(line));
 }
 
-function verifyLogWindow() {
-  const output = runAgentDevice(['logs', 'path', '--session', smokeSession, '--platform', 'android'], {
+function verifyLogWindow(runAgentDeviceCommand = runAgentDevice) {
+  const output = runAgentDeviceCommand(['logs', 'path', '--session', smokeSession, '--platform', 'android'], {
     capture: true,
     cwd: rootDir
   });
@@ -44,6 +45,62 @@ function verifyLogWindow() {
     throw new Error('agent-device 未返回可读取的 App 日志路径。');
   }
   assertNoRuntimeFailure(readFileSync(logPath, 'utf8'), 'App 日志');
+}
+
+function runAdb(args, { allowFailure = false } = {}) {
+  const result = spawnSync('adb', args, {
+    cwd: rootDir,
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  if (result.error) {
+    throw new Error(`adb 启动失败：${result.error.message}`);
+  }
+  if (result.status !== 0 && !allowFailure) {
+    throw new Error(`adb ${args.join(' ')} 失败：${String(result.stderr || '').trim() || `退出码 ${result.status ?? 'unknown'}`}`);
+  }
+  return String(result.stdout || '');
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function logcatProcessId(line) {
+  return line.match(/^\S+\s+\S+\s+(\d+)\s+\d+\s+[A-Z]\s+/)?.[1];
+}
+
+function androidPackageLogWindow(output, packageName, marker, currentPids = '') {
+  const lines = String(output).split(/\r?\n/);
+  const markerIndex = lines.findIndex((line) => line.includes(marker));
+  if (markerIndex < 0) {
+    throw new Error('首次启动日志 marker 已从 logcat 窗口丢失，无法形成 APK_SANITY 证据。');
+  }
+  const windowLines = lines.slice(markerIndex + 1);
+  const packagePattern = escapeRegex(packageName);
+  const startProcessPattern = new RegExp(`\\bStart proc\\s+(\\d+):${packagePattern}(?:\\b|:)`);
+  const crashProcessPattern = new RegExp(`\\bProcess:\\s*${packagePattern}(?::[^,\\s]+)?\\s*,\\s*PID:\\s*(\\d+)`);
+  const packagePids = new Set(String(currentPids).match(/\b\d+\b/g) || []);
+  for (const line of windowLines) {
+    const processId = startProcessPattern.exec(line)?.[1] || crashProcessPattern.exec(line)?.[1];
+    if (processId) {
+      packagePids.add(processId);
+    }
+  }
+  return windowLines.filter((line) => {
+    const processId = logcatProcessId(line);
+    return line.includes(packageName) || Boolean(processId && packagePids.has(processId));
+  }).join('\n');
+}
+
+function verifyFirstLaunchLogWindow(deviceId, marker, logcatStart, runAdbCommand = runAdb) {
+  const currentPids = runAdbCommand(['-s', deviceId, 'shell', 'pidof', appPackage], { allowFailure: true });
+  const output = runAdbCommand(['-s', deviceId, 'logcat', '-d', '-v', 'threadtime', '-T', logcatStart]);
+  assertNoRuntimeFailure(
+    androidPackageLogWindow(output, appPackage, marker, currentPids),
+    'APK 首次启动日志'
+  );
 }
 
 function resolveApkPath(value) {
@@ -59,30 +116,37 @@ function bootSelectedDevice() {
   runAgentDevice(['boot', '--platform', 'android', '--device', selectedDevice, '--headless'], { cwd: rootDir });
 }
 
-async function main() {
-  const apkPath = resolveApkPath(process.argv[2]);
-  const selectedDevice = selectedDeviceName();
-  assertAgentDeviceVersion(rootDir);
-  runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
-  bootSelectedDevice();
+export function runApkSanity({
+  apkPath,
+  device,
+  marker = `wz-apk-sanity-first-launch-${process.pid}-${Date.now()}`,
+  runAdbCommand = runAdb,
+  runAgentDeviceCommand = runAgentDevice,
+  verifySessionLog
+}) {
   try {
-    runAgentDevice(['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs()], { cwd: rootDir });
+    runAgentDeviceCommand(['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs(device.name)], { cwd: rootDir });
   } catch (error) {
     throw new Error(`BLOCKED_BY_ENV：覆盖安装失败；未卸载 App，也未清数据、Cookie 或登录态。${error instanceof Error ? ` ${error.message}` : ''}`);
   }
 
+  const logcatStart = runAdbCommand(['-s', device.id, 'shell', 'date', '+%s.%3N']).trim();
+  if (!/^\d+\.\d+$/.test(logcatStart)) {
+    throw new Error('无法读取设备 logcat 起始时间，未执行首次启动。');
+  }
+  runAdbCommand(['-s', device.id, 'shell', 'log', '-p', 'i', '-t', 'WZ_APK_SANITY', marker]);
   let opened = false;
   let logging = false;
   const errors = [];
   try {
-    runAgentDevice(['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs()], { cwd: rootDir });
+    runAgentDeviceCommand(['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs(device.name)], { cwd: rootDir });
     opened = true;
-    runAgentDevice(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+    runAgentDeviceCommand(['logs', 'clear', '--restart', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
     logging = true;
-    runAgentDevice(['logs', 'mark', 'wz-apk-sanity-start', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
-    runAgentDevice(['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch'], { cwd: rootDir });
-    waitFor('id="feed-list-ready-all"', 60_000);
-    const appState = runAgentDevice(['appstate', '--session', smokeSession, '--platform', 'android', '--json'], {
+    runAgentDeviceCommand(['logs', 'mark', 'wz-apk-sanity-start', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+    runAgentDeviceCommand(['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch'], { cwd: rootDir });
+    waitFor('id="feed-list-ready-all"', 60_000, runAgentDeviceCommand);
+    const appState = runAgentDeviceCommand(['appstate', '--session', smokeSession, '--platform', 'android', '--json'], {
       capture: true,
       cwd: rootDir,
       echoCapture: false
@@ -93,18 +157,23 @@ async function main() {
   } catch (error) {
     errors.push(error);
   } finally {
+    try {
+      verifyFirstLaunchLogWindow(device.id, marker, logcatStart, runAdbCommand);
+    } catch (error) {
+      errors.push(error);
+    }
     if (logging) {
       try {
-        runAgentDevice(['logs', 'mark', 'wz-apk-sanity-end', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
-        runAgentDevice(['logs', 'stop', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
-        verifyLogWindow();
+        runAgentDeviceCommand(['logs', 'mark', 'wz-apk-sanity-end', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+        runAgentDeviceCommand(['logs', 'stop', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+        (verifySessionLog || (() => verifyLogWindow(runAgentDeviceCommand)))();
       } catch (error) {
         errors.push(error);
       }
     }
     if (opened) {
       try {
-        runAgentDevice(['close', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
+        runAgentDeviceCommand(['close', '--session', smokeSession, '--platform', 'android'], { cwd: rootDir });
       } catch (error) {
         errors.push(error);
       }
@@ -114,6 +183,16 @@ async function main() {
   if (errors.length) {
     throw new AggregateError(errors, 'APK_SANITY 失败');
   }
+}
+
+async function main() {
+  const apkPath = resolveApkPath(process.argv[2]);
+  const selectedDevice = selectedDeviceName();
+  assertAgentDeviceVersion(rootDir);
+  runAgentDevice(['doctor', '--platform', 'android'], { cwd: os.tmpdir() });
+  bootSelectedDevice();
+  const device = resolveAndroidDevice(selectedDevice);
+  runApkSanity({ apkPath, device });
   console.log('APK_SANITY');
   await runDeviceReplay({ apkPath, selectedDevice });
 }

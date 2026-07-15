@@ -50,4 +50,3 @@ press id="library-source-linuxdo"
 wait "id=\"library-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 press id="library-source-all"
 wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
-close

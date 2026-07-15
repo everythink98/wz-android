@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
-export const MIN_AGENT_DEVICE_VERSION = '0.14.0';
+export const MIN_AGENT_DEVICE_VERSION = '0.19.0';
 
 export function selectedDeviceName(device = process.env.WZ_ANDROID_TEST_DEVICE || process.env.WZ_ANDROID_SMOKE_DEVICE) {
   const selectedDevice = String(device || '').trim();

@@ -42,6 +42,10 @@ wait "id=\"feed-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 press id="feed-source-nodeseek"
 wait "id=\"feed-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
 wait id="feed-list-ready-nodeseek" 60000
+wait id="feed-topic-first" 10000
+scroll down
+scroll down
+wait label="回到顶部" 10000
 press label="列表筛选"
 press text="新评论"
 wait id="feed-list-ready-nodeseek" 60000
@@ -62,4 +66,3 @@ back --system
 wait id="feed-list-ready-yaohuo" 60000
 wait id="feed-topic-first" 10000
 wait "id=\"feed-source-yaohuo\" label=\"妖火，已选择\"" 10000
-close

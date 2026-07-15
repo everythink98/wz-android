@@ -10,28 +10,45 @@ wait id="search-query" 10000
 
 press id="search-source-linuxdo"
 wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
-fill id="search-query" codex-linuxdo
-is text id="search-query" codex-linuxdo
+fill id="search-query" AI
+is text id="search-query" AI
 press id="search-submit"
 keyboard dismiss
 wait id="search-complete" 60000
-is text id="search-query" codex-linuxdo
+is visible id="search-result-first"
+press id="search-result-first"
+wait id="topic-detail-loaded" 60000
+back --system
+wait id="search-complete" 60000
+is text id="search-query" AI
+wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 
 press id="search-source-nodeseek"
 wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
-fill id="search-query" codex-nodeseek
-is text id="search-query" codex-nodeseek
+fill id="search-query" AI
+is text id="search-query" AI
 press id="search-submit"
 keyboard dismiss
 wait id="search-complete" 60000
-is text id="search-query" codex-nodeseek
+is visible id="search-result-first"
+press id="search-result-first"
+wait id="topic-detail-loaded" 60000
+back --system
+wait id="search-complete" 60000
+is text id="search-query" AI
+wait "id=\"search-source-nodeseek\" label=\"NodeSeek，已选择\"" 10000
 
 press id="search-source-yaohuo"
 wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000
-fill id="search-query" codex-yaohuo
-is text id="search-query" codex-yaohuo
+fill id="search-query" AI
+is text id="search-query" AI
 press id="search-submit"
 keyboard dismiss
 wait id="search-complete" 60000
-is text id="search-query" codex-yaohuo
-close
+is visible id="search-result-first"
+press id="search-result-first"
+wait id="topic-detail-loaded" 60000
+back --system
+wait id="search-complete" 60000
+is text id="search-query" AI
+wait "id=\"search-source-yaohuo\" label=\"妖火，已选择\"" 10000

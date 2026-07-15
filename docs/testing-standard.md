@@ -38,7 +38,7 @@
 
 - MCP 是探索、诊断和录制入口；Replay 是经过审查后进入仓库的稳定旅程，二者不互相替代。
 - tracked Replay 只能使用稳定 `testID`、accessibility label、role 和稳定文案；禁止坐标、临时引用、动态标题和固定实时数量。
-- Replay 默认 retries 为 0；单个 `.ad` 首次失败即停止，普通执行失败由外层继续其他独立文件并在最后汇总，清理失败则立即中止后续文件以避免污染，只有全部通过才输出 `DEVICE_REPLAY_PASS`。诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
+- Replay 默认 retries 为 0；单个 `.ad` 首次失败即停止，普通执行失败由外层继续其他独立文件并在最后汇总，清理失败则立即中止后续文件以避免污染，只有全部通过才输出 `DEVICE_REPLAY_PASS`。带 `--record-video` 的 tracked Replay 不自行执行 `close`：test harness 必须先停止并拉回视频，再由 cleanup 关闭 session。诊断性重跑不能覆盖第一次失败。禁止在 CI 使用 `replay -u`：本机 0.19.0 仍可能重写脚本，而 0.19.1 起该参数已退役为 no-op；统一根据 divergence 建议人工修改并审查 diff。
 - Agent Live 不是 CI。它只在 `npm run verify` 和相关 Replay 之后按 `targeted` 或 `full` Profile 执行；CF、动态目标、授权、恢复、不可逆写入和失败续跑规则以 `tests/live/agent-live.md` 为准。
 - React Doctor 只扫描新增行并阻断新增 error；它是静态建议，不替代任何行为测试。
 - 历史逃逸事故及负向控制见 `docs/regression-corpus.md`。
@@ -104,7 +104,7 @@ $env:WZ_ANDROID_TEST_APK = 'C:\path\to\current.apk'
 npm run test:device
 ```
 
-`test:device` 先核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 独立 relaunch，单文件内部零重试并在失败处停止；普通执行失败时外层继续其余文件并汇总为非零退出，若本机 daemon 或设备录屏 scratch 清理失败则立即中止，后续场景不再具备隔离证据。证据拉回后只终止本条 Replay 新增的本机 daemon，并只清理明确设备上路径匹配 agent-device 录屏前缀的进程/scratch；不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。动态结果只断言状态、来源和可打开性，不固定主题标题或数量，也不把依赖动态对象内容长度、回复组成或权限的交互塞进固定 Replay；这类行为由 RNTL 固定、Agent Live 选择满足前置条件的真实对象核实。
+`test:device` 要求可信安装为 `agent-device >= 0.19.0`，随后核对 App version/versionCode，并从明确设备只读拉取已安装 `base.apk` 计算 SHA-256；任何身份不匹配都直接失败。它只形成 `DEVICE_REPLAY_PASS`；JUnit、截图、视频和日志产物进入 ignored 的 `tmp/agent-device/`。每个 `.ad` 使用唯一 session、独立 relaunch且不自行 `close`，让 test harness 先完成录屏 stop，再执行 session cleanup；单文件内部零重试并在失败处停止。普通执行失败时外层继续其余文件并汇总为非零退出，任何录屏隔离或恢复失败都立即中止。执行前若明确设备存在 active manifest、对应 `.tmp`、工具录屏进程或 orphan scratch，流程按 `BLOCKED_BY_ENV` 停止并保留现场；正式 manifest 即使为空也按文件存在视为占用。执行后只对同时匹配本条唯一 session 与 device 的 manifest 调用 agent-device `record stop`，未知或畸形 manifest、录屏进程和 scratch 一律不终止、不删除。runner 不结束本机 daemon，不使用 wildcard 清设备文件，也不能停止 MCP、清 App 数据、Cookie、用户文件或本机首败证据。动态结果只断言状态、来源和可打开性，不固定主题标题或数量，也不把依赖动态对象内容长度、回复组成或权限的交互塞进固定 Replay；这类行为由 RNTL 固定、Agent Live 选择满足前置条件的真实对象核实。
 
 发布脚本分别校验正式 APK 与开发签名 smoke APK 后运行：
 
@@ -112,7 +112,7 @@ npm run test:device
 npm run smoke:android
 ```
 
-通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；冷启动与日志窗口没有本次流程产生的崩溃、ANR 或 RedBox，形成 `APK_SANITY`；随后执行 tracked Replay，形成独立的 `DEVICE_REPLAY_PASS`。缺少搜索结果、用户主题、收藏基线、页面 readiness 或 APK 身份均判定失败，不降级为跳过。全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
+通过标准：覆盖安装且不清 App 数据；确认 App 版本、versionCode、APK SHA、设备和登录来源；覆盖安装后先读取设备 epoch、再写唯一 logcat marker 并执行第一次启动，以 `logcat -T` 有界读取该时间之后的日志，按包名与该包 PID 裁剪 marker 后窗口，同时保留 agent-device session 的第二次 relaunch 日志。任一窗口出现崩溃、ANR 或 RedBox，或 marker 丢失，都不能形成 `APK_SANITY`；不得清空设备全局 logcat。随后执行 tracked Replay，形成独立的 `DEVICE_REPLAY_PASS`。缺少搜索结果、用户主题、收藏基线、页面 readiness 或 APK 身份均判定失败，不降级为跳过。全程只读，不创建或切换收藏，也不执行其他真实写操作；受影响来源仍要继续执行本文件对应专项验收。
 
 动态来源、真实账号和已授权写操作按 `tests/live/agent-live.md` 执行。普通改动只跑受影响能力的 `targeted`；集中修复、里程碑或发布前跑 `full`。场景相互独立，CF 由用户手动处理；无人处理记 `BLOCKED_BY_ENV`，不可逆结果不明确时不得重试。
 
@@ -169,7 +169,7 @@ npm run typecheck
 2. 输入或选择关键词后，必须点击 App 内提交按钮；最近搜索词只填入关键词，不代表已经搜索。
 3. 分别检查 `全部`、`V2EX`、`linux.do`、`NodeSeek`、`妖火`。
 4. 每个来源记录结果数、首条标题、错误文案和是否可继续加载。
-5. 打开至少一个结果详情，再返回搜索页，确认关键词、来源和结果仍保留。
+5. tracked Replay 对 linux.do、NodeSeek、妖火分别要求首条结果可见、可打开详情并返回；手工验收同样至少打开每个受影响来源的一条结果，再返回搜索页确认关键词、来源和结果仍保留。
 6. 打开搜索筛选，确认筛选项存在；非必要不改变筛选。
 7. 若点到 `linux.do 老帖` 的外部搜索入口，记录为外部跳转检查，不作为登录 / 验证检查。
 
