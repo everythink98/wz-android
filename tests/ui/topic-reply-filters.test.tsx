@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail } from '../../src/types';
 import type { ReplyFilter } from '../../src/appTypes';
@@ -189,7 +189,9 @@ function HtmlRendererIdentityHarness({
     topicKey: `${topicDetail.source}:${topicDetail.id}`,
     webViewBlockMessage: ''
   });
-  onRender(rendering.htmlRenderers, rendering.htmlRenderersProps);
+  useEffect(() => {
+    onRender(rendering.htmlRenderers, rendering.htmlRenderersProps);
+  }, [onRender, rendering.htmlRenderers, rendering.htmlRenderersProps]);
   return null;
 }
 
