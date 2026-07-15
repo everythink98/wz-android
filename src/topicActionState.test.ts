@@ -268,6 +268,75 @@ describe('topic action state patches', () => {
     }]);
   });
 
+  it('[REG-WRITE-001] increments poll participants once after the first submitted vote', () => {
+    const initial = {
+      ...topic,
+      polls: [{
+        id: 'poll-1',
+        title: '投票',
+        participantCount: 4,
+        voted: false,
+        options: [
+          { id: 'a', label: 'A', count: 2 },
+          { id: 'b', label: 'B', count: 1 }
+        ]
+      }]
+    };
+    const patch = { pollId: 'poll-1', optionIds: ['a'] };
+
+    const afterFirstApply = applyPollVoteToTopic(initial, patch);
+    const afterRepeatedApply = applyPollVoteToTopic(afterFirstApply, patch);
+
+    expect(afterFirstApply?.polls?.[0]).toMatchObject({
+      participantCount: 5,
+      voted: true,
+      options: [
+        { id: 'a', count: 3, selected: true },
+        { id: 'b', count: 1, selected: false }
+      ]
+    });
+    expect(afterRepeatedApply?.polls?.[0]?.participantCount).toBe(5);
+    expect(afterRepeatedApply?.polls?.[0]?.options[0]).toMatchObject({ id: 'a', count: 3 });
+  });
+
+  it('[REG-WRITE-001] increments multi-select participants once while incrementing every selected option', () => {
+    const initial = {
+      ...topic,
+      polls: [{
+        id: 'poll-multiple',
+        title: '多选投票',
+        participantCount: 8,
+        multiple: true,
+        voted: false,
+        options: [
+          { id: 'a', label: 'A', count: 3 },
+          { id: 'b', label: 'B', count: 5 },
+          { id: 'c', label: 'C', count: 2 }
+        ]
+      }]
+    };
+    const patch = { pollId: 'poll-multiple', optionIds: ['a', 'c'] };
+
+    const afterFirstApply = applyPollVoteToTopic(initial, patch);
+    const afterRepeatedApply = applyPollVoteToTopic(afterFirstApply, patch);
+
+    expect(afterFirstApply?.polls?.[0]).toMatchObject({
+      participantCount: 9,
+      voted: true,
+      options: [
+        { id: 'a', count: 4, selected: true },
+        { id: 'b', count: 5, selected: false },
+        { id: 'c', count: 3, selected: true }
+      ]
+    });
+    expect(afterRepeatedApply?.polls?.[0]?.participantCount).toBe(9);
+    expect(afterRepeatedApply?.polls?.[0]?.options).toMatchObject([
+      { id: 'a', count: 4 },
+      { id: 'b', count: 5 },
+      { id: 'c', count: 3 }
+    ]);
+  });
+
   it('does not mark every anonymous poll as voted on multi-poll topics', () => {
     const next = applyPollVoteToTopic({
       ...topic,

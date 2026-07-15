@@ -1,0 +1,52 @@
+context platform=android
+context timeout=180000
+context retries=0
+env APP_ID=com.wz.reader
+
+open ${APP_ID} --relaunch
+wait id="feed-list-ready-all" 60000
+press id="main-tab-library"
+wait id="library-favorites-ready" 60000
+wait "id=\"library-tab-favorites\" label=\"帖子，已选择\"" 10000
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
+wait id="library-favorite-first" 10000
+press id="library-favorite-first"
+wait id="topic-detail-loaded" 60000
+press id="topic-author"
+wait id="user-screen-loaded" 60000
+back --system
+wait id="topic-detail-loaded" 60000
+back --system
+wait id="library-favorites-ready" 60000
+wait "id=\"library-tab-favorites\" label=\"帖子，已选择\"" 10000
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
+press id="library-source-v2ex"
+wait "id=\"library-source-v2ex\" label=\"V2EX，已选择\"" 10000
+press id="library-source-all"
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
+press id="library-tab-users"
+wait id="library-users-ready" 10000
+wait id="library-user-first" 10000
+press id="library-user-first"
+wait id="user-screen-loaded" 60000
+back --system
+wait id="library-users-ready" 60000
+wait "id=\"library-tab-users\" label=\"关注用户，已选择\"" 10000
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
+press id="library-source-v2ex"
+wait "id=\"library-source-v2ex\" label=\"V2EX，已选择\"" 10000
+press id="library-source-all"
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
+press id="library-tab-history"
+wait id="library-history-ready" 10000
+wait id="library-history-first" 10000
+press id="library-history-first"
+wait id="topic-detail-loaded" 60000
+back --system
+wait id="library-history-ready" 60000
+wait "id=\"library-tab-history\" label=\"历史，已选择\"" 10000
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000
+press id="library-source-linuxdo"
+wait "id=\"library-source-linuxdo\" label=\"linux.do，已选择\"" 10000
+press id="library-source-all"
+wait "id=\"library-source-all\" label=\"全部，已选择\"" 10000

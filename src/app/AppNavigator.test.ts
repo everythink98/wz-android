@@ -3,6 +3,8 @@ import { CommonActions, StackActions as RouterStackActions, StackRouter } from '
 
 const navigation = vi.hoisted(() => ({
   dispatch: vi.fn(),
+  getCurrentRoute: vi.fn(),
+  getRootState: vi.fn(),
   isReady: vi.fn(() => true)
 }));
 
@@ -23,7 +25,7 @@ vi.mock('@react-navigation/native-stack', () => ({
 vi.mock('../components/NavBar', () => ({ TabBarIcon: () => null, tabNavItems: [] }));
 vi.mock('../components/AppControls', () => ({ triggerPressFeedback: vi.fn() }));
 
-import { AppNavigator, navigateMainTab, shouldUpdateAppRootScreen } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigateMainTab, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, shouldUpdateAppRootScreen } from './AppNavigator';
 
 describe('AppNavigator', () => {
   it('skips parent-only rerenders when its navigation props are unchanged', () => {
@@ -80,5 +82,99 @@ describe('navigateMainTab', () => {
 
     expect(state.routes.map((route) => route.name)).toEqual(['MainTabs']);
     expect(state.routes[0]?.params).toEqual({ screen: 'more' });
+  });
+
+  it('keeps nested Topic and User routes distinct and pops them one level at a time', () => {
+    const router = StackRouter({ initialRouteName: 'MainTabs' });
+    const options = {
+      routeNames: ['MainTabs', 'Topic', 'User'],
+      routeParamList: { MainTabs: undefined, Topic: undefined, User: undefined },
+      routeGetIdList: {},
+      routeKeyChanges: [],
+      routePreloadList: {}
+    };
+    let state = router.getInitialState(options);
+    for (const action of [
+      RouterStackActions.push('Topic'),
+      RouterStackActions.push('User'),
+      RouterStackActions.push('Topic')
+    ]) {
+      const result = router.getStateForAction(state, action, options);
+      if (!result) {
+        throw new Error(`Navigation action ${action.type} was not handled`);
+      }
+      state = router.getRehydratedState(result, options);
+    }
+
+    expect(state.routes.map((route) => route.name)).toEqual(['MainTabs', 'Topic', 'User', 'Topic']);
+    expect(state.routes[1]?.key).not.toBe(state.routes[3]?.key);
+
+    for (const expectedRoutes of [
+      ['MainTabs', 'Topic', 'User'],
+      ['MainTabs', 'Topic'],
+      ['MainTabs']
+    ]) {
+      const result = router.getStateForAction(state, RouterStackActions.pop(1), options);
+      if (!result) {
+        throw new Error('Stack pop was not handled');
+      }
+      state = router.getRehydratedState(result, options);
+      expect(state.routes.map((route) => route.name)).toEqual(expectedRoutes);
+    }
+  });
+});
+
+describe('topic route keys', () => {
+  beforeEach(() => {
+    navigation.isReady.mockReturnValue(true);
+  });
+
+  it('identifies both the active Topic route and the Topic directly below User', () => {
+    navigation.getCurrentRoute.mockReturnValue({ key: 'Topic-active', name: 'Topic' });
+    expect(currentTopicRouteKey()).toBe('Topic-active');
+
+    navigation.getCurrentRoute.mockReturnValue({ key: 'User-active', name: 'User' });
+    navigation.getRootState.mockReturnValue({
+      index: 2,
+      routes: [
+        { key: 'MainTabs', name: 'MainTabs' },
+        { key: 'Topic-return', name: 'Topic' },
+        { key: 'User-active', name: 'User' }
+      ]
+    });
+    expect(currentTopicRouteKey()).toBeNull();
+    expect(previousTopicRouteKey()).toBe('Topic-return');
+  });
+
+  it('[REG-TOPIC-002] saves the current Topic snapshot before opening reading settings', () => {
+    const events: string[] = [];
+    const saveTopicRoute = vi.fn(() => events.push('save'));
+    navigation.dispatch.mockImplementation(() => events.push('push'));
+    navigation.getCurrentRoute.mockReturnValue({ key: 'Topic-active', name: 'Topic' });
+
+    expect(openReadingSettingsFromCurrentTopic(saveTopicRoute)).toBe(true);
+
+    expect(saveTopicRoute).toHaveBeenCalledWith('Topic-active');
+    expect(events).toEqual(['save', 'push']);
+  });
+});
+
+describe('navigateAppScreen', () => {
+  beforeEach(() => {
+    navigation.dispatch.mockClear();
+    navigation.isReady.mockReturnValue(true);
+    navigation.getCurrentRoute.mockReturnValue({ key: 'feed', name: 'feed' });
+  });
+
+  it('pushes detail routes but returns tab destinations through the existing MainTabs route', () => {
+    expect(navigateAppScreen('topic')).toBe(true);
+    expect(navigateAppScreen('user')).toBe(true);
+    expect(navigateAppScreen('library')).toBe(true);
+
+    expect(navigation.dispatch.mock.calls).toEqual([
+      [{ type: 'PUSH', payload: { name: 'Topic' } }],
+      [{ type: 'PUSH', payload: { name: 'User' } }],
+      [{ type: 'POP_TO', payload: { name: 'MainTabs', params: { screen: 'library' } } }]
+    ]);
   });
 });

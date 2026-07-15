@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FeedResponse, FeedSource, Source } from '../types';
+import type { FeedResponse, FeedSource, Source, Topic } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
+import { getYaohuoTopicDirect } from '../yaohuoApi';
 
 const forumMocks = vi.hoisted(() => ({
   getCategories: vi.fn(),
@@ -246,6 +247,49 @@ describe('source gateway read contract', () => {
 
     const terminal = lines.map((line) => JSON.parse(line)).filter(({ phase }) => phase === 'finish');
     expect(terminal).toEqual([expect.objectContaining({ outcome: 'partial' })]);
+  });
+
+  it('marks a Yaohuo topic trace partial when optional favorite state is unavailable', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const trace = beginDiagnosticTrace('topic', 'open', { source: 'yaohuo' });
+    const topic: Topic = {
+      source: 'yaohuo',
+      id: 'private-topic-id',
+      title: 'private title',
+      author: 'private author',
+      url: 'https://www.yaohuo.me/bbs-private-topic-id.html',
+      createdAt: '',
+      replyCount: 0
+    };
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=secret'),
+      nodeSeekUserAgent: () => ''
+    });
+    vi.mocked(getYaohuoTopicDirect).mockResolvedValueOnce(annotateSourceDiagnosticSummary({
+      ...topic,
+      contentHtml: '<p>private body</p>',
+      replies: []
+    }, {
+      parserVariant: 'html-topic-with-replies',
+      candidateCount: 1,
+      validCount: 1,
+      droppedCount: 0,
+      partialErrorCount: 1,
+      hasDegradation: true
+    }));
+
+    await gateway.getTopic({ source: 'yaohuo', id: topic.id, topic }, { trace });
+    markDiagnosticStage(trace, 'apply', { itemCount: 1 });
+    finishDiagnosticTrace(trace, 'success');
+
+    const serialized = lines.join('');
+    const terminal = lines.map((line) => JSON.parse(line)).filter(({ phase }) => phase === 'finish');
+    expect(terminal).toEqual([expect.objectContaining({ outcome: 'partial' })]);
+    expect(serialized).not.toMatch(/private-topic-id|private title|private author|private body|yaohuo\.me|sidyaohuo=secret/);
   });
 
   it.each<Source>(['v2ex', 'linuxdo', 'nodeseek'])('keeps all five reads behind the gateway for %s', async (source) => {

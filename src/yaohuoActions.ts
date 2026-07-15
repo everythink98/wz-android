@@ -156,6 +156,24 @@ export function buildYaohuoFavoriteRequest({
   };
 }
 
+export function buildYaohuoDeleteFavoriteRequest({
+  favoriteId
+}: {
+  favoriteId: string | number;
+}): YaohuoActionRequest {
+  const params = new URLSearchParams({
+    action: 'delete',
+    siteid: '1000',
+    favtypeid: '0',
+    id: cleanPositiveInteger(favoriteId, '收藏记录 id')
+  });
+  return {
+    path: `/bbs/favlist.aspx?${params.toString()}`,
+    method: 'POST',
+    headers: { accept: '*/*' }
+  };
+}
+
 export function buildYaohuoVoteRequest({
   topicId,
   classId,

@@ -33,7 +33,7 @@ import { useAppUpdateController } from './useAppUpdateController';
 import { useFeedController } from './useFeedController';
 import { useHtmlRenderingController } from './useHtmlRenderingController';
 import { useHiddenBrowserFetchController } from './useHiddenBrowserFetchController';
-import { AppNavigator, currentTopicRouteKey, navigateAppScreen, navigationRef, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
+import { AppNavigator, currentTopicRouteKey, isReadingSettingsScreen, navigateAppScreen, navigationRef, openReadingSettingsFromCurrentTopic, previousTopicRouteKey, pushTopicRoute, shouldUpdateAppRootScreen, type MainTabParamList } from './AppNavigator';
 import { useImagePreviewController } from './useImagePreviewController';
 import { useSearchController } from './useSearchController';
 import { useSessionController } from './useSessionController';
@@ -59,7 +59,7 @@ import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
 import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
 import { createSourceGateway, type LinuxDoLevelProfile } from '../sources/sourceGateway';
-import type { FeedSource, Source, Topic, UserProfile } from '../types';
+import type { FeedSource, Source, Topic, TopicDetail, UserProfile } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
 import { isHttpOrHttpsUrl } from '../htmlImages';
 import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
@@ -75,8 +75,10 @@ import { errorMessage } from '../appUtils';
 import { FeedScreen } from '../screens/FeedScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { MoreScreen } from '../screens/MoreScreen';
+import { AppearancePanel } from '../screens/more/MorePanels';
 import { SearchScreen } from '../screens/SearchScreen';
-import { TopicScreen } from '../screens/TopicScreen';
+import { TopicScreen, YaohuoFavoriteStateProvider } from '../screens/TopicScreen';
+import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 import { UserScreen } from '../screens/UserScreen';
 import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
@@ -112,6 +114,24 @@ type UserReturnTopic = {
   snapshot: TopicSnapshot;
   backStack: TopicSnapshot[];
 };
+
+function useStableTopicLayoutDetail(topicDetail: TopicDetail | null) {
+  const stableDetailRef = useRef(topicDetail);
+  if (
+    stableDetailRef.current !== topicDetail
+    && !hasSameYaohuoTopicLayout(stableDetailRef.current, topicDetail)
+  ) {
+    stableDetailRef.current = topicDetail;
+  }
+  return stableDetailRef.current;
+}
+
+function useLatestCallback<Arguments extends unknown[], Result>(callback: (...args: Arguments) => Result) {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  return useCallback((...args: Arguments) => callbackRef.current(...args), []);
+}
+
 const NODESEEK_LOGIN_HOSTS = ['nodeseek.com', 'challenges.cloudflare.com'];
 const NODEIMAGE_LOGIN_HOSTS = ['nodeimage.com', 'nodeseek.com', 'challenges.cloudflare.com'];
 const YAOHUO_LOGIN_HOSTS = ['www.yaohuo.me'];
@@ -432,6 +452,7 @@ export function AppRoot() {
     restore: restoreTopicSnapshot,
     snapshot: topicSnapshot
   } = topicSession;
+  const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
   const abortQuotedReplyRequests = topicQuotes.abortRequests;
   const activateTopicRoute = topicNavigation.activateRoute;
   const changeCommentQuery = topicView.changeCommentQuery;
@@ -673,10 +694,10 @@ export function AppRoot() {
     commentQuery: debouncedCommentQuery,
     inlineSizedImageUrls,
     replyFilter,
-    topicDetail,
+    topicDetail: topicLayoutDetail,
     topicImageDeriver,
     topicReplies
-  }), [debouncedCommentQuery, inlineSizedImageUrls, replyFilter, topicDetail, topicImageDeriver, topicReplies]);
+  }), [debouncedCommentQuery, inlineSizedImageUrls, replyFilter, topicImageDeriver, topicLayoutDetail, topicReplies]);
   const nodeSeekCurrentUserForTopicActions = siteSessionViewModels.nodeseek.currentUser || (topicDetail?.source === 'nodeseek' ? topicDetail.currentUser : undefined);
   const displayReplies = useMemo(
     () => markCurrentNodeSeekOwnRepliesUnlikable(filteredReplies, nodeSeekCurrentUserForTopicActions, effectiveNodeSeekUserId),
@@ -1527,9 +1548,8 @@ export function AppRoot() {
     changeNodeSeekLoginPanel(false);
     closeYaohuoLoginPanel();
     closeLinuxDoPanel();
-    setShowSettingsPanel(true);
-    changeScreen('more');
-  }, [changeNodeSeekLoginPanel, changeScreen, closeLinuxDoPanel, closeYaohuoLoginPanel]);
+    openReadingSettingsFromCurrentTopic(saveTopicRoute);
+  }, [changeNodeSeekLoginPanel, closeLinuxDoPanel, closeYaohuoLoginPanel, saveTopicRoute]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -1559,6 +1579,10 @@ export function AppRoot() {
       if (showLinuxDoPanel) {
         closeLinuxDoPanel();
         return handled('linuxdo-panel-closed');
+      }
+      if (isReadingSettingsScreen()) {
+        navigationRef.goBack();
+        return handled('reading-settings-closed');
       }
       if (showSettingsPanel) {
         setShowSettingsPanel(false);
@@ -1937,6 +1961,22 @@ export function AppRoot() {
     yaohuoLoginPrompt
   ]);
 
+  const stableBookmarkOnLinuxDoSite = useLatestCallback(bookmarkOnLinuxDoSite);
+  const stableCollectOnNodeSeekSite = useLatestCallback(collectOnNodeSeekSite);
+  const stableDeleteReply = useLatestCallback(deleteReply);
+  const stableFavoriteOnYaohuoSite = useLatestCallback(favoriteOnYaohuoSite);
+  const stableInteract = useLatestCallback(interact);
+  const stableLoadMoreReplies = useLatestCallback(loadMoreReplies);
+  const stableOpenUser = useLatestCallback(openUser);
+  const stableRefreshTopicReplies = useLatestCallback(refreshTopicReplies);
+  const stableRefreshWholeTopic = useLatestCallback(refreshWholeTopic);
+  const stableShareTopic = useLatestCallback(shareTopic);
+  const stableSubmitReply = useLatestCallback(submitReply);
+  const stableToggleQuotedFloor = useLatestCallback(toggleQuotedFloor);
+  const stableUploadReplyImage = useLatestCallback(uploadReplyImage);
+  const stableVerifyLinuxDoFromTopic = useLatestCallback(verifyLinuxDoFromTopic);
+  const stableVerifyNodeSeekFromTopic = useLatestCallback(verifyNodeSeekFromTopic);
+  const stableVotePoll = useLatestCallback(votePoll);
   const topicProps = useMemo(() => ({
       actionBusy,
       canUseLinuxDoActions,
@@ -1971,7 +2011,7 @@ export function AppRoot() {
       sourceReplies: topicReplies,
       styles,
       theme,
-      topic: topicDetail,
+      topic: topicLayoutDetail,
       topicBusy,
       topicError,
       topicScrollRef,
@@ -1979,15 +2019,14 @@ export function AppRoot() {
       onBack: goBackFromTopic,
       onCommentQueryChange: changeCommentQuery,
       optimisticActions: optimisticTopicActions,
-      onDeleteReply: deleteReply,
+      onDeleteReply: stableDeleteReply,
       onEditReply: editReply,
-      onInteract: interact,
-      onLinuxDoBookmark: bookmarkOnLinuxDoSite,
-      onNodeSeekCollection: collectOnNodeSeekSite,
-      onShareTopic: shareTopic,
-      onYaohuoFavorite: favoriteOnYaohuoSite,
-      onVotePoll: votePoll,
-      onLoadMoreReplies: loadMoreReplies,
+      onInteract: stableInteract,
+      onLinuxDoBookmark: stableBookmarkOnLinuxDoSite,
+      onNodeSeekCollection: stableCollectOnNodeSeekSite,
+      onShareTopic: stableShareTopic,
+      onVotePoll: stableVotePoll,
+      onLoadMoreReplies: stableLoadMoreReplies,
       onOpenOriginal: openExternalUrl,
       onOpenReadingSettings: openReadingSettingsFromTopic,
       onReplyComposerOpenChange: toggleReplyComposer,
@@ -1995,30 +2034,26 @@ export function AppRoot() {
       onReplyFaceChange: changeReplyFace,
       onReplyFilterChange: changeReplyFilter,
       onReplyToFloor: replyToFloor,
-      onRefreshTopic: refreshTopicReplies,
-      onRefreshWholeTopic: refreshWholeTopic,
-      onVerifyLinuxDo: verifyLinuxDoFromTopic,
-      onVerifyNodeSeek: verifyNodeSeekFromTopic,
-      onSubmitReply: submitReply,
-      onUploadReplyImage: uploadReplyImage,
+      onRefreshTopic: stableRefreshTopicReplies,
+      onRefreshWholeTopic: stableRefreshWholeTopic,
+      onVerifyLinuxDo: stableVerifyLinuxDoFromTopic,
+      onVerifyNodeSeek: stableVerifyNodeSeekFromTopic,
+      onSubmitReply: stableSubmitReply,
+      onUploadReplyImage: stableUploadReplyImage,
       onTopicScroll: handleTopicScroll,
-      onToggleQuotedFloor: toggleQuotedFloor,
+      onToggleQuotedFloor: stableToggleQuotedFloor,
       onToggleFavorite: toggleTopicFavorite,
-      onOpenUser: openUser
+      onOpenUser: stableOpenUser
   }), [
     actionBusy,
-    bookmarkOnLinuxDoSite,
     canUseLinuxDoActions,
     canUseNodeSeekActions,
     canUseYaohuoActions,
-    collectOnNodeSeekSite,
     commentQuery,
-    deleteReply,
     editReply,
     contentWidth,
     debouncedCommentQuery,
     expandedQuotes,
-    favoriteOnYaohuoSite,
     displayReplies,
     goBackFromTopic,
     handleTopicScroll,
@@ -2029,18 +2064,13 @@ export function AppRoot() {
     htmlRenderersProps,
     htmlTagsStyles,
     inlineSizedImageUrls,
-    interact,
-    loadMoreReplies,
     loadedQuotedReplies,
     loadingMoreReplies,
     loadingQuotedFloors,
     openExternalUrl,
     openReadingSettingsFromTopic,
-    openUser,
     optimisticTopicActions,
     quoteStateVersion,
-    refreshTopicReplies,
-    refreshWholeTopic,
     replyComposerOpen,
     replyContent,
     replyFace,
@@ -2051,25 +2081,33 @@ export function AppRoot() {
     replyToFloor,
     changeReplyFace,
     selectedTopic,
-    shareTopic,
+    stableBookmarkOnLinuxDoSite,
+    stableCollectOnNodeSeekSite,
+    stableDeleteReply,
+    stableInteract,
+    stableLoadMoreReplies,
+    stableOpenUser,
+    stableRefreshTopicReplies,
+    stableRefreshWholeTopic,
+    stableShareTopic,
+    stableSubmitReply,
+    stableToggleQuotedFloor,
+    stableUploadReplyImage,
+    stableVerifyLinuxDoFromTopic,
+    stableVerifyNodeSeekFromTopic,
+    stableVotePoll,
     styles,
-    submitReply,
     theme,
     toggleReplyComposer,
     toggleTopicFavorite,
-    toggleQuotedFloor,
     topicBusy,
-    topicDetail,
+    topicLayoutDetail,
     topicError,
     topicFavorite,
     topicImageDeriver,
     topicReplies,
     topicScrollRef,
-    unreadReplyCount,
-    verifyNodeSeekFromTopic,
-    verifyLinuxDoFromTopic,
-    uploadReplyImage,
-    votePoll
+    unreadReplyCount
   ]);
 
   const userProps = useMemo(() => ({
@@ -2124,6 +2162,11 @@ export function AppRoot() {
       <MoreScreen {...moreProps} />
     </ScrollView>
   ), [moreProps, styles]);
+  const renderReadingSettingsScreen = useCallback(() => (
+    <ScrollView style={styles.content} contentContainerStyle={styles.moreContentInner} keyboardShouldPersistTaps="handled">
+      <AppearancePanel settings={readerData.settings} showSettingsPanel styles={styles} onUpdateSettings={updateSettings} />
+    </ScrollView>
+  ), [readerData.settings, styles, updateSettings]);
   const renderTopicScreen = useCallback(() => (
     <TopicScreen {...topicProps} />
   ), [topicProps]);
@@ -2214,23 +2257,30 @@ export function AppRoot() {
               closeNodeImageAuthPanel={closeNodeImageAuthPanel}
             />
               {networkProxyContentReady ? (
-              <AppNavigator
-              moreHasBadge={Boolean(appUpdateInfo)}
-              navigationTheme={navigationTheme}
-              renderFeedTab={renderFeedTab}
-              renderLibraryTab={renderLibraryTab}
-              renderMoreTab={renderMoreTab}
-              renderSearchTab={renderSearchTab}
-              renderTopicScreen={renderTopicScreen}
-              renderUserScreen={renderUserScreen}
-              styles={styles}
-              theme={theme}
-              onReady={handleNavigationReady}
-              onScreenChange={handleNavigationScreenChange}
-              onTabPress={handleMainTabPress}
-              onTopicClosing={flushDeferredNavigationTask}
-              onUserClosing={flushDeferredNavigationTask}
-              />
+              <YaohuoFavoriteStateProvider
+                bookmarked={topicDetail?.source === 'yaohuo' ? topicDetail.bookmarked : undefined}
+                onPress={stableFavoriteOnYaohuoSite}
+                topicKey={topicDetail?.source === 'yaohuo' ? `${topicDetail.source}:${topicDetail.id}` : ''}
+              >
+                <AppNavigator
+                moreHasBadge={Boolean(appUpdateInfo)}
+                navigationTheme={navigationTheme}
+                renderFeedTab={renderFeedTab}
+                renderLibraryTab={renderLibraryTab}
+                renderMoreTab={renderMoreTab}
+                renderReadingSettingsScreen={renderReadingSettingsScreen}
+                renderSearchTab={renderSearchTab}
+                renderTopicScreen={renderTopicScreen}
+                renderUserScreen={renderUserScreen}
+                styles={styles}
+                theme={theme}
+                onReady={handleNavigationReady}
+                onScreenChange={handleNavigationScreenChange}
+                onTabPress={handleMainTabPress}
+                onTopicClosing={flushDeferredNavigationTask}
+                onUserClosing={flushDeferredNavigationTask}
+                />
+              </YaohuoFavoriteStateProvider>
               ) : null}
           </SafeAreaView>
         </KeyboardAvoidingView>

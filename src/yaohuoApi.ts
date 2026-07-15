@@ -4,6 +4,7 @@ import {
   checkYaohuoLoginHtml,
   ensureYaohuoHtmlLoggedIn,
   parseYaohuoListHtml,
+  parseYaohuoFavoriteRecordId,
   parseYaohuoRepliesHtml,
   parseYaohuoSearchHtml,
   parseYaohuoTopicHtml
@@ -15,7 +16,11 @@ import {
   YAOHUO_LOGIN_URL,
   requireYaohuoRequestUrl
 } from './localYaohuoHelpers';
-import { mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
+import {
+  annotateSourceDiagnosticSummary,
+  mergeSourceDiagnosticSummaries,
+  sourceDiagnosticSummary
+} from './sourceAdapterDiagnostics';
 
 interface DirectRequestOptions {
   signal?: AbortSignal;
@@ -199,30 +204,55 @@ export async function getYaohuoTopicDirect({
     url: topicPage.url
   });
 
-  const replies = await getYaohuoRepliesDirect({
-    id: detail.id || id,
-    categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
-    page: 1,
-    limit: replyLimit,
-    yaohuoCookie,
-    yaohuoFetcher,
-    signal,
-    timeoutMs
-  });
+  const [replies, favoritePage] = await Promise.all([
+    getYaohuoRepliesDirect({
+      id: detail.id || id,
+      categoryId: detail.categoryId || topic.categoryId || DEFAULT_CLASS_ID,
+      page: 1,
+      limit: replyLimit,
+      yaohuoCookie,
+      yaohuoFetcher,
+      signal,
+      timeoutMs
+    }),
+    fetchYaohuoHtml(yaohuoUrl('/bbs/favlist.aspx', {
+      key: detail.title || topic.title
+    }), cookie, yaohuoFetcher, { signal, timeoutMs }).catch((error) => {
+      if (signal?.aborted) {
+        throw error;
+      }
+      return null;
+    })
+  ]);
+  const favoriteId = favoritePage
+    ? parseYaohuoFavoriteRecordId(favoritePage.html, detail.id || id)
+    : undefined;
 
   const result = {
     ...detail,
     categoryId: detail.categoryId || topic.categoryId,
     category: detail.category || topic.category,
+    ...(favoritePage ? {
+      bookmarked: Boolean(favoriteId),
+      bookmarkId: favoriteId
+    } : {}),
     replyCount: Math.max(detail.replyCount || 0, topic.replyCount || 0, replies.items.length),
     replies: replies.items,
     replyHasMore: replies.hasMore,
     replyNextPage: replies.nextPage,
     replyNextOffset: replies.hasMore ? replies.items.length : null
   };
-  return mergeSourceDiagnosticSummaries(result, 'html-topic-with-replies', [detail, replies], {
+  const mergedResult = mergeSourceDiagnosticSummaries(result, 'html-topic-with-replies', [detail, replies], {
     validCount: 1 + replies.items.length
   });
+  const summary = sourceDiagnosticSummary(mergedResult);
+  return !favoritePage && summary
+    ? annotateSourceDiagnosticSummary(mergedResult, {
+      ...summary,
+      partialErrorCount: summary.partialErrorCount + 1,
+      hasDegradation: true
+    })
+    : mergedResult;
 }
 
 export async function getYaohuoRepliesDirect({

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
 import { Image as ExpoImage } from 'expo-image';
@@ -39,6 +39,7 @@ import { buildHtmlRenderingStyles } from '../htmlRenderingStyles';
 import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
+import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 
 export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
   return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
@@ -246,6 +247,11 @@ export function useHtmlRenderingController({
   topicKey: string;
   webViewBlockMessage: string;
 }) {
+  const htmlTopicDetailRef = useRef(topicDetail);
+  if (htmlTopicDetailRef.current !== topicDetail && !hasSameYaohuoTopicLayout(htmlTopicDetailRef.current, topicDetail)) {
+    htmlTopicDetailRef.current = topicDetail;
+  }
+  const htmlTopicDetail = htmlTopicDetailRef.current;
   const [inlineSizedImageState, setInlineSizedImageState] = useState<{ topicKey: string; urls: Record<string, true> }>({ topicKey: '', urls: {} });
   const emptyInlineSizedImageUrls = useMemo<Record<string, true>>(() => ({}), [topicKey]);
   const inlineSizedImageUrls = inlineSizedImageState.topicKey === topicKey ? inlineSizedImageState.urls : emptyInlineSizedImageUrls;
@@ -289,10 +295,10 @@ export function useHtmlRenderingController({
       onOpenImagePreview(href);
       return;
     }
-    const baseUrl = selectedTopic?.url || topicDetail?.url;
+    const baseUrl = selectedTopic?.url || htmlTopicDetail?.url;
     const candidates = [
       ...(selectedTopic ? [selectedTopic] : []),
-      ...(topicDetail ? [topicDetail, ...(topicDetail.replies || [])] : [])
+      ...(htmlTopicDetail ? [htmlTopicDetail, ...(htmlTopicDetail.replies || [])] : [])
     ];
     const appUser = parseForumUserLink(href, baseUrl, candidates);
     if (appUser) {
@@ -309,7 +315,7 @@ export function useHtmlRenderingController({
     if (isHttpOrHttpsUrl(href)) {
       onOpenExternalUrl(href);
     }
-  }, [onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic, topicDetail]);
+  }, [htmlTopicDetail, onOpenExternalUrl, onOpenImagePreview, onOpenTopic, onOpenUser, selectedTopic]);
   const htmlRenderers = useMemo<HtmlRenderers>(() => {
     const ReplyReferenceRenderer: CustomBlockRenderer = (props) => {
       const attributes = props.tnode.attributes || {};

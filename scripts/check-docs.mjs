@@ -1,16 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stableMarkdownFiles = [
   'docs/product-charter.md',
+  'docs/product-map.md',
+  'docs/regression-corpus.md',
   'docs/architecture.md',
   'docs/testing-standard.md',
   'docs/operator-runbook.md',
   'docs/handoff.md',
-  'docs/code-cleanup-map.md'
+  'docs/code-cleanup-map.md',
+  'tests/live/agent-live.md'
 ];
 const optionalRepositoryPaths = new Set([
   'docs/emulator-baseline.md',
@@ -19,6 +22,7 @@ const optionalRepositoryPaths = new Set([
   'android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk',
   'release-manifest.json'
 ]);
+const retiredUserFacingTerms = ['生物凭证', '生物认证', '身份识别保护', '身份安全识别'];
 
 function lineNumberAt(text, index) {
   return text.slice(0, index).split(/\r?\n/).length;
@@ -125,6 +129,80 @@ export function findBrokenDocReferences(root, markdownFiles) {
   return errors;
 }
 
+function filesBelow(directory) {
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolutePath = path.join(directory, entry.name);
+    return entry.isDirectory() ? filesBelow(absolutePath) : [absolutePath];
+  });
+}
+
+export function findKnowledgeContractErrors(root) {
+  const errors = [];
+  const productMapPath = path.join(root, 'docs', 'product-map.md');
+  const regressionCorpusPath = path.join(root, 'docs', 'regression-corpus.md');
+  if (!existsSync(productMapPath) || !existsSync(regressionCorpusPath)) return errors;
+
+  const productMap = readFileSync(productMapPath, 'utf8');
+  const capabilitySection = productMap.match(/## 能力清单([\s\S]*?)(?=\r?\n## 四站能力矩阵)/)?.[1] ?? '';
+  const capabilityIds = [...capabilitySection.matchAll(/^\|\s*`([A-Z]+-\d+)`\s*\|/gm)].map((match) => match[1]);
+  const knownCapabilities = new Set(capabilityIds);
+  for (const capabilityId of knownCapabilities) {
+    if (capabilityIds.filter((value) => value === capabilityId).length > 1) {
+      errors.push(`docs/product-map.md：${capabilityId} 重复定义`);
+    }
+  }
+
+  const regressionCorpus = readFileSync(regressionCorpusPath, 'utf8');
+  const knownRegressionIds = new Set(
+    [...regressionCorpus.matchAll(/^## `((?:REG)-[A-Z]+-\d+)`/gm)].map((match) => match[1])
+  );
+  const referencedCapabilities = new Set(regressionCorpus.match(/(?<!REG-)\b(?:NAV|FEED|SEARCH|TOPIC|USER|LIBRARY|ACCOUNT|WRITE|DATA|MORE|RELEASE)-\d+\b/g) ?? []);
+  for (const capabilityId of referencedCapabilities) {
+    if (!knownCapabilities.has(capabilityId)) {
+      errors.push(`docs/regression-corpus.md：引用的能力 ${capabilityId} 不存在`);
+    }
+  }
+
+  const expectedFailureFiles = filesBelow(path.join(root, 'tests')).filter((file) => /\.test\.[cm]?[jt]sx?$/.test(file));
+  for (const file of expectedFailureFiles) {
+    const text = readFileSync(file, 'utf8');
+    for (const match of text.matchAll(/\b(?:it|test)\.failing\b/g)) {
+      const relativeFile = path.relative(root, file).replaceAll('\\', '/');
+      const line = lineNumberAt(text, match.index ?? 0);
+      const invocation = text.slice(match.index ?? 0);
+      if (/^(?:it|test)\.failing\s*\.each\b/.test(invocation)) {
+        errors.push(`${relativeFile}:${line} 不支持 .failing.each；请拆成使用静态字符串标题的 it.failing/test.failing`);
+        continue;
+      }
+      const staticTitle = /^(?:it|test)\.failing\s*\(\s*(['"])([^'"\r\n]+)\1/.exec(invocation);
+      if (!staticTitle) {
+        errors.push(`${relativeFile}:${line} it.failing 必须使用含 REG ID 的静态字符串标题`);
+        continue;
+      }
+      const regressionId = staticTitle[2].match(/\bREG-[A-Z]+-\d+\b/)?.[0];
+      if (!regressionId) {
+        errors.push(`${relativeFile}:${line} it.failing 缺少 REG ID`);
+      } else if (!knownRegressionIds.has(regressionId)) {
+        errors.push(`${relativeFile}:${line} it.failing 引用的 ${regressionId} 不存在`);
+      }
+    }
+  }
+
+  const sourceFiles = filesBelow(path.join(root, 'src')).filter((file) => /\.[cm]?[jt]sx?$/.test(file));
+  const stableDocs = stableMarkdownFiles.map((file) => path.join(root, file)).filter(existsSync);
+  for (const file of [...sourceFiles, ...stableDocs]) {
+    const text = readFileSync(file, 'utf8');
+    for (const term of retiredUserFacingTerms) {
+      const index = text.indexOf(term);
+      if (index >= 0) {
+        errors.push(`${path.relative(root, file).replaceAll('\\', '/')}:${lineNumberAt(text, index)} 禁止旧用户可见术语：${term}`);
+      }
+    }
+  }
+  return errors;
+}
+
 function trackedMarkdownFiles(root) {
   try {
     return execFileSync('git', ['ls-files', '--', '*.md'], { cwd: root, encoding: 'utf8' })
@@ -137,7 +215,10 @@ function trackedMarkdownFiles(root) {
 
 function main() {
   const markdownFiles = [...new Set([...trackedMarkdownFiles(rootDir), ...stableMarkdownFiles])];
-  const errors = findBrokenDocReferences(rootDir, markdownFiles);
+  const errors = [
+    ...findBrokenDocReferences(rootDir, markdownFiles),
+    ...findKnowledgeContractErrors(rootDir)
+  ];
   if (errors.length) {
     console.error(errors.join('\n'));
     process.exitCode = 1;

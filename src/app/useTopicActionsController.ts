@@ -13,6 +13,7 @@ import {
   type NodeSeekActionRequest
 } from '../nodeseekActions';
 import {
+  buildYaohuoDeleteFavoriteRequest,
   buildYaohuoFavoriteRequest,
   buildYaohuoDeleteReplyRequest,
   buildYaohuoReplyRequest,
@@ -201,7 +202,7 @@ function actionRequestDiagnosticFields(
   }
   const requestType = path === '/bbs/book_re.aspx' ? 'reply'
     : path === '/bbs/book_re_del.aspx' ? 'delete'
-      : path === '/bbs/share.aspx' ? 'favorite'
+      : path === '/bbs/share.aspx' || path === '/bbs/favlist.aspx' ? 'favorite'
         : path === '/bbs/book_view_tovote.aspx' ? 'vote'
           : 'unknown';
   return { requestType, csrfSource: 'none' };
@@ -508,9 +509,10 @@ export function useTopicActionsController({
       return false;
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
-    const run = startActionRun(options.key || requestOwner.action.key || success, true);
+    const busy = options.busy ?? true;
+    const run = startActionRun(options.key || requestOwner.action.key || success, busy);
     if (diagnosticTrace) {
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: 'yaohuo', hasOwner: true, isBusy: true });
+      markDiagnosticStage(diagnosticTrace, 'guard', { source: 'yaohuo', hasOwner: true, isBusy: busy });
       markDiagnosticStage(diagnosticTrace, 'credential', { source: 'yaohuo', state: 'load' });
     }
     let yaohuoGeneration: number | undefined;
@@ -589,7 +591,7 @@ export function useTopicActionsController({
       failDiagnosticActionRequest(options, 'yaohuo', 'transport', 'failure', diagnosticReason);
       return false;
     } finally {
-      finishActionRun(run, true);
+      finishActionRun(run, busy);
     }
   }, [canUseYaohuoActions, clearYaohuoLoginState, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
@@ -1302,15 +1304,43 @@ export function useTopicActionsController({
     markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
     const requestTopicKey = topicKey(detail);
     const actionKey = yaohuoFavoriteActionKey(requestTopicKey);
-    await runSingleNonIdempotentTopicAction(actionKey, () => runYaohuoRequest(
-      () => buildYaohuoFavoriteRequest({
-        topicId: detail.id,
-        classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
-      }),
-      '原站收藏已提交',
-      { owner: startTopicActionRequest(actionKey), diagnosticTrace }
-    ), diagnosticTrace);
-  }, [runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+    const favoriteDetail = detail as TopicDetail;
+    const bookmarked = Boolean(favoriteDetail.bookmarked);
+    if (bookmarked && !favoriteDetail.bookmarkId) {
+      notify('当前收藏记录不完整，请刷新主题后再试。');
+      finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
+      return;
+    }
+    await runSingleNonIdempotentTopicAction(actionKey, async () => {
+      const requestOwner = startTopicActionRequest(actionKey);
+      const result = await runYaohuoRequest(
+        () => bookmarked
+          ? buildYaohuoDeleteFavoriteRequest({ favoriteId: favoriteDetail.bookmarkId || 0 })
+          : buildYaohuoFavoriteRequest({
+            topicId: detail.id,
+            classId: detail.categoryId || YAOHUO_DEFAULT_CLASS_ID
+          }),
+        bookmarked ? '已取消原站收藏' : '原站收藏已提交',
+        { owner: requestOwner, busy: false, diagnosticTrace }
+      );
+      if (!result || !isCurrentTopicActionRequest(requestOwner)) {
+        if (result) {
+          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
+        }
+        return;
+      }
+      if (!bookmarked && !result.favoriteId) {
+        failDiagnosticActionRequest({ diagnosticTrace }, 'yaohuo', 'transport', 'failure', 'invalid_response');
+        return;
+      }
+      applyTopicActionUpdate({
+        type: 'bookmark',
+        bookmarked: !bookmarked,
+        bookmarkId: bookmarked ? undefined : result.favoriteId
+      });
+      markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
+    }, diagnosticTrace);
+  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const collectOnNodeSeekSite = useCallback(async () => {
     const actionSource = topicDetail?.source || selectedTopic?.source;

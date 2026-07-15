@@ -1,7 +1,7 @@
 import type { YaohuoActionRequest } from './yaohuoActions';
 import { fetchWithTimeout, type Fetcher } from './request';
 import { elementText, parseHtml, textContentFromHtml } from './localHtml';
-import { isYaohuoLoginRequiredHtml, isYaohuoVerificationRequiredHtml } from './localYaohuo';
+import { isYaohuoLoginRequiredHtml, isYaohuoVerificationRequiredHtml, parseYaohuoFavoriteRecordId } from './localYaohuo';
 import {
   YAOHUO_ANDROID_USER_AGENT,
   YAOHUO_BASE_URL,
@@ -24,6 +24,14 @@ const YAOHUO_ACTION_HEADERS = {
 };
 const YAOHUO_ACTION_FAILURE_PATTERN = /(失败|权限不足|请勿重复|重复提交|错误|禁止|无权|不允许|请选择|不能为空|未成功)/;
 const YAOHUO_REPLY_DELETE_PATH_PATTERN = /^\/bbs\/book_re_del\.aspx$/i;
+const YAOHUO_FAVORITE_ENTRY_PATH_PATTERN = /^\/bbs\/share\.aspx$/i;
+const YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN = /^\/bbs\/favlist\.aspx$/i;
+
+export interface YaohuoActionResult {
+  ok: true;
+  message: string;
+  favoriteId?: number;
+}
 
 function yaohuoLoginRequiredError(reason: 'expired' | 'verification' = 'expired') {
   const error = new Error(
@@ -89,6 +97,45 @@ function deleteConfirmationPath(html: string) {
   }
 }
 
+function isFavoriteEntryRequest(request: YaohuoActionRequest) {
+  const url = new URL(request.path, YAOHUO_BASE_URL);
+  return request.method === 'GET'
+    && YAOHUO_FAVORITE_ENTRY_PATH_PATTERN.test(url.pathname)
+    && url.searchParams.get('action')?.toLowerCase() === 'fav';
+}
+
+function isFavoriteSuccessUrl(responseUrl: string) {
+  try {
+    const url = new URL(responseUrl);
+    return url.origin === new URL(YAOHUO_BASE_URL).origin
+      && YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isFavoriteDeleteRequest(request: YaohuoActionRequest) {
+  const url = new URL(request.path, YAOHUO_BASE_URL);
+  return request.method === 'POST'
+    && YAOHUO_FAVORITE_SUCCESS_PATH_PATTERN.test(url.pathname)
+    && url.searchParams.get('action')?.toLowerCase() === 'delete';
+}
+
+function favoriteDeleteMessage(text: string) {
+  let result: { success?: unknown; message?: unknown };
+  try {
+    result = JSON.parse(text) as { success?: unknown; message?: unknown };
+  } catch {
+    throw new Error('取消收藏结果无法确认，请刷新原帖核对');
+  }
+  if (result.success !== true) {
+    throw new Error(typeof result.message === 'string' && result.message.trim()
+      ? result.message.trim()
+      : '取消收藏失败');
+  }
+  return '已取消原站收藏';
+}
+
 async function fetchYaohuoActionHtml({
   cookieHeader,
   request,
@@ -129,7 +176,7 @@ async function fetchYaohuoActionHtml({
   if (!response.ok) {
     throw new Error(`妖火请求失败：HTTP ${response.status}`);
   }
-  return html;
+  return { html, responseUrl };
 }
 
 export async function runYaohuoAction({
@@ -144,13 +191,13 @@ export async function runYaohuoAction({
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;
-}) {
+}): Promise<YaohuoActionResult> {
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
     throw yaohuoLoginRequiredError('expired');
   }
 
-  let html = await fetchYaohuoActionHtml({
+  let { html, responseUrl } = await fetchYaohuoActionHtml({
     cookieHeader: cleanCookie,
     request,
     fetcher,
@@ -162,17 +209,32 @@ export async function runYaohuoAction({
   if (request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(new URL(request.path, YAOHUO_BASE_URL).pathname)) {
     const confirmationPath = deleteConfirmationPath(html);
     if (confirmationPath) {
-      html = await fetchYaohuoActionHtml({
+      ({ html, responseUrl } = await fetchYaohuoActionHtml({
         cookieHeader: cleanCookie,
         request,
         fetcher,
         path: confirmationPath,
         signal,
         timeoutMs
-      });
+      }));
     }
   }
 
-  const message = actionMessage(html);
-  return { ok: true, message };
+  if (isFavoriteDeleteRequest(request)) {
+    return { ok: true, message: favoriteDeleteMessage(html) };
+  }
+
+  if (isFavoriteEntryRequest(request)) {
+    actionMessage(html);
+    if (isFavoriteSuccessUrl(responseUrl)) {
+      const topicId = new URL(request.path, YAOHUO_BASE_URL).searchParams.get('id') || '';
+      const favoriteId = parseYaohuoFavoriteRecordId(html, topicId);
+      if (favoriteId) {
+        return { ok: true, message: '收藏成功', favoriteId };
+      }
+    }
+    return { ok: true, message: '操作结果无法确认，请刷新原帖核对' };
+  }
+
+  return { ok: true, message: actionMessage(html) };
 }

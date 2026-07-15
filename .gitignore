@@ -8,6 +8,8 @@ memory/
 # 稳定、脱敏文档进入版本控制；模拟器基线等运行态资料继续只留本机。
 docs/*
 !docs/product-charter.md
+!docs/product-map.md
+!docs/regression-corpus.md
 !docs/architecture.md
 !docs/testing-standard.md
 !docs/operator-runbook.md

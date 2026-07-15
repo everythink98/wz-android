@@ -20,6 +20,7 @@ export function PillRail({
   variant = 'pills',
   value,
   resetScrollKey,
+  testIDPrefix,
   styles,
   onChange
 }: {
@@ -27,6 +28,7 @@ export function PillRail({
   variant?: 'pills' | 'tabs' | 'subtabs';
   value: string;
   resetScrollKey?: string | number;
+  testIDPrefix?: string;
   styles: ReturnType<typeof createStyles>;
   onChange: (value: string) => void;
 }) {
@@ -42,8 +44,10 @@ export function PillRail({
     <ScrollView ref={scrollRef} horizontal showsHorizontalScrollIndicator={false} fadingEdgeLength={0} contentContainerStyle={isTabs ? styles.tabRail : isSubtabs ? styles.subtabRail : styles.pillRail}>
       {items.map((item) => (
         <Pressable
+          testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}
           hitSlop={TOUCH_HIT_SLOP}
           key={`${item.value}-${item.label}`}
+          accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}
           accessibilityRole="button"
           accessibilityState={{ selected: value === item.value }}
           style={isTabs ? [styles.tab, value === item.value && styles.tabActive] : isSubtabs ? [styles.subtab, value === item.value && styles.subtabActive] : [styles.pill, value === item.value && styles.pillActive]}
@@ -264,6 +268,7 @@ export function AppButton({
   compact = false,
   disabled = false,
   label,
+  testID,
   tiny = false,
   variant = 'default',
   styles,
@@ -272,6 +277,7 @@ export function AppButton({
   compact?: boolean;
   disabled?: boolean;
   label: string;
+  testID?: string;
   tiny?: boolean;
   variant?: 'default' | 'danger' | 'ghost' | 'primary';
   styles: ReturnType<typeof createStyles>;
@@ -279,6 +285,7 @@ export function AppButton({
 }) {
   return (
     <Pressable
+      testID={testID}
       hitSlop={TOUCH_HIT_SLOP}
       accessibilityRole="button"
       accessibilityLabel={label}

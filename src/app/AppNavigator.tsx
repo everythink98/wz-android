@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from 'react';
+import { createContext, memo, type ReactNode, useContext } from 'react';
 import { NavigationContainer, StackActions, createNavigationContainerRef, type NavigatorScreenParams, type Theme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -17,11 +17,17 @@ export type MainTabParamList = {
 export type RootStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList> | undefined;
   Topic: undefined;
+  ReadingSettings: undefined;
   User: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
+const TopicScreenRendererContext = createContext<() => ReactNode>(() => null);
+
+function TopicRouteScreen() {
+  return useContext(TopicScreenRendererContext)();
+}
 
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
@@ -33,7 +39,7 @@ export function navigateMainTab(screen: keyof MainTabParamList) {
 }
 
 function appScreenForRouteName(routeName?: string): Screen {
-  if (routeName === 'Topic') {
+  if (routeName === 'Topic' || routeName === 'ReadingSettings') {
     return 'topic';
   }
   if (routeName === 'User') {
@@ -47,7 +53,10 @@ function appScreenForRouteName(routeName?: string): Screen {
 
 function currentAppRoute() {
   const route = navigationRef.getCurrentRoute();
-  return { routeKey: route?.key || '', screen: appScreenForRouteName(route?.name) };
+  return {
+    routeKey: route?.name === 'ReadingSettings' ? '' : route?.key || '',
+    screen: appScreenForRouteName(route?.name)
+  };
 }
 
 function currentAppScreen(): Screen {
@@ -91,6 +100,27 @@ export function navigateAppScreen(screen: Screen) {
     navigateMainTab(screen);
   }
   return true;
+}
+
+export function openReadingSettingsScreen() {
+  if (!navigationRef.isReady() || currentAppScreen() !== 'topic') {
+    return false;
+  }
+  navigationRef.dispatch(StackActions.push('ReadingSettings'));
+  return true;
+}
+
+export function openReadingSettingsFromCurrentTopic(saveTopicRoute: (routeKey: string) => void) {
+  const routeKey = currentTopicRouteKey();
+  if (!routeKey) {
+    return false;
+  }
+  saveTopicRoute(routeKey);
+  return openReadingSettingsScreen();
+}
+
+export function isReadingSettingsScreen() {
+  return navigationRef.getCurrentRoute()?.name === 'ReadingSettings';
 }
 
 export function pushTopicRoute() {
@@ -166,6 +196,7 @@ export const AppNavigator = memo(function AppNavigator({
   renderFeedTab,
   renderLibraryTab,
   renderMoreTab,
+  renderReadingSettingsScreen,
   renderSearchTab,
   renderTopicScreen,
   renderUserScreen,
@@ -182,6 +213,7 @@ export const AppNavigator = memo(function AppNavigator({
   renderFeedTab: () => ReactNode;
   renderLibraryTab: () => ReactNode;
   renderMoreTab: () => ReactNode;
+  renderReadingSettingsScreen: () => ReactNode;
   renderSearchTab: () => ReactNode;
   renderTopicScreen: () => ReactNode;
   renderUserScreen: () => ReactNode;
@@ -198,16 +230,17 @@ export const AppNavigator = memo(function AppNavigator({
     onScreenChange(route.screen, route.routeKey);
   };
   return (
-    <NavigationContainer
-      ref={navigationRef}
-      theme={navigationTheme}
-      onReady={() => {
-        publishCurrentScreen();
-        onReady();
-      }}
-      onStateChange={publishCurrentScreen}
-    >
-      <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', freezeOnBlur: true, contentStyle: { backgroundColor: theme.background } }}>
+    <TopicScreenRendererContext.Provider value={renderTopicScreen}>
+      <NavigationContainer
+        ref={navigationRef}
+        theme={navigationTheme}
+        onReady={() => {
+          publishCurrentScreen();
+          onReady();
+        }}
+        onStateChange={publishCurrentScreen}
+      >
+        <Stack.Navigator screenOptions={{ headerShown: false, animation: 'slide_from_right', freezeOnBlur: true, contentStyle: { backgroundColor: theme.background } }}>
         <Stack.Screen name="MainTabs">
           {() => (
             <MainTabsHost
@@ -222,12 +255,13 @@ export const AppNavigator = memo(function AppNavigator({
             />
           )}
         </Stack.Screen>
-        <Stack.Screen name="Topic" listeners={{ transitionEnd: (event) => {
+        <Stack.Screen name="Topic" component={TopicRouteScreen} listeners={{ transitionEnd: (event) => {
           if (event.data.closing) {
             onTopicClosing();
           }
-        } }}>
-          {renderTopicScreen}
+        } }} />
+        <Stack.Screen name="ReadingSettings" options={{ headerShown: true, title: '阅读设置' }}>
+          {renderReadingSettingsScreen}
         </Stack.Screen>
         <Stack.Screen name="User" listeners={{ transitionEnd: (event) => {
           if (event.data.closing) {
@@ -236,7 +270,8 @@ export const AppNavigator = memo(function AppNavigator({
         } }}>
           {renderUserScreen}
         </Stack.Screen>
-      </Stack.Navigator>
-    </NavigationContainer>
+        </Stack.Navigator>
+      </NavigationContainer>
+    </TopicScreenRendererContext.Provider>
   );
 });

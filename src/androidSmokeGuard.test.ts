@@ -1,8 +1,20 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { deviceSelectionArgs, isVersionSupported, libraryOutcomeFromCompletionAttrs, MIN_AGENT_DEVICE_VERSION, READ_ONLY_PRESS_TARGETS, searchOutcomeFromCompletionAttrs, searchQueryIsPreserved } from '../scripts/smoke-android.mjs';
+import { deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } from '../scripts/agent-device-runtime.mjs';
+import { runApkSanity } from '../scripts/smoke-android.mjs';
+import {
+  listReplayFiles,
+  matchingAndroidDevices,
+  parseAgentDeviceList,
+  parseAndroidRecordingScratchPaths,
+  parseAndroidPackageInfo,
+  replayRecordingRecoverySession,
+  ReplayCleanupError,
+  replayDeviceSelectionArgs,
+  runReplayBatch
+} from '../scripts/run-device-replay.mjs';
 
 const rootDir = path.resolve(__dirname, '..');
 
@@ -10,119 +22,284 @@ function readProjectFile(...parts: string[]) {
   return readFileSync(path.join(rootDir, ...parts), 'utf8');
 }
 
-describe('Android release smoke guards', () => {
-  it('requires a supported installed agent-device version', () => {
-    expect(MIN_AGENT_DEVICE_VERSION).toBe('0.14.0');
-    expect(isVersionSupported('0.13.9')).toBe(false);
-    expect(isVersionSupported('0.14.0-beta.1')).toBe(false);
-    expect(isVersionSupported('0.14.0')).toBe(true);
+describe('Android release evidence guards', () => {
+  it('[REG-OPS-008] requires the first agent-device version that supports Replay recording and reporters', () => {
+    expect(MIN_AGENT_DEVICE_VERSION).toBe('0.19.0');
+    expect(isVersionSupported('0.18.9')).toBe(false);
+    expect(isVersionSupported('0.19.0-beta.1')).toBe(false);
     expect(isVersionSupported('0.19.0')).toBe(true);
+    expect(isVersionSupported('0.20.0')).toBe(true);
   });
 
-  it('requires one explicitly selected smoke device', () => {
-    expect(() => deviceSelectionArgs('')).toThrow('WZ_ANDROID_SMOKE_DEVICE');
-    expect(deviceSelectionArgs('  WZ_Pixel_API_35  ')).toEqual(['--device', 'WZ_Pixel_API_35']);
+  it('requires one explicitly selected device', () => {
+    expect(() => deviceSelectionArgs('')).toThrow('WZ_ANDROID_TEST_DEVICE');
+    expect(deviceSelectionArgs('  WZ Pixel API 35  ')).toEqual(['--device', 'WZ Pixel API 35']);
   });
 
-  it('allows only read-only navigation targets and no destructive device commands', () => {
+  it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
+    const devices = parseAgentDeviceList(JSON.stringify({
+      success: true,
+      data: {
+        devices: [
+          { id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }
+        ]
+      }
+    }));
+    expect(devices).toEqual([
+      { id: 'emulator-5554', name: 'WZ Pixel API 35', platform: 'android', booted: true }
+    ]);
+    expect(replayDeviceSelectionArgs(devices[0])).toEqual(['--device', 'WZ Pixel API 35']);
+    expect(parseAndroidPackageInfo('versionCode=67 minSdk=24\nversionName=1.3.63\n')).toEqual({
+      versionCode: 67,
+      versionName: '1.3.63'
+    });
+    expect(matchingAndroidDevices(devices, 'WZ_Pixel_API_35')).toEqual(devices);
+  });
+
+  it('recovers only recording manifests owned by the current Replay session', () => {
+    const sessionName = 'wz-replay-4321-search:test:suite:1-search:attempt-1';
+    const manifest = JSON.stringify({
+      version: 1,
+      sessionName,
+      recordingId: 'android-2321-1784023321348',
+      deviceId: 'emulator-5554',
+      startedAt: 1784023321348,
+      showTouches: true,
+      current: {
+        remotePid: '2321',
+        remotePath: '/sdcard/agent-device-recording-1784023321348.mp4',
+        startedAt: 1784023321348
+      },
+      chunks: [{ index: 1, remotePath: '/sdcard/agent-device-recording-1784023321348.mp4' }]
+    });
+
+    expect(replayRecordingRecoverySession(manifest, 'emulator-5554', 'wz-replay-4321-search')).toBe(sessionName);
+    expect(replayRecordingRecoverySession(manifest, 'emulator-5554', 'wz-replay-9999-search')).toBeUndefined();
+    expect(replayRecordingRecoverySession(manifest, 'emulator-5556', 'wz-replay-4321-search')).toBeUndefined();
+    expect(replayRecordingRecoverySession('{ malformed', 'emulator-5554', 'wz-replay-4321-search')).toBeUndefined();
+  });
+
+  it('[REG-OPS-007] treats active and atomic-temp recording manifests as occupied scratch', () => {
+    expect(parseAndroidRecordingScratchPaths([
+      'agent-device-recording-1784023321348.mp4',
+      'agent-device-recording-active.json',
+      'agent-device-recording-active.json.tmp',
+      'screenrecord-user.mp4',
+      'agent-device-recording-not-a-timestamp.mp4'
+    ].join('\n'), '/sdcard')).toEqual([
+      '/sdcard/agent-device-recording-1784023321348.mp4',
+      '/sdcard/agent-device-recording-active.json',
+      '/sdcard/agent-device-recording-active.json.tmp'
+    ]);
+  });
+
+  it('keeps Smoke limited to APK sanity and delegates journeys to Replay', () => {
     const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
 
-    expect(READ_ONLY_PRESS_TARGETS).toEqual([
-      'id="main-tab-search"',
-      'id="main-tab-library"',
-      'id="main-tab-more"',
-      'label="展开问题诊断"',
-      'id="main-tab-feed"',
-      'id="search-submit"',
-      'id="search-result-first"',
-      'id="library-favorite-first"',
-      'id="feed-topic-first"',
-      'id="topic-author"',
-      'id="user-topic-first"',
-      'label="返回"'
-    ]);
     expect(smokeScript).toContain("['doctor', '--platform', 'android']");
     const bootIndex = smokeScript.indexOf('bootSelectedDevice();');
-    const installIndex = smokeScript.indexOf("['install', appPackage, apkPath");
+    const sanityIndex = smokeScript.indexOf('runApkSanity({ apkPath, device });');
     expect(bootIndex).toBeGreaterThan(0);
-    expect(installIndex).toBeGreaterThan(bootIndex);
-    expect(smokeScript).toContain("['boot', '--platform', 'android', '--device', selectedDevice, '--headless']");
-    expect(smokeScript).toContain("['install', appPackage, apkPath, '--platform', 'android', ...deviceSelectionArgs()]");
-    const bootstrapOpenIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', ...deviceSelectionArgs()]");
-    const clearLogsIndex = smokeScript.indexOf("['logs', 'clear', '--restart'");
-    const coldStartIndex = smokeScript.indexOf("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
-    expect(bootstrapOpenIndex).toBeGreaterThan(installIndex);
-    expect(clearLogsIndex).toBeGreaterThan(bootstrapOpenIndex);
-    expect(coldStartIndex).toBeGreaterThan(clearLogsIndex);
-    expect(smokeScript).not.toContain("...deviceSelectionArgs(), '--relaunch'");
-    const coldStartGraceIndex = smokeScript.indexOf("['wait', '60000', '--session', smokeSession, '--platform', 'android']");
-    const coldStartReadyIndex = smokeScript.indexOf("waitFor('id=\"feed-topic-first\"', 60_000);");
-    expect(coldStartGraceIndex).toBeGreaterThan(coldStartIndex);
-    expect(coldStartReadyIndex).toBeGreaterThan(coldStartGraceIndex);
-    expect(smokeScript).not.toContain("['wait', 'stable'");
-    expect(smokeScript).not.toContain("'--settle'");
-    expect(smokeScript).toContain("'--timeout', '60000'");
-    expect(smokeScript).toContain("['logs', 'stop'");
-    expect(smokeScript).toContain("['close', '--session', smokeSession");
-    expect(smokeScript).toContain("['fill', 'id=\"search-query\"', 'vps'");
-    expect(smokeScript).toContain("['keyboard', 'dismiss'");
-    expect(smokeScript).toContain("['is', 'visible', 'id=\"search-result-first\"'");
-    expect(smokeScript).toContain("['back', '--system'");
-    const moreIndex = smokeScript.indexOf("pressReadOnly('id=\"main-tab-more\"');");
-    const diagnosticIndex = smokeScript.indexOf("pressReadOnly('label=\"展开问题诊断\"');");
-    const diagnosticButtonIndex = smokeScript.indexOf("waitFor('label=\"生成并分享诊断日志\"');");
-    const feedIndex = smokeScript.indexOf("pressReadOnly('id=\"main-tab-feed\"');", moreIndex);
-    expect(diagnosticIndex).toBeGreaterThan(moreIndex);
-    expect(diagnosticButtonIndex).toBeGreaterThan(diagnosticIndex);
-    expect(feedIndex).toBeGreaterThan(diagnosticButtonIndex);
-    expect(smokeScript).not.toContain("pressReadOnly('label=\"生成并分享诊断日志\"');");
-    expect(smokeScript).not.toContain("['scroll', 'down'");
-    expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:uninstall|reinstall)['"]/);
+    expect(sanityIndex).toBeGreaterThan(bootIndex);
+    expect(smokeScript).toContain("['install', appPackage, apkPath");
+    expect(smokeScript).toContain("['logs', 'clear', '--restart'");
+    expect(smokeScript).toContain("['open', appPackage, '--session', smokeSession, '--platform', 'android', '--relaunch']");
+    expect(smokeScript).toContain("waitFor('id=\"feed-list-ready-all\"', 60_000, runAgentDeviceCommand);");
+    expect(smokeScript).toContain("console.log('APK_SANITY');");
+    expect(smokeScript).toContain('await runDeviceReplay({ apkPath, selectedDevice });');
+    expect(smokeScript).not.toMatch(/runAgentDevice\(\[['"](?:press|click|fill|type|back|uninstall|reinstall)['"]/);
     expect(smokeScript).not.toContain("'--shutdown'");
     expect(smokeScript).not.toMatch(/['"]pm['"]\s*,\s*['"]clear['"]/);
   });
 
-  it('accepts only an explicitly classified completed search outcome', () => {
-    expect(searchOutcomeFromCompletionAttrs('{"label":"搜索结果，已完成，有可打开结果"}')).toBe('result');
-    expect(searchOutcomeFromCompletionAttrs('{"label":"搜索结果，已完成，结构化回退"}')).toBe('fallback');
-    expect(searchOutcomeFromCompletionAttrs('{"label":"搜索结果，已完成，缺少结构化结果"}')).toBeNull();
-    expect(searchOutcomeFromCompletionAttrs('{"label":"搜索结果，已完成"}')).toBeNull();
+  it('[REG-OPS-005] captures the first post-install launch before it can fail', () => {
+    const marker = 'wz-apk-sanity-first-launch-test';
+    const events: string[] = [];
+    const runAgentDeviceCommand = (args: string[]) => {
+      events.push(`agent:${args.join(' ')}`);
+      return args[0] === 'appstate'
+        ? JSON.stringify({ data: { package: 'com.wz.reader' } })
+        : '';
+    };
+    const runAdbCommand = (args: string[]) => {
+      events.push(`adb:${args.join(' ')}`);
+      if (args.includes('date')) {
+        return '1784102400.000\n';
+      }
+      if (args.includes('logcat')) {
+        return [
+          `07-15 16:00:00.000  2000  2000 I WZ_APK_SANITY: ${marker}`,
+          '07-15 16:00:00.010  1000  1000 I ActivityManager: Start proc 4321:com.wz.reader/u0a123 for top-activity',
+          '07-15 16:00:00.020  4321  4321 E AndroidRuntime: FATAL EXCEPTION: main',
+          '07-15 16:00:00.021  4321  4321 E AndroidRuntime: Process: com.wz.reader, PID: 4321'
+        ].join('\n');
+      }
+      return '';
+    };
+    let failure: unknown;
+
+    try {
+      runApkSanity({
+        apkPath: 'candidate.apk',
+        device: { id: 'emulator-5554', name: 'WZ Pixel API 35' },
+        marker,
+        runAdbCommand,
+        runAgentDeviceCommand,
+        verifySessionLog: () => undefined
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors.some((error) => String(error).includes('Android 崩溃'))).toBe(true);
+    const installIndex = events.findIndex((event) => event.startsWith('agent:install '));
+    const timestampIndex = events.findIndex((event) => event.includes('shell date +%s.%3N'));
+    const markerIndex = events.findIndex((event) => event.includes('shell log -p i -t WZ_APK_SANITY'));
+    const firstOpenIndex = events.findIndex((event) => event.startsWith('agent:open '));
+    const dumpIndex = events.findIndex((event) => event.includes('logcat -d -v threadtime -T 1784102400.000'));
+    expect(installIndex).toBeGreaterThanOrEqual(0);
+    expect(timestampIndex).toBeGreaterThan(installIndex);
+    expect(markerIndex).toBeGreaterThan(timestampIndex);
+    expect(firstOpenIndex).toBeGreaterThan(markerIndex);
+    expect(dumpIndex).toBeGreaterThan(firstOpenIndex);
   });
 
-  it('checks that search state survives opening and returning from a topic', () => {
-    expect(searchQueryIsPreserved('{"label":"codex","value":"codex"}', 'codex')).toBe(true);
-    expect(searchQueryIsPreserved('{"label":"other","value":"other"}', 'codex')).toBe(false);
-    expect(searchQueryIsPreserved('snapshot unchanged since previous read', 'codex')).toBe(false);
+  it('[REG-OPS-006] keeps the seven tracked Replay journeys deterministic and lets the test harness stop video', () => {
+    const deviceDir = path.join(rootDir, 'tests', 'device');
+    const expected = [
+      'feed-topic-return.ad',
+      'four-source-feed.ad',
+      'library-return.ad',
+      'more-readonly.ad',
+      'nodeseek-session.ad',
+      'search-multi-source.ad',
+      'search-topic-user-return.ad'
+    ];
+    expect(readdirSync(deviceDir).sort()).toEqual(expected);
+    expect(listReplayFiles(deviceDir).map((file) => path.basename(file))).toEqual(expected);
+
+    for (const file of expected) {
+      const replay = readFileSync(path.join(deviceDir, file), 'utf8');
+      expect(replay).toContain('context platform=android');
+      expect(replay).toContain('context retries=0');
+      expect(replay).toContain('open ${APP_ID} --relaunch');
+      expect(replay).not.toMatch(/^close\s*$/m);
+      expect(replay).not.toMatch(/@[a-z]\d+/i);
+      expect(replay).not.toMatch(/\b(?:press|click|swipe|longpress)\s+\d+\s+\d+/);
+      expect(replay).not.toMatch(/(?:清除登录|退出登录|清空历史|取消收藏|取消关注|删除回复|提交回复|保存 Key|签到)/);
+      expect(replay).not.toMatch(/^\s*(?:uninstall|reinstall|settings reset|shutdown)\b/m);
+    }
+    const nodeSeekReplay = readFileSync(path.join(deviceDir, 'nodeseek-session.ad'), 'utf8');
+    expect(nodeSeekReplay).toContain('wait id="nodeseek-login-webview-ready" 15000');
+    expect(nodeSeekReplay).toContain('is visible id="nodeseek-login-webview-ready"');
+    expect(nodeSeekReplay).toContain('is hidden text="NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。"');
+    expect(nodeSeekReplay).toContain('back --system');
+    expect(nodeSeekReplay).not.toMatch(/^wait 15000$/m);
+
+    const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8');
+    expect(fourSourceReplay).toContain([
+      'wait id="feed-list-ready-nodeseek" 60000',
+      'wait id="feed-topic-first" 10000',
+      'scroll down',
+      'scroll down',
+      'wait label="回到顶部" 10000',
+      'press label="列表筛选"',
+      'press text="新评论"',
+      'wait id="feed-list-ready-nodeseek" 60000',
+      'wait id="feed-topic-first" 10000'
+    ].join('\n'));
+
+    const multiSourceSearchReplay = readFileSync(path.join(deviceDir, 'search-multi-source.ad'), 'utf8');
+    expect(multiSourceSearchReplay.match(/is visible id="search-result-first"/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay.match(/press id="search-result-first"/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay.match(/wait id="topic-detail-loaded" 60000/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay.match(/back --system/g)).toHaveLength(3);
   });
 
-  it('classifies a loaded library result and explicit empty state', () => {
-    expect(libraryOutcomeFromCompletionAttrs('{"label":"收藏列表，已加载，有收藏"}')).toBe('result');
-    expect(libraryOutcomeFromCompletionAttrs('{"label":"收藏列表，已加载，没有收藏"}')).toBe('empty');
-    expect(libraryOutcomeFromCompletionAttrs('{"label":"收藏列表，正在加载"}')).toBeNull();
-    expect(libraryOutcomeFromCompletionAttrs('snapshot unchanged since previous read')).toBeNull();
+  it('continues independent Replay files and reports all failures together', async () => {
+    const attempted: string[] = [];
+    let failure: unknown;
+
+    try {
+      await runReplayBatch(['first.ad', 'broken.ad', 'last.ad'], async (replayFile: string) => {
+        attempted.push(replayFile);
+        if (replayFile !== 'first.ad') {
+          throw new Error(`${replayFile} failed`);
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(attempted).toEqual(['first.ad', 'broken.ad', 'last.ad']);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(2);
+    expect((failure as Error).message).toContain('broken.ad');
+    expect((failure as Error).message).toContain('last.ad');
   });
 
-  it('fails instead of skipping required read-only navigation journeys', () => {
-    const smokeScript = readProjectFile('scripts', 'smoke-android.mjs');
+  it('stops before the next Replay when cleanup cannot restore isolation', async () => {
+    const attempted: string[] = [];
+    let failure: unknown;
 
-    expect(smokeScript).toContain('搜索只返回 error/auth/empty，未完成搜索→详情只读验收。');
-    expect(smokeScript).toContain('本机没有可用于只读 smoke 的收藏，无法验证收藏→详情→用户→返回。');
-    expect(smokeScript).toContain("waitFor('id=\"user-topic-first\"', 60_000);");
-    expect(smokeScript).not.toContain('跳过 User→Topic');
-    expect(smokeScript).not.toContain('跳过收藏→详情');
+    try {
+      await runReplayBatch(['first.ad', 'cleanup-broken.ad', 'must-not-run.ad'], async (replayFile: string) => {
+        attempted.push(replayFile);
+        if (replayFile === 'cleanup-broken.ad') {
+          throw new ReplayCleanupError(replayFile, new Error('recorder still running'));
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(attempted).toEqual(['first.ad', 'cleanup-broken.ad']);
+    expect(failure).toBeInstanceOf(ReplayCleanupError);
+    expect((failure as Error).message).toContain('cleanup-broken.ad');
   });
 
-  it('keeps stable selectors on the read-only navigation path', () => {
+  it('requires explicit APK identity and writes Replay evidence only below ignored tmp', () => {
+    const packageJson = JSON.parse(readProjectFile('package.json'));
+    const replayScript = readProjectFile('scripts', 'run-device-replay.mjs');
+
+    expect(packageJson.scripts['test:device']).toBe('node scripts/run-device-replay.mjs');
+    expect(replayScript).toContain('WZ_ANDROID_TEST_APK');
+    expect(replayScript).toContain("['-s', deviceId, 'shell', 'pm', 'path', appPackage]");
+    expect(replayScript).toContain("['-s', deviceId, 'pull', installedApkPath, localInstalledApk]");
+    expect(replayScript).toContain('expectedSha256 !== installedSha256');
+    expect(replayScript).toContain("path.join(rootDir, 'tmp', 'agent-device')");
+    expect(replayScript).toContain('for (const replayFile of replayFiles)');
+    expect(replayScript).toContain("'test', replayFile");
+    expect(replayScript).toContain("'--retries', '0'");
+    expect(replayScript).toContain("'--reporter', `junit:${junitPath}`");
+    expect(replayScript).toContain("'--session', replaySession");
+    expect(replayScript).toContain('assertNoExistingAgentDeviceRecording(device.id)');
+    expect(replayScript).toContain('androidRecordingScratchPaths(device.id)');
+    expect(replayScript).toContain('recoverOwnedReplayRecording(device, replaySession)');
+    expect(replayScript).toContain("'record', 'stop'");
+    expect(replayScript).not.toContain('closeDefaultReplaySession');
+    expect(replayScript).not.toContain("'shell', 'kill'");
+    expect(replayScript).not.toContain('rm -f /sdcard/agent-device-recording-');
+    expect(replayScript).not.toContain('stopNewLocalAgentDeviceDaemons');
+    expect(replayScript).toContain("console.log('DEVICE_REPLAY_PASS');");
+  });
+
+  it('keeps stable selectors on the read-only navigation paths', () => {
     expect(readProjectFile('src', 'app', 'AppNavigator.tsx')).toContain('tabBarButtonTestID: `main-tab-${item.value}`');
-    expect(readProjectFile('src', 'screens', 'FeedScreen.tsx')).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
+    const appControls = readProjectFile('src', 'components', 'AppControls.tsx');
+    expect(appControls).toContain('testID={testIDPrefix ? `${testIDPrefix}-${item.value}` : undefined}');
+    expect(appControls).toContain("accessibilityLabel={`${item.label}${value === item.value ? '，已选择' : ''}`}");
+    const feedScreen = readProjectFile('src', 'screens', 'FeedScreen.tsx');
+    expect(feedScreen).toContain("testID={index === 0 ? 'feed-topic-first' : undefined}");
+    expect(feedScreen).toContain("testID={!busy ? `feed-list-ready-${feedSource}` : undefined}");
+    expect(feedScreen).toContain('testIDPrefix="feed-source"');
     const searchScreen = readProjectFile('src', 'screens', 'SearchScreen.tsx');
     expect(searchScreen).toContain('testID="search-query"');
     expect(searchScreen).toContain('testID="search-submit"');
+    expect(searchScreen).toContain('testIDPrefix="search-source"');
     expect(searchScreen).toContain("'search-result-first'");
     expect(searchScreen).toContain("'search-complete'");
-    expect(searchScreen).toContain("'搜索结果，已完成，有可打开结果'");
-    expect(searchScreen).toContain("'搜索结果，已完成，结构化回退'");
-    expect(searchScreen).toContain('search-outcome-error-');
     expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain("testID={topic ? 'topic-detail-loaded' : undefined}");
     expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain('testID="topic-author"');
     const userScreen = readProjectFile('src', 'screens', 'UserScreen.tsx');
@@ -130,15 +307,26 @@ describe('Android release smoke guards', () => {
     expect(userScreen).toContain("testID={index === 0 ? 'user-topic-first' : undefined}");
     const libraryScreen = readProjectFile('src', 'screens', 'LibraryScreen.tsx');
     expect(libraryScreen).toContain("'library-favorites-ready'");
-    expect(libraryScreen).toContain("'library-favorites-empty'");
-    expect(libraryScreen).toContain("'library-favorite-first'");
-    expect(libraryScreen).toContain("'收藏列表，已加载，有收藏'");
-    expect(libraryScreen).toContain("'收藏列表，已加载，没有收藏'");
-    expect(libraryScreen).toContain("filteredRecords.length ? '收藏列表，已加载，有收藏'");
-    expect(libraryScreen).toContain("!filteredRecords.length ? 'library-favorites-empty'");
+    expect(libraryScreen).toContain("'library-users-ready'");
+    expect(libraryScreen).toContain("'library-history-ready'");
+    expect(libraryScreen).toContain("'library-user-first'");
+    expect(libraryScreen).toContain("'library-history-first'");
+    const accountCenter = readProjectFile('src', 'screens', 'more', 'AccountCenterPanel.tsx');
+    expect(accountCenter).toContain('testID={`account-site-${view.site}`}');
+    const morePanels = readProjectFile('src', 'screens', 'more', 'MorePanels.tsx');
+    expect(morePanels).toContain('NODESEEK_REPLAY_READINESS_SCRIPT');
+    expect(morePanels).toContain('event.nativeEvent.data === NODESEEK_REPLAY_READY_MESSAGE');
+    expect(morePanels.match(/setWebViewReadyForReplay\(true\)/g)).toHaveLength(1);
+    expect(morePanels.slice(
+      morePanels.indexOf('onLoadEnd={(event) =>'),
+      morePanels.indexOf('onLoadProgress={(event) =>')
+    )).not.toContain('setWebViewReadyForReplay(true)');
+    const loginWebViewScripts = readProjectFile('src', 'loginWebViewScripts.ts');
+    expect(loginWebViewScripts).toContain('host === "nodeseek.com" || host.endsWith(".nodeseek.com")');
+    expect(loginWebViewScripts).toContain('document.readyState !== "loading" && bodyText.length > 0');
   });
 
-  it('keeps diagnostic logging initialized and wired into the Release More screen', () => {
+  it('keeps diagnostic logging initialized and wired into the More screen', () => {
     const entry = readProjectFile('index.ts');
     const appRoot = readProjectFile('src', 'app', 'AppRoot.tsx');
     const moreScreen = readProjectFile('src', 'screens', 'MoreScreen.tsx');
@@ -151,7 +339,7 @@ describe('Android release smoke guards', () => {
     expect(moreScreen).toContain('onPress={onExportDiagnosticLog}');
   });
 
-  it('runs smoke only after APK signer verification and before writing the release manifest', () => {
+  it('runs Smoke only after APK signer verification and before writing the release manifest', () => {
     const packageJson = JSON.parse(readProjectFile('package.json'));
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const signerIndex = releaseScript.indexOf('verifyExpectedReleaseSigner(signerSha256);');
@@ -163,13 +351,13 @@ describe('Android release smoke guards', () => {
     expect(manifestIndex).toBeGreaterThan(smokeIndex);
   });
 
-  it('keeps the published arm64 APK separate from a development-signed emulator smoke APK', () => {
+  it('keeps the published arm64 APK separate from a development-signed emulator Smoke APK', () => {
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
     const releaseGradle = readProjectFile('scripts', 'android-release-apk.gradle');
     const loadEnvIndex = releaseScript.indexOf('loadReleaseEnvFile();');
     const smokeAbiIndex = releaseScript.indexOf('const smokeApkAbi = requestedSmokeApkAbi(process.env.WZ_ANDROID_SMOKE_ABI);');
 
-    expect(releaseScript).toContain("process.env.WZ_ANDROID_SMOKE_ABI");
+    expect(releaseScript).toContain('process.env.WZ_ANDROID_SMOKE_ABI');
     expect(smokeAbiIndex).toBeGreaterThan(loadEnvIndex);
     expect(releaseScript).toContain("['arm64-v8a', smokeApkAbi]");
     expect(releaseScript).toContain("`-PreactNativeArchitectures=${releaseApkAbis.join(',')}`");

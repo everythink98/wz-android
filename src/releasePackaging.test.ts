@@ -9,17 +9,17 @@ function readProjectFile(...parts: string[]) {
 }
 
 describe('Android release packaging guards', () => {
-  it('keeps release checks before Android files are regenerated', () => {
+  it('uses the same complete verification entrypoint in CI and release', () => {
+    const pkg = JSON.parse(readProjectFile('package.json'));
+    const ciWorkflow = readProjectFile('.github', 'workflows', 'ci.yml');
     const releaseScript = readProjectFile('scripts', 'release-android.mjs');
-    const testIndex = releaseScript.indexOf("run('npm', ['test']);");
-    const unusedIndex = releaseScript.indexOf("run('npm', ['run', 'check:unused']);");
-    const versionIndex = releaseScript.indexOf("run('node', ['scripts/check-version.mjs']);");
+    const verifyIndex = releaseScript.indexOf("run('npm', ['run', 'verify']);");
     const prebuildIndex = releaseScript.indexOf("run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);");
 
-    expect(testIndex).toBeGreaterThanOrEqual(0);
-    expect(unusedIndex).toBeGreaterThan(testIndex);
-    expect(versionIndex).toBeGreaterThan(unusedIndex);
-    expect(prebuildIndex).toBeGreaterThan(versionIndex);
+    expect(pkg.scripts.verify).toBe('npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs');
+    expect(ciWorkflow).toContain('- run: npm run verify');
+    expect(verifyIndex).toBeGreaterThanOrEqual(0);
+    expect(prebuildIndex).toBeGreaterThan(verifyIndex);
   });
 
   it('keeps version truth in config instead of duplicating it in stable docs', () => {

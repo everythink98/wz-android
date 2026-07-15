@@ -281,6 +281,17 @@ export function useTopicSessionController({
   }, []);
 
   const applyTopicActionUpdate = useCallback((update: TopicSessionActionUpdate) => {
+    const activeRouteKey = activeTopicRouteKeyRef.current;
+    const routeSnapshot = activeRouteKey
+      ? readTopicRouteSnapshot(topicRouteSessionStoreRef.current, activeRouteKey)
+      : undefined;
+    if (activeRouteKey && routeSnapshot) {
+      saveTopicRouteSnapshot(topicRouteSessionStoreRef.current, activeRouteKey, {
+        ...routeSnapshot,
+        topicDetail: topicDetailAfterActionUpdate(routeSnapshot.topicDetail, update),
+        topicReplies: topicRepliesAfterActionUpdate(routeSnapshot.topicReplies, update)
+      });
+    }
     setTopicDetail((current) => topicDetailAfterActionUpdate(current, update));
     setTopicReplies((current) => topicRepliesAfterActionUpdate(current, update));
     if (actionUpdateClosesReplyComposer(update, { replyTarget, replyEditTarget })) {

@@ -654,6 +654,20 @@ function topicTitle(root: ReturnType<typeof parseHtml>) {
     || elementText(root.querySelector('title')).replace(/[-_].*$/, '').trim();
 }
 
+export function parseYaohuoFavoriteRecordId(html: string, topicId: string | number) {
+  const expectedTopicId = String(topicId).trim();
+  if (!/^\d+$/.test(expectedTopicId)) {
+    return undefined;
+  }
+  const row = parseHtml(html).querySelectorAll('.modern-list-item').find((item) => {
+    const topicLink = item.querySelectorAll('a[href]').find((link) => (
+      extractTopicParts(link.getAttribute('href')).id === expectedTopicId
+    ));
+    return Boolean(topicLink);
+  });
+  return parsePositiveInteger(row?.querySelector('[data-fav-id]')?.getAttribute('data-fav-id')) || undefined;
+}
+
 export function parseYaohuoTopicHtml(html: string, { id, url }: { id: string; url?: string }): TopicDetail {
   ensureYaohuoHtmlLoggedIn(html, url);
   const root = parseHtml(html);

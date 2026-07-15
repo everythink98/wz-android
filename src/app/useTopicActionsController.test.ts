@@ -68,7 +68,8 @@ function createTopicActionController({
   notify = vi.fn(),
   refreshTopicReplies = vi.fn(async () => undefined),
   replyContent = '',
-  source = 'nodeseek'
+  source = 'nodeseek',
+  topicPatch = {}
 }: {
   applyUpdate?: ReturnType<typeof vi.fn>;
   completeSubmission?: ReturnType<typeof vi.fn>;
@@ -77,6 +78,7 @@ function createTopicActionController({
   refreshTopicReplies?: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
   replyContent?: string;
   source?: Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
+  topicPatch?: Partial<TopicDetail>;
 } = {}) {
   const detail: TopicDetail = {
     source,
@@ -89,9 +91,11 @@ function createTopicActionController({
     contentHtml: '<p>private body</p>',
     replies: [],
     commentId: 987654,
-    liked: false
+    liked: false,
+    ...topicPatch
   };
   const optimisticTopicActionsRef = { current: {} };
+  const setActionBusy = vi.fn();
   const siteSessionStates = createSiteSessionStates();
   siteSessionStates[source] = {
     site: source,
@@ -113,7 +117,7 @@ function createTopicActionController({
     optimisticTopicActionsRef,
     refreshTopicReplies,
     resetLinuxDoLevelState: vi.fn(),
-    setActionBusy: vi.fn(),
+    setActionBusy,
     setOptimisticTopicActions: vi.fn(),
     showLinuxDoLogin: vi.fn(),
     showYaohuoLogin: vi.fn(),
@@ -139,7 +143,7 @@ function createTopicActionController({
     } as unknown as TopicSessionController,
     updateLinuxDoSession: vi.fn()
   });
-  return { applyUpdate, completeSubmission, controller, detail, optimisticTopicActionsRef };
+  return { applyUpdate, completeSubmission, controller, detail, optimisticTopicActionsRef, setActionBusy };
 }
 
 afterEach(() => {
@@ -329,5 +333,48 @@ describe('topic action auth guards', () => {
       csrfSource: 'none'
     }));
     expect(lines.join('')).not.toMatch(/csrf-token|private (?:reply|linux\.do) body|fake-credential|\/api\//i);
+  });
+
+  it('REG-WRITE-003 REG-WRITE-004 applies the confirmed yaohuo favorite locally without global busy', async () => {
+    actionMocks.runYaohuoAction.mockResolvedValueOnce({ ok: true, message: '收藏成功', favoriteId: 987 });
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({ source: 'yaohuo' });
+
+    await controller.favoriteOnYaohuoSite();
+
+    expect(actionMocks.runYaohuoAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        method: 'GET',
+        path: '/bbs/Share.aspx?action=fav&siteid=1000&classid=177&id=424242'
+      })
+    }));
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'bookmark',
+      bookmarked: true,
+      bookmarkId: 987
+    });
+    expect(setActionBusy).not.toHaveBeenCalled();
+  });
+
+  it('REG-WRITE-003 cancels a confirmed yaohuo favorite and clears the visible state', async () => {
+    actionMocks.runYaohuoAction.mockResolvedValueOnce({ ok: true, message: '已取消原站收藏' });
+    const { applyUpdate, controller } = createTopicActionController({
+      source: 'yaohuo',
+      topicPatch: { bookmarked: true, bookmarkId: 987 }
+    });
+
+    await controller.favoriteOnYaohuoSite();
+
+    expect(actionMocks.runYaohuoAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: {
+        method: 'POST',
+        path: '/bbs/favlist.aspx?action=delete&siteid=1000&favtypeid=0&id=987',
+        headers: { accept: '*/*' }
+      }
+    }));
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'bookmark',
+      bookmarked: false,
+      bookmarkId: undefined
+    });
   });
 });

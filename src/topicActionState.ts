@@ -214,6 +214,9 @@ function applyPollVoteToPolls(
     }
     return {
       ...poll,
+      participantCount: typeof poll.participantCount === 'number' && !poll.voted
+        ? nextCount(poll.participantCount, 1)
+        : poll.participantCount,
       voted: true,
       options: poll.options.map((option) => {
         const selected = selectedIds.has(option.id);

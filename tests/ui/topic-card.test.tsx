@@ -1,0 +1,106 @@
+import { describe, expect, it, jest } from '@jest/globals';
+import { fireEvent, render } from '@testing-library/react-native';
+import React from 'react';
+import { Pressable, Text } from 'react-native';
+import { createEmptyReaderData } from '../../src/readerData';
+import { TopicCard } from '../../src/components/TopicCard';
+import { createStyles, createTheme } from '../../src/theme';
+import type { Topic } from '../../src/types';
+
+jest.mock('@shopify/flash-list', () => ({
+  useMappingHelper: () => ({ getMappingKey: (key: string | number) => String(key) })
+}));
+
+jest.mock('lucide-react-native', () => {
+  const Icon = () => null;
+  return { Eye: Icon, MessageCircle: Icon };
+});
+
+jest.mock('expo-image', () => ({ Image: () => null }));
+
+const readerData = createEmptyReaderData();
+const theme = createTheme(readerData.settings);
+const styles = createStyles(theme, readerData.settings, 800);
+const topic: Topic = {
+  source: 'linuxdo',
+  id: 'topic-card-1',
+  title: '真实自动化覆盖卡片',
+  author: 'alice',
+  authorLevelLabel: 'LV 2',
+  category: '开发调优',
+  url: 'https://linux.do/t/topic-card-1',
+  createdAt: '2026-07-14T00:00:00.000Z',
+  displayTimeText: '今天 08:00',
+  replyCount: 23,
+  viewCount: 456,
+  excerpt: '宽松密度下显示的主题摘要',
+  tags: ['Android', '测试', '回归', '第四个标签'],
+  duplicateSources: ['V2EX', 'NodeSeek'],
+  accessRequirement: {
+    type: 'level',
+    label: '等级限制',
+    detail: '需要等级达到 2 才能查看'
+  }
+};
+
+describe('Topic card visible behavior', () => {
+  it('shows source metadata, local state, tag limits, access rules and the loose excerpt', async () => {
+    const onOpenTopic = jest.fn();
+    const view = await render(
+      <TopicCard
+        highlightQuery="自动化"
+        readerState={{ favorite: true, listDensity: 'loose', read: true }}
+        styles={styles}
+        testID="real-topic-card"
+        theme={theme}
+        topic={topic}
+        onOpenTopic={onOpenTopic}
+      />
+    );
+
+    expect(view.getByText('linux.do')).toBeTruthy();
+    expect(view.getByText('开发调优')).toBeTruthy();
+    expect(view.getByText('今天 08:00')).toBeTruthy();
+    expect(view.getByText('alice · LV 2 · 已收藏 · 同链：V2EX、NodeSeek')).toBeTruthy();
+    expect(view.getByText('需 Lv2')).toBeTruthy();
+    expect(view.getByText('Android')).toBeTruthy();
+    expect(view.getByText('测试')).toBeTruthy();
+    expect(view.getByText('回归')).toBeTruthy();
+    expect(view.queryByText('第四个标签')).toBeNull();
+    expect(view.getByText('+1')).toBeTruthy();
+    expect(view.getByText('宽松密度下显示的主题摘要')).toBeTruthy();
+    expect(view.getByText('23')).toBeTruthy();
+    expect(view.getByText('456')).toBeTruthy();
+
+    await fireEvent.press(view.getByTestId('real-topic-card'));
+    expect(onOpenTopic).toHaveBeenCalledWith(topic);
+  });
+
+  it('hides density-dependent content and keeps a trailing local action separate', async () => {
+    const onOpenTopic = jest.fn();
+    const onTrailingAction = jest.fn();
+    const view = await render(
+      <TopicCard
+        hideReplyCount
+        readerState={{ favorite: false, listDensity: 'standard', read: false }}
+        renderTrailingAction={() => (
+          <Pressable accessibilityRole="button" accessibilityLabel="本机取消收藏" onPress={onTrailingAction}>
+            <Text>取消</Text>
+          </Pressable>
+        )}
+        styles={styles}
+        testID="real-topic-card"
+        theme={theme}
+        topic={topic}
+        onOpenTopic={onOpenTopic}
+      />
+    );
+
+    expect(view.queryByText('宽松密度下显示的主题摘要')).toBeNull();
+    expect(view.queryByText('23')).toBeNull();
+    expect(view.getByText('456')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('本机取消收藏'));
+    expect(onTrailingAction).toHaveBeenCalledTimes(1);
+    expect(onOpenTopic).not.toHaveBeenCalled();
+  });
+});

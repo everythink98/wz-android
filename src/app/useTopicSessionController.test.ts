@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Reply, TopicDetail } from '../types';
+import { createTopicImageDeriver } from '../topicDerivedData';
 import {
   actionUpdateClosesReplyComposer,
+  filterTopicSessionReplies,
   replyContentAfterComposerClose,
   replyComposerAfterSuccessfulSubmission,
   topicDetailAfterActionUpdate,
@@ -34,6 +36,31 @@ const reply: Reply = {
 };
 
 describe('topic session controller helpers', () => {
+  it('applies author, image, newest and comment-query reply filters', () => {
+    const topicReplies: Reply[] = [
+      { author: 'alice', contentHtml: '<p>first answer</p>', createdAt: '2026-05-26T00:01:00.000Z', floor: 1 },
+      { author: 'bob', contentHtml: '<p>second needle</p><img src="https://img.example.com/2.png">', createdAt: '2026-05-26T00:02:00.000Z', floor: 2 },
+      { author: 'alice', contentHtml: '<p>third needle</p>', createdAt: '2026-05-26T00:03:00.000Z', floor: 3 }
+    ];
+    const topicDetail = { ...topic, replyCount: topicReplies.length, replies: topicReplies };
+    const topicImageDeriver = createTopicImageDeriver();
+    const filter = (replyFilter: 'all' | 'author' | 'images' | 'newest', commentQuery = '') => filterTopicSessionReplies({
+      commentQuery,
+      inlineSizedImageUrls: {},
+      replyFilter,
+      topicDetail,
+      topicImageDeriver,
+      topicReplies
+    }).map((item) => item.floor);
+
+    expect(filter('all')).toEqual([1, 2, 3]);
+    expect(filter('author')).toEqual([1, 3]);
+    expect(filter('images')).toEqual([2]);
+    expect(filter('newest')).toEqual([3, 2, 1]);
+    expect(filter('all', 'needle')).toEqual([2, 3]);
+    expect(filter('author', 'needle')).toEqual([3]);
+  });
+
   it('clears edited reply text when closing edit mode without dropping normal drafts', () => {
     expect(replyContentAfterComposerClose('普通草稿', null)).toBe('普通草稿');
     expect(replyContentAfterComposerClose('旧回复内容', {
