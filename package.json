@@ -13,6 +13,7 @@
     "check:docs": "node scripts/check-docs.mjs",
     "check:react": "npx --yes react-doctor@0.7.7 . --scope lines --base HEAD --include-untracked --no-telemetry --no-dead-code --no-supply-chain --blocking error",
     "check:unused": "tsc --noEmit --noUnusedLocals --noUnusedParameters --allowUnreachableCode false --allowUnusedLabels false",
+    "verify": "npm test && npm run test:ui && npm run test:docs && npm run check:docs && npm run typecheck && npm run check:unused && node scripts/check-version.mjs",
     "preandroid": "npm run generate:adaptive-icon",
     "android": "expo run:android",
     "generate:adaptive-icon": "node scripts/generate-adaptive-icon.mjs",

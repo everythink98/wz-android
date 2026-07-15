@@ -94,7 +94,7 @@ describe('App navigator UI state', () => {
     expect(view.getByLabelText('更多，有可用更新')).toBeTruthy();
   });
 
-  it.failing('returns from topic reading settings without losing the topic route', async () => {
+  it.failing('[REG-TOPIC-002] returns from topic reading settings without losing the topic route', async () => {
     const view = await render(
       <AppNavigator
         moreHasBadge={false}

@@ -119,7 +119,7 @@ Modal、BottomSheet、WebView、文件选择器、系统分享和安装器也是
 | --- | --- | --- | --- | --- |
 | `WRITE-01` | NodeSeek、linux.do、妖火详情按登录态显示回复和楼层回复；编辑器 BottomSheet 支持打开/收起、草稿恢复、引用、常用格式、表情和图片插入，提交期间防重复。V2EX 保持只读。 | `src/screens/topic/ReplyComposer.tsx`、`src/screens/topic/ReplyComposerSheet.tsx`、`src/app/useTopicActionsController.ts`、各站 action client | `src/app/useTopicActionsController.test.ts`、`src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`tests/ui/reply-composer.test.tsx` | 只检查入口、输入、收起/恢复和权限；真实评论提交必须按授权。 |
 | `WRITE-02` | 编辑/删除只按原站解析出的逐条权限显示。NodeSeek 编辑使用真实 commentId；当前请求在未传 token 时生成 16 位 `csrf-token`。linux.do 使用原站 edit/delete 权限；妖火仅在存在删除链接时可删且不提供编辑；NodeSeek 未确认删除时不显示。 | `src/app/useTopicActionsController.ts`、`src/nodeseekActions.ts`、`src/linuxdoActions.ts`、`src/yaohuoActions.ts` | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/app/topicActionControllerHelpers.test.ts` | 检查自己的回复操作菜单；真实编辑/删除评论必须按授权和清理约束。 |
-| `WRITE-03` | NodeSeek 支持点赞、鸡腿、反对、原站收藏和投票；linux.do 支持点赞、原站书签和投票；妖火支持原站收藏提交和投票；V2EX 只展示互动信息。不可逆或客户端不能撤销的操作不得按“可恢复切换”验收。 | `src/screens/topic/TopicActionBar.tsx`、`src/screens/topic/TopicPolls.tsx`、`src/app/useTopicActionsController.ts` | `src/topicActionState.test.ts`、`src/screens/topic/TopicPolls.test.ts`、三站 action client 测试 | 先看入口和权限；真实互动按具体站点、对象、可逆性取得授权并核对最终状态。 |
+| `WRITE-03` | NodeSeek 支持点赞、鸡腿、反对、原站收藏和投票；linux.do 支持点赞、原站书签和投票；妖火支持原站收藏提交和投票；V2EX 只展示互动信息。首次投票成功后本地所选项票数与参与人数只增量一次。不可逆或客户端不能撤销的操作不得按“可恢复切换”验收。 | `src/screens/topic/TopicActionBar.tsx`、`src/screens/topic/TopicPolls.tsx`、`src/app/useTopicActionsController.ts` | `src/topicActionState.test.ts`、`src/screens/topic/TopicPolls.test.ts`、三站 action client 测试 | 先看入口和权限；真实互动按具体站点、对象、可逆性取得授权并核对最终状态。 |
 | `WRITE-04` | NodeSeek 经 NodeImage、linux.do 经 `/uploads.json`、妖火经图床上传并插入对应 Markdown/UBB；上传失败不得提交残缺正文或泄露凭据。 | `src/replyImageUpload.ts`、`src/linuxdoActions.ts`、`src/app/useTopicActionsController.ts` | `src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/app/useTopicActionsController.test.ts` | 只检查选择/授权入口；真实上传因残留文件风险需单独授权。 |
 
 ### DATA：本机资料、持久化与备份
@@ -158,7 +158,7 @@ Modal、BottomSheet、WebView、文件选择器、系统分享和安装器也是
 | 关联 `FEED-02`、`FEED-04` | 单站分类来自当前站；排序默认分别为 V2EX“全部”、linux.do“最新”、NodeSeek“新帖子”，妖火无额外排序。 | linux.do 可同时使用分类和排序；V2EX/NodeSeek 选中分类后隐藏排序入口但保留该站已选排序，清空分类后恢复；刷新、加载更多和空态必须属于当前组合。 | `src/feedCategoryRail.test.ts`、`src/feedLogic.test.ts`、`src/forumApi.test.ts`、`tests/ui/feed-screen.test.tsx`；各站至少验证默认、一个分类和一个非默认排序。 |
 | 关联 `SEARCH-02` | 关键词输入/清空、提交、最近搜索逐条删除；“全部”结果按站点分组并可展开/收起，每站独立重试和分页。 | 空关键词不请求；点历史只填入；输入与已提交词不一致时旧结果立即失效；分页使用已提交词而不是正在编辑的词。 | `src/searchHistory.test.ts`、`src/searchListItems.test.ts`、`src/app/useSearchController.test.ts`；检查删除、折叠、局部错误和分页。 |
 | 关联 `SEARCH-03` | V2EX：排序、24小时/7天/30天/1年、节点、作者、任一/全部关键词；linux.do：全文/标题、分类、标签、时间、排序、作者；NodeSeek：分类、新评论/新帖子；妖火：版块。 | 仅单站显示筛选；四站草稿和已应用值互相隔离。关闭不应用，重置只重置草稿，确认后有关键词则重跑第一页；请求 owner key、分页和详情返回都必须携带已应用筛选。 | `src/searchFilters.test.ts`、`src/localSources.test.ts`、`tests/ui/search-screen.test.tsx`、`tests/device/search-topic-user-return.ad`、`tests/device/search-multi-source.ad`；UI 已覆盖四站筛选及草稿/确认语义，Replay 对 V2EX 覆盖筛选与详情返回，对 linux.do、NodeSeek、妖火分别覆盖来源切换和独立查询完成；动态结果内容不固定标题或数量。 |
-| 关联 `TOPIC-03` | 回复筛选：全部、只看楼主、只看带图、倒序；可叠加“评论内查找”。 | 数量应显示当前筛选结果；筛选、查找、回复分页和新增回复状态进入 Topic session snapshot，Topic → User → Topic 返回后恢复。当前回复标题数量缺陷见 `REG-TOPIC-001`，3 个 `it.failing` 不计作 `UI_PASS`。 | `src/app/useTopicSessionController.test.ts`、`tests/ui/topic-reply-filters.test.tsx`；设备逐项切换并走一次作者页返回。 |
+| 关联 `TOPIC-03` | 回复筛选：全部、只看楼主、只看带图、倒序；可叠加“评论内查找”。 | 数量应显示当前筛选结果；筛选、查找、回复分页和新增回复状态进入 Topic session snapshot，Topic → User → Topic 返回后恢复。`REG-TOPIC-001` 由 4 个普通 UI 回归测试保护，其中包含查询 debounce 过渡。 | `src/app/useTopicSessionController.test.ts`、`tests/ui/topic-reply-filters.test.tsx`；动态 Topic 的选择与停止条件按 Agent Live，筛选和作者返回使用独立目标。 |
 | 关联 `USER-01` | 用户页主题/回复 tab、刷新和各自加载更多。 | 两个 tab 使用各自列表、cursor 和加载态；切换 tab 回到列表顶部，进入 Topic 后返回保留当前用户页上下文。 | `src/app/useUserController.test.ts`、`src/screens/user/userScreenItems.test.ts`；两 tab 各打开一项并返回。 |
 | 关联 `LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03` | 帖子/关注用户/历史 tab；全部或四站来源；帖子和历史再提供当前来源分类。 | 切换 tab 重置来源和分类；切换来源重置分类；分类不能跨来源泄漏；筛选计数显示“当前/总数”。取消收藏、取消关注、删除和清空不属于只读筛选。 | `src/androidFeatureHelpers.test.ts`、`src/screens/library/libraryScreenItems.ts`、`tests/ui/library-screen.test.tsx`、`tests/device/library-return.ad`；UI 已覆盖三 tab 的来源、分类、计数和重置，Replay 覆盖 tab/返回与来源选择，动态分类组合仍按设备结果报告。 |
 
@@ -213,12 +213,12 @@ More → useNetworkProxyController → networkProxy + Android generated module
 | `FEED-02`、`FEED-03` | `tests/ui/feed-screen.test.tsx`、`tests/device/four-source-feed.ad` | 阅读状态与本机收藏切换需记录原状态并恢复。 |
 | `SEARCH-01`、`SEARCH-02`、`SEARCH-03` | `tests/ui/search-screen.test.tsx`、`tests/device/search-topic-user-return.ad`、`tests/device/search-multi-source.ad`；V2EX 覆盖筛选、详情和逐层返回，linux.do、NodeSeek、妖火覆盖独立查询完成与来源隔离 | 动态结果只断言可打开、来源和状态，不固定标题或数量。 |
 | `SEARCH-04` | `tests/device/nodeseek-session.ad` | 受限、验证和 fallback 必须以 App 内会话为事实。 |
-| `TOPIC-01`、`TOPIC-03`、`USER-01`、`USER-02` | `tests/ui/topic-reply-filters.test.tsx`、`tests/ui/topic-components.test.tsx`、`tests/ui/topic-card.test.tsx`、`tests/ui/user-screen.test.tsx`；Feed/Search/Library 三条返回 Replay，Feed 路径固定“只看楼主”返回状态 | `REG-TOPIC-001` 的 3 个 `it.failing` 只证明已知缺陷仍可被观察，不算计数 `UI_PASS`；四站字段、分页、其余筛选和原站主页按当前对象核实。 |
+| `TOPIC-01`、`TOPIC-03`、`USER-01`、`USER-02` | `tests/ui/topic-reply-filters.test.tsx`、`tests/ui/topic-components.test.tsx`、`tests/ui/topic-card.test.tsx`、`tests/ui/user-screen.test.tsx`；Feed/Search/Library 三条返回 Replay固定导航与返回 | `REG-TOPIC-001` 的 4 个普通 UI 测试固定筛选计数及查询 debounce 过渡；动态 Feed 首项不保证回复控件可见，真实筛选、四站字段、分页和原站主页按 `tests/live/agent-live.md` 当前对象核实。 |
 | `TOPIC-02`、`TOPIC-04` | `tests/ui/topic-components.test.tsx`、`tests/ui/topic-and-more-controls.test.tsx`、`tests/ui/image-preview.test.tsx`、`tests/ui/topic-reply-filters.test.tsx`、`tests/ui/app-navigator.test.tsx`；Replay 只证明详情可达，图片和分享仍走专项路径 | `REG-TOPIC-002` 的 `it.failing` 只保存阅读设置返回缺陷，不算该行为 `UI_PASS`；保存图片、收藏切换和系统分享按授权并恢复。 |
 | `LIBRARY-01`、`LIBRARY-02`、`LIBRARY-03` | `tests/ui/library-screen.test.tsx`、`tests/device/library-return.ad` | 取消收藏、取消关注、删除/清空历史不进入默认 Replay。 |
 | `ACCOUNT-01`、`ACCOUNT-02`、`ACCOUNT-03` | `tests/ui/account-site-panels.test.tsx` 固定三站登录 WebView 的加载、失败、刷新和关闭边界；`tests/device/nodeseek-session.ad` 提供 App 内 NodeSeek 会话证据；`tests/device/more-readonly.ad` 固定三站已登录状态和页签切换 | 三站登录、Cookie 和 WebView 的最终状态只接受 App 内证据；不清登录。 |
-| `ACCOUNT-04`、`ACCOUNT-05` | `tests/ui/account-site-panels.test.tsx` 固定 linux.do 等级和 NodeImage 入口；`tests/ui/account-center.test.tsx` 固定三站状态、命令和凭据门禁；`tests/device/more-readonly.ad` 只读确认 linux.do 等级入口可达 | 签到、真实 NodeImage 授权、真实填入和等级动态数据按当前登录态与写入授权核实，不记录账号密码。 |
-| `WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04` | `tests/ui/reply-composer.test.tsx` 固定楼层回复、编辑、三站表情和上传入口；`tests/ui/topic-components.test.tsx` 固定逐站回复权限、互动入口和投票约束；请求由 Vitest 固定 | 默认 Replay 不提交评论或写入；获授权操作逐项记录可逆性和残留。 |
+| `ACCOUNT-04`、`ACCOUNT-05` | `tests/ui/account-site-panels.test.tsx` 固定 linux.do 等级和 NodeImage 入口；`tests/ui/account-center.test.tsx` 固定三站状态、命令和凭据门禁；`tests/device/more-readonly.ad` 只读确认 linux.do 等级入口可达 | 签到、真实 NodeImage 授权、真实填入和等级动态数据按 `tests/live/agent-live.md` 的账号场景核实，不记录账号密码。 |
+| `WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04` | `tests/ui/reply-composer.test.tsx` 固定楼层回复、编辑、三站表情和上传入口；`tests/ui/topic-components.test.tsx` 固定逐站回复权限、互动入口和投票约束；请求由 Vitest 固定；`REG-WRITE-001` 固定首次投票计数且重复补丁不重计 | 默认 Replay 不提交评论或写入；获授权操作按 `tests/live/agent-live.md` 逐项记录可逆性、恢复和残留。 |
 | `DATA-01`、`DATA-02`、`DATA-03` | ReaderData/store/backup Vitest；`tests/ui/topic-and-more-controls.test.tsx` 固定备份忙碌门禁，`tests/ui/backup-status-controller.test.tsx` 固定取消、损坏、合并、导出分享失败和临时文件清理；`tests/device/more-readonly.ad` 只证明备份导入/导出入口可达，Library Replay 只证明读取路径 | 覆盖安装、重启、真实文件导入和回退兼容必须使用保留数据设备。 |
 | `MORE-01`、`MORE-02`、`MORE-03`、`MORE-04`、`MORE-05` | `tests/ui/network-proxy-modal.test.tsx` 固定代理校验、选择、编辑、延迟、启停和删除确认；`tests/ui/more-screen.test.tsx` 固定诊断、更新、备份和开发工具状态；`tests/ui/topic-and-more-controls.test.tsx` 固定外观选择；`tests/device/more-readonly.ad` 只读覆盖代理 Modal、诊断、备份和外观入口 | 代理原生恢复、系统分享、文件选择、安装器和开发工具重启后的最终状态必须记录。 |
 | `RELEASE-01`、`RELEASE-02` | `scripts/smoke-android.mjs` 输出 `APK_SANITY`，`npm run test:device` 输出 `DEVICE_REPLAY_PASS` | 只有明确发布任务运行正式签名与上传流程。 |
@@ -250,6 +250,7 @@ More → useNetworkProxyController → networkProxy + Android generated module
 
 - Vitest 主要固定解析、请求构造、权限映射、状态机、存储、隐私和源码 guard；它不证明原站当天 DOM/API、Cloudflare、登录态或 Android WebView 真机行为。
 - 模拟器专项必须按受影响 ID 走真实入口并记录 revision、版本、APK SHA、设备、登录来源、已验证和未验证范围。
+- 动态目标、真实账号和获授权写操作统一使用 `tests/live/agent-live.md`；它是 `targeted`/`full` 受监督验收，不进入 CI，不替代 Replay。
 - 默认“全面测试”不授权发帖/回复、编辑、删除、上传、点赞、投票、收藏切换或其他真实写入；授权、临时内容和恢复规则见 `docs/testing-standard.md`。登录清除、清 Cookie、清 App 数据、卸载和重置设备始终需要明确授权。
 - 单一账号未显示某入口、一次网络请求无变化或已加载 JS 未找到行为，只能记录为未确认，不能据此删能力或宣称成功/不支持。
 
@@ -262,6 +263,7 @@ More → useNetworkProxyController → networkProxy + Android generated module
 | [ReaderData 格式或代码回退](regression-corpus.md#reg-data-001-readerdata-实验与代码回退不兼容) | `FEED-03`、`LIBRARY-*`、`DATA-*` | `reader-data` key/version、store 调度、备份兼容、首页筛选、收藏/关注/历史数量；覆盖安装和重启后旧数据仍可读，失败不覆盖原数据。 |
 | [APK、Smoke 或 Replay 证据链](regression-corpus.md#reg-ops-002-设备侧录屏分片耗尽-replay-空间) | `RELEASE-02` | APK/version/SHA 身份、`APK_SANITY` 与 `DEVICE_REPLAY_PASS` 分离、最终安装构建、失败首证据、设备侧 agent-device 录屏 scratch 和本机 ignored 产物；不得用诊断重跑覆盖首败。 |
 | [Replay 设备 ID 与名称映射](regression-corpus.md#reg-ops-003-replay-把设备-id-当成设备名称) | `RELEASE-02` | 环境选择可使用 ID 或名称；ADB 身份校验必须使用解析后的 ID，`agent-device test` 必须使用解析后的显示名称；单元映射和五条 `retries=0` Replay 都要通过。 |
+| [AVD 名与 booted device 显示名映射](regression-corpus.md#reg-ops-004-avd-名与设备显示名不一致导致-replay-被拒绝) | `RELEASE-02` | Smoke 可用 AVD 名启动；Replay 设备发现只把下划线/空白差异视为同名且必须唯一，不能模糊选择其他设备；单元映射、APK sanity 和七条零重试 Replay 都要通过。 |
 
 ## 维护规则
 

@@ -18,6 +18,7 @@
 
 ```powershell
 npm install
+npm run verify
 npm test
 npm run typecheck
 npm run check:unused
@@ -30,7 +31,15 @@ npm run release:android
 npm run smoke:android
 ```
 
-`npm run test:device` 要求通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。Replay 会在证据拉回后按 PID 差分终止本条新增 daemon，并清理该设备上 agent-device 自己的录屏进程/scratch，防止长期运行耗尽空间；清理边界固定在工具录屏路径，不停止 MCP，也不触碰 App 数据或用户文件。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载或清数据。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
+`npm run verify` 是确定性门禁，统一包含 Vitest、Jest/RNTL UI、文档测试与引用、typecheck、unused 和版本一致性。`npm run test:device` 要求通过 `WZ_ANDROID_TEST_DEVICE` 和 `WZ_ANDROID_TEST_APK` 明确设备及目标 APK，先比对设备上实际 `base.apk` 的版本与 SHA-256，再执行 `tests/device/` Replay。单个 Replay 零重试并在失败处停止；普通执行失败由外层继续其他独立文件并最终统一返回，任何清理失败则立即停止后续文件，因为此时已不能证明场景隔离；只有全部通过才输出 `DEVICE_REPLAY_PASS`。Replay 会在证据拉回后按 PID 差分终止本条新增 daemon，并清理该设备上 agent-device 自己的录屏进程/scratch，防止长期运行耗尽空间；清理边界固定在工具录屏路径，不停止 MCP，也不触碰 App 数据或用户文件。`npm run smoke:android` 默认验证 `android/app/build/outputs/apk/release/app-x86_64-smoke-dev.apk`；也可以直接执行 `node scripts/smoke-android.mjs <apkPath>` 验证指定 APK。它通过 `WZ_ANDROID_SMOKE_DEVICE` 明确唯一登录态设备，先形成 `APK_SANITY`，再把同一 APK 交给 Replay 形成独立的 `DEVICE_REPLAY_PASS`。脚本不会自动选择其他设备，也不会卸载或清数据。`npm run release:android` 仍只上传正式 arm64 APK 和 manifest，开发签名 Smoke APK 不上传。
+
+## Agent Live
+
+- `tests/live/agent-live.md` 是唯一 Agent Live 流程，不另建功能清单、DSL 或 runner。
+- 普通改动在 `verify` 与相关 Replay 后执行 `targeted`；集中修复、里程碑或发布前执行 `full`。
+- 启动任务时给 Agent Profile、Git revision、App version、APK SHA、设备和能力 ID；由现有 agent-device MCP 操作，用户监督。
+- 场景不 fail-fast，但每项必须 relaunch 并重新确认前置状态。CF 等待用户手动完成；恢复失败时停止该来源后续写入。
+- 最终按能力 ID 报告 `LIVE_PASS`、`NOT_VERIFIED`、`BLOCKED_BY_ENV` 或明确失败，以及恢复状态和残留。
 
 ## 工具进程收口
 
@@ -47,8 +56,9 @@ npm run smoke:android
 - 服务器代理配置不进入备份 JSON，只保存在 Android 安全存储。
 - `android/` 是生成目录，不作为长期配置来源。
 - 发布版本号以 `app.json` 和 `package*.json` 为准；每次发布递增 `expo.android.versionCode`。
-- `npm run release:android` 会先执行测试、严格无用代码检查和版本一致性检查；严格检查已包含 TypeScript 编译检查。
+- `npm run release:android` 会先执行 `npm run verify`，其中包含 UI 测试、文档检查、TypeScript、严格无用代码检查和版本一致性检查。
 - 当前 release APK 必须使用正式签名；本机 `.env.release.local` 需要提供 `WZ_ANDROID_KEYSTORE_PATH`、`WZ_ANDROID_KEYSTORE_PASSWORD`、`WZ_ANDROID_KEY_ALIAS`、`WZ_ANDROID_KEY_PASSWORD`、`WZ_ANDROID_SMOKE_DEVICE` 和 `WZ_ANDROID_SMOKE_ABI=x86_64`。
+- `WZ_ANDROID_SMOKE_DEVICE` 可以使用 agent-device 的设备 ID、显示名或 AVD 名；AVD 名与 booted device 显示名仅允许下划线/空白等价，并且归一化后仍必须唯一匹配，不能靠部分名称自动选择设备。
 - 正式 APK 不能使用 `androiddebugkey`、`debug.keystore` 或默认密码 `android`；开发签名只用于不上传的 smoke APK。
 - 通过检查后，发布脚本会执行 `expo prebuild --platform android --clean`，再打包，确保 `app.json` 的版本号和原生配置进入 APK。
 - release 包应为 `android/app/build/outputs/apk/release/app-arm64-v8a-release.apk`。
@@ -74,12 +84,12 @@ npm run smoke:android
 - 涉及账号区时，至少运行账号中心、会话、凭据仓库、登录表单 adapter 和来源测试及 `npm run typecheck`；统一 UI 位于 `src/screens/more/AccountCenterPanel.tsx`，视图规则位于 `src/screens/more/accountCenter.ts`，凭据和填入边界位于 `src/credentialVault.ts`、`src/loginFormAdapters.ts`。
 - 涉及服务器代理时，至少运行 `npm test -- src/networkProxy.test.ts src/networkProxyControllerGuard.test.ts src/networkProxyModalGuard.test.ts src/webViewProxyGuard.test.ts src/appUpdateProxyGuard.test.ts src/releasePackaging.test.ts` 和 `npm run typecheck`；改 `plugins/withNetworkProxyModule.js` 后发布前必须跑 `npm run release:android`。
 - 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
-- 发布前运行 `npm run release:android`；它已经包含 `npm test`、文档检查、`npm run check:unused`、版本一致性、APK 签名校验、只读设备 smoke 和 SHA-256 输出。
+- 发布前运行 `npm run release:android`；它已经包含 `npm run verify`、APK 签名校验、只读设备 smoke 和 SHA-256 输出。
 
 ## 发布批次与闸门
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。
-- 发布候选依次通过文档引用检查、完整自动测试、typecheck、unused、版本一致性、正式签名构建与 signer 校验，再由同代码的开发签名 x86_64 APK 在唯一登录态设备上完成只读 smoke。
+- 发布候选依次通过 `npm run verify`、正式签名构建与 signer 校验，再由同代码的开发签名 x86_64 APK 在唯一登录态设备上完成只读 smoke；最后按授权执行 `full` Agent Live。
 - `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分只检查安装、冷启动、前台包名、Feed readiness 及日志窗口中的崩溃、ANR、RedBox，输出 `APK_SANITY`。Feed/Search/Library/账号与四站旅程由 tracked `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
 - 实时来源只断言关键字段存在且结果可打开，不固定结果数量；本批次触及某个来源时，再按 `docs/testing-standard.md` 做该来源的登录态或原站专项验收。
 - smoke 不执行回复、编辑、删除、上传、点赞、投票、收藏切换、清除登录或其他真实写操作。

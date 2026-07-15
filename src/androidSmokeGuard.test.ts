@@ -6,10 +6,13 @@ import { deviceSelectionArgs, isVersionSupported, MIN_AGENT_DEVICE_VERSION } fro
 import {
   androidRecordingScratchCleanupArgs,
   listReplayFiles,
+  matchingAndroidDevices,
   parseAgentDeviceList,
   parseAndroidAgentDeviceRecorders,
   parseAndroidPackageInfo,
-  replayDeviceSelectionArgs
+  ReplayCleanupError,
+  replayDeviceSelectionArgs,
+  runReplayBatch
 } from '../scripts/run-device-replay.mjs';
 
 const rootDir = path.resolve(__dirname, '..');
@@ -32,7 +35,7 @@ describe('Android release evidence guards', () => {
     expect(deviceSelectionArgs('  WZ Pixel API 35  ')).toEqual(['--device', 'WZ Pixel API 35']);
   });
 
-  it('parses the device and installed package identity used by Replay', () => {
+  it('[REG-OPS-004] maps the configured AVD name to the booted device display name', () => {
     const devices = parseAgentDeviceList(JSON.stringify({
       success: true,
       data: {
@@ -49,6 +52,7 @@ describe('Android release evidence guards', () => {
       versionCode: 67,
       versionName: '1.3.63'
     });
+    expect(matchingAndroidDevices(devices, 'WZ_Pixel_API_35')).toEqual(devices);
   });
 
   it('limits device-side recording cleanup to agent-device scratch files', () => {
@@ -117,6 +121,48 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).toContain('is visible id="nodeseek-login-webview-ready"');
     expect(nodeSeekReplay).toContain('back --system');
     expect(nodeSeekReplay).not.toContain('wait id="nodeseek-login-webview-ready"');
+  });
+
+  it('continues independent Replay files and reports all failures together', async () => {
+    const attempted: string[] = [];
+    let failure: unknown;
+
+    try {
+      await runReplayBatch(['first.ad', 'broken.ad', 'last.ad'], async (replayFile: string) => {
+        attempted.push(replayFile);
+        if (replayFile !== 'first.ad') {
+          throw new Error(`${replayFile} failed`);
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(attempted).toEqual(['first.ad', 'broken.ad', 'last.ad']);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(2);
+    expect((failure as Error).message).toContain('broken.ad');
+    expect((failure as Error).message).toContain('last.ad');
+  });
+
+  it('stops before the next Replay when cleanup cannot restore isolation', async () => {
+    const attempted: string[] = [];
+    let failure: unknown;
+
+    try {
+      await runReplayBatch(['first.ad', 'cleanup-broken.ad', 'must-not-run.ad'], async (replayFile: string) => {
+        attempted.push(replayFile);
+        if (replayFile === 'cleanup-broken.ad') {
+          throw new ReplayCleanupError(replayFile, new Error('recorder still running'));
+        }
+      });
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(attempted).toEqual(['first.ad', 'cleanup-broken.ad']);
+    expect(failure).toBeInstanceOf(ReplayCleanupError);
+    expect((failure as Error).message).toContain('cleanup-broken.ad');
   });
 
   it('requires explicit APK identity and writes Replay evidence only below ignored tmp', () => {

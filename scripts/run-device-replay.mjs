@@ -149,16 +149,29 @@ function resolveExpectedApkPath(value = process.argv[2] || process.env.WZ_ANDROI
   return apkPath;
 }
 
+function normalizedAndroidDeviceName(value) {
+  return String(value).trim().toLowerCase().replace(/[\s_]+/g, ' ');
+}
+
+export function matchingAndroidDevices(devices, selectedDevice) {
+  const normalizedSelectedDevice = normalizedAndroidDeviceName(selectedDevice);
+  return devices.filter((device) => (
+    device.platform === 'android'
+    && (
+      device.id === selectedDevice
+      || device.name === selectedDevice
+      || normalizedAndroidDeviceName(device.name) === normalizedSelectedDevice
+    )
+  ));
+}
+
 function resolveAndroidDevice(selectedDevice) {
   const output = runAgentDevice(['devices', '--platform', 'android', '--json'], {
     capture: true,
     cwd: rootDir,
     echoCapture: false
   });
-  const matches = parseAgentDeviceList(output).filter((device) => (
-    device.platform === 'android'
-    && (device.id === selectedDevice || device.name === selectedDevice)
-  ));
+  const matches = matchingAndroidDevices(parseAgentDeviceList(output), selectedDevice);
   if (matches.length !== 1) {
     throw new Error(`无法唯一匹配 Android 设备：${selectedDevice}`);
   }
@@ -219,6 +232,39 @@ export function listReplayFiles(deviceDir = path.join(rootDir, 'tests', 'device'
     .sort((left, right) => left.localeCompare(right));
 }
 
+export class ReplayCleanupError extends Error {
+  constructor(replayFile, cause) {
+    super(`Device Replay 清理失败，已停止后续文件：${path.basename(replayFile)}`, { cause });
+    this.name = 'ReplayCleanupError';
+  }
+}
+
+export async function runReplayBatch(replayFiles, executeReplay) {
+  const failures = [];
+  for (const replayFile of replayFiles) {
+    try {
+      await executeReplay(replayFile);
+    } catch (error) {
+      if (error instanceof ReplayCleanupError) {
+        if (failures.length === 0) {
+          throw error;
+        }
+        throw new AggregateError(
+          [...failures.map((failure) => failure.error), error],
+          `Device Replay 在 ${path.basename(replayFile)} 清理失败并停止；此前执行失败 ${failures.length} 个：${failures.map((failure) => path.basename(failure.replayFile)).join(', ')}`
+        );
+      }
+      failures.push({ replayFile, error: error instanceof Error ? error : new Error(String(error)) });
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(
+      failures.map((failure) => failure.error),
+      `Device Replay 失败 ${failures.length}/${replayFiles.length}：${failures.map((failure) => path.basename(failure.replayFile)).join(', ')}`
+    );
+  }
+}
+
 function closeDefaultReplaySession() {
   try {
     runAgentDevice(['close', '--platform', 'android'], {
@@ -249,13 +295,14 @@ export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selec
   console.log(
     `Replay identity: revision=${git.revision} dirty=${git.dirty} version=${identity.versionName} versionCode=${identity.versionCode} apkSha256=${identity.sha256} device=${device.name}(${device.id})`
   );
-  for (const replayFile of replayFiles) {
+  await runReplayBatch(replayFiles, async (replayFile) => {
     const replayName = path.basename(replayFile, '.ad');
     const replayArtifactsDir = path.join(artifactsDir, replayName);
     const junitPath = path.join(artifactsDir, `${replayName}.junit.xml`);
     mkdirSync(replayArtifactsDir, { recursive: true });
     const localDaemonPidsBefore = localAgentDeviceDaemonPids();
     let replayError;
+    let cleanupError;
     try {
       runAgentDevice([
         'test', replayFile,
@@ -275,15 +322,19 @@ export async function runDeviceReplay({ apkPath: apkValue, selectedDevice: selec
     try {
       stopNewLocalAgentDeviceDaemons(localDaemonPidsBefore);
       await cleanupAgentDeviceRecordingScratch(device.id);
-    } catch (cleanupError) {
-      if (!replayError) {
-        throw cleanupError;
-      }
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (cleanupError) {
+      const cause = replayError
+        ? new AggregateError([replayError, cleanupError], `${replayName} 执行和清理均失败`)
+        : cleanupError;
+      throw new ReplayCleanupError(replayFile, cause);
     }
     if (replayError) {
       throw replayError;
     }
-  }
+  });
   console.log('DEVICE_REPLAY_PASS');
 }
 

@@ -133,6 +133,7 @@ const topic: TopicDetail = {
 
 function TopicFilterHarness({
   canUseNodeSeekActions = false,
+  filteredCommentQuery,
   loadingMoreReplies = false,
   onLoadMoreReplies = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
@@ -147,6 +148,7 @@ function TopicFilterHarness({
   topicBusy = false
 }: {
   canUseNodeSeekActions?: boolean;
+  filteredCommentQuery?: string;
   loadingMoreReplies?: boolean;
   onLoadMoreReplies?: () => void;
   onRefreshWholeTopic?: () => void;
@@ -163,14 +165,15 @@ function TopicFilterHarness({
   const [commentQuery, setCommentQuery] = useState('');
   const [replyFilter, setReplyFilter] = useState<ReplyFilter>('all');
   const topicScrollRef = useRef(null);
+  const effectiveCommentQuery = filteredCommentQuery ?? commentQuery;
   const replies = useMemo(() => filterTopicSessionReplies({
-    commentQuery,
+    commentQuery: effectiveCommentQuery,
     inlineSizedImageUrls: {},
     replyFilter,
     topicDetail,
     topicImageDeriver,
     topicReplies: sourceReplies
-  }), [commentQuery, replyFilter, topicDetail]);
+  }), [effectiveCommentQuery, replyFilter, topicDetail]);
 
   return (
     <View>
@@ -201,7 +204,7 @@ function TopicFilterHarness({
         replyFace=""
         replyFilter={replyFilter}
         replyHasMore={replyHasMore}
-        replyHighlightQuery={commentQuery}
+        replyHighlightQuery={effectiveCommentQuery}
         replyTarget={null}
         selectedTopic={selectedTopic}
         sourceReplies={sourceReplies}
@@ -385,7 +388,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('3 条')).toBeTruthy();
   });
 
-  it.failing('shows the two visible replies in the count after selecting only the author', async () => {
+  it('[REG-TOPIC-001] shows the two visible replies in the count after selecting only the author', async () => {
     const view = await render(<TopicFilterHarness />);
 
     await fireEvent.press(view.getByLabelText('只看楼主'));
@@ -393,7 +396,7 @@ describe('Topic reply filters', () => {
     expect(view.getByText('2 条')).toBeTruthy();
   });
 
-  it.failing('shows the one visible reply in the count after selecting replies with images', async () => {
+  it('[REG-TOPIC-001] shows the one visible reply in the count after selecting replies with images', async () => {
     const view = await render(<TopicFilterHarness />);
 
     await fireEvent.press(view.getByLabelText('只看带图'));
@@ -401,11 +404,22 @@ describe('Topic reply filters', () => {
     expect(view.getByText('1 条')).toBeTruthy();
   });
 
-  it.failing('shows the two visible replies in the count after a comment query', async () => {
+  it('[REG-TOPIC-001] shows the two visible replies in the count after a comment query', async () => {
     const view = await render(<TopicFilterHarness />);
 
     await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), 'needle');
 
     expect(view.getByText('2 条')).toBeTruthy();
+  });
+
+  it('[REG-TOPIC-001] keeps the count aligned with the debounced result while a cleared query settles', async () => {
+    const view = await render(<TopicFilterHarness filteredCommentQuery="needle" />);
+
+    expect(view.getAllByText(/^reply-/)).toHaveLength(2);
+    expect(view.getByText('2 条')).toBeTruthy();
+
+    await view.rerender(<TopicFilterHarness filteredCommentQuery="first" />);
+    expect(view.getAllByText(/^reply-/)).toHaveLength(1);
+    expect(view.getByText('1 条')).toBeTruthy();
   });
 });

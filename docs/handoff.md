@@ -9,7 +9,7 @@
 5. 阅读 `docs/architecture.md` 与 `docs/operator-runbook.md`，确认 module seam、数据边界和操作命令。
 6. 阅读 `docs/testing-standard.md`，按能力 ID 选择验证；需要模拟器时只读取与当前 Git revision、版本和 APK 身份匹配的本机 `docs/emulator-baseline.md`。
 7. 本机存在 `memory/MEMORY.md` 时，按索引读取与任务相关的已确认事实；它只是补充，不能覆盖用户最新要求、当前代码或运行结果。
-8. 运行 `npm install`、`npm test`、`npm run test:ui`、`npm run typecheck`、`npm run check:unused` 和 `npm run check:docs`。
+8. 运行 `npm install` 和 `npm run verify`；需要真实设备时再按能力 ID 运行 Replay 与 `tests/live/agent-live.md`。
 
 ## 事实源边界
 

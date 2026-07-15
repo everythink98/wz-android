@@ -9,13 +9,10 @@ wait id="feed-topic-first" 10000
 wait "id=\"feed-source-all\" label=\"全部，已选择\"" 10000
 press id="feed-topic-first"
 wait id="topic-detail-loaded" 60000
-press label="只看楼主"
-wait label="只看楼主，已选择" 10000
 press id="topic-author"
 wait id="user-screen-loaded" 60000
 back --system
 wait id="topic-detail-loaded" 60000
-wait label="只看楼主，已选择" 10000
 back --system
 wait id="feed-list-ready-all" 60000
 wait id="feed-topic-first" 10000

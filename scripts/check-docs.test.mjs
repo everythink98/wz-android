@@ -84,7 +84,7 @@ test('reports a broken repository path inside a fenced test command', async () =
   assert.match(errors[0], /docs\/guide\.md:2.*src\/missing\.test\.ts/);
 });
 
-async function createKnowledgeFixture({ productMap, regressionCorpus = '', source = 'export {};\n' }) {
+async function createKnowledgeFixture({ productMap, regressionCorpus = '', source = 'export {};\n', expectedFailure }) {
   const rootDir = await mkdtemp(path.join(os.tmpdir(), 'wz-knowledge-contract-'));
   temporaryDirectories.push(rootDir);
   await mkdir(path.join(rootDir, 'docs'));
@@ -92,6 +92,10 @@ async function createKnowledgeFixture({ productMap, regressionCorpus = '', sourc
   await writeFile(path.join(rootDir, 'docs', 'product-map.md'), productMap);
   await writeFile(path.join(rootDir, 'docs', 'regression-corpus.md'), regressionCorpus);
   await writeFile(path.join(rootDir, 'src', 'screen.tsx'), source);
+  if (expectedFailure) {
+    await mkdir(path.join(rootDir, 'tests'));
+    await writeFile(path.join(rootDir, 'tests', 'known-failure.test.tsx'), expectedFailure);
+  }
   return rootDir;
 }
 
@@ -132,6 +136,56 @@ test('does not parse a REG id as a product capability id', async () => {
   });
 
   assert.deepEqual(findKnowledgeContractErrors(rootDir), []);
+});
+
+test('requires every expected failing UI test to name its regression id', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `TOPIC-03` | first |',
+      '## 四站能力矩阵'
+    ].join('\n'),
+    regressionCorpus: '## `REG-TOPIC-001` known issue\n',
+    expectedFailure: "it.failing('shows the correct reply count', () => {});\n"
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /known-failure\.test\.tsx:1.*缺少 REG ID/);
+});
+
+test('rejects an expected failing UI test that names an unknown regression', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `TOPIC-03` | first |',
+      '## 四站能力矩阵'
+    ].join('\n'),
+    regressionCorpus: '## `REG-TOPIC-001` known issue\n',
+    expectedFailure: "it.failing('[REG-TOPIC-999] shows the correct reply count', () => {});\n"
+  });
+
+  assert.match(findKnowledgeContractErrors(rootDir).join('\n'), /REG-TOPIC-999.*不存在/);
+});
+
+test('rejects dynamic or parameterized expected-failure titles that bypass REG mapping', async () => {
+  const rootDir = await createKnowledgeFixture({
+    productMap: [
+      '## 能力清单',
+      '| `TOPIC-03` | first |',
+      '## 四站能力矩阵'
+    ].join('\n'),
+    regressionCorpus: '## `REG-TOPIC-001` known issue\n',
+    expectedFailure: [
+      "const title = '[REG-TOPIC-001] dynamic';",
+      'it.failing(title, () => {});',
+      'test.failing(`[REG-TOPIC-001] template`, () => {});',
+      "it.failing.each([[1]])('[REG-TOPIC-001] case %s', () => {});"
+    ].join('\n')
+  });
+
+  const errors = findKnowledgeContractErrors(rootDir).join('\n');
+  assert.match(errors, /known-failure\.test\.tsx:2.*静态字符串标题/);
+  assert.match(errors, /known-failure\.test\.tsx:3.*静态字符串标题/);
+  assert.match(errors, /known-failure\.test\.tsx:4.*不支持 \.failing\.each/);
 });
 
 test('reports retired user-facing authentication terms in source files', async () => {

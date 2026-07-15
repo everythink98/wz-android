@@ -251,11 +251,7 @@ const releaseApkAbis = [...new Set(['arm64-v8a', smokeApkAbi])];
 const builtSmokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-release.apk`);
 const smokeApkPath = path.join(androidDir, 'app', 'build', 'outputs', 'apk', 'release', `app-${smokeApkAbi}-smoke-dev.apk`);
 
-run('npm', ['test']);
-run('npm', ['run', 'test:docs']);
-run('npm', ['run', 'check:docs']);
-run('npm', ['run', 'check:unused']);
-run('node', ['scripts/check-version.mjs']);
+run('npm', ['run', 'verify']);
 
 run('node', ['scripts/generate-adaptive-icon.mjs']);
 run('npx', ['expo', 'prebuild', '--platform', 'android', '--clean']);

@@ -12,7 +12,8 @@ const stableMarkdownFiles = [
   'docs/testing-standard.md',
   'docs/operator-runbook.md',
   'docs/handoff.md',
-  'docs/code-cleanup-map.md'
+  'docs/code-cleanup-map.md',
+  'tests/live/agent-live.md'
 ];
 const optionalRepositoryPaths = new Set([
   'docs/emulator-baseline.md',
@@ -153,10 +154,38 @@ export function findKnowledgeContractErrors(root) {
   }
 
   const regressionCorpus = readFileSync(regressionCorpusPath, 'utf8');
+  const knownRegressionIds = new Set(
+    [...regressionCorpus.matchAll(/^## `((?:REG)-[A-Z]+-\d+)`/gm)].map((match) => match[1])
+  );
   const referencedCapabilities = new Set(regressionCorpus.match(/(?<!REG-)\b(?:NAV|FEED|SEARCH|TOPIC|USER|LIBRARY|ACCOUNT|WRITE|DATA|MORE|RELEASE)-\d+\b/g) ?? []);
   for (const capabilityId of referencedCapabilities) {
     if (!knownCapabilities.has(capabilityId)) {
       errors.push(`docs/regression-corpus.md：引用的能力 ${capabilityId} 不存在`);
+    }
+  }
+
+  const expectedFailureFiles = filesBelow(path.join(root, 'tests')).filter((file) => /\.test\.[cm]?[jt]sx?$/.test(file));
+  for (const file of expectedFailureFiles) {
+    const text = readFileSync(file, 'utf8');
+    for (const match of text.matchAll(/\b(?:it|test)\.failing\b/g)) {
+      const relativeFile = path.relative(root, file).replaceAll('\\', '/');
+      const line = lineNumberAt(text, match.index ?? 0);
+      const invocation = text.slice(match.index ?? 0);
+      if (/^(?:it|test)\.failing\s*\.each\b/.test(invocation)) {
+        errors.push(`${relativeFile}:${line} 不支持 .failing.each；请拆成使用静态字符串标题的 it.failing/test.failing`);
+        continue;
+      }
+      const staticTitle = /^(?:it|test)\.failing\s*\(\s*(['"])([^'"\r\n]+)\1/.exec(invocation);
+      if (!staticTitle) {
+        errors.push(`${relativeFile}:${line} it.failing 必须使用含 REG ID 的静态字符串标题`);
+        continue;
+      }
+      const regressionId = staticTitle[2].match(/\bREG-[A-Z]+-\d+\b/)?.[0];
+      if (!regressionId) {
+        errors.push(`${relativeFile}:${line} it.failing 缺少 REG ID`);
+      } else if (!knownRegressionIds.has(regressionId)) {
+        errors.push(`${relativeFile}:${line} it.failing 引用的 ${regressionId} 不存在`);
+      }
     }
   }
 

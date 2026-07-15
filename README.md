@@ -51,6 +51,7 @@
 
 ```powershell
 npm install
+npm run verify
 npm test
 npm run typecheck
 npm run android
