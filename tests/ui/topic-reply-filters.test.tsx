@@ -2,7 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
-import type { Reply, SourceErrorInfo, Topic, TopicDetail } from '../../src/types';
+import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '../../src/types';
 import type { ReplyFilter } from '../../src/appTypes';
 import { filterTopicSessionReplies } from '../../src/app/useTopicSessionController';
 import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
@@ -95,7 +95,13 @@ jest.mock('lucide-react-native', () => {
 
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
-jest.mock('../../src/localLinuxdo', () => ({ getLinuxDoEmojiUrls: async () => ({}) }));
+jest.mock('../../src/localLinuxdo', () => ({
+  getLinuxDoEmojiUrls: async () => ({}),
+  splitLinuxDoContentHtml: (html: string | undefined, polls: TopicPoll[] | undefined) => [
+    ...(html ? [{ type: 'html' as const, html }] : []),
+    ...(polls || []).map((poll) => ({ type: 'poll' as const, poll }))
+  ]
+}));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
@@ -124,8 +130,49 @@ jest.mock('../../src/screens/topic/TopicActionBar', () => {
     }, ReactModule.createElement(NativeText, null, label))
   };
 });
-jest.mock('../../src/screens/topic/TopicContentBlock', () => ({ MemoizedTopicContentBlock: () => null }));
-jest.mock('../../src/screens/topic/TopicPolls', () => ({ TopicPolls: () => null }));
+jest.mock('../../src/screens/topic/TopicContentBlock', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  return {
+    MemoizedTopicContentBlock: ({ html }: { html: string }) => ReactModule.createElement(NativeText, null, html)
+  };
+});
+jest.mock('../../src/screens/topic/TopicPolls', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Pressable: NativePressable, Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
+  return {
+    TopicPolls: ({
+      canWritePollSource,
+      onVotePoll,
+      polls,
+      source
+    }: {
+      canWritePollSource: boolean;
+      onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
+      polls: TopicPoll[];
+      source?: TopicDetail['source'];
+    }) => {
+      const poll = polls[0];
+      if (!poll) {
+        return null;
+      }
+      return ReactModule.createElement(
+        NativeView,
+        { testID: `topic-poll-${source}` },
+        ReactModule.createElement(NativeText, null, canWritePollSource ? '可投票' : '只读投票'),
+        canWritePollSource ? ReactModule.createElement(
+          NativePressable,
+          {
+            accessibilityLabel: `提交 ${source} 投票`,
+            accessibilityRole: 'button',
+            onPress: () => onVotePoll(poll, [poll.options[0].id])
+          },
+          ReactModule.createElement(NativeText, null, '提交投票')
+        ) : null
+      );
+    }
+  };
+});
 jest.mock('../../src/screens/topic/ReplyComposerSheet', () => ({ ReplyComposerSheet: () => null }));
 jest.mock('../../src/screens/topic/TopicMenu', () => ({ TopicMenu: () => null }));
 jest.mock('../../src/screens/topic/ReplyItem', () => {
@@ -138,7 +185,11 @@ jest.mock('../../src/screens/topic/ReplyItem', () => {
       { testID: `reply-floor-${reply.floor}` },
       `reply-${reply.floor}-${reply.author}`
     ),
-    NodeSeekStatPill: () => null,
+    NodeSeekStatPill: ({ label, value }: { label: string; value: number }) => ReactModule.createElement(
+      NativeText,
+      { testID: `readonly-stat-${label}` },
+      `${label} ${value}`
+    ),
     nodeSeekTopicReactionStats: () => []
   };
 });
@@ -165,6 +216,14 @@ const topic: TopicDetail = {
   replyCount: sourceReplies.length,
   contentHtml: '',
   replies: sourceReplies
+};
+const topicPoll: TopicPoll = {
+  id: 'source-poll',
+  title: '来源投票',
+  options: [
+    { id: 'yes', label: '赞成', count: 3 },
+    { id: 'no', label: '反对', count: 1 }
+  ]
 };
 
 function HtmlRendererIdentityHarness({
@@ -196,6 +255,7 @@ function HtmlRendererIdentityHarness({
 }
 
 function TopicFilterHarness({
+  canUseLinuxDoActions = false,
   canUseNodeSeekActions = false,
   canUseYaohuoActions = false,
   filteredCommentQuery,
@@ -206,6 +266,7 @@ function TopicFilterHarness({
   onToggleFavorite = jest.fn(),
   onYaohuoFavorite = jest.fn(),
   onVerifyNodeSeek = jest.fn(),
+  onVotePoll = jest.fn(),
   replyHasMore = false,
   selectedTopic = topic,
   topicDetail = topic,
@@ -214,6 +275,7 @@ function TopicFilterHarness({
   topicBusy = false,
   yaohuoVisualBookmarked
 }: {
+  canUseLinuxDoActions?: boolean;
   canUseNodeSeekActions?: boolean;
   canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
@@ -224,6 +286,7 @@ function TopicFilterHarness({
   onToggleFavorite?: (topic: Topic) => void;
   onYaohuoFavorite?: () => void;
   onVerifyNodeSeek?: () => void;
+  onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
   replyHasMore?: boolean;
   selectedTopic?: Topic;
   topicDetail?: TopicDetail | null;
@@ -254,7 +317,7 @@ function TopicFilterHarness({
       >
         <TopicScreen
         actionBusy={false}
-        canUseLinuxDoActions={false}
+        canUseLinuxDoActions={canUseLinuxDoActions}
         canUseNodeSeekActions={canUseNodeSeekActions}
         canUseYaohuoActions={canUseYaohuoActions}
         commentQuery={commentQuery}
@@ -313,12 +376,13 @@ function TopicFilterHarness({
         onShareTopic={jest.fn()}
         onSubmitReply={jest.fn()}
         onToggleFavorite={onToggleFavorite}
-        onToggleQuotedFloor={jest.fn()}
+        onToggleReplyQuote={jest.fn()}
+        onToggleTopicBodyQuote={jest.fn()}
         onTopicScroll={jest.fn()}
         onUploadReplyImage={jest.fn()}
         onVerifyLinuxDo={jest.fn()}
         onVerifyNodeSeek={onVerifyNodeSeek}
-        onVotePoll={jest.fn()}
+        onVotePoll={onVotePoll}
       />
       </YaohuoFavoriteStateProvider>
       <Text testID="active-filter">{replyFilter}</Text>
@@ -327,6 +391,70 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
+  it.each(['linuxdo', 'yaohuo'] as const)('wires %s topic polls through the source-specific writable path', async (source) => {
+    const onVotePoll = jest.fn<(poll: TopicPoll, optionIds: string[]) => void>();
+    const sourceTopic: TopicDetail = {
+      ...topic,
+      source,
+      id: `${source}-poll-topic`,
+      url: source === 'linuxdo'
+        ? 'https://linux.do/t/topic/2'
+        : 'https://yaohuo.me/bbs-2.html',
+      polls: [topicPoll]
+    };
+    const view = await render(
+      <TopicFilterHarness
+        canUseLinuxDoActions={source === 'linuxdo'}
+        canUseYaohuoActions={source === 'yaohuo'}
+        onVotePoll={onVotePoll}
+        selectedTopic={sourceTopic}
+        topicDetail={sourceTopic}
+      />
+    );
+
+    expect(view.getByTestId(`topic-poll-${source}`)).toBeTruthy();
+    expect(view.getByText('可投票')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText(`提交 ${source} 投票`));
+    expect(onVotePoll).toHaveBeenCalledWith(topicPoll, ['yes']);
+  });
+
+  it('[REG-WRITE-009] renders a NodeSeek poll at its marker between body blocks', async () => {
+    const nodeSeekTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      id: 'nodeseek-poll-topic',
+      url: 'https://www.nodeseek.com/post-2-1',
+      contentHtml: '<p>投票前正文</p><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll><p>投票后正文</p><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll>',
+      polls: [topicPoll]
+    };
+    const view = await render(
+      <TopicFilterHarness
+        canUseNodeSeekActions
+        selectedTopic={nodeSeekTopic}
+        topicDetail={nodeSeekTopic}
+      />
+    );
+
+    const rendered = JSON.stringify(view.toJSON());
+    const beforeIndex = rendered.indexOf('投票前正文');
+    const pollIndex = rendered.indexOf('topic-poll-nodeseek');
+    const afterIndex = rendered.indexOf('投票后正文');
+    expect(beforeIndex).toBeGreaterThanOrEqual(0);
+    expect(pollIndex).toBeGreaterThan(beforeIndex);
+    expect(afterIndex).toBeGreaterThan(pollIndex);
+    expect(view.getAllByTestId('topic-poll-nodeseek')).toHaveLength(1);
+  });
+
+  it('shows the V2EX topic vote count without exposing a vote action', async () => {
+    const v2exTopic: TopicDetail = { ...topic, upvoteCount: 336 };
+    const view = await render(
+      <TopicFilterHarness selectedTopic={v2exTopic} topicDetail={v2exTopic} />
+    );
+
+    expect(view.getByTestId('readonly-stat-UP 票').props.children).toBe('UP 票 336');
+    expect(view.queryByTestId('topic-poll-v2ex')).toBeNull();
+  });
+
   it('keeps V2EX read-only and exposes reply composition only for an authorized writable source', async () => {
     const onReplyComposerOpenChange = jest.fn<(open: boolean) => void>();
     const view = await render(

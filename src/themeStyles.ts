@@ -1059,6 +1059,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     },
     replyDetailActionButton: {
       justifyContent: 'flex-start',
+      minHeight: 44,
       paddingHorizontal: 0
     },
     replyCompactActionButton: {
@@ -2469,7 +2470,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 14
     },
     replyCard: {
-      gap: 10,
+      gap: 8,
       borderBottomColor: theme.line,
       borderBottomWidth: StyleSheet.hairlineWidth,
       backgroundColor: 'transparent',
@@ -2576,7 +2577,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       lineHeight: 15
     },
     replyContentArea: {
-      gap: 10,
+      gap: 8,
       paddingLeft: 42,
       paddingRight: 0
     },
@@ -2657,9 +2658,11 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 0
     },
     replySignature: {
-      borderTopColor: theme.line,
+      borderTopColor: theme.lineStrong,
       borderTopWidth: StyleSheet.hairlineWidth,
-      paddingTop: 8
+      marginTop: 4,
+      paddingBottom: 4,
+      paddingTop: 4
     },
     replyStatRail: {
       alignSelf: 'flex-start',
@@ -2667,7 +2670,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 6,
-      minHeight: 40
+      marginTop: 4
     },
     replyThanksText: {
       alignSelf: 'flex-start',
@@ -2681,8 +2684,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       flexDirection: 'row',
       gap: 4,
       justifyContent: 'flex-start',
-      minHeight: 48,
-      paddingTop: 2
+      marginBottom: -12,
+      marginTop: -2,
+      minHeight: 44,
+      paddingTop: 0
     },
     quoteStack: {
       gap: 12
@@ -2734,6 +2739,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 12,
       paddingVertical: 8
+    },
+    replyQuoteBox: {
+      backgroundColor: replyNeutralSurface,
+      borderColor: replyNeutralBorder
     },
     quoteHeader: {
       alignItems: 'center',
@@ -2790,6 +2799,12 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '600',
       lineHeight: 18
     },
+    quotePreviewText: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: Math.round(14 * fontScale),
+      lineHeight: Math.round(22 * fontScale)
+    },
     quoteBody: {
       paddingTop: 4
     },
@@ -2798,6 +2813,11 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopWidth: StyleSheet.hairlineWidth,
       marginTop: 2,
       paddingTop: 8
+    },
+    replyQuotePanelBody: {
+      marginTop: 0,
+      paddingBottom: 2,
+      paddingTop: 10
     },
     quoteAuthorRow: {
       alignItems: 'center',

@@ -111,6 +111,21 @@ export function hasSameYaohuoTopicLayout(previous: TopicDetail | null, current: 
   return true;
 }
 
+export function topicOpeningPostAsReply(topic: TopicDetail): Reply {
+  return {
+    author: topic.author,
+    authorId: topic.authorId,
+    authorAvatar: topic.authorAvatar,
+    authorLevelLabel: topic.authorLevelLabel,
+    authorUrl: topic.authorUrl,
+    contentHtml: topic.contentHtml,
+    createdAt: topic.createdAt,
+    floor: 1,
+    commentId: topic.commentId,
+    polls: topic.polls
+  };
+}
+
 export {
   getReplyKey,
   stableTextHash

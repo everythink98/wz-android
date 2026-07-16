@@ -5,6 +5,7 @@ import {
   accessRequirementFromText,
   decodeHtml,
   elementText,
+  FORUM_LINK_CARD_TAG,
   isRecord,
   parseHtml,
   parsePositiveInteger,
@@ -38,9 +39,14 @@ import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sour
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
 const TOPIC_STREAM_CACHE_LIMIT = 100;
+const LINUXDO_POLL_PLACEHOLDER_TAG = 'forum-linuxdo-poll';
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
 let csrfTokenCache: string | null = null;
 let emojiUrlCache: LinuxDoEmojiUrlMap | null = null;
+
+export type LinuxDoContentPart =
+  | { type: 'html'; html: string }
+  | { type: 'poll'; poll: TopicPoll };
 
 interface LinuxDoOptions {
   cursor?: string | null;
@@ -287,6 +293,7 @@ function localQuotedFloorFromAside(node: ReturnType<typeof parseHtml>, topicId?:
 function quotedReferencesFromHtml(html: string, topicId?: string) {
   const floors = new Set<number>();
   const authors: Record<number, string> = {};
+  const previews: Record<number, string> = {};
   const root = parseHtml(html);
   root.querySelectorAll('aside').forEach((node) => {
     const floor = localQuotedFloorFromAside(node, topicId);
@@ -298,11 +305,15 @@ function quotedReferencesFromHtml(html: string, topicId?: string) {
     const author = decodeHtml(node.getAttribute('data-username') || node.getAttribute('data-display-name') || '').trim()
       || quotedAuthorFromAvatarUrl(String(node.querySelector('.title img')?.getAttribute('src') || ''))
       || quotedAuthorFromTitle(textContentFromHtml(node.querySelector('.title')?.toString() || ''));
+    const preview = textContentFromHtml(node.querySelector('blockquote')?.toString() || '').replace(/\s+/g, ' ').trim();
     if (author) {
       authors[floor] = author;
     }
+    if (preview) {
+      previews[floor] = preview;
+    }
   });
-  return { floors: [...floors], authors };
+  return { floors: [...floors], authors, previews };
 }
 
 function contentHtmlWithoutLocalQuoteAsides(html: string, topicId?: string) {
@@ -468,6 +479,104 @@ function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
   return polls.length ? polls : undefined;
 }
 
+function escapeLinuxDoContentAttribute(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function redditSourceUrl(value: unknown) {
+  try {
+    const url = new URL(String(value || ''), BASE_URL);
+    if (url.hostname.toLowerCase() !== 'embed.reddit.com') {
+      return '';
+    }
+    url.protocol = 'https:';
+    url.hostname = 'www.reddit.com';
+    url.port = '';
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | undefined) {
+  const root = parseHtml(html);
+  const pollNames = new Set((polls || []).map((poll) => poll.name).filter((name): name is string => Boolean(name)));
+  root.querySelectorAll('.poll').forEach((node) => {
+    const name = String(node.getAttribute('data-poll-name') || '').trim();
+    if (name && pollNames.has(name)) {
+      node.replaceWith(`<${LINUXDO_POLL_PLACEHOLDER_TAG} name="${escapeLinuxDoContentAttribute(name)}"></${LINUXDO_POLL_PLACEHOLDER_TAG}>`);
+    }
+  });
+  root.querySelectorAll('iframe').forEach((node) => {
+    const href = redditSourceUrl(node.getAttribute('src'));
+    if (!href) {
+      return;
+    }
+    node.replaceWith(
+      `<${FORUM_LINK_CARD_TAG} href="${escapeLinuxDoContentAttribute(href)}" site="Reddit" title="Reddit 帖子" description="在 Reddit 中查看原帖"></${FORUM_LINK_CARD_TAG}>`
+    );
+  });
+  return sanitizeContentHtml(root.toString(), BASE_URL);
+}
+
+function linuxDoContentTagName(node: unknown) {
+  const record = node as { rawTagName?: unknown; tagName?: unknown };
+  return String(record.rawTagName || record.tagName || '').toLowerCase();
+}
+
+export function splitLinuxDoContentHtml(html: string | undefined, polls: TopicPoll[] | undefined): LinuxDoContentPart[] {
+  const clean = String(html || '').trim();
+  const pollList = polls || [];
+  if (!clean) {
+    return pollList.map((poll) => ({ type: 'poll' as const, poll }));
+  }
+  const pollsByName = new Map(pollList.flatMap((poll) => poll.name ? [[poll.name, poll] as const] : []));
+  const matchedPolls = new Set<TopicPoll>();
+  const parts: LinuxDoContentPart[] = [];
+  let currentHtml = '';
+  const pushHtml = () => {
+    const value = currentHtml.trim();
+    if (value) {
+      parts.push({ type: 'html', html: value });
+    }
+    currentHtml = '';
+  };
+  try {
+    const nodes = parseHtml(`<body>${clean}</body>`).querySelector('body')?.childNodes || [];
+    for (const node of nodes) {
+      if (linuxDoContentTagName(node) === LINUXDO_POLL_PLACEHOLDER_TAG) {
+        const name = String((node as unknown as { getAttribute?: (name: string) => string | undefined }).getAttribute?.('name') || '').trim();
+        const poll = pollsByName.get(name);
+        if (poll) {
+          pushHtml();
+          parts.push({ type: 'poll', poll });
+          matchedPolls.add(poll);
+        }
+        continue;
+      }
+      currentHtml += node.toString();
+    }
+    pushHtml();
+  } catch {
+    const withoutPlaceholders = clean.replace(new RegExp(`<${LINUXDO_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${LINUXDO_POLL_PLACEHOLDER_TAG}\\s*>`, 'gi'), '').trim();
+    if (withoutPlaceholders) {
+      parts.push({ type: 'html', html: withoutPlaceholders });
+    }
+  }
+  for (const poll of pollList) {
+    if (!matchedPolls.has(poll)) {
+      parts.push({ type: 'poll', poll });
+    }
+  }
+  return parts;
+}
+
 function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFloor = index + 1): Reply | null {
   if (!isRecord(raw)) {
     return null;
@@ -475,7 +584,8 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   if (raw.deleted_at || raw.user_deleted === true) {
     return null;
   }
-  const contentHtml = sanitizeContentHtml(raw.cooked || '', BASE_URL);
+  const polls = normalizeDiscoursePolls(raw);
+  const contentHtml = sanitizeLinuxDoContentHtml(raw.cooked || '', polls);
   const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
   const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
   const liked = likedFromActionsSummary(raw.actions_summary);
@@ -485,7 +595,6 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
   const targetAuthor = replyTargetAuthor(raw.reply_to_user);
   const postType = Number(raw.post_type);
   const isSystemAction = Number.isFinite(postType) && postType !== 1;
-  const polls = normalizeDiscoursePolls(raw);
   const authorLevelLabel = linuxDoLevelLabel(raw);
   const contentMarkdown = typeof raw.raw === 'string' ? raw.raw : '';
   return {
@@ -498,6 +607,7 @@ function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFl
     floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
     ...(quotedReferences.floors.length ? { quotedFloors: quotedReferences.floors } : {}),
     ...(Object.keys(quotedReferences.authors).length ? { quotedAuthors: quotedReferences.authors } : {}),
+    ...(Object.keys(quotedReferences.previews).length ? { quotedPreviews: quotedReferences.previews } : {}),
     ...(positiveNumber(raw.id) ? { commentId: positiveNumber(raw.id) } : {}),
     ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
     ...(liked !== undefined ? { liked } : {}),
@@ -788,7 +898,7 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   cacheTopicStream(topic.id, data);
   const result = {
     ...topic,
-    contentHtml: sanitizeContentHtml(isRecord(firstPost) ? firstPost.cooked || '' : '', BASE_URL),
+    contentHtml: sanitizeLinuxDoContentHtml(isRecord(firstPost) ? firstPost.cooked || '' : '', polls),
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,

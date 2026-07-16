@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const actionMocks = vi.hoisted(() => ({
+  fetchNodeSeekVoteInfo: vi.fn(),
   runLinuxDoAction: vi.fn(),
   runNodeSeekAction: vi.fn(),
   runYaohuoAction: vi.fn()
@@ -29,6 +30,7 @@ vi.mock('expo-secure-store', () => ({
 }));
 
 vi.mock('../nodeseekActionClient', () => ({
+  fetchNodeSeekVoteInfo: actionMocks.fetchNodeSeekVoteInfo,
   runNodeSeekAction: actionMocks.runNodeSeekAction
 }));
 
@@ -51,6 +53,7 @@ vi.mock('../linuxdoCookieBridge', () => ({
 }));
 
 import { clearLinuxDoAccessForGeneration } from '../linuxdoCookieBridge';
+import { Alert } from 'react-native';
 import { createRequestOwner } from '../requestOwnership';
 import { createSiteSessionStates } from '../siteSessionState';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
@@ -376,5 +379,142 @@ describe('topic action auth guards', () => {
       bookmarked: false,
       bookmarkId: undefined
     });
+  });
+});
+
+describe('topic poll submission', () => {
+  const nodeSeekPoll = {
+    id: '2443',
+    title: 'NodeSeek poll',
+    options: [
+      { id: '71', label: '选项 A' },
+      { id: '72', label: '选项 B' }
+    ]
+  };
+
+  it('[REG-WRITE-008] keeps the NodeSeek selection and sends no request when confirmation is canceled', async () => {
+    actionMocks.runNodeSeekAction.mockResolvedValueOnce({});
+    const { applyUpdate, controller } = createTopicActionController();
+
+    await controller.votePoll(nodeSeekPoll, ['72']);
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      '确认提交投票？',
+      '提交后不可修改。',
+      expect.any(Array),
+      expect.objectContaining({
+        cancelable: true,
+        onDismiss: expect.any(Function)
+      })
+    );
+    const buttons = vi.mocked(Alert.alert).mock.calls[0]?.[2] || [];
+    buttons[0]?.onPress?.();
+
+    expect(actionMocks.runNodeSeekAction).not.toHaveBeenCalled();
+    expect(applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('[REG-WRITE-008] sends one NodeSeek POST after confirmation even when submit is pressed twice', async () => {
+    actionMocks.runNodeSeekAction.mockResolvedValue({});
+    actionMocks.fetchNodeSeekVoteInfo.mockResolvedValue({
+      id: '2443',
+      voted: true,
+      options: [
+        { id: '71', label: '选项 A', count: 2, selected: false },
+        { id: '72', label: '选项 B', count: 6, selected: true }
+      ]
+    });
+    const notify = vi.fn();
+    const { applyUpdate, controller } = createTopicActionController({ notify });
+
+    await controller.votePoll(nodeSeekPoll, ['72']);
+
+    expect(actionMocks.runNodeSeekAction).not.toHaveBeenCalled();
+    const buttons = vi.mocked(Alert.alert).mock.calls[0]?.[2] || [];
+    buttons[1]?.onPress?.();
+    buttons[1]?.onPress?.();
+
+    await vi.waitFor(() => {
+      expect(actionMocks.runNodeSeekAction).toHaveBeenCalledTimes(1);
+      expect(actionMocks.fetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
+    });
+    expect(actionMocks.runNodeSeekAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        path: '/api/vote/voteforitem',
+        method: 'POST'
+      })
+    }));
+    expect(actionMocks.runNodeSeekAction.mock.invocationCallOrder[0]).toBeLessThan(
+      actionMocks.fetchNodeSeekVoteInfo.mock.invocationCallOrder[0]
+    );
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'poll-vote',
+      patch: expect.objectContaining({
+        pollId: '2443',
+        optionIds: ['72'],
+        confirmedPoll: expect.objectContaining({
+          id: '2443',
+          voted: true,
+          options: expect.arrayContaining([
+            expect.objectContaining({ id: '72', count: 6, selected: true })
+          ])
+        })
+      })
+    });
+    expect(notify).toHaveBeenCalledWith('投票已提交');
+  });
+
+  it('[REG-WRITE-007] keeps a submitted NodeSeek vote without inventing counts when result GET fails', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    actionMocks.runNodeSeekAction.mockResolvedValueOnce({ success: true });
+    actionMocks.fetchNodeSeekVoteInfo.mockRejectedValueOnce(new Error('result refresh failed'));
+    const notify = vi.fn();
+    const { applyUpdate, controller } = createTopicActionController({ notify });
+
+    await controller.votePoll(nodeSeekPoll, ['72']);
+    const buttons = vi.mocked(Alert.alert).mock.calls[0]?.[2] || [];
+    buttons[1]?.onPress?.();
+
+    await vi.waitFor(() => {
+      expect(applyUpdate).toHaveBeenCalledWith({
+        type: 'poll-vote',
+        patch: expect.objectContaining({
+          pollId: '2443',
+          optionIds: ['72'],
+          preserveUnknownCounts: true
+        })
+      });
+    });
+    expect(actionMocks.runNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(actionMocks.fetchNodeSeekVoteInfo).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith('提交成功但结果刷新失败，请手动刷新。');
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(
+      expect.objectContaining({ phase: 'finish', outcome: 'partial', reason: 'refresh_failed' })
+    );
+  });
+
+  it('[REG-WRITE-008] does not add confirmation to LinuxDo or Yaohuo polls', async () => {
+    actionMocks.runLinuxDoAction.mockResolvedValueOnce({});
+    actionMocks.runYaohuoAction.mockResolvedValueOnce({});
+    const { controller: linuxDoController } = createTopicActionController({ source: 'linuxdo' });
+    const { controller: yaohuoController } = createTopicActionController({ source: 'yaohuo' });
+
+    await linuxDoController.votePoll({
+      id: 'linuxdo-poll',
+      name: 'poll_name',
+      postId: '424242',
+      options: [{ id: '1', label: 'A' }]
+    }, ['1']);
+    await yaohuoController.votePoll({
+      id: 'yaohuo-poll',
+      options: [{ id: '1', label: 'A' }]
+    }, ['1']);
+
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(actionMocks.runLinuxDoAction).toHaveBeenCalledTimes(1);
+    expect(actionMocks.runYaohuoAction).toHaveBeenCalledTimes(1);
   });
 });

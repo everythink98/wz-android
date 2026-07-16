@@ -268,6 +268,76 @@ describe('topic action state patches', () => {
     }]);
   });
 
+  it('[REG-WRITE-007] applies the authoritative server poll snapshot after a NodeSeek vote', () => {
+    const next = applyPollVoteToTopic({
+      ...topic,
+      source: 'nodeseek',
+      polls: [{
+        id: '2443',
+        title: '投票',
+        voted: false,
+        options: [
+          { id: '71', label: 'A' },
+          { id: '72', label: 'B' }
+        ]
+      }]
+    }, {
+      pollId: '2443',
+      optionIds: ['72'],
+      confirmedPoll: {
+        id: '2443',
+        title: '投票',
+        voted: true,
+        options: [
+          { id: '71', label: 'A', count: 2, selected: false },
+          { id: '72', label: 'B', count: 6, selected: true }
+        ]
+      }
+    });
+
+    expect(next?.polls?.[0]).toEqual({
+      id: '2443',
+      title: '投票',
+      voted: true,
+      options: [
+        { id: '71', label: 'A', count: 2, selected: false },
+        { id: '72', label: 'B', count: 6, selected: true }
+      ]
+    });
+  });
+
+  it('[REG-WRITE-007] does not invent a count when NodeSeek result refresh fails', () => {
+    const next = applyPollVoteToTopic({
+      ...topic,
+      source: 'nodeseek',
+      polls: [{
+        id: '2443',
+        title: '投票',
+        multiple: true,
+        voted: false,
+        options: [
+          { id: '71', label: 'A', count: 2 },
+          { id: '72', label: 'B' }
+        ]
+      }]
+    }, {
+      pollId: '2443',
+      optionIds: ['71', '72'],
+      preserveUnknownCounts: true
+    });
+
+    expect(next?.polls?.[0]).toEqual({
+      id: '2443',
+      title: '投票',
+      multiple: true,
+      voted: true,
+      options: [
+        { id: '71', label: 'A', count: 3, selected: true },
+        { id: '72', label: 'B', selected: true }
+      ]
+    });
+  });
+
   it('[REG-WRITE-001] increments poll participants once after the first submitted vote', () => {
     const initial = {
       ...topic,

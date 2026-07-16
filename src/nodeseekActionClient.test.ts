@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { runNodeSeekAction } from './nodeseekActionClient';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from './nodeseekActionClient';
 import { buildNodeSeekAttendanceRequest, buildNodeSeekReplyRequest } from './nodeseekActions';
 import { browserFetchIntentFromInit } from './browserFetchIntent';
 
@@ -13,6 +13,54 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('runNodeSeekAction', () => {
+  it('[REG-WRITE-007] reads the authoritative NodeSeek poll snapshot with vote headers', async () => {
+    const fetcher = vi.fn(async () => jsonResponse({
+      vote: {
+        id: 2443,
+        voted: true,
+        items: [
+          { vote_item_id: 71, text: '选项 A', count: 2, voted: false },
+          { vote_item_id: 72, text: '选项 B', count: 6, voted: true }
+        ]
+      }
+    }));
+
+    const poll = await fetchNodeSeekVoteInfo({
+      cookieHeader: 'session=abc',
+      pollId: '2443',
+      fetcher,
+      userAgent: 'current-webview-ua'
+    });
+
+    expect(poll).toMatchObject({
+      id: '2443',
+      voted: true,
+      options: [
+        { id: '71', count: 2, selected: false },
+        { id: '72', count: 6, selected: true }
+      ]
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/api/vote/info/2443',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          accept: 'application/json, text/plain, */*',
+          cookie: 'session=abc',
+          'user-agent': 'current-webview-ua',
+          'x-dynamic-sign': 'a'.repeat(40)
+        }),
+        signal: expect.any(AbortSignal)
+      })
+    );
+    const calls = fetcher.mock.calls as unknown as Array<[string, RequestInit?]>;
+    expect(browserFetchIntentFromInit(calls[0]?.[1])).toEqual({
+      owner: 'write',
+      priority: 'write',
+      cancelable: false
+    });
+  });
+
   it('sends NodeSeek write requests with browser-like action headers', async () => {
     const fetcher = vi.fn(async () => jsonResponse({ success: true }));
 

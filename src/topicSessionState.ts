@@ -20,7 +20,7 @@ export type TopicSession = {
   replyTarget: ReplyTarget | null;
   replyEditTarget: ReplyEditTarget | null;
   expandedQuotes: Record<string, boolean>;
-  loadedQuotedReplies: Record<number, Reply>;
+  loadedQuotedReplies: Record<string, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
   scrollY: number;
 };

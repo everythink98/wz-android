@@ -1,4 +1,4 @@
-import type { Reply, TopicDetail } from './types';
+import type { Reply, TopicDetail, TopicPoll } from './types';
 
 export type InteractionType = 'upvote' | 'like' | 'dislike';
 type InteractionMode = 'add' | 'remove';
@@ -192,9 +192,18 @@ export function applyNodeSeekCollectionToTopic<T extends TopicDetail | null>(
   } as T;
 }
 
+type PollVotePatch = {
+  pollId?: string;
+  pollName?: string;
+  pollPostId?: string;
+  optionIds: string[];
+  confirmedPoll?: TopicPoll;
+  preserveUnknownCounts?: boolean;
+};
+
 function applyPollVoteToPolls(
   polls: TopicDetail['polls'],
-  patch: { pollId?: string; pollName?: string; pollPostId?: string; optionIds: string[] }
+  patch: PollVotePatch
 ) {
   if (!polls?.length) {
     return polls;
@@ -212,20 +221,34 @@ function applyPollVoteToPolls(
     if (!matchesPoll) {
       return poll;
     }
+    if (patch.confirmedPoll) {
+      return {
+        ...poll,
+        ...patch.confirmedPoll
+      };
+    }
+    const participantCount = typeof poll.participantCount === 'number' && !poll.voted
+      ? nextCount(poll.participantCount, 1)
+      : poll.participantCount;
     return {
       ...poll,
-      participantCount: typeof poll.participantCount === 'number' && !poll.voted
-        ? nextCount(poll.participantCount, 1)
-        : poll.participantCount,
+      ...(participantCount !== undefined ? { participantCount } : {}),
       voted: true,
       options: poll.options.map((option) => {
         const selected = selectedIds.has(option.id);
         const wasSelected = option.selected === true;
-        return {
+        const nextOption = {
           ...option,
-          selected,
-          count: selected && !wasSelected ? nextCount(option.count, 1) : option.count
+          selected
         };
+        if (selected && !wasSelected) {
+          if (typeof option.count === 'number') {
+            nextOption.count = nextCount(option.count, 1);
+          } else if (!patch.preserveUnknownCounts) {
+            nextOption.count = 1;
+          }
+        }
+        return nextOption;
       })
     };
   });
@@ -233,7 +256,7 @@ function applyPollVoteToPolls(
 
 export function applyPollVoteToTopic<T extends TopicDetail | null>(
   topic: T,
-  patch: { pollId?: string; pollName?: string; pollPostId?: string; optionIds: string[] }
+  patch: PollVotePatch
 ): T {
   if (!topic?.polls?.length) {
     return topic;
@@ -246,7 +269,7 @@ export function applyPollVoteToTopic<T extends TopicDetail | null>(
 
 export function applyPollVoteToReplies(
   replies: Reply[],
-  patch: { pollId?: string; pollName?: string; pollPostId?: string; optionIds: string[] }
+  patch: PollVotePatch
 ) {
   return replies.map((reply) => {
     const polls = applyPollVoteToPolls(reply.polls, patch);

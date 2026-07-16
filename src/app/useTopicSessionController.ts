@@ -154,7 +154,7 @@ export function useTopicSessionController({
   const topicRepliesRef = useRef<Reply[]>(topicReplies);
   const loadingMoreRepliesRef = useRef(false);
   const expandedQuotesRef = useRef<Record<string, boolean>>({});
-  const loadedQuotedRepliesRef = useRef<Record<number, Reply>>({});
+  const loadedQuotedRepliesRef = useRef<Record<string, Reply>>({});
   const loadingQuotedFloorsRef = useRef<Record<string, boolean>>({});
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
 
@@ -184,7 +184,7 @@ export function useTopicSessionController({
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const updateLoadedQuotedReplies = useCallback((updater: (current: Record<number, Reply>) => Record<number, Reply>) => {
+  const updateLoadedQuotedReplies = useCallback((updater: (current: Record<string, Reply>) => Record<string, Reply>) => {
     loadedQuotedRepliesRef.current = updater(loadedQuotedRepliesRef.current);
     setQuoteStateVersion((current) => current + 1);
   }, []);
@@ -382,10 +382,8 @@ export function useTopicSessionController({
     updateLoadingQuotedFloors((current) => ({ ...current, [key]: loading }));
   }, [updateLoadingQuotedFloors]);
 
-  const rememberQuotedReply = useCallback((reply: Reply) => {
-    if (reply.floor) {
-      updateLoadedQuotedReplies((current) => ({ ...current, [reply.floor as number]: reply }));
-    }
+  const rememberQuotedReply = useCallback((referenceKey: string, reply: Reply) => {
+    updateLoadedQuotedReplies((current) => ({ ...current, [referenceKey]: reply }));
   }, [updateLoadedQuotedReplies]);
 
   const stopTopicWork = useCallback((clearCurrentTopic = false) => {
@@ -470,7 +468,7 @@ export function useTopicSessionController({
     topicBackStackRef.current = [...stack];
   }, []);
   const isQuoteExpanded = useCallback((key: string) => Boolean(expandedQuotesRef.current[key]), []);
-  const getLoadedQuotedReply = useCallback((floor: number) => loadedQuotedRepliesRef.current[floor], []);
+  const getLoadedQuotedReply = useCallback((referenceKey: string) => loadedQuotedRepliesRef.current[referenceKey], []);
   const replaceQuotedReplyRequest = useCallback((key: string, controller: AbortController) => {
     quotedReplyAbortRefs.current[key]?.abort();
     quotedReplyAbortRefs.current[key] = controller;

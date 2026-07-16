@@ -184,7 +184,8 @@ describe('NodeSeek action request builders', () => {
       path: '/api/vote/voteforitem',
       method: 'POST',
       headers: {
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        'x-dynamic-sign': 'a'.repeat(40)
       },
       body: JSON.stringify({
         ids: [71, 72]

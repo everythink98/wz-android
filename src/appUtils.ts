@@ -138,6 +138,13 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
   return null;
 }
 
+export function parseInternalTopicOpenLink(value: string) {
+  const url = forumLinkUrl(value);
+  return url?.protocol === 'exp+wz-android:' && url.hostname === 'open-topic'
+    ? parseForumTopicLink(url.searchParams.get('url') || '')
+    : null;
+}
+
 export function parseForumUserLink(href: string, baseUrl?: string, candidates: ForumUserLinkCandidate[] = []): UserProfile | null {
   const url = forumLinkUrl(href, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {

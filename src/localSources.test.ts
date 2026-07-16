@@ -20,11 +20,13 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
+import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
+import { splitLinuxDoContentHtml } from './localLinuxdo';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -538,8 +540,11 @@ describe('Android local sources', () => {
         ]
       }
     })).toString('base64');
-    const fetcher = vi.fn(async (input: string) => {
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.includes('/api/vote/info/2443')) {
+        if (new Headers(init?.headers).get('x-dynamic-sign') !== 'a'.repeat(40)) {
+          return new Response(JSON.stringify({ success: false }), { status: 403 });
+        }
         return json({
           vote: {
             id: 2443,
@@ -559,6 +564,9 @@ describe('Android local sources', () => {
 
     const topic = await getNodeSeekTopic('759903', { fetcher });
 
+    const voteRequest = fetcher.mock.calls.find(([input]) => input.includes('/api/vote/info/2443'));
+    expect(new Headers(voteRequest?.[1]?.headers).get('x-dynamic-sign')).toBe('a'.repeat(40));
+
     expect(topic.polls).toEqual([{
       id: '2443',
       title: '公开投票',
@@ -571,6 +579,104 @@ describe('Android local sources', () => {
         { id: '72', label: '选项 B', count: 5, selected: true }
       ]
     }]);
+    expect(topic.contentHtml).not.toContain('nsapp://vote?id=2443');
+    expect(topic.contentHtml).not.toContain('提交投票');
+    expect(topic.contentHtml).toContain('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
+  });
+
+  it('[REG-WRITE-007] hides NodeSeek vote counts until the current user has voted', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 759903,
+        title: 'NodeSeek unvoted poll topic',
+        op: { name: 'alice' },
+        comments: [{
+          commentId: 10,
+          poster: { name: 'alice' },
+          markdown: '提交投票 nsapp://vote?id=2443',
+          time: { createdDate: '2026-06-03T00:00:00.000Z' }
+        }]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/vote/info/2443')) {
+        return json({
+          vote: {
+            id: 2443,
+            title: '未投票时隐藏结果',
+            isPublic: false,
+            locked: true,
+            multiple: true,
+            voted: false,
+            items: [
+              { vote_item_id: 71, text: '选项 A', count: 2, voted: false },
+              { vote_item_id: 72, text: '选项 B', count: 5, voted: false }
+            ]
+          }
+        });
+      }
+      return html(`<script>${payload}</script>`);
+    });
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls).toEqual([{
+      id: '2443',
+      title: '未投票时隐藏结果',
+      public: false,
+      closed: true,
+      multiple: true,
+      voted: false,
+      options: [
+        { id: '71', label: '选项 A', selected: false },
+        { id: '72', label: '选项 B', selected: false }
+      ]
+    }]);
+  });
+
+  it('[REG-WRITE-007] keeps failed NodeSeek vote markers and reports a partial topic', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 759903,
+        title: 'NodeSeek partial poll topic',
+        op: { name: 'alice' },
+        comments: [{
+          commentId: 10,
+          poster: { name: 'alice' },
+          markdown: '提交投票 nsapp://vote?id=2443\n\n提交投票 nsapp://vote?id=2444\n\n提交投票 nsapp://vote?id=2445',
+          time: { createdDate: '2026-06-03T00:00:00.000Z' }
+        }]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/vote/info/2443')) {
+        return json({
+          vote: {
+            id: 2443,
+            title: '可用投票',
+            items: [{ vote_item_id: 71, text: '选项 A', voted: false }]
+          }
+        });
+      }
+      if (input.includes('/api/vote/info/2444')) {
+        return new Response(JSON.stringify({ success: false }), { status: 403 });
+      }
+      if (input.includes('/api/vote/info/2445')) {
+        return json({ success: false });
+      }
+      return html(`<script>${payload}</script>`);
+    });
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls?.map((poll) => poll.id)).toEqual(['2443']);
+    expect(topic.contentHtml).not.toContain('nsapp://vote?id=2443');
+    expect(topic.contentHtml).toContain('nsapp://vote?id=2444');
+    expect(topic.contentHtml).toContain('nsapp://vote?id=2445');
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+      partialErrorCount: 2,
+      hasDegradation: true
+    });
   });
 
   it('maps rendered NodeSeek vote forms to unified polls and removes the raw form from content', async () => {
@@ -604,6 +710,7 @@ describe('Android local sources', () => {
     }]);
     expect(topic.contentHtml).not.toContain('<form');
     expect(topic.contentHtml).not.toContain('Debian');
+    expect(topic.contentHtml).toContain('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
   it('maps hydrated NodeSeek embedded vote panels from the rendered page', async () => {
@@ -638,6 +745,8 @@ describe('Android local sources', () => {
               </form>
             </div>
           </div>
+          <p>&quot;&gt;</p>
+          <p><span>nsapp://vote?id=2443</span></p>
         </article>
       </div>
     `));
@@ -658,7 +767,7 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('pure-form');
     expect(topic.contentHtml).not.toContain('vote-panel');
     expect(topic.contentHtml).not.toContain('embed-vote');
-    expect(topic.contentHtml.trim()).toBe('');
+    expect(topic.contentHtml.trim()).toBe('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {
@@ -1233,7 +1342,12 @@ describe('Android local sources', () => {
         posts: [{
           id: 1001,
           username: 'alice',
-          cooked: '<p>投票正文</p>',
+          cooked: [
+            '<p>投票前</p>',
+            '<div class="poll" data-poll-name="poll"><ul><li>原始方案 A</li><li>原始方案 B</li></ul><div class="poll-info">0 投票人</div></div>',
+            '<p>投票后</p>',
+            '<iframe src="https://embed.reddit.com/r/OpenAI/comments/abc123/topic/?embed=true"></iframe>'
+          ].join(''),
           created_at: '2026-06-03T00:00:00.000Z',
           post_number: 1,
           polls: [{
@@ -1279,6 +1393,17 @@ describe('Android local sources', () => {
         { id: 'c3', label: '方案 C', selected: false }
       ]
     }]);
+    expect(topic.contentHtml).toContain('<forum-linuxdo-poll name="poll"></forum-linuxdo-poll>');
+    expect(topic.contentHtml).not.toContain('原始方案 A');
+    expect(topic.contentHtml).not.toContain('0 投票人');
+    expect(topic.contentHtml).toContain('<forum-link-card');
+    expect(topic.contentHtml).toContain('href="https://www.reddit.com/r/OpenAI/comments/abc123/topic/"');
+    expect(topic.contentHtml).not.toContain('嵌入内容 · embed.reddit.com');
+    expect(splitLinuxDoContentHtml(topic.contentHtml, topic.polls).map((part) => part.type)).toEqual([
+      'html',
+      'poll',
+      'html'
+    ]);
   });
 
   it('maps linux.do Discourse polls from reply posts', async () => {
@@ -1301,7 +1426,7 @@ describe('Android local sources', () => {
           {
             id: 1002,
             username: 'bob',
-            cooked: '<p>回复投票</p>',
+            cooked: '<p>回复投票前</p><div class="poll" data-poll-name="reply-poll"><p>原始回复选项</p></div><p>回复投票后</p>',
             created_at: '2026-06-03T00:01:00.000Z',
             post_number: 2,
             polls: [{
@@ -1337,6 +1462,12 @@ describe('Android local sources', () => {
         { id: '2', label: '2 分', count: 3, selected: false }
       ]
     }]);
+    expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
+    expect(splitLinuxDoContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)).toEqual([
+      'html',
+      'poll',
+      'html'
+    ]);
   });
 
   it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
@@ -1815,7 +1946,52 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
-  it('keeps linux.do quote author names from quote markup', async () => {
+  it('keeps a linux.do topic-body quote preview and loads its cross-topic complete post separately', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (String(input).includes('/t/920.json')) {
+        return json({
+          id: 920,
+          title: 'Referenced topic',
+          created_at: '2026-05-20T00:00:00.000Z',
+          post_stream: {
+            stream: [11],
+            posts: [{
+              id: 11,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>',
+              created_at: '2026-05-20T00:00:00.000Z'
+            }]
+          }
+        });
+      }
+      return json({
+        id: 910,
+        title: 'Topic with external quote',
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream: [1],
+          posts: [{
+            id: 1,
+            post_number: 1,
+            username: 'bob',
+            cooked: '<aside data-post="1" class="quote" data-topic="920" data-username="alice"><blockquote><p>Short cross-topic preview.</p></blockquote></aside><p>Topic body</p>',
+            created_at: '2026-05-20T00:00:00.000Z'
+          }]
+        }
+      });
+    });
+
+    const topic = await getTopic({ source: 'linuxdo', id: '910', fetcher });
+    const completePost = await getReply({ source: 'linuxdo', id: '920', floor: 1, fetcher });
+
+    expect(topic.contentHtml).toContain('data-topic="920"');
+    expect(topic.contentHtml).toContain('Short cross-topic preview.');
+    expect(topic.contentHtml).not.toContain('Complete cross-topic second paragraph.');
+    expect(completePost.contentHtml).toBe('<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>');
+  });
+
+  it('keeps a linux.do reply quote preview and loads the same-topic complete post separately', async () => {
     const fetcher = vi.fn(async () => json({
       id: 910,
       title: 'linux.do quoted author',
@@ -1823,12 +1999,12 @@ describe('Android local sources', () => {
       post_stream: {
         stream: [1, 2],
         posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>', created_at: '2026-05-20T00:00:00.000Z' },
           {
             id: 2,
             post_number: 2,
             username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+            cooked: '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Short preview.</p></blockquote></aside><p>Reply</p>',
             created_at: '2026-05-20T00:02:00.000Z'
           }
         ]
@@ -1836,39 +2012,18 @@ describe('Android local sources', () => {
     }));
 
     const topic = await getTopic({ source: 'linuxdo', id: '910', fetcher });
+    const completePost = await getReply({ source: 'linuxdo', id: '910', floor: 1, fetcher });
 
-    expect(topic.replies[0].quotedFloors).toEqual([1]);
-    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
+    expect(topic.replies[0]).toMatchObject({
+      quotedFloors: [1],
+      quotedAuthors: { 1: 'alice' },
+      quotedPreviews: { 1: 'Short preview.' },
+      contentHtml: '<p>Reply</p>'
+    });
+    expect(completePost.contentHtml).toBe('<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>');
   });
 
-  it('removes native linux.do quote markup after extracting same-topic quoted floors', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 912,
-      title: 'linux.do quoted markup',
-      created_at: '2026-05-20T00:00:00.000Z',
-      post_stream: {
-        stream: [1, 2],
-        posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
-          {
-            id: 2,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="912" data-username="alice"><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
-            created_at: '2026-05-20T00:02:00.000Z'
-          }
-        ]
-      }
-    }));
-
-    const topic = await getTopic({ source: 'linuxdo', id: '912', fetcher });
-
-    expect(topic.replies[0].quotedFloors).toEqual([1]);
-    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
-    expect(topic.replies[0].contentHtml).toBe('<p>Reply</p>');
-  });
-
-  it('keeps linux.do quote author names from quote avatar URLs', async () => {
+  it('keeps linux.do reply quote author names from quote avatar URLs', async () => {
     const fetcher = vi.fn(async () => json({
       id: 911,
       title: 'linux.do quoted author avatar',
@@ -4223,6 +4378,10 @@ describe('Android local sources', () => {
               {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":2}
             ]}
           </script>
+          <div id="topic_810_votes" class="votes">
+            <a href="javascript:" onclick="upVoteTopic(810);" class="vote">▲ 27</a>
+            <a href="javascript:" onclick="downVoteTopic(810);" class="vote">▼</a>
+          </div>
           <a href="/tag/开户" class="tag">开户</a>
           <a href="/tag/券商" class="tag"><span></span> 券商</a>
           <div class="subtle">
@@ -4240,6 +4399,7 @@ describe('Android local sources', () => {
 
     expect(topic.replyCount).toBe(2);
     expect(topic.viewCount).toBe(743);
+    expect(topic.upvoteCount).toBe(27);
     expect(topic.tags).toEqual(['开户', '券商']);
     expect(topic.contentHtml).toContain('补充 1');
     expect(topic.contentHtml).toContain('补充正文');

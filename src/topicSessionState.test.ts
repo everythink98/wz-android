@@ -85,9 +85,9 @@ describe('topic session state', () => {
       replyComposerOpen: true,
       replyTarget: { floor: 2, author: 'bob' },
       replyEditTarget: { commentId: 9, floor: 3, contentMarkdown: '旧回复' },
-      expandedQuotes: { '4:2': true },
+      expandedQuotes: { 'reply:4:nodeseek:3:2': true },
       loadedQuotedReplies: {
-        2: { floor: 2, author: 'bob', createdAt: '2026-06-06T01:00:00.000Z', contentHtml: '<p>quote</p>' }
+        'nodeseek:3:2': { floor: 2, author: 'bob', createdAt: '2026-06-06T01:00:00.000Z', contentHtml: '<p>quote</p>' }
       },
       scrollY: 120
     };
@@ -100,9 +100,9 @@ describe('topic session state', () => {
       replyComposerOpen: true,
       replyTarget: { floor: 2, author: 'bob' },
       replyEditTarget: { commentId: 9, floor: 3, contentMarkdown: '旧回复' },
-      expandedQuotes: { '4:2': true },
+      expandedQuotes: { 'reply:4:nodeseek:3:2': true },
       loadedQuotedReplies: {
-        2: { floor: 2, author: 'bob', createdAt: '2026-06-06T01:00:00.000Z', contentHtml: '<p>quote</p>' }
+        'nodeseek:3:2': { floor: 2, author: 'bob', createdAt: '2026-06-06T01:00:00.000Z', contentHtml: '<p>quote</p>' }
       },
       scrollY: 120
     });

@@ -197,7 +197,7 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).toContain('back --system');
     expect(nodeSeekReplay).not.toMatch(/^wait 15000$/m);
 
-    const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8');
+    const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8').replace(/\r\n/g, '\n');
     expect(fourSourceReplay).toContain([
       'wait id="feed-list-ready-nodeseek" 60000',
       'wait id="feed-topic-first" 10000',

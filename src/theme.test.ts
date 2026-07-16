@@ -113,6 +113,30 @@ describe('Android reader theme safety rails', () => {
     expect(styles.replyCompactActionButton.minHeight).toBeGreaterThanOrEqual(44);
   });
 
+  it('keeps replies flat while balancing content, signatures, stats, and the action row', () => {
+    const theme = createTheme(settings);
+    const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;
+
+    expect(styles.replyCard).toMatchObject({
+      backgroundColor: 'transparent',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      gap: 8,
+      paddingVertical: 18
+    });
+    expect(styles.replyCard.borderRadius).toBeUndefined();
+    expect(styles.replyContentArea.gap).toBe(8);
+    expect(styles.replyActionRow).toMatchObject({ marginBottom: -12, marginTop: -2, minHeight: 44 });
+    expect(styles.replySignature).toMatchObject({
+      borderTopColor: theme.lineStrong,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      marginTop: 4,
+      paddingBottom: 4,
+      paddingTop: 4
+    });
+    expect(styles.replyStatRail.marginTop).toBe(4);
+    expect(styles.replyQuoteBox.backgroundColor).not.toBe(styles.quoteBox.backgroundColor);
+  });
+
   it('keeps appearance controls compact, equal-width, and touch accessible', () => {
     const theme = createTheme(settings);
     const styles = createStyles(theme, settings, 800) as Record<string, Record<string, unknown>>;

@@ -86,6 +86,21 @@ npm run smoke:android
 - 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
 - 发布前运行 `npm run release:android`；它已经包含 `npm run verify`、APK 签名校验、只读设备 smoke 和 SHA-256 输出。
 
+### 直接打开主题链接
+
+用户给出 NodeSeek、linux.do、V2EX 或妖火主题 URL 并要求查看、验证或排障时，URL 本身就是目标，不是搜索词：
+
+1. 用 `src/appUtils.ts` 的 `parseForumTopicLink` 规则解析来源和主题 id，并使用解析结果中的规范化 URL。
+2. 确认模拟器中的 `com.wz.reader` 已运行当前代码；优先调用 agent-device `open`，传入 `app=com.wz.reader` 和 `url=exp+wz-android://open-topic?url=<encoded canonical URL>`。
+3. agent-device 不可用时使用以下 ADB 等价路径：
+
+```powershell
+$topicUrl = [uri]::EscapeDataString('https://linux.do/t/123456')
+adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-topic?url=$topicUrl" com.wz.reader
+```
+
+4. 在 App 内确认详情页的来源、标题和正文已加载。直达失败时检查当前 bundle、deep link 和详情请求并报告阻碍；不得静默改走站内或网页搜索。
+
 ## 发布批次与闸门
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。

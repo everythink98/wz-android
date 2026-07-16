@@ -17,9 +17,10 @@ import {
   TRenderEngineProvider,
   defaultHTMLElementModels,
   useTNodeChildrenProps,
-  type CustomBlockRenderer
+  type CustomBlockRenderer,
+  type TNode
 } from 'react-native-render-html';
-import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
@@ -37,18 +38,26 @@ import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
-import { getLinuxDoEmojiUrls } from '../../localLinuxdo';
+import { getLinuxDoEmojiUrls, splitLinuxDoContentHtml } from '../../localLinuxdo';
+import { splitNodeSeekContentHtml } from '../../nodeseekPolls';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import { replyImageUploadSupported } from '../../replyImageUpload';
+import {
+  linuxDoQuotedPostReferenceFromAttributes,
+  quotedPostReferenceKey,
+  topicQuotedPostInstanceKey,
+  type ToggleReplyQuoteOptions,
+  type ToggleTopicBodyQuoteOptions
+} from '../../quotedPosts';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
-import { MemoizedTopicContentBlock } from './TopicContentBlock';
+import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
+import { MemoizedTopicContentBlock, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from './TopicContentBlock';
 import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
-
-import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
+import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicOpeningPostAsReply, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
 
 type YaohuoFavoriteState = {
   bookmarked?: boolean;
@@ -103,10 +112,34 @@ function YaohuoFavoriteButton({
 type TopicContentItem =
   | { type: 'content'; key: string; html: string }
   | { type: 'contentVideo'; key: string; src: string }
+  | { type: 'poll'; key: string; poll: TopicPoll }
   | { type: 'accessNotice'; key: string; label: string; detail: string };
 export type { TopicListItem };
 
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
+const EMPTY_TOPIC_POLLS: TopicPoll[] = [];
+
+function trimsTrailingBlockSpacing(tnode: TNode) {
+  let child = tnode;
+  for (let parent = child.parent; parent; parent = parent.parent) {
+    if (child.nodeIndex !== parent.children.length - 1) {
+      return false;
+    }
+    if (parent.attributes[TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE] === 'true') {
+      return true;
+    }
+    child = parent;
+  }
+  return false;
+}
+
+const TrimTrailingBlockSpacingRenderer: CustomBlockRenderer = ({ InternalRenderer, ...props }) => (
+  <InternalRenderer
+    {...props}
+    style={trimsTrailingBlockSpacing(props.tnode) ? { ...props.style, marginBottom: -4 } : props.style}
+  />
+);
+
 const HTML_CUSTOM_ELEMENT_MODELS = {
   details: defaultHTMLElementModels.details.extend({
     contentModel: HTMLContentModel.mixed
@@ -270,7 +303,8 @@ export const TopicScreen = memo(function TopicScreen({
   onSubmitReply,
   onUploadReplyImage,
   onTopicScroll,
-  onToggleQuotedFloor,
+  onToggleReplyQuote,
+  onToggleTopicBodyQuote,
   onToggleFavorite,
   onOpenUser,
   inlineSizedImageUrls,
@@ -288,7 +322,7 @@ export const TopicScreen = memo(function TopicScreen({
   htmlRenderersProps: HtmlRenderersProps;
   htmlTagsStyles: HtmlTagsStyles;
   expandedQuotes: Record<string, boolean>;
-  loadedQuotedReplies: Record<number, Reply>;
+  loadedQuotedReplies: Record<string, Reply>;
   loadingMoreReplies: boolean;
   loadingQuotedFloors: Record<string, boolean>;
   commentQuery: string;
@@ -337,7 +371,8 @@ export const TopicScreen = memo(function TopicScreen({
   onSubmitReply: () => void;
   onUploadReplyImage: () => void;
   onTopicScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-  onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
+  onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
+  onToggleTopicBodyQuote: (options: ToggleTopicBodyQuoteOptions) => void;
   onToggleFavorite: (topic: Topic) => void;
   onOpenUser: (user: UserProfile) => void;
   inlineSizedImageUrls: Record<string, true>;
@@ -372,18 +407,16 @@ export const TopicScreen = memo(function TopicScreen({
   const autoLoadRepliesArmedRef = useRef(false);
   const repliesByFloor = useMemo(() => {
     const next = new Map<number, Reply>();
+    if (topic) {
+      next.set(1, topicOpeningPostAsReply(topic));
+    }
     sourceReplies.forEach((reply) => {
       if (typeof reply.floor === 'number') {
         next.set(reply.floor, reply);
       }
     });
-    Object.values(loadedQuotedReplies).forEach((reply) => {
-      if (reply.floor) {
-        next.set(reply.floor, reply);
-      }
-    });
     return next;
-  }, [loadedQuotedReplies, quoteStateVersion, sourceReplies]);
+  }, [quoteStateVersion, sourceReplies, topic]);
   const newReplyFloorStart = useMemo(() => {
     if (unreadReplyCount <= 0) {
       return Number.POSITIVE_INFINITY;
@@ -436,7 +469,7 @@ export const TopicScreen = memo(function TopicScreen({
 
   const topicColumnStyle = useMemo(() => ({ width: contentWidth }), [contentWidth]);
   const topicContentHtml = topic?.contentHtml || '';
-  const topicPolls = topic?.polls || [];
+  const topicPolls = topic?.polls || EMPTY_TOPIC_POLLS;
   const topicAccessRequirementText = topic?.accessRequirement ? forumAccessRequirementText(topic.accessRequirement) : '';
   const topicAccessRequirementDetail = topic?.accessRequirement?.detail || '当前账号暂无权限查看这个帖子';
   const topicShowsAccessNotice = Boolean(topic && isAccessNoticeHtml(topicContentHtml, topic.accessRequirement));
@@ -449,14 +482,24 @@ export const TopicScreen = memo(function TopicScreen({
           label: topicAccessRequirementText,
           detail: topicAccessRequirementDetail
         }]
-        : splitTopicContentHtml(topicContentHtml).map((html, index) => {
-          const video = forumVideoBlockFromHtml(html);
-          return video
-            ? { type: 'contentVideo', key: `topic-video-${index}-${stableTextHash(video.src)}`, src: video.src }
-            : { type: 'content', key: `topic-content-${index}-${stableTextHash(html)}`, html };
+        : (topic.source === 'linuxdo'
+          ? splitLinuxDoContentHtml(topicContentHtml, topicPolls)
+          : topic.source === 'nodeseek'
+            ? splitNodeSeekContentHtml(topicContentHtml, topicPolls)
+            : [{ type: 'html' as const, html: topicContentHtml }]
+        ).flatMap((part, partIndex): TopicContentItem[] => {
+          if (part.type === 'poll') {
+            return [{ type: 'poll' as const, key: `topic-poll-${part.poll.name || part.poll.id || partIndex}`, poll: part.poll }];
+          }
+          return splitTopicContentHtml(part.html).map((html, index) => {
+            const video = forumVideoBlockFromHtml(html);
+            return video
+              ? { type: 'contentVideo' as const, key: `topic-video-${partIndex}-${index}-${stableTextHash(video.src)}`, src: video.src }
+              : { type: 'content' as const, key: `topic-content-${partIndex}-${index}-${stableTextHash(html)}`, html };
+          });
         })
       : []
-  ), [topic, topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicShowsAccessNotice]);
+  ), [topic, topicAccessRequirementDetail, topicAccessRequirementText, topicContentHtml, topicPolls, topicShowsAccessNotice]);
   const replyItems = useMemo<TopicListItem[]>(() => replies.map((reply) => ({
     type: 'reply',
     key: getReplyKey(reply),
@@ -475,6 +518,7 @@ export const TopicScreen = memo(function TopicScreen({
     (topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0))
     || (topic.source === 'linuxdo' && (canWriteLinuxDo || linuxDoReactionStats(topic).length > 0))
     || (topic.source === 'yaohuo' && canWriteYaohuo)
+    || (topic.source === 'v2ex' && typeof topic.upvoteCount === 'number')
   ));
   const replyListItems = useMemo(() => buildReplyListItems({
     canShowReplies,
@@ -504,50 +548,7 @@ export const TopicScreen = memo(function TopicScreen({
     setTopicMenuOpen(false);
     action();
   }, []);
-  const topicHtmlRenderers = useMemo<HtmlRenderers>(() => {
-    const QuoteAsideRenderer: CustomBlockRenderer = (props) => {
-      const [expanded, setExpanded] = useState(false);
-      const tchildrenProps = useTNodeChildrenProps(props);
-      const { TDefaultRenderer, ...defaultRendererProps } = props;
-      if (!hasHtmlClass(props.tnode, 'quote')) {
-        return <TDefaultRenderer {...defaultRendererProps} />;
-      }
-
-      const quoteTitleChildren = props.tnode.children.filter((child) => htmlTagName(child) === 'div' && hasHtmlClass(child, 'title'));
-      const quoteHeaderChildren = quoteTitleChildren.length ? quoteTitleChildren : props.tnode.children.slice(0, 1);
-      const quoteBodyChildren = props.tnode.children.filter((child) => !quoteHeaderChildren.includes(child));
-      const StateIcon = expanded ? ChevronUp : ChevronDown;
-
-      return (
-        <View style={styles.quoteBox}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded }}
-            android_ripple={androidRipple(theme.primarySoft)}
-            disabled={!quoteBodyChildren.length}
-            style={styles.quotePanelHeader}
-            onPress={() => setExpanded((value) => !value)}
-          >
-            <View style={styles.quoteAuthorSummary}>
-              <TChildrenRenderer {...tchildrenProps} tchildren={quoteHeaderChildren} />
-            </View>
-            {quoteBodyChildren.length ? (
-              <View style={styles.quotePanelState}>
-                <Text style={styles.quotePanelStateText}>{expanded ? '收起' : '展开'}</Text>
-                <View style={styles.quotePanelStateIcon}>
-                  <StateIcon size={16} color={theme.primary} strokeWidth={1.9} />
-                </View>
-              </View>
-            ) : null}
-          </Pressable>
-          {expanded && quoteBodyChildren.length ? (
-            <View style={[styles.quoteBody, styles.quotePanelBody]}>
-              <TChildrenRenderer {...tchildrenProps} tchildren={quoteBodyChildren} />
-            </View>
-          ) : null}
-        </View>
-      );
-    };
+  const genericHtmlRenderers = useMemo<HtmlRenderers>(() => {
     const DetailsRenderer: CustomBlockRenderer = (props) => {
       const [expanded, setExpanded] = useState(props.tnode.attributes?.open !== undefined);
       const tchildrenProps = useTNodeChildrenProps(props);
@@ -601,8 +602,116 @@ export const TopicScreen = memo(function TopicScreen({
         </ScrollView>
       );
     };
-    return { ...htmlRenderers, aside: QuoteAsideRenderer, details: DetailsRenderer, summary: SummaryRenderer, table: TableRenderer };
-  }, [htmlRenderers, styles, theme.ink, theme.primary, theme.primarySoft]);
+    return {
+      ...htmlRenderers,
+      blockquote: TrimTrailingBlockSpacingRenderer,
+      details: DetailsRenderer,
+      h1: TrimTrailingBlockSpacingRenderer,
+      h2: TrimTrailingBlockSpacingRenderer,
+      h3: TrimTrailingBlockSpacingRenderer,
+      h4: TrimTrailingBlockSpacingRenderer,
+      h5: TrimTrailingBlockSpacingRenderer,
+      h6: TrimTrailingBlockSpacingRenderer,
+      ol: TrimTrailingBlockSpacingRenderer,
+      p: TrimTrailingBlockSpacingRenderer,
+      pre: TrimTrailingBlockSpacingRenderer,
+      summary: SummaryRenderer,
+      table: TableRenderer,
+      ul: TrimTrailingBlockSpacingRenderer
+    };
+  }, [htmlRenderers, styles, theme.ink, theme.primarySoft]);
+  const topicBodyHtmlRenderers = useMemo<HtmlRenderers>(() => {
+    const QuoteAsideRenderer: CustomBlockRenderer = (props) => {
+      const tchildrenProps = useTNodeChildrenProps(props);
+      const { TDefaultRenderer, ...defaultRendererProps } = props;
+      if (!hasHtmlClass(props.tnode, 'quote')) {
+        return <TDefaultRenderer {...defaultRendererProps} />;
+      }
+
+      const quoteTitleChildren = props.tnode.children.filter((child) => htmlTagName(child) === 'div' && hasHtmlClass(child, 'title'));
+      const quoteHeaderChildren = quoteTitleChildren.length ? quoteTitleChildren : props.tnode.children.slice(0, 1);
+      const quoteHeaderChildSet = new Set(quoteHeaderChildren);
+      const quoteBodyChildren = props.tnode.children.filter((child) => !quoteHeaderChildSet.has(child));
+      const reference = itemSource === 'linuxdo'
+        ? linuxDoQuotedPostReferenceFromAttributes(props.tnode.attributes, item?.id)
+        : null;
+      const referenceKey = reference ? quotedPostReferenceKey(reference) : '';
+      const instanceKey = reference && item?.id ? topicQuotedPostInstanceKey(item.id, reference) : '';
+      const quotedPost = reference
+        ? (reference.topicId === item?.id ? repliesByFloor.get(reference.postNumber) : undefined)
+          || loadedQuotedReplies[referenceKey]
+        : undefined;
+      const expanded = Boolean(instanceKey && expandedQuotes[instanceKey]);
+      const loading = Boolean(instanceKey && loadingQuotedFloors[instanceKey]);
+      const completeQuotedPost = expanded ? quotedPost : undefined;
+      return (
+        <TopicBodyQuoteCard
+          completeContent={reference && completeQuotedPost ? (
+            <>
+              {splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls).map((part) => part.type === 'poll' ? (
+                <TopicPolls
+                  embeddedInArticle
+                  key={`topic-quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
+                  actionBusy={actionBusy}
+                  canWritePollSource={false}
+                  keyPrefix={`topic-quote-${reference.topicId}-${reference.postNumber}`}
+                  onTogglePollSelection={togglePollSelection}
+                  onVotePoll={onVotePoll}
+                  pollSelections={pollSelections}
+                  polls={[part.poll]}
+                  source={reference.source}
+                  styles={styles}
+                  theme={theme}
+                />
+              ) : (
+                <MemoizedTopicContentBlock
+                  key={`topic-quote-html-${stableTextHash(part.html)}`}
+                  baseUrl={topicBaseUrl}
+                  contentWidth={Math.max(220, contentWidth - 24)}
+                  inlineSizedImageUrls={inlineSizedImageUrls}
+                  html={part.html}
+                  topicImageDeriver={topicImageDeriver}
+                />
+              ))}
+            </>
+          ) : undefined}
+          completeTestID={reference ? `topic-quote-complete-${reference.topicId}-${reference.postNumber}` : undefined}
+          expanded={expanded}
+          header={<TChildrenRenderer {...tchildrenProps} tchildren={quoteHeaderChildren} />}
+          loading={loading}
+          preview={quoteBodyChildren.length ? <TChildrenRenderer {...tchildrenProps} tchildren={quoteBodyChildren} /> : undefined}
+          previewTestID={reference ? `topic-quote-preview-${reference.topicId}-${reference.postNumber}` : undefined}
+          styles={styles}
+          testID={reference ? `topic-quote-${reference.topicId}-${reference.postNumber}` : undefined}
+          theme={theme}
+          onToggle={reference && instanceKey ? () => onToggleTopicBodyQuote({ instanceKey, reference, quotedPost }) : undefined}
+        />
+      );
+    };
+    return {
+      ...genericHtmlRenderers,
+      aside: QuoteAsideRenderer
+    };
+  }, [
+    actionBusy,
+    contentWidth,
+    expandedQuotes,
+    genericHtmlRenderers,
+    inlineSizedImageUrls,
+    item?.id,
+    itemSource,
+    loadedQuotedReplies,
+    loadingQuotedFloors,
+    onToggleTopicBodyQuote,
+    onVotePoll,
+    pollSelections,
+    repliesByFloor,
+    styles,
+    theme,
+    togglePollSelection,
+    topicBaseUrl,
+    topicImageDeriver
+  ]);
   const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string) => (
     <View key={key} style={styles.topicListItemFrame}>{children}</View>
   ), [styles]);
@@ -620,17 +729,49 @@ export const TopicScreen = memo(function TopicScreen({
       );
     }
 
+    if (contentItem.type === 'poll') {
+      return renderTopicListItemFrame(
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <View style={styles.articleBody}>
+            <TopicPolls
+              actionBusy={actionBusy}
+              canWritePollSource={canWriteTopicPollSource}
+              embeddedInArticle
+              keyPrefix="topic"
+              onTogglePollSelection={togglePollSelection}
+              onVotePoll={onVotePoll}
+              pollSelections={pollSelections}
+              polls={[contentItem.poll]}
+              source={topic?.source}
+              styles={styles}
+              theme={theme}
+            />
+          </View>
+        </View>,
+        contentItem.key
+      );
+    }
+
     if (contentItem.type === 'content') {
       return renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
-            <MemoizedTopicContentBlock
-              baseUrl={topicBaseUrl}
-              contentWidth={contentWidth}
-              inlineSizedImageUrls={inlineSizedImageUrls}
-              html={contentItem.html}
-              topicImageDeriver={topicImageDeriver}
-            />
+            <RenderHTMLConfigProvider
+              renderers={topicBodyHtmlRenderers}
+              renderersProps={htmlRenderersProps}
+              defaultTextProps={{ selectable: true }}
+              enableExperimentalBRCollapsing
+              enableExperimentalGhostLinesPrevention
+              enableExperimentalMarginCollapsing
+            >
+              <MemoizedTopicContentBlock
+                baseUrl={topicBaseUrl}
+                contentWidth={contentWidth}
+                inlineSizedImageUrls={inlineSizedImageUrls}
+                html={contentItem.html}
+                topicImageDeriver={topicImageDeriver}
+              />
+            </RenderHTMLConfigProvider>
           </View>
         </View>,
         contentItem.key
@@ -724,7 +865,8 @@ export const TopicScreen = memo(function TopicScreen({
           onEditReply={onEditReply}
           onVotePoll={onVotePoll}
           onReplyToFloor={onReplyToFloor}
-          onToggleQuotedFloor={onToggleQuotedFloor}
+          onToggleReplyQuote={onToggleReplyQuote}
+          topicId={item?.id}
           query={replyHighlightQuery}
           isNew={typeof listItem.reply.floor === 'number' && listItem.reply.floor >= newReplyFloorStart}
           source={itemSource}
@@ -739,6 +881,8 @@ export const TopicScreen = memo(function TopicScreen({
     contentWidth,
     expandedQuotes,
     inlineSizedImageUrls,
+    item?.author,
+    item?.id,
     topicImageDeriver,
     isOptimisticActionPending,
     loadedQuotedReplies,
@@ -752,7 +896,7 @@ export const TopicScreen = memo(function TopicScreen({
     onReplyComposerOpenChange,
     onReplyFilterChange,
     onReplyToFloor,
-    onToggleQuotedFloor,
+    onToggleReplyQuote,
     onOpenUser,
     onVotePoll,
     pollSelections,
@@ -767,7 +911,8 @@ export const TopicScreen = memo(function TopicScreen({
     theme,
     togglePollSelection,
     topicBaseUrl,
-    topicColumnStyle
+    topicColumnStyle,
+    unreadReplyCount
   ]);
 
   if (!item) {
@@ -853,7 +998,7 @@ export const TopicScreen = memo(function TopicScreen({
         {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
       </View>
       {topicContentItems.map(renderTopicContentItem)}
-      {topic && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
+      {topic && topic.source !== 'linuxdo' && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <TopicPolls
@@ -875,6 +1020,11 @@ export const TopicScreen = memo(function TopicScreen({
       ) : null}
       {topicHasPostActions ? renderTopicListItemFrame(
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
+          {topic?.source === 'v2ex' && typeof topic.upvoteCount === 'number' ? (
+            <View style={styles.topicStatRail}>
+              <NodeSeekStatPill label="UP 票" value={topic.upvoteCount} styles={styles} />
+            </View>
+          ) : null}
           {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
             <View style={styles.topicStatRail}>
               {topicReactionStats.map((stat) => (
@@ -923,7 +1073,7 @@ export const TopicScreen = memo(function TopicScreen({
   return (
     <TRenderEngineProvider baseStyle={htmlBaseStyle} allowedStyles={HTML_ALLOWED_INLINE_STYLES} classesStyles={htmlClassesStyles} customHTMLElementModels={HTML_CUSTOM_ELEMENT_MODELS} ignoredStyles={htmlIgnoredStyles} tagsStyles={htmlTagsStyles} ignoredDomTags={HTML_IGNORED_DOM_TAGS}>
       <RenderHTMLConfigProvider
-        renderers={topicHtmlRenderers}
+        renderers={genericHtmlRenderers}
         renderersProps={htmlRenderersProps}
         defaultTextProps={{ selectable: true }}
         enableExperimentalBRCollapsing
