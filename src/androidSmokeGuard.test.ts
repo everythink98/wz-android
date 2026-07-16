@@ -191,10 +191,14 @@ describe('Android release evidence guards', () => {
       expect(replay).not.toMatch(/^\s*(?:uninstall|reinstall|settings reset|shutdown)\b/m);
     }
     const nodeSeekReplay = readFileSync(path.join(deviceDir, 'nodeseek-session.ad'), 'utf8');
-    expect(nodeSeekReplay).toContain('wait id="nodeseek-login-webview-ready" 15000');
-    expect(nodeSeekReplay).toContain('is visible id="nodeseek-login-webview-ready"');
-    expect(nodeSeekReplay).toContain('is hidden text="NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。"');
+    expect(nodeSeekReplay).toContain('wait "role=\\"webview\\" label=\\"NodeSeek\\"" 15000');
+    expect(nodeSeekReplay).toContain('wait "role=\\"image\\" label=\\"logo\\"" 15000');
+    expect(nodeSeekReplay).toContain('wait label="新帖子" 15000');
+    expect(nodeSeekReplay).toContain('is visible "role=\\"webview\\" label=\\"NodeSeek\\""');
+    expect(nodeSeekReplay).toContain('is visible "role=\\"image\\" label=\\"logo\\""');
+    expect(nodeSeekReplay).toContain('is visible label="新帖子"');
     expect(nodeSeekReplay).toContain('back --system');
+    expect(nodeSeekReplay).not.toContain('nodeseek-login-webview-ready');
     expect(nodeSeekReplay).not.toMatch(/^wait 15000$/m);
 
     const fourSourceReplay = readFileSync(path.join(deviceDir, 'four-source-feed.ad'), 'utf8').replace(/\r\n/g, '\n');

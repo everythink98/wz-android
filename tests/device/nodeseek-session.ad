@@ -11,8 +11,11 @@ press label="展开账号中心"
 wait id="account-site-nodeseek" 10000
 wait "id=\"account-site-nodeseek\" label=\"NodeSeek，已登录，已选择\"" 60000
 press label="检测或重新登录"
-wait id="nodeseek-login-webview-ready" 15000
-is visible id="nodeseek-login-webview-ready"
-is hidden text="NodeSeek 页面打开超时：请检查模拟器网络后刷新页面。"
+wait "role=\"webview\" label=\"NodeSeek\"" 15000
+wait "role=\"image\" label=\"logo\"" 15000
+wait label="新帖子" 15000
+is visible "role=\"webview\" label=\"NodeSeek\""
+is visible "role=\"image\" label=\"logo\""
+is visible label="新帖子"
 back --system
 wait label="收起账号中心" 10000
