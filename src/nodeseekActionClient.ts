@@ -1,5 +1,6 @@
 import { nodeSeekActionErrorMessage, type NodeSeekActionRequest } from './nodeseekActions';
 import { withBrowserFetchIntent } from './browserFetchIntent';
+import { NODESEEK_VOTE_API_HEADERS, normalizeNodeSeekVoteInfo } from './nodeseekPolls';
 import { fetchWithTimeout, type Fetcher } from './request';
 
 const NODESEEK_BASE_URL = 'https://www.nodeseek.com';
@@ -35,6 +36,59 @@ function isFailedActionPayload(data: unknown) {
     return /high risk|risk|fail|error|invalid|csrf|unauthorized|forbidden|拒绝|失败|错误|风险|无效|登录/i.test(record.message);
   }
   return false;
+}
+
+export async function fetchNodeSeekVoteInfo({
+  cookieHeader,
+  pollId,
+  fetcher = fetch,
+  signal,
+  timeoutMs,
+  userAgent
+}: {
+  cookieHeader: string;
+  pollId: string;
+  fetcher?: Fetcher;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  userAgent?: string;
+}) {
+  const cleanCookie = cookieHeader.trim();
+  if (!cleanCookie) {
+    throw new Error('请先检测 NodeSeek 登录');
+  }
+  const cleanPollId = pollId.trim();
+  if (!/^\d+$/.test(cleanPollId)) {
+    throw new Error('投票 id 不正确');
+  }
+  const cleanUserAgent = userAgent?.trim();
+  const response = await fetchWithTimeout(`${NODESEEK_BASE_URL}/api/vote/info/${encodeURIComponent(cleanPollId)}`, withBrowserFetchIntent({
+    method: 'GET',
+    headers: {
+      ...NODESEEK_ACTION_HEADERS,
+      ...NODESEEK_VOTE_API_HEADERS,
+      ...(cleanUserAgent ? { 'user-agent': cleanUserAgent } : {}),
+      cookie: cleanCookie
+    }
+  }, { owner: 'write', priority: 'write', cancelable: false }), {
+    fetcher,
+    signal,
+    timeoutMs
+  });
+  let data: unknown = null;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error('NodeSeek 返回内容格式不正确');
+  }
+  if (!response.ok) {
+    throw nodeSeekActionError(data, response.status);
+  }
+  const poll = normalizeNodeSeekVoteInfo(data, cleanPollId);
+  if (!poll) {
+    throw new Error('NodeSeek 返回内容格式不正确');
+  }
+  return poll;
 }
 
 export async function runNodeSeekAction({

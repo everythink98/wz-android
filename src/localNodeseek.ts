@@ -32,6 +32,7 @@ import {
   withNodeSeekReplyPagination
 } from './localNodeseekHelpers';
 import { nodeSeekMarkdownToHtml } from './nodeSeekMarkdown';
+import { NODESEEK_VOTE_API_HEADERS, nodeSeekPollPlaceholderHtml, normalizeNodeSeekVoteInfo, stripLoadedNodeSeekVoteMarkers } from './nodeseekPolls';
 import { annotateSourceDiagnosticSummary, mergeSourceDiagnosticSummaries } from './sourceAdapterDiagnostics';
 
 const BASE_URL = NODESEEK_BASE_URL;
@@ -150,49 +151,6 @@ function extractNodeSeekVoteIds(...values: unknown[]) {
     }
   });
   return [...ids];
-}
-
-function normalizeNodeSeekVoteInfo(value: unknown, fallbackId: string): TopicPoll | null {
-  const source = isRecord(value) && isRecord(value.vote)
-    ? value.vote
-    : isRecord(value) && isRecord(value.detail)
-      ? value.detail
-      : isRecord(value)
-        ? value
-        : null;
-  if (!source) {
-    return null;
-  }
-  const pollId = String(source.id || source.voteId || fallbackId).trim();
-  const options = arrayField(source.items || source.options)
-    .filter(isRecord)
-    .map((item): TopicPollOption | null => {
-      const id = String(item.vote_item_id || item.id || item.itemId || '').trim();
-      const label = String(item.text || item.label || item.name || item.title || '').trim();
-      if (!id || !label) {
-        return null;
-      }
-      const count = optionalInteger(item.count ?? item.votes);
-      return {
-        id,
-        label,
-        ...(count !== undefined ? { count } : {}),
-        selected: optionalBoolean(item.voted ?? item.selected) === true
-      };
-    })
-    .filter((item): item is TopicPollOption => Boolean(item));
-  if (!pollId || !options.length) {
-    return null;
-  }
-  return {
-    id: pollId,
-    title: String(source.title || '').trim() || undefined,
-    public: optionalBoolean(source.isPublic ?? source.public),
-    closed: optionalBoolean(source.locked ?? source.closed),
-    multiple: optionalBoolean(source.multiple),
-    voted: optionalBoolean(source.voted) === true || options.some((option) => option.selected),
-    options
-  };
 }
 
 function nodeSeekElementHasAttribute(element: HTMLElement, name: string) {
@@ -339,7 +297,7 @@ function parseRenderedNodeSeekPollForms(html: string) {
     return /vote|poll/i.test(marker)
       || form.querySelectorAll('input[type="radio"], input[type="checkbox"]').some((input) => /^(?:ids?|ids\[\]|vote|vote-item|option)$/i.test(String(input.getAttribute('name') || '')));
   });
-  const polls = forms.map((form, index): TopicPoll | null => {
+  const parsedPolls = forms.map((form, index): TopicPoll | null => {
     const inputs = form.querySelectorAll('input[type="radio"], input[type="checkbox"]');
     const options = inputs
       .map((input) => nodeSeekPollOptionFromInput(form, input))
@@ -366,8 +324,16 @@ function parseRenderedNodeSeekPollForms(html: string) {
       ...(voted ? { voted } : {}),
       options
     };
-  }).filter((poll): poll is TopicPoll => Boolean(poll));
-  forms.forEach((form) => form.remove());
+  });
+  const polls = parsedPolls.filter((poll): poll is TopicPoll => Boolean(poll));
+  forms.forEach((form, index) => {
+    const poll = parsedPolls[index];
+    if (!poll?.id) {
+      form.remove();
+      return;
+    }
+    (form.closest('.vote-panel') || form).replaceWith(nodeSeekPollPlaceholderHtml(poll.id));
+  });
   removeEmptyRenderedNodeSeekPollShells(root);
   const cleaned = root.querySelector('body')?.innerHTML || '';
   return {
@@ -392,19 +358,37 @@ function mergeNodeSeekPolls(...groups: Array<TopicPoll[] | undefined>) {
   return polls.length ? polls : undefined;
 }
 
-async function readNodeSeekPollsFromVoteLinks(values: unknown[], options: NodeSeekOptions) {
-  const ids = extractNodeSeekVoteIds(...values);
+async function readNodeSeekPollsFromVoteLinks(
+  values: unknown[],
+  options: NodeSeekOptions,
+  knownPolls: TopicPoll[] = []
+) {
+  const knownIds = new Set(knownPolls.map((poll) => poll.id).filter(Boolean));
+  const ids = extractNodeSeekVoteIds(...values).filter((id) => !knownIds.has(id));
   if (!ids.length) {
-    return undefined;
+    return { partialErrorCount: 0, polls: undefined };
   }
+  let partialErrorCount = 0;
   const polls = (await Promise.all(ids.map(async (id) => {
     try {
-      return normalizeNodeSeekVoteInfo(await fetchNodeSeekJson(`/api/vote/info/${encodeURIComponent(id)}`, options), id);
+      const poll = normalizeNodeSeekVoteInfo(await fetchNodeSeekJson(
+        `/api/vote/info/${encodeURIComponent(id)}`,
+        options,
+        NODESEEK_VOTE_API_HEADERS
+      ), id);
+      if (!poll) {
+        partialErrorCount += 1;
+      }
+      return poll;
     } catch {
+      partialErrorCount += 1;
       return null;
     }
   }))).filter((poll): poll is TopicPoll => Boolean(poll));
-  return polls.length ? polls : undefined;
+  return {
+    partialErrorCount,
+    polls: polls.length ? polls : undefined
+  };
 }
 
 function nodeSeekEmbeddedUserId(user: Record<string, unknown>) {
@@ -747,13 +731,18 @@ function isNodeSeekCloudflareError(error: unknown) {
   return isRecord(error) && error.reason === 'cloudflare';
 }
 
-async function fetchNodeSeekText(path: string, options: NodeSeekOptions = {}) {
+async function fetchNodeSeekText(
+  path: string,
+  options: NodeSeekOptions = {},
+  requestHeaders: Record<string, string> = {}
+) {
   const requestOptions = { ...options, timeoutMs: options.timeoutMs ?? NODESEEK_READ_TIMEOUT_MS };
   const cookie = options.nodeSeekCookie?.trim();
   const headers: HeadersInit = {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.7',
     Referer: BASE_URL,
-    'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT
+    'User-Agent': options.nodeSeekUserAgent || DEFAULT_NODESEEK_ANDROID_USER_AGENT,
+    ...requestHeaders
   };
   if (cookie) {
     headers.cookie = cookie;
@@ -797,8 +786,12 @@ async function fetchNodeSeekGoogleSearchText(query: string, page: number, option
   return text;
 }
 
-async function fetchNodeSeekJson(path: string, options: NodeSeekOptions = {}) {
-  const text = await fetchNodeSeekText(path, options);
+async function fetchNodeSeekJson(
+  path: string,
+  options: NodeSeekOptions = {},
+  requestHeaders: Record<string, string> = {}
+) {
+  const text = await fetchNodeSeekText(path, options, requestHeaders);
   try {
     return JSON.parse(extractNodeSeekJsonText(text)) as unknown;
   } catch {
@@ -1383,12 +1376,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
   if (rendered) {
     const embeddedTopic = postData ? normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30) : undefined;
     const topic = mergeRenderedNodeSeekTopic(rendered, embeddedTopic);
-    const polls = mergeNodeSeekPolls(
-      topic.polls,
-      await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions)
-    );
+    const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([topic.contentHtml, html], requestOptions, topic.polls);
+    const polls = mergeNodeSeekPolls(topic.polls, voteLinkPolls.polls);
     const result = withNodeSeekReplyPagination({
       ...topic,
+      contentHtml: stripLoadedNodeSeekVoteMarkers(topic.contentHtml, (polls || []).map((poll) => poll.id)),
       ...(polls ? { polls } : {}),
       ...(currentUser ? { currentUser } : {})
     }, html, id, 1);
@@ -1398,6 +1390,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       candidateCount: 1 + Math.max(rendered.replies.length, Math.max(0, comments.length - 1)),
       validCount: 1 + result.replies.length,
       droppedCount: Math.max(0, Math.max(rendered.replies.length, Math.max(0, comments.length - 1)) - result.replies.length),
+      partialErrorCount: voteLinkPolls.partialErrorCount,
       missingFloorCount: rendered.replies.filter((reply) => !reply.floor).length
     });
   }
@@ -1405,9 +1398,11 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
     const comments = arrayField(postData.comments);
     const first = isRecord(comments[0]) ? comments[0] : {};
     const topic = normalizePostData(postData, id, nodeSeekTopicUrl(id), options.replyLimit || 30);
-    const polls = mergeNodeSeekPolls(await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions));
+    const voteLinkPolls = await readNodeSeekPollsFromVoteLinks([first.markdown, html], requestOptions);
+    const polls = mergeNodeSeekPolls(voteLinkPolls.polls);
     const result = withNodeSeekReplyPagination({
       ...topic,
+      contentHtml: stripLoadedNodeSeekVoteMarkers(topic.contentHtml, (polls || []).map((poll) => poll.id)),
       ...(polls ? { polls } : {}),
       ...(currentUser ? { currentUser } : {})
     }, html, id, 1);
@@ -1418,6 +1413,7 @@ export async function getNodeSeekTopic(id: string, options: NodeSeekOptions & { 
       candidateCount: 1 + replyCandidates,
       validCount: 1 + result.replies.length,
       droppedCount: Math.max(0, replyCandidates - result.replies.length),
+      partialErrorCount: voteLinkPolls.partialErrorCount,
       missingFloorCount
     });
   }

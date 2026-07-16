@@ -42,4 +42,55 @@ describe('topic session controller', () => {
 
     expect(hook.result.current.state.topicDetail).toMatchObject({ bookmarked: true, bookmarkId: 99 });
   });
+
+  it('[REG-WRITE-007] keeps the authoritative NodeSeek poll snapshot when restoring the Topic route', async () => {
+    const nodeSeekTopic: TopicDetail = {
+      ...topic,
+      source: 'nodeseek',
+      id: '759903',
+      url: 'https://www.nodeseek.com/post-759903-1',
+      polls: [{
+        id: '2443',
+        voted: false,
+        options: [
+          { id: '71', label: '选项 A' },
+          { id: '72', label: '选项 B' }
+        ]
+      }]
+    };
+    const confirmedPoll = {
+      id: '2443',
+      voted: true,
+      options: [
+        { id: '71', label: '选项 A', count: 2, selected: false },
+        { id: '72', label: '选项 B', count: 6, selected: true }
+      ]
+    };
+    const hook = await renderHook(() => useTopicSessionController({
+      invalidateTopicActionRequests: jest.fn(),
+      notify: jest.fn()
+    }));
+
+    await act(() => {
+      hook.result.current.commands.navigation.activateRoute('NodeSeek-route');
+      hook.result.current.commands.topic.beginLoad(nodeSeekTopic, 'nodeseek:759903');
+      hook.result.current.commands.topic.resolveLoad(nodeSeekTopic, 0);
+      hook.result.current.commands.topic.finishLoad();
+    });
+    await act(() => hook.result.current.commands.navigation.saveRoute('NodeSeek-route'));
+    await act(() => hook.result.current.commands.actions.applyUpdate({
+      type: 'poll-vote',
+      patch: {
+        pollId: '2443',
+        optionIds: ['72'],
+        confirmedPoll
+      }
+    }));
+
+    expect(hook.result.current.state.topicDetail?.polls?.[0]).toEqual(confirmedPoll);
+
+    await act(() => hook.result.current.commands.navigation.restoreRoute('NodeSeek-route'));
+
+    expect(hook.result.current.state.topicDetail?.polls?.[0]).toEqual(confirmedPoll);
+  });
 });

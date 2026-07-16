@@ -1070,8 +1070,8 @@ describe('Android local forum facade', () => {
     expect(yaohuo.topics.map((topic) => topic.id)).toEqual(['67', '66']);
   });
 
-  it('keeps untimed NodeSeek user profile posts untimed without opening topic details', async () => {
-    const fetcher = vi.fn(async (input: string) => {
+  it('[REG-WRITE-007] keeps untimed NodeSeek profile reads free of vote-only headers', async () => {
+    const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
         return new Response(JSON.stringify({ success: true, detail: { member_name: '我是ikun', member_id: 48872 } }));
       }
@@ -1094,6 +1094,9 @@ describe('Android local forum facade', () => {
     expect(nodeseek.topics[0].lastReplyAt).toBe('');
     expect(calls).not.toContain('nodeseek.com/post-101-1');
     expect(calls).toContain('list-comments');
+    expect(fetcher.mock.calls.every(([, init]) => (
+      new Headers(init?.headers).get('x-dynamic-sign') === null
+    ))).toBe(true);
   });
 
   it('reads NodeSeek user profile JSON when hidden WebView wraps it in an HTML document', async () => {

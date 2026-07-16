@@ -1,3 +1,5 @@
+import { NODESEEK_VOTE_API_HEADERS } from './nodeseekPolls';
+
 export interface NodeSeekActionRequest {
   path: string;
   method: 'POST';
@@ -186,7 +188,8 @@ export function buildNodeSeekVoteRequest({
     path: '/api/vote/voteforitem',
     method: 'POST',
     headers: {
-      'content-type': 'application/json'
+      'content-type': 'application/json',
+      'x-dynamic-sign': NODESEEK_VOTE_API_HEADERS['x-dynamic-sign']
     },
     body: JSON.stringify({ ids })
   };

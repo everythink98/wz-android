@@ -230,10 +230,29 @@ describe('Topic real child components', () => {
     expect(onVotePoll).toHaveBeenCalledWith(multiplePoll, ['a', 'b']);
   });
 
+  it('keeps authenticated Yaohuo polls selectable and submittable', async () => {
+    const onVotePoll = jest.fn();
+    const view = await render(
+      <TopicPolls
+        {...pollProps({
+          onVotePoll,
+          pollSelections: { 'topic-poll-1': ['a', 'b'] },
+          source: 'yaohuo'
+        })}
+      />
+    );
+
+    expect(view.getByLabelText('提交投票').props.accessibilityState.disabled).toBe(false);
+    await fireEvent.press(view.getByLabelText('提交投票'));
+    expect(onVotePoll).toHaveBeenCalledWith(multiplePoll, ['a', 'b']);
+  });
+
   it('keeps unsupported and unauthenticated polls visibly read-only', async () => {
     const view = await render(<TopicPolls {...pollProps({ canWritePollSource: false, source: 'v2ex' })} />);
 
     expect(view.getByText('只读结果')).toBeTruthy();
+    expect(view.getByText('3 人参与')).toBeTruthy();
+    expect(view.getByText('2 票 · 67%')).toBeTruthy();
     expect(view.getAllByRole('checkbox').every((option) => option.props.accessibilityState.disabled)).toBe(true);
     expect(view.queryByText('提交投票')).toBeNull();
 

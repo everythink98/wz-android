@@ -26,6 +26,7 @@ import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
 import { splitLinuxDoContentHtml } from './localLinuxdo';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -539,8 +540,11 @@ describe('Android local sources', () => {
         ]
       }
     })).toString('base64');
-    const fetcher = vi.fn(async (input: string) => {
+    const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.includes('/api/vote/info/2443')) {
+        if (new Headers(init?.headers).get('x-dynamic-sign') !== 'a'.repeat(40)) {
+          return new Response(JSON.stringify({ success: false }), { status: 403 });
+        }
         return json({
           vote: {
             id: 2443,
@@ -560,6 +564,9 @@ describe('Android local sources', () => {
 
     const topic = await getNodeSeekTopic('759903', { fetcher });
 
+    const voteRequest = fetcher.mock.calls.find(([input]) => input.includes('/api/vote/info/2443'));
+    expect(new Headers(voteRequest?.[1]?.headers).get('x-dynamic-sign')).toBe('a'.repeat(40));
+
     expect(topic.polls).toEqual([{
       id: '2443',
       title: '公开投票',
@@ -572,6 +579,104 @@ describe('Android local sources', () => {
         { id: '72', label: '选项 B', count: 5, selected: true }
       ]
     }]);
+    expect(topic.contentHtml).not.toContain('nsapp://vote?id=2443');
+    expect(topic.contentHtml).not.toContain('提交投票');
+    expect(topic.contentHtml).toContain('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
+  });
+
+  it('[REG-WRITE-007] hides NodeSeek vote counts until the current user has voted', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 759903,
+        title: 'NodeSeek unvoted poll topic',
+        op: { name: 'alice' },
+        comments: [{
+          commentId: 10,
+          poster: { name: 'alice' },
+          markdown: '提交投票 nsapp://vote?id=2443',
+          time: { createdDate: '2026-06-03T00:00:00.000Z' }
+        }]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/vote/info/2443')) {
+        return json({
+          vote: {
+            id: 2443,
+            title: '未投票时隐藏结果',
+            isPublic: false,
+            locked: true,
+            multiple: true,
+            voted: false,
+            items: [
+              { vote_item_id: 71, text: '选项 A', count: 2, voted: false },
+              { vote_item_id: 72, text: '选项 B', count: 5, voted: false }
+            ]
+          }
+        });
+      }
+      return html(`<script>${payload}</script>`);
+    });
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls).toEqual([{
+      id: '2443',
+      title: '未投票时隐藏结果',
+      public: false,
+      closed: true,
+      multiple: true,
+      voted: false,
+      options: [
+        { id: '71', label: '选项 A', selected: false },
+        { id: '72', label: '选项 B', selected: false }
+      ]
+    }]);
+  });
+
+  it('[REG-WRITE-007] keeps failed NodeSeek vote markers and reports a partial topic', async () => {
+    const payload = Buffer.from(JSON.stringify({
+      postData: {
+        postId: 759903,
+        title: 'NodeSeek partial poll topic',
+        op: { name: 'alice' },
+        comments: [{
+          commentId: 10,
+          poster: { name: 'alice' },
+          markdown: '提交投票 nsapp://vote?id=2443\n\n提交投票 nsapp://vote?id=2444\n\n提交投票 nsapp://vote?id=2445',
+          time: { createdDate: '2026-06-03T00:00:00.000Z' }
+        }]
+      }
+    })).toString('base64');
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/vote/info/2443')) {
+        return json({
+          vote: {
+            id: 2443,
+            title: '可用投票',
+            items: [{ vote_item_id: 71, text: '选项 A', voted: false }]
+          }
+        });
+      }
+      if (input.includes('/api/vote/info/2444')) {
+        return new Response(JSON.stringify({ success: false }), { status: 403 });
+      }
+      if (input.includes('/api/vote/info/2445')) {
+        return json({ success: false });
+      }
+      return html(`<script>${payload}</script>`);
+    });
+
+    const topic = await getNodeSeekTopic('759903', { fetcher });
+
+    expect(topic.polls?.map((poll) => poll.id)).toEqual(['2443']);
+    expect(topic.contentHtml).not.toContain('nsapp://vote?id=2443');
+    expect(topic.contentHtml).toContain('nsapp://vote?id=2444');
+    expect(topic.contentHtml).toContain('nsapp://vote?id=2445');
+    expect(sourceDiagnosticSummary(topic)).toMatchObject({
+      partialErrorCount: 2,
+      hasDegradation: true
+    });
   });
 
   it('maps rendered NodeSeek vote forms to unified polls and removes the raw form from content', async () => {
@@ -605,6 +710,7 @@ describe('Android local sources', () => {
     }]);
     expect(topic.contentHtml).not.toContain('<form');
     expect(topic.contentHtml).not.toContain('Debian');
+    expect(topic.contentHtml).toContain('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
   it('maps hydrated NodeSeek embedded vote panels from the rendered page', async () => {
@@ -639,6 +745,8 @@ describe('Android local sources', () => {
               </form>
             </div>
           </div>
+          <p>&quot;&gt;</p>
+          <p><span>nsapp://vote?id=2443</span></p>
         </article>
       </div>
     `));
@@ -659,7 +767,7 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('pure-form');
     expect(topic.contentHtml).not.toContain('vote-panel');
     expect(topic.contentHtml).not.toContain('embed-vote');
-    expect(topic.contentHtml.trim()).toBe('');
+    expect(topic.contentHtml.trim()).toBe('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
   });
 
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {
@@ -4270,6 +4378,10 @@ describe('Android local sources', () => {
               {"interactionType":"https://schema.org/ReplyAction","userInteractionCount":2}
             ]}
           </script>
+          <div id="topic_810_votes" class="votes">
+            <a href="javascript:" onclick="upVoteTopic(810);" class="vote">▲ 27</a>
+            <a href="javascript:" onclick="downVoteTopic(810);" class="vote">▼</a>
+          </div>
           <a href="/tag/开户" class="tag">开户</a>
           <a href="/tag/券商" class="tag"><span></span> 券商</a>
           <div class="subtle">
@@ -4287,6 +4399,7 @@ describe('Android local sources', () => {
 
     expect(topic.replyCount).toBe(2);
     expect(topic.viewCount).toBe(743);
+    expect(topic.upvoteCount).toBe(27);
     expect(topic.tags).toEqual(['开户', '券商']);
     expect(topic.contentHtml).toContain('补充 1');
     expect(topic.contentHtml).toContain('补充正文');

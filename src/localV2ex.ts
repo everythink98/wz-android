@@ -61,6 +61,7 @@ type V2exHtmlReplyMeta = {
 type V2exHtmlDetail = {
   supplementHtml: string;
   tags: string[];
+  upvoteCount?: number;
   viewCount?: number;
   replies: Reply[];
   repliesByCommentId: Map<number, V2exHtmlReplyMeta>;
@@ -249,6 +250,14 @@ function parseV2exViewCount(root: ReturnType<typeof parseHtml>) {
   return undefined;
 }
 
+function parseV2exTopicUpvoteCount(root: ReturnType<typeof parseHtml>) {
+  const voteBox = root.querySelectorAll('[id^="topic_"]')
+    .find((element) => /^topic_\d+_votes$/.test(String(element.getAttribute('id') || '')));
+  const upvoteLink = voteBox?.querySelectorAll('a')
+    .find((element) => /upVoteTopic/i.test(String(element.getAttribute('onclick') || '')));
+  return upvoteLink ? parsePositiveInteger(elementText(upvoteLink)) : undefined;
+}
+
 function parseV2exTags(root: ReturnType<typeof parseHtml>) {
   const seen = new Set<string>();
   const tags: string[] = [];
@@ -336,6 +345,7 @@ function parseV2exHtmlDetail(html: string): V2exHtmlDetail {
   return {
     supplementHtml: parseV2exSupplements(root),
     tags: parseV2exTags(root),
+    upvoteCount: parseV2exTopicUpvoteCount(root),
     viewCount: parseV2exViewCount(root),
     replies: replyMeta.replies,
     repliesByCommentId: replyMeta.repliesByCommentId,
@@ -987,6 +997,7 @@ export async function getV2exTopic(id: string, options: V2exOptions & { replyLim
   const replies = apiReplies.length ? apiReplies : htmlDetail?.replies || [];
   const result = {
     ...topic,
+    ...(typeof htmlDetail?.upvoteCount === 'number' ? { upvoteCount: htmlDetail.upvoteCount } : {}),
     ...(htmlDetail?.viewCount ? { viewCount: htmlDetail.viewCount } : {}),
     ...(htmlDetail?.tags.length ? { tags: htmlDetail.tags } : {}),
     replyCount: replies.length || topic.replyCount,

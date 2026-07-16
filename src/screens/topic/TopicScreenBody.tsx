@@ -39,6 +39,7 @@ import { topicActionStateKey, type InteractionType, type OptimisticActionState, 
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
 import { getLinuxDoEmojiUrls, splitLinuxDoContentHtml } from '../../localLinuxdo';
+import { splitNodeSeekContentHtml } from '../../nodeseekPolls';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import { replyImageUploadSupported } from '../../replyImageUpload';
@@ -483,7 +484,9 @@ export const TopicScreen = memo(function TopicScreen({
         }]
         : (topic.source === 'linuxdo'
           ? splitLinuxDoContentHtml(topicContentHtml, topicPolls)
-          : [{ type: 'html' as const, html: topicContentHtml }]
+          : topic.source === 'nodeseek'
+            ? splitNodeSeekContentHtml(topicContentHtml, topicPolls)
+            : [{ type: 'html' as const, html: topicContentHtml }]
         ).flatMap((part, partIndex): TopicContentItem[] => {
           if (part.type === 'poll') {
             return [{ type: 'poll' as const, key: `topic-poll-${part.poll.name || part.poll.id || partIndex}`, poll: part.poll }];
@@ -515,6 +518,7 @@ export const TopicScreen = memo(function TopicScreen({
     (topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0))
     || (topic.source === 'linuxdo' && (canWriteLinuxDo || linuxDoReactionStats(topic).length > 0))
     || (topic.source === 'yaohuo' && canWriteYaohuo)
+    || (topic.source === 'v2ex' && typeof topic.upvoteCount === 'number')
   ));
   const replyListItems = useMemo(() => buildReplyListItems({
     canShowReplies,
@@ -994,7 +998,7 @@ export const TopicScreen = memo(function TopicScreen({
         {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
       </View>
       {topicContentItems.map(renderTopicContentItem)}
-      {topic && topic.source !== 'linuxdo' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
+      {topic && topic.source !== 'linuxdo' && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <TopicPolls
@@ -1016,6 +1020,11 @@ export const TopicScreen = memo(function TopicScreen({
       ) : null}
       {topicHasPostActions ? renderTopicListItemFrame(
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>
+          {topic?.source === 'v2ex' && typeof topic.upvoteCount === 'number' ? (
+            <View style={styles.topicStatRail}>
+              <NodeSeekStatPill label="UP 票" value={topic.upvoteCount} styles={styles} />
+            </View>
+          ) : null}
           {topic?.source === 'nodeseek' && !canWriteNodeSeek && topicReactionStats.length ? (
             <View style={styles.topicStatRail}>
               {topicReactionStats.map((stat) => (

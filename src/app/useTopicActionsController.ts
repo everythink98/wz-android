@@ -33,7 +33,7 @@ import {
   type LinuxDoActionRequest
 } from '../linuxdoActions';
 import { runLinuxDoAction } from '../linuxdoActionClient';
-import { runNodeSeekAction } from '../nodeseekActionClient';
+import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '../nodeseekActionClient';
 import { runYaohuoAction } from '../yaohuoActionClient';
 import {
   linuxDoBookmarkIdFromActionResult,
@@ -1453,15 +1453,36 @@ export function useTopicActionsController({
     markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
     const requestTopicKey = topicKey(detail);
     const actionKey = topicPollVoteActionKey(requestTopicKey, poll);
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
+    const submitVote = () => runSingleNonIdempotentTopicAction(actionKey, async () => {
       const requestOwner = startTopicActionRequest(actionKey);
       let submitted: unknown = false;
+      let confirmedPoll: TopicPoll | undefined;
+      let resultRefreshFailed = false;
       if (isNodeSeekActionTopic(detail)) {
         submitted = await runNodeSeekRequest(
           () => buildNodeSeekVoteRequest({ optionIds }),
-          '投票已提交',
-          { owner: requestOwner, diagnosticTrace }
+          '',
+          { owner: requestOwner, diagnosticTrace, notifySuccess: false }
         );
+        if (submitted) {
+          try {
+            if (!poll.id) {
+              throw new Error('投票 id 不正确');
+            }
+            const access = await loadNodeSeekActionAccess();
+            if (!access?.cookieHeader) {
+              throw new Error('NodeSeek 登录信息不可用');
+            }
+            confirmedPoll = await fetchNodeSeekVoteInfo({
+              cookieHeader: access.cookieHeader,
+              pollId: poll.id,
+              fetcher: withDiagnosticFetcher(diagnosticTrace, fetcher),
+              userAgent: access.userAgent || nodeSeekWebViewUserAgentRef.current
+            });
+          } catch {
+            resultRefreshFailed = true;
+          }
+        }
       } else if (isLinuxDoActionTopic(detail)) {
         if (!poll.postId || !poll.name) {
           notify('当前投票信息不完整，刷新主题后再试。');
@@ -1496,16 +1517,64 @@ export function useTopicActionsController({
         applyTopicActionUpdate({
           type: 'poll-vote',
           patch: {
-          pollId: poll.id,
-          pollName: poll.name,
-          pollPostId: poll.postId,
-          optionIds
+            pollId: poll.id,
+            pollName: poll.name,
+            pollPostId: poll.postId,
+            optionIds,
+            ...(confirmedPoll ? { confirmedPoll } : {}),
+            ...(resultRefreshFailed ? { preserveUnknownCounts: true } : {})
           }
         });
-        markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
+        markDiagnosticStage(diagnosticTrace, 'apply', {
+          source: detail.source,
+          state: confirmedPoll ? 'server' : 'local',
+          localApplied: true,
+          ...(confirmedPoll ? { serverConfirmed: true } : {})
+        });
+        if (isNodeSeekActionTopic(detail)) {
+          if (resultRefreshFailed) {
+            notify('提交成功但结果刷新失败，请手动刷新。');
+            finishDiagnosticTrace(diagnosticTrace, 'partial', { source: detail.source, reason: 'refresh_failed' });
+          } else {
+            notify('投票已提交');
+          }
+        }
       }
     }, diagnosticTrace);
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+    if (isNodeSeekActionTopic(detail)) {
+      let resolved = false;
+      const cancelVote = () => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        finishDiagnosticTrace(diagnosticTrace, 'canceled', { source: detail.source, reason: 'canceled' });
+      };
+      Alert.alert('确认提交投票？', '提交后不可修改。', [
+        {
+          text: '取消',
+          style: 'cancel',
+          onPress: cancelVote
+        },
+        {
+          text: '提交',
+          style: 'destructive',
+          onPress: () => {
+            if (resolved) {
+              return;
+            }
+            resolved = true;
+            void submitVote();
+          }
+        }
+      ], {
+        cancelable: true,
+        onDismiss: cancelVote
+      });
+      return;
+    }
+    await submitVote();
+  }, [applyTopicActionUpdate, fetcher, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   return {
     bookmarkOnLinuxDoSite,
