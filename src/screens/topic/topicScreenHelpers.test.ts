@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReplyListItems, hasSameYaohuoTopicLayout, type TopicListItem } from './topicScreenHelpers';
+import { buildReplyListItems, hasSameYaohuoTopicLayout, topicOpeningPostAsReply, type TopicListItem } from './topicScreenHelpers';
 import type { Reply, TopicDetail } from '../../types';
 
 const reply: Reply = {
@@ -42,5 +42,27 @@ describe('topic screen helpers', () => {
     expect(hasSameYaohuoTopicLayout(detail, { ...detail, bookmarked: true, bookmarkId: 987 })).toBe(true);
     expect(hasSameYaohuoTopicLayout(detail, { ...detail, bookmarked: false, bookmarkId: undefined })).toBe(true);
     expect(hasSameYaohuoTopicLayout(detail, { ...detail, title: 'changed' })).toBe(false);
+  });
+
+  it('reuses the already-loaded opening post when a reply quotes floor 1', () => {
+    const topic: TopicDetail = {
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/topic/42',
+      createdAt: '2026-07-03T00:00:00.000Z',
+      replyCount: 1,
+      contentHtml: '<p>Complete opening post.</p>',
+      replies: [],
+      polls: [{ id: 'poll', title: 'Poll', options: [{ id: 'yes', label: 'Yes' }] }]
+    };
+
+    expect(topicOpeningPostAsReply(topic)).toMatchObject({
+      author: 'alice',
+      contentHtml: '<p>Complete opening post.</p>',
+      floor: 1,
+      polls: topic.polls
+    });
   });
 });

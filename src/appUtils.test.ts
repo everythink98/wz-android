@@ -7,6 +7,7 @@ import {
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError,
   parseForumTopicLink,
+  parseInternalTopicOpenLink,
   parseForumUserLink,
   sourceLabel,
   startAbortableRequest,
@@ -133,6 +134,21 @@ describe('Android app utils', () => {
       category: '资源分享',
       url: 'https://www.yaohuo.me/bbs-655.html'
     });
+  });
+
+  it('opens only supported forum topics from the internal app link', () => {
+    const targets = [
+      ['linuxdo', '123456', 'https://linux.do/t/topic/123456'],
+      ['nodeseek', '2578075', 'https://www.nodeseek.com/post-2578075-1'],
+      ['v2ex', '789', 'https://www.v2ex.com/t/789'],
+      ['yaohuo', '654', 'https://www.yaohuo.me/bbs-654.html']
+    ] as const;
+
+    for (const [source, id, target] of targets) {
+      expect(parseInternalTopicOpenLink(`exp+wz-android://open-topic?url=${encodeURIComponent(target)}`)).toMatchObject({ source, id });
+    }
+    expect(parseInternalTopicOpenLink(`exp+wz-android://open-topic?url=${encodeURIComponent('https://example.com/t/123456')}`)).toBeNull();
+    expect(parseInternalTopicOpenLink('exp+wz-android://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081')).toBeNull();
   });
 
   it('does not treat ordinary external links or non-topic forum links as app topics', () => {

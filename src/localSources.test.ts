@@ -20,9 +20,10 @@ vi.mock('react-native', () => ({
   }
 }));
 
-import { getCategories, getFeed, getReplies, getTopic, searchTopics } from './forumApi';
+import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
+import { splitLinuxDoContentHtml } from './localLinuxdo';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import {
@@ -1233,7 +1234,12 @@ describe('Android local sources', () => {
         posts: [{
           id: 1001,
           username: 'alice',
-          cooked: '<p>投票正文</p>',
+          cooked: [
+            '<p>投票前</p>',
+            '<div class="poll" data-poll-name="poll"><ul><li>原始方案 A</li><li>原始方案 B</li></ul><div class="poll-info">0 投票人</div></div>',
+            '<p>投票后</p>',
+            '<iframe src="https://embed.reddit.com/r/OpenAI/comments/abc123/topic/?embed=true"></iframe>'
+          ].join(''),
           created_at: '2026-06-03T00:00:00.000Z',
           post_number: 1,
           polls: [{
@@ -1279,6 +1285,17 @@ describe('Android local sources', () => {
         { id: 'c3', label: '方案 C', selected: false }
       ]
     }]);
+    expect(topic.contentHtml).toContain('<forum-linuxdo-poll name="poll"></forum-linuxdo-poll>');
+    expect(topic.contentHtml).not.toContain('原始方案 A');
+    expect(topic.contentHtml).not.toContain('0 投票人');
+    expect(topic.contentHtml).toContain('<forum-link-card');
+    expect(topic.contentHtml).toContain('href="https://www.reddit.com/r/OpenAI/comments/abc123/topic/"');
+    expect(topic.contentHtml).not.toContain('嵌入内容 · embed.reddit.com');
+    expect(splitLinuxDoContentHtml(topic.contentHtml, topic.polls).map((part) => part.type)).toEqual([
+      'html',
+      'poll',
+      'html'
+    ]);
   });
 
   it('maps linux.do Discourse polls from reply posts', async () => {
@@ -1301,7 +1318,7 @@ describe('Android local sources', () => {
           {
             id: 1002,
             username: 'bob',
-            cooked: '<p>回复投票</p>',
+            cooked: '<p>回复投票前</p><div class="poll" data-poll-name="reply-poll"><p>原始回复选项</p></div><p>回复投票后</p>',
             created_at: '2026-06-03T00:01:00.000Z',
             post_number: 2,
             polls: [{
@@ -1337,6 +1354,12 @@ describe('Android local sources', () => {
         { id: '2', label: '2 分', count: 3, selected: false }
       ]
     }]);
+    expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
+    expect(splitLinuxDoContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)).toEqual([
+      'html',
+      'poll',
+      'html'
+    ]);
   });
 
   it('keeps linux.do tags and topic status markers from Discourse lists', async () => {
@@ -1815,7 +1838,52 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
-  it('keeps linux.do quote author names from quote markup', async () => {
+  it('keeps a linux.do topic-body quote preview and loads its cross-topic complete post separately', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (String(input).includes('/t/920.json')) {
+        return json({
+          id: 920,
+          title: 'Referenced topic',
+          created_at: '2026-05-20T00:00:00.000Z',
+          post_stream: {
+            stream: [11],
+            posts: [{
+              id: 11,
+              post_number: 1,
+              username: 'alice',
+              cooked: '<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>',
+              created_at: '2026-05-20T00:00:00.000Z'
+            }]
+          }
+        });
+      }
+      return json({
+        id: 910,
+        title: 'Topic with external quote',
+        created_at: '2026-05-20T00:00:00.000Z',
+        post_stream: {
+          stream: [1],
+          posts: [{
+            id: 1,
+            post_number: 1,
+            username: 'bob',
+            cooked: '<aside data-post="1" class="quote" data-topic="920" data-username="alice"><blockquote><p>Short cross-topic preview.</p></blockquote></aside><p>Topic body</p>',
+            created_at: '2026-05-20T00:00:00.000Z'
+          }]
+        }
+      });
+    });
+
+    const topic = await getTopic({ source: 'linuxdo', id: '910', fetcher });
+    const completePost = await getReply({ source: 'linuxdo', id: '920', floor: 1, fetcher });
+
+    expect(topic.contentHtml).toContain('data-topic="920"');
+    expect(topic.contentHtml).toContain('Short cross-topic preview.');
+    expect(topic.contentHtml).not.toContain('Complete cross-topic second paragraph.');
+    expect(completePost.contentHtml).toBe('<p>Complete cross-topic first paragraph.</p><p>Complete cross-topic second paragraph.</p>');
+  });
+
+  it('keeps a linux.do reply quote preview and loads the same-topic complete post separately', async () => {
     const fetcher = vi.fn(async () => json({
       id: 910,
       title: 'linux.do quoted author',
@@ -1823,12 +1891,12 @@ describe('Android local sources', () => {
       post_stream: {
         stream: [1, 2],
         posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+          { id: 1, post_number: 1, username: 'alice', cooked: '<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>', created_at: '2026-05-20T00:00:00.000Z' },
           {
             id: 2,
             post_number: 2,
             username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
+            cooked: '<aside data-post="1" class="quote" data-topic="910" data-username="alice"><blockquote><p>Short preview.</p></blockquote></aside><p>Reply</p>',
             created_at: '2026-05-20T00:02:00.000Z'
           }
         ]
@@ -1836,39 +1904,18 @@ describe('Android local sources', () => {
     }));
 
     const topic = await getTopic({ source: 'linuxdo', id: '910', fetcher });
+    const completePost = await getReply({ source: 'linuxdo', id: '910', floor: 1, fetcher });
 
-    expect(topic.replies[0].quotedFloors).toEqual([1]);
-    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
+    expect(topic.replies[0]).toMatchObject({
+      quotedFloors: [1],
+      quotedAuthors: { 1: 'alice' },
+      quotedPreviews: { 1: 'Short preview.' },
+      contentHtml: '<p>Reply</p>'
+    });
+    expect(completePost.contentHtml).toBe('<p>Complete post first paragraph.</p><p>Complete post second paragraph.</p>');
   });
 
-  it('removes native linux.do quote markup after extracting same-topic quoted floors', async () => {
-    const fetcher = vi.fn(async () => json({
-      id: 912,
-      title: 'linux.do quoted markup',
-      created_at: '2026-05-20T00:00:00.000Z',
-      post_stream: {
-        stream: [1, 2],
-        posts: [
-          { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
-          {
-            id: 2,
-            post_number: 2,
-            username: 'bob',
-            cooked: '<aside data-post="1" class="quote" data-topic="912" data-username="alice"><blockquote><p>Original text</p></blockquote></aside><p>Reply</p>',
-            created_at: '2026-05-20T00:02:00.000Z'
-          }
-        ]
-      }
-    }));
-
-    const topic = await getTopic({ source: 'linuxdo', id: '912', fetcher });
-
-    expect(topic.replies[0].quotedFloors).toEqual([1]);
-    expect(topic.replies[0].quotedAuthors).toEqual({ 1: 'alice' });
-    expect(topic.replies[0].contentHtml).toBe('<p>Reply</p>');
-  });
-
-  it('keeps linux.do quote author names from quote avatar URLs', async () => {
+  it('keeps linux.do reply quote author names from quote avatar URLs', async () => {
     const fetcher = vi.fn(async () => json({
       id: 911,
       title: 'linux.do quoted author avatar',

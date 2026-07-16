@@ -88,7 +88,7 @@
 - `src/screens/TopicScreen.tsx` 是兼容入口，继续导出 `TopicScreen` 和 `TopicListItem`。
 - `src/screens/topic/TopicScreenBody.tsx` 承载详情页主体，组合详情内容、回复列表、楼层搜索、操作菜单和回复框。
 - `src/screens/topic/topicScreenHelpers.ts` 承载详情页纯辅助逻辑，例如回复 key、状态徽标和权限提示识别。
-- `src/screens/topic/ReplyItem.tsx`、`src/screens/topic/ReplyComposer.tsx`、`src/screens/topic/TopicActionBar.tsx`、`src/screens/topic/TopicContentBlock.tsx`、`src/screens/topic/TopicMenu.tsx`、`src/screens/topic/TopicPolls.tsx` 分别承载详情页局部 UI。
+- `src/screens/topic/ReplyItem.tsx`、`src/screens/topic/TopicBodyQuoteCard.tsx`、`src/screens/topic/ReplyComposer.tsx`、`src/screens/topic/TopicActionBar.tsx`、`src/screens/topic/TopicContentBlock.tsx`、`src/screens/topic/TopicMenu.tsx`、`src/screens/topic/TopicPolls.tsx` 分别承载详情页局部 UI。正文引用卡片与评论引用卡片保持独立展示实现；`src/quotedPosts.ts` 只共享来源、主题 id、帖子号组成的引用标识和缓存键。
 
 ## 回复写操作
 

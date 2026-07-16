@@ -24,6 +24,13 @@ import type { Reply, Topic } from '../types';
 import type { ReplyRefreshTarget, Screen, TopicRepliesRefreshOptions } from '../appTypes';
 import type { ReaderDataMutationReason } from './useReaderDataController';
 import {
+  quotedPostReferenceFromReply,
+  quotedPostReferenceKey,
+  replyQuotedPostInstanceKey,
+  type ToggleReplyQuoteOptions,
+  type ToggleTopicBodyQuoteOptions
+} from '../quotedPosts';
+import {
   beginDiagnosticTrace,
   diagnosticRef,
   finishDiagnosticTrace,
@@ -613,21 +620,18 @@ export function useTopicController({
     }
   }, [openTopic, selectedTopic, topicDetail]);
 
-  const toggleQuotedFloor = useCallback(async ({
-    replyFloor,
-    quotedFloor,
-    quotedReply
-  }: {
-    replyFloor: number;
-    quotedFloor: number;
-    quotedReply?: Reply;
-  }) => {
+  const toggleLoadedQuotedPost = useCallback(async ({
+    instanceKey,
+    reference,
+    quotedPost
+  }: ToggleTopicBodyQuoteOptions) => {
     const detail = topicDetail || selectedTopic;
     const trace = beginDiagnosticTrace('reply', 'toggle-quote', {
       source: detail?.source || 'unknown',
       ...(detail ? { topicRef: diagnosticRef('topic', `${detail.source}:${detail.id}`) } : {})
     });
-    const key = `${replyFloor}:${quotedFloor}`;
+    const referenceKey = quotedPostReferenceKey(reference);
+    const key = instanceKey;
     if (topicQuotes.isExpanded(key)) {
       topicQuotes.changeExpanded(key, false);
       markDiagnosticStage(trace, 'apply', { state: 'collapsed' });
@@ -635,14 +639,14 @@ export function useTopicController({
       return;
     }
 
-    if (quotedReply || topicQuotes.getLoaded(quotedFloor)) {
+    if (quotedPost || topicQuotes.getLoaded(referenceKey)) {
       topicQuotes.changeExpanded(key, true);
       markDiagnosticStage(trace, 'apply', { state: 'cached-quote' });
       finishDiagnosticTrace(trace, 'success', { state: 'cached-quote' });
       return;
     }
 
-    if (!detail || detail.source !== 'linuxdo') {
+    if (!detail || reference.source !== 'linuxdo') {
       markDiagnosticStage(trace, 'guard', { state: detail ? 'unsupported-source' : 'missing-topic' });
       finishDiagnosticTrace(trace, 'blocked', { reason: detail ? 'unsupported' : 'not_ready' });
       notify('引用楼层未加载');
@@ -656,23 +660,23 @@ export function useTopicController({
     topicQuotes.replaceRequest(key, controller);
     try {
       const loaded = await sourceGateway.getReply({
-        source: detail.source,
-        id: detail.id,
-        floor: quotedFloor,
+        source: reference.source,
+        id: reference.topicId,
+        floor: reference.postNumber,
         signal: controller.signal
       }, { isCurrent: () => topicCommands.getCurrentKey() === requestTopicKey, trace });
       if (topicCommands.getCurrentKey() !== requestTopicKey) {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
         return;
       }
-      topicQuotes.remember(loaded);
+      topicQuotes.remember(referenceKey, loaded);
       topicQuotes.changeExpanded(key, true);
       markDiagnosticStage(trace, 'apply', { state: 'quote-expanded' });
       finishDiagnosticTrace(trace, 'success');
-      notify(`引用已展开 #${quotedFloor}`);
+      notify(`引用已展开 #${reference.postNumber}`);
     } catch (error) {
       if (topicCommands.getCurrentKey() === requestTopicKey) {
-        const sourceError = sourceErrorFromUnknown(detail.source, error);
+        const sourceError = sourceErrorFromUnknown(reference.source, error);
         if (sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
@@ -712,6 +716,28 @@ export function useTopicController({
     topicDetail,
   ]);
 
+  const toggleTopicBodyQuote = useCallback((options: ToggleTopicBodyQuoteOptions) => (
+    toggleLoadedQuotedPost(options)
+  ), [toggleLoadedQuotedPost]);
+
+  const toggleReplyQuote = useCallback(({
+    replyFloor,
+    quotedFloor,
+    quotedReply
+  }: ToggleReplyQuoteOptions) => {
+    const detail = topicDetail || selectedTopic;
+    const reference = quotedPostReferenceFromReply(detail?.source, detail?.id, quotedFloor);
+    if (!reference) {
+      notify('引用楼层未加载');
+      return;
+    }
+    return toggleLoadedQuotedPost({
+      instanceKey: replyQuotedPostInstanceKey(replyFloor, reference),
+      reference,
+      quotedPost: quotedReply
+    });
+  }, [notify, selectedTopic, toggleLoadedQuotedPost, topicDetail]);
+
   return {
     currentTopic,
     currentTopicKey,
@@ -719,7 +745,8 @@ export function useTopicController({
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
-    toggleQuotedFloor,
+    toggleReplyQuote,
+    toggleTopicBodyQuote,
     topicFavorite
   };
 }

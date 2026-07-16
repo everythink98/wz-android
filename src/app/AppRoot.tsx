@@ -71,7 +71,7 @@ import {
   createTheme
 } from '../theme';
 import type { LibraryTab } from '../feedLogic';
-import { errorMessage } from '../appUtils';
+import { errorMessage, parseInternalTopicOpenLink } from '../appUtils';
 import { FeedScreen } from '../screens/FeedScreen';
 import { LibraryScreen } from '../screens/LibraryScreen';
 import { MoreScreen } from '../screens/MoreScreen';
@@ -1255,7 +1255,8 @@ export function AppRoot() {
     openTopic,
     refreshTopicReplies,
     refreshWholeTopic,
-    toggleQuotedFloor,
+    toggleReplyQuote,
+    toggleTopicBodyQuote,
     topicFavorite
   } = useTopicController({
     changeScreen,
@@ -1292,6 +1293,18 @@ export function AppRoot() {
   }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify]);
 
   openTopicRef.current = openTopic;
+
+  useEffect(() => {
+    const openInternalTopic = (url: string | null) => {
+      const topic = url ? parseInternalTopicOpenLink(url) : null;
+      if (topic) {
+        void openTopicRef.current?.(topic);
+      }
+    };
+    const subscription = Linking.addEventListener('url', ({ url }) => openInternalTopic(url));
+    void Linking.getInitialURL().then(openInternalTopic).catch(() => undefined);
+    return () => subscription.remove();
+  }, []);
 
   const verifyNodeSeekFromTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
@@ -1974,7 +1987,8 @@ export function AppRoot() {
   const stableRefreshWholeTopic = useLatestCallback(refreshWholeTopic);
   const stableShareTopic = useLatestCallback(shareTopic);
   const stableSubmitReply = useLatestCallback(submitReply);
-  const stableToggleQuotedFloor = useLatestCallback(toggleQuotedFloor);
+  const stableToggleReplyQuote = useLatestCallback(toggleReplyQuote);
+  const stableToggleTopicBodyQuote = useLatestCallback(toggleTopicBodyQuote);
   const stableUploadReplyImage = useLatestCallback(uploadReplyImage);
   const stableVerifyLinuxDoFromTopic = useLatestCallback(verifyLinuxDoFromTopic);
   const stableVerifyNodeSeekFromTopic = useLatestCallback(verifyNodeSeekFromTopic);
@@ -2043,7 +2057,8 @@ export function AppRoot() {
       onSubmitReply: stableSubmitReply,
       onUploadReplyImage: stableUploadReplyImage,
       onTopicScroll: handleTopicScroll,
-      onToggleQuotedFloor: stableToggleQuotedFloor,
+      onToggleReplyQuote: stableToggleReplyQuote,
+      onToggleTopicBodyQuote: stableToggleTopicBodyQuote,
       onToggleFavorite: toggleTopicFavorite,
       onOpenUser: stableOpenUser
   }), [
@@ -2051,6 +2066,8 @@ export function AppRoot() {
     canUseLinuxDoActions,
     canUseNodeSeekActions,
     canUseYaohuoActions,
+    changeCommentQuery,
+    changeReplyContent,
     commentQuery,
     editReply,
     contentWidth,
@@ -2082,6 +2099,7 @@ export function AppRoot() {
     replyTarget,
     replyToFloor,
     changeReplyFace,
+    changeReplyFilter,
     selectedTopic,
     stableBookmarkOnLinuxDoSite,
     stableCollectOnNodeSeekSite,
@@ -2093,7 +2111,8 @@ export function AppRoot() {
     stableRefreshWholeTopic,
     stableShareTopic,
     stableSubmitReply,
-    stableToggleQuotedFloor,
+    stableToggleReplyQuote,
+    stableToggleTopicBodyQuote,
     stableUploadReplyImage,
     stableVerifyLinuxDoFromTopic,
     stableVerifyNodeSeekFromTopic,

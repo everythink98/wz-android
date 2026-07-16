@@ -8,8 +8,15 @@ import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../t
 import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
+import { splitLinuxDoContentHtml } from '../../localLinuxdo';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
+import {
+  quotedPostReferenceFromReply,
+  quotedPostReferenceKey,
+  replyQuotedPostInstanceKey,
+  type ToggleReplyQuoteOptions
+} from '../../quotedPosts';
 import { createStyles, replyContextBadgeStyle, type ReaderTheme } from '../../theme';
 import { AppButton, triggerPressFeedback } from '../../components/AppControls';
 import { Avatar } from '../../components/Avatar';
@@ -19,6 +26,7 @@ import { inlineSizedImageSignatureForReply, type TopicImageDeriver } from '../..
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { MemoizedTopicContentBlock } from './TopicContentBlock';
+import { stableTextHash } from './topicScreenHelpers';
 
 type NodeSeekStat = { label: string; value: number };
 
@@ -118,6 +126,7 @@ export function ReplyItem({
   theme,
   topicAuthor,
   topicBaseUrl,
+  topicId,
   topicImageDeriver,
   onInteract,
   onDeleteReply,
@@ -125,7 +134,7 @@ export function ReplyItem({
   onOpenUser,
   onReplyToFloor,
   onVotePoll,
-  onToggleQuotedFloor
+  onToggleReplyQuote
 }: {
   actionBusy: boolean;
   canWrite: boolean;
@@ -135,7 +144,7 @@ export function ReplyItem({
   inlineSizedImageUrls: Record<string, true>;
   linuxDoEmojiUrls?: LinuxDoEmojiUrlMap;
   isNew?: boolean;
-  loadedQuotedReplies: Record<number, Reply>;
+  loadedQuotedReplies: Record<string, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
   onTogglePollSelection: (key: string, poll: TopicPoll, optionId: string) => void;
   pollSelections: Record<string, string[]>;
@@ -148,6 +157,7 @@ export function ReplyItem({
   theme: ReaderTheme;
   topicAuthor?: string;
   topicBaseUrl?: string;
+  topicId?: string;
   topicImageDeriver: TopicImageDeriver;
   onInteract: (type: InteractionType, commentId?: number) => void;
   onDeleteReply: (reply: Reply) => void;
@@ -155,11 +165,14 @@ export function ReplyItem({
   onOpenUser: (user: UserProfile) => void;
   onReplyToFloor: (reply: Reply) => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
-  onToggleQuotedFloor: (options: { replyFloor: number; quotedFloor: number; quotedReply?: Reply }) => void;
+  onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
 }) {
   const { getMappingKey } = useMappingHelper();
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
+  const linuxDoContentParts = useMemo(() => (
+    source === 'linuxdo' ? splitLinuxDoContentHtml(highlightedHtml, reply.polls) : []
+  ), [highlightedHtml, reply.polls, source]);
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
@@ -176,11 +189,15 @@ export function ReplyItem({
   } : null;
   const copyReplyTextToClipboard = useCallback(() => {
     const htmlParts = quotedFloors.flatMap((quotedFloor) => {
-      const key = `${replyFloor}:${quotedFloor}`;
+      const reference = quotedPostReferenceFromReply(source, topicId, quotedFloor);
+      if (!reference) {
+        return [];
+      }
+      const key = replyQuotedPostInstanceKey(replyFloor, reference);
       if (!expandedQuotes[key]) {
         return [];
       }
-      const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
+      const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedPostReferenceKey(reference)];
       return quotedReply?.contentHtml ? [quotedReply.contentHtml] : [];
     });
     htmlParts.push(reply.contentHtml);
@@ -192,7 +209,7 @@ export function ReplyItem({
     void Clipboard.setStringAsync(replyCopyText)
       .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
       .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
-  }, [expandedQuotes, loadedQuotedReplies, quotedFloors, repliesByFloor, reply.contentHtml, replyFloor]);
+  }, [expandedQuotes, loadedQuotedReplies, quotedFloors, repliesByFloor, reply.contentHtml, replyFloor, source, topicId]);
   return (
     <View style={styles.replyCard}>
       <Pressable
@@ -231,9 +248,14 @@ export function ReplyItem({
         {quotedFloors.length ? (
           <View style={styles.quoteStack}>
             {quotedFloors.map((quotedFloor, index) => {
-              const key = `${replyFloor}:${quotedFloor}`;
-              const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedFloor];
+              const reference = quotedPostReferenceFromReply(source, topicId, quotedFloor);
+              if (!reference) {
+                return null;
+              }
+              const key = replyQuotedPostInstanceKey(replyFloor, reference);
+              const quotedReply = repliesByFloor.get(quotedFloor) || loadedQuotedReplies[quotedPostReferenceKey(reference)];
               const quotedAuthorFromMarkup = reply.quotedAuthors?.[quotedFloor];
+              const quotedPreview = reply.quotedPreviews?.[quotedFloor];
               const quotedAuthorName = quotedReply?.author || quotedAuthorFromMarkup || '未知作者';
               const quotedUser = quotedReply ? userFromReply(quotedReply, source) : source && quotedAuthorFromMarkup ? {
                 source,
@@ -245,8 +267,13 @@ export function ReplyItem({
               } : null;
               const expanded = Boolean(expandedQuotes[key]);
               const loading = Boolean(loadingQuotedFloors[key]);
+              const completeQuotedPost = expanded ? quotedReply : undefined;
               return (
-                <View key={getMappingKey(key, index)} style={styles.quoteBox}>
+                <View
+                  key={getMappingKey(key, index)}
+                  style={[styles.quoteBox, styles.replyQuoteBox]}
+                  testID={`reply-quote-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
+                >
                   <View style={styles.quoteHeader}>
                     <Pressable
                       accessibilityRole="button"
@@ -261,7 +288,7 @@ export function ReplyItem({
                       {quotedReply ? <Avatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} /> : null}
                       <View style={styles.quoteAuthorTextBlock}>
                         <Text style={styles.quoteAuthorText} numberOfLines={1}>{quotedAuthorName}</Text>
-                        <Text style={styles.replyMeta}>引用 #{quotedFloor}{quotedReply ? '' : ' · 楼层未加载'}</Text>
+                        <Text style={styles.replyMeta}>引用 #{quotedFloor}</Text>
                       </View>
                     </Pressable>
                     <AppButton
@@ -270,34 +297,48 @@ export function ReplyItem({
                       variant="ghost"
                       styles={styles}
                       disabled={loading}
-                      onPress={() => onToggleQuotedFloor({ replyFloor, quotedFloor, quotedReply })}
+                      onPress={() => onToggleReplyQuote({ replyFloor, quotedFloor, quotedReply })}
                     />
                   </View>
-                  {expanded && quotedReply ? (
-                    <View style={styles.quoteBody}>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={!userFromReply(quotedReply, source)}
-                        style={styles.quoteAuthorRow}
-                        onPress={() => {
-                          const user = userFromReply(quotedReply, source);
-                          if (user) {
-                            onOpenUser(user);
-                          }
-                        }}
-                      >
-                        <Avatar small name={quotedReply.author} uri={quotedReply.authorAvatar} styles={styles} />
-                        <Text style={styles.replyMeta}>引用 #{quotedFloor} · {quotedReply.author || '未知作者'}</Text>
-                      </Pressable>
-                      <Pressable delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
-                        <MemoizedTopicContentBlock
-                          baseUrl={topicBaseUrl}
-                          contentWidth={Math.max(220, replyContentWidth - 24)}
-                          inlineSizedImageUrls={inlineSizedImageUrls}
-                          html={quotedReply.contentHtml}
-                          topicImageDeriver={topicImageDeriver}
+                  {quotedPreview ? (
+                    <Text style={styles.quotePreviewText} testID={`reply-quote-preview-${replyFloor}-${reference.topicId}-${reference.postNumber}`}>
+                      {quotedPreview}
+                    </Text>
+                  ) : null}
+                  {completeQuotedPost ? (
+                    <View
+                      style={[styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]}
+                      testID={`reply-quote-complete-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
+                    >
+                      {(source === 'linuxdo'
+                        ? splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+                        : [{ type: 'html' as const, html: completeQuotedPost.contentHtml }]
+                      ).map((part) => part.type === 'poll' ? (
+                        <TopicPolls
+                          embeddedInArticle
+                          key={`quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
+                          actionBusy={actionBusy}
+                          canWritePollSource={false}
+                          keyPrefix={`quote-${replyFloor}-${quotedFloor}`}
+                          onTogglePollSelection={onTogglePollSelection}
+                          onVotePoll={onVotePoll}
+                          pollSelections={pollSelections}
+                          polls={[part.poll]}
+                          source={source}
+                          styles={styles}
+                          theme={theme}
                         />
-                      </Pressable>
+                      ) : (
+                        <Pressable key={`quote-html-${stableTextHash(part.html)}`} delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
+                          <MemoizedTopicContentBlock
+                            baseUrl={topicBaseUrl}
+                            contentWidth={Math.max(220, replyContentWidth - 24)}
+                            inlineSizedImageUrls={inlineSizedImageUrls}
+                            html={part.html}
+                            topicImageDeriver={topicImageDeriver}
+                          />
+                        </Pressable>
+                      ))}
                     </View>
                   ) : null}
                 </View>
@@ -319,27 +360,61 @@ export function ReplyItem({
             <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
           </Pressable>
         ) : null}
-        <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
-          <MemoizedTopicContentBlock
-            baseUrl={topicBaseUrl}
-            contentWidth={replyContentWidth}
-            inlineSizedImageUrls={inlineSizedImageUrls}
-            html={highlightedHtml}
-            topicImageDeriver={topicImageDeriver}
-          />
-        </Pressable>
-        <TopicPolls
-          actionBusy={actionBusy}
-          canWritePollSource={Boolean(canWrite && source === 'linuxdo')}
-          keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
-          onTogglePollSelection={onTogglePollSelection}
-          onVotePoll={onVotePoll}
-          pollSelections={pollSelections}
-          polls={reply.polls || []}
-          source={source}
-          styles={styles}
-          theme={theme}
-        />
+        {source === 'linuxdo' ? (
+          <View style={styles.replyBody}>
+            {linuxDoContentParts.map((part, index) => part.type === 'poll' ? (
+              <TopicPolls
+                key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
+                actionBusy={actionBusy}
+                canWritePollSource={canWrite}
+                keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+                onTogglePollSelection={onTogglePollSelection}
+                onVotePoll={onVotePoll}
+                pollSelections={pollSelections}
+                polls={[part.poll]}
+                source={source}
+                styles={styles}
+                theme={theme}
+              />
+            ) : (
+              <Pressable key={`html-${stableTextHash(part.html)}`} delayLongPress={450} onLongPress={copyReplyTextToClipboard}>
+                <MemoizedTopicContentBlock
+                  baseUrl={topicBaseUrl}
+                  contentWidth={replyContentWidth}
+                  inlineSizedImageUrls={inlineSizedImageUrls}
+                  html={part.html}
+                  trimTrailingBlockSpacing={index === linuxDoContentParts.length - 1}
+                  topicImageDeriver={topicImageDeriver}
+                />
+              </Pressable>
+            ))}
+          </View>
+        ) : (
+          <>
+            <Pressable delayLongPress={450} style={styles.replyBody} onLongPress={copyReplyTextToClipboard}>
+              <MemoizedTopicContentBlock
+                baseUrl={topicBaseUrl}
+                contentWidth={replyContentWidth}
+                inlineSizedImageUrls={inlineSizedImageUrls}
+                html={highlightedHtml}
+                trimTrailingBlockSpacing
+                topicImageDeriver={topicImageDeriver}
+              />
+            </Pressable>
+            <TopicPolls
+              actionBusy={actionBusy}
+              canWritePollSource={false}
+              keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
+              onTogglePollSelection={onTogglePollSelection}
+              onVotePoll={onVotePoll}
+              pollSelections={pollSelections}
+              polls={reply.polls || []}
+              source={source}
+              styles={styles}
+              theme={theme}
+            />
+          </>
+        )}
         {reply.signatureHtml ? (
           <View style={styles.replySignature}>
             <MemoizedTopicContentBlock
@@ -347,6 +422,7 @@ export function ReplyItem({
               contentWidth={replyContentWidth}
               inlineSizedImageUrls={inlineSizedImageUrls}
               html={reply.signatureHtml}
+              trimTrailingBlockSpacing
               topicImageDeriver={topicImageDeriver}
             />
           </View>
@@ -410,7 +486,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.onOpenUser !== next.onOpenUser
     || previous.onReplyToFloor !== next.onReplyToFloor
     || previous.onTogglePollSelection !== next.onTogglePollSelection
-    || previous.onToggleQuotedFloor !== next.onToggleQuotedFloor
+    || previous.onToggleReplyQuote !== next.onToggleReplyQuote
     || previous.onVotePoll !== next.onVotePoll
     || previous.pollSelections !== next.pollSelections
     || previous.query !== next.query
@@ -421,6 +497,7 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
     || previous.theme !== next.theme
     || previous.topicAuthor !== next.topicAuthor
     || previous.topicBaseUrl !== next.topicBaseUrl
+    || previous.topicId !== next.topicId
     || previous.topicImageDeriver !== next.topicImageDeriver
   ) {
     return false;
@@ -428,12 +505,17 @@ export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
 
   const quotedFloors = new Set([...(previous.reply.quotedFloors || []), ...(next.reply.quotedFloors || [])]);
   for (const quotedFloor of quotedFloors) {
-    const previousKey = `${previous.replyFloor}:${quotedFloor}`;
-    const nextKey = `${next.replyFloor}:${quotedFloor}`;
+    const previousReference = quotedPostReferenceFromReply(previous.source, previous.topicId, quotedFloor);
+    const nextReference = quotedPostReferenceFromReply(next.source, next.topicId, quotedFloor);
+    if (!previousReference || !nextReference) {
+      continue;
+    }
+    const previousKey = replyQuotedPostInstanceKey(previous.replyFloor, previousReference);
+    const nextKey = replyQuotedPostInstanceKey(next.replyFloor, nextReference);
     if (
       Boolean(previous.expandedQuotes[previousKey]) !== Boolean(next.expandedQuotes[nextKey])
       || Boolean(previous.loadingQuotedFloors[previousKey]) !== Boolean(next.loadingQuotedFloors[nextKey])
-      || previous.loadedQuotedReplies[quotedFloor] !== next.loadedQuotedReplies[quotedFloor]
+      || previous.loadedQuotedReplies[quotedPostReferenceKey(previousReference)] !== next.loadedQuotedReplies[quotedPostReferenceKey(nextReference)]
       || previous.repliesByFloor.get(quotedFloor) !== next.repliesByFloor.get(quotedFloor)
     ) {
       return false;

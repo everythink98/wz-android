@@ -95,7 +95,10 @@ jest.mock('lucide-react-native', () => {
 
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
-jest.mock('../../src/localLinuxdo', () => ({ getLinuxDoEmojiUrls: async () => ({}) }));
+jest.mock('../../src/localLinuxdo', () => ({
+  getLinuxDoEmojiUrls: async () => ({}),
+  splitLinuxDoContentHtml: (html: string | undefined) => html ? [{ type: 'html' as const, html }] : []
+}));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
   const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
@@ -313,7 +316,8 @@ function TopicFilterHarness({
         onShareTopic={jest.fn()}
         onSubmitReply={jest.fn()}
         onToggleFavorite={onToggleFavorite}
-        onToggleQuotedFloor={jest.fn()}
+        onToggleReplyQuote={jest.fn()}
+        onToggleTopicBodyQuote={jest.fn()}
         onTopicScroll={jest.fn()}
         onUploadReplyImage={jest.fn()}
         onVerifyLinuxDo={jest.fn()}

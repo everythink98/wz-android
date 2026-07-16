@@ -17,7 +17,7 @@
 - 只打开 App、看首页显示、截图留存，都不算完整测试。
 - 优化代码前只使用与当前 Git revision、App 版本和 APK 身份匹配的 `docs/emulator-baseline.md` 记录；优化后按同一功能、同一关键词、同一来源和同一登录态复测差异，不能以记录日期较新代替身份匹配。
 - 登录和验证网页必须从 App 的 `更多 -> 账号中心` 入口打开；页面包名仍应是 `com.wz.reader`。用 Chrome 打开网页不能算登录 / 验证通过。
-- 用户提供 NodeSeek、linux.do、V2EX 或妖火主题链接用于效果验证或排障时，先解析来源和主题 id，再用模拟器 App 内详情页验证；不得用 Chrome 或桌面浏览器代替。该内部验证流程不代表产品需要支持外部链接直达。
+- 用户提供 NodeSeek、linux.do、V2EX 或妖火主题链接用于查看、效果验证或排障时，必须按 `docs/operator-runbook.md` 的“直接打开主题链接”解析来源和主题 id，并直达模拟器 App 内详情页；搜索框、搜索结果、Chrome 或桌面浏览器都不能代替。该内部验证流程不代表产品需要支持外部 HTTPS 链接直达。
 - 新增或修改依赖登录态的能力时，必须从 App 内原站同类页面核实字段、权限、入口和请求；未登录页面、桌面浏览器、第三方客户端、作者名或猜测的 API 不能作为依据。必要时可通过 WebView 调试查看 DOM、全局数据、已加载 JS 和 network，但不得输出 Cookie、token 或含敏感信息的截图、UI dump；临时取证文件只能保留在本机且不得提交。
 - 单一账号、页面或当前已加载 JS/API 中没有对应入口或行为，不足以证明原站不支持。证据不足时不得猜测实现或新增入口，也不得据此移除或隐藏已有能力；应说明证据缺口。
 - “全面测试”默认不授权真实发布、回复、编辑、删除、上传、点赞、投票或收藏切换；这些写操作只用自动测试、请求构造、权限显示和只读入口检查覆盖。
@@ -42,6 +42,28 @@
 - Agent Live 不是 CI。它只在 `npm run verify` 和相关 Replay 之后按 `targeted` 或 `full` Profile 执行；CF、动态目标、授权、恢复、不可逆写入和失败续跑规则以 `tests/live/agent-live.md` 为准。
 - React Doctor 只扫描新增行并阻断新增 error；它是静态建议，不替代任何行为测试。
 - 历史逃逸事故及负向控制见 `docs/regression-corpus.md`。
+
+## 改动影响面回归
+
+任何会被多个入口、流程或数据路径消费的改动，都不能只用当前复现入口代表完整影响面。修改前后必须按以下顺序执行：
+
+1. 用户指定入口、路径或数据来源时，以该路径作为事实基准；不得用搜索结果、替代入口或近似数据代替。路径确实不可用时，记录阻碍和替代路径的差异。
+2. 修改前用代码搜索、结构导航和必要的运行时检查枚举直接调用方、间接消费者、共享状态、配置、样式、数据结构及上下游转换，并记录各入口的输入、默认状态和结果。
+3. 按行为而不是文件数量分组。数据约束、生命周期、权限、错误处理或交互结果不同的场景必须分别验收，并在实现上保持清晰边界。
+4. 每类受影响行为都要有独立回归证据：优先用能在修复前失败的入口级自动测试；缺少自动化能力时，使用稳定定位和真实运行环境逐入口验收。
+5. 局部模块单测只证明局部规则，不能证明所有入口接线正确；静态检查、程序可启动或单个入口截图也不能替代完整影响面回归。
+6. 不得为了让新用例通过而删除或合并掉覆盖旧行为的测试。最终交付必须列出“影响面 / 验证方式 / 结果”，未验证项要明确说明原因和风险。
+
+评论布局或间距改动还必须覆盖“正文最后一个可见内容”之后的行为差异，不能只按站点各抽一条普通文本评论：
+
+| 来源 | 必查末尾分支 |
+| --- | --- |
+| NodeSeek | 普通正文、纯表情 / sticker、带用户留言或签名；可写时检查操作栏，不可写且有统计时检查统计栏 |
+| linux.do | 有 / 无 reaction 统计、含投票的回复；可写时检查操作栏 |
+| V2EX | 有 / 无回复目标、有 / 无感谢；本站没有评论操作栏，检查末块到分隔线及下一条评论的留白 |
+| 妖火 | 普通正文、表情 / 图片；检查回复操作栏，出现删除入口时不得改变操作栏纵向几何 |
+
+每个分支都要比较正文、表情、留言、统计或感谢中的最后一个实际可见元素到操作栏或分隔线的距离，以及操作栏到分隔线的距离；同时用真实截图做视觉复核。只量父容器、只看一张截图或只验证某站普通文本，均不能代表该改动已完整回归。
 
 ## 诊断日志完成标准
 
@@ -71,7 +93,7 @@
 | 入口 / 导航 | 冷启动进入首页；4 个底部入口可切换；从首页、搜索、收藏打开主题和用户页后可返回；详情页内再打开主题不会丢上一级状态 | `src/topicSessionState.test.ts`、`src/userNavigation.test.ts`、`src/app/backHandlerHelpers.test.ts` |
 | 首页 / 分类 / 分页 | 四站来源按当前支持范围返回；分类不串站；分页不重复、不漏掉下一页；聚合首页保留来源平衡；linux.do、NodeSeek、V2EX 单站排序参数和缓存 key 不串用 | `src/feedLogic.test.ts`、`src/feedCategoryRail.test.ts`、`src/forumApi.test.ts`、`src/localSources.test.ts` |
 | 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/yaohuoApi.test.ts` |
-| 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；楼层引用和图片预览可用；返回后上一层详情状态保留 | `src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts` |
+| 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；正文引用和评论引用分别默认显示简介，展开后显示目标完整帖子，且两条渲染路径互不串样式、状态或缓存；图片预览可用；返回后上一层详情状态保留 | `src/quotedPosts.test.ts`、`src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts` |
 | 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
 | 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站 | `src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
@@ -277,7 +299,7 @@ npm run typecheck
 | 区域 | 必查 | 不默认点击 |
 | --- | --- | --- |
 | 首页 | 四个来源、分类、阅读筛选、单站排序、打开详情、返回列表 | 无 |
-| 详情 | 来源、标题、作者、时间、正文、回复数、附件、图片预览、返回 | 保存图片、回复、点赞、收藏切换 |
+| 详情 | 来源、标题、作者、时间、正文、回复数、附件、图片预览、返回；正文引用与评论引用分别检查简介常显、展开完整帖、收起恢复简介，并确认修改一处后另一处样式和交互不变 | 保存图片、回复、点赞、收藏切换 |
 | 搜索 | 关键词、来源分组、结果数、首条、筛选、详情、返回、错误文案 | 外部网页、写操作 |
 | 收藏 | 收藏数、来源筛选、分类筛选、已收藏 / 已读状态 | 取消收藏 |
 | 历史 | 历史数、最近阅读、已读状态 | 删除、清空历史 |

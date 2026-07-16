@@ -74,6 +74,7 @@ export interface Reply {
   floor?: number;
   quotedFloors?: number[];
   quotedAuthors?: Record<number, string>;
+  quotedPreviews?: Record<number, string>;
   commentId?: number;
   upvoteCount?: number;
   likeCount?: number;

@@ -5,6 +5,7 @@ import { Pressable, Text, View } from 'react-native';
 import { createEmptyReaderData } from '../../src/readerData';
 import { ReplyComposerSheet } from '../../src/screens/topic/ReplyComposerSheet';
 import { ReplyItem } from '../../src/screens/topic/ReplyItem';
+import { TopicBodyQuoteCard } from '../../src/screens/topic/TopicBodyQuoteCard';
 import { TopicPolls } from '../../src/screens/topic/TopicPolls';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
@@ -14,6 +15,13 @@ jest.mock('@shopify/flash-list', () => ({
   useMappingHelper: () => ({
     getMappingKey: (key: string | number) => String(key)
   })
+}));
+
+jest.mock('../../src/localLinuxdo', () => ({
+  splitLinuxDoContentHtml: (html: string | undefined, polls: TopicPoll[] | undefined) => [
+    ...(html ? [{ type: 'html' as const, html }] : []),
+    ...(polls || []).map((poll) => ({ type: 'poll' as const, poll }))
+  ]
 }));
 
 jest.mock('@gorhom/bottom-sheet', () => {
@@ -88,6 +96,8 @@ jest.mock('lucide-react-native', () => {
   return {
     CheckCircle: Icon,
     CheckSquare: Icon,
+    ChevronDown: Icon,
+    ChevronUp: Icon,
     Circle: Icon,
     Drumstick: Icon,
     MessageCircle: Icon,
@@ -170,7 +180,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     onOpenUser: jest.fn(),
     onReplyToFloor: jest.fn(),
     onTogglePollSelection: jest.fn(),
-    onToggleQuotedFloor: jest.fn(),
+    onToggleReplyQuote: jest.fn(),
     onVotePoll: jest.fn(),
     pollSelections: {},
     query: '',
@@ -182,6 +192,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
     theme,
     topicAuthor: 'alice',
     topicBaseUrl: 'https://www.nodeseek.com/post-1-1',
+    topicId: 'topic-1',
     topicImageDeriver,
     ...overrides
   };
@@ -234,7 +245,7 @@ describe('Topic real child components', () => {
     const onInteract = jest.fn();
     const onOpenUser = jest.fn();
     const onReplyToFloor = jest.fn();
-    const onToggleQuotedFloor = jest.fn();
+    const onToggleReplyQuote = jest.fn();
     const quotedReply: Reply = {
       author: 'quoted-user',
       contentHtml: '<p>被引用内容</p>',
@@ -242,11 +253,11 @@ describe('Topic real child components', () => {
       floor: 1
     };
     const props = replyProps({
-      loadedQuotedReplies: { 1: quotedReply },
+      loadedQuotedReplies: { 'nodeseek:topic-1:1': quotedReply },
       onInteract,
       onOpenUser,
       onReplyToFloor,
-      onToggleQuotedFloor
+      onToggleReplyQuote
     });
     const view = await render(<ReplyItem {...props} />);
 
@@ -254,9 +265,9 @@ describe('Topic real child components', () => {
     expect(view.getByText('OP')).toBeTruthy();
     expect(view.queryByText('被引用内容')).toBeNull();
     await fireEvent.press(view.getByText('展开'));
-    expect(onToggleQuotedFloor).toHaveBeenCalledWith({ replyFloor: 2, quotedFloor: 1, quotedReply });
+    expect(onToggleReplyQuote).toHaveBeenCalledWith({ replyFloor: 2, quotedFloor: 1, quotedReply });
 
-    await view.rerender(<ReplyItem {...props} expandedQuotes={{ '2:1': true }} />);
+    await view.rerender(<ReplyItem {...props} expandedQuotes={{ 'reply:2:nodeseek:topic-1:1': true }} />);
     expect(view.getByText('被引用内容')).toBeTruthy();
     await fireEvent.press(view.getByText('回复 @bob'));
     expect(onOpenUser).toHaveBeenCalledWith(expect.objectContaining({ source: 'nodeseek', username: 'bob' }));
@@ -271,6 +282,94 @@ describe('Topic real child components', () => {
       ['like', 22],
       ['dislike', 22]
     ]);
+  });
+
+  it('keeps a linux.do quote preview visible and reveals only the matching complete post on expand', async () => {
+    const onToggleReplyQuote = jest.fn();
+    const quotedReply: Reply = {
+      author: 'quoted-user',
+      contentHtml: '<p>完整帖子正文</p>',
+      createdAt: '2026-07-14T00:00:00.000Z',
+      floor: 1
+    };
+    const reply: Reply = {
+      ...replyProps().reply,
+      quotedPreviews: { 1: '引用简介' }
+    };
+    const props = replyProps({
+      loadedQuotedReplies: {
+        'linuxdo:other-topic:1': { ...quotedReply, contentHtml: '<p>错误主题内容</p>' },
+        'linuxdo:topic-1:1': quotedReply
+      },
+      onToggleReplyQuote,
+      repliesByFloor: new Map(),
+      reply,
+      source: 'linuxdo'
+    });
+    const view = await render(<ReplyItem {...props} />);
+
+    expect(view.getByText('引用简介')).toBeTruthy();
+    expect(view.queryByText('完整帖子正文')).toBeNull();
+    expect(view.queryByText('错误主题内容')).toBeNull();
+    await fireEvent.press(view.getByText('展开'));
+    expect(onToggleReplyQuote).toHaveBeenCalledWith({ replyFloor: 2, quotedFloor: 1, quotedReply });
+
+    await view.rerender(
+      <ReplyItem {...props} expandedQuotes={{ 'reply:2:linuxdo:topic-1:1': true }} />
+    );
+    expect(view.getByText('引用简介')).toBeTruthy();
+    expect(view.getByText('完整帖子正文')).toBeTruthy();
+    expect(view.queryByText('错误主题内容')).toBeNull();
+  });
+
+  it('keeps the topic-body quote preview separate from its complete post', async () => {
+    const onOpenReference = jest.fn();
+    const onToggle = jest.fn();
+    const view = await render(
+      <TopicBodyQuoteCard
+        expanded={false}
+        header={(
+          <Pressable accessibilityLabel="正文引用标题" onPress={onOpenReference}>
+            <Text>正文引用作者</Text>
+          </Pressable>
+        )}
+        loading={false}
+        preview={<Text>正文引用简介</Text>}
+        previewTestID="topic-quote-preview-20-1"
+        styles={styles}
+        testID="topic-quote-20-1"
+        theme={theme}
+        onToggle={onToggle}
+      />
+    );
+
+    expect(view.getByTestId('topic-quote-preview-20-1')).toBeTruthy();
+    expect(view.getByText('正文引用简介')).toBeTruthy();
+    expect(view.queryByText('正文引用完整帖子')).toBeNull();
+    await fireEvent.press(view.getByLabelText('正文引用标题'));
+    expect(onOpenReference).toHaveBeenCalledTimes(1);
+    expect(onToggle).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByText('展开'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    await view.rerender(
+      <TopicBodyQuoteCard
+        completeContent={<Text>正文引用完整帖子</Text>}
+        completeTestID="topic-quote-complete-20-1"
+        expanded
+        header={<Text>正文引用作者</Text>}
+        loading={false}
+        preview={<Text>正文引用简介</Text>}
+        previewTestID="topic-quote-preview-20-1"
+        styles={styles}
+        testID="topic-quote-20-1"
+        theme={theme}
+        onToggle={onToggle}
+      />
+    );
+    expect(view.getByTestId('topic-quote-complete-20-1')).toBeTruthy();
+    expect(view.getByText('正文引用简介')).toBeTruthy();
+    expect(view.getByText('正文引用完整帖子')).toBeTruthy();
   });
 
   it('exposes only the actions allowed by each reply source', async () => {
