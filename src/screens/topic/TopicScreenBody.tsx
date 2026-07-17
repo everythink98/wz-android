@@ -39,7 +39,7 @@ import { topicActionStateKey, type InteractionType, type OptimisticActionState, 
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
 import { getLinuxDoEmojiUrls, splitLinuxDoContentHtml } from '../../localLinuxdo';
-import { splitNodeSeekContentHtml } from '../../nodeseekPolls';
+import { NODESEEK_POLL_PLACEHOLDER_TAG } from '../../nodeseekPolls';
 import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import { replyImageUploadSupported } from '../../replyImageUpload';
@@ -169,6 +169,11 @@ const HTML_CUSTOM_ELEMENT_MODELS = {
   }),
   [FORUM_REPLY_REFERENCE_TAG]: HTMLElementModel.fromCustomModel({
     tagName: FORUM_REPLY_REFERENCE_TAG,
+    contentModel: HTMLContentModel.block,
+    isOpaque: true
+  }),
+  [NODESEEK_POLL_PLACEHOLDER_TAG]: HTMLElementModel.fromCustomModel({
+    tagName: NODESEEK_POLL_PLACEHOLDER_TAG,
     contentModel: HTMLContentModel.block,
     isOpaque: true
   }),
@@ -484,9 +489,7 @@ export const TopicScreen = memo(function TopicScreen({
         }]
         : (topic.source === 'linuxdo'
           ? splitLinuxDoContentHtml(topicContentHtml, topicPolls)
-          : topic.source === 'nodeseek'
-            ? splitNodeSeekContentHtml(topicContentHtml, topicPolls)
-            : [{ type: 'html' as const, html: topicContentHtml }]
+          : [{ type: 'html' as const, html: topicContentHtml }]
         ).flatMap((part, partIndex): TopicContentItem[] => {
           if (part.type === 'poll') {
             return [{ type: 'poll' as const, key: `topic-poll-${part.poll.name || part.poll.id || partIndex}`, poll: part.poll }];
@@ -621,6 +624,30 @@ export const TopicScreen = memo(function TopicScreen({
     };
   }, [htmlRenderers, styles, theme.ink, theme.primarySoft]);
   const topicBodyHtmlRenderers = useMemo<HtmlRenderers>(() => {
+    const NodeSeekPollRenderer: CustomBlockRenderer = (props) => {
+      const encodedId = String(props.tnode.attributes.id || '');
+      const poll = itemSource === 'nodeseek'
+        ? topicPolls.find((candidate) => candidate.id && encodeURIComponent(candidate.id) === encodedId)
+        : undefined;
+      if (!poll) {
+        return null;
+      }
+      return (
+        <TopicPolls
+          actionBusy={actionBusy}
+          canWritePollSource={canWriteTopicPollSource}
+          embeddedInArticle
+          keyPrefix="topic"
+          onTogglePollSelection={togglePollSelection}
+          onVotePoll={onVotePoll}
+          pollSelections={pollSelections}
+          polls={[poll]}
+          source="nodeseek"
+          styles={styles}
+          theme={theme}
+        />
+      );
+    };
     const QuoteAsideRenderer: CustomBlockRenderer = (props) => {
       const tchildrenProps = useTNodeChildrenProps(props);
       const { TDefaultRenderer, ...defaultRendererProps } = props;
@@ -690,10 +717,12 @@ export const TopicScreen = memo(function TopicScreen({
     };
     return {
       ...genericHtmlRenderers,
-      aside: QuoteAsideRenderer
+      aside: QuoteAsideRenderer,
+      [NODESEEK_POLL_PLACEHOLDER_TAG]: NodeSeekPollRenderer
     };
   }, [
     actionBusy,
+    canWriteTopicPollSource,
     contentWidth,
     expandedQuotes,
     genericHtmlRenderers,
@@ -710,7 +739,8 @@ export const TopicScreen = memo(function TopicScreen({
     theme,
     togglePollSelection,
     topicBaseUrl,
-    topicImageDeriver
+    topicImageDeriver,
+    topicPolls
   ]);
   const renderTopicListItemFrame = useCallback((children: ReactNode, key?: string) => (
     <View key={key} style={styles.topicListItemFrame}>{children}</View>

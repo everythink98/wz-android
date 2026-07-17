@@ -24,6 +24,7 @@ import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } 
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
 import { splitLinuxDoContentHtml } from './localLinuxdo';
+import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
@@ -768,6 +769,53 @@ describe('Android local sources', () => {
     expect(topic.contentHtml).not.toContain('vote-panel');
     expect(topic.contentHtml).not.toContain('embed-vote');
     expect(topic.contentHtml.trim()).toBe('<forum-nodeseek-poll id="2443"></forum-nodeseek-poll>');
+  });
+
+  it('[REG-WRITE-010] removes an adjacent NodeSeek poll marker leak without splitting the surrounding paragraph', async () => {
+    const fetcher = vi.fn(async () => html(`
+      <h1>NodeSeek mixed poll paragraph</h1>
+      <div id="0" data-comment-id="100" class="content-item">
+        <div class="author-info"><a href="/space/9891" class="author-name">alice</a></div>
+        <time datetime="2026-07-13T00:00:00.000Z"></time>
+        <article class="post-content">
+          <p>投票前正文 1 &gt; 0<br>
+            &quot;&gt;<div class="vote-panel">
+              <div class="embed-vote">
+                <form class="pure-form">
+                  <h2>原位投票</h2>
+                  <fieldset class="vote-stat-wrapper">
+                    <div class="vote-stat not-voted">
+                      <input id="vote-item-2674-12308" name="vote-item" type="radio" value="12308">
+                      <label for="vote-item-2674-12308" class="pure-checkbox">
+                        <div class="vote-item-text">选项 A</div>
+                      </label>
+                    </div>
+                  </fieldset>
+                  <div>nsapp://vote?id=2674 (匿名投票)</div>
+                </form>
+              </div>
+            </div><br>
+            投票后正文 <img class="sticker" src="/static/image/sticker/ac/2007.png" alt="ac2007"><br>
+            正文结尾
+          </p>
+        </article>
+      </div>
+    `));
+
+    const topic = await getNodeSeekTopic('819647', { fetcher });
+    const placeholder = '<forum-nodeseek-poll id="2674"></forum-nodeseek-poll>';
+    const beforeIndex = topic.contentHtml.indexOf('投票前正文');
+    const pollIndex = topic.contentHtml.indexOf(placeholder);
+    const afterIndex = topic.contentHtml.indexOf('投票后正文');
+
+    expect(topic.contentHtml).not.toContain('&quot;&gt;');
+    expect(textContentFromHtml(topic.contentHtml)).not.toContain('\">');
+    expect(topic.contentHtml).toContain('1 &gt; 0');
+    expect(topic.contentHtml.match(/<forum-nodeseek-poll\b/g)).toHaveLength(1);
+    expect(topic.contentHtml).toMatch(/^<p>[\s\S]*<\/p>$/);
+    expect(pollIndex).toBeGreaterThan(beforeIndex);
+    expect(afterIndex).toBeGreaterThan(pollIndex);
+    expect(topic.contentHtml).toContain('class="sticker"');
   });
 
   it('keeps NodeSeek detail metadata from rendered HTML fallback', async () => {

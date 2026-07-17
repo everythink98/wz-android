@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import { ActivityIndicator, Image, PixelRatio, Pressable, ScrollView, StyleSheet, Text, View, type ImageStyle, type ImageURISource, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
 import { useEvent } from 'expo';
-import { Image as ExpoImage } from 'expo-image';
+import { Image as ExpoImage, useImage, type ImageRef } from 'expo-image';
 import { VideoView, useVideoPlayer, type VideoPlayerStatus, type VideoSource } from 'expo-video';
 import { WebView } from 'react-native-webview';
 import {
@@ -9,9 +9,10 @@ import {
   TChildrenRenderer,
   useContentWidth,
   useIMGElementProps,
-  useIMGElementState,
+  useIMGElementStateWithCache,
   type CustomBlockRenderer,
-  type CustomMixedRenderer
+  type CustomMixedRenderer,
+  type IMGElementProps
 } from 'react-native-render-html';
 import type { ReaderSettings } from '../readerData';
 import { createTopicImageDeriver } from '../topicDerivedData';
@@ -40,10 +41,6 @@ import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
-
-export function shouldShowPreviewImageLoading(imageStateType: 'loading' | 'success' | 'error', nativeImageLoaded: boolean) {
-  return imageStateType === 'loading' || (imageStateType === 'success' && !nativeImageLoaded);
-}
 
 function isVideoStickerUrl(url: string) {
   return /\.(?:webm|mp4|mov)(?:[?#].*)?$/i.test(url);
@@ -205,6 +202,120 @@ function ForumVideoStickerVideo({
         </View>
       ) : null}
     </View>
+  );
+}
+
+type PreviewImageDimensions = { height: number; width: number };
+
+const previewImageDimensionsByUrl = new Map<string, PreviewImageDimensions>();
+
+function PreviewImageBlock({
+  attributes,
+  errorTextStyle,
+  frameBackgroundColor,
+  frameBorderColor,
+  imageProps,
+  imageSource,
+  loadingColor,
+  markInlineSizedImageUrl,
+  onOpenImagePreview,
+  src
+}: {
+  attributes: Record<string, string | undefined>;
+  errorTextStyle: StyleProp<TextStyle>;
+  frameBackgroundColor: string;
+  frameBorderColor: string;
+  imageProps: IMGElementProps;
+  imageSource: ImageURISource;
+  loadingColor: string;
+  markInlineSizedImageUrl: (url: string) => void;
+  onOpenImagePreview: (url: string) => void;
+  src: string;
+}) {
+  const headers = imageSource.headers;
+  const headerAccept = headers?.Accept || '';
+  const headerCookie = headers?.Cookie || '';
+  const headerReferer = headers?.Referer || '';
+  const headerUserAgent = headers?.['User-Agent'] || '';
+  const requestIdentity = [src, headerAccept, headerCookie, headerReferer, headerUserAgent].join('\u0000');
+  const requestIdentityRef = useRef(requestIdentity);
+  requestIdentityRef.current = requestIdentity;
+  const [resolvedImage, setResolvedImage] = useState<{ image: ImageRef; requestIdentity: string } | null>(null);
+  const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
+  const contentWidth = Math.max(1, imageProps.contentWidth || 1);
+  const imageRef = useImage(imageSource, {
+    maxWidth: Math.ceil(contentWidth * PixelRatio.get()),
+    onError: () => setFailedRequestIdentity(requestIdentityRef.current)
+  }, [headerAccept, headerCookie, headerReferer, headerUserAgent]);
+  useEffect(() => {
+    if (imageRef) {
+      setResolvedImage({ image: imageRef, requestIdentity: requestIdentityRef.current });
+    }
+  }, [imageRef]);
+  const activeImageRef = resolvedImage?.requestIdentity === requestIdentity ? resolvedImage.image : null;
+  const loadFailed = failedRequestIdentity === requestIdentity;
+  const cacheKey = normalizeImagePreviewUrl(src).trim();
+  const cachedDimensions = previewImageDimensionsByUrl.get(cacheKey);
+  const naturalDimensions = activeImageRef
+    ? { height: activeImageRef.height, width: activeImageRef.width }
+    : cachedDimensions || { height: Math.round(contentWidth * 0.75), width: contentWidth };
+  const imageState = useIMGElementStateWithCache({
+    ...imageProps,
+    cachedNaturalDimensions: naturalDimensions,
+    source: imageSource,
+    style: [imageProps.style, { resizeMode: 'contain' }]
+  });
+  useEffect(() => {
+    if (!activeImageRef || !cacheKey) {
+      return;
+    }
+    const dimensions = { height: activeImageRef.height, width: activeImageRef.width };
+    previewImageDimensionsByUrl.set(cacheKey, dimensions);
+    if (shouldMarkLoadedImageInline(attributes, dimensions.width, dimensions.height)) {
+      markInlineSizedImageUrl(src);
+    }
+  }, [activeImageRef, attributes, cacheKey, markInlineSizedImageUrl, src]);
+  const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
+  const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
+  const imageStateFrameStyle = [{
+    alignItems: 'center' as const,
+    backgroundColor: frameBackgroundColor,
+    borderColor: frameBorderColor,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: 'center' as const,
+    overflow: 'hidden' as const
+  }, imageState.dimensions];
+  const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
+  return (
+    <Pressable
+      accessibilityLabel={imageState.alt || '查看图片'}
+      accessibilityRole="button"
+      style={sharedContainerStyle}
+      onPress={(event) => {
+        event.stopPropagation?.();
+        onOpenImagePreview(src);
+      }}
+    >
+      <View testID="topic-image-frame" style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
+        {activeImageRef ? (
+          <ExpoImage
+            contentFit="contain"
+            recyclingKey={src}
+            source={activeImageRef}
+            style={[imageState.dimensions, imageState.type === 'success' ? imageState.imageStyle : null]}
+          />
+        ) : null}
+        {!activeImageRef && !loadFailed ? (
+          <View style={imageLoadingOverlayStyle}>
+            <ActivityIndicator color={loadingColor} size="small" />
+          </View>
+        ) : loadFailed ? (
+          <View style={imageLoadingOverlayStyle}>
+            <Text numberOfLines={2} style={errorTextStyle}>{imageState.alt || '图片加载失败'}</Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -547,81 +658,30 @@ export function useHtmlRenderingController({
       return <VideoEmbedBlock embedUrl={embed.embedUrl} />;
     };
     const PreviewImageRenderer: CustomBlockRenderer = (props) => {
-      const [nativeImageLoadState, setNativeImageLoadState] = useState({ src: '', loaded: false });
       const contentWidth = useContentWidth();
       const imageProps = useIMGElementProps(props);
       const src = props.tnode.attributes.src || (typeof imageProps.source.uri === 'string' ? imageProps.source.uri : '');
-      const nativeImageLoaded = nativeImageLoadState.src === src && nativeImageLoadState.loaded;
       const imageSource = imageSourceFromUrl(src, imageProps.source, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
-      const imageState = useIMGElementState({
-        ...imageProps,
-        source: imageSource,
-        style: [imageProps.style, { resizeMode: 'contain' }]
-      });
       if (!src) {
         return <Text style={styles.inlineForumImageText}>{props.tnode.attributes.alt || props.tnode.attributes.title || ''}</Text>;
       }
       if (isInlineForumImage(props.tnode.attributes)) {
         return <Image source={imageSourceFromUrl(src, undefined, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent)} style={[styles.inlineForumImage, inlineForumImageDisplaySize(props.tnode.attributes, settings.fontScale, contentWidth), inlineForumImageAlignmentStyle(props.tnode.attributes, settings.fontScale, htmlBaseStyle.lineHeight)]} />;
       }
-      const { width: _width, height: _height, ...containerStyle } = StyleSheet.flatten(imageState.containerStyle) || {};
-      const sharedContainerStyle = [{ flexDirection: 'row' as const, alignSelf: 'stretch' as const, justifyContent: 'center' as const }, containerStyle];
-      const imageStateFrameStyle = [{
-        alignItems: 'center' as const,
-        backgroundColor: theme.surface2,
-        borderColor: theme.line,
-        borderWidth: StyleSheet.hairlineWidth,
-        justifyContent: 'center' as const,
-        overflow: 'hidden' as const
-      }, imageState.dimensions];
-      const imageLoadingOverlayStyle = [StyleSheet.absoluteFillObject, imageStateFrameStyle];
-      const showImageLoading = shouldShowPreviewImageLoading(imageState.type, nativeImageLoaded);
-      const content = imageState.type === 'success' ? (
-        <View style={[{ overflow: 'hidden' as const }, imageState.dimensions]}>
-          <ExpoImage
-            contentFit="contain"
-            recyclingKey={src}
-            source={imageState.source}
-            style={[imageState.dimensions, imageState.imageStyle, nativeImageLoaded ? null : { opacity: 0 }]}
-            onLoad={(event) => {
-              if (shouldMarkLoadedImageInline(props.tnode.attributes, event.source.width, event.source.height)) {
-                markInlineSizedImageUrl(src);
-              }
-            }}
-            onLoadStart={() => setNativeImageLoadState({ src, loaded: false })}
-            onLoadEnd={() => setNativeImageLoadState({ src, loaded: true })}
-            onError={(event) => {
-              setNativeImageLoadState({ src, loaded: true });
-              imageState.onError(new Error(event.error));
-            }}
-          />
-          {showImageLoading ? (
-            <View style={imageLoadingOverlayStyle}>
-              <ActivityIndicator color={theme.primary} size="small" />
-            </View>
-          ) : null}
-        </View>
-      ) : showImageLoading ? (
-        <View style={imageStateFrameStyle}>
-          <ActivityIndicator color={theme.primary} size="small" />
-        </View>
-      ) : (
-        <View style={imageStateFrameStyle}>
-          <Text numberOfLines={2} style={styles.inlineForumImageText}>{imageState.alt || '图片加载失败'}</Text>
-        </View>
-      );
       return (
-        <Pressable
-          accessibilityLabel={imageState.alt || '查看图片'}
-          accessibilityRole="button"
-          style={sharedContainerStyle}
-          onPress={(event) => {
-            event.stopPropagation?.();
-            onOpenImagePreview(src);
-          }}
-        >
-          {content}
-        </Pressable>
+        <PreviewImageBlock
+          key={src}
+          attributes={props.tnode.attributes}
+          errorTextStyle={styles.inlineForumImageText}
+          frameBackgroundColor={theme.surface2}
+          frameBorderColor={theme.line}
+          imageProps={imageProps}
+          imageSource={imageSource as ImageURISource}
+          loadingColor={theme.primary}
+          markInlineSizedImageUrl={markInlineSizedImageUrl}
+          onOpenImagePreview={onOpenImagePreview}
+          src={src}
+        />
       );
     };
     const InlineForumImageRenderer: CustomMixedRenderer = (props) => {

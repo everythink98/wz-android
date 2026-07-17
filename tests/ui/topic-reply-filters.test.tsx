@@ -62,10 +62,12 @@ jest.mock('react-native-webview', () => ({ WebView: () => null }));
 jest.mock('react-native-render-html', () => {
   const ReactModule = require('react') as typeof React;
   const Passthrough = ({ children }: { children?: React.ReactNode }) => ReactModule.createElement(ReactModule.Fragment, null, children);
+  const RenderersContext = ReactModule.createContext<Record<string, React.ComponentType<any>>>({});
   return {
+    __useMockRenderers: () => ReactModule.useContext(RenderersContext),
     HTMLContentModel: { block: 'block', mixed: 'mixed', textual: 'textual' },
     HTMLElementModel: { fromCustomModel: () => ({}) },
-    RenderHTMLConfigProvider: Passthrough,
+    RenderHTMLConfigProvider: ({ children, renderers = {} }: { children?: React.ReactNode; renderers?: Record<string, React.ComponentType<any>> }) => ReactModule.createElement(RenderersContext.Provider, { value: renderers }, children),
     TChildrenRenderer: () => null,
     TRenderEngineProvider: Passthrough,
     defaultHTMLElementModels: {
@@ -132,9 +134,35 @@ jest.mock('../../src/screens/topic/TopicActionBar', () => {
 });
 jest.mock('../../src/screens/topic/TopicContentBlock', () => {
   const ReactModule = require('react') as typeof React;
-  const { Text: NativeText } = require('react-native') as typeof import('react-native');
+  const { Text: NativeText, View: NativeView } = require('react-native') as typeof import('react-native');
   return {
-    MemoizedTopicContentBlock: ({ html }: { html: string }) => ReactModule.createElement(NativeText, null, html)
+    MemoizedTopicContentBlock: ({ html }: { html: string }) => {
+      const renderers = (require('react-native-render-html') as {
+        __useMockRenderers: () => Record<string, React.ComponentType<any>>;
+      }).__useMockRenderers();
+      const children: React.ReactNode[] = [];
+      const pattern = /<forum-nodeseek-poll\b[^>]*\bid=["']([^"']+)["'][^>]*>\s*<\/forum-nodeseek-poll\s*>/gi;
+      let offset = 0;
+      let match = pattern.exec(html);
+      while (match) {
+        if (match.index > offset) {
+          children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset, match.index)));
+        }
+        const Renderer = renderers['forum-nodeseek-poll'];
+        if (Renderer) {
+          children.push(ReactModule.createElement(Renderer, {
+            key: `poll-${match.index}`,
+            tnode: { attributes: { id: match[1] } }
+          }));
+        }
+        offset = pattern.lastIndex;
+        match = pattern.exec(html);
+      }
+      if (offset < html.length) {
+        children.push(ReactModule.createElement(NativeText, { key: `html-${offset}` }, html.slice(offset)));
+      }
+      return ReactModule.createElement(NativeView, { testID: 'topic-html-block' }, children);
+    }
   };
 });
 jest.mock('../../src/screens/topic/TopicPolls', () => {
@@ -424,7 +452,7 @@ describe('Topic reply filters', () => {
       source: 'nodeseek',
       id: 'nodeseek-poll-topic',
       url: 'https://www.nodeseek.com/post-2-1',
-      contentHtml: '<p>投票前正文</p><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll><p>投票后正文</p><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll>',
+      contentHtml: '<p>投票前正文<br><forum-nodeseek-poll id="source-poll"></forum-nodeseek-poll><br>投票后正文 <img class="sticker" src="/sticker.png"></p>',
       polls: [topicPoll]
     };
     const view = await render(
@@ -442,6 +470,7 @@ describe('Topic reply filters', () => {
     expect(beforeIndex).toBeGreaterThanOrEqual(0);
     expect(pollIndex).toBeGreaterThan(beforeIndex);
     expect(afterIndex).toBeGreaterThan(pollIndex);
+    expect(view.getAllByTestId('topic-html-block')).toHaveLength(1);
     expect(view.getAllByTestId('topic-poll-nodeseek')).toHaveLength(1);
   });
 
