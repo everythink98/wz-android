@@ -123,6 +123,11 @@ export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: Array<stri
     if (!placeholderIds.has(id)) {
       return;
     }
+    const adjacentPrefix = element.previousSibling;
+    const adjacentPrefixText = decodeHtml(adjacentPrefix?.textContent || '').replace(/\s/g, '');
+    if (adjacentPrefix && /^"?>$/.test(adjacentPrefixText)) {
+      adjacentPrefix.remove();
+    }
     const anchor = element.closest('p') || element;
     const previous = anchor.previousElementSibling;
     const previousPrefix = decodeHtml(previous?.textContent || '').replace(/\s/g, '');
@@ -137,40 +142,4 @@ export function stripLoadedNodeSeekVoteMarkers(html: string, pollIds: Array<stri
     seen.add(id);
   });
   return root.querySelector('body')?.innerHTML || cleaned;
-}
-
-export function splitNodeSeekContentHtml(html: string | undefined, polls: TopicPoll[] | undefined) {
-  const clean = String(html || '').trim();
-  const pollList = polls || [];
-  if (!clean) {
-    return pollList.map((poll) => ({ type: 'poll' as const, poll }));
-  }
-  const pollsById = new Map(pollList.flatMap((poll) => poll.id ? [[encodeURIComponent(poll.id), poll] as const] : []));
-  const matchedPolls = new Set<TopicPoll>();
-  const parts: Array<{ type: 'html'; html: string } | { type: 'poll'; poll: TopicPoll }> = [];
-  const pattern = new RegExp(`<${NODESEEK_POLL_PLACEHOLDER_TAG}\\b[^>]*\\bid=["']([^"']+)["'][^>]*>\\s*<\\/${NODESEEK_POLL_PLACEHOLDER_TAG}\\s*>`, 'gi');
-  let offset = 0;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(clean))) {
-    const before = clean.slice(offset, match.index).trim();
-    if (before) {
-      parts.push({ type: 'html', html: before });
-    }
-    const poll = pollsById.get(match[1] || '');
-    if (poll && !matchedPolls.has(poll)) {
-      parts.push({ type: 'poll', poll });
-      matchedPolls.add(poll);
-    }
-    offset = pattern.lastIndex;
-  }
-  const after = clean.slice(offset).trim();
-  if (after) {
-    parts.push({ type: 'html', html: after });
-  }
-  for (const poll of pollList) {
-    if (!matchedPolls.has(poll)) {
-      parts.push({ type: 'poll', poll });
-    }
-  }
-  return parts;
 }

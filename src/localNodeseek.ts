@@ -284,7 +284,8 @@ function removeEmptyRenderedNodeSeekPollShells(root: HTMLElement) {
 }
 
 function parseRenderedNodeSeekPollForms(html: string) {
-  const root = parseHtml(`<body>${html}</body>`);
+  const wrappedHtml = `<body>${html}</body>`;
+  const root = parseHtml(wrappedHtml);
   const forms = root.querySelectorAll('form').filter((form) => {
     const marker = [
       form.getAttribute('class'),
@@ -326,16 +327,25 @@ function parseRenderedNodeSeekPollForms(html: string) {
     };
   });
   const polls = parsedPolls.filter((poll): poll is TopicPoll => Boolean(poll));
+  const replacements = new Map<string, { end: number; html: string; start: number }>();
   forms.forEach((form, index) => {
     const poll = parsedPolls[index];
-    if (!poll?.id) {
-      form.remove();
-      return;
-    }
-    (form.closest('.vote-panel') || form).replaceWith(nodeSeekPollPlaceholderHtml(poll.id));
+    const target = poll?.id ? (form.closest('.vote-panel') || form) : form;
+    const [start, end] = target.range;
+    replacements.set(`${start}:${end}`, {
+      end,
+      html: poll?.id ? nodeSeekPollPlaceholderHtml(poll.id) : '',
+      start
+    });
   });
-  removeEmptyRenderedNodeSeekPollShells(root);
-  const cleaned = root.querySelector('body')?.innerHTML || '';
+  const replacedHtml = [...replacements.values()]
+    .sort((left, right) => right.start - left.start)
+    .reduce((source, replacement) => (
+      `${source.slice(0, replacement.start)}${replacement.html}${source.slice(replacement.end)}`
+    ), wrappedHtml);
+  const cleanedRoot = parseHtml(replacedHtml);
+  removeEmptyRenderedNodeSeekPollShells(cleanedRoot);
+  const cleaned = cleanedRoot.querySelector('body')?.innerHTML || '';
   return {
     html: cleaned.trim(),
     polls: polls.length ? polls : undefined
@@ -1265,7 +1275,21 @@ function parseRenderedNodeSeekTopicHtml(html: string, id: string, replyLimit = 3
     || root.querySelector('.post-detail .post-content')
     || root.querySelector('.post-content');
   const title = nodeSeekRenderedTitle(root, restrictedNotice);
-  const renderedContentHtml = String(contentElement?.innerHTML || '').trim();
+  const renderedContentOuterHtml = contentElement
+    ? html.slice(contentElement.range[0], contentElement.range[1])
+    : '';
+  const renderedContentOpeningEnd = renderedContentOuterHtml.indexOf('>');
+  const renderedContentClosingStart = renderedContentOuterHtml.toLowerCase().lastIndexOf(
+    `</${String(contentElement?.rawTagName || '').toLowerCase()}`
+  );
+  const rawRenderedContentHtml = renderedContentOpeningEnd >= 0 && renderedContentClosingStart > renderedContentOpeningEnd
+    ? renderedContentOuterHtml.slice(renderedContentOpeningEnd + 1, renderedContentClosingStart)
+    : '';
+  const renderedContentHtml = String(
+    contentElement?.querySelector('.vote-panel') && rawRenderedContentHtml
+      ? rawRenderedContentHtml
+      : contentElement?.innerHTML || ''
+  ).trim();
   const contentHtml = renderedContentHtml || restrictedNotice;
   if (!title || !contentHtml) {
     return null;

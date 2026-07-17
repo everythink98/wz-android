@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
   Image: 'Image',
+  PixelRatio: { get: () => 1 },
   Pressable: 'Pressable',
   StyleSheet: {
     absoluteFillObject: {},
@@ -19,7 +20,8 @@ vi.mock('react-native-webview', () => ({
 }));
 
 vi.mock('expo-image', () => ({
-  Image: 'ExpoImage'
+  Image: 'ExpoImage',
+  useImage: vi.fn()
 }));
 
 vi.mock('expo', () => ({
@@ -43,22 +45,12 @@ vi.mock('lucide-react-native', () => ({
 vi.mock('react-native-render-html', () => ({
   getNativePropsForTNode: vi.fn(() => ({})),
   useIMGElementProps: vi.fn(),
-  useIMGElementState: vi.fn()
+  useIMGElementStateWithCache: vi.fn()
 }));
 
-import { shouldShowPreviewImageLoading, shouldShowVideoStickerLoading } from './useHtmlRenderingController';
+import { shouldShowVideoStickerLoading } from './useHtmlRenderingController';
 
-describe('HTML topic image loading state', () => {
-  it('keeps loading visible after dimensions are ready until the native image finishes loading', () => {
-    expect(shouldShowPreviewImageLoading('success', false)).toBe(true);
-    expect(shouldShowPreviewImageLoading('success', true)).toBe(false);
-  });
-
-  it('shows loading while dimensions are unresolved but not after an image error', () => {
-    expect(shouldShowPreviewImageLoading('loading', false)).toBe(true);
-    expect(shouldShowPreviewImageLoading('error', false)).toBe(false);
-  });
-
+describe('HTML topic media loading state', () => {
   it('keeps video sticker loading visible until the first rendered frame', () => {
     expect(shouldShowVideoStickerLoading(false, false, 'idle')).toBe(true);
     expect(shouldShowVideoStickerLoading(false, false, 'readyToPlay')).toBe(true);

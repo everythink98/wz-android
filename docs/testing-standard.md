@@ -93,7 +93,7 @@
 | 入口 / 导航 | 冷启动进入首页；4 个底部入口可切换；从首页、搜索、收藏打开主题和用户页后可返回；详情页内再打开主题不会丢上一级状态 | `src/topicSessionState.test.ts`、`src/userNavigation.test.ts`、`src/app/backHandlerHelpers.test.ts` |
 | 首页 / 分类 / 分页 | 四站来源按当前支持范围返回；分类不串站；分页不重复、不漏掉下一页；聚合首页保留来源平衡；linux.do、NodeSeek、V2EX 单站排序参数和缓存 key 不串用 | `src/feedLogic.test.ts`、`src/feedCategoryRail.test.ts`、`src/forumApi.test.ts`、`src/localSources.test.ts` |
 | 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/yaohuoApi.test.ts` |
-| 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；正文引用和评论引用分别默认显示简介，展开后显示目标完整帖子，且两条渲染路径互不串样式、状态或缓存；图片预览可用；返回后上一层详情状态保留 | `src/quotedPosts.test.ts`、`src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts` |
+| 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；正文引用和评论引用分别默认显示简介，展开后显示目标完整帖子，且两条渲染路径互不串样式、状态或缓存；块级正文图片冷加载只有一个全宽 4:3 占位和一个连续 Spinner，同一 ImageRef 就绪后直接显示，热重进保持真实比例，请求切换不泄漏旧图，inline 媒体不进入块图 loader；图片预览可用；返回后上一层详情状态保留 | `src/quotedPosts.test.ts`、`src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts`、`tests/ui/topic-image-loading.test.tsx` |
 | 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
 | 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
 | 互动 / 写操作 | 未登录时不发送；登录后请求带正确 Cookie / CSRF / sid；成功后本地状态不重复计数；失败后回滚；投票、收藏、点赞、回复的目标不串站。NodeSeek 投票读取失败时保留原始标记并诊断为 `partial`；提交前确认，确认后严格 `POST × 1 → GET × 1`，GET 失败不重投、不伪造票数 | `src/localSources.test.ts`、`src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/app/useTopicActionsController.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
@@ -245,7 +245,7 @@ npm run typecheck
 通过标准：
 
 - NodeSeek `/api/vote/info/{id}` 缺少动态签名的 403 必须能被测试复现；fallback header 只进入投票读取和提交，不能扩散到其他 NodeSeek JSON 或写操作。隐藏 WebView 不等待投票 DOM。
-- 未投、已投、多选、锁定和多个标记部分失败分别有 oracle。未投时不提前展示结果票数；成功标记替换为正文内投票占位，渲染表单与相邻 `">` 原始标记并存时也只能保留一张卡，且严格位于标记前后正文之间；失败标记保留且详情诊断为 `partial`。
+- 未投、已投、多选、锁定和多个标记部分失败分别有 oracle。未投时不提前展示结果票数；成功标记替换为正文内投票占位，渲染表单与相邻 `">` 原始标记并存时也只能保留一张卡，且严格位于标记前后正文之间；整篇 NodeSeek 正文保持一个 HTML 渲染树，不因投票新增正文分隔线，投票后的文本、图片和 sticker 不重叠；失败标记保留且详情诊断为 `partial`。
 - NodeSeek 取消确认时保留当前选择且零请求；确认后只有一次 POST，随后只有一次结果 GET。服务端快照替换当前投票数据并经 action update 同步活动 route snapshot，不刷新整篇正文。
 - 结果 GET 失败仍显示已投和所选项，未知票数保持未知，诊断为 `partial` 并提示刷新失败；不得重发 POST 或把未知票数写成 `1`。
 - LinuxDo 保留 `REG-WRITE-001` 的已知计数/参与人数单次增量，妖火仍可提交投票，V2EX 仍只显示原站可读票数；公共 `TopicPolls` 的样式和交互未因 NodeSeek 专项协议改变。
@@ -254,7 +254,7 @@ npm run typecheck
 
 1. 记录当前 revision、dirty 状态、App version/versionCode、安装 APK SHA、设备和 Metro 身份；安装包或 bundle 不匹配时不能沿用旧基线。
 2. 用户给出主题 URL 时，解析来源与 id 后直达 App 内详情页。该 URL 是目标，不得先走搜索；只有没有目标，或需要额外寻找一个未投只读样本时，才可搜索准确关键词“投票”。
-3. 对已投 NodeSeek 目标只读核对：准确所选项、动态票数、禁用/已投状态、投票卡片位于原始正文标记位置且正文底部没有重复卡片，并确认原始 `nsapp://vote` 标记消失。动态票数只记录当次结果，不写成固定基线；不得再次投票。
+3. 对已投 NodeSeek 目标只读核对：准确所选项、动态票数、禁用/已投状态、投票卡片位于原始正文标记位置且正文底部没有重复卡片，并确认原始 `nsapp://vote` 标记和相邻泄漏前缀消失；对投票前后含正文/媒体的目标，再与“原站打开”对照，确认没有额外正文分隔线，后文、图片和 sticker 不重叠。动态票数只记录当次结果，不写成固定基线；不得再次投票。
 4. 对未投 NodeSeek 目标，先记录准确选项和未投状态，只打开“提交后不可修改”确认框并取消，确认本地选择仍在且没有远端写入。没有合格目标记 `NOT_VERIFIED`，不能拿搜索结果页或普通主题冒充。
 5. 只读打开 LinuxDo、妖火各一个真实投票和 V2EX 一个可见票数主题，分别核对卡片/选项/状态；某站没有合格动态目标时只记该站 `NOT_VERIFIED`，不能用另一站通过代替。
 6. 真正投票属于不可逆写入：必须先报告主题、准确选项和残留风险，再取得针对该对象和本次提交的逐次授权。确认后只提交一次；结果不明时停止且不得重试。刷新/重进 App 后，再从 App 内原站同类页面核对所选项和结果，桌面浏览器或第三方客户端不能替代。
