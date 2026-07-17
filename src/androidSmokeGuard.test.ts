@@ -215,10 +215,14 @@ describe('Android release evidence guards', () => {
     ].join('\n'));
 
     const multiSourceSearchReplay = readFileSync(path.join(deviceDir, 'search-multi-source.ad'), 'utf8');
-    expect(multiSourceSearchReplay.match(/is visible id="search-result-first"/g)).toHaveLength(3);
-    expect(multiSourceSearchReplay.match(/press id="search-result-first"/g)).toHaveLength(3);
-    expect(multiSourceSearchReplay.match(/wait id="topic-detail-loaded" 60000/g)).toHaveLength(3);
-    expect(multiSourceSearchReplay.match(/back --system/g)).toHaveLength(3);
+    expect(multiSourceSearchReplay).toContain('press id="search-overview-source-v2ex"');
+    expect(multiSourceSearchReplay).not.toContain('search-page-loaded-');
+    expect(multiSourceSearchReplay).toContain('press label="清空搜索关键词"');
+    expect(multiSourceSearchReplay).toContain('press label="搜索最近记录 AI"');
+    expect(multiSourceSearchReplay.match(/is visible id="search-result-first"/g)).toHaveLength(5);
+    expect(multiSourceSearchReplay.match(/press id="search-result-first"/g)).toHaveLength(4);
+    expect(multiSourceSearchReplay.match(/wait id="topic-detail-loaded" 60000/g)).toHaveLength(4);
+    expect(multiSourceSearchReplay.match(/back --system/g)).toHaveLength(4);
   });
 
   it('continues independent Replay files and reports all failures together', async () => {
@@ -302,6 +306,9 @@ describe('Android release evidence guards', () => {
     expect(searchScreen).toContain('testID="search-query"');
     expect(searchScreen).toContain('testID="search-submit"');
     expect(searchScreen).toContain('testIDPrefix="search-source"');
+    expect(searchScreen).toContain('search-overview-source-');
+    expect(searchScreen).toContain('search-page-loaded-');
+    expect(searchScreen).toContain('搜索最近记录');
     expect(searchScreen).toContain("'search-result-first'");
     expect(searchScreen).toContain("'search-complete'");
     expect(readProjectFile('src', 'screens', 'topic', 'TopicScreenBody.tsx')).toContain("testID={topic ? 'topic-detail-loaded' : undefined}");

@@ -17,7 +17,57 @@ function topic(id: string, source: Topic['source'], category = '默认'): Topic 
 }
 
 describe('Android search list items', () => {
-  it('puts remote group topics into virtualized list items', () => {
+  it('uses a two-topic non-paginating preview for the all-source overview', () => {
+    const groups: SearchGroup[] = [
+      {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [topic('v1', 'v2ex'), topic('v2', 'v2ex'), topic('v3', 'v2ex')],
+        hasMore: true,
+        nextPage: 2
+      },
+      {
+        source: 'linuxdo',
+        label: 'linux.do',
+        items: [topic('l1', 'linuxdo'), topic('l2', 'linuxdo'), topic('l3', 'linuxdo')],
+        hasMore: true,
+        nextPage: 2
+      },
+      {
+        source: 'nodeseek',
+        label: 'NodeSeek',
+        items: [topic('n1', 'nodeseek'), topic('n2', 'nodeseek'), topic('n3', 'nodeseek')],
+        hasMore: true,
+        nextPage: 2
+      },
+      {
+        source: 'yaohuo',
+        label: '妖火',
+        items: [topic('y1', 'yaohuo'), topic('y2', 'yaohuo'), topic('y3', 'yaohuo')],
+        hasMore: true,
+        nextPage: 2
+      }
+    ];
+
+    const items = buildSearchListItems({ groups, mode: 'overview' });
+
+    expect(items.filter((item) => item.type === 'groupHeader').map((item) => item.group.source)).toEqual([
+      'v2ex',
+      'linuxdo',
+      'nodeseek',
+      'yaohuo'
+    ]);
+    expect(items.filter((item) => item.type === 'topic').map((item) => item.topic.id)).toEqual([
+      'v1', 'v2',
+      'l1', 'l2',
+      'n1', 'n2',
+      'y1', 'y2'
+    ]);
+    expect(items.some((item) => item.type === 'groupLoadMore')).toBe(false);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '已载入 3 条' });
+  });
+
+  it('renders the full source list and pagination sentinel without a group header', () => {
     const groups: SearchGroup[] = [{
       source: 'linuxdo',
       label: 'linux.do',
@@ -26,28 +76,10 @@ describe('Android search list items', () => {
       nextPage: 2
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { linuxdo: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'source' });
 
-    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'topic', 'topic', 'groupLoadMore']);
+    expect(items.map((item) => item.type)).toEqual(['topic', 'topic', 'groupLoadMore']);
     expect(items.filter((item) => item.type === 'topic')).toHaveLength(2);
-  });
-
-  it('does not include group topics when the group is collapsed', () => {
-    const groups: SearchGroup[] = [{
-      source: 'linuxdo',
-      label: 'linux.do',
-      items: [topic('1', 'linuxdo')]
-    }];
-
-    const items = buildSearchListItems({
-      expandedGroups: { linuxdo: false },
-      groups
-    });
-
-    expect(items.map((item) => item.type)).toEqual(['groupHeader']);
   });
 
   it('keeps source auth notices visible instead of treating them as empty results', () => {
@@ -62,10 +94,7 @@ describe('Android search list items', () => {
       }
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { nodeseek: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupEmpty']);
     expect(items[1]).toMatchObject({ type: 'groupAuthNotice', group: { authNotice: { message: '未登录搜索，结果可能不完整。', tone: 'warning' } } });
@@ -83,13 +112,10 @@ describe('Android search list items', () => {
       }
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { nodeseek: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupEmpty']);
-    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '0 条' });
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '已载入 0 条' });
     expect(searchGroupEmptyText(groups[0])).toBe('NodeSeek 没有匹配结果');
   });
 
@@ -107,10 +133,7 @@ describe('Android search list items', () => {
       errorKind: 'login-required'
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { yaohuo: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '需登录' });
@@ -129,10 +152,7 @@ describe('Android search list items', () => {
       error: '请求超时，请稍后重试'
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { nodeseek: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice', 'groupError']);
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
@@ -148,14 +168,10 @@ describe('Android search list items', () => {
       nextPage: 2
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { v2ex: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'source' });
 
-    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'topic', 'groupError']);
-    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '1 条 · 加载失败' });
-    expect(items[1]).toMatchObject({ type: 'topic', topic: { id: '1' } });
+    expect(items.map((item) => item.type)).toEqual(['topic', 'groupError']);
+    expect(items[0]).toMatchObject({ type: 'topic', topic: { id: '1' } });
   });
 
   it('keeps a first-page partial failure on the whole-source error path', () => {
@@ -168,13 +184,9 @@ describe('Android search list items', () => {
       nextPage: null
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { v2ex: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'source' });
 
-    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupError']);
-    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
+    expect(items.map((item) => item.type)).toEqual(['groupError']);
   });
 
   it('labels verification-required search groups separately from login limits', () => {
@@ -191,10 +203,7 @@ describe('Android search list items', () => {
       errorKind: 'verification-required'
     }];
 
-    const items = buildSearchListItems({
-      expandedGroups: { nodeseek: true },
-      groups
-    });
+    const items = buildSearchListItems({ groups, mode: 'overview' });
 
     expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupAuthNotice']);
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '需验证' });

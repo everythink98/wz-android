@@ -1,8 +1,8 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
-import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-react-native';
+import { ChevronDown, ChevronRight, ChevronUp, History, Search, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, FeedSource, LinuxDoTagOption, LinuxDoUserOption, Source, Topic } from '../types';
 import { topicKey } from '../readerData';
 import { sourceLabel } from '../appUtils';
@@ -66,6 +66,12 @@ function SearchInputField({
   onQueryChange: (value: string) => void;
   onSearch: () => void;
 }) {
+  const submitDisabled = busy || !query.trim();
+  const submitSearch = () => {
+    if (!submitDisabled) {
+      onSearch();
+    }
+  };
   return (
     <View style={styles.searchInputShell}>
       <Search size={18} color={theme.muted} strokeWidth={1.9} style={styles.searchInputIcon} />
@@ -80,7 +86,7 @@ function SearchInputField({
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"
-        onSubmitEditing={onSearch}
+        onSubmitEditing={submitSearch}
       />
       {query ? (
         <Pressable
@@ -98,12 +104,12 @@ function SearchInputField({
         testID="search-submit"
         accessibilityRole="button"
         accessibilityLabel="提交搜索"
-        accessibilityState={{ disabled: busy }}
+        accessibilityState={{ disabled: submitDisabled }}
         android_ripple={androidRipple(theme.primarySoft, true)}
-        disabled={busy}
+        disabled={submitDisabled}
         hitSlop={TOUCH_HIT_SLOP}
-        style={[styles.searchInlineButton, styles.searchSubmitInlineButton, busy && styles.buttonDisabled]}
-        onPress={onSearch}
+        style={[styles.searchInlineButton, styles.searchSubmitInlineButton, submitDisabled && styles.buttonDisabled]}
+        onPress={submitSearch}
       >
         <Search size={17} color={theme.primary} strokeWidth={2} />
       </Pressable>
@@ -990,19 +996,21 @@ function SearchFilterEntry({
   theme: ReaderTheme;
   onPress: () => void;
 }) {
+  const active = summary !== '默认';
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`打开搜索筛选，当前${summary}`}
+      accessibilityState={{ selected: active }}
       android_ripple={androidRipple(theme.primarySoft)}
-      style={styles.searchFilterEntry}
+      style={[styles.searchFilterEntry, active && styles.searchFilterEntryActive]}
       onPress={onPress}
     >
       <View style={styles.searchFilterEntryIcon}>
         <SlidersHorizontal size={17} color={theme.primary} strokeWidth={1.9} />
       </View>
       <Text style={styles.searchFilterEntryText}>筛选</Text>
-      <Text numberOfLines={1} style={styles.searchFilterEntrySummary}>{summary}</Text>
+      <Text numberOfLines={1} style={[styles.searchFilterEntrySummary, active && styles.searchFilterEntrySummaryActive]}>{summary}</Text>
       <ChevronDown size={16} color={theme.muted} strokeWidth={1.7} />
     </Pressable>
   );
@@ -1099,7 +1107,7 @@ export const SearchScreen = memo(function SearchScreen({
   onQueryChange: (value: string) => void;
   onRetrySearchSource: (source: Source) => void;
   onRetryLinuxDoAiSearch: () => void;
-  onSearch: () => void;
+  onSearch: (queryOverride?: string) => void;
   onSearchFilterApply: (source: Source, filter: SourceSearchFilter) => void;
   onSearchLinuxDoTags: (options: { query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
   onSearchLinuxDoUsers: (options: { term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
@@ -1108,24 +1116,57 @@ export const SearchScreen = memo(function SearchScreen({
 }) {
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
   const autoLoadArmedRef = useRef(false);
-  const pendingAutoLoadRef = useRef<{ source: Source; page: number } | null>(null);
+  const pendingAutoLoadRef = useRef<{ source: Source; page: number; previousItemCount: number } | null>(null);
   const paginationStateRef = useRef<{
     busy: boolean;
-    expandedGroups: Record<string, boolean>;
     groups: SearchGroup[];
     onLoadMore: (source: Source, page: number) => void;
   }>({
     busy: true,
-    expandedGroups: {},
     groups: [],
     onLoadMore: onLoadMoreSearchSource
   });
   const [filterSheetVisible, setFilterSheetVisible] = useState(false);
+  const [completedPagination, setCompletedPagination] = useState<{
+    context: string;
+    source: Source;
+    page: number;
+    previousItemCount: number;
+  } | null>(null);
   const openFilterSheet = useCallback(() => setFilterSheetVisible(true), []);
   const closeFilterSheet = useCallback(() => setFilterSheetVisible(false), []);
+  const resetPaginationFeedback = useCallback(() => {
+    autoLoadArmedRef.current = false;
+    pendingAutoLoadRef.current = null;
+    setCompletedPagination(null);
+  }, []);
+  const scrollSearchToTop = useCallback(() => {
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, []);
+  const submitSearch = useCallback((queryOverride?: string) => {
+    const nextQuery = (queryOverride ?? query).trim();
+    if (busy || !nextQuery) {
+      return;
+    }
+    resetPaginationFeedback();
+    Keyboard.dismiss();
+    scrollSearchToTop();
+    if (queryOverride === undefined) {
+      onSearch();
+    } else {
+      onSearch(nextQuery);
+    }
+  }, [busy, onSearch, query, resetPaginationFeedback, scrollSearchToTop]);
   const changeSearchSource = useCallback((value: string) => {
+    resetPaginationFeedback();
+    scrollSearchToTop();
     onSearchSourceChange(value as FeedSource);
-  }, [onSearchSourceChange]);
+  }, [onSearchSourceChange, resetPaginationFeedback, scrollSearchToTop]);
+  const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {
+    resetPaginationFeedback();
+    scrollSearchToTop();
+    onSearchFilterApply(source, filter);
+  }, [onSearchFilterApply, resetPaginationFeedback, scrollSearchToTop]);
   const renderTopicCard = useCallback((item: Topic, testID?: string) => (
     <MemoizedTopicCard
       highlightQuery={query}
@@ -1137,56 +1178,47 @@ export const SearchScreen = memo(function SearchScreen({
       onOpenTopic={onOpenTopic}
     />
   ), [onOpenTopic, query, styles, theme, topicStateIndex]);
-  const [expandedSearchGroups, setExpandedSearchGroups] = useState<Record<string, boolean>>({});
   useEffect(() => {
     if (searchSource === 'all') {
       setFilterSheetVisible(false);
     }
   }, [searchSource]);
-  useEffect(() => {
-    setExpandedSearchGroups((current) => {
-      const next = { ...current };
-      for (const group of searchGroups) {
-        if (next[group.source] === undefined) {
-          next[group.source] = true;
-        }
-      }
-      for (const source of Object.keys(next)) {
-        if (!searchGroups.some((group) => group.source === source)) {
-          delete next[source];
-        }
-      }
-      return next;
-    });
-  }, [searchGroups]);
-  const toggleSearchGroup = useCallback((source: Source, expanded: boolean) => {
-    setExpandedSearchGroups((current) => ({
-      ...current,
-      [source]: expanded
-    }));
-  }, []);
   const visibleSearchGroups = searchGroups;
   const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
   const paginationContext = `${submittedQuery}\u0000${searchSource}`;
   useLayoutEffect(() => {
     autoLoadArmedRef.current = false;
     pendingAutoLoadRef.current = null;
+    setCompletedPagination(null);
   }, [paginationContext]);
   useLayoutEffect(() => {
     const pendingAutoLoad = pendingAutoLoadRef.current;
     if (pendingAutoLoad) {
       const pendingGroup = visibleSearchGroups.find((group) => group.source === pendingAutoLoad.source);
-      if (!pendingGroup || pendingGroup.error || !pendingGroup.hasMore || pendingGroup.nextPage !== pendingAutoLoad.page) {
+      const paginationCompleted = Boolean(
+        pendingGroup
+        && !pendingGroup.error
+        && !pendingGroup.loadingMore
+        && (!pendingGroup.hasMore || pendingGroup.nextPage !== pendingAutoLoad.page)
+      );
+      if (paginationCompleted) {
+        setCompletedPagination({
+          context: paginationContext,
+          source: pendingAutoLoad.source,
+          page: pendingAutoLoad.page,
+          previousItemCount: pendingAutoLoad.previousItemCount
+        });
+      }
+      if (!pendingGroup || pendingGroup.error || paginationCompleted) {
         pendingAutoLoadRef.current = null;
       }
     }
     paginationStateRef.current = {
       busy: paginationBusy,
-      expandedGroups: expandedSearchGroups,
       groups: visibleSearchGroups,
       onLoadMore: onLoadMoreSearchSource
     };
-  }, [expandedSearchGroups, onLoadMoreSearchSource, paginationBusy, visibleSearchGroups]);
+  }, [onLoadMoreSearchSource, paginationBusy, paginationContext, visibleSearchGroups]);
   const searchTerm = query.trim();
   const hasInputValue = query.length > 0;
   const hasSearchTerm = searchTerm.length > 0;
@@ -1196,14 +1228,33 @@ export const SearchScreen = memo(function SearchScreen({
   const searchFilterEntrySummary = searchSource !== 'all'
     ? searchFilterSummary(searchSource as Source, searchFilterForSource(searchFilters, searchSource as Source), categories)
     : '';
-  const listItems = useMemo(() => (
-    showSearchGroups
-      ? buildSearchListItems({
-        expandedGroups: expandedSearchGroups,
-        groups: visibleSearchGroups
-      })
-      : []
-  ), [expandedSearchGroups, showSearchGroups, visibleSearchGroups]);
+  const listItems = useMemo(() => {
+    if (!showSearchGroups) {
+      return [];
+    }
+    const items = buildSearchListItems({
+        groups: visibleSearchGroups,
+        mode: searchSource === 'all' ? 'overview' : 'source'
+    });
+    if (!completedPagination || completedPagination.context !== paginationContext || searchSource === 'all') {
+      return items;
+    }
+    const completedGroup = visibleSearchGroups.find((group) => group.source === completedPagination.source);
+    if (!completedGroup) {
+      return items;
+    }
+    let completedTopicCount = 0;
+    const insertionIndex = items.findIndex((item) => {
+      if (item.type !== 'topic' || item.groupSource !== completedPagination.source) {
+        return false;
+      }
+      completedTopicCount += 1;
+      return completedTopicCount === completedPagination.previousItemCount;
+    });
+    const pageStatus = { type: 'groupPageStatus' as const, group: completedGroup, page: completedPagination.page };
+    const pageStatusIndex = insertionIndex >= 0 ? insertionIndex + 1 : items.length;
+    return [...items.slice(0, pageStatusIndex), pageStatus, ...items.slice(pageStatusIndex)];
+  }, [completedPagination, paginationContext, searchSource, showSearchGroups, visibleSearchGroups]);
   const firstSearchResultKey = useMemo(() => {
     const item = listItems.find((candidate) => candidate.type === 'topic');
     return item?.type === 'topic' ? topicKey(item.topic) : '';
@@ -1246,8 +1297,7 @@ export const SearchScreen = memo(function SearchScreen({
       const { group, page } = token.item;
       const currentGroup = state.groups.find((candidate) => candidate.source === group.source);
       if (
-        state.expandedGroups[group.source] === false
-        || !currentGroup
+        !currentGroup
         || currentGroup.error
         || currentGroup.loading
         || currentGroup.loadingMore
@@ -1257,35 +1307,45 @@ export const SearchScreen = memo(function SearchScreen({
         continue;
       }
       autoLoadArmedRef.current = false;
-      pendingAutoLoadRef.current = { source: group.source, page };
+      pendingAutoLoadRef.current = {
+        source: group.source,
+        page,
+        previousItemCount: currentGroup.items.length
+      };
       state.onLoadMore(group.source, page);
       return;
     }
   }, []);
   useLayoutEffect(() => {
     autoLoadArmedRef.current = false;
-  }, [expandedSearchGroups, query, scrollToTopSignal, searchSource, submittedQuery]);
+  }, [query, scrollToTopSignal, searchSource, submittedQuery]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
       return renderTopicCard(item.topic, topicKey(item.topic) === firstSearchResultKey ? 'search-result-first' : undefined);
     }
     if (item.type === 'groupHeader') {
-      const Chevron = item.expanded ? ChevronUp : ChevronDown;
+      const canOpenSource = item.group.items.length > 0;
       return (
         <Pressable
-          accessibilityLabel={item.expanded ? `收起${item.group.label}搜索结果` : `展开${item.group.label}搜索结果`}
+          testID={`search-overview-source-${item.group.source}`}
+          accessibilityLabel={`查看 ${item.group.label} 全部搜索结果`}
           accessibilityRole="button"
-          accessibilityState={{ expanded: item.expanded }}
+          accessibilityState={{ disabled: !canOpenSource }}
           android_ripple={androidRipple(theme.primarySoft)}
-          hitSlop={TOUCH_HIT_SLOP}
+          disabled={!canOpenSource}
           style={styles.searchGroupHeader}
-          onPress={() => toggleSearchGroup(item.group.source, !item.expanded)}
+          onPress={() => changeSearchSource(item.group.source)}
         >
           <View style={styles.searchGroupTitleRow}>
             <Text style={styles.searchGroupTitleText}>{item.group.label}</Text>
             <Text style={styles.searchGroupMetaText}>{item.meta}</Text>
           </View>
-          <Chevron size={17} color={theme.muted} strokeWidth={1.8} style={styles.searchGroupChevron} />
+          {canOpenSource ? (
+            <View style={styles.searchGroupAction}>
+              <Text style={styles.searchGroupActionText}>查看全部</Text>
+              <ChevronRight size={16} color={theme.primary} strokeWidth={1.8} style={styles.searchGroupChevron} />
+            </View>
+          ) : null}
         </Pressable>
       );
     }
@@ -1349,7 +1409,7 @@ export const SearchScreen = memo(function SearchScreen({
             : `继续下滑加载更多 ${item.group.label}`}
           accessibilityLiveRegion={item.group.loadingMore ? 'polite' : 'none'}
           accessibilityState={{ busy: Boolean(item.group.loadingMore) }}
-          testID={`search-load-more-${item.group.source}`}
+          testID={`search-load-more-${item.group.source}-page-${item.page}`}
           style={[styles.button, styles.buttonGhost]}
         >
           {item.group.loadingMore ? (
@@ -1363,8 +1423,21 @@ export const SearchScreen = memo(function SearchScreen({
         </View>
       );
     }
+    if (item.type === 'groupPageStatus') {
+      return (
+        <View
+          accessible
+          accessibilityLabel={`${item.group.label} 已载入 ${item.group.items.length} 条`}
+          accessibilityLiveRegion="polite"
+          testID={`search-page-loaded-${item.group.source}-page-${item.page}`}
+          style={styles.searchPaginationStatus}
+        >
+          <Text style={styles.meta}>{`已载入 ${item.group.items.length} 条`}</Text>
+        </View>
+      );
+    }
     return null;
-  }, [busy, firstSearchResultKey, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme, toggleSearchGroup]);
+  }, [busy, changeSearchSource, firstSearchResultKey, onLoadMoreSearchSource, onRetrySearchSource, renderTopicCard, styles, theme]);
   const keySearchListItem = useCallback((item: SearchListItem) => {
     if (item.type === 'topic') {
       return `topic:${item.groupSource || item.topic.source}:${topicKey(item.topic)}`;
@@ -1373,6 +1446,9 @@ export const SearchScreen = memo(function SearchScreen({
       return `${item.group.source}:header`;
     }
     if (item.type === 'groupLoadMore') {
+      return `${item.group.source}:${item.type}:${item.page}`;
+    }
+    if (item.type === 'groupPageStatus') {
       return `${item.group.source}:${item.type}:${item.page}`;
     }
     return `${item.group.source}:${item.type}`;
@@ -1395,7 +1471,7 @@ export const SearchScreen = memo(function SearchScreen({
         styles={styles}
         theme={theme}
         onQueryChange={onQueryChange}
-        onSearch={onSearch}
+        onSearch={() => submitSearch()}
       />
       <PillRail
         variant="tabs"
@@ -1461,20 +1537,29 @@ export const SearchScreen = memo(function SearchScreen({
       {showIdleRecentSearches ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>最近搜索</Text>
-          <View style={styles.chipWrap}>
-            {recentSearches.map((item) => (
-              <View key={item} style={styles.removableChipShell}>
-                <Pressable accessibilityRole="button" style={[styles.removableChip, styles.removableChipPadded]} onPress={() => onQueryChange(item)}>
-                  <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.pillText, styles.removableChipText]}>{item}</Text>
+          <View style={styles.recentSearchList}>
+            {recentSearches.map((item, index) => (
+              <View key={item} style={[styles.removableChipShell, index > 0 && styles.removableChipShellDivided]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`搜索最近记录 ${item}`}
+                  accessibilityState={{ disabled: busy }}
+                  android_ripple={androidRipple(theme.primarySoft)}
+                  disabled={busy}
+                  style={[styles.removableChip, busy && styles.buttonDisabled]}
+                  onPress={() => submitSearch(item)}
+                >
+                  <History size={17} color={theme.muted} strokeWidth={1.9} style={styles.removableChipIcon} />
+                  <Text numberOfLines={2} ellipsizeMode="tail" style={styles.removableChipText}>{item}</Text>
                 </Pressable>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={`删除最近搜索 ${item}`}
-                  hitSlop={14}
+                  android_ripple={androidRipple(theme.primarySoft, true)}
                   style={styles.removableChipClose}
                   onPress={() => onRemoveRecentSearch(item)}
                 >
-                  <X size={12} color={theme.muted} strokeWidth={2.2} />
+                  <X size={16} color={theme.muted} strokeWidth={2.2} />
                 </Pressable>
               </View>
             ))}
@@ -1493,7 +1578,6 @@ export const SearchScreen = memo(function SearchScreen({
     onQueryChange,
     onRemoveRecentSearch,
     onRetryLinuxDoAiSearch,
-    onSearch,
     onToggleLinuxDoAiSearch,
     openFilterSheet,
     query,
@@ -1503,6 +1587,7 @@ export const SearchScreen = memo(function SearchScreen({
     searchSource,
     showIdleRecentSearches,
     styles,
+    submitSearch,
     theme
   ]);
 
@@ -1511,6 +1596,8 @@ export const SearchScreen = memo(function SearchScreen({
       <FlashList
         ref={listRef}
         accessibilityLabel={hasSubmittedQuery && !busy ? completedSearchAccessibilityLabel : '搜索结果'}
+        accessibilityLiveRegion={hasSubmittedQuery ? 'polite' : 'none'}
+        accessibilityState={{ busy: busy && hasSubmittedQuery }}
         testID={hasSubmittedQuery && !busy ? 'search-complete' : undefined}
         style={styles.content}
         contentContainerStyle={styles.contentInner}
@@ -1542,7 +1629,7 @@ export const SearchScreen = memo(function SearchScreen({
           visible={filterSheetVisible}
           onSearchLinuxDoTags={onSearchLinuxDoTags}
           onSearchLinuxDoUsers={onSearchLinuxDoUsers}
-          onApply={onSearchFilterApply}
+          onApply={applySearchFilter}
           onClose={closeFilterSheet}
         />
       ) : null}

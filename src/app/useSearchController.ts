@@ -52,6 +52,7 @@ import {
 } from '../searchControllerResults';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
+type SearchRunInput = Source | Partial<SearchRunOptions>;
 
 function mergedSearchGroupItemCount(groups: SearchGroup[]) {
   const merged = groups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
@@ -99,7 +100,7 @@ export function useSearchController({
   const submittedSearchSourceRef = useRef<FeedSource>('all');
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
-  const runSearchRef = useRef<((options?: Source | SearchRunOptions) => Promise<void>) | null>(null);
+  const runSearchRef = useRef<((options?: SearchRunInput) => Promise<void>) | null>(null);
   const loadMoreSearchSourceRef = useRef<((source: Source, page: number) => Promise<void>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
@@ -353,7 +354,7 @@ export function useSearchController({
     requireNodeSeekSearchVerification(action.message, retryNodeSeek);
   }, [requireNodeSeekSearchVerification, showYaohuoLogin]);
 
-  const runSearch = useCallback(async (options?: Source | SearchRunOptions) => {
+  const runSearch = useCallback(async (options?: SearchRunInput) => {
     const runOptions: Partial<SearchRunOptions> & { sourceOverride?: Source } = typeof options === 'string' ? { sourceOverride: options } : options || {};
     const query = (runOptions.query ?? searchQuery).trim();
     const requestSearchSource = runOptions.source ?? searchSource;
@@ -485,9 +486,9 @@ export function useSearchController({
         return;
       }
       const errors = nextGroups.filter((group) => group.error);
-      notify(errors.length
-        ? errors.map((group) => `${group.label}：${group.error}`).join('；')
-        : `搜索完成：${resultCount} 条结果`);
+      if (errors.length) {
+        notify(errors.map((group) => `${group.label}：${group.error}`).join('；'));
+      }
       if (errors.length) {
         const reason = diagnosticReasonForSearchError(errors[0]?.errorKind ? {
           kind: errors[0].errorKind,
@@ -668,8 +669,8 @@ export function useSearchController({
         });
         return;
       }
-      notify(updated?.error ? `${updated.label}：${updated.error}` : `${sourceLabel(source)} 已加载更多`);
       if (updated?.error) {
+        notify(`${updated.label}：${updated.error}`);
         const reason = diagnosticReasonForSearchError(updated.errorKind ? { kind: updated.errorKind, message: updated.error } : undefined);
         finishTrace(updated.items.length > currentGroup.items.length ? 'partial' : 'failure', {
           source,

@@ -1667,8 +1667,8 @@ export function AppRoot() {
     loadFeed({ page: activeFeedState.page + 1, cursor: activeFeedState.nextCursor, nocache: true });
   }, [activeFeedState.nextCursor, activeFeedState.page, feedAllowsRemotePagination, loadFeed]);
 
-  const runCurrentSearch = useCallback(() => {
-    void runSearch();
+  const runCurrentSearch = useCallback((queryOverride?: string) => {
+    void runSearch(queryOverride === undefined ? undefined : { query: queryOverride });
   }, [runSearch]);
 
   const refreshCurrentUser = useCallback(() => {

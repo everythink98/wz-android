@@ -60,10 +60,10 @@ function createGateway({
   } as unknown as SourceGateway;
 }
 
-function renderSearchController(sourceGateway: SourceGateway) {
+function renderSearchController(sourceGateway: SourceGateway, notify = jest.fn<(message: string) => void>()) {
   return renderHook(() => useSearchController({
     categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
-    notify: jest.fn(),
+    notify,
     sessionViewModels: loggedInSessions,
     showNodeSeekVerification: jest.fn(),
     showYaohuoLogin: jest.fn(),
@@ -89,6 +89,74 @@ describe('linux.do AI search controller', () => {
 
   afterEach(() => {
     setDiagnosticWriter(null);
+  });
+
+  it('uses inline status instead of success notifications for search and pagination', async () => {
+    const notify = jest.fn<(message: string) => void>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockResolvedValueOnce({
+        items: [{ ...standardTopic, id: '2', url: 'https://linux.do/t/2' }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }), notify);
+    await prepareLinuxDoSearch(hook, 'codex');
+    const filters = {
+      ...DEFAULT_SEARCH_FILTERS,
+      linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'latest' as const }
+    };
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters });
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    expect(hook.result.current.searchGroups[0]?.items).toHaveLength(2);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('submits a query override with the current source and stores one recent entry', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await act(async () => {
+      hook.result.current.setSearchSource('linuxdo');
+    });
+    await waitFor(() => expect(hook.result.current.searchSource).toBe('linuxdo'));
+    await act(async () => {
+      hook.result.current.applySearchFilter('linuxdo', { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'latest' });
+    });
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'history query' });
+      await hook.result.current.runSearch({ query: 'history query' });
+    });
+
+    expect(hook.result.current.searchQuery).toBe('history query');
+    expect(hook.result.current.recentSearches).toEqual(['history query']);
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+    expect(searchTopics.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      query: 'history query',
+      source: 'linuxdo',
+      filter: expect.objectContaining({ order: 'latest' })
+    }));
   });
 
   it('runs AI in parallel, caches it behind the switch, and keeps it after standard pagination', async () => {
@@ -220,6 +288,7 @@ describe('linux.do AI search controller', () => {
   });
 
   it('keeps a first-page partial failure on the whole-source retry path', async () => {
+    const notify = jest.fn<(message: string) => void>();
     const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
       items: [standardTopic],
       errors: {
@@ -234,7 +303,7 @@ describe('linux.do AI search controller', () => {
     const hook = await renderSearchController(createGateway({
       searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
       searchTopics
-    }));
+    }), notify);
     await prepareLinuxDoSearch(hook, 'codex');
 
     await act(async () => {
@@ -247,6 +316,7 @@ describe('linux.do AI search controller', () => {
       hasMore: false,
       nextPage: null
     });
+    expect(notify).toHaveBeenCalledWith('linux.do：首屏部分失败');
   });
 
   it('retries a NodeSeek verification failure on the same pagination page', async () => {

@@ -92,7 +92,7 @@
 | --- | --- | --- |
 | 入口 / 导航 | 冷启动进入首页；4 个底部入口可切换；从首页、搜索、收藏打开主题和用户页后可返回；详情页内再打开主题不会丢上一级状态 | `src/topicSessionState.test.ts`、`src/userNavigation.test.ts`、`src/app/backHandlerHelpers.test.ts` |
 | 首页 / 分类 / 分页 | 四站来源按当前支持范围返回；分类不串站；分页不重复、不漏掉下一页；聚合首页保留来源平衡；linux.do、NodeSeek、V2EX 单站排序参数和缓存 key 不串用 | `src/feedLogic.test.ts`、`src/feedCategoryRail.test.ts`、`src/forumApi.test.ts`、`src/localSources.test.ts` |
-| 搜索 | 空关键词不请求；单站和全部搜索都按站点分组；结果字段完整；错误按站点显示；分页能继续；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/yaohuoApi.test.ts` |
+| 搜索 | 空关键词或请求进行中不重复提交；“全部”按 V2EX、linux.do、NodeSeek、妖火固定顺序显示每站最多 2 条预览且不分页；单站直接显示连续完整列表并可分页；结果字段完整；错误按站点隔离；筛选参数真实传给站点；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`src/yaohuoApi.test.ts` |
 | 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；正文引用和评论引用分别默认显示简介，展开后显示目标完整帖子，且两条渲染路径互不串样式、状态或缓存；块级正文图片冷加载只有一个全宽 4:3 占位和一个连续 Spinner，同一 ImageRef 就绪后直接显示，热重进保持真实比例，请求切换不泄漏旧图，inline 媒体不进入块图 loader；图片预览可用；返回后上一层详情状态保留 | `src/quotedPosts.test.ts`、`src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts`、`tests/ui/topic-image-loading.test.tsx` |
 | 回复编辑 / 图片上传 | 三站回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
 | 回复删除 | NodeSeek、linux.do、妖火只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；删除成功后列表中消失；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts` |
@@ -162,7 +162,7 @@ npm run typecheck
 
 | 关键词 | 目的 |
 | --- | --- |
-| `codex` | 英文技术词，检查四站普通搜索、分组数量和 NodeSeek 登录 / 未登录搜索路径；模拟器当前登录态下的 NodeSeek 数量只能作为站内搜索基准 |
+| `codex` | 英文技术词，检查四站普通搜索、“全部”来源预览和 NodeSeek 登录 / 未登录搜索路径；模拟器当前登录态下的 NodeSeek 数量只能作为站内搜索基准 |
 | `AI` | 高频词，检查分页、去重和 V2EX / linux.do 结果 |
 | `安卓手机免` | 中文长词，检查妖火官方搜索不被本地错误过滤 |
 
@@ -188,9 +188,9 @@ npm run typecheck
 固定操作：
 
 1. 点底部 `搜索`，确保回到搜索页顶部。
-2. 输入或选择关键词后，必须点击 App 内提交按钮；最近搜索词只填入关键词，不代表已经搜索。
-3. 分别检查 `全部`、`V2EX`、`linux.do`、`NodeSeek`、`妖火`。
-4. 每个来源记录结果数、首条标题、错误文案和是否可继续加载。
+2. 手动输入关键词后点击 App 内提交按钮；清空输入后点击最近搜索词必须立即发起同一关键词请求，不得要求再次提交。
+3. 在 `全部` 检查四站固定预览和“查看全部”，再分别检查 `V2EX`、`linux.do`、`NodeSeek`、`妖火` 的连续单站列表。
+4. 每个来源记录结果数、首条标题、错误文案和是否可继续加载；`全部` 每站最多显示 2 条且不得出现分页入口。
 5. tracked Replay 对 linux.do、NodeSeek、妖火分别要求首条结果可见、可打开详情并返回；手工验收同样至少打开每个受影响来源的一条结果，再返回搜索页确认关键词、来源和结果仍保留。
 6. 打开搜索筛选，确认筛选项存在；非必要不改变筛选。
 7. 若点到 `linux.do 老帖` 的外部搜索入口，记录为外部跳转检查，不作为登录 / 验证检查。
