@@ -40,6 +40,9 @@ export function searchGroupMeta(group: SearchGroup) {
     return '搜索中';
   }
   if (group.error) {
+    if (group.nextPage) {
+      return `${group.items.length} 条 · 加载失败`;
+    }
     if (errorLooksLikeVerification(group)) {
       return '需验证';
     }
@@ -65,6 +68,7 @@ export function buildSearchListItems({
   const items: SearchListItem[] = [];
   for (const group of groups) {
     const expanded = expandedGroups[group.source] ?? true;
+    const paginationError = Boolean(group.error && group.nextPage);
     items.push({
       type: 'groupHeader',
       group,
@@ -74,7 +78,7 @@ export function buildSearchListItems({
     if (!expanded) {
       continue;
     }
-    if (group.error) {
+    if (group.error && !paginationError) {
       if (group.authNotice?.message === group.error && shouldRenderAuthNotice(group)) {
         items.push({ type: 'groupAuthNotice', group });
       } else {
@@ -97,6 +101,10 @@ export function buildSearchListItems({
     }
     if (!group.items.length) {
       items.push({ type: 'groupEmpty', group });
+    }
+    if (group.error) {
+      items.push({ type: 'groupError', group });
+      continue;
     }
     if (group.hasMore && group.nextPage) {
       items.push({ type: 'groupLoadMore', group, page: group.nextPage });

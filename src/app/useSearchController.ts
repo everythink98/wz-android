@@ -100,6 +100,7 @@ export function useSearchController({
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
   const runSearchRef = useRef<((options?: Source | SearchRunOptions) => Promise<void>) | null>(null);
+  const loadMoreSearchSourceRef = useRef<((source: Source, page: number) => Promise<void>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -319,8 +320,8 @@ export function useSearchController({
         authNotice: sourceError ? authNoticeForSourceError(sourceError) || undefined : sourceStatusNotice,
         error: sourceErrorText,
         errorKind: sourceError?.kind,
-        hasMore: Boolean(data.hasMore && data.nextPage),
-        nextPage: data.nextPage ?? null
+        hasMore: sourceErrorText ? false : Boolean(data.hasMore && data.nextPage),
+        nextPage: sourceErrorText ? null : data.nextPage ?? null
       };
       if (source === 'nodeseek' && group.errorKind === 'verification-required' && group.error) {
         return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message: group.error } };
@@ -631,7 +632,10 @@ export function useSearchController({
         }
         const mergedItems = mergeTopics(group.items, data.items);
         const visitedPages = searchVisitedPagesRef.current[visitedKey] || new Set<number>();
-        visitedPages.add(page);
+        const paginationFailed = result.kind !== 'success';
+        if (!paginationFailed) {
+          visitedPages.add(page);
+        }
         searchVisitedPagesRef.current[visitedKey] = visitedPages;
         const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(data.nextPage));
         return {
@@ -639,8 +643,8 @@ export function useSearchController({
           items: mergedItems,
           loading: false,
           loadingMore: false,
-          hasMore: canLoadNext,
-          nextPage: canLoadNext ? data.nextPage ?? null : null
+          hasMore: paginationFailed ? true : canLoadNext,
+          nextPage: paginationFailed ? page : canLoadNext ? data.nextPage ?? null : null
         };
       });
       const updated = nextGroups.find((group) => group.source === source);
@@ -655,11 +659,7 @@ export function useSearchController({
       setSearchGroups(nextGroups);
       if (result.kind === 'action-required') {
         handleRemoteSearchAction(result.action, () => {
-          void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
-            filters: requestFilters,
-            query,
-            searchSource: requestSearchSource
-          }));
+          void loadMoreSearchSourceRef.current?.(source, page);
         });
         finishTrace(updated?.items.length ? 'partial' : 'blocked', {
           source,
@@ -726,6 +726,10 @@ export function useSearchController({
       finishAbortableRequest(searchAbortRef, controller);
     }
   }, [handleRemoteSearchAction, notify, runRemoteSearchSource]);
+
+  useEffect(() => {
+    loadMoreSearchSourceRef.current = loadMoreSearchSource;
+  }, [loadMoreSearchSource]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;

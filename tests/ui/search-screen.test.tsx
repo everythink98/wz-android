@@ -18,23 +18,44 @@ jest.mock('@shopify/flash-list', () => {
     FlashList: ReactModule.forwardRef(function FlashList(
       {
         data = [],
+        accessibilityLabel,
         keyExtractor,
         ListEmptyComponent,
         ListHeaderComponent,
-        renderItem
+        onScrollBeginDrag,
+        onViewableItemsChanged,
+        renderItem,
+        testID
       }: {
+        accessibilityLabel?: string;
         data?: unknown[];
         keyExtractor?: (item: unknown, index: number) => string;
         ListEmptyComponent?: React.ReactNode;
         ListHeaderComponent?: React.ReactNode;
+        onScrollBeginDrag?: () => void;
+        onViewableItemsChanged?: (info: { viewableItems: unknown[]; changed: unknown[] }) => void;
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
+        testID?: string;
       },
-      ref: React.ForwardedRef<{ scrollToOffset: () => void }>
+      ref: React.ForwardedRef<{
+        recordInteraction: () => void;
+        recomputeViewableItems: () => void;
+        scrollToOffset: () => void;
+      }>
     ) {
-      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
+      ReactModule.useImperativeHandle(ref, () => ({
+        recordInteraction: () => undefined,
+        recomputeViewableItems: () => undefined,
+        scrollToOffset: () => undefined
+      }));
       return ReactModule.createElement(
         NativeView,
-        null,
+        {
+          accessibilityLabel,
+          testID: testID ?? 'search-list',
+          onScrollBeginDrag,
+          onViewableItemsChanged
+        } as React.ComponentProps<typeof NativeView>,
         ListHeaderComponent,
         ...data.map((item, index) => ReactModule.createElement(
           NativeView,
@@ -104,6 +125,15 @@ const linuxTopic: Topic = {
   title: 'linux.do 主题',
   url: 'https://linux.do/t/topic/linux-search-1'
 };
+
+function visibleLoadMore(group: SearchGroup, page: number, index: number) {
+  return {
+    index,
+    isViewable: true,
+    key: `${group.source}:groupLoadMore:${page}`,
+    item: { type: 'groupLoadMore' as const, group, page }
+  };
+}
 
 function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource }) {
   const [route, setRoute] = useState<'search' | 'topic' | 'user'>('search');
@@ -241,7 +271,7 @@ function RecentSearchHarness({
   );
 }
 
-function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof SearchScreen>> = {}) {
+function createSearchScreenProps(overrides: Partial<React.ComponentProps<typeof SearchScreen>> = {}) {
   const props: React.ComponentProps<typeof SearchScreen> = {
     busy: false,
     categories,
@@ -272,7 +302,11 @@ function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof Searc
     onSearchSourceChange: jest.fn(),
     ...overrides
   };
-  return render(<SearchScreen {...props} />);
+  return props;
+}
+
+function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof SearchScreen>> = {}) {
+  return render(<SearchScreen {...createSearchScreenProps(overrides)} />);
 }
 
 describe('Search state', () => {
@@ -399,35 +433,217 @@ describe('Search state', () => {
     expect(view.getByText('NodeSeek 没有匹配结果')).toBeTruthy();
   });
 
-  it('loads the next page for each result source independently', async () => {
+  it('loads only the first visible source after a user scroll and never from initial render', async () => {
     const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const searchGroups: SearchGroup[] = [
+      {
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        hasMore: true,
+        nextPage: 2
+      },
+      {
+        source: 'linuxdo',
+        label: 'linux.do',
+        items: [linuxTopic],
+        hasMore: true,
+        nextPage: 7
+      }
+    ];
+    const props = createSearchScreenProps({
+      onLoadMoreSearchSource,
+      searchGroups
+    });
+    const view = await render(<SearchScreen {...props} />);
+
+    const list = view.getByTestId('search-complete');
+    const visibleSentinels = [
+      visibleLoadMore(searchGroups[0], 2, 2),
+      visibleLoadMore(searchGroups[1], 7, 5)
+    ];
+    await fireEvent(list, 'viewableItemsChanged', { viewableItems: visibleSentinels, changed: visibleSentinels });
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
+    expect(view.getByText('继续下滑加载更多 V2EX')).toBeTruthy();
+    expect(view.getByTestId('search-load-more-v2ex').props.onPress).toBeUndefined();
+
+    await fireEvent(list, 'scrollBeginDrag');
+    await fireEvent(list, 'viewableItemsChanged', { viewableItems: visibleSentinels, changed: visibleSentinels });
+    expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(1);
+    expect(onLoadMoreSearchSource).toHaveBeenLastCalledWith('v2ex', 2);
+
+    await fireEvent(list, 'viewableItemsChanged', {
+      viewableItems: [visibleSentinels[1]],
+      changed: [visibleSentinels[1]]
+    });
+    expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(1);
+
+    await view.rerender(<SearchScreen
+      {...props}
+      searchGroups={[{ ...searchGroups[0], hasMore: false, nextPage: null }, searchGroups[1]]}
+    />);
+    const updatedList = view.getByTestId('search-complete');
+    await fireEvent(updatedList, 'scrollBeginDrag');
+    await fireEvent(updatedList, 'viewableItemsChanged', {
+      viewableItems: [visibleSentinels[1]],
+      changed: [visibleSentinels[1]]
+    });
+    expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(2);
+    expect(onLoadMoreSearchSource).toHaveBeenLastCalledWith('linuxdo', 7);
+  });
+
+  it.each([
+    ['query', { query: 'changed' }],
+    ['source', { searchSource: 'v2ex' as const }],
+    ['scroll-to-top', { scrollToTopSignal: 1 }]
+  ])('clears an armed sentinel when %s changes', async (_label, changedProps) => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const group: SearchGroup = {
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [firstTopic],
+      hasMore: true,
+      nextPage: 2
+    };
+    const props = createSearchScreenProps({ onLoadMoreSearchSource, searchGroups: [group] });
+    const view = await render(<SearchScreen {...props} />);
+    const list = view.getByTestId('search-complete');
+    const sentinel = visibleLoadMore(group, 2, 2);
+
+    await fireEvent(list, 'scrollBeginDrag');
+    await view.rerender(<SearchScreen {...props} {...changedProps} />);
+    await fireEvent(list, 'viewableItemsChanged', { viewableItems: [sentinel], changed: [sentinel] });
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
+  });
+
+  it('does not arm automatic pagination while a search request is busy', async () => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const group: SearchGroup = {
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [firstTopic],
+      hasMore: true,
+      nextPage: 2
+    };
+    const view = await renderSearchScreen({ busy: true, onLoadMoreSearchSource, searchGroups: [group] });
+    const list = view.getByTestId('search-list');
+    const sentinel = visibleLoadMore(group, 2, 2);
+
+    await fireEvent(list, 'scrollBeginDrag');
+    await fireEvent(list, 'viewableItemsChanged', { viewableItems: [sentinel], changed: [sentinel] });
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
+  });
+
+  it('clears an armed sentinel when its group is collapsed', async () => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const group: SearchGroup = {
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [firstTopic],
+      hasMore: true,
+      nextPage: 2
+    };
+    const view = await renderSearchScreen({ onLoadMoreSearchSource, searchGroups: [group] });
+    const sentinel = visibleLoadMore(group, 2, 2);
+
+    await fireEvent(view.getByTestId('search-complete'), 'scrollBeginDrag');
+    await fireEvent.press(view.getByLabelText('收起V2EX搜索结果'));
+    await fireEvent(view.getByTestId('search-complete'), 'viewableItemsChanged', {
+      viewableItems: [sentinel],
+      changed: [sentinel]
+    });
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
+  });
+
+  it('ignores a stale sentinel after the source reaches its last page', async () => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const group: SearchGroup = {
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [firstTopic],
+      hasMore: true,
+      nextPage: 2
+    };
+    const finishedGroup = { ...group, hasMore: false, nextPage: null };
+    const finishedView = await renderSearchScreen({ onLoadMoreSearchSource, searchGroups: [finishedGroup] });
+    const sentinel = visibleLoadMore(group, 2, 2);
+
+    await fireEvent(finishedView.getByTestId('search-complete'), 'scrollBeginDrag');
+    await fireEvent(finishedView.getByTestId('search-complete'), 'viewableItemsChanged', {
+      viewableItems: [sentinel],
+      changed: [sentinel]
+    });
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
+    expect(finishedView.queryByTestId('search-load-more-v2ex')).toBeNull();
+  });
+
+  it('shows a spinner while loading and removes the sentinel at the last page', async () => {
+    const loadingGroup: SearchGroup = {
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [firstTopic],
+      loadingMore: true,
+      hasMore: true,
+      nextPage: 2
+    };
+    const props = createSearchScreenProps({ searchGroups: [loadingGroup] });
+    const view = await render(<SearchScreen {...props} />);
+
+    expect(view.getByText('正在加载更多 V2EX')).toBeTruthy();
+    expect(view.getByTestId('search-load-more-spinner-v2ex')).toBeTruthy();
+
+    await view.rerender(<SearchScreen
+      {...props}
+      searchGroups={[{ ...loadingGroup, loadingMore: false, hasMore: false, nextPage: null }]}
+    />);
+    expect(view.queryByTestId('search-load-more-v2ex')).toBeNull();
+  });
+
+  it('REG-SEARCH-002 keeps loaded results and retries the failed page', async () => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const onRetrySearchSource = jest.fn<(source: Source) => void>();
     const view = await renderSearchScreen({
       onLoadMoreSearchSource,
-      searchGroups: [
-        {
-          source: 'v2ex',
-          label: 'V2EX',
-          items: [firstTopic],
-          hasMore: true,
-          nextPage: 2
-        },
-        {
-          source: 'linuxdo',
-          label: 'linux.do',
-          items: [linuxTopic],
-          hasMore: true,
-          nextPage: 7
-        }
-      ]
+      onRetrySearchSource,
+      searchGroups: [{
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        error: '第 2 页请求失败',
+        hasMore: true,
+        nextPage: 2
+      }]
     });
 
-    await fireEvent.press(view.getByText('加载更多 linux.do'));
-    expect(onLoadMoreSearchSource).toHaveBeenLastCalledWith('linuxdo', 7);
-    expect(view.getByText('加载更多 V2EX')).toBeTruthy();
+    expect(view.getByText('第一页主题')).toBeTruthy();
+    expect(view.getByText('1 条 · 加载失败')).toBeTruthy();
+    expect(view.getByText('第 2 页请求失败')).toBeTruthy();
+    await fireEvent.press(view.getByText('重试加载 V2EX'));
+    expect(onLoadMoreSearchSource).toHaveBeenCalledWith('v2ex', 2);
+    expect(onRetrySearchSource).not.toHaveBeenCalled();
+  });
 
-    await fireEvent.press(view.getByText('加载更多 V2EX'));
-    expect(onLoadMoreSearchSource).toHaveBeenLastCalledWith('v2ex', 2);
-    expect(onLoadMoreSearchSource).toHaveBeenCalledTimes(2);
+  it('keeps first-page partial failures on whole-source retry', async () => {
+    const onLoadMoreSearchSource = jest.fn<(source: Source, page: number) => void>();
+    const onRetrySearchSource = jest.fn<(source: Source) => void>();
+    const view = await renderSearchScreen({
+      onLoadMoreSearchSource,
+      onRetrySearchSource,
+      searchGroups: [{
+        source: 'v2ex',
+        label: 'V2EX',
+        items: [firstTopic],
+        error: '首屏请求失败',
+        hasMore: false,
+        nextPage: null
+      }]
+    });
+
+    expect(view.queryByText('第一页主题')).toBeNull();
+    expect(view.getByText('首屏请求失败')).toBeTruthy();
+    await fireEvent.press(view.getByText('重试 V2EX'));
+    expect(onRetrySearchSource).toHaveBeenCalledWith('v2ex');
+    expect(onLoadMoreSearchSource).not.toHaveBeenCalled();
   });
 
   it('keeps query, filter and loaded page across Topic and User navigation', async () => {
@@ -441,9 +657,21 @@ describe('Search state', () => {
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
     expect(view.getByTestId('search-result-first')).toBeTruthy();
-    expect(view.getByText('加载更多 V2EX')).toBeTruthy();
+    expect(view.getByText('继续下滑加载更多 V2EX')).toBeTruthy();
 
-    await fireEvent.press(view.getByText('加载更多 V2EX'));
+    const v2exGroup: SearchGroup = {
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [firstTopic],
+      hasMore: true,
+      nextPage: 2
+    };
+    await fireEvent(view.getByTestId('search-complete'), 'scrollBeginDrag');
+    const v2exSentinel = visibleLoadMore(v2exGroup, 2, 2);
+    await fireEvent(view.getByTestId('search-complete'), 'viewableItemsChanged', {
+      viewableItems: [v2exSentinel],
+      changed: [v2exSentinel]
+    });
     expect(view.getByText('第二页主题')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-result-first'));
@@ -456,7 +684,7 @@ describe('Search state', () => {
     expect(view.getByLabelText('搜索关键词').props.value).toBe('codex');
     expect(view.getByLabelText('打开搜索筛选，当前按时间')).toBeTruthy();
     expect(view.getByText('第二页主题')).toBeTruthy();
-    expect(view.queryByText('加载更多 V2EX')).toBeNull();
+    expect(view.queryByTestId('search-load-more-v2ex')).toBeNull();
   });
 
   it('applies linux.do, NodeSeek and Yaohuo filters without leaking state between sites', async () => {
@@ -600,7 +828,19 @@ describe('Search state', () => {
     await fireEvent.press(view.getByText('确认筛选'));
     await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
     await fireEvent.press(view.getByLabelText('提交搜索'));
-    await fireEvent.press(view.getByText('加载更多 linux.do'));
+    const linuxDoGroup: SearchGroup = {
+      source: 'linuxdo',
+      label: 'linux.do',
+      items: [linuxTopic],
+      hasMore: true,
+      nextPage: 2
+    };
+    await fireEvent(view.getByTestId('search-complete'), 'scrollBeginDrag');
+    const linuxDoSentinel = visibleLoadMore(linuxDoGroup, 2, 2);
+    await fireEvent(view.getByTestId('search-complete'), 'viewableItemsChanged', {
+      viewableItems: [linuxDoSentinel],
+      changed: [linuxDoSentinel]
+    });
     expect(view.getByText('第二页主题')).toBeTruthy();
 
     await fireEvent.press(view.getByTestId('search-result-first'));

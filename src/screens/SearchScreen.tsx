@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-react-native';
 import type { Category, FeedSource, LinuxDoTagOption, LinuxDoUserOption, Source, Topic } from '../types';
@@ -31,6 +31,12 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
+
+const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 50,
+  minimumViewTime: 0,
+  waitForInteraction: true
+};
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -1101,6 +1107,19 @@ export const SearchScreen = memo(function SearchScreen({
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
+  const autoLoadArmedRef = useRef(false);
+  const pendingAutoLoadRef = useRef<{ source: Source; page: number } | null>(null);
+  const paginationStateRef = useRef<{
+    busy: boolean;
+    expandedGroups: Record<string, boolean>;
+    groups: SearchGroup[];
+    onLoadMore: (source: Source, page: number) => void;
+  }>({
+    busy: true,
+    expandedGroups: {},
+    groups: [],
+    onLoadMore: onLoadMoreSearchSource
+  });
   const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const openFilterSheet = useCallback(() => setFilterSheetVisible(true), []);
   const closeFilterSheet = useCallback(() => setFilterSheetVisible(false), []);
@@ -1147,6 +1166,27 @@ export const SearchScreen = memo(function SearchScreen({
     }));
   }, []);
   const visibleSearchGroups = searchGroups;
+  const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
+  const paginationContext = `${submittedQuery}\u0000${searchSource}`;
+  useLayoutEffect(() => {
+    autoLoadArmedRef.current = false;
+    pendingAutoLoadRef.current = null;
+  }, [paginationContext]);
+  useLayoutEffect(() => {
+    const pendingAutoLoad = pendingAutoLoadRef.current;
+    if (pendingAutoLoad) {
+      const pendingGroup = visibleSearchGroups.find((group) => group.source === pendingAutoLoad.source);
+      if (!pendingGroup || pendingGroup.error || !pendingGroup.hasMore || pendingGroup.nextPage !== pendingAutoLoad.page) {
+        pendingAutoLoadRef.current = null;
+      }
+    }
+    paginationStateRef.current = {
+      busy: paginationBusy,
+      expandedGroups: expandedSearchGroups,
+      groups: visibleSearchGroups,
+      onLoadMore: onLoadMoreSearchSource
+    };
+  }, [expandedSearchGroups, onLoadMoreSearchSource, paginationBusy, visibleSearchGroups]);
   const searchTerm = query.trim();
   const hasInputValue = query.length > 0;
   const hasSearchTerm = searchTerm.length > 0;
@@ -1173,6 +1213,58 @@ export const SearchScreen = memo(function SearchScreen({
     : visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => !group.loading)
       ? '搜索结果，已完成，结构化回退'
       : '搜索结果，已完成，缺少结构化结果';
+  const handleSearchScrollBeginDrag = useCallback(() => {
+    const state = paginationStateRef.current;
+    autoLoadArmedRef.current = false;
+    if (state.busy || pendingAutoLoadRef.current) {
+      return;
+    }
+    autoLoadArmedRef.current = true;
+    listRef.current?.recordInteraction();
+    listRef.current?.recomputeViewableItems();
+  }, []);
+  const handleSearchViewableItemsChanged = useCallback(({
+    viewableItems
+  }: {
+    viewableItems: ViewToken<SearchListItem>[];
+  }) => {
+    if (!autoLoadArmedRef.current) {
+      return;
+    }
+    const state = paginationStateRef.current;
+    if (state.busy || pendingAutoLoadRef.current) {
+      autoLoadArmedRef.current = false;
+      return;
+    }
+    const orderedItems = [...viewableItems].sort((left, right) => (
+      (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
+    ));
+    for (const token of orderedItems) {
+      if (!token.isViewable || token.item.type !== 'groupLoadMore') {
+        continue;
+      }
+      const { group, page } = token.item;
+      const currentGroup = state.groups.find((candidate) => candidate.source === group.source);
+      if (
+        state.expandedGroups[group.source] === false
+        || !currentGroup
+        || currentGroup.error
+        || currentGroup.loading
+        || currentGroup.loadingMore
+        || !currentGroup.hasMore
+        || currentGroup.nextPage !== page
+      ) {
+        continue;
+      }
+      autoLoadArmedRef.current = false;
+      pendingAutoLoadRef.current = { source: group.source, page };
+      state.onLoadMore(group.source, page);
+      return;
+    }
+  }, []);
+  useLayoutEffect(() => {
+    autoLoadArmedRef.current = false;
+  }, [expandedSearchGroups, query, scrollToTopSignal, searchSource, submittedQuery]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
       return renderTopicCard(item.topic, topicKey(item.topic) === firstSearchResultKey ? 'search-result-first' : undefined);
@@ -1198,10 +1290,26 @@ export const SearchScreen = memo(function SearchScreen({
       );
     }
     if (item.type === 'groupError') {
+      const paginationError = Boolean(item.group.nextPage);
+      const retryPage = paginationError ? item.group.nextPage : null;
       return (
         <View testID={`search-outcome-error-${item.group.source}`} style={styles.errorBox}>
           <Text style={styles.errorText}>{item.group.error}</Text>
-          <AppButton label={`重试 ${item.group.label}`} variant="ghost" styles={styles} disabled={busy} onPress={() => onRetrySearchSource(item.group.source)} />
+          <AppButton
+            label={paginationError ? `重试加载 ${item.group.label}` : `重试 ${item.group.label}`}
+            variant="ghost"
+            styles={styles}
+            disabled={busy || (paginationError && !retryPage)}
+            onPress={() => {
+              if (paginationError) {
+                if (retryPage) {
+                  onLoadMoreSearchSource(item.group.source, retryPage);
+                }
+                return;
+              }
+              onRetrySearchSource(item.group.source);
+            }}
+          />
         </View>
       );
     }
@@ -1234,13 +1342,25 @@ export const SearchScreen = memo(function SearchScreen({
     }
     if (item.type === 'groupLoadMore') {
       return (
-        <AppButton
-          label={item.group.loadingMore ? '加载中...' : `加载更多 ${item.group.label}`}
-          variant="ghost"
-          styles={styles}
-          disabled={busy || item.group.loadingMore}
-          onPress={() => onLoadMoreSearchSource(item.group.source, item.page)}
-        />
+        <View
+          accessible
+          accessibilityLabel={item.group.loadingMore
+            ? `正在加载更多 ${item.group.label}`
+            : `继续下滑加载更多 ${item.group.label}`}
+          accessibilityLiveRegion={item.group.loadingMore ? 'polite' : 'none'}
+          accessibilityState={{ busy: Boolean(item.group.loadingMore) }}
+          testID={`search-load-more-${item.group.source}`}
+          style={[styles.button, styles.buttonGhost]}
+        >
+          {item.group.loadingMore ? (
+            <ActivityIndicator testID={`search-load-more-spinner-${item.group.source}`} size="small" color={theme.primary} />
+          ) : null}
+          <Text style={styles.buttonText}>
+            {item.group.loadingMore
+              ? `正在加载更多 ${item.group.label}`
+              : `继续下滑加载更多 ${item.group.label}`}
+          </Text>
+        </View>
       );
     }
     return null;
@@ -1251,6 +1371,9 @@ export const SearchScreen = memo(function SearchScreen({
     }
     if (item.type === 'groupHeader') {
       return `${item.group.source}:header`;
+    }
+    if (item.type === 'groupLoadMore') {
+      return `${item.group.source}:${item.type}:${item.page}`;
     }
     return `${item.group.source}:${item.type}`;
   }, []);
@@ -1396,6 +1519,9 @@ export const SearchScreen = memo(function SearchScreen({
         getItemType={(item) => item.type}
         keyboardShouldPersistTaps="handled"
         {...TOPIC_LIST_PERFORMANCE_PROPS}
+        onScrollBeginDrag={handleSearchScrollBeginDrag}
+        onViewableItemsChanged={handleSearchViewableItemsChanged}
+        viewabilityConfig={SEARCH_PAGINATION_VIEWABILITY_CONFIG}
         ListHeaderComponent={header}
         ListFooterComponent={null}
         ListEmptyComponent={showSearchGroups ? null : busy && hasSubmittedQuery

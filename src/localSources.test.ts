@@ -2861,7 +2861,7 @@ describe('Android local sources', () => {
     expect(calls).not.toContain('https://linux.do/latest.json');
   });
 
-  it('passes linux.do search pages through and exposes more results', async () => {
+  it('REG-SEARCH-003 maps Discourse search post authors and paginates results', async () => {
     mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
@@ -2879,6 +2879,13 @@ describe('Android local sources', () => {
           bumped_at: '2026-05-21T00:00:00.000Z',
           posts_count: 1
         })),
+        posts: [501, 502, 503].map((id) => ({
+          id: id + 1000,
+          topic_id: id,
+          username: `author-${id}`,
+          avatar_template: `/user_avatar/linux.do/author-${id}/{size}/1.png`,
+          blurb: `matching post ${id}`
+        })),
         users: []
       });
     });
@@ -2886,7 +2893,11 @@ describe('Android local sources', () => {
     const first = await searchTopics({ source: 'linuxdo', query: 'keyword', limit: 1, fetcher });
     const second = await searchTopics({ source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher });
 
-    expect(first.items.map((item) => item.id)).toEqual(['501']);
+    expect(first.items).toEqual([expect.objectContaining({
+      id: '501',
+      author: 'author-501',
+      authorAvatar: 'https://linux.do/user_avatar/linux.do/author-501/96/1.png'
+    })]);
     expect(first.hasMore).toBe(true);
     expect(first.nextPage).toBe(2);
     expect(second.items.map((item) => item.id)).toEqual(['502']);

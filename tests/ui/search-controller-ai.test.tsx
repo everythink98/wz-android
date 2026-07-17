@@ -166,6 +166,173 @@ describe('linux.do AI search controller', () => {
     expect(diagnosticLines.join('')).not.toContain('快问快答');
   });
 
+  it('REG-SEARCH-002 preserves the failed page cursor and retries that page', async () => {
+    const secondPageTopic: Topic = {
+      ...standardTopic,
+      id: '2',
+      title: '普通第二页',
+      url: 'https://linux.do/t/2'
+    };
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockRejectedValueOnce(new Error('第二页请求失败'))
+      .mockResolvedValueOnce({
+        items: [secondPageTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      error: expect.any(String),
+      hasMore: true,
+      loadingMore: false,
+      nextPage: 2
+    });
+
+    await act(async () => {
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2]);
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' }), expect.objectContaining({ id: '2' })],
+      error: undefined,
+      hasMore: false,
+      nextPage: null
+    });
+  });
+
+  it('keeps a first-page partial failure on the whole-source retry path', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {
+        linuxdo: {
+          kind: 'ordinary',
+          message: '首屏部分失败'
+        }
+      },
+      hasMore: true,
+      nextPage: 2
+    });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      error: '首屏部分失败',
+      hasMore: false,
+      nextPage: null
+    });
+  });
+
+  it('retries a NodeSeek verification failure on the same pagination page', async () => {
+    const nodeSeekTopic: Topic = {
+      ...standardTopic,
+      source: 'nodeseek',
+      url: 'https://www.nodeseek.com/post-1-1'
+    };
+    const secondPageTopic: Topic = {
+      ...nodeSeekTopic,
+      id: '2',
+      url: 'https://www.nodeseek.com/post-2-1'
+    };
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [nodeSeekTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        errors: {
+          nodeseek: {
+            kind: 'verification-required',
+            message: 'NodeSeek 需要验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      })
+      .mockResolvedValueOnce({
+        items: [secondPageTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+    const onVerificationRequired = jest.fn<(message: string, retry: () => void) => void>();
+    const gateway = createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    });
+    const hook = await renderHook(() => useSearchController({
+      categories: [],
+      notify: jest.fn(),
+      onNodeSeekSearchVerificationRequired: onVerificationRequired,
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates({
+        nodeseek: {
+          site: 'nodeseek',
+          status: 'logged-in',
+          cookieSummary: ['session-present'],
+          isVerifying: false
+        }
+      })),
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway: gateway
+    }));
+    await act(async () => {
+      hook.result.current.setSearchSource('nodeseek');
+      hook.result.current.setSearchQuery('codex');
+    });
+    await waitFor(() => expect(hook.result.current.searchSource).toBe('nodeseek'));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'nodeseek', filters: DEFAULT_SEARCH_FILTERS });
+      await hook.result.current.loadMoreSearchSource('nodeseek', 2);
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      hasMore: true,
+      nextPage: 2
+    });
+    expect(onVerificationRequired).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      onVerificationRequired.mock.calls[0]?.[1]();
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(3));
+
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2]);
+    expect(hook.result.current.searchGroups[0]?.items.map((topic) => topic.id)).toEqual(['1', '2']);
+  });
+
   it('passes one safe controller trace into each generic candidate gateway read', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => { diagnosticLines.push(line); });

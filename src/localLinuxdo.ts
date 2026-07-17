@@ -1099,9 +1099,9 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
   const topics = Array.isArray(data.topics) ? data.topics : [];
   const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
   const items = topics.map((topic) => {
-    const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
-    const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
     const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
+    const authorData = post || (isRecord(topic) ? originalPoster(topic, users) : undefined);
+    const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
     return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
   }).filter(Boolean) as Topic[];
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
