@@ -218,7 +218,8 @@ describe('Android release evidence guards', () => {
     expect(multiSourceSearchReplay).toContain('press id="search-overview-source-v2ex"');
     expect(multiSourceSearchReplay).not.toContain('search-page-loaded-');
     expect(multiSourceSearchReplay).toContain('press label="清空搜索关键词"');
-    expect(multiSourceSearchReplay).toContain('press label="搜索最近记录 AI"');
+    expect(multiSourceSearchReplay).toContain('wait "label=\\"搜索最近记录 AI\\"" 10000');
+    expect(multiSourceSearchReplay).toContain('press "label=\\"搜索最近记录 AI\\""');
     expect(multiSourceSearchReplay.match(/is visible id="search-result-first"/g)).toHaveLength(5);
     expect(multiSourceSearchReplay.match(/press id="search-result-first"/g)).toHaveLength(4);
     expect(multiSourceSearchReplay.match(/wait id="topic-detail-loaded" 60000/g)).toHaveLength(4);
