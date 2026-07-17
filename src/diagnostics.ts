@@ -115,7 +115,7 @@ const operationValues = closedValues(
   'load-more-topics', 'load-stored', 'load-summary', 'mutate', 'open', 'page-state', 'parse-topic',
   'recover', 'refresh', 'replace', 'request', 'restore-webview', 'run', 'save',
   'save-image', 'save-preview',
-  'screen-change', 'searchTopics', 'set-enabled', 'state-transition', 'submit', 'test',
+  'screen-change', 'searchSemanticTopics', 'searchTagOptions', 'searchTopics', 'searchUserOptions', 'set-enabled', 'state-transition', 'submit', 'test',
   'toggle-quote', 'topic-back', 'transport-fallback', 'uncaught-error', 'user-back',
   'vote', 'webview-transport'
 );
@@ -162,7 +162,7 @@ const parserVariantValues = closedValues(
   'access-restricted-topic', 'aggregate-categories', 'aggregate-feed', 'aggregate-search',
   'api-categories', 'api-latest-feed', 'api-topic', 'api-user', 'api-user-basic',
   'atom-user-topics', 'discourse-categories', 'discourse-feed',
-  'discourse-replies', 'discourse-search', 'discourse-search-page', 'discourse-topic',
+  'discourse-replies', 'discourse-search', 'discourse-search-page', 'discourse-ai-search', 'discourse-topic',
   'discourse-user', 'embedded-categories', 'embedded-list', 'embedded-replies',
   'embedded-reply', 'embedded-topic', 'fetched-reply', 'google-search', 'html-all-feed',
   'html-hot-feed', 'html-latest-feed',

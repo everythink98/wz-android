@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FeedResponse, FeedSource, Source, Topic } from '../types';
+import type { FeedResponse, FeedSource, LinuxDoTagOption, LinuxDoUserOption, Source, Topic } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { getYaohuoTopicDirect } from '../yaohuoApi';
@@ -14,6 +14,11 @@ const forumMocks = vi.hoisted(() => ({
   getUserProfile: vi.fn(async ({ id, source }) => ({ source, id, username: id, displayName: id, url: '', topics: [] })),
   searchTopics: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null }))
 }));
+const linuxDoMocks = vi.hoisted(() => ({
+  searchLinuxDoSemantic: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
+  searchLinuxDoTags: vi.fn(async (): Promise<LinuxDoTagOption[]> => []),
+  searchLinuxDoUsers: vi.fn(async (): Promise<LinuxDoUserOption[]> => [])
+}));
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: { clearByName: vi.fn(), flush: vi.fn(), get: vi.fn(async () => ({})) }
@@ -26,6 +31,7 @@ vi.mock('expo-secure-store', () => ({
 vi.mock('react-native', () => ({ NativeModules: { LinuxDoCookieModule: {} } }));
 
 vi.mock('../forumApi', () => forumMocks);
+vi.mock('../localLinuxdo', () => linuxDoMocks);
 vi.mock('../yaohuoApi', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
@@ -52,6 +58,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource,
       loadYaohuoCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -99,6 +106,57 @@ describe('source gateway read contract', () => {
     expect(serialized).not.toContain('private upstream message');
   });
 
+  it('records LinuxDo credential presence without exposing credential contents', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const hasLinuxDoCredentialForSource = vi.fn(async () => true);
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource,
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await gateway.searchTagOptions({ source: 'linuxdo' });
+
+    const events = lines.map((line) => JSON.parse(line));
+    expect(hasLinuxDoCredentialForSource).toHaveBeenCalledWith('linuxdo', {
+      diagnosticTrace: expect.objectContaining({ traceId: events[0].traceId })
+    });
+    expect(events.find(({ phase }) => phase === 'credential')).toMatchObject({
+      source: 'linuxdo',
+      hasCredential: true
+    });
+    expect(lines.join('')).not.toContain('cookieHeader');
+  });
+
+  it('does not let a LinuxDo credential diagnostic probe block an all-source read', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => {
+        throw new Error('storage read failed');
+      }),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+
+    await expect(gateway.getFeed({ source: 'all' })).resolves.toMatchObject({ items: [] });
+
+    expect(forumMocks.getFeed).toHaveBeenCalledWith(expect.objectContaining({ source: 'all' }));
+    expect(lines.map((line) => JSON.parse(line)).find(({ phase }) => phase === 'credential')).toMatchObject({
+      source: 'all',
+      hasCredential: false,
+      isCredentialKnown: false,
+      reason: 'storage_error'
+    });
+  });
+
   it('adds gateway stages without finishing a caller-owned trace', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
@@ -106,6 +164,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgent: () => ''
@@ -129,6 +188,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgent: () => ''
@@ -163,6 +223,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgent: () => ''
@@ -192,6 +253,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgent: () => ''
@@ -226,6 +288,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgent: () => ''
@@ -265,6 +328,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=secret'),
       nodeSeekUserAgent: () => ''
@@ -306,6 +370,45 @@ describe('source gateway read contract', () => {
     expect(forumMocks.getUserProfile).toHaveBeenCalledWith(expect.objectContaining({ source, id: 'user-1' }));
   });
 
+  it('keeps linux.do search candidates and AI reads behind the managed gateway', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const fetcher = vi.fn();
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher,
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgent: () => ''
+    });
+    const tagTrace = beginDiagnosticTrace('search', 'searchTagOptions', { source: 'linuxdo' });
+    linuxDoMocks.searchLinuxDoTags.mockResolvedValueOnce([{ name: '人工智能' }]);
+
+    await gateway.searchTagOptions(
+      { source: 'linuxdo', query: '人', categoryId: '4', selectedTags: ['快问快答'] },
+      { trace: tagTrace }
+    );
+    markDiagnosticStage(tagTrace, 'apply', { source: 'linuxdo', itemCount: 1 });
+    finishDiagnosticTrace(tagTrace, 'success', { source: 'linuxdo', itemCount: 1 });
+    await gateway.searchUserOptions({ source: 'linuxdo', term: 'ali', categoryId: '4' });
+    await gateway.searchSemanticTopics({ source: 'linuxdo', query: 'AI tags:人工智能' });
+
+    expect(linuxDoMocks.searchLinuxDoTags).toHaveBeenCalledWith(expect.objectContaining({
+      query: '人', categoryId: '4', selectedTags: ['快问快答'], fetcher: expect.any(Function)
+    }));
+    expect(linuxDoMocks.searchLinuxDoUsers).toHaveBeenCalledWith(expect.objectContaining({
+      term: 'ali', categoryId: '4', fetcher: expect.any(Function)
+    }));
+    expect(linuxDoMocks.searchLinuxDoSemantic).toHaveBeenCalledWith('AI tags:人工智能', expect.objectContaining({ fetcher: expect.any(Function) }));
+    const tagEvents = lines.map((line) => JSON.parse(line)).filter(({ traceId }) => traceId === tagTrace.traceId);
+    expect(tagEvents.map(({ phase }) => phase)).toEqual(['intent', 'credential', 'transport', 'parse', 'apply', 'finish']);
+    expect(tagEvents.find(({ phase }) => phase === 'parse')).toMatchObject({ itemCount: 1 });
+    expect(new Set(tagEvents.map(({ traceId }) => traceId))).toHaveProperty('size', 1);
+    expect(lines.join('')).not.toContain('快问快答');
+    expect(lines.join('')).not.toContain('AI tags:人工智能');
+  });
+
   it('owns NodeSeek credentials, user agent, and transport for every read path', async () => {
     const fetcher = vi.fn();
     const loadNodeSeekCookieForSource = vi.fn(async () => 'session=node');
@@ -314,6 +417,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState,
       fetcher,
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource,
       loadYaohuoCookieForSource,
       nodeSeekUserAgent: () => 'NodeSeek UA'
@@ -356,6 +460,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState,
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource,
       nodeSeekUserAgent: () => ''
@@ -378,6 +483,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState,
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=stale'),
       nodeSeekUserAgent: () => ''
@@ -400,6 +506,7 @@ describe('source gateway read contract', () => {
     const gateway = createSourceGateway({
       clearYaohuoLoginState,
       fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       loadYaohuoCookieForSource: vi.fn(async () => 'sidyaohuo=verify'),
       nodeSeekUserAgent: () => ''

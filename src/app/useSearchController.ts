@@ -6,6 +6,7 @@ import {
   type SearchSort
 } from '../feedLogic';
 import {
+  buildLinuxDoSearchQuery,
   DEFAULT_SEARCH_FILTERS,
   type SearchFilterState,
   type SourceSearchFilter
@@ -39,9 +40,12 @@ import {
   createSearchMoreRequestSnapshot,
   enqueueSearchHistoryWrite,
   groupFromRemoteSearchResult,
+  linuxDoAiFailureState,
+  mergeLinuxDoAiTopics,
   remoteSearchSort,
   remoteSearchActionForSource,
   snapshotSearchFilters,
+  type LinuxDoAiSearchState,
   type RemoteSearchAction,
   type RemoteSearchSourceResult,
   type SearchRunOptions
@@ -85,6 +89,9 @@ export function useSearchController({
   const searchRequestIdRef = useRef(0);
   const searchRequestOwnerRef = useRef(createRequestOwner('search'));
   const searchAbortRef = useRef<AbortController | null>(null);
+  const linuxDoAiAbortRef = useRef<AbortController | null>(null);
+  const linuxDoAiRequestIdRef = useRef(0);
+  const linuxDoAiQueryRef = useRef('');
   const searchGroupsRef = useRef<SearchGroup[]>([]);
   const searchQueryRef = useRef('');
   const submittedSearchQueryRef = useRef('');
@@ -101,6 +108,8 @@ export function useSearchController({
   const [searchSource, setSearchSource] = useState<FeedSource>('all');
   const [searchFilters, setSearchFilters] = useState<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const [searchGroups, setSearchGroups] = useState<SearchGroup[]>([]);
+  const [linuxDoAiItems, setLinuxDoAiItems] = useState<Topic[]>([]);
+  const [linuxDoAiState, setLinuxDoAiState] = useState<LinuxDoAiSearchState>({ status: 'idle', enabled: false, count: 0 });
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
   const searchSessionNotices = useMemo(() => (
@@ -167,13 +176,88 @@ export function useSearchController({
     });
   }, []);
 
+  const clearLinuxDoAiSearch = useCallback(() => {
+    linuxDoAiRequestIdRef.current += 1;
+    linuxDoAiAbortRef.current?.abort();
+    linuxDoAiAbortRef.current = null;
+    linuxDoAiQueryRef.current = '';
+    setLinuxDoAiItems([]);
+    setLinuxDoAiState({ status: 'idle', enabled: false, count: 0 });
+  }, []);
+
+  const runLinuxDoAiSearch = useCallback((fullQuery: string) => {
+    const controller = startAbortableRequest(linuxDoAiAbortRef);
+    const requestId = ++linuxDoAiRequestIdRef.current;
+    const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
+    let traceFinished = false;
+    const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
+      if (!traceFinished) {
+        traceFinished = true;
+        finishDiagnosticTrace(trace, outcome, fields);
+      }
+    };
+    const isCurrent = () => requestId === linuxDoAiRequestIdRef.current && !controller.signal.aborted;
+    linuxDoAiQueryRef.current = fullQuery;
+    setLinuxDoAiItems([]);
+    setLinuxDoAiState({ status: 'loading', enabled: false, count: 0 });
+    markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
+    void (async () => {
+      try {
+        const result = await sourceGateway.searchSemanticTopics({
+          source: 'linuxdo',
+          query: fullQuery,
+          signal: controller.signal
+        }, { trace, isCurrent });
+        if (!isCurrent()) {
+          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+            source: 'linuxdo',
+            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          });
+          return;
+        }
+        markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: result.items.length });
+        setLinuxDoAiItems(result.items);
+        setLinuxDoAiState(result.items.length
+          ? { status: 'ready', enabled: false, count: result.items.length }
+          : { status: 'empty', enabled: false, count: 0, message: '未找到 AI 结果' });
+        finishTrace('success', { source: 'linuxdo', itemCount: result.items.length });
+      } catch (error) {
+        if (controller.signal.aborted || isCanceledRequest(error)) {
+          finishTrace('canceled', { source: 'linuxdo', reason: 'canceled' });
+          return;
+        }
+        if (requestId !== linuxDoAiRequestIdRef.current) {
+          finishTrace('stale', { source: 'linuxdo', reason: 'superseded' });
+          return;
+        }
+        const sourceError = sourceErrorFromUnknown('linuxdo', error);
+        const reason = diagnosticReasonForSearchError(sourceError);
+        setLinuxDoAiItems([]);
+        setLinuxDoAiState(linuxDoAiFailureState(error));
+        finishTrace(
+          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
+          { source: 'linuxdo', reason }
+        );
+      } finally {
+        if (!traceFinished) {
+          finishTrace(isCurrent() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+            source: 'linuxdo',
+            reason: isCurrent() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          });
+        }
+        finishAbortableRequest(linuxDoAiAbortRef, controller);
+      }
+    })();
+  }, [sourceGateway]);
+
   const clearSearchResults = useCallback(() => {
     searchRequestIdRef.current += 1;
     searchAbortRef.current?.abort();
     setSearchGroups([]);
     searchGroupsRef.current = [];
     setSearchBusy(false);
-  }, []);
+    clearLinuxDoAiSearch();
+  }, [clearLinuxDoAiSearch]);
 
   useEffect(() => {
     const cleanQuery = searchQuery.trim();
@@ -188,6 +272,12 @@ export function useSearchController({
   useEffect(() => {
     clearSearchResults();
   }, [clearSearchResults, searchSource]);
+
+  useEffect(() => {
+    if (!sessionViewModels.linuxdo.isLoggedIn) {
+      clearLinuxDoAiSearch();
+    }
+  }, [clearLinuxDoAiSearch, sessionViewModels.linuxdo.isLoggedIn]);
 
   const requireNodeSeekSearchVerification = useCallback((message: string, retry: () => void) => {
     if (onNodeSeekSearchVerificationRequired) {
@@ -292,6 +382,13 @@ export function useSearchController({
     }
     const requestFilters = runOptions.filters ?? searchFiltersRef.current;
     const sourceOverride = runOptions.sourceOverride;
+    if (!sourceOverride) {
+      clearLinuxDoAiSearch();
+      const linuxDoFilter = requestFilters.linuxdo;
+      if (requestSearchSource === 'linuxdo' && sessionViewModels.linuxdo.isLoggedIn && linuxDoFilter.order === 'relevance') {
+        runLinuxDoAiSearch(buildLinuxDoSearchQuery(query, linuxDoFilter, categories));
+      }
+    }
     submittedSearchQueryRef.current = query;
     submittedSearchFiltersRef.current = snapshotSearchFilters(requestFilters);
     submittedSearchSourceRef.current = requestSearchSource;
@@ -454,10 +551,13 @@ export function useSearchController({
     }
   }, [
     addRecentSearch,
+    categories,
+    clearLinuxDoAiSearch,
     notify,
     requireNodeSeekSearchVerification,
     handleRemoteSearchAction,
     runRemoteSearchSource,
+    runLinuxDoAiSearch,
     searchQuery,
     searchSource,
     sessionViewModels,
@@ -657,8 +757,96 @@ export function useSearchController({
     void runSearch(source);
   }, [runSearch]);
 
+  const searchLinuxDoTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'>) => {
+    const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source: 'linuxdo' });
+    const isCurrent = () => !options.signal?.aborted;
+    markDiagnosticStage(trace, 'guard', {
+      source: 'linuxdo',
+      state: 'started',
+      hasQuery: Boolean(options.query?.trim()),
+      selectedCount: options.selectedTags?.length || 0
+    });
+    try {
+      const items = await sourceGateway.searchTagOptions({ source: 'linuxdo', ...options }, { trace, isCurrent });
+      if (!isCurrent()) {
+        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+        return items;
+      }
+      markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: items.length });
+      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: items.length });
+      return items;
+    } catch (error) {
+      if (options.signal?.aborted || isCanceledRequest(error)) {
+        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+      } else {
+        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown('linuxdo', error));
+        finishDiagnosticTrace(
+          trace,
+          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
+          { source: 'linuxdo', reason }
+        );
+      }
+      throw error;
+    }
+  }, [sourceGateway]);
+
+  const searchLinuxDoUsers = useCallback(async (options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'>) => {
+    const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source: 'linuxdo' });
+    const isCurrent = () => !options.signal?.aborted;
+    markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started', hasQuery: Boolean(options.term.trim()) });
+    try {
+      const items = await sourceGateway.searchUserOptions({ source: 'linuxdo', ...options }, { trace, isCurrent });
+      if (!isCurrent()) {
+        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+        return items;
+      }
+      markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: items.length });
+      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: items.length });
+      return items;
+    } catch (error) {
+      if (options.signal?.aborted || isCanceledRequest(error)) {
+        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+      } else {
+        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown('linuxdo', error));
+        finishDiagnosticTrace(
+          trace,
+          reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
+          { source: 'linuxdo', reason }
+        );
+      }
+      throw error;
+    }
+  }, [sourceGateway]);
+
+  const linuxDoAiVisible = Boolean(
+    submittedSearchQuery
+    && searchSource === 'linuxdo'
+    && searchFilters.linuxdo.order === 'relevance'
+    && sessionViewModels.linuxdo.isLoggedIn
+  );
+  const visibleSearchGroups = useMemo(() => (
+    linuxDoAiState.enabled
+      ? searchGroups.map((group) => group.source === 'linuxdo'
+        ? { ...group, items: mergeLinuxDoAiTopics(group.items, linuxDoAiItems, true) }
+        : group)
+      : searchGroups
+  ), [linuxDoAiItems, linuxDoAiState.enabled, searchGroups]);
+
+  const toggleLinuxDoAiSearch = useCallback(() => {
+    setLinuxDoAiState((current) => current.status === 'ready'
+      ? { ...current, enabled: !current.enabled }
+      : current);
+  }, []);
+
+  const retryLinuxDoAiSearch = useCallback(() => {
+    if (linuxDoAiState.status === 'error' && linuxDoAiQueryRef.current) {
+      runLinuxDoAiSearch(linuxDoAiQueryRef.current);
+    }
+  }, [linuxDoAiState.status, runLinuxDoAiSearch]);
+
   const abortSearchRequests = useCallback(() => {
     searchAbortRef.current?.abort();
+    linuxDoAiAbortRef.current?.abort();
   }, []);
 
   useEffect(() => abortSearchRequests, [abortSearchRequests]);
@@ -670,15 +858,21 @@ export function useSearchController({
     recentSearches,
     removeRecentSearch,
     retrySearchSource,
+    retryLinuxDoAiSearch,
     runSearch,
     searchBusy,
     searchFilters,
-    searchGroups,
+    searchGroups: visibleSearchGroups,
+    searchLinuxDoTags,
+    searchLinuxDoUsers,
+    linuxDoAiState,
+    linuxDoAiVisible,
     searchSessionNotices,
     searchQuery,
     searchSource,
     submittedSearchQuery,
     setSearchQuery,
-    setSearchSource
+    setSearchSource,
+    toggleLinuxDoAiSearch
   };
 }

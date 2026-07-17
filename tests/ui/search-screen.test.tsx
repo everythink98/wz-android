@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { createEmptyReaderData } from '../../src/readerData';
@@ -57,12 +57,25 @@ jest.mock('lucide-react-native', () => ({
   X: () => null
 }));
 
+jest.mock('@react-native-community/datetimepicker', () => {
+  const ReactModule = require('react') as typeof React;
+  const { Pressable: NativePressable, Text: NativeText } = require('react-native') as typeof import('react-native');
+  return function MockDateTimePicker({ onChange }: { onChange: (event: { type: string }, date?: Date) => void }) {
+    return ReactModule.createElement(
+      NativePressable,
+      { accessibilityRole: 'button', accessibilityLabel: '确认日期 2026-07-01', onPress: () => onChange({ type: 'set' }, new Date(2026, 6, 1)) },
+      ReactModule.createElement(NativeText, null, '确认日期')
+    );
+  };
+});
+
 const readerData = createEmptyReaderData();
 const theme = createTheme(readerData.settings);
 const styles = createStyles(theme, readerData.settings, 800);
 const topicStateIndex = createTopicListItemStateIndex(readerData);
 const categories: Category[] = [
-  { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' },
+  { source: 'linuxdo', id: '2', name: '技术', slug: 'tech', topicCount: 120 },
+  { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev', parentId: '2', parentSlug: 'tech', topicCount: 88, readRestricted: true },
   { source: 'nodeseek', id: 'daily', name: '日常' },
   { source: 'yaohuo', id: '177', name: '妖火茶馆' }
 ];
@@ -127,10 +140,19 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
     );
   }
 
+  const resultSource: Source = searchSource === 'all' ? 'v2ex' : searchSource;
+  const resultLabel = resultSource === 'v2ex' ? 'V2EX' : resultSource === 'linuxdo' ? 'linux.do' : resultSource === 'nodeseek' ? 'NodeSeek' : '妖火';
+  const resultFirstTopic = resultSource === 'linuxdo' ? linuxTopic : { ...firstTopic, source: resultSource };
+  const resultSecondTopic = resultSource === 'v2ex' ? secondTopic : {
+    ...resultFirstTopic,
+    id: `${resultSource}-search-2`,
+    title: '第二页主题',
+    url: `${resultFirstTopic.url}/2`
+  };
   const searchGroups = submittedQuery ? [{
-    source: 'v2ex' as const,
-    label: 'V2EX',
-    items: page === 1 ? [firstTopic] : [firstTopic, secondTopic],
+    source: resultSource,
+    label: resultLabel,
+    items: page === 1 ? [resultFirstTopic] : [resultFirstTopic, resultSecondTopic],
     hasMore: page === 1,
     nextPage: page === 1 ? 2 : null
   }] : [];
@@ -145,6 +167,8 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       topicStateIndex={topicStateIndex}
       searchFilters={searchFilters}
       searchGroups={searchGroups}
+      linuxDoAiState={{ status: 'idle', enabled: false, count: 0 }}
+      linuxDoAiVisible={false}
       searchSessionNotices={[]}
       searchSource={searchSource}
       submittedQuery={submittedQuery}
@@ -156,6 +180,7 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       onRemoveRecentSearch={jest.fn()}
       onQueryChange={setQuery}
       onRetrySearchSource={jest.fn()}
+      onRetryLinuxDoAiSearch={jest.fn()}
       onSearch={() => {
         setSubmittedQuery(query.trim());
         setPage(1);
@@ -163,6 +188,12 @@ function SearchHarness({ initialSource = 'v2ex' }: { initialSource?: FeedSource 
       onSearchFilterApply={(source: Source, filter: SourceSearchFilter) => {
         setSearchFilters((current) => ({ ...current, [source]: filter } as SearchFilterState));
       }}
+      onSearchLinuxDoTags={async () => [
+        { name: '人工智能', topicCount: 12 },
+        { name: '快问快答', topicCount: 3 }
+      ]}
+      onSearchLinuxDoUsers={async () => [{ id: '7', username: 'alice', displayName: 'Alice' }]}
+      onToggleLinuxDoAiSearch={jest.fn()}
       onSearchSourceChange={setSearchSource}
     />
   );
@@ -186,6 +217,8 @@ function RecentSearchHarness({
       topicStateIndex={topicStateIndex}
       searchFilters={DEFAULT_SEARCH_FILTERS}
       searchGroups={[]}
+      linuxDoAiState={{ status: 'idle', enabled: false, count: 0 }}
+      linuxDoAiVisible={false}
       searchSessionNotices={[]}
       searchSource="all"
       submittedQuery=""
@@ -197,8 +230,12 @@ function RecentSearchHarness({
       onRemoveRecentSearch={onRemoveRecentSearch}
       onQueryChange={setQuery}
       onRetrySearchSource={jest.fn()}
+      onRetryLinuxDoAiSearch={jest.fn()}
       onSearch={onSearch}
       onSearchFilterApply={jest.fn()}
+      onSearchLinuxDoTags={jest.fn(async () => [])}
+      onSearchLinuxDoUsers={jest.fn(async () => [])}
+      onToggleLinuxDoAiSearch={jest.fn()}
       onSearchSourceChange={jest.fn()}
     />
   );
@@ -213,6 +250,8 @@ function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof Searc
     topicStateIndex,
     searchFilters: DEFAULT_SEARCH_FILTERS,
     searchGroups: [],
+    linuxDoAiState: { status: 'idle', enabled: false, count: 0 },
+    linuxDoAiVisible: false,
     searchSessionNotices: [],
     searchSource: 'all',
     submittedQuery: 'codex',
@@ -224,8 +263,12 @@ function renderSearchScreen(overrides: Partial<React.ComponentProps<typeof Searc
     onRemoveRecentSearch: jest.fn(),
     onQueryChange: jest.fn(),
     onRetrySearchSource: jest.fn(),
+    onRetryLinuxDoAiSearch: jest.fn(),
     onSearch: jest.fn(),
     onSearchFilterApply: jest.fn(),
+    onSearchLinuxDoTags: jest.fn(async () => []),
+    onSearchLinuxDoUsers: jest.fn(async () => []),
+    onToggleLinuxDoAiSearch: jest.fn(),
     onSearchSourceChange: jest.fn(),
     ...overrides
   };
@@ -421,9 +464,16 @@ describe('Search state', () => {
 
     await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
     await fireEvent.press(view.getByText('标题'));
-    await fireEvent.press(view.getByText('开发调优'));
-    await fireEvent.changeText(view.getByPlaceholderText('例如 人工智能'), '人工智能');
-    await fireEvent.changeText(view.getByPlaceholderText('linux.do 用户名'), 'alice');
+    await fireEvent.press(view.getByLabelText('选择分类'));
+    await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('标签 人工智能'));
+    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('选择作者'));
+    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
+    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('用户 alice'));
     await fireEvent.press(view.getByText('7天'));
     await fireEvent.press(view.getByText('最新'));
     await fireEvent.press(view.getByText('确认筛选'));
@@ -445,6 +495,233 @@ describe('Search state', () => {
 
     await fireEvent.press(view.getByTestId('search-source-linuxdo'));
     expect(view.getByLabelText('打开搜索筛选，当前标题 · 开发调优 · 人工智能 · alice · 7天 · 最新')).toBeTruthy();
+  });
+
+  it('REG-SEARCH-001 accepts linux.do tags only from the candidate picker', async () => {
+    const view = await render(<SearchHarness initialSource="linuxdo" />);
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    expect(view.queryByPlaceholderText('例如 人工智能')).toBeNull();
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await fireEvent.changeText(view.getByLabelText('搜索标签'), '任意手打');
+    await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('标签 人工智能'));
+    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByText('确认筛选'));
+
+    expect(view.getByLabelText('打开搜索筛选，当前人工智能')).toBeTruthy();
+    expect(view.queryByText('任意手打')).toBeNull();
+  });
+
+  it('REG-SEARCH-001 ignores a stale linux.do tag response after the search term changes', async () => {
+    const oldResponse = Promise.withResolvers<Array<{ name: string }>>();
+    const freshResponse = Promise.withResolvers<Array<{ name: string }>>();
+    const onSearchLinuxDoTags = jest.fn(({ query: term }: { query: string }) => (
+      term === 'old' ? oldResponse.promise : freshResponse.promise
+    ));
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchLinuxDoTags });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await fireEvent.changeText(view.getByLabelText('搜索标签'), 'old');
+    await waitFor(() => expect(onSearchLinuxDoTags).toHaveBeenCalledWith(expect.objectContaining({ query: 'old' })));
+    await fireEvent.changeText(view.getByLabelText('搜索标签'), 'fresh');
+    await waitFor(() => expect(onSearchLinuxDoTags).toHaveBeenCalledWith(expect.objectContaining({ query: 'fresh' })));
+
+    await act(async () => {
+      freshResponse.resolve([{ name: '新候选' }]);
+      await freshResponse.promise;
+    });
+    await waitFor(() => expect(view.getByLabelText('标签 新候选')).toBeTruthy());
+    await act(async () => {
+      oldResponse.resolve([{ name: '旧候选' }]);
+      await oldResponse.promise;
+    });
+
+    expect(view.queryByLabelText('标签 旧候选')).toBeNull();
+    expect(view.getByLabelText('标签 新候选')).toBeTruthy();
+  });
+
+  it('REG-SEARCH-001 removes visible tag and author candidates as soon as their query changes', async () => {
+    const onSearchLinuxDoTags = jest.fn(async ({ query: term }: { query: string }) => (
+      term === 'old' ? [{ name: '旧标签' }] : [{ name: '新标签' }]
+    ));
+    const onSearchLinuxDoUsers = jest.fn(async ({ term }: { term: string }) => (
+      term === 'old' ? [{ id: 'old', username: 'old-user' }] : [{ id: 'new', username: 'new-user' }]
+    ));
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchLinuxDoTags, onSearchLinuxDoUsers });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await fireEvent.changeText(view.getByLabelText('搜索标签'), 'old');
+    await waitFor(() => expect(view.getByLabelText('标签 旧标签')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('搜索标签'), 'fresh');
+    expect(view.queryByLabelText('标签 旧标签')).toBeNull();
+    await waitFor(() => expect(view.getByLabelText('标签 新标签')).toBeTruthy());
+    await fireEvent.press(view.getByText('完成'));
+
+    await fireEvent.press(view.getByLabelText('选择作者'));
+    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'old');
+    await waitFor(() => expect(view.getByLabelText('用户 old-user')).toBeTruthy());
+    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'fresh');
+    expect(view.queryByLabelText('用户 old-user')).toBeNull();
+    await waitFor(() => expect(view.getByLabelText('用户 new-user')).toBeTruthy());
+  });
+
+  it('selects a hierarchical linux.do category and author from searchable candidates', async () => {
+    const view = await render(<SearchHarness initialSource="linuxdo" />);
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    expect(view.queryByPlaceholderText('linux.do 用户名')).toBeNull();
+    await fireEvent.press(view.getByLabelText('选择分类'));
+    await fireEvent.changeText(view.getByLabelText('搜索分类'), '开发');
+    await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
+    await fireEvent.press(view.getByLabelText('选择作者'));
+    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'ali');
+    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('用户 alice'));
+    await fireEvent.press(view.getByText('确认筛选'));
+
+    expect(view.getByLabelText('打开搜索筛选，当前开发调优 · alice')).toBeTruthy();
+  });
+
+  it('REG-SEARCH-001 keeps selected linux.do candidates through pagination and Topic return', async () => {
+    const view = await render(<SearchHarness initialSource="linuxdo" />);
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('标签 人工智能'));
+    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('选择作者'));
+    await fireEvent.changeText(view.getByLabelText('搜索作者'), 'alice');
+    await waitFor(() => expect(view.getByLabelText('用户 alice')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('用户 alice'));
+    await fireEvent.press(view.getByText('确认筛选'));
+    await fireEvent.changeText(view.getByLabelText('搜索关键词'), 'codex');
+    await fireEvent.press(view.getByLabelText('提交搜索'));
+    await fireEvent.press(view.getByText('加载更多 linux.do'));
+    expect(view.getByText('第二页主题')).toBeTruthy();
+
+    await fireEvent.press(view.getByTestId('search-result-first'));
+    await fireEvent.press(view.getByLabelText('返回搜索'));
+    expect(view.getByText('第二页主题')).toBeTruthy();
+    expect(view.getByLabelText('打开搜索筛选，当前人工智能 · alice')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前人工智能 · alice'));
+    expect(view.getByLabelText('移除标签 人工智能')).toBeTruthy();
+    expect(view.getByLabelText('移除作者 alice')).toBeTruthy();
+  });
+
+  it('applies every linux.do advanced filter exposed by the original site', async () => {
+    const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      query: '',
+      submittedQuery: '',
+      onSearchFilterApply,
+      onSearchLinuxDoTags: jest.fn(async () => [
+        { name: '人工智能', topicCount: 12 },
+        { name: '快问快答', topicCount: 3 }
+      ])
+    });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(view.getByLabelText('标签 人工智能')).toBeTruthy());
+    await fireEvent.press(view.getByLabelText('标签 人工智能'));
+    await fireEvent.press(view.getByLabelText('标签 快问快答'));
+    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('匹配全部标签'));
+    await fireEvent.press(view.getByText('我读过'));
+    await fireEvent.press(view.getByText('我赞过'));
+    await fireEvent.press(view.getByText('已解决'));
+    await fireEvent.press(view.getByText('之前'));
+    await fireEvent.press(view.getByLabelText('选择精确日期'));
+    await fireEvent.press(view.getByLabelText('确认日期 2026-07-01'));
+    await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '2');
+    await fireEvent.changeText(view.getByLabelText('帖子数最大值'), '20');
+    await fireEvent.changeText(view.getByLabelText('浏览量最小值'), '100');
+    await fireEvent.changeText(view.getByLabelText('浏览量最大值'), '1000');
+    await fireEvent.press(view.getByLabelText('有专家回应'));
+    await fireEvent.press(view.getByText('确认筛选'));
+
+    expect(onSearchFilterApply).toHaveBeenCalledWith('linuxdo', expect.objectContaining({
+      tags: ['人工智能', '快问快答'],
+      tagMatch: 'all',
+      visited: ['seen', 'likes'],
+      status: 'solved',
+      dateRelation: 'before',
+      date: '2026-07-01',
+      timeRange: 'all',
+      minPosts: 2,
+      maxPosts: 20,
+      minViews: 100,
+      maxViews: 1000,
+      expertResponse: true
+    }));
+  });
+
+  it('blocks an invalid linux.do numeric range and explains the field error', async () => {
+    const onSearchFilterApply = jest.fn<(source: Source, filter: SourceSearchFilter) => void>();
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchFilterApply });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '-1');
+    expect(view.getByLabelText('帖子数最小值').props.value).toBe('');
+    await fireEvent.changeText(view.getByLabelText('帖子数最小值'), '20');
+    await fireEvent.changeText(view.getByLabelText('帖子数最大值'), '2');
+    await fireEvent.press(view.getByText('确认筛选'));
+
+    expect(view.getByText('帖子数最小值不能大于最大值')).toBeTruthy();
+    expect(onSearchFilterApply).not.toHaveBeenCalled();
+    expect(view.getByText('确认筛选')).toBeTruthy();
+  });
+
+  it('shows cached AI results as an optional marked extension of linux.do results', async () => {
+    const onToggleLinuxDoAiSearch = jest.fn<() => void>();
+    const aiTopic: Topic = {
+      ...linuxTopic,
+      id: 'linux-search-ai',
+      title: 'AI 独有主题',
+      url: 'https://linux.do/t/topic/linux-search-ai',
+      isAiGenerated: true
+    };
+    const view = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      searchGroups: [{ source: 'linuxdo', label: 'linux.do', items: [linuxTopic, aiTopic] }],
+      linuxDoAiVisible: true,
+      linuxDoAiState: { status: 'ready', enabled: false, count: 2 },
+      onToggleLinuxDoAiSearch
+    });
+
+    expect(view.getByText('2 条 AI 结果')).toBeTruthy();
+    expect(view.getByText('✦ AI')).toBeTruthy();
+    expect(view.getByLabelText('AI 搜索').props.accessibilityState).toEqual({ checked: false, disabled: false });
+    await fireEvent.press(view.getByLabelText('AI 搜索'));
+    expect(onToggleLinuxDoAiSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the AI switch disabled while loading', async () => {
+    const loadingView = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      linuxDoAiVisible: true,
+      linuxDoAiState: { status: 'loading', enabled: false, count: 0 }
+    });
+    expect(loadingView.getByText('AI 结果加载中')).toBeTruthy();
+    expect(loadingView.getByLabelText('AI 搜索').props.accessibilityState.disabled).toBe(true);
+  });
+
+  it('offers retry for an AI network failure', async () => {
+    const onRetryLinuxDoAiSearch = jest.fn<() => void>();
+    const errorView = await renderSearchScreen({
+      searchSource: 'linuxdo',
+      linuxDoAiVisible: true,
+      linuxDoAiState: { status: 'error', enabled: false, count: 0, message: 'AI 搜索失败，可重试' },
+      onRetryLinuxDoAiSearch
+    });
+    expect(errorView.getByText('AI 搜索失败，可重试')).toBeTruthy();
+    await fireEvent.press(errorView.getByText('重试 AI 搜索'));
+    expect(onRetryLinuxDoAiSearch).toHaveBeenCalledTimes(1);
   });
 
   it('applies every V2EX filter field exposed by the compact sheet', async () => {

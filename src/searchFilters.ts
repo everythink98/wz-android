@@ -5,6 +5,10 @@ export type SearchTimeRange = 'all' | 'day' | 'week' | 'month' | 'year';
 export type SearchTextScope = 'all' | 'title';
 export type SearchKeywordOperator = 'or' | 'and';
 export type LinuxDoSearchOrder = 'relevance' | 'latest';
+export type LinuxDoTagMatch = 'any' | 'all';
+export type LinuxDoVisitedFilter = 'seen' | 'bookmarks' | 'likes' | 'posted' | 'created';
+export type LinuxDoSearchStatus = '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
+export type LinuxDoDateRelation = 'before' | 'after';
 export type NodeSeekSearchSort = 'replyTime' | 'postTime';
 
 export type V2exSearchFilter = {
@@ -20,9 +24,19 @@ export type LinuxDoSearchFilter = {
   source: 'linuxdo';
   scope: SearchTextScope;
   category: string;
-  tags: string;
+  tags: string[];
+  tagMatch: LinuxDoTagMatch;
   username: string;
+  visited: LinuxDoVisitedFilter[];
+  status: LinuxDoSearchStatus;
   timeRange: SearchTimeRange;
+  dateRelation: LinuxDoDateRelation;
+  date: string;
+  minPosts: number | null;
+  maxPosts: number | null;
+  minViews: number | null;
+  maxViews: number | null;
+  expertResponse: boolean;
   order: LinuxDoSearchOrder;
 };
 
@@ -63,9 +77,19 @@ export const DEFAULT_SEARCH_FILTERS: SearchFilterState = {
     source: 'linuxdo',
     scope: 'all',
     category: '',
-    tags: '',
+    tags: [],
+    tagMatch: 'any',
     username: '',
+    visited: [],
+    status: '',
     timeRange: 'all',
+    dateRelation: 'after',
+    date: '',
+    minPosts: null,
+    maxPosts: null,
+    minViews: null,
+    maxViews: null,
+    expertResponse: false,
     order: 'relevance'
   },
   nodeseek: {
@@ -100,7 +124,10 @@ function categoryForFilter(categories: Category[], source: Source, id: string) {
 }
 
 export function defaultSearchFilterForSource<T extends Source>(source: T): SearchFilterState[T] {
-  return { ...DEFAULT_SEARCH_FILTERS[source] };
+  const filter = DEFAULT_SEARCH_FILTERS[source];
+  return (source === 'linuxdo'
+    ? { ...filter, tags: [...DEFAULT_SEARCH_FILTERS.linuxdo.tags], visited: [...DEFAULT_SEARCH_FILTERS.linuxdo.visited] }
+    : { ...filter }) as SearchFilterState[T];
 }
 
 export function searchFilterForSource(filters: SearchFilterState, source: Source): SourceSearchFilter {
@@ -131,7 +158,41 @@ function categoryLabel(categories: Category[], source: Source, id: string) {
 
 function linuxDoCategoryToken(categories: Category[], id: string) {
   const category = categoryForFilter(categories, 'linuxdo', id);
-  return (category?.slug || category?.id || id).trim();
+  return (category?.id || id).trim();
+}
+
+function cleanLinuxDoTags(tags: string[]) {
+  return [...new Set(tags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
+}
+
+function validSearchDate(value: string) {
+  const clean = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return false;
+  }
+  const date = new Date(`${clean}T00:00:00.000Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === clean;
+}
+
+function validRangeValue(value: number | null) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+export function linuxDoSearchFilterError(filter: LinuxDoSearchFilter) {
+  if (filter.date.trim() && !validSearchDate(filter.date)) {
+    return '请选择有效日期';
+  }
+  const ranges = [filter.minPosts, filter.maxPosts, filter.minViews, filter.maxViews];
+  if (ranges.some((value) => value !== null && validRangeValue(value) === null)) {
+    return '帖子数和浏览量必须是非负整数';
+  }
+  if (filter.minPosts !== null && filter.maxPosts !== null && filter.minPosts > filter.maxPosts) {
+    return '帖子数最小值不能大于最大值';
+  }
+  if (filter.minViews !== null && filter.maxViews !== null && filter.minViews > filter.maxViews) {
+    return '浏览量最小值不能大于最大值';
+  }
+  return '';
 }
 
 export function buildLinuxDoSearchQuery(query: string, filter: LinuxDoSearchFilter, categories: Category[]) {
@@ -143,17 +204,42 @@ export function buildLinuxDoSearchQuery(query: string, filter: LinuxDoSearchFilt
   if (category) {
     parts.push(`category:${category}`);
   }
-  const tags = filter.tags.trim().replace(/^#+/, '');
-  if (tags) {
-    parts.push(`tags:${tags}`);
+  const tags = cleanLinuxDoTags(filter.tags);
+  if (tags.length) {
+    parts.push(`tags:${tags.join(filter.tagMatch === 'all' ? '+' : ',')}`);
+  }
+  for (const visited of filter.visited) {
+    parts.push(`in:${visited}`);
+  }
+  if (filter.status) {
+    parts.push(`status:${filter.status}`);
   }
   const username = filter.username.trim().replace(/^@+/, '');
   if (username) {
     parts.push(`@${username}`);
   }
-  const after = searchTimeRangeStartDate(filter.timeRange);
-  if (after) {
-    parts.push(`after:${after}`);
+  const date = filter.date.trim();
+  if (validSearchDate(date)) {
+    parts.push(`${filter.dateRelation}:${date}`);
+  } else {
+    const after = searchTimeRangeStartDate(filter.timeRange);
+    if (after) {
+      parts.push(`after:${after}`);
+    }
+  }
+  const ranges = [
+    ['min_posts', validRangeValue(filter.minPosts)],
+    ['max_posts', validRangeValue(filter.maxPosts)],
+    ['min_views', validRangeValue(filter.minViews)],
+    ['max_views', validRangeValue(filter.maxViews)]
+  ] as const;
+  for (const [name, value] of ranges) {
+    if (value !== null) {
+      parts.push(`${name}:${value}`);
+    }
+  }
+  if (filter.expertResponse) {
+    parts.push('with:category_expert_response');
   }
   if (filter.order === 'latest') {
     parts.push('order:latest');
@@ -187,14 +273,36 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
     if (filter.category.trim()) {
       parts.push(categoryLabel(categories, 'linuxdo', filter.category));
     }
-    if (filter.tags.trim()) {
-      parts.push(filter.tags.trim().replace(/^#+/, ''));
+    const tags = cleanLinuxDoTags(filter.tags);
+    if (tags.length) {
+      parts.push(tags.join(filter.tagMatch === 'all' ? ' + ' : '、'));
+    }
+    if (filter.visited.length) {
+      parts.push(`${filter.visited.length}项回访`);
+    }
+    if (filter.status) {
+      parts.push(`状态 ${filter.status}`);
     }
     if (filter.username.trim()) {
       parts.push(filter.username.trim().replace(/^@+/, ''));
     }
-    if (filter.timeRange !== 'all') {
+    if (validSearchDate(filter.date)) {
+      parts.push(`${filter.date}${filter.dateRelation === 'before' ? '前' : '后'}`);
+    } else if (filter.timeRange !== 'all') {
       parts.push(searchTimeRangeLabel(filter.timeRange));
+    }
+    const minPosts = validRangeValue(filter.minPosts);
+    const maxPosts = validRangeValue(filter.maxPosts);
+    if (minPosts !== null || maxPosts !== null) {
+      parts.push(`帖子 ${minPosts ?? 0}–${maxPosts ?? '∞'}`);
+    }
+    const minViews = validRangeValue(filter.minViews);
+    const maxViews = validRangeValue(filter.maxViews);
+    if (minViews !== null || maxViews !== null) {
+      parts.push(`浏览 ${minViews ?? 0}–${maxViews ?? '∞'}`);
+    }
+    if (filter.expertResponse) {
+      parts.push('专家回应');
     }
     if (filter.order === 'latest') {
       parts.push('最新');

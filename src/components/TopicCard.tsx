@@ -54,6 +54,7 @@ function sameTopicCardTopic(left: Topic, right: Topic) {
     && left.replyCount === right.replyCount
     && left.viewCount === right.viewCount
     && left.excerpt === right.excerpt
+    && left.isAiGenerated === right.isAiGenerated
     && sameStringArray(left.tags, right.tags)
     && sameStringArray(left.duplicateSources, right.duplicateSources)
     && sameAccessRequirement(left.accessRequirement, right.accessRequirement);
@@ -126,6 +127,7 @@ export function TopicCard({
         <View style={styles.topicCardHead}>
           <View style={styles.topicBadgeRow}>
             <Text style={[styles.topicSourceBadge, sourceBadgeColorStyle(topic.source, theme)]} numberOfLines={1}>{sourceLabel(topic.source)}</Text>
+            {topic.isAiGenerated ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>✦ AI</Text> : null}
             {topic.category ? <Text style={styles.topicCategoryBadge} numberOfLines={1}>{topic.category}</Text> : null}
           </View>
           <View style={styles.topicCardHeadMeta}>

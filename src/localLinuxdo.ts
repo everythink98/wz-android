@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, LinuxDoFeedFilter, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
+import type { CategoriesResponse, FeedResponse, LinuxDoFeedFilter, LinuxDoTagOption, LinuxDoUserOption, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
@@ -823,12 +823,19 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   const categories = Array.isArray(data.categories) ? data.categories : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
+  const categorySlugs = new Map(categories.filter(isRecord).map((category) => [String(category.id), String(category.slug || '')]));
   const result = {
     items: categories.filter(isRecord).filter((category) => !isUncategorizedCategory(category)).map((category) => ({
       source: 'linuxdo' as const,
       id: String(category.id),
       name: String(category.name || ''),
-      slug: typeof category.slug === 'string' ? category.slug : undefined
+      slug: typeof category.slug === 'string' ? category.slug : undefined,
+      ...(category.parent_category_id ? {
+        parentId: String(category.parent_category_id),
+        ...(categorySlugs.get(String(category.parent_category_id)) ? { parentSlug: categorySlugs.get(String(category.parent_category_id)) } : {})
+      } : {}),
+      ...(Number.isInteger(Number(category.topic_count)) && Number(category.topic_count) >= 0 ? { topicCount: Number(category.topic_count) } : {}),
+      ...(category.read_restricted === true ? { readRestricted: true } : {})
     })).filter((category) => category.id && category.name),
     errors: {}
   };
@@ -838,6 +845,62 @@ export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promis
     validCount: result.items.length,
     droppedCount: Math.max(0, categories.length - result.items.length),
     isParseEmpty: categories.length === 0
+  });
+}
+
+export async function searchLinuxDoTags(options: LinuxDoOptions & {
+  query?: string;
+  categoryId?: string;
+  selectedTags?: string[];
+  limit?: number;
+} = {}): Promise<LinuxDoTagOption[]> {
+  const limit = Math.min(8, Math.max(1, Math.floor(options.limit || 8)));
+  const data = await fetchLinuxDoJson<Record<string, unknown>>('/tags/filter/search', {
+    q: options.query?.trim() || '',
+    limit,
+    ...(options.categoryId?.trim() ? { categoryId: options.categoryId.trim() } : {}),
+    ...(options.selectedTags?.length ? { 'selected_tags[]': options.selectedTags } : {})
+  }, options);
+  const results = Array.isArray(data.results) ? data.results : [];
+  const seen = new Set<string>();
+  return results.filter(isRecord).flatMap((item) => {
+    const name = String(item.name || item.id || '').trim();
+    if (!name || seen.has(name)) {
+      return [];
+    }
+    seen.add(name);
+    const count = Number(item.count ?? item.topic_count);
+    return [{ name, ...(Number.isInteger(count) && count >= 0 ? { topicCount: count } : {}) }];
+  });
+}
+
+export async function searchLinuxDoUsers(options: LinuxDoOptions & {
+  term: string;
+  categoryId?: string;
+  limit?: number;
+}): Promise<LinuxDoUserOption[]> {
+  const term = options.term.trim();
+  if (!term) {
+    return [];
+  }
+  const data = await fetchLinuxDoJson<Record<string, unknown>>('/u/search/users', {
+    term,
+    include_groups: 'false',
+    limit: options.limit || 20,
+    ...(options.categoryId?.trim() ? { category_id: options.categoryId.trim() } : {})
+  }, options);
+  const users = Array.isArray(data.users) ? data.users : [];
+  return users.filter(isRecord).flatMap((user) => {
+    const username = String(user.username || '').trim();
+    if (!username) {
+      return [];
+    }
+    return [{
+      id: String(user.id || username),
+      username,
+      ...(String(user.name || '').trim() ? { displayName: String(user.name).trim() } : {}),
+      ...(avatarUrl(user.avatar_template) ? { avatar: avatarUrl(user.avatar_template) } : {})
+    }];
   });
 }
 
@@ -1199,6 +1262,32 @@ export async function searchLinuxDo(query: string, options: LinuxDoOptions & { l
     droppedCount,
     isExpectedEmpty: candidateCount === 0,
     hasRepeatedCursor: result.nextPage === page
+  });
+}
+
+export async function searchLinuxDoSemantic(query: string, options: LinuxDoOptions = {}): Promise<SearchResponse> {
+  const cleanQuery = query.trim();
+  if (!cleanQuery) {
+    return annotateSourceDiagnosticSummary({ items: [], errors: {}, hasMore: false, nextPage: null }, {
+      parserVariant: 'discourse-ai-search',
+      candidateCount: 0,
+      validCount: 0,
+      droppedCount: 0,
+      isExpectedEmpty: true
+    });
+  }
+  const data = await fetchLinuxDoJson<Record<string, unknown>>('/discourse-ai/embeddings/semantic-search', {
+    q: cleanQuery
+  }, options, { referer: `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}` });
+  const parsed = await topicsFromLinuxDoSearchData(data, options);
+  const items = parsed.items.map((topic) => ({ ...topic, isAiGenerated: true }));
+  const summary = sourceDiagnosticSummary(parsed);
+  return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore: false, nextPage: null }, {
+    parserVariant: 'discourse-ai-search',
+    candidateCount: summary?.candidateCount || items.length,
+    validCount: items.length,
+    droppedCount: summary?.droppedCount || 0,
+    isExpectedEmpty: items.length === 0
   });
 }
 

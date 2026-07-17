@@ -23,11 +23,12 @@ vi.mock('react-native', () => ({
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
-import { splitLinuxDoContentHtml } from './localLinuxdo';
+import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers, splitLinuxDoContentHtml } from './localLinuxdo';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+import { DEFAULT_SEARCH_FILTERS } from './searchFilters';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -1932,23 +1933,32 @@ describe('Android local sources', () => {
         name: '未分类',
         slug: 'uncategorized'
       }, {
+        id: 2,
+        name: '技术',
+        slug: 'tech'
+      }, {
         id: 4,
         name: '开发调优',
         slug: 'dev',
         description_text: '只用于原站说明',
         parent_category_id: 2,
-        topic_count: 88
+        topic_count: 88,
+        read_restricted: true
       }]
     }));
 
     const categories = await getCategories({ source: 'linuxdo', fetcher, nocache: true });
 
-    expect(categories.items).toHaveLength(1);
-    expect(categories.items[0]).toEqual({
+    expect(categories.items).toHaveLength(2);
+    expect(categories.items.find((category) => category.id === '4')).toEqual({
       source: 'linuxdo',
       id: '4',
       name: '开发调优',
-      slug: 'dev'
+      slug: 'dev',
+      parentId: '2',
+      parentSlug: 'tech',
+      topicCount: 88,
+      readRestricted: true
     });
   });
 
@@ -4723,10 +4733,10 @@ describe('Android local sources', () => {
       query: 'AI',
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
       filter: {
-        source: 'linuxdo',
+        ...DEFAULT_SEARCH_FILTERS.linuxdo,
         scope: 'title',
         category: '4',
-        tags: '人工智能',
+        tags: ['人工智能'],
         username: 'alice',
         timeRange: 'all',
         order: 'latest'
@@ -4735,7 +4745,7 @@ describe('Android local sources', () => {
     });
 
     const url = new URL((fetcher.mock.calls as unknown as Array<[string]>).find((call) => new URL(call[0]).pathname === '/search')?.[0] || '');
-    expect(url.searchParams.get('q')).toBe('AI in:title category:dev tags:人工智能 @alice order:latest');
+    expect(url.searchParams.get('q')).toBe('AI in:title category:4 tags:人工智能 @alice order:latest');
   });
 
   it('passes NodeSeek real post/comment sort parameters through site search', async () => {
@@ -4868,5 +4878,120 @@ describe('Android local sources', () => {
     }));
 
     await expect(getFeed({ source: 'linuxdo', fetcher })).rejects.toThrow('linux.do 返回内容格式不正确');
+  });
+
+  it('loads selectable linux.do tags with category and current selections', async () => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async () => json({
+      results: [
+        { id: '人工智能', name: '人工智能', count: 12 },
+        { id: '快问快答', name: '快问快答', count: 3 }
+      ]
+    }));
+
+    const tags = await searchLinuxDoTags({
+      query: '人',
+      categoryId: '4',
+      selectedTags: ['快问快答'],
+      limit: 20,
+      fetcher
+    });
+
+    expect(tags).toEqual([
+      { name: '人工智能', topicCount: 12 },
+      { name: '快问快答', topicCount: 3 }
+    ]);
+    const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));
+    expect(url.pathname).toBe('/tags/filter/search');
+    expect(url.searchParams.get('q')).toBe('人');
+    expect(url.searchParams.get('categoryId')).toBe('4');
+    expect(url.searchParams.getAll('selected_tags[]')).toEqual(['快问快答']);
+    expect(url.searchParams.get('limit')).toBe('8');
+    expect(url.searchParams.has('filterForInput')).toBe(false);
+    expect((fetcher.mock.calls as unknown as Array<[string, RequestInit]>)[0]?.[1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({
+        Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
+        'Discourse-Logged-In': 'true',
+        'User-Agent': 'LinuxDo WebView UA'
+      })
+    }));
+  });
+
+  it('loads selectable linux.do authors without groups', async () => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async () => json({
+      users: [{ id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1.png' }],
+      groups: [{ id: 2, name: 'staff' }]
+    }));
+
+    const users = await searchLinuxDoUsers({ term: 'ali', categoryId: '4', limit: 20, fetcher });
+
+    expect(users).toEqual([{
+      id: '7',
+      username: 'alice',
+      displayName: 'Alice',
+      avatar: 'https://linux.do/user_avatar/linux.do/alice/96/1.png'
+    }]);
+    const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));
+    expect(url.pathname).toBe('/u/search/users');
+    expect(url.searchParams.get('term')).toBe('ali');
+    expect(url.searchParams.get('include_groups')).toBe('false');
+    expect(url.searchParams.get('category_id')).toBe('4');
+    expect(url.searchParams.get('limit')).toBe('20');
+  });
+
+  it('loads linux.do semantic results with an AI marker', async () => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async () => json({
+      topics: [{
+        id: 88,
+        title: 'AI semantic result',
+        slug: 'ai-semantic-result',
+        created_at: '2026-07-17T00:00:00.000Z',
+        bumped_at: '2026-07-17T00:00:00.000Z',
+        posts_count: 2
+      }],
+      posts: [{ topic_id: 88, blurb: 'semantic match' }],
+      users: []
+    }));
+
+    const result = await searchLinuxDoSemantic('AI tags:人工智能', { fetcher });
+
+    expect(result.items).toEqual([expect.objectContaining({ id: '88', isAiGenerated: true })]);
+    expect(result.hasMore).toBe(false);
+    expect(result.nextPage).toBeNull();
+    const url = new URL(String((fetcher.mock.calls as unknown as Array<[string]>)[0]?.[0]));
+    expect(url.pathname).toBe('/discourse-ai/embeddings/semantic-search');
+    expect(url.searchParams.get('q')).toBe('AI tags:人工智能');
+  });
+
+  it('keeps a zero-result linux.do semantic response distinct from an API failure', async () => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async () => json({ topics: [], posts: [], users: [] }));
+
+    const result = await searchLinuxDoSemantic('nothing', { fetcher });
+
+    expect(result.items).toEqual([]);
+    expect(result.errors).toEqual({});
+    expect(result.hasMore).toBe(false);
+  });
+
+  it.each([403, 404, 429])('preserves HTTP %s from the linux.do semantic endpoint', async (status) => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: [`HTTP ${status}`] }), {
+      status,
+      headers: { 'content-type': 'application/json' }
+    }));
+
+    await expect(searchLinuxDoSemantic('AI', { fetcher })).rejects.toMatchObject({ status });
+  });
+
+  it('preserves a network failure from the linux.do semantic endpoint', async () => {
+    mockStoredLinuxDoLoginAccess();
+    const fetcher = vi.fn(async () => {
+      throw new Error('network down');
+    });
+
+    await expect(searchLinuxDoSemantic('AI', { fetcher })).rejects.toThrow('network down');
   });
 });

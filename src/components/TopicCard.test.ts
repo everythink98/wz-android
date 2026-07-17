@@ -51,4 +51,11 @@ describe('topicCardPropsAreEqual', () => {
       }
     })).toBe(false);
   });
+
+  it('re-renders when a topic gains the AI search marker', () => {
+    expect(topicCardPropsAreEqual(props, {
+      ...props,
+      topic: { ...topic, isAiGenerated: true }
+    })).toBe(false);
+  });
 });
