@@ -44,8 +44,8 @@ is text id="search-query" AI
 wait "id=\"search-source-linuxdo\" label=\"linux.do，已选择\"" 10000
 
 press label="清空搜索关键词"
-wait label="搜索最近记录 AI" 10000
-press label="搜索最近记录 AI"
+wait "label=\"搜索最近记录 AI\"" 10000
+press "label=\"搜索最近记录 AI\""
 wait id="search-complete" 60000
 is text id="search-query" AI
 is visible id="search-result-first"
