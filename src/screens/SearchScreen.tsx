@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { FlashList, type FlashListRef, type ListRenderItem } from '@shopify/flash-list';
+import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
+import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronUp, Search, SlidersHorizontal, X } from 'lucide-react-native';
-import type { Category, FeedSource, Source, Topic } from '../types';
+import type { Category, FeedSource, LinuxDoTagOption, LinuxDoUserOption, Source, Topic } from '../types';
 import { topicKey } from '../readerData';
 import { sourceLabel } from '../appUtils';
 import { feedSourceItems } from '../feedCategoryRail';
@@ -12,11 +13,14 @@ import {
   type SearchGroup,
   type SearchListItem
 } from '../searchListItems';
+import type { LinuxDoAiSearchState } from '../searchControllerResults';
 import {
   defaultSearchFilterForSource,
+  linuxDoSearchFilterError,
   searchFilterForSource,
   searchFilterSummary,
   searchTimeRangeItems,
+  type LinuxDoVisitedFilter,
   type SearchFilterState,
   type SourceSearchFilter
 } from '../searchFilters';
@@ -27,6 +31,12 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
+
+const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
+  itemVisiblePercentThreshold: 50,
+  minimumViewTime: 0,
+  waitForInteraction: true
+};
 
 function sourceCategories(categories: Category[], source: Source) {
   return categories.filter((category) => category.source === source);
@@ -188,6 +198,8 @@ function SearchFilterSheet({
   styles,
   theme,
   visible,
+  onSearchLinuxDoTags,
+  onSearchLinuxDoUsers,
   onApply,
   onClose
 }: {
@@ -197,37 +209,205 @@ function SearchFilterSheet({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   visible: boolean;
+  onSearchLinuxDoTags: (options: { query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
+  onSearchLinuxDoUsers: (options: { term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
   onApply: (source: Source, filter: SourceSearchFilter) => void;
   onClose: () => void;
 }) {
   const [draftFilter, setDraftFilter] = useState<SourceSearchFilter>(() => searchFilterForSource(searchFilters, source));
   const [v2exMoreVisible, setV2exMoreVisible] = useState(false);
-  const linuxDoCategoryItems = useMemo(() => categoryOptions(categories, 'linuxdo'), [categories]);
+  const [tagPickerVisible, setTagPickerVisible] = useState(false);
+  const [tagQuery, setTagQuery] = useState('');
+  const [tagOptions, setTagOptions] = useState<LinuxDoTagOption[]>([]);
+  const [tagLoading, setTagLoading] = useState(false);
+  const [tagError, setTagError] = useState('');
+  const [tagRetry, setTagRetry] = useState(0);
+  const tagRequestIdRef = useRef(0);
+  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
+  const [categoryQuery, setCategoryQuery] = useState('');
+  const [userPickerVisible, setUserPickerVisible] = useState(false);
+  const [userQuery, setUserQuery] = useState('');
+  const [userOptions, setUserOptions] = useState<LinuxDoUserOption[]>([]);
+  const [userLoading, setUserLoading] = useState(false);
+  const [userError, setUserError] = useState('');
+  const [userRetry, setUserRetry] = useState(0);
+  const userRequestIdRef = useRef(0);
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [filterError, setFilterError] = useState('');
   const nodeSeekCategoryItems = useMemo(() => categoryOptions(categories, 'nodeseek'), [categories]);
   const yaohuoCategoryItems = useMemo(() => categoryOptions(categories, 'yaohuo'), [categories]);
 
   useEffect(() => {
     if (visible) {
-      setDraftFilter({ ...searchFilterForSource(searchFilters, source) });
+      const filter = searchFilterForSource(searchFilters, source);
+      setDraftFilter(filter.source === 'linuxdo'
+        ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
+        : { ...filter });
       setV2exMoreVisible(false);
+      setTagPickerVisible(false);
+      setCategoryPickerVisible(false);
+      setUserPickerVisible(false);
+      setDatePickerVisible(false);
+      setFilterError('');
     }
   }, [searchFilters, source, visible]);
 
   const updateDraft = useCallback((partial: Partial<SourceSearchFilter>) => {
+    setFilterError('');
     setDraftFilter((current) => ({ ...current, ...partial } as SourceSearchFilter));
   }, []);
 
   const resetDraft = useCallback(() => {
     setDraftFilter(defaultSearchFilterForSource(source));
+    setDatePickerVisible(false);
+    setFilterError('');
   }, [source]);
 
   const applyDraft = useCallback(() => {
+    if (draftFilter.source === 'linuxdo') {
+      const error = linuxDoSearchFilterError(draftFilter);
+      if (error) {
+        setFilterError(error);
+        return;
+      }
+    }
     onApply(source, draftFilter);
     onClose();
   }, [draftFilter, onApply, onClose, source]);
   const V2exMoreChevron = v2exMoreVisible ? ChevronUp : ChevronDown;
+  const linuxDoDraft = draftFilter.source === 'linuxdo' ? draftFilter : null;
+  const linuxDoCategories = useMemo(() => sourceCategories(categories, 'linuxdo'), [categories]);
+  const categoryNames = useMemo(() => new Map(linuxDoCategories.map((category) => [category.id, category.name])), [linuxDoCategories]);
+  const filteredLinuxDoCategories = useMemo(() => {
+    const query = categoryQuery.trim().toLowerCase();
+    return linuxDoCategories.filter((category) => {
+      const parentName = category.parentId ? categoryNames.get(category.parentId) || '' : '';
+      return !query || `${parentName} ${category.name} ${category.slug || ''}`.toLowerCase().includes(query);
+    });
+  }, [categoryNames, categoryQuery, linuxDoCategories]);
+
+  useEffect(() => {
+    if (!tagPickerVisible) {
+      return;
+    }
+    setTagOptions([]);
+    setTagLoading(true);
+    setTagError('');
+  }, [tagPickerVisible, tagQuery]);
+
+  useEffect(() => {
+    if (!tagPickerVisible || !linuxDoDraft) {
+      return;
+    }
+    setTagLoading(true);
+    setTagError('');
+    const requestId = ++tagRequestIdRef.current;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const items = await onSearchLinuxDoTags({
+            query: tagQuery,
+            categoryId: linuxDoDraft.category || undefined,
+            selectedTags: linuxDoDraft.tags,
+            signal: controller.signal
+          });
+          if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
+            setTagOptions(items);
+          }
+        } catch {
+          if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
+            setTagError('标签候选加载失败');
+          }
+        } finally {
+          if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
+            setTagLoading(false);
+          }
+        }
+      })();
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [linuxDoDraft?.category, linuxDoDraft?.tags, onSearchLinuxDoTags, tagPickerVisible, tagQuery, tagRetry]);
+
+  useEffect(() => {
+    const term = userQuery.trim();
+    if (!userPickerVisible || !linuxDoDraft || !term) {
+      setUserOptions([]);
+      setUserLoading(false);
+      setUserError('');
+      return;
+    }
+    setUserOptions([]);
+    setUserLoading(true);
+    setUserError('');
+    const requestId = ++userRequestIdRef.current;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const items = await onSearchLinuxDoUsers({
+            term,
+            categoryId: linuxDoDraft.category || undefined,
+            signal: controller.signal
+          });
+          if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
+            setUserOptions(items);
+          }
+        } catch {
+          if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
+            setUserError('作者候选加载失败');
+          }
+        } finally {
+          if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
+            setUserLoading(false);
+          }
+        }
+      })();
+    }, 300);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [linuxDoDraft?.category, onSearchLinuxDoUsers, userPickerVisible, userQuery, userRetry]);
+
+  const toggleTag = useCallback((name: string) => {
+    setFilterError('');
+    setDraftFilter((current) => {
+      if (current.source !== 'linuxdo') {
+        return current;
+      }
+      const tags = current.tags.includes(name)
+        ? current.tags.filter((tag) => tag !== name)
+        : [...current.tags, name];
+      return { ...current, tags };
+    });
+  }, []);
+
+  const toggleVisited = useCallback((value: LinuxDoVisitedFilter) => {
+    setFilterError('');
+    setDraftFilter((current) => {
+      if (current.source !== 'linuxdo') {
+        return current;
+      }
+      const visited = current.visited.includes(value)
+        ? current.visited.filter((item) => item !== value)
+        : [...current.visited, value];
+      return { ...current, visited };
+    });
+  }, []);
+
+  const changeExactDate = useCallback((event: DateTimePickerEvent, value?: Date) => {
+    setDatePickerVisible(false);
+    if (event.type === 'set' && value) {
+      updateDraft({ date: localSearchDate(value), timeRange: 'all' });
+    }
+  }, [updateDraft]);
 
   return (
+    <>
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
         <Pressable accessibilityRole="button" accessibilityLabel="关闭筛选" style={styles.searchFilterBackdrop} onPress={onClose} />
@@ -239,6 +419,7 @@ function SearchFilterSheet({
               <Text style={styles.meta}>{sourceLabel(source)}</Text>
             </View>
             <Pressable
+              testID="search-filter-close"
               accessibilityRole="button"
               accessibilityLabel="关闭筛选"
               hitSlop={TOUCH_HIT_SLOP}
@@ -313,24 +494,170 @@ function SearchFilterSheet({
                   theme={theme}
                   onChange={(value) => updateDraft({ scope: value as typeof draftFilter.scope })}
                 />
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>分类</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="选择分类"
+                    android_ripple={androidRipple(theme.primarySoft)}
+                    style={styles.input}
+                    onPress={() => {
+                      setCategoryQuery('');
+                      setCategoryPickerVisible(true);
+                    }}
+                  >
+                    <Text style={[styles.searchFilterOptionText, draftFilter.category && styles.searchFilterOptionTextActive]}>
+                      {draftFilter.category ? categoryNames.get(draftFilter.category) || draftFilter.category : '全部分类'}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>标签</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="选择标签"
+                    android_ripple={androidRipple(theme.primarySoft)}
+                    style={styles.input}
+                    onPress={() => {
+                      setTagQuery('');
+                      setTagPickerVisible(true);
+                    }}
+                  >
+                    <Text style={[styles.searchFilterOptionText, draftFilter.tags.length > 0 && styles.searchFilterOptionTextActive]}>
+                      {draftFilter.tags.length ? `已选择 ${draftFilter.tags.length} 个标签` : '选择标签'}
+                    </Text>
+                  </Pressable>
+                  {draftFilter.tags.length ? (
+                    <View style={styles.chipWrap}>
+                      {draftFilter.tags.map((tag) => (
+                        <Pressable
+                          key={tag}
+                          accessibilityRole="button"
+                          accessibilityLabel={`移除标签 ${tag}`}
+                          style={styles.searchFilterOption}
+                          onPress={() => toggleTag(tag)}
+                        >
+                          <Text style={styles.searchFilterOptionText}>{tag} ×</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  ) : null}
+                  {draftFilter.tags.length >= 2 ? (
+                    <FilterCheckbox
+                      checked={draftFilter.tagMatch === 'all'}
+                      label="匹配全部标签"
+                      styles={styles}
+                      theme={theme}
+                      onChange={(checked) => updateDraft({ tagMatch: checked ? 'all' : 'any' })}
+                    />
+                  ) : null}
+                </View>
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>回访范围</Text>
+                  <View style={styles.searchFilterOptionWrap}>
+                    {([
+                      ['seen', '我读过'],
+                      ['bookmarks', '我已添加为书签'],
+                      ['likes', '我赞过'],
+                      ['posted', '我发过帖'],
+                      ['created', '我创建']
+                    ] as Array<[LinuxDoVisitedFilter, string]>).map(([value, label]) => (
+                      <FilterCheckbox
+                        key={value}
+                        checked={draftFilter.visited.includes(value)}
+                        label={label}
+                        styles={styles}
+                        theme={theme}
+                        onChange={() => toggleVisited(value)}
+                      />
+                    ))}
+                  </View>
+                </View>
                 <FilterChoiceGroup
-                  horizontal={linuxDoCategoryItems.length > 8}
-                  title="分类"
-                  value={draftFilter.category}
-                  items={linuxDoCategoryItems}
+                  title="话题状态"
+                  value={draftFilter.status}
+                  items={[
+                    { value: '', label: '不限状态' },
+                    { value: 'open', label: '开放' },
+                    { value: 'closed', label: '已关闭' },
+                    { value: 'public', label: '公开' },
+                    { value: 'archived', label: '已归档' },
+                    { value: 'noreplies', label: '无回复' },
+                    { value: 'single_user', label: '单一用户' },
+                    { value: 'solved', label: '已解决' },
+                    { value: 'unsolved', label: '未解决' }
+                  ]}
                   styles={styles}
                   theme={theme}
-                  onChange={(value) => updateDraft({ category: value })}
+                  onChange={(value) => updateDraft({ status: value as typeof draftFilter.status })}
                 />
-                <FilterTextField label="标签" placeholder="例如 人工智能" value={draftFilter.tags} styles={styles} theme={theme} onChange={(value) => updateDraft({ tags: value })} />
                 <FilterChoiceGroup
                   title="时间"
                   value={draftFilter.timeRange}
                   items={searchTimeRangeItems}
                   styles={styles}
                   theme={theme}
-                  onChange={(value) => updateDraft({ timeRange: value as typeof draftFilter.timeRange })}
+                  onChange={(value) => updateDraft({ timeRange: value as typeof draftFilter.timeRange, date: '' })}
                 />
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>精确日期</Text>
+                  <FilterChoiceGroup
+                    title="日期关系"
+                    value={draftFilter.dateRelation}
+                    items={[
+                      { value: 'after', label: '之后' },
+                      { value: 'before', label: '之前' }
+                    ]}
+                    styles={styles}
+                    theme={theme}
+                    onChange={(value) => updateDraft({ dateRelation: value as typeof draftFilter.dateRelation })}
+                  />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="选择精确日期"
+                    android_ripple={androidRipple(theme.primarySoft)}
+                    style={styles.input}
+                    onPress={() => setDatePickerVisible(true)}
+                  >
+                    <Text style={[styles.searchFilterOptionText, draftFilter.date && styles.searchFilterOptionTextActive]}>{draftFilter.date || '选择日期'}</Text>
+                  </Pressable>
+                  {draftFilter.date ? (
+                    <Pressable accessibilityRole="button" accessibilityLabel="清除精确日期" style={styles.searchFilterOption} onPress={() => updateDraft({ date: '' })}>
+                      <Text style={styles.searchFilterOptionText}>清除日期</Text>
+                    </Pressable>
+                  ) : null}
+                  {datePickerVisible ? (
+                    <DateTimePicker
+                      value={draftFilter.date ? new Date(`${draftFilter.date}T12:00:00`) : new Date()}
+                      mode="date"
+                      onChange={changeExactDate}
+                    />
+                  ) : null}
+                </View>
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>帖子数范围</Text>
+                  <View style={styles.searchFilterOptionRow}>
+                    <FilterNumberField label="帖子数最小值" value={draftFilter.minPosts} styles={styles} theme={theme} onChange={(value) => updateDraft({ minPosts: value })} />
+                    <FilterNumberField label="帖子数最大值" value={draftFilter.maxPosts} styles={styles} theme={theme} onChange={(value) => updateDraft({ maxPosts: value })} />
+                  </View>
+                </View>
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>浏览量范围</Text>
+                  <View style={styles.searchFilterOptionRow}>
+                    <FilterNumberField label="浏览量最小值" value={draftFilter.minViews} styles={styles} theme={theme} onChange={(value) => updateDraft({ minViews: value })} />
+                    <FilterNumberField label="浏览量最大值" value={draftFilter.maxViews} styles={styles} theme={theme} onChange={(value) => updateDraft({ maxViews: value })} />
+                  </View>
+                </View>
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>其他</Text>
+                  <FilterCheckbox
+                    checked={draftFilter.expertResponse}
+                    label="有专家回应"
+                    styles={styles}
+                    theme={theme}
+                    onChange={(checked) => updateDraft({ expertResponse: checked })}
+                  />
+                </View>
                 <FilterChoiceGroup
                   title="排序"
                   value={draftFilter.order}
@@ -342,7 +669,28 @@ function SearchFilterSheet({
                   theme={theme}
                   onChange={(value) => updateDraft({ order: value as typeof draftFilter.order })}
                 />
-                <FilterTextField label="作者" placeholder="linux.do 用户名" value={draftFilter.username} styles={styles} theme={theme} onChange={(value) => updateDraft({ username: value })} />
+                <View style={styles.searchFilterField}>
+                  <Text style={styles.searchFilterLabel}>发帖人</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="选择作者"
+                    android_ripple={androidRipple(theme.primarySoft)}
+                    style={styles.input}
+                    onPress={() => {
+                      setUserQuery('');
+                      setUserPickerVisible(true);
+                    }}
+                  >
+                    <Text style={[styles.searchFilterOptionText, draftFilter.username && styles.searchFilterOptionTextActive]}>
+                      {draftFilter.username || '选择站点用户'}
+                    </Text>
+                  </Pressable>
+                  {draftFilter.username ? (
+                    <Pressable accessibilityRole="button" accessibilityLabel={`移除作者 ${draftFilter.username}`} style={styles.searchFilterOption} onPress={() => updateDraft({ username: '' })}>
+                      <Text style={styles.searchFilterOptionText}>{draftFilter.username} ×</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               </>
             ) : null}
             {draftFilter.source === 'nodeseek' ? (
@@ -381,6 +729,7 @@ function SearchFilterSheet({
               />
             ) : null}
           </ScrollView>
+          {filterError ? <Text accessibilityRole="alert" style={styles.errorText}>{filterError}</Text> : null}
           <View style={styles.searchFilterActions}>
             <AppButton compact label="重置" variant="ghost" styles={styles} onPress={resetDraft} />
             <AppButton compact label="确认筛选" variant="primary" styles={styles} onPress={applyDraft} />
@@ -388,7 +737,246 @@ function SearchFilterSheet({
         </View>
       </KeyboardAvoidingView>
     </Modal>
+    <Modal transparent visible={tagPickerVisible} animationType="fade" onRequestClose={() => setTagPickerVisible(false)}>
+      <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
+        <Pressable accessibilityRole="button" accessibilityLabel="关闭标签选择" style={styles.searchFilterBackdrop} onPress={() => setTagPickerVisible(false)} />
+        <View style={styles.searchFilterSheet}>
+          <View style={styles.searchFilterHandle} />
+          <View style={styles.searchFilterHeader}>
+            <Text style={styles.searchFilterTitle}>选择标签</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="关闭标签选择" hitSlop={TOUCH_HIT_SLOP} style={styles.searchInlineButton} onPress={() => setTagPickerVisible(false)}>
+              <X size={18} color={theme.muted} strokeWidth={2} />
+            </Pressable>
+          </View>
+          <View style={styles.searchFilterBodyInner}>
+            <TextInput
+              accessibilityLabel="搜索标签"
+              style={styles.input}
+              value={tagQuery}
+              onChangeText={setTagQuery}
+              placeholder="搜索站点标签"
+              placeholderTextColor={theme.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <ScrollView style={styles.searchFilterBody} contentContainerStyle={styles.searchFilterBodyInner} keyboardShouldPersistTaps="handled">
+            {tagLoading ? <LoadingState text="正在加载标签..." styles={styles} theme={theme} /> : null}
+            {tagError ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{tagError}</Text>
+                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => setTagRetry((value) => value + 1)} />
+              </View>
+            ) : null}
+            {!tagLoading && !tagError && !tagOptions.length ? <EmptyText text="没有匹配标签" styles={styles} /> : null}
+            {tagOptions.map((option) => {
+              const selected = Boolean(linuxDoDraft?.tags.includes(option.name));
+              return (
+                <Pressable
+                  key={option.name}
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={`标签 ${option.name}`}
+                  accessibilityState={{ checked: selected }}
+                  android_ripple={androidRipple(theme.primarySoft)}
+                  style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
+                  onPress={() => toggleTag(option.name)}
+                >
+                  <Text style={[styles.searchFilterOptionText, selected && styles.searchFilterOptionTextActive]}>
+                    {option.name}{option.topicCount === undefined ? '' : ` · ${option.topicCount}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+          <View style={styles.searchFilterActions}>
+            <AppButton compact label="完成" variant="primary" styles={styles} onPress={() => setTagPickerVisible(false)} />
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    <Modal transparent visible={categoryPickerVisible} animationType="fade" onRequestClose={() => setCategoryPickerVisible(false)}>
+      <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
+        <Pressable accessibilityRole="button" accessibilityLabel="关闭分类选择" style={styles.searchFilterBackdrop} onPress={() => setCategoryPickerVisible(false)} />
+        <View style={styles.searchFilterSheet}>
+          <View style={styles.searchFilterHandle} />
+          <View style={styles.searchFilterHeader}>
+            <Text style={styles.searchFilterTitle}>选择分类</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="关闭分类选择" hitSlop={TOUCH_HIT_SLOP} style={styles.searchInlineButton} onPress={() => setCategoryPickerVisible(false)}>
+              <X size={18} color={theme.muted} strokeWidth={2} />
+            </Pressable>
+          </View>
+          <View style={styles.searchFilterBodyInner}>
+            <TextInput
+              accessibilityLabel="搜索分类"
+              style={styles.input}
+              value={categoryQuery}
+              onChangeText={setCategoryQuery}
+              placeholder="搜索分类"
+              placeholderTextColor={theme.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <ScrollView style={styles.searchFilterBody} contentContainerStyle={styles.searchFilterBodyInner} keyboardShouldPersistTaps="handled">
+            <Pressable
+              accessibilityRole="radio"
+              accessibilityLabel="分类 全部分类"
+              accessibilityState={{ checked: !linuxDoDraft?.category }}
+              style={[styles.searchFilterOption, !linuxDoDraft?.category && styles.searchFilterOptionActive]}
+              onPress={() => {
+                updateDraft({ category: '' });
+                setCategoryPickerVisible(false);
+              }}
+            >
+              <Text style={[styles.searchFilterOptionText, !linuxDoDraft?.category && styles.searchFilterOptionTextActive]}>全部分类</Text>
+            </Pressable>
+            {filteredLinuxDoCategories.map((category) => {
+              const parentName = category.parentId ? categoryNames.get(category.parentId) : '';
+              const label = parentName ? `${parentName} / ${category.name}` : category.name;
+              const selected = linuxDoDraft?.category === category.id;
+              return (
+                <Pressable
+                  key={category.id}
+                  accessibilityRole="radio"
+                  accessibilityLabel={`分类 ${label}`}
+                  accessibilityState={{ checked: selected }}
+                  style={[styles.searchFilterOption, selected && styles.searchFilterOptionActive]}
+                  onPress={() => {
+                    updateDraft({ category: category.id });
+                    setCategoryPickerVisible(false);
+                  }}
+                >
+                  <Text style={[styles.searchFilterOptionText, selected && styles.searchFilterOptionTextActive]}>
+                    {label}{category.readRestricted ? ' · 🔒' : ''}{category.topicCount === undefined ? '' : ` · ${category.topicCount}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    <Modal transparent visible={userPickerVisible} animationType="fade" onRequestClose={() => setUserPickerVisible(false)}>
+      <KeyboardAvoidingView behavior="height" style={styles.searchFilterModalRoot}>
+        <Pressable accessibilityRole="button" accessibilityLabel="关闭作者选择" style={styles.searchFilterBackdrop} onPress={() => setUserPickerVisible(false)} />
+        <View style={styles.searchFilterSheet}>
+          <View style={styles.searchFilterHandle} />
+          <View style={styles.searchFilterHeader}>
+            <Text style={styles.searchFilterTitle}>选择发帖人</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="关闭作者选择" hitSlop={TOUCH_HIT_SLOP} style={styles.searchInlineButton} onPress={() => setUserPickerVisible(false)}>
+              <X size={18} color={theme.muted} strokeWidth={2} />
+            </Pressable>
+          </View>
+          <View style={styles.searchFilterBodyInner}>
+            <TextInput
+              accessibilityLabel="搜索作者"
+              style={styles.input}
+              value={userQuery}
+              onChangeText={setUserQuery}
+              placeholder="输入用户名"
+              placeholderTextColor={theme.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+          <ScrollView style={styles.searchFilterBody} contentContainerStyle={styles.searchFilterBodyInner} keyboardShouldPersistTaps="handled">
+            {userLoading ? <LoadingState text="正在加载作者..." styles={styles} theme={theme} /> : null}
+            {userError ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{userError}</Text>
+                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => setUserRetry((value) => value + 1)} />
+              </View>
+            ) : null}
+            {!userQuery.trim() ? <EmptyText text="输入用户名后选择" styles={styles} /> : null}
+            {!userLoading && !userError && userQuery.trim() && !userOptions.length ? <EmptyText text="没有匹配用户" styles={styles} /> : null}
+            {userOptions.map((user) => (
+              <Pressable
+                key={user.id}
+                accessibilityRole="radio"
+                accessibilityLabel={`用户 ${user.username}`}
+                accessibilityState={{ checked: linuxDoDraft?.username === user.username }}
+                style={[styles.searchFilterOption, linuxDoDraft?.username === user.username && styles.searchFilterOptionActive]}
+                onPress={() => {
+                  updateDraft({ username: user.username });
+                  setUserPickerVisible(false);
+                }}
+              >
+                <Text style={[styles.searchFilterOptionText, linuxDoDraft?.username === user.username && styles.searchFilterOptionTextActive]}>
+                  {user.displayName && user.displayName !== user.username ? `${user.displayName} · ` : ''}@{user.username}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+    </>
   );
+}
+
+function FilterCheckbox({
+  checked,
+  label,
+  styles,
+  theme,
+  onChange
+}: {
+  checked: boolean;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityLabel={label}
+      accessibilityState={{ checked }}
+      android_ripple={androidRipple(theme.primarySoft)}
+      style={[styles.searchFilterOption, checked && styles.searchFilterOptionActive]}
+      onPress={() => onChange(!checked)}
+    >
+      <Text style={[styles.searchFilterOptionText, checked && styles.searchFilterOptionTextActive]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function FilterNumberField({
+  label,
+  value,
+  styles,
+  theme,
+  onChange
+}: {
+  label: string;
+  value: number | null;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onChange: (value: number | null) => void;
+}) {
+  return (
+    <TextInput
+      accessibilityLabel={label}
+      style={[styles.input, styles.flex]}
+      value={value === null ? '' : String(value)}
+      onChangeText={(nextValue) => {
+        if (!/^\d*$/.test(nextValue)) {
+          return;
+        }
+        onChange(nextValue ? Number(nextValue) : null);
+      }}
+      placeholder={label.includes('最小') ? '最小' : '最大'}
+      placeholderTextColor={theme.muted}
+      keyboardType="number-pad"
+    />
+  );
+}
+
+function localSearchDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function SearchFilterEntry({
@@ -420,6 +1008,47 @@ function SearchFilterEntry({
   );
 }
 
+function LinuxDoAiControl({
+  state,
+  styles,
+  theme,
+  onRetry,
+  onToggle
+}: {
+  state: LinuxDoAiSearchState;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  onRetry: () => void;
+  onToggle: () => void;
+}) {
+  const disabled = state.status !== 'ready';
+  const statusText = state.status === 'loading'
+    ? 'AI 结果加载中'
+    : state.status === 'ready'
+      ? `${state.count} 条 AI 结果`
+      : state.message || '';
+  return (
+    <View style={styles.searchFilterEntry}>
+      <View style={styles.searchFilterEntryIcon}><Text style={styles.searchFilterOptionTextActive}>✦</Text></View>
+      <Text style={styles.searchFilterEntryText}>AI 搜索</Text>
+      <Text numberOfLines={1} style={styles.searchFilterEntrySummary}>{statusText}</Text>
+      {state.status === 'loading' ? <ActivityIndicator size="small" color={theme.primary} /> : null}
+      {state.status === 'error' ? <AppButton compact label="重试 AI 搜索" variant="ghost" styles={styles} onPress={onRetry} /> : null}
+      <Pressable
+        accessibilityRole="switch"
+        accessibilityLabel="AI 搜索"
+        accessibilityState={{ checked: state.enabled, disabled }}
+        disabled={disabled}
+        android_ripple={androidRipple(theme.primarySoft)}
+        style={[styles.searchFilterOption, state.enabled && styles.searchFilterOptionActive, disabled && styles.buttonDisabled]}
+        onPress={onToggle}
+      >
+        <Text style={[styles.searchFilterOptionText, state.enabled && styles.searchFilterOptionTextActive]}>{state.enabled ? '开启' : '关闭'}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 export const SearchScreen = memo(function SearchScreen({
   busy,
   categories,
@@ -428,6 +1057,8 @@ export const SearchScreen = memo(function SearchScreen({
   topicStateIndex,
   searchFilters,
   searchGroups,
+  linuxDoAiState,
+  linuxDoAiVisible,
   searchSessionNotices,
   searchSource,
   submittedQuery,
@@ -439,8 +1070,12 @@ export const SearchScreen = memo(function SearchScreen({
   onRemoveRecentSearch,
   onQueryChange,
   onRetrySearchSource,
+  onRetryLinuxDoAiSearch,
   onSearch,
   onSearchFilterApply,
+  onSearchLinuxDoTags,
+  onSearchLinuxDoUsers,
+  onToggleLinuxDoAiSearch,
   onSearchSourceChange
 }: {
   busy: boolean;
@@ -450,6 +1085,8 @@ export const SearchScreen = memo(function SearchScreen({
   topicStateIndex: TopicListItemStateIndex;
   searchFilters: SearchFilterState;
   searchGroups: SearchGroup[];
+  linuxDoAiState: LinuxDoAiSearchState;
+  linuxDoAiVisible: boolean;
   searchSessionNotices: SearchSessionNoticeItem[];
   searchSource: FeedSource;
   submittedQuery: string;
@@ -461,11 +1098,28 @@ export const SearchScreen = memo(function SearchScreen({
   onRemoveRecentSearch: (query: string) => void;
   onQueryChange: (value: string) => void;
   onRetrySearchSource: (source: Source) => void;
+  onRetryLinuxDoAiSearch: () => void;
   onSearch: () => void;
   onSearchFilterApply: (source: Source, filter: SourceSearchFilter) => void;
+  onSearchLinuxDoTags: (options: { query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
+  onSearchLinuxDoUsers: (options: { term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
+  onToggleLinuxDoAiSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
 }) {
   const listRef = useRef<FlashListRef<SearchListItem> | null>(null);
+  const autoLoadArmedRef = useRef(false);
+  const pendingAutoLoadRef = useRef<{ source: Source; page: number } | null>(null);
+  const paginationStateRef = useRef<{
+    busy: boolean;
+    expandedGroups: Record<string, boolean>;
+    groups: SearchGroup[];
+    onLoadMore: (source: Source, page: number) => void;
+  }>({
+    busy: true,
+    expandedGroups: {},
+    groups: [],
+    onLoadMore: onLoadMoreSearchSource
+  });
   const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const openFilterSheet = useCallback(() => setFilterSheetVisible(true), []);
   const closeFilterSheet = useCallback(() => setFilterSheetVisible(false), []);
@@ -512,6 +1166,27 @@ export const SearchScreen = memo(function SearchScreen({
     }));
   }, []);
   const visibleSearchGroups = searchGroups;
+  const paginationBusy = busy || visibleSearchGroups.some((group) => group.loading || group.loadingMore);
+  const paginationContext = `${submittedQuery}\u0000${searchSource}`;
+  useLayoutEffect(() => {
+    autoLoadArmedRef.current = false;
+    pendingAutoLoadRef.current = null;
+  }, [paginationContext]);
+  useLayoutEffect(() => {
+    const pendingAutoLoad = pendingAutoLoadRef.current;
+    if (pendingAutoLoad) {
+      const pendingGroup = visibleSearchGroups.find((group) => group.source === pendingAutoLoad.source);
+      if (!pendingGroup || pendingGroup.error || !pendingGroup.hasMore || pendingGroup.nextPage !== pendingAutoLoad.page) {
+        pendingAutoLoadRef.current = null;
+      }
+    }
+    paginationStateRef.current = {
+      busy: paginationBusy,
+      expandedGroups: expandedSearchGroups,
+      groups: visibleSearchGroups,
+      onLoadMore: onLoadMoreSearchSource
+    };
+  }, [expandedSearchGroups, onLoadMoreSearchSource, paginationBusy, visibleSearchGroups]);
   const searchTerm = query.trim();
   const hasInputValue = query.length > 0;
   const hasSearchTerm = searchTerm.length > 0;
@@ -538,6 +1213,58 @@ export const SearchScreen = memo(function SearchScreen({
     : visibleSearchGroups.length > 0 && visibleSearchGroups.every((group) => !group.loading)
       ? '搜索结果，已完成，结构化回退'
       : '搜索结果，已完成，缺少结构化结果';
+  const handleSearchScrollBeginDrag = useCallback(() => {
+    const state = paginationStateRef.current;
+    autoLoadArmedRef.current = false;
+    if (state.busy || pendingAutoLoadRef.current) {
+      return;
+    }
+    autoLoadArmedRef.current = true;
+    listRef.current?.recordInteraction();
+    listRef.current?.recomputeViewableItems();
+  }, []);
+  const handleSearchViewableItemsChanged = useCallback(({
+    viewableItems
+  }: {
+    viewableItems: ViewToken<SearchListItem>[];
+  }) => {
+    if (!autoLoadArmedRef.current) {
+      return;
+    }
+    const state = paginationStateRef.current;
+    if (state.busy || pendingAutoLoadRef.current) {
+      autoLoadArmedRef.current = false;
+      return;
+    }
+    const orderedItems = [...viewableItems].sort((left, right) => (
+      (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
+    ));
+    for (const token of orderedItems) {
+      if (!token.isViewable || token.item.type !== 'groupLoadMore') {
+        continue;
+      }
+      const { group, page } = token.item;
+      const currentGroup = state.groups.find((candidate) => candidate.source === group.source);
+      if (
+        state.expandedGroups[group.source] === false
+        || !currentGroup
+        || currentGroup.error
+        || currentGroup.loading
+        || currentGroup.loadingMore
+        || !currentGroup.hasMore
+        || currentGroup.nextPage !== page
+      ) {
+        continue;
+      }
+      autoLoadArmedRef.current = false;
+      pendingAutoLoadRef.current = { source: group.source, page };
+      state.onLoadMore(group.source, page);
+      return;
+    }
+  }, []);
+  useLayoutEffect(() => {
+    autoLoadArmedRef.current = false;
+  }, [expandedSearchGroups, query, scrollToTopSignal, searchSource, submittedQuery]);
   const renderSearchListItem = useCallback<ListRenderItem<SearchListItem>>(({ item }) => {
     if (item.type === 'topic') {
       return renderTopicCard(item.topic, topicKey(item.topic) === firstSearchResultKey ? 'search-result-first' : undefined);
@@ -563,10 +1290,26 @@ export const SearchScreen = memo(function SearchScreen({
       );
     }
     if (item.type === 'groupError') {
+      const paginationError = Boolean(item.group.nextPage);
+      const retryPage = paginationError ? item.group.nextPage : null;
       return (
         <View testID={`search-outcome-error-${item.group.source}`} style={styles.errorBox}>
           <Text style={styles.errorText}>{item.group.error}</Text>
-          <AppButton label={`重试 ${item.group.label}`} variant="ghost" styles={styles} disabled={busy} onPress={() => onRetrySearchSource(item.group.source)} />
+          <AppButton
+            label={paginationError ? `重试加载 ${item.group.label}` : `重试 ${item.group.label}`}
+            variant="ghost"
+            styles={styles}
+            disabled={busy || (paginationError && !retryPage)}
+            onPress={() => {
+              if (paginationError) {
+                if (retryPage) {
+                  onLoadMoreSearchSource(item.group.source, retryPage);
+                }
+                return;
+              }
+              onRetrySearchSource(item.group.source);
+            }}
+          />
         </View>
       );
     }
@@ -599,13 +1342,25 @@ export const SearchScreen = memo(function SearchScreen({
     }
     if (item.type === 'groupLoadMore') {
       return (
-        <AppButton
-          label={item.group.loadingMore ? '加载中...' : `加载更多 ${item.group.label}`}
-          variant="ghost"
-          styles={styles}
-          disabled={busy || item.group.loadingMore}
-          onPress={() => onLoadMoreSearchSource(item.group.source, item.page)}
-        />
+        <View
+          accessible
+          accessibilityLabel={item.group.loadingMore
+            ? `正在加载更多 ${item.group.label}`
+            : `继续下滑加载更多 ${item.group.label}`}
+          accessibilityLiveRegion={item.group.loadingMore ? 'polite' : 'none'}
+          accessibilityState={{ busy: Boolean(item.group.loadingMore) }}
+          testID={`search-load-more-${item.group.source}`}
+          style={[styles.button, styles.buttonGhost]}
+        >
+          {item.group.loadingMore ? (
+            <ActivityIndicator testID={`search-load-more-spinner-${item.group.source}`} size="small" color={theme.primary} />
+          ) : null}
+          <Text style={styles.buttonText}>
+            {item.group.loadingMore
+              ? `正在加载更多 ${item.group.label}`
+              : `继续下滑加载更多 ${item.group.label}`}
+          </Text>
+        </View>
       );
     }
     return null;
@@ -616,6 +1371,9 @@ export const SearchScreen = memo(function SearchScreen({
     }
     if (item.type === 'groupHeader') {
       return `${item.group.source}:header`;
+    }
+    if (item.type === 'groupLoadMore') {
+      return `${item.group.source}:${item.type}:${item.page}`;
     }
     return `${item.group.source}:${item.type}`;
   }, []);
@@ -691,6 +1449,15 @@ export const SearchScreen = memo(function SearchScreen({
           onPress={openFilterSheet}
         />
       ) : null}
+      {linuxDoAiVisible ? (
+        <LinuxDoAiControl
+          state={linuxDoAiState}
+          styles={styles}
+          theme={theme}
+          onRetry={onRetryLinuxDoAiSearch}
+          onToggle={onToggleLinuxDoAiSearch}
+        />
+      ) : null}
       {showIdleRecentSearches ? (
         <View style={styles.stack}>
           <Text style={styles.meta}>最近搜索</Text>
@@ -721,9 +1488,13 @@ export const SearchScreen = memo(function SearchScreen({
     hasInputValue,
     hasSearchTerm,
     hasSubmittedQuery,
+    linuxDoAiState,
+    linuxDoAiVisible,
     onQueryChange,
     onRemoveRecentSearch,
+    onRetryLinuxDoAiSearch,
     onSearch,
+    onToggleLinuxDoAiSearch,
     openFilterSheet,
     query,
     recentSearches,
@@ -748,6 +1519,9 @@ export const SearchScreen = memo(function SearchScreen({
         getItemType={(item) => item.type}
         keyboardShouldPersistTaps="handled"
         {...TOPIC_LIST_PERFORMANCE_PROPS}
+        onScrollBeginDrag={handleSearchScrollBeginDrag}
+        onViewableItemsChanged={handleSearchViewableItemsChanged}
+        viewabilityConfig={SEARCH_PAGINATION_VIEWABILITY_CONFIG}
         ListHeaderComponent={header}
         ListFooterComponent={null}
         ListEmptyComponent={showSearchGroups ? null : busy && hasSubmittedQuery
@@ -766,6 +1540,8 @@ export const SearchScreen = memo(function SearchScreen({
           styles={styles}
           theme={theme}
           visible={filterSheetVisible}
+          onSearchLinuxDoTags={onSearchLinuxDoTags}
+          onSearchLinuxDoUsers={onSearchLinuxDoUsers}
           onApply={onSearchFilterApply}
           onClose={closeFilterSheet}
         />

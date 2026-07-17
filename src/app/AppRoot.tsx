@@ -57,7 +57,7 @@ import { useDeferredNavigationTask } from './useDeferredNavigationTask';
 import { GlobalModalHost } from './GlobalModalHost';
 import { HiddenBrowserHost } from './HiddenBrowserHost';
 import { shouldCloseReplyComposerOnBack } from './backHandlerHelpers';
-import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
+import { DEFAULT_LINUXDO_ANDROID_USER_AGENT, loadLinuxDoAccess, setLinuxDoDevAnonymousOverride } from '../linuxdoCookieBridge';
 import { createSourceGateway, type LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { FeedSource, Source, Topic, TopicDetail, UserProfile } from '../types';
 import type { OptimisticActionState } from '../topicActionState';
@@ -974,6 +974,7 @@ export function AppRoot() {
   const sourceGateway = useMemo(() => createSourceGateway({
     clearYaohuoLoginState,
     fetcher: forumFetchWithWebViewFallback,
+    hasLinuxDoCredentialForSource: async () => Boolean((await loadLinuxDoAccess())?.cookieHeader),
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
     nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current
@@ -1015,17 +1016,23 @@ export function AppRoot() {
     loadMoreSearchSource,
     recentSearches,
     removeRecentSearch,
+    retryLinuxDoAiSearch,
     retrySearchSource,
     runSearch,
     searchBusy,
     searchFilters,
     searchGroups,
+    searchLinuxDoTags,
+    searchLinuxDoUsers,
+    linuxDoAiState,
+    linuxDoAiVisible,
     searchSessionNotices,
     searchQuery,
     searchSource,
     submittedSearchQuery,
     setSearchQuery,
-    setSearchSource
+    setSearchSource,
+    toggleLinuxDoAiSearch
   } = useSearchController({
     categories,
     notify,
@@ -1756,6 +1763,8 @@ export function AppRoot() {
       recentSearches,
       searchFilters,
       searchGroups,
+      linuxDoAiState,
+      linuxDoAiVisible,
       searchSessionNotices,
       searchSource,
       submittedQuery: submittedSearchQuery,
@@ -1766,10 +1775,14 @@ export function AppRoot() {
       onOpenTopic: openTopic,
       onRemoveRecentSearch: removeRecentSearch,
       onQueryChange: setSearchQuery,
+      onRetryLinuxDoAiSearch: retryLinuxDoAiSearch,
       onSearch: runCurrentSearch,
       onSearchFilterApply: applySearchFilter,
+      onSearchLinuxDoTags: searchLinuxDoTags,
+      onSearchLinuxDoUsers: searchLinuxDoUsers,
       onSearchSourceChange: setSearchSource,
-      onRetrySearchSource: retrySearchSource
+      onRetrySearchSource: retrySearchSource,
+      onToggleLinuxDoAiSearch: toggleLinuxDoAiSearch
   }), [
     applySearchFilter,
     categories,
@@ -1777,11 +1790,16 @@ export function AppRoot() {
     openTopic,
     recentSearches,
     removeRecentSearch,
+    retryLinuxDoAiSearch,
     retrySearchSource,
     runCurrentSearch,
     searchBusy,
     searchFilters,
     searchGroups,
+    searchLinuxDoTags,
+    searchLinuxDoUsers,
+    linuxDoAiState,
+    linuxDoAiVisible,
     searchQuery,
     searchSessionNotices,
     searchSource,
@@ -1789,6 +1807,7 @@ export function AppRoot() {
     submittedSearchQuery,
     tabScrollToTopSignals.search,
     theme,
+    toggleLinuxDoAiSearch,
     topicStateIndex
   ]);
 

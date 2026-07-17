@@ -138,6 +138,45 @@ describe('Android search list items', () => {
     expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
   });
 
+  it('REG-SEARCH-002 keeps loaded topics visible when the next page fails', () => {
+    const groups: SearchGroup[] = [{
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [topic('1', 'v2ex')],
+      error: '第 2 页请求失败',
+      hasMore: true,
+      nextPage: 2
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { v2ex: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'topic', 'groupError']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '1 条 · 加载失败' });
+    expect(items[1]).toMatchObject({ type: 'topic', topic: { id: '1' } });
+  });
+
+  it('keeps a first-page partial failure on the whole-source error path', () => {
+    const groups: SearchGroup[] = [{
+      source: 'v2ex',
+      label: 'V2EX',
+      items: [topic('1', 'v2ex')],
+      error: '首屏请求失败',
+      hasMore: false,
+      nextPage: null
+    }];
+
+    const items = buildSearchListItems({
+      expandedGroups: { v2ex: true },
+      groups
+    });
+
+    expect(items.map((item) => item.type)).toEqual(['groupHeader', 'groupError']);
+    expect(items[0]).toMatchObject({ type: 'groupHeader', meta: '请求失败' });
+  });
+
   it('labels verification-required search groups separately from login limits', () => {
     const groups: SearchGroup[] = [{
       source: 'nodeseek',

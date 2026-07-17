@@ -56,6 +56,7 @@ export interface Topic {
   solved?: boolean;
   acceptedAnswerFloor?: number;
   slowModeSeconds?: number;
+  isAiGenerated?: boolean;
 }
 
 export interface ReactionSummary {
@@ -131,6 +132,22 @@ export interface Category {
   id: string;
   name: string;
   slug?: string;
+  parentId?: string;
+  parentSlug?: string;
+  topicCount?: number;
+  readRestricted?: boolean;
+}
+
+export interface LinuxDoTagOption {
+  name: string;
+  topicCount?: number;
+}
+
+export interface LinuxDoUserOption {
+  id: string;
+  username: string;
+  displayName?: string;
+  avatar?: string;
 }
 
 export interface TopicPollOption {

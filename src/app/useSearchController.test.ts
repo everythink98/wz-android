@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_SEARCH_FILTERS } from '../searchFilters';
 import {
   createNodeSeekRetrySearchOptions,
   createSearchMoreRequestSnapshot,
@@ -6,7 +7,10 @@ import {
   enqueueSearchHistoryWrite,
   firstRemoteSearchAction,
   groupFromRemoteSearchResult,
+  linuxDoAiFailureState,
+  mergeLinuxDoAiTopics,
   remoteSearchActionForSource,
+  snapshotSearchFilters,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
 
@@ -63,7 +67,7 @@ describe('search controller result helpers', () => {
   it('snapshots NodeSeek verification retry search inputs', () => {
     const filters = {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
-      linuxdo: { source: 'linuxdo' as const, scope: 'all' as const, category: '', tags: '', timeRange: 'all' as const, order: 'relevance' as const, username: '' },
+      linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
       nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
       yaohuo: { source: 'yaohuo' as const, category: '0' }
     };
@@ -89,7 +93,7 @@ describe('search controller result helpers', () => {
   it('uses the submitted query for search pagination', () => {
     const filters = {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
-      linuxdo: { source: 'linuxdo' as const, scope: 'all' as const, category: '', tags: '', timeRange: 'all' as const, order: 'relevance' as const, username: '' },
+      linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
       nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
       yaohuo: { source: 'yaohuo' as const, category: '0' }
     };
@@ -106,6 +110,54 @@ describe('search controller result helpers', () => {
       query: 'codex',
       sort: 'relevance',
       visitedKey: 'nodeseek:codex:{"source":"nodeseek","category":"tech","sort":"replyTime"}'
+    });
+  });
+
+  it('REG-SEARCH-001 keeps submitted linux.do candidates independent from later drafts', () => {
+    const filters = snapshotSearchFilters(DEFAULT_SEARCH_FILTERS);
+    filters.linuxdo.tags.push('人工智能');
+    filters.linuxdo.visited.push('seen');
+    const submitted = snapshotSearchFilters(filters);
+
+    filters.linuxdo.tags.push('快问快答');
+    filters.linuxdo.visited.push('likes');
+
+    expect(submitted.linuxdo.tags).toEqual(['人工智能']);
+    expect(submitted.linuxdo.visited).toEqual(['seen']);
+  });
+
+  it('appends only new AI topics after standard linux.do results', () => {
+    const standard = [
+      { source: 'linuxdo' as const, id: '1', title: 'standard one', author: '', url: '', createdAt: '', replyCount: 0 },
+      { source: 'linuxdo' as const, id: '2', title: 'standard two', author: '', url: '', createdAt: '', replyCount: 0 }
+    ];
+    const ai = [
+      { ...standard[1], isAiGenerated: true },
+      { ...standard[0], id: '3', title: 'AI only', isAiGenerated: true }
+    ];
+
+    expect(mergeLinuxDoAiTopics(standard, ai, true).map((topic) => topic.id)).toEqual(['1', '2', '3']);
+    expect(mergeLinuxDoAiTopics(standard, ai, false)).toBe(standard);
+  });
+
+  it('separates unavailable AI search from retryable failures', () => {
+    expect(linuxDoAiFailureState(Object.assign(new Error('forbidden'), { status: 403 }))).toEqual({
+      status: 'unavailable',
+      enabled: false,
+      count: 0,
+      message: '当前不可用'
+    });
+    expect(linuxDoAiFailureState(Object.assign(new Error('not found'), { statusCode: 404 }))).toEqual({
+      status: 'unavailable',
+      enabled: false,
+      count: 0,
+      message: '当前不可用'
+    });
+    expect(linuxDoAiFailureState(Object.assign(new Error('limited'), { status: 429 }))).toEqual({
+      status: 'error',
+      enabled: false,
+      count: 0,
+      message: 'AI 搜索失败，可重试'
     });
   });
 });

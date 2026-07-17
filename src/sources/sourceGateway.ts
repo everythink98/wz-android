@@ -13,6 +13,11 @@ import {
   getYaohuoTopicDirect,
   searchYaohuoDirect
 } from '../yaohuoApi';
+import {
+  searchLinuxDoSemantic as searchLinuxDoSemanticDirect,
+  searchLinuxDoTags as searchLinuxDoTagsDirect,
+  searchLinuxDoUsers as searchLinuxDoUsersDirect
+} from '../localLinuxdo';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
 import { sourceErrorFromUnknown } from '../sourceErrors';
 import {
@@ -142,6 +147,7 @@ type SourceGatewayCredentialLoadOptions = {
 type SourceGatewayDependencies = {
   clearYaohuoLoginState: (options?: { generation?: number }) => Promise<void>;
   fetcher: Fetcher;
+  hasLinuxDoCredentialForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<boolean>;
   loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekUserAgent: () => string;
@@ -157,6 +163,9 @@ type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
 type ManagedGetReplyOptions = Omit<GetReplyOptions, 'fetcher'>;
 type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie'>;
+type ManagedTagOptionSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoTagsDirect>[0]>, 'fetcher'> & { source: 'linuxdo' };
+type ManagedUserOptionSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoUsersDirect>[0]>, 'fetcher'> & { source: 'linuxdo' };
+type ManagedSemanticTopicSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>, 'fetcher'> & { query: string; source: 'linuxdo' };
 export type SourceGatewayReadContext = {
   isCurrent?: () => boolean;
   trace?: DiagnosticTrace;
@@ -171,6 +180,9 @@ function summarizeReadResult(result: unknown) {
     resultPresent: result !== null && result !== undefined,
     partialErrorCount: errors
   };
+  if (Array.isArray(result)) {
+    summary.itemCount = result.length;
+  }
   for (const [field, diagnosticField] of [
     ['items', 'itemCount'],
     ['replies', 'replyCount'],
@@ -212,6 +224,18 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
     let yaohuoGeneration: number | undefined;
     try {
+      let hasLinuxDoCredential = false;
+      let isLinuxDoCredentialKnown: boolean | undefined;
+      let linuxDoCredentialReason: ReturnType<typeof normalizeDiagnosticReason> | undefined;
+      if (source === 'linuxdo' || source === 'all') {
+        isLinuxDoCredentialKnown = true;
+        try {
+          hasLinuxDoCredential = await dependencies.hasLinuxDoCredentialForSource(source, { diagnosticTrace: trace });
+        } catch (error) {
+          isLinuxDoCredentialKnown = false;
+          linuxDoCredentialReason = normalizeDiagnosticReason(error);
+        }
+      }
       const nodeSeekCookie = source === 'nodeseek' || source === 'all'
         ? await dependencies.loadNodeSeekCookieForSource(source, { diagnosticTrace: trace })
         : undefined;
@@ -223,7 +247,9 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         : undefined;
       markDiagnosticStage(trace, 'credential', {
         source,
-        hasCredential: Boolean(nodeSeekCookie?.trim() || yaohuoCookie?.trim())
+        hasCredential: Boolean(hasLinuxDoCredential || nodeSeekCookie?.trim() || yaohuoCookie?.trim()),
+        ...(isLinuxDoCredentialKnown !== undefined ? { isCredentialKnown: isLinuxDoCredentialKnown } : {}),
+        ...(linuxDoCredentialReason ? { reason: linuxDoCredentialReason } : {})
       });
       markDiagnosticStage(trace, 'transport', { source, channel: 'direct', state: 'start' });
       const result = await operation({
@@ -299,6 +325,24 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       return read(options.source, 'searchTopics', (credentials) => searchTopics({
         ...options,
         ...credentials
+      }), context);
+    },
+    searchTagOptions({ source, ...options }: ManagedTagOptionSearchOptions, context?: SourceGatewayReadContext) {
+      return read(source, 'searchTagOptions', ({ fetcher }) => searchLinuxDoTagsDirect({
+        ...options,
+        fetcher
+      }), context);
+    },
+    searchUserOptions({ source, ...options }: ManagedUserOptionSearchOptions, context?: SourceGatewayReadContext) {
+      return read(source, 'searchUserOptions', ({ fetcher }) => searchLinuxDoUsersDirect({
+        ...options,
+        fetcher
+      }), context);
+    },
+    searchSemanticTopics({ query, source, ...options }: ManagedSemanticTopicSearchOptions, context?: SourceGatewayReadContext) {
+      return read(source, 'searchSemanticTopics', ({ fetcher }) => searchLinuxDoSemanticDirect(query, {
+        ...options,
+        fetcher
       }), context);
     },
     getTopic(options: ManagedGetTopicOptions, context?: SourceGatewayReadContext) {
