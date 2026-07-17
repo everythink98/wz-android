@@ -691,7 +691,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       gap: 7
     },
     searchInputShell: {
-      minHeight: 46,
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
       gap: 8,
@@ -708,7 +708,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
     searchInput: {
       flex: 1,
       minWidth: 0,
-      minHeight: 44,
+      minHeight: 46,
       color: theme.ink,
       fontFamily: appFontFamily,
       fontSize: 15,
@@ -731,7 +731,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderWidth: StyleSheet.hairlineWidth
     },
     searchFilterEntry: {
-      minHeight: 42,
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
       gap: 8,
@@ -741,6 +741,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderWidth: StyleSheet.hairlineWidth,
       paddingHorizontal: 10,
       paddingVertical: 6
+    },
+    searchFilterEntryActive: {
+      backgroundColor: theme.mist,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.36 : 0.22)
     },
     searchFilterEntryIcon: {
       width: 22,
@@ -766,6 +770,10 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       fontWeight: '500',
       includeFontPadding: false,
       lineHeight: 17
+    },
+    searchFilterEntrySummaryActive: {
+      color: theme.primary,
+      fontWeight: '600'
     },
     searchSessionStatusBar: {
       alignItems: 'center',
@@ -958,7 +966,7 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       paddingTop: 12
     },
     searchGroupHeader: {
-      minHeight: 44,
+      minHeight: 48,
       alignItems: 'center',
       flexDirection: 'row',
       justifyContent: 'space-between',
@@ -992,8 +1000,28 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       includeFontPadding: false,
       lineHeight: 17
     },
+    searchGroupAction: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 2
+    },
+    searchGroupActionText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 17
+    },
     searchGroupChevron: {
       opacity: 0.78
+    },
+    searchPaginationStatus: {
+      alignItems: 'center',
+      minHeight: 36,
+      justifyContent: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 8
     },
     flex: {
       flex: 1
@@ -1462,36 +1490,49 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       borderTopColor: theme.line,
       borderTopWidth: StyleSheet.hairlineWidth
     },
+    recentSearchList: {
+      overflow: 'hidden',
+      backgroundColor: theme.surface,
+      borderColor: theme.line,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth
+    },
     removableChip: {
+      alignItems: 'center',
       flex: 1,
-      minHeight: 44,
-      justifyContent: 'center',
-      paddingLeft: 2,
-      paddingRight: 44,
+      flexDirection: 'row',
+      gap: 10,
+      minHeight: 48,
+      paddingHorizontal: 12,
       paddingVertical: 8
     },
-    removableChipPadded: {
-      paddingRight: 44
+    removableChipIcon: {
+      flexShrink: 0
     },
     removableChipText: {
+      flex: 1,
       color: theme.ink,
+      fontFamily: appFontFamily,
       fontSize: 14,
-      maxWidth: '100%'
+      fontWeight: '500',
+      lineHeight: 20,
+      minWidth: 0
     },
     removableChipShell: {
-      position: 'relative',
+      alignItems: 'stretch',
       flexDirection: 'row',
-      borderBottomColor: theme.line,
-      borderBottomWidth: StyleSheet.hairlineWidth
+      minHeight: 48
+    },
+    removableChipShellDivided: {
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth
     },
     removableChipClose: {
-      position: 'absolute',
-      top: 0,
-      right: 0,
+      alignSelf: 'stretch',
       alignItems: 'center',
       justifyContent: 'center',
-      width: 44,
-      height: 44
+      width: 48,
+      minHeight: 48
     },
     loginPanel: {
       gap: 10

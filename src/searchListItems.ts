@@ -15,12 +15,13 @@ export type SearchGroup = {
 };
 
 export type SearchListItem =
-  | { type: 'groupHeader'; group: SearchGroup; expanded: boolean; meta: string }
+  | { type: 'groupHeader'; group: SearchGroup; meta: string }
   | { type: 'groupAuthNotice'; group: SearchGroup }
   | { type: 'groupError'; group: SearchGroup }
   | { type: 'groupLoading'; group: SearchGroup }
   | { type: 'groupEmpty'; group: SearchGroup }
   | { type: 'groupLoadMore'; group: SearchGroup; page: number }
+  | { type: 'groupPageStatus'; group: SearchGroup; page: number }
   | { type: 'topic'; topic: Topic; groupSource?: Source };
 
 function shouldRenderAuthNotice(group: SearchGroup) {
@@ -51,7 +52,7 @@ export function searchGroupMeta(group: SearchGroup) {
     }
     return '请求失败';
   }
-  return `${group.items.length} 条${group.hasMore ? ' · 可继续加载' : ''}`;
+  return `已载入 ${group.items.length} 条`;
 }
 
 export function searchGroupEmptyText(group: SearchGroup) {
@@ -59,24 +60,21 @@ export function searchGroupEmptyText(group: SearchGroup) {
 }
 
 export function buildSearchListItems({
-  expandedGroups,
-  groups
+  groups,
+  mode
 }: {
-  expandedGroups: Record<string, boolean>;
   groups: SearchGroup[];
+  mode: 'overview' | 'source';
 }): SearchListItem[] {
   const items: SearchListItem[] = [];
   for (const group of groups) {
-    const expanded = expandedGroups[group.source] ?? true;
     const paginationError = Boolean(group.error && group.nextPage);
-    items.push({
-      type: 'groupHeader',
-      group,
-      expanded,
-      meta: searchGroupMeta(group)
-    });
-    if (!expanded) {
-      continue;
+    if (mode === 'overview') {
+      items.push({
+        type: 'groupHeader',
+        group,
+        meta: searchGroupMeta(group)
+      });
     }
     if (group.error && !paginationError) {
       if (group.authNotice?.message === group.error && shouldRenderAuthNotice(group)) {
@@ -96,7 +94,8 @@ export function buildSearchListItems({
       items.push({ type: 'groupLoading', group });
       continue;
     }
-    for (const topic of group.items) {
+    const visibleTopics = mode === 'overview' ? group.items.slice(0, 2) : group.items;
+    for (const topic of visibleTopics) {
       items.push({ type: 'topic', topic, groupSource: group.source });
     }
     if (!group.items.length) {
@@ -106,7 +105,7 @@ export function buildSearchListItems({
       items.push({ type: 'groupError', group });
       continue;
     }
-    if (group.hasMore && group.nextPage) {
+    if (mode === 'source' && group.hasMore && group.nextPage) {
       items.push({ type: 'groupLoadMore', group, page: group.nextPage });
     }
   }
