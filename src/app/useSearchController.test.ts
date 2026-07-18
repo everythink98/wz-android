@@ -1,5 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('react', () => ({
+  useCallback: <T,>(callback: T) => callback,
+  useEffect: () => undefined,
+  useMemo: <T,>(factory: () => T) => factory(),
+  useRef: <T,>(value: T) => ({ current: value }),
+  useState: <T,>(initial: T | (() => T)) => {
+    let state = typeof initial === 'function' ? (initial as () => T)() : initial;
+    return [state, (next: T | ((current: T) => T)) => {
+      state = typeof next === 'function' ? (next as (current: T) => T)(state) : next;
+    }];
+  }
+}));
+
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(async () => undefined)
+  }
+}));
 import { DEFAULT_SEARCH_FILTERS } from '../searchFilters';
+import { createSiteSessionStates, createSiteSessionViewModels } from '../siteSessionState';
+import type { SourceGateway } from '../sources/sourceGateway';
+import type { Topic } from '../types';
 import {
   createNodeSeekRetrySearchOptions,
   createSearchMoreRequestSnapshot,
@@ -13,6 +36,7 @@ import {
   snapshotSearchFilters,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
+import { useSearchController } from './useSearchController';
 
 describe('search controller result helpers', () => {
   it('keeps successful groups while surfacing the first required action', () => {
@@ -159,5 +183,113 @@ describe('search controller result helpers', () => {
       count: 0,
       message: 'AI 搜索失败，可重试'
     });
+  });
+
+  it('REG-LINUXDO-002 retries the exact failed linux.do search page without discarding the submitted snapshot', async () => {
+    const loadedTopic: Topic = {
+      source: 'linuxdo',
+      id: '1',
+      title: 'loaded',
+      author: 'alice',
+      url: 'https://linux.do/t/1',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0
+    };
+    const nextTopic: Topic = { ...loadedTopic, id: '2', title: 'next' };
+    const filters = snapshotSearchFilters(DEFAULT_SEARCH_FILTERS);
+    filters.linuxdo.tags.push('stable-tag');
+    const searchTopics = vi.fn()
+      .mockResolvedValueOnce({ items: [loadedTopic], errors: {}, hasMore: true, nextPage: 2 })
+      .mockResolvedValueOnce({
+        items: [],
+        errors: {
+          linuxdo: {
+            kind: 'verification-required',
+            message: 'linux.do 需要验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      })
+      .mockResolvedValueOnce({ items: [nextTopic], errors: {}, hasMore: false, nextPage: null });
+    const showLinuxDoVerification = vi.fn();
+    const controller = useSearchController({
+      categories: [],
+      notify: vi.fn(),
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { searchTopics } as unknown as SourceGateway
+    });
+
+    await expect(controller.runSearch({
+      filters,
+      query: 'stable query',
+      source: 'linuxdo'
+    })).resolves.toBe('completed');
+    filters.linuxdo.tags.push('late-draft-tag');
+
+    await expect(controller.loadMoreSearchSource('linuxdo', 2)).resolves.toBe('verification-required');
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    expect(recovery).toBeDefined();
+    await expect(recovery.resume()).resolves.toBe('completed');
+
+    for (const callIndex of [2, 3]) {
+      expect(searchTopics).toHaveBeenNthCalledWith(callIndex, expect.objectContaining({
+        query: 'stable query',
+        source: 'linuxdo',
+        page: 2,
+        filter: expect.objectContaining({ tags: ['stable-tag'] })
+      }), expect.any(Object));
+    }
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-LINUXDO-002 keeps a search recovery inside the same panel when the failed page still requires verification', async () => {
+    const loadedTopic: Topic = {
+      source: 'linuxdo',
+      id: '1',
+      title: 'loaded',
+      author: 'alice',
+      url: 'https://linux.do/t/1',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0
+    };
+    const verificationFailure = {
+      items: [],
+      errors: {
+        linuxdo: {
+          kind: 'verification-required' as const,
+          message: 'linux.do 需要验证',
+          verificationRequired: true
+        }
+      },
+      hasMore: false,
+      nextPage: null
+    };
+    const searchTopics = vi.fn()
+      .mockResolvedValueOnce({ items: [loadedTopic], errors: {}, hasMore: true, nextPage: 2 })
+      .mockResolvedValueOnce(verificationFailure)
+      .mockResolvedValueOnce(verificationFailure);
+    const showLinuxDoVerification = vi.fn();
+    const controller = useSearchController({
+      categories: [],
+      notify: vi.fn(),
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { searchTopics } as unknown as SourceGateway
+    });
+
+    await controller.runSearch({ query: 'stable query', source: 'linuxdo' });
+    await expect(controller.loadMoreSearchSource('linuxdo', 2)).resolves.toBe('verification-required');
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(searchTopics).toHaveBeenCalledTimes(3);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 });

@@ -332,6 +332,14 @@ export function useTopicSessionController({
     setTopicBusy(true);
   }, [invalidateTopicActionRequests, resetQuoteState, setLoadingMoreReplies]);
 
+  const beginTopicRefresh = useCallback((topic: Topic, key: string) => {
+    invalidateTopicActionRequests(key);
+    currentTopicKeyRef.current = key;
+    setSelectedTopic(topic);
+    setTopicError(null);
+    setTopicBusy(true);
+  }, [invalidateTopicActionRequests]);
+
   const resolveTopicLoad = useCallback((detail: TopicDetail, unreadCount: number) => {
     setUnreadReplyCount(unreadCount);
     setTopicDetail(detail);
@@ -585,6 +593,7 @@ export function useTopicSessionController({
       },
       topic: {
         beginLoad: beginTopicLoad,
+        beginRefresh: beginTopicRefresh,
         failLoad: failTopicLoad,
         finishLoad: finishTopicLoad,
         getCurrentKey: getCurrentTopicKey,

@@ -50,9 +50,10 @@ import {
   type RemoteSearchSourceResult,
   type SearchRunOptions
 } from '../searchControllerResults';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
-type SearchRunInput = Source | Partial<SearchRunOptions>;
+type SearchRunInput = Source | (Partial<SearchRunOptions> & { suppressLinuxDoVerification?: boolean });
 
 function mergedSearchGroupItemCount(groups: SearchGroup[]) {
   const merged = groups.reduce<Topic[]>((items, group) => mergeTopics(items, group.items), []);
@@ -75,6 +76,7 @@ export function useSearchController({
   notify,
   onNodeSeekSearchVerificationRequired,
   sessionViewModels,
+  showLinuxDoVerification,
   showNodeSeekVerification,
   showYaohuoLogin,
   sourceGateway
@@ -83,6 +85,7 @@ export function useSearchController({
   notify: (message: string) => void;
   onNodeSeekSearchVerificationRequired?: (message: string, retry: () => void) => void;
   sessionViewModels: SiteSessionViewModels;
+  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
@@ -100,8 +103,8 @@ export function useSearchController({
   const submittedSearchSourceRef = useRef<FeedSource>('all');
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
-  const runSearchRef = useRef<((options?: SearchRunInput) => Promise<void>) | null>(null);
-  const loadMoreSearchSourceRef = useRef<((source: Source, page: number) => Promise<void>) | null>(null);
+  const runSearchRef = useRef<((options?: SearchRunInput) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const loadMoreSearchSourceRef = useRef<((source: Source, page: number, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -327,6 +330,9 @@ export function useSearchController({
       if (source === 'nodeseek' && group.errorKind === 'verification-required' && group.error) {
         return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message: group.error } };
       }
+      if (source === 'linuxdo' && group.errorKind === 'verification-required' && group.error) {
+        return { kind: 'action-required', group, action: { type: 'linuxdo-verification', message: group.error } };
+      }
       return remoteSearchResult(group);
     } catch (error) {
       if (isCanceledRequest(error)) {
@@ -342,6 +348,10 @@ export function useSearchController({
         const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
         return { kind: 'action-required', group, action: { type: 'nodeseek-verification', message } };
       }
+      if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
+        const group = { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || sourceStatusNotice, hasMore: false, nextPage: null };
+        return { kind: 'action-required', group, action: { type: 'linuxdo-verification', message } };
+      }
       return { kind: 'failed', group: { source, label: sourceLabel(source), items: [], error: message, errorKind: sourceError.kind, authNotice: authNoticeForSourceError(sourceError) || undefined, hasMore: false, nextPage: null } };
     }
   }, [categories, sessionViewModels, sourceGateway]);
@@ -351,11 +361,14 @@ export function useSearchController({
       showYaohuoLogin(action.message);
       return;
     }
+    if (action.type === 'linuxdo-verification') {
+      return;
+    }
     requireNodeSeekSearchVerification(action.message, retryNodeSeek);
   }, [requireNodeSeekSearchVerification, showYaohuoLogin]);
 
-  const runSearch = useCallback(async (options?: SearchRunInput) => {
-    const runOptions: Partial<SearchRunOptions> & { sourceOverride?: Source } = typeof options === 'string' ? { sourceOverride: options } : options || {};
+  const runSearch = useCallback(async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
+    const runOptions: Partial<SearchRunOptions> & { sourceOverride?: Source; suppressLinuxDoVerification?: boolean } = typeof options === 'string' ? { sourceOverride: options } : options || {};
     const query = (runOptions.query ?? searchQuery).trim();
     const requestSearchSource = runOptions.source ?? searchSource;
     const trace = beginDiagnosticTrace('search', 'run', {
@@ -373,7 +386,7 @@ export function useSearchController({
       markDiagnosticStage(trace, 'guard', { state: 'missing-query' });
       finishTrace('blocked', { reason: 'not_ready' });
       notify('请输入搜索词');
-      return;
+      return 'completed';
     }
     if (runOptions.query !== undefined && searchQueryRef.current !== query) {
       searchQueryRef.current = query;
@@ -403,6 +416,22 @@ export function useSearchController({
     const requestFilter = requestSearchSource === 'all' ? undefined : activeFilter;
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    const linuxDoRecovery = (): LinuxDoReadRecovery => ({
+      key: requestOwner.key,
+      isCurrent: isCurrentSearchRequest,
+      resume: async () => {
+        if (!isCurrentSearchRequest()) {
+          return 'stale';
+        }
+        return await runSearchRef.current?.({
+          filters: snapshotSearchFilters(requestFilters),
+          query,
+          source: requestSearchSource,
+          sourceOverride: 'linuxdo',
+          suppressLinuxDoVerification: true
+        }) ?? 'stale';
+      }
+    });
     const activeSources = sourceOverride
       ? [sourceOverride]
       : requestSearchSource === 'all'
@@ -461,7 +490,7 @@ export function useSearchController({
           source: sourceOverride || requestSearchSource,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       const nextGroups = searchGroupsRef.current.map((group) => (
         activeSources.includes(group.source) ? { ...group, loading: false } : group
@@ -469,8 +498,19 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
       const resultCount = mergedSearchGroupItemCount(nextGroups);
-      const action = remoteSearchActionForSource(requestSearchSource, activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
+      const action = remoteSearchActionForSource(sourceOverride || requestSearchSource, activeSources.map((source) => resultsBySource[source]).filter(Boolean) as RemoteSearchSourceResult[]);
       if (action) {
+        if (action.type === 'linuxdo-verification') {
+          finishTrace(resultCount ? 'partial' : 'blocked', {
+            source: 'linuxdo',
+            reason: 'verification_required',
+            itemCount: resultCount
+          });
+          if (requestSearchSource === 'linuxdo' && !runOptions.suppressLinuxDoVerification) {
+            await showLinuxDoVerification(action.message, linuxDoRecovery());
+          }
+          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
+        }
         handleRemoteSearchAction(action, () => {
           void runSearchRef.current?.(createNodeSeekRetrySearchOptions({
             filters: requestFilters,
@@ -483,7 +523,7 @@ export function useSearchController({
           reason: action.type === 'nodeseek-verification' ? 'verification_required' : 'login_required',
           itemCount: resultCount
         });
-        return;
+        return 'completed';
       }
       const errors = nextGroups.filter((group) => group.error);
       if (errors.length) {
@@ -501,14 +541,17 @@ export function useSearchController({
       } else {
         finishTrace('success', { source: sourceOverride || requestSearchSource, itemCount: resultCount });
       }
+      return 'completed';
     } catch (error) {
       if (isCanceledRequest(error)) {
         finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
           source: sourceOverride || requestSearchSource,
           reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
         });
+        return 'stale';
       } else if (!isCurrentSearchRequest()) {
         finishTrace('stale', { source: sourceOverride || requestSearchSource, reason: 'superseded' });
+        return 'stale';
       } else {
         const failureSource = sourceOverride || requestSearchSource;
         const sourceError = sourceErrorFromUnknown(failureSource, error);
@@ -523,7 +566,7 @@ export function useSearchController({
             showYaohuoLogin(sourceError.message);
           }
           finishTrace(outcome, { source: failureSource, reason });
-          return;
+          return 'completed';
         }
         if (failureSource === 'nodeseek' && sourceError.kind === 'verification-required') {
           requireNodeSeekSearchVerification(sourceError.message, () => {
@@ -534,10 +577,18 @@ export function useSearchController({
             }));
           });
           finishTrace(outcome, { source: failureSource, reason });
-          return;
+          return 'completed';
+        }
+        if (failureSource === 'linuxdo' && sourceError.kind === 'verification-required') {
+          finishTrace(outcome, { source: failureSource, reason });
+          if (requestSearchSource === 'linuxdo' && !runOptions.suppressLinuxDoVerification) {
+            await showLinuxDoVerification(sourceError.message, linuxDoRecovery());
+          }
+          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
         }
         notify(sourceError.message);
         finishTrace(outcome, { source: failureSource, reason });
+        return 'completed';
       }
     } finally {
       if (!traceFinished) {
@@ -563,10 +614,15 @@ export function useSearchController({
     searchQuery,
     searchSource,
     sessionViewModels,
+    showLinuxDoVerification,
     showYaohuoLogin
   ]);
 
-  const loadMoreSearchSource = useCallback(async (source: Source, page: number) => {
+  const loadMoreSearchSource = useCallback(async (
+    source: Source,
+    page: number,
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const trace = beginDiagnosticTrace('search', 'load-more', { source, page });
     let traceFinished = false;
     const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
@@ -587,7 +643,7 @@ export function useSearchController({
     if (!requestSnapshot) {
       markDiagnosticStage(trace, 'guard', { source, state: 'missing-snapshot' });
       finishTrace('blocked', { source, reason: 'not_ready' });
-      return;
+      return 'completed';
     }
     const { activeFilter, ownerKey, query, sort, visitedKey } = requestSnapshot;
     const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
@@ -601,7 +657,7 @@ export function useSearchController({
         source,
         ...(busy ? { reason: 'busy' } : currentGroup ? {} : { reason: 'not_ready' })
       });
-      return;
+      return 'completed';
     }
     markDiagnosticStage(trace, 'guard', { source, state: 'load-more', page });
     const markedGroups = searchGroupsRef.current.map((group) => (
@@ -613,6 +669,16 @@ export function useSearchController({
     const requestId = ++searchRequestIdRef.current;
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, ownerKey);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: ownerKey,
+      isCurrent: isCurrentSearchRequest,
+      resume: async () => {
+        if (!isCurrentSearchRequest()) {
+          return 'stale';
+        }
+        return await loadMoreSearchSourceRef.current?.(source, page, true) ?? 'stale';
+      }
+    };
     setSearchBusy(true);
     try {
       const result = await runRemoteSearchSource(source, query, page, controller.signal, sort, activeFilter, {
@@ -624,7 +690,7 @@ export function useSearchController({
           source,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       const data = groupFromRemoteSearchResult(result);
       const nextGroups = searchGroupsRef.current.map((group) => {
@@ -659,6 +725,17 @@ export function useSearchController({
       searchGroupsRef.current = nextGroups;
       setSearchGroups(nextGroups);
       if (result.kind === 'action-required') {
+        if (result.action.type === 'linuxdo-verification') {
+          finishTrace(updated?.items.length ? 'partial' : 'blocked', {
+            source,
+            reason: 'verification_required',
+            itemCount: updated?.items.length || 0
+          });
+          if (requestSearchSource === 'linuxdo' && !suppressLinuxDoVerification) {
+            await showLinuxDoVerification(result.action.message, linuxDoRecovery);
+          }
+          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
+        }
         handleRemoteSearchAction(result.action, () => {
           void loadMoreSearchSourceRef.current?.(source, page);
         });
@@ -667,7 +744,7 @@ export function useSearchController({
           reason: result.action.type === 'nodeseek-verification' ? 'verification_required' : 'login_required',
           itemCount: updated?.items.length || 0
         });
-        return;
+        return 'completed';
       }
       if (updated?.error) {
         notify(`${updated.label}：${updated.error}`);
@@ -686,14 +763,17 @@ export function useSearchController({
           hasMore: Boolean(updated?.hasMore)
         });
       }
+      return 'completed';
     } catch (error) {
       if (isCanceledRequest(error)) {
         finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
           source,
           reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
         });
+        return 'stale';
       } else if (!isCurrentSearchRequest()) {
         finishTrace('stale', { source, reason: 'superseded' });
+        return 'stale';
       } else {
         const sourceError = sourceErrorFromUnknown(source, error);
         const nextGroups = searchGroupsRef.current.map((group) => (
@@ -707,12 +787,19 @@ export function useSearchController({
         ));
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
-        notify(sourceError.message);
         const reason = diagnosticReasonForSearchError(sourceError);
         finishTrace(
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
           { source, reason }
         );
+        if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
+          if (requestSearchSource === 'linuxdo' && !suppressLinuxDoVerification) {
+            await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
+          }
+          return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
+        }
+        notify(sourceError.message);
+        return 'completed';
       }
     } finally {
       if (!traceFinished) {
@@ -726,16 +813,12 @@ export function useSearchController({
       }
       finishAbortableRequest(searchAbortRef, controller);
     }
-  }, [handleRemoteSearchAction, notify, runRemoteSearchSource]);
+  }, [handleRemoteSearchAction, notify, runRemoteSearchSource, showLinuxDoVerification]);
 
-  useEffect(() => {
-    loadMoreSearchSourceRef.current = loadMoreSearchSource;
-  }, [loadMoreSearchSource]);
+  loadMoreSearchSourceRef.current = loadMoreSearchSource;
+  runSearchRef.current = runSearch;
+  searchQueryRef.current = searchQuery;
 
-  useEffect(() => {
-    searchQueryRef.current = searchQuery;
-    runSearchRef.current = runSearch;
-  }, [runSearch, searchQuery]);
 
   const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {
     const nextFilters = {

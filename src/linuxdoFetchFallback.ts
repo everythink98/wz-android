@@ -1,4 +1,4 @@
-import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { isGoogleSiteSearchUrl } from './googleSearchFallback';
 import type { Fetcher } from './request';
 import {
@@ -9,6 +9,14 @@ import {
   normalizeDiagnosticReason,
   registerDiagnosticContextFetcher
 } from './diagnostics';
+
+export type LinuxDoHiddenBrowserFailureReason = 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
+
+export class LinuxDoHiddenBrowserFailureError extends Error {
+  constructor(public readonly reason: LinuxDoHiddenBrowserFailureReason, message: string) {
+    super(message);
+  }
+}
 
 export function isLinuxDoRequestUrl(input: string) {
   try {
@@ -80,7 +88,15 @@ async function fetchLinuxDoThroughWebView(
         reason
       });
     }
-    throw error;
+    if (
+      reason === 'canceled'
+      || reason === 'stale'
+      || reason === 'superseded'
+      || (error instanceof LinuxDoHiddenBrowserFailureError && error.reason === 'content-too-large')
+    ) {
+      throw error;
+    }
+    throw new LinuxDoCloudflareError();
   }
 }
 
@@ -130,11 +146,15 @@ export function createLinuxDoWebViewFallbackFetcher({
 }): Fetcher {
   return registerDiagnosticContextFetcher(async (input, init) => {
     const url = String(input);
+    const method = String(init?.method || 'GET').toUpperCase();
     if (isLinuxDoGoogleSearchUrl(url)) {
+      if (method !== 'GET') {
+        return defaultFetcher(input, init);
+      }
       return fetchLinuxDoWebViewOnly(webViewFetcher, url, init);
     }
     const response = await defaultFetcher(input, init);
-    if (!isLinuxDoRequestUrl(url)) {
+    if (!isLinuxDoRequestUrl(url) || method !== 'GET') {
       return response;
     }
     if (isCloudflareChallengeResponse(response)) {

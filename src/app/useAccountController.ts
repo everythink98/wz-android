@@ -663,7 +663,7 @@ export function useAccountController({
     const summary = linuxDoAccessSummary(access);
     const cookieSummary = summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names;
     updateLinuxDoSession(summary.hasClearance
-      ? { type: 'verification-succeeded', cookieSummary, loggedIn: false, at: new Date().toISOString() }
+      ? { type: 'cookie-loaded', cookieSummary, hasVerification: true, loggedIn: false, at: new Date().toISOString() }
       : { type: 'cleared' });
     resetLinuxDoLevelState();
     resetLinuxDoWebView();

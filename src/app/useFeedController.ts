@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import type { SourceGateway } from '../sources/sourceGateway';
 import { defaultFeedFilters, shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import {
@@ -115,7 +116,7 @@ export function useFeedController({
   notify: (message: string) => void;
   readerData: ReaderData;
   readerDataLoaded: boolean;
-  showLinuxDoVerification: (message?: string) => void;
+  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
@@ -238,6 +239,19 @@ export function useFeedController({
     }));
   }, []);
 
+  const loadFeedRef = useRef<((options?: {
+    page?: number;
+    cursor?: string;
+    reset?: boolean;
+    source?: FeedSource;
+    category?: string;
+    feedFilter?: SourceFeedFilter;
+    nocache?: boolean;
+    clearItems?: boolean;
+    successMessage?: string;
+    suppressLinuxDoVerification?: boolean;
+  }) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+
   const loadFeed = useCallback(async ({
     page = 1,
     cursor,
@@ -247,7 +261,8 @@ export function useFeedController({
     feedFilter,
     nocache = false,
     clearItems = reset && !nocache,
-    successMessage
+    successMessage,
+    suppressLinuxDoVerification = false
   }: {
     page?: number;
     cursor?: string;
@@ -258,7 +273,8 @@ export function useFeedController({
     nocache?: boolean;
     clearItems?: boolean;
     successMessage?: string;
-  } = {}) => {
+    suppressLinuxDoVerification?: boolean;
+  } = {}): Promise<LinuxDoReadResumeOutcome> => {
     const requestSource = source;
     const isLoadMore = !reset && page > 1;
     const trace = beginDiagnosticTrace('feed', 'load', {
@@ -277,7 +293,7 @@ export function useFeedController({
     if (feedLoadingRef.current && !reset) {
       markDiagnosticStage(trace, 'guard', { source: requestSource, state: 'busy', isLoadMore });
       finishTrace('blocked', { source: requestSource, reason: 'busy' });
-      return;
+      return 'stale';
     }
     const requestBaseState = feedStatesRef.current[requestSource];
     const requestFeedFilter = feedFilter ?? feedFilterForRequest(requestSource, category, feedFilters);
@@ -287,6 +303,27 @@ export function useFeedController({
     const requestId = ++feedRequestIdRef.current;
     const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
+    const linuxDoRecovery = (): LinuxDoReadRecovery => ({
+      key: `feed:${requestKey}:${page}:${cursor || ''}`,
+      isCurrent: isCurrentFeedRequest,
+      resume: async () => {
+        if (!isCurrentFeedRequest()) {
+          return 'stale';
+        }
+        return await loadFeedRef.current?.({
+          page,
+          cursor,
+          reset,
+          source: requestSource,
+          category,
+          feedFilter: requestFeedFilter,
+          nocache: true,
+          clearItems: false,
+          successMessage,
+          suppressLinuxDoVerification: true
+        }) || 'stale';
+      }
+    });
     feedSourceRequestIdRef.current[requestSource] = requestId;
     markDiagnosticStage(trace, 'guard', {
       source: requestSource,
@@ -359,7 +396,7 @@ export function useFeedController({
           source: requestSource,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       let finalErrors: SourceErrors = {};
       if (source === 'all' && hasYaohuoCredential) {
@@ -402,7 +439,7 @@ export function useFeedController({
             source: requestSource,
             reason: controller.signal.aborted ? 'canceled' : 'superseded'
           });
-          return;
+          return 'stale';
         }
         setFeedStates((current) => ({
           ...current,
@@ -435,7 +472,7 @@ export function useFeedController({
             source: requestSource,
             reason: controller.signal.aborted ? 'canceled' : 'superseded'
           });
-          return;
+          return 'stale';
         }
         applyFeedResponse(data);
         finalErrors = data.errors || {};
@@ -456,7 +493,7 @@ export function useFeedController({
             source: requestSource,
             reason: controller.signal.aborted ? 'canceled' : 'superseded'
           });
-          return;
+          return 'stale';
         }
         applyFeedResponse(data);
         finalErrors = data.errors || {};
@@ -466,7 +503,7 @@ export function useFeedController({
           source: requestSource,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       const errors = Object.entries(finalErrors);
       if (errors.length) {
@@ -483,16 +520,21 @@ export function useFeedController({
           }
           showNodeSeekVerification(isLoadMore ? `加载下一页失败：${verificationMessage}` : verificationMessage);
           finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
-          return;
+          return 'completed';
         }
         const linuxDoVerificationMessage = linuxDoVerificationNavigationMessage(requestSource, finalErrors);
         if (linuxDoVerificationMessage) {
           if (isLoadMore) {
             markFeedLoadMoreFailed(requestSource);
           }
-          showLinuxDoVerification(isLoadMore ? `加载下一页失败：${linuxDoVerificationMessage}` : linuxDoVerificationMessage);
+          if (!suppressLinuxDoVerification) {
+            await showLinuxDoVerification(
+              isLoadMore ? `加载下一页失败：${linuxDoVerificationMessage}` : linuxDoVerificationMessage,
+              linuxDoRecovery()
+            );
+          }
           finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
-          return;
+          return 'verification-required';
         }
         const message = formatSourceErrorMessages(finalErrors, sourceLabel);
         if (isLoadMore) {
@@ -513,14 +555,17 @@ export function useFeedController({
           hasMore: Boolean(appliedSummary?.hasMore)
         });
       }
+      return 'completed';
     } catch (error) {
       if (isCanceledRequest(error)) {
         finishTrace(isCurrentFeedRequest() ? 'canceled' : 'stale', {
           source: requestSource,
           reason: isCurrentFeedRequest() ? 'canceled' : 'superseded'
         });
+        return 'stale';
       } else if (!isCurrentFeedRequest()) {
         finishTrace('stale', { source: requestSource, reason: 'superseded' });
+        return 'stale';
       } else {
         const sourceError = sourceErrorFromUnknown(requestSource, error);
         const reason = diagnosticReasonForSourceError(sourceError);
@@ -538,20 +583,23 @@ export function useFeedController({
             showYaohuoLogin(notice);
           }
           finishTrace(outcome, { source: requestSource, reason });
-          return;
+          return 'completed';
         }
         if (requestSource === 'nodeseek' && sourceError.kind === 'verification-required') {
           showNodeSeekVerification(notice);
           finishTrace(outcome, { source: requestSource, reason });
-          return;
+          return 'completed';
         }
         if (requestSource === 'linuxdo' && sourceError.kind === 'verification-required') {
-          showLinuxDoVerification(notice);
+          if (!suppressLinuxDoVerification) {
+            await showLinuxDoVerification(notice, linuxDoRecovery());
+          }
           finishTrace(outcome, { source: requestSource, reason });
-          return;
+          return 'verification-required';
         }
         notify(notice);
         finishTrace(outcome, { source: requestSource, reason });
+        return 'completed';
       }
     } finally {
       if (!traceFinished) {
@@ -589,10 +637,7 @@ export function useFeedController({
     sourceGateway
   ]);
 
-  const loadFeedRef = useRef(loadFeed);
-  useEffect(() => {
-    loadFeedRef.current = loadFeed;
-  }, [loadFeed]);
+  loadFeedRef.current = loadFeed;
 
   useEffect(() => {
     if (!readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter)) {
@@ -603,7 +648,7 @@ export function useFeedController({
     if (shouldReuseFeedStateForRequest(feedStatesRef.current[feedSource], requestKey)) {
       return;
     }
-    void loadFeedRef.current({ reset: true, page: 1, source: feedSource, category: categoryFilter, feedFilter: requestFeedFilter, nocache: true, clearItems: true });
+    void loadFeedRef.current?.({ reset: true, page: 1, source: feedSource, category: categoryFilter, feedFilter: requestFeedFilter, nocache: true, clearItems: true });
   }, [categoryFilter, feedFilters, feedSource, readerDataLoaded, readingFilter]);
 
   useEffect(() => {

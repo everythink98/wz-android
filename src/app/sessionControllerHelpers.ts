@@ -95,18 +95,14 @@ export function takeNodeSeekVerificationRetry<TopicLike>(
   return topic ? { type: 'topic', topic } : null;
 }
 
-export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErrorStatus?: number) {
-  const status = challenge ? 403 : httpErrorStatus || 200;
-  const responseBody = challenge ? '' : body;
-  const isJson = /^\s*[{[]/.test(responseBody);
+export function linuxDoBrowserResponse(body: string, httpErrorStatus?: number) {
+  const status = httpErrorStatus || 200;
+  const isJson = /^\s*[{[]/.test(body);
   const headerValues: Record<string, string> = {
     'content-type': isJson ? 'application/json' : 'text/html'
   };
-  if (challenge) {
-    headerValues['cf-mitigated'] = 'challenge';
-  }
   if (typeof Response !== 'undefined') {
-    return new Response(responseBody, {
+    return new Response(body, {
       status,
       headers: headerValues
     });
@@ -117,7 +113,7 @@ export function linuxDoBrowserResponse(body: string, challenge: boolean, httpErr
     headers: {
       get: (headerName: string) => headerValues[headerName.toLowerCase()] || null
     },
-    text: () => Promise.resolve(responseBody)
+    text: () => Promise.resolve(body)
   } as Response;
 }
 
@@ -232,7 +228,7 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
   skipStopLoading = false
 }: {
   request: T;
-  message: string;
+  message: string | Error;
   currentRef: MutableRef<T | null>;
   queueRef: MutableRef<T[]>;
   setActiveRequest: (request: BrowserFetchRequestView | null) => void;
@@ -254,7 +250,7 @@ export function rejectBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
     currentRef.current = null;
     setActiveRequest(null);
   }
-  const settled = settleBrowserFetchRequestOnce(request, () => request.reject(new Error(message)));
+  const settled = settleBrowserFetchRequestOnce(request, () => request.reject(message instanceof Error ? message : new Error(message)));
   if (!settled) {
     return;
   }

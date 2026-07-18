@@ -13,6 +13,16 @@ const CHALLENGE_BODY_MARKERS = [
   '正在检查'
 ];
 
+export class LinuxDoCloudflareError extends Error {
+  source = 'linuxdo' as const;
+  reason = 'cloudflare' as const;
+  verificationRequired = true as const;
+
+  constructor() {
+    super('linux.do 需要完成 Cloudflare 验证');
+  }
+}
+
 function isCloudflareChallengeBody(body: string) {
   const text = body.toLowerCase();
   return CHALLENGE_BODY_MARKERS.some((marker) => text.includes(marker));

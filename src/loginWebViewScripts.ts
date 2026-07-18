@@ -49,6 +49,7 @@ export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
 (() => {
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "linuxdo-webview",
+    documentKey: String(location.href || "") + ":" + String(performance.timeOrigin || 0),
     userAgent: navigator.userAgent || "",
     cookie: document.cookie || ""
   }));

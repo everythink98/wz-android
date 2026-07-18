@@ -9,7 +9,8 @@ export type SearchHistoryWriteQueue = {
 
 export type RemoteSearchAction =
   | { type: 'yaohuo-login'; message: string }
-  | { type: 'nodeseek-verification'; message: string };
+  | { type: 'nodeseek-verification'; message: string }
+  | { type: 'linuxdo-verification'; message: string };
 
 export type RemoteSearchSourceResult =
   | { kind: 'success'; group: SearchGroup }
