@@ -225,7 +225,10 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
   const requestId = __LINUXDO_BROWSER_FETCH_ID__;
   const bridgeMessageLimit = 900000;
   const challengePattern = /just a moment|checking your browser|cf-browser-verification|challenge-running|challenge-platform|cf-turnstile|cf_chl_|attention required|enable javascript and cookies|请稍候|正在检查/i;
-  const pageText = (limit = 12000) => (document.body?.innerText || document.documentElement?.innerText || "").trim().slice(0, limit);
+  const pageText = (limit) => {
+    const text = (document.body?.innerText || document.documentElement?.innerText || "").trim();
+    return typeof limit === "number" ? text.slice(0, limit) : text;
+  };
   const pageHtml = () => document.documentElement ? document.documentElement.outerHTML : "";
   const isChallengePage = () => {
     const challengeText = [document.title || "", pageText(3000)].join(" ");
@@ -262,7 +265,8 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
       id: requestId,
       url: location.href,
       title: document.title || "",
-      challenge: true,
+      challenge: false,
+      failureReason: 'content-too-large',
       error: 'linux.do 页面内容过大，已停止读取',
       userAgent: navigator.userAgent || "",
       cookie: document.cookie || ""
@@ -308,6 +312,7 @@ export function useHiddenBrowserFetchController({
     userAgent?: string;
     challenge?: boolean;
     error?: string;
+    failureReason?: 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
     httpErrorStatus?: number;
   }) => void;
   completeNodeSeekBrowserFetch: (data: {
@@ -332,6 +337,7 @@ export function useHiddenBrowserFetchController({
         userAgent?: string;
         challenge?: boolean;
         error?: string;
+        failureReason?: 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
         httpErrorStatus?: number;
       };
       if (data.type === 'nodeseek-browser-fetch') {

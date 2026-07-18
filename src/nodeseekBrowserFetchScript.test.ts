@@ -34,6 +34,15 @@ function runLinuxDoBrowserFetchScript(url: string, html: string) {
   return { postMessage };
 }
 
+function runLinuxDoBrowserFetchJson(url: string, body: string) {
+  document.body.innerHTML = '<pre></pre>';
+  Object.defineProperty(document.body, 'innerText', {
+    configurable: true,
+    value: body
+  });
+  return runLinuxDoBrowserFetchScript(url, document.body.innerHTML);
+}
+
 describe('hidden browser fetch scripts', () => {
   afterEach(() => {
     document.body.innerHTML = '';
@@ -343,5 +352,35 @@ describe('hidden browser fetch scripts', () => {
       challenge: true
     });
     expect(payload.body).toBe('');
+  });
+
+  it('returns linux.do JSON bodies larger than 12 KB without truncating them', () => {
+    const body = JSON.stringify({ items: ['x'.repeat(13000)] });
+    const { postMessage } = runLinuxDoBrowserFetchJson('/latest.json', body);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'linuxdo-browser-fetch',
+      id: 9,
+      challenge: false,
+      body
+    });
+  });
+
+  it('REG-LINUXDO-001 reports an oversized linux.do bridge payload without classifying it as Cloudflare', () => {
+    const body = JSON.stringify({ items: ['x'.repeat(950000)] });
+    const { postMessage } = runLinuxDoBrowserFetchJson('/latest.json', body);
+
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+    expect(payload).toMatchObject({
+      type: 'linuxdo-browser-fetch',
+      id: 9,
+      challenge: false,
+      failureReason: 'content-too-large',
+      error: 'linux.do 页面内容过大，已停止读取'
+    });
+    expect(payload.body).toBeUndefined();
   });
 });

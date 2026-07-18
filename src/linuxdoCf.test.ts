@@ -35,6 +35,7 @@ import {
   canStoreLinuxDoLogin,
   clearLinuxDoAccess,
   clearLinuxDoAccessForGeneration,
+  clearLinuxDoClearance,
   clearLinuxDoWebViewClearance,
   clearLinuxDoSavedAccess,
   currentLinuxDoAccessGeneration,
@@ -228,6 +229,40 @@ describe('linux.do Cloudflare helpers', () => {
 
     expect(SecureStore.setItemAsync).not.toHaveBeenCalledWith('linuxdo-clearance', expect.stringContaining('old'));
     expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('linuxdo-clearance');
+  });
+
+  it('serializes WebView clearance removal before a newer linux.do access save', async () => {
+    let releaseClearance: () => void = () => undefined;
+    const clearanceBarrier = new Promise<void>((resolve) => {
+      releaseClearance = resolve;
+    });
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce(JSON.stringify({
+      cookieHeader: 'cf_clearance=old; _t=login; _forum_session=session',
+      userAgent: 'LinuxDo UA'
+    }));
+    vi.mocked(SecureStore.setItemAsync).mockClear();
+    vi.mocked(CookieManager.clearByName).mockClear();
+    vi.mocked(CookieManager.clearByName).mockImplementation(async () => {
+      await clearanceBarrier;
+      return true;
+    });
+
+    try {
+      const clear = clearLinuxDoClearance();
+      await vi.waitFor(() => expect(CookieManager.clearByName).toHaveBeenCalled());
+      const save = saveLinuxDoAccess('cf_clearance=new; _t=login; _forum_session=session', 'LinuxDo UA');
+      releaseClearance();
+      await Promise.all([clear, save]);
+
+      const savedCalls = vi.mocked(SecureStore.setItemAsync).mock.calls;
+      const newSaveIndex = savedCalls.findIndex(([, value]) => String(value).includes('cf_clearance=new'));
+      expect(newSaveIndex).toBeGreaterThanOrEqual(0);
+      const newSaveOrder = vi.mocked(SecureStore.setItemAsync).mock.invocationCallOrder[newSaveIndex];
+      expect(vi.mocked(CookieManager.clearByName).mock.invocationCallOrder.every((order) => order < newSaveOrder)).toBe(true);
+    } finally {
+      releaseClearance();
+      vi.mocked(CookieManager.clearByName).mockImplementation(async () => true);
+    }
   });
 
   it('skips stale linux.do login clears captured before a newer access generation exists', async () => {

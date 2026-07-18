@@ -32,11 +32,15 @@ wait text="关于阅坛" 10000
 
 find "问题诊断" click
 wait label="生成并分享诊断日志" 10000
+press label="收起问题诊断"
+wait label="展开问题诊断" 10000
 
 find "备份 / 恢复" click
 wait label="导出备份文件" 10000
 wait label="选择备份文件恢复" 10000
+press label="收起备份 / 恢复"
+wait "label=\"展开备份 / 恢复\"" 10000
 
 find "外观" click
-find "主题" exists
-find "字号" exists
+wait label="主题" 10000
+wait label="字号" 10000

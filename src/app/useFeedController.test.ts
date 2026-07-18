@@ -144,4 +144,98 @@ describe('feed controller helpers', () => {
     ]));
     expect(new Set(terminalEvents.map((event) => event.traceId)).size).toBe(2);
   });
+
+  it('gives linux.do verification an exact read recovery that reports the resumed outcome', async () => {
+    const showLinuxDoVerification = vi.fn();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn()
+        .mockResolvedValueOnce({
+          items: [],
+          errors: {
+            linuxdo: {
+              kind: 'verification-required',
+              message: 'linux.do 需要验证',
+              verificationRequired: true
+            }
+          },
+          hasMore: false,
+          nextPage: null
+        })
+        .mockResolvedValueOnce({ items: [], errors: {}, hasMore: false, nextPage: null })
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await controller.loadFeed({ source: 'linuxdo', reset: true, nocache: true });
+
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    expect(recovery).toMatchObject({ key: expect.stringContaining('feed:linuxdo') });
+    expect(recovery.isCurrent()).toBe(true);
+    await expect(recovery.resume()).resolves.toBe('completed');
+    expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2);
+  });
+
+  it('REG-LINUXDO-002 retries the exact failed linux.do feed page and cursor', async () => {
+    const showLinuxDoVerification = vi.fn();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn()
+        .mockResolvedValueOnce({
+          items: [],
+          errors: {
+            linuxdo: {
+              kind: 'verification-required',
+              message: 'linux.do 需要验证',
+              verificationRequired: true
+            }
+          },
+          hasMore: false,
+          nextPage: null
+        })
+        .mockResolvedValueOnce({ items: [], errors: {}, hasMore: false, nextPage: null })
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await controller.loadFeed({
+      source: 'linuxdo',
+      page: 3,
+      cursor: 'failed-cursor',
+      category: 'dev',
+      feedFilter: 'hot'
+    });
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    await expect(recovery.resume()).resolves.toBe('completed');
+
+    expect(sourceGateway.getFeed).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      source: 'linuxdo',
+      page: 3,
+      cursor: 'failed-cursor',
+      category: 'dev',
+      feedFilter: 'hot'
+    }), expect.any(Object));
+    expect(sourceGateway.getFeed).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      source: 'linuxdo',
+      page: 3,
+      cursor: 'failed-cursor',
+      category: 'dev',
+      feedFilter: 'hot',
+      nocache: true
+    }), expect.any(Object));
+  });
 });

@@ -378,7 +378,7 @@ export function useTopicActionsController({
   const refreshTopicRepliesAfterWrite = useCallback(async (diagnosticTrace: DiagnosticTrace, options: TopicRepliesRefreshOptions) => {
     try {
       const refreshed = await refreshTopicReplies({ ...options, diagnosticTrace });
-      if (refreshed === false) {
+      if (refreshed === false || refreshed === 'stale' || refreshed === 'verification-required') {
         finishDiagnosticTrace(diagnosticTrace, 'partial', { reason: 'refresh_failed' });
         return;
       }

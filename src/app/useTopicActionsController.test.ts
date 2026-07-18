@@ -49,10 +49,10 @@ vi.mock('../linuxdoCookieBridge', () => ({
   linuxDoAccessSummary: vi.fn(() => ({ loggedIn: true })),
   loadLinuxDoAccess: vi.fn(async () => ({ cookieHeader: '_t=fake-credential', userAgent: 'ua' })),
   parseLinuxDoDocumentCookie: vi.fn(() => ({})),
-  summarizeLinuxDoCookies: vi.fn(() => ({ names: [] }))
+  summarizeLinuxDoCookies: vi.fn(() => ({ names: [], hasClearance: false }))
 }));
 
-import { clearLinuxDoAccessForGeneration } from '../linuxdoCookieBridge';
+import { clearLinuxDoAccessForGeneration, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { Alert } from 'react-native';
 import { createRequestOwner } from '../requestOwnership';
 import { createSiteSessionStates } from '../siteSessionState';
@@ -174,6 +174,36 @@ describe('topic action auth guards', () => {
       message: 'linux.do 登录已失效，请重新登录。'
     });
     expect(resetLinuxDoLevelState).toHaveBeenCalledTimes(1);
+  });
+
+  it('records retained linux.do clearance as cookie-loaded instead of verification success', async () => {
+    vi.mocked(clearLinuxDoAccessForGeneration).mockResolvedValueOnce({
+      cookieHeader: 'cf_clearance=retained',
+      savedAt: '2026-07-18T00:00:00.000Z',
+      source: 'webview'
+    });
+    vi.mocked(summarizeLinuxDoCookies).mockReturnValueOnce({
+      hasClearance: true,
+      loggedIn: false,
+      names: ['cf_clearance']
+    });
+    const updateLinuxDoSession = vi.fn();
+
+    await clearExpiredLinuxDoLogin({
+      error: new Error('linux.do 登录已失效，请重新登录。'),
+      generation: 3,
+      cookieHeader: 'cf_clearance=retained; _t=expired',
+      resetLinuxDoLevelState: vi.fn(),
+      updateLinuxDoSession
+    });
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith({
+      type: 'cookie-loaded',
+      cookieSummary: ['cf_clearance'],
+      hasVerification: true,
+      loggedIn: false,
+      at: expect.any(String)
+    });
   });
 
   it('traces an optimistic interaction through rollback without leaking action data', async () => {

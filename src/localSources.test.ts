@@ -22,7 +22,7 @@ vi.mock('react-native', () => ({
 
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
-import { createLinuxDoWebViewFallbackFetcher } from './linuxdoFetchFallback';
+import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from './linuxdoFetchFallback';
 import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers, splitLinuxDoContentHtml } from './localLinuxdo';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
@@ -4841,6 +4841,113 @@ describe('Android local sources', () => {
       expect.objectContaining({ phase: 'finish', outcome: 'success', channel: 'webview' })
     ]);
     expect(JSON.stringify(events)).not.toMatch(/\/t\/42|https?:|cf-turnstile/);
+  });
+
+  it('REG-LINUXDO-001 preserves an ordinary linux.do 429 without opening the WebView fallback', async () => {
+    const normalFetcher = vi.fn(async () => new Response('rate limited', { status: 429 }));
+    const webViewFetcher = vi.fn();
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher: webViewFetcher as never
+    });
+
+    const response = await fetcher('https://linux.do/latest.json');
+
+    expect(response.status).toBe(429);
+    expect(webViewFetcher).not.toHaveBeenCalled();
+  });
+
+  it('REG-LINUXDO-001 keeps a confirmed direct challenge typed when the hidden renderer cannot inspect it', async () => {
+    const normalFetcher = vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => {
+      throw new Error('linux.do 页面读取进程已停止');
+    });
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const error = await fetcher('https://linux.do/latest.json').catch((caught) => caught);
+
+    expect(isLinuxDoCloudflareError(error)).toBe(true);
+  });
+
+  it('REG-LINUXDO-001 keeps a confirmed direct challenge typed after an explicit renderer failure', async () => {
+    const normalFetcher = vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => {
+      throw new LinuxDoHiddenBrowserFailureError('renderer', 'renderer stopped');
+    });
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const error = await fetcher('https://linux.do/latest.json').catch((caught) => caught);
+
+    expect(isLinuxDoCloudflareError(error)).toBe(true);
+  });
+
+  it('REG-LINUXDO-001 preserves an explicit hidden-browser size failure', async () => {
+    const normalFetcher = vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => {
+      throw new LinuxDoHiddenBrowserFailureError('content-too-large', 'response exceeds bridge limit');
+    });
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const error = await fetcher('https://linux.do/latest.json').catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(LinuxDoHiddenBrowserFailureError);
+    expect(error).toMatchObject({ reason: 'content-too-large' });
+    expect(isLinuxDoCloudflareError(error)).toBe(false);
+  });
+
+  it('REG-LINUXDO-001 preserves a final ordinary 429 returned by the hidden WebView', async () => {
+    const normalFetcher = vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => new Response('rate limited', { status: 429 }));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const response = await fetcher('https://linux.do/latest.json');
+
+    expect(response.status).toBe(429);
+    expect(await response.text()).toBe('rate limited');
+  });
+
+  it('REG-LINUXDO-002 never replays a linux.do write through the hidden WebView', async () => {
+    const normalFetcher = vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    }));
+    const webViewFetcher = vi.fn(async () => new Response('unexpected replay', { status: 200 }));
+    const fetcher = createLinuxDoWebViewFallbackFetcher({
+      defaultFetcher: normalFetcher,
+      webViewFetcher
+    });
+
+    const response = await fetcher('https://linux.do/posts', {
+      method: 'POST',
+      body: JSON.stringify({ raw: 'reply' })
+    });
+
+    expect(response.status).toBe(429);
+    expect(webViewFetcher).not.toHaveBeenCalled();
   });
 
   it('does not read ordinary linux.do JSON twice before handing it to callers', async () => {

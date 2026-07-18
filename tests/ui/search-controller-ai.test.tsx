@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useSearchController } from '../../src/app/useSearchController';
+import type { LinuxDoReadRecovery } from '../../src/app/useVerificationController';
 import { setDiagnosticWriter } from '../../src/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '../../src/searchFilters';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
@@ -60,11 +61,16 @@ function createGateway({
   } as unknown as SourceGateway;
 }
 
-function renderSearchController(sourceGateway: SourceGateway, notify = jest.fn<(message: string) => void>()) {
+function renderSearchController(
+  sourceGateway: SourceGateway,
+  notify = jest.fn<(message: string) => void>(),
+  showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
+) {
   return renderHook(() => useSearchController({
     categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
     notify,
     sessionViewModels: loggedInSessions,
+    showLinuxDoVerification,
     showNodeSeekVerification: jest.fn(),
     showYaohuoLogin: jest.fn(),
     sourceGateway
@@ -85,6 +91,85 @@ async function prepareLinuxDoSearch(hook: Awaited<ReturnType<typeof renderSearch
 describe('linux.do AI search controller', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('REG-LINUXDO-002 resumes the exact foreground search without recursively reopening verification', async () => {
+    const showLinuxDoVerification = jest.fn();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [],
+        errors: {
+          linuxdo: {
+            kind: 'verification-required',
+            message: 'linux.do 需要验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      })
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }), jest.fn(), showLinuxDoVerification);
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({
+        filters: {
+          ...DEFAULT_SEARCH_FILTERS,
+          linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'latest' }
+        },
+        query: 'codex',
+        source: 'linuxdo'
+      });
+    });
+
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    expect(recovery.key).toContain('search:linuxdo');
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+    expect(searchTopics).toHaveBeenCalledTimes(2);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps linux.do verification local in aggregated search', async () => {
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => ({
+      items: [],
+      errors: source === 'linuxdo' ? {
+        linuxdo: {
+          kind: 'verification-required',
+          message: 'linux.do 需要验证',
+          verificationRequired: true
+        }
+      } : {},
+      hasMore: false,
+      nextPage: null
+    }));
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }), jest.fn(), showLinuxDoVerification);
+    await act(async () => {
+      hook.result.current.setSearchQuery('codex');
+    });
+    await waitFor(() => expect(hook.result.current.searchQuery).toBe('codex'));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+
+    expect(searchTopics).toHaveBeenCalledTimes(4);
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
   });
 
   afterEach(() => {
@@ -186,7 +271,7 @@ describe('linux.do AI search controller', () => {
       }
     };
 
-    let searchPromise!: Promise<void>;
+    let searchPromise!: ReturnType<typeof hook.result.current.runSearch>;
     await act(async () => {
       searchPromise = hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters });
       await Promise.resolve();
@@ -372,6 +457,7 @@ describe('linux.do AI search controller', () => {
           isVerifying: false
         }
       })),
+      showLinuxDoVerification: jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
       showNodeSeekVerification: jest.fn(),
       showYaohuoLogin: jest.fn(),
       sourceGateway: gateway

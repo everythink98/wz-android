@@ -46,7 +46,14 @@ import { NODESEEK_URL, YAOHUO_URL } from '../appUrls';
 import type { FeedSource, Source } from '../types';
 import type { Fetcher } from '../request';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl, isNodeSeekRequestUrl } from '../nodeseekFetchFallback';
-import { createLinuxDoWebViewFallbackFetcher, isLinuxDoBrowserFetchUrl, isLinuxDoRequestUrl } from '../linuxdoFetchFallback';
+import {
+  createLinuxDoWebViewFallbackFetcher,
+  isLinuxDoBrowserFetchUrl,
+  isLinuxDoRequestUrl,
+  LinuxDoHiddenBrowserFailureError,
+  type LinuxDoHiddenBrowserFailureReason
+} from '../linuxdoFetchFallback';
+import { LinuxDoCloudflareError } from '../cloudflareChallenge';
 import { browserFetchIntentFromInit, type BrowserFetchIntent } from '../browserFetchIntent';
 import { errorMessage } from '../appUtils';
 import {
@@ -737,7 +744,7 @@ export function useSessionController({
     }
   }, [linuxDoBrowserFetchCurrentRef, linuxDoBrowserFetchQueueRef, rejectLinuxDoBrowserFetchRef, setLinuxDoBrowserFetchRequest]);
 
-  const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string, options: { skipStopLoading?: boolean } = {}) => {
+  const rejectLinuxDoBrowserFetch = useCallback((request: PendingLinuxDoBrowserFetchRequest, message: string | Error, options: { skipStopLoading?: boolean } = {}) => {
     rejectBrowserFetchRequest({
       request,
       message,
@@ -882,6 +889,7 @@ export function useSessionController({
     userAgent?: string;
     challenge?: boolean;
     error?: string;
+    failureReason?: LinuxDoHiddenBrowserFailureReason;
   }) => {
     const current = linuxDoBrowserFetchCurrentRef.current;
     if (!current || data.id !== current.id) {
@@ -893,7 +901,10 @@ export function useSessionController({
     }
     const isLinuxDoPage = isLinuxDoRequestUrl(data.url);
     if (data.error) {
-      rejectLinuxDoBrowserFetch(current, data.error);
+      rejectLinuxDoBrowserFetch(
+        current,
+        data.failureReason ? new LinuxDoHiddenBrowserFailureError(data.failureReason, data.error) : data.error
+      );
       return;
     }
     linuxDoBrowserWebViewRef.current?.stopLoading();
@@ -910,7 +921,7 @@ export function useSessionController({
     }
     const settled = settleBrowserFetchRequestOnce(current, () => {
       const challenge = Boolean(data.challenge);
-      const status = challenge ? 403 : current.httpErrorStatus || 200;
+      const status = current.httpErrorStatus || (challenge ? 403 : 200);
       finishBrowserFetchSuccess(
         current.diagnosticTrace,
         current.diagnosticOwnsTrace,
@@ -920,7 +931,11 @@ export function useSessionController({
         typeof data.cookie === 'string' && Boolean(data.cookie),
         challenge
       );
-      current.resolve(linuxDoBrowserResponse(data.body || '', Boolean(data.challenge), current.httpErrorStatus));
+      if (challenge) {
+        current.reject(new LinuxDoCloudflareError());
+        return;
+      }
+      current.resolve(linuxDoBrowserResponse(data.body || '', current.httpErrorStatus));
     });
     if (!settled) {
       return;
@@ -945,8 +960,9 @@ export function useSessionController({
           const summary = summarizeLinuxDoCookies(cookies);
           if (generation === currentLinuxDoAccessGeneration()) {
             updateLinuxDoSession({
-              type: 'verification-succeeded',
+              type: 'cookie-loaded',
               cookieSummary: summary.names,
+              hasVerification: summary.hasClearance,
               loggedIn: summary.loggedIn,
               at: new Date().toISOString()
             });
@@ -978,9 +994,13 @@ export function useSessionController({
     }
   }, [linuxDoBrowserFetchCurrentRef, rejectLinuxDoBrowserFetch]);
 
-  const markLinuxDoBrowserFetchHttpError = useCallback((requestId: number, statusCode: number) => {
+  const markLinuxDoBrowserFetchHttpError = useCallback((requestId: number, statusCode?: number) => {
     if (linuxDoBrowserFetchCurrentRef.current?.id === requestId) {
-      linuxDoBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
+      if (statusCode === undefined) {
+        delete linuxDoBrowserFetchCurrentRef.current.httpErrorStatus;
+      } else {
+        linuxDoBrowserFetchCurrentRef.current.httpErrorStatus = statusCode;
+      }
     }
   }, []);
 

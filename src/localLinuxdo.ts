@@ -15,7 +15,7 @@ import {
   textExcerpt,
   toIsoString
 } from './localHtml';
-import { isCloudflareChallengeResponse } from './cloudflareChallenge';
+import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
@@ -59,15 +59,6 @@ interface LinuxDoOptions {
 interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
   linuxDoCookie?: string;
   linuxDoUserAgent?: string;
-}
-
-export class LinuxDoCloudflareError extends Error {
-  source = 'linuxdo' as const;
-  reason = 'cloudflare' as const;
-
-  constructor() {
-    super('linux.do 需要完成 Cloudflare 验证');
-  }
 }
 
 function usersById(users: unknown) {

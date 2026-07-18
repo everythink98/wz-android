@@ -39,7 +39,7 @@ export function HiddenBrowserHost({
   handleNodeSeekBrowserFetchMessage: (event: WebViewMessageEvent) => void;
   linuxDoBrowserWebViewRef: RefObject<WebView | null>;
   nodeSeekBrowserWebViewRef: RefObject<WebView | null>;
-  onLinuxDoHttpErrorStatus: (requestId: number, statusCode: number) => void;
+  onLinuxDoHttpErrorStatus: (requestId: number, statusCode?: number) => void;
   onNodeSeekHttpErrorStatus: (requestId: number, statusCode: number) => void;
   state: HiddenBrowserState;
   styles: ReturnType<typeof createStyles>;
@@ -154,6 +154,9 @@ export function HiddenBrowserHost({
             onShouldStartLoadWithRequest={handleLinuxDoBrowserNavigation}
             containerStyle={styles.hiddenBrowserWebView}
             style={styles.hiddenBrowserWebView}
+            onLoadStart={() => {
+              onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, undefined);
+            }}
             onLoadEnd={() => {
               linuxDoBrowserWebViewRef.current?.injectJavaScript(
                 LINUXDO_BROWSER_FETCH_SCRIPT.replace('__LINUXDO_BROWSER_FETCH_ID__', String(linuxDoBrowserFetchRequest.id))
@@ -171,11 +174,7 @@ export function HiddenBrowserHost({
               )) {
                 return;
               }
-              if (event.nativeEvent.statusCode === 403) {
-                onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, event.nativeEvent.statusCode);
-                return;
-              }
-              failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, `linux.do 页面返回错误 ${event.nativeEvent.statusCode}`);
+              onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, event.nativeEvent.statusCode);
             }}
             onRenderProcessGone={handleHiddenBrowserRenderProcessGone}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}

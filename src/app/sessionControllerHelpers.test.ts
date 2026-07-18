@@ -36,7 +36,6 @@ import {
   enqueueCredentialWrite,
   enqueueLatestBrowserFetchRequest,
   isCredentialWriteCurrent,
-  linuxDoBrowserResponse,
   nodeSeekBrowserResponse,
   preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
@@ -233,6 +232,90 @@ describe('session controller helpers', () => {
       expect.objectContaining({ phase: 'guard', channel: 'webview', state: 'queued' }),
       expect.objectContaining({ phase: 'parse', channel: 'webview', status: 200 })
     ]));
+  });
+
+  it('rejects a confirmed linux.do WebView challenge as a typed verification error', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 429, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const url = 'https://linux.do/latest.json';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => {
+      expect(lines.some((line) => {
+        const event = JSON.parse(line);
+        return event.source === 'linuxdo' && event.channel === 'webview' && event.state === 'queued';
+      })).toBe(true);
+    });
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      challenge: true
+    });
+
+    await expect(responsePromise).rejects.toMatchObject({
+      source: 'linuxdo',
+      reason: 'cloudflare',
+      verificationRequired: true
+    });
+  });
+
+  it('keeps an oversized linux.do WebView body as an explicit transport failure', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    })));
+    const url = 'https://linux.do/latest.json';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      challenge: false,
+      error: 'linux.do 页面内容过大，已停止读取',
+      failureReason: 'content-too-large'
+    });
+
+    await expect(responsePromise).rejects.toMatchObject({
+      reason: 'content-too-large',
+      message: 'linux.do 页面内容过大，已停止读取'
+    });
+  });
+
+  it('records hidden linux.do cookie persistence as cookie-loaded, not verification success', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response('challenge', {
+      status: 429,
+      headers: { 'cf-mitigated': 'challenge' }
+    })));
+    const url = 'https://linux.do/latest.json';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      body: '{"topic_list":{"topics":[]}}',
+      challenge: false,
+      cookie: 'cf_clearance=private-value'
+    });
+    await expect(responsePromise).resolves.toMatchObject({ status: 200 });
+
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'state-transition' && event.eventType === 'cookie-loaded';
+    })).toBe(true));
+    expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'state-transition' && event.eventType === 'verification-succeeded';
+    })).toBe(false);
   });
 
   it('settles a browser fetch request only once', () => {
@@ -759,7 +842,6 @@ describe('session controller helpers', () => {
 
   it('clears browser challenge response bodies even if a script sends page HTML', async () => {
     await expect(nodeSeekBrowserResponse('<html>challenge</html>', true).text()).resolves.toBe('');
-    await expect(linuxDoBrowserResponse('<html>challenge</html>', true).text()).resolves.toBe('');
   });
 
   it('takes a pending NodeSeek topic verification retry only once', () => {

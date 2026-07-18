@@ -44,7 +44,7 @@ export async function clearExpiredLinuxDoLogin({
   const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
   const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
   updateLinuxDoSession(remainingAccess?.cookieHeader
-    ? { type: 'verification-succeeded', cookieSummary: remainingSummary.names, loggedIn: false, at: new Date().toISOString() }
+    ? { type: 'cookie-loaded', cookieSummary: remainingSummary.names, hasVerification: remainingSummary.hasClearance, loggedIn: false, at: new Date().toISOString() }
     : { type: 'login-expired', message: errorMessage(error) });
   resetLinuxDoLevelState();
 }

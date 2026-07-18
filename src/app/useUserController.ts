@@ -28,6 +28,7 @@ import { sourceErrorFromUnknown } from '../sourceErrors';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Source, SourceErrorInfo, UserProfile, UserReplyActivity } from '../types';
 import type { Screen } from '../appTypes';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 
 function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
   const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
@@ -91,7 +92,7 @@ export function useUserController({
   readerData: ReaderData;
   screen: Screen;
   sessionViewModels: SiteSessionViewModels;
-  showLinuxDoVerification: (message?: string) => void;
+  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
   showNodeSeekVerification: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
@@ -103,6 +104,9 @@ export function useUserController({
   const userLoadingMoreReplyCursorRef = useRef<string | null>(null);
   const userVisitedTopicCursorsRef = useRef<Set<string>>(new Set());
   const userVisitedReplyCursorsRef = useRef<Set<string>>(new Set());
+  const openUserRef = useRef<((user: UserProfile, nocache?: boolean, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const loadMoreUserTopicsRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const loadMoreUserRepliesRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userBusy, setUserBusy] = useState(false);
@@ -136,10 +140,12 @@ export function useUserController({
 
   useEffect(() => cancelUserRequests, [cancelUserRequests]);
 
-  const handleUserSourceError = useCallback(({ error, source }: {
+  const handleUserSourceError = useCallback(async ({ error, recovery, source, suppressLinuxDoVerification = false }: {
     error: unknown;
+    recovery?: LinuxDoReadRecovery;
     source: Source;
-  }) => {
+    suppressLinuxDoVerification?: boolean;
+  }): Promise<LinuxDoReadResumeOutcome> => {
     const classifiedError = sourceErrorFromUnknown(source, error);
     const sourceError = source === 'yaohuo' && classifiedError.kind === 'login-required'
       ? {
@@ -150,12 +156,14 @@ export function useUserController({
     setUserError(sourceError);
     const recoveryTarget = userSourceRecoveryTarget(source, sourceError);
     if (recoveryTarget === 'linuxdo-verification') {
-      showLinuxDoVerification(sourceError.message);
-      return;
+      if (!suppressLinuxDoVerification) {
+        await showLinuxDoVerification(sourceError.message, recovery);
+      }
+      return 'verification-required';
     }
     if (recoveryTarget === 'nodeseek-verification') {
       showNodeSeekVerification(sourceError.message);
-      return;
+      return 'completed';
     }
     if (recoveryTarget === 'yaohuo-login') {
       if (sourceError.kind === 'login-expired') {
@@ -163,12 +171,17 @@ export function useUserController({
       } else {
         showYaohuoLogin(sourceError.message);
       }
-      return;
+      return 'completed';
     }
     notify(sourceError.message);
+    return 'completed';
   }, [notify, sessionViewModels, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
 
-  const openUser = useCallback(async (user: UserProfile, nocache = false) => {
+  const openUser = useCallback(async (
+    user: UserProfile,
+    nocache = false,
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const trace = beginDiagnosticTrace('user', 'open', diagnosticUserFields(user));
     let traceFinished = false;
     const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
@@ -181,7 +194,7 @@ export function useUserController({
       markDiagnosticStage(trace, 'guard', { source: user.source, state: 'incomplete-user' });
       finishTrace('blocked', { source: user.source, reason: 'not_ready' });
       notify('用户信息不完整');
-      return;
+      return 'completed';
     }
     markDiagnosticStage(trace, 'guard', {
       source: user.source,
@@ -200,8 +213,26 @@ export function useUserController({
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${requestUser.source}:${requestUser.id || requestUser.username}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: requestOwner.key,
+      isCurrent: isCurrentUserRequest,
+      resume: async () => {
+        if (!isCurrentUserRequest()) {
+          return 'stale';
+        }
+        return await openUserRef.current?.(requestUser, true, true) ?? 'stale';
+      }
+    };
     setSelectedUser(requestUser);
-    setUserProfile(null);
+    const preserveCurrentProfile = Boolean(
+      nocache
+      && userProfile
+      && userProfile.source === requestUser.source
+      && userProfile.id === requestUser.id
+    );
+    if (!preserveCurrentProfile) {
+      setUserProfile(null);
+    }
     setUserError(null);
     setUserBusy(true);
     setUserLoadingMoreTopics(false);
@@ -223,7 +254,7 @@ export function useUserController({
           source: requestUser.source,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       markDiagnosticStage(trace, 'apply', {
         source: requestUser.source,
@@ -243,22 +274,30 @@ export function useUserController({
         topicCount: profile.topics.length,
         replyCount: profile.replies?.length || 0
       });
+      return 'completed';
     } catch (error) {
       if (isCanceledRequest(error)) {
         finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
           source: requestUser.source,
           reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
         });
+        return 'stale';
       } else if (!isCurrentUserRequest()) {
         finishTrace('stale', { source: requestUser.source, reason: 'superseded' });
+        return 'stale';
       } else {
         const sourceError = sourceErrorFromUnknown(requestUser.source, error);
-        handleUserSourceError({ error, source: requestUser.source });
         const reason = diagnosticReasonForUserError(sourceError);
         finishTrace(
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
           { source: requestUser.source, reason }
         );
+        return await handleUserSourceError({
+          error,
+          recovery: requestUser.source === 'linuxdo' ? linuxDoRecovery : undefined,
+          source: requestUser.source,
+          suppressLinuxDoVerification
+        });
       }
     } finally {
       if (!traceFinished) {
@@ -278,10 +317,15 @@ export function useUserController({
     handleUserSourceError,
     notify,
     onOpenUserScreen,
-    sourceGateway
+    sourceGateway,
+    userProfile
   ]);
 
-  const loadMoreUserTopics = useCallback(async () => {
+  openUserRef.current = openUser;
+
+  const loadMoreUserTopics = useCallback(async (
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const current = userProfile;
     const trace = beginDiagnosticTrace('user', 'load-more-topics', diagnosticUserFields(current, current?.nextTopicsCursor));
     let traceFinished = false;
@@ -301,12 +345,22 @@ export function useUserController({
         ...(current ? { source: current.source } : {}),
         ...(busy ? { reason: 'busy' } : current?.hasMoreTopics ? { reason: 'not_ready' } : current ? {} : { reason: 'not_ready' })
       });
-      return;
+      return 'completed';
     }
     markDiagnosticStage(trace, 'guard', { source: current.source, state: 'load-more', hasCursor: true });
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more:${current.nextTopicsCursor}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: requestOwner.key,
+      isCurrent: isCurrentUserRequest,
+      resume: async () => {
+        if (!isCurrentUserRequest()) {
+          return 'stale';
+        }
+        return await loadMoreUserTopicsRef.current?.(true) ?? 'stale';
+      }
+    };
     const controller = startAbortableRequest(userAbortRef);
     userLoadingMoreTopicCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMoreTopics(true);
@@ -325,7 +379,7 @@ export function useUserController({
           source: current.source,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       const expectedAfterCount = mergeTopics(current.topics, nextProfile.topics).length;
       markDiagnosticStage(trace, 'apply', {
@@ -356,22 +410,30 @@ export function useUserController({
         afterCount: expectedAfterCount,
         hasMore: Boolean(nextProfile.hasMoreTopics)
       });
+      return 'completed';
     } catch (error) {
       if (isCanceledRequest(error)) {
         finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
           source: current.source,
           reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
         });
+        return 'stale';
       } else if (!isCurrentUserRequest()) {
         finishTrace('stale', { source: current.source, reason: 'superseded' });
+        return 'stale';
       } else {
         const sourceError = sourceErrorFromUnknown(current.source, error);
-        handleUserSourceError({ error, source: current.source });
         const reason = diagnosticReasonForUserError(sourceError);
         finishTrace(
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
           { source: current.source, reason }
         );
+        return await handleUserSourceError({
+          error,
+          recovery: current.source === 'linuxdo' ? linuxDoRecovery : undefined,
+          source: current.source,
+          suppressLinuxDoVerification
+        });
       }
     } finally {
       if (!traceFinished) {
@@ -395,7 +457,11 @@ export function useUserController({
     userProfile
   ]);
 
-  const loadMoreUserReplies = useCallback(async () => {
+  loadMoreUserTopicsRef.current = loadMoreUserTopics;
+
+  const loadMoreUserReplies = useCallback(async (
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const current = userProfile;
     const trace = beginDiagnosticTrace('user', 'load-more-replies', diagnosticUserFields(current, current?.nextRepliesCursor));
     let traceFinished = false;
@@ -415,12 +481,22 @@ export function useUserController({
         ...(current ? { source: current.source } : {}),
         ...(busy ? { reason: 'busy' } : current?.hasMoreReplies ? { reason: 'not_ready' } : current ? {} : { reason: 'not_ready' })
       });
-      return;
+      return 'completed';
     }
     markDiagnosticStage(trace, 'guard', { source: current.source, state: 'load-more', hasCursor: true });
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more-replies:${current.nextRepliesCursor}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: requestOwner.key,
+      isCurrent: isCurrentUserRequest,
+      resume: async () => {
+        if (!isCurrentUserRequest()) {
+          return 'stale';
+        }
+        return await loadMoreUserRepliesRef.current?.(true) ?? 'stale';
+      }
+    };
     const controller = startAbortableRequest(userAbortRef);
     userLoadingMoreReplyCursorRef.current = current.nextRepliesCursor;
     setUserLoadingMoreReplies(true);
@@ -439,7 +515,7 @@ export function useUserController({
           source: current.source,
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
-        return;
+        return 'stale';
       }
       const expectedAfterCount = mergeUserReplies(current.replies || [], nextProfile.replies || []).length;
       markDiagnosticStage(trace, 'apply', {
@@ -470,22 +546,30 @@ export function useUserController({
         afterCount: expectedAfterCount,
         hasMore: Boolean(nextProfile.hasMoreReplies)
       });
+      return 'completed';
     } catch (error) {
       if (isCanceledRequest(error)) {
         finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
           source: current.source,
           reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
         });
+        return 'stale';
       } else if (!isCurrentUserRequest()) {
         finishTrace('stale', { source: current.source, reason: 'superseded' });
+        return 'stale';
       } else {
         const sourceError = sourceErrorFromUnknown(current.source, error);
-        handleUserSourceError({ error, source: current.source });
         const reason = diagnosticReasonForUserError(sourceError);
         finishTrace(
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
           { source: current.source, reason }
         );
+        return await handleUserSourceError({
+          error,
+          recovery: current.source === 'linuxdo' ? linuxDoRecovery : undefined,
+          source: current.source,
+          suppressLinuxDoVerification
+        });
       }
     } finally {
       if (!traceFinished) {
@@ -508,6 +592,8 @@ export function useUserController({
     userLoadingMoreReplies,
     userProfile
   ]);
+
+  loadMoreUserRepliesRef.current = loadMoreUserReplies;
 
   return {
     currentUserFollowed,

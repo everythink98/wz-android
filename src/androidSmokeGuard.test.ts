@@ -194,9 +194,9 @@ describe('Android release evidence guards', () => {
     expect(nodeSeekReplay).toContain('wait "role=\\"webview\\" label=\\"NodeSeek\\"" 15000');
     expect(nodeSeekReplay).toContain('wait "role=\\"image\\" label=\\"logo\\"" 15000');
     expect(nodeSeekReplay).toContain('wait label="新帖子" 15000');
-    expect(nodeSeekReplay).toContain('is visible "role=\\"webview\\" label=\\"NodeSeek\\""');
-    expect(nodeSeekReplay).toContain('is visible "role=\\"image\\" label=\\"logo\\""');
-    expect(nodeSeekReplay).toContain('is visible label="新帖子"');
+    expect(nodeSeekReplay).not.toContain('is visible "role=\\"webview\\" label=\\"NodeSeek\\""');
+    expect(nodeSeekReplay).not.toContain('is visible "role=\\"image\\" label=\\"logo\\""');
+    expect(nodeSeekReplay).not.toContain('is visible label="新帖子"');
     expect(nodeSeekReplay).toContain('back --system');
     expect(nodeSeekReplay).not.toContain('nodeseek-login-webview-ready');
     expect(nodeSeekReplay).not.toMatch(/^wait 15000$/m);

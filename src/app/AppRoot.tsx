@@ -41,7 +41,7 @@ import { useNetworkProxyController } from './useNetworkProxyController';
 import { useTopicController } from './useTopicController';
 import { filterTopicSessionReplies, useTopicSessionController } from './useTopicSessionController';
 import { useUserController } from './useUserController';
-import { useVerificationController, type DeferredNavigationTask } from './useVerificationController';
+import { useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
 import { useTopicActionsController } from './useTopicActionsController';
@@ -167,18 +167,12 @@ export function AppRoot() {
   const userReturnTopicRef = useRef<UserReturnTopic | null>(null);
   const reopenExistingTopicScreenRef = useRef(false);
   const pendingNavigationScreenRef = useRef<Screen | null>(null);
-  const pendingLinuxDoTopicRef = useRef<Topic | null>(null);
-  const linuxDoPendingTopicVerifiedRef = useRef(false);
-  const linuxDoPendingReopenTopicAfterCloseRef = useRef<Topic | null>(null);
-  const linuxDoDismissedVerificationTopicKeyRef = useRef<string | null>(null);
-  const linuxDoVerifiedRetryTopicKeyRef = useRef<string | null>(null);
   const linuxDoWebViewSessionRef = useRef(0);
   const linuxDoPanelClosingSessionRef = useRef<number | null>(null);
   const linuxDoWebViewMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const linuxDoPanelCloseSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const linuxDoPendingReopenTaskRef = useRef<DeferredNavigationTask | null>(null);
-  const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<void>) | null>(null);
-  const openUserRef = useRef<((user: UserProfile, nocache?: boolean) => Promise<void>) | null>(null);
+  const openTopicRef = useRef<((topic: Topic, nocache?: boolean) => Promise<unknown>) | null>(null);
+  const openUserRef = useRef<((user: UserProfile, nocache?: boolean) => Promise<unknown>) | null>(null);
   const openImagePreviewRef = useRef<(url: string) => void>(() => undefined);
   const pendingNodeSeekSearchRetryRef = useRef<(() => void) | null>(null);
   const pendingNodeSeekTopicRetryRef = useRef<Topic | null>(null);
@@ -485,10 +479,6 @@ export function AppRoot() {
   screenRef.current = screen;
   showLoginPanelRef.current = showLoginPanel;
   showLinuxDoPanelRef.current = showLinuxDoPanel;
-  const cancelLinuxDoPendingReopenTask = useCallback(() => {
-    linuxDoPendingReopenTaskRef.current?.cancel();
-    linuxDoPendingReopenTaskRef.current = null;
-  }, []);
   const {
     fontFamily,
     fontScale,
@@ -836,7 +826,6 @@ export function AppRoot() {
     changeLinuxDoPanel,
     checkLinuxDoCookie,
     closeLinuxDoPanel,
-    handleLinuxDoCloudflareForTopic,
     handleLinuxDoMessage,
     resetLinuxDoWebView,
     setLinuxDoWebViewErrorForSession,
@@ -846,19 +835,13 @@ export function AppRoot() {
     stopLinuxDoVerificationForInactiveApp,
     verifyLinuxDoFromTopic
   } = useVerificationController({
-    cancelLinuxDoPendingReopenTask,
     changeNodeSeekLoginPanel,
     checkingRequestIdRef,
     closeYaohuoLoginPanel,
     linuxDoClearanceBeforeVerifyRef,
-    linuxDoDismissedVerificationTopicKeyRef,
     linuxDoPanelClosingSessionRef,
     linuxDoPanelCloseSettleTimerRef,
-    linuxDoPendingReopenTaskRef,
-    linuxDoPendingReopenTopicAfterCloseRef,
-    linuxDoPendingTopicVerifiedRef,
     linuxDoRequireFreshClearanceRef,
-    linuxDoVerifiedRetryTopicKeyRef,
     linuxDoWebViewCookieHeader,
     linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewMountTimerRef,
@@ -869,8 +852,6 @@ export function AppRoot() {
     notify,
     onLoginWebViewFailure: handleCredentialLoginWebViewFailure,
     openTopicRef,
-    pendingLinuxDoTopicRef,
-    reopenExistingTopicScreenRef,
     resetLinuxDoLevelState,
     selectedTopic,
     setChecking,
@@ -883,7 +864,6 @@ export function AppRoot() {
     changeScreen,
     setShowLinuxDoPanel,
     setShowSettingsPanel,
-    showLinuxDoPanel,
     showLinuxDoPanelRef,
     topicDetail,
     updateLinuxDoSession,
@@ -1038,6 +1018,7 @@ export function AppRoot() {
     notify,
     onNodeSeekSearchVerificationRequired: handleNodeSeekSearchVerificationRequired,
     sessionViewModels: siteSessionViewModels,
+    showLinuxDoVerification,
     showNodeSeekVerification,
     showYaohuoLogin,
     sourceGateway
@@ -1145,9 +1126,6 @@ export function AppRoot() {
     if (previousScreen === 'more' && nextScreen !== 'more') {
       closeMorePanels();
     }
-    if (nextScreen !== 'topic') {
-      linuxDoVerifiedRetryTopicKeyRef.current = null;
-    }
     if (leavingTopicForUser) {
       topicRequestIdRef.current += 1;
       repliesRequestIdRef.current += 1;
@@ -1167,7 +1145,6 @@ export function AppRoot() {
       topicAbortRef.current?.abort();
       repliesAbortRef.current?.abort();
       abortQuotedReplyRequests();
-      pendingLinuxDoTopicRef.current = null;
       invalidateTopicActionRequests(null);
       stopTopicWork(true);
     }
@@ -1268,13 +1245,8 @@ export function AppRoot() {
   } = useTopicController({
     changeScreen,
     commitReaderData,
-    handleLinuxDoCloudflareForTopic,
-    linuxDoDismissedVerificationTopicKeyRef,
-    linuxDoPendingTopicVerifiedRef,
-    linuxDoVerifiedRetryTopicKeyRef,
     notify,
     onNodeSeekTopicVerificationRequired: handleNodeSeekTopicVerificationRequired,
-    pendingLinuxDoTopicRef,
     pushTopicScreen,
     readerData,
     readerDataRef,
@@ -1283,6 +1255,7 @@ export function AppRoot() {
     repliesRequestIdRef,
     getCurrentScreen,
     screen,
+    showLinuxDoVerification,
     showYaohuoLogin,
     sourceGateway,
     topicAbortRef,

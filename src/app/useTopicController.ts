@@ -37,6 +37,7 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason
 } from '../diagnostics';
+import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -55,13 +56,8 @@ function replyTargetIndex(replies: Reply[], target?: ReplyRefreshTarget | null) 
 export function useTopicController({
   changeScreen,
   commitReaderData,
-  handleLinuxDoCloudflareForTopic,
-  linuxDoDismissedVerificationTopicKeyRef,
-  linuxDoPendingTopicVerifiedRef,
-  linuxDoVerifiedRetryTopicKeyRef,
   notify,
   onNodeSeekTopicVerificationRequired,
-  pendingLinuxDoTopicRef,
   pushTopicScreen,
   readerData,
   readerDataRef,
@@ -70,6 +66,7 @@ export function useTopicController({
   repliesRequestIdRef,
   getCurrentScreen,
   screen,
+  showLinuxDoVerification,
   showYaohuoLogin,
   sourceGateway,
   topicAbortRef,
@@ -82,13 +79,8 @@ export function useTopicController({
     mutationReason: ReaderDataMutationReason,
     updater: (current: ReaderData) => ReaderData
   ) => void;
-  handleLinuxDoCloudflareForTopic: (topic: Topic, message: string) => Promise<boolean>;
-  linuxDoDismissedVerificationTopicKeyRef: MutableRef<string | null>;
-  linuxDoPendingTopicVerifiedRef: MutableRef<boolean>;
-  linuxDoVerifiedRetryTopicKeyRef: MutableRef<string | null>;
   notify: (message: string) => void;
   onNodeSeekTopicVerificationRequired: (message: string) => void;
-  pendingLinuxDoTopicRef: MutableRef<Topic | null>;
   pushTopicScreen: () => void;
   readerData: ReaderData;
   readerDataRef: MutableRef<ReaderData>;
@@ -97,6 +89,7 @@ export function useTopicController({
   repliesRequestIdRef: MutableRef<number>;
   getCurrentScreen: () => Screen;
   screen: Screen;
+  showLinuxDoVerification: (message?: string, recovery?: LinuxDoReadRecovery) => void | Promise<void>;
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
   topicAbortRef: MutableRef<AbortController | null>;
@@ -117,13 +110,28 @@ export function useTopicController({
   const topicRequestOwnerRef = useRef(createRequestOwner('topic'));
   const repliesRequestOwnerRef = useRef(createRequestOwner('topic-replies'));
   const replyVisitedPageKeysRef = useRef<Record<string, Set<string>>>({});
+  const openTopicRef = useRef<((topic: Topic, nocache?: boolean, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const loadMoreRepliesRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const refreshTopicRepliesRef = useRef<((
+    options?: TopicRepliesRefreshOptions,
+    suppressLinuxDoVerification?: boolean
+  ) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const toggleLoadedQuotedPostRef = useRef<((
+    options: ToggleTopicBodyQuoteOptions,
+    suppressLinuxDoVerification?: boolean,
+    onVerificationRequired?: () => void
+  ) => Promise<void>) | null>(null);
   const currentTopic = topicDetail || selectedTopic;
   const currentTopicKey = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   const topicFavorite = useMemo(() => (
     Boolean(currentTopic && readerData.favorites[topicKey(currentTopic)])
   ), [currentTopic, readerData.favorites]);
 
-  const openTopic = useCallback(async (topic: Topic, nocache = false) => {
+  const openTopic = useCallback(async (
+    topic: Topic,
+    nocache = false,
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const trace = beginDiagnosticTrace('topic', 'open', {
       source: topic.source,
       topicRef: diagnosticRef('topic', `${topic.source}:${topic.id}`),
@@ -132,9 +140,6 @@ export function useTopicController({
     const reopenExistingTopicScreen = reopenExistingTopicScreenRef.current;
     const currentScreen = getCurrentScreen();
     reopenExistingTopicScreenRef.current = false;
-    if (!reopenExistingTopicScreen) {
-      linuxDoDismissedVerificationTopicKeyRef.current = null;
-    }
     const nextTopicKey = topicKey(topic);
     const activeTopicKey = topicCommands.getCurrentKey() || (reopenExistingTopicScreen && selectedTopic ? topicKey(selectedTopic) : null);
     const opensDifferentTopic = nextTopicKey !== activeTopicKey;
@@ -157,19 +162,12 @@ export function useTopicController({
       }
       markDiagnosticStage(trace, 'apply', { state: 'cached-detail-reused' });
       finishDiagnosticTrace(trace, 'success', { state: 'cached-detail-reused' });
-      return;
+      return 'completed';
     }
     if (currentScreen === 'topic' && !reopenExistingTopicScreen && !opensDifferentTopic && !nocache) {
       markDiagnosticStage(trace, 'guard', { state: 'same-topic' });
       finishDiagnosticTrace(trace, 'noop', { reason: 'duplicate' });
-      return;
-    }
-    if (pendingLinuxDoTopicRef.current && topicKey(pendingLinuxDoTopicRef.current) !== topicKey(topic)) {
-      pendingLinuxDoTopicRef.current = null;
-      linuxDoPendingTopicVerifiedRef.current = false;
-    }
-    if (linuxDoVerifiedRetryTopicKeyRef.current && linuxDoVerifiedRetryTopicKeyRef.current !== topicKey(topic)) {
-      linuxDoVerifiedRetryTopicKeyRef.current = null;
+      return 'completed';
     }
     const requestId = ++topicRequestIdRef.current;
     const requestOwner = startOwnedRequest(topicRequestOwnerRef, `topic:${nextTopicKey}:${nocache ? 'nocache' : 'cache'}`);
@@ -181,10 +179,31 @@ export function useTopicController({
       requestOwner,
       requestTopicKey: nextTopicKey
     });
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: requestOwner.key,
+      isCurrent: isCurrentTopicRequest,
+      resume: async () => {
+        if (!isCurrentTopicRequest()) {
+          return 'stale';
+        }
+        return await openTopicRef.current?.(topic, true, true) ?? 'stale';
+      }
+    };
     repliesRequestIdRef.current += 1;
     repliesAbortRef.current?.abort();
     replyVisitedPageKeysRef.current[nextTopicKey] = new Set();
-    topicCommands.beginLoad(topic, nextTopicKey);
+    const preserveCurrentDetail = Boolean(
+      nocache
+      && currentScreen === 'topic'
+      && !opensDifferentTopic
+      && topicDetail
+      && topicKey(topicDetail) === nextTopicKey
+    );
+    if (preserveCurrentDetail) {
+      topicCommands.beginRefresh(topic, nextTopicKey);
+    } else {
+      topicCommands.beginLoad(topic, nextTopicKey);
+    }
     if (!reopenExistingTopicScreen) {
       changeScreen('topic');
     }
@@ -200,7 +219,7 @@ export function useTopicController({
       }, { isCurrent: isCurrentTopicRequest, trace });
       if (!isCurrentTopicRequest()) {
         finishDiagnosticTrace(trace, 'stale', { source: topic.source, reason: 'stale' });
-        return;
+        return 'stale';
       }
       const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
       const previousReplyCount = readerDataRef.current.history[topicKey(displayDetail)]?.topic.replyCount;
@@ -218,11 +237,11 @@ export function useTopicController({
       if (nocache) {
         notify('主题已更新');
       }
-      linuxDoVerifiedRetryTopicKeyRef.current = null;
       finishDiagnosticTrace(trace, 'success', {
         itemCount: detail.replies?.length || 0,
         hasContent: Boolean(detail.contentHtml?.trim())
       });
+      return 'completed';
     } catch (error) {
       if (isCurrentTopicRequest()) {
         const sourceError = sourceErrorFromUnknown(topic.source, error);
@@ -230,13 +249,15 @@ export function useTopicController({
         topicCommands.failLoad(sourceError);
         if (topic.source === 'linuxdo' && sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
-          await handleLinuxDoCloudflareForTopic(topic, message);
-          return;
+          if (!suppressLinuxDoVerification) {
+            await showLinuxDoVerification(message, linuxDoRecovery);
+          }
+          return 'verification-required';
         }
         if (topic.source === 'nodeseek' && sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           onNodeSeekTopicVerificationRequired(message);
-          return;
+          return 'completed';
         }
         if (topic.source === 'yaohuo' && yaohuoErrorRequiresLoginPanel(sourceError)) {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'login_required' });
@@ -245,7 +266,7 @@ export function useTopicController({
           } else {
             showYaohuoLogin(message);
           }
-          return;
+          return 'completed';
         }
         if (isCanceledRequest(error)) {
           finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
@@ -253,8 +274,10 @@ export function useTopicController({
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(message);
         }
+        return isCanceledRequest(error) ? 'stale' : 'completed';
       } else {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
+        return 'stale';
       }
     } finally {
       if (isCurrentTopicRequest()) {
@@ -264,19 +287,15 @@ export function useTopicController({
     }
   }, [
     topicCommands.beginLoad,
+    topicCommands.beginRefresh,
     changeScreen,
     commitReaderData,
     topicNavigation.clearBackStack,
     topicCommands.getCurrentKey,
     getCurrentScreen,
-    handleLinuxDoCloudflareForTopic,
-    linuxDoDismissedVerificationTopicKeyRef,
-    linuxDoPendingTopicVerifiedRef,
-    linuxDoVerifiedRetryTopicKeyRef,
     notify,
     topicCommands.failLoad,
     topicCommands.finishLoad,
-    pendingLinuxDoTopicRef,
     pushTopicScreen,
     topicNavigation.pushBackStack,
     readerDataRef,
@@ -289,6 +308,7 @@ export function useTopicController({
     sourceGateway,
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
+    showLinuxDoVerification,
     topicAbortRef,
     topicDetail,
     topicRequestIdRef,
@@ -296,15 +316,21 @@ export function useTopicController({
     topicSnapshot
   ]);
 
-  const refreshTopicReplies = useCallback(async ({
-    silent = false,
-    afterSubmit = false,
-    nocache = !silent || afterSubmit,
-    editedReplyContent,
-    targetReply,
-    excludeReply,
-    diagnosticTrace
-  }: TopicRepliesRefreshOptions = {}) => {
+  openTopicRef.current = openTopic;
+
+  const refreshTopicReplies = useCallback(async (
+    options: TopicRepliesRefreshOptions = {},
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
+    const {
+      silent = false,
+      afterSubmit = false,
+      nocache = !silent || afterSubmit,
+      editedReplyContent,
+      targetReply,
+      excludeReply,
+      diagnosticTrace
+    } = options;
     const detail = topicDetail || selectedTopic;
     const ownsTrace = !diagnosticTrace;
     const trace = diagnosticTrace || beginDiagnosticTrace('reply', 'refresh', {
@@ -325,13 +351,13 @@ export function useTopicController({
     if (!detail) {
       markDiagnosticStage(trace, 'guard', { state: 'missing-topic' });
       finishRefreshTrace('blocked', { reason: 'not_ready' });
-      return false;
+      return 'completed';
     }
     if (detail.source === 'v2ex') {
       markDiagnosticStage(trace, 'guard', { state: 'topic-refresh-delegated' });
       await openTopic(detail, true);
       finishRefreshTrace('success', { state: 'topic-refresh-delegated' });
-      return true;
+      return 'completed';
     }
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
@@ -344,6 +370,24 @@ export function useTopicController({
       requestOwner,
       requestTopicKey
     });
+    const recoveryOptions: TopicRepliesRefreshOptions = {
+      silent,
+      afterSubmit,
+      nocache,
+      editedReplyContent,
+      targetReply,
+      excludeReply
+    };
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: requestOwner.key,
+      isCurrent: isCurrentRepliesRequest,
+      resume: async () => {
+        if (!isCurrentRepliesRequest()) {
+          return 'stale';
+        }
+        return await refreshTopicRepliesRef.current?.(recoveryOptions, true) ?? 'stale';
+      }
+    };
     repliesAbortRef.current?.abort();
     let controller: AbortController | null = null;
     topicReplyCommands.beginLoad();
@@ -372,7 +416,7 @@ export function useTopicController({
       }, { isCurrent: isCurrentRepliesRequest, trace });
       if (!isCurrentRepliesRequest()) {
         finishRefreshTrace('stale', { reason: 'stale' });
-        return false;
+        return 'stale';
       }
       const refreshedItems = removeReply(data.items, excludeReply);
       const mergedReplies = mergeReplies(topicReplyCommands.getCurrent(), refreshedItems);
@@ -412,7 +456,7 @@ export function useTopicController({
         itemCount: refreshedItems.length,
         hasMore: Boolean(data.hasMore)
       });
-      return true;
+      return 'completed';
     } catch (error) {
       if (isCurrentRepliesRequest()) {
         const sourceError = sourceErrorFromUnknown(detail.source, error);
@@ -423,18 +467,20 @@ export function useTopicController({
           } else {
             showYaohuoLogin(sourceError.message);
           }
-          return false;
+          return 'completed';
         }
         if (detail.source === 'linuxdo' && sourceError.kind === 'verification-required') {
           finishRefreshTrace('blocked', { reason: 'verification_required' });
-          await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
-          return false;
+          if (!suppressLinuxDoVerification) {
+            await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
+          }
+          return 'verification-required';
         }
         if (detail.source === 'nodeseek' && sourceError.kind === 'verification-required') {
           finishRefreshTrace('blocked', { reason: 'verification_required' });
           topicCommands.failLoad(sourceError);
           onNodeSeekTopicVerificationRequired(sourceError.message);
-          return false;
+          return 'completed';
         }
         if (isCanceledRequest(error)) {
           finishRefreshTrace('canceled', { reason: 'canceled' });
@@ -445,7 +491,7 @@ export function useTopicController({
       } else {
         finishRefreshTrace('stale', { reason: 'stale' });
       }
-      return false;
+      return isCanceledRequest(error) || !isCurrentRepliesRequest() ? 'stale' : 'completed';
     } finally {
       if (isCurrentRepliesRequest()) {
         topicReplyCommands.finishLoad();
@@ -460,7 +506,6 @@ export function useTopicController({
     topicReplyCommands.finishLoad,
     topicCommands.getCurrentKey,
     topicReplyCommands.getCurrent,
-    handleLinuxDoCloudflareForTopic,
     notify,
     openTopic,
     repliesAbortRef,
@@ -471,12 +516,17 @@ export function useTopicController({
     sourceGateway,
     topicReplyCommands.resolve,
     onNodeSeekTopicVerificationRequired,
+    showLinuxDoVerification,
     showYaohuoLogin,
     topicDetail,
     topicReplies,
   ]);
 
-  const loadMoreReplies = useCallback(async () => {
+  refreshTopicRepliesRef.current = refreshTopicReplies;
+
+  const loadMoreReplies = useCallback(async (
+    suppressLinuxDoVerification = false
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const detail = topicDetail || selectedTopic;
     const trace = beginDiagnosticTrace('reply', 'load-more', {
       source: detail?.source || 'unknown',
@@ -491,7 +541,7 @@ export function useTopicController({
         state === 'no-next-page' ? 'noop' : 'blocked',
         { reason: state === 'busy' ? 'busy' : 'not_ready' }
       );
-      return;
+      return 'completed';
     }
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
@@ -504,6 +554,16 @@ export function useTopicController({
       requestOwner,
       requestTopicKey
     });
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: requestOwner.key,
+      isCurrent: isCurrentRepliesRequest,
+      resume: async () => {
+        if (!isCurrentRepliesRequest()) {
+          return 'stale';
+        }
+        return await loadMoreRepliesRef.current?.(true) ?? 'stale';
+      }
+    };
     let controller: AbortController | null = null;
     topicReplyCommands.beginLoad();
     try {
@@ -524,7 +584,7 @@ export function useTopicController({
       }, { isCurrent: isCurrentRepliesRequest, trace });
       if (!isCurrentRepliesRequest()) {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
-        return;
+        return 'stale';
       }
       const currentReplies = topicReplyCommands.getCurrent();
       const mergedReplies = mergeReplies(currentReplies, data.items);
@@ -552,6 +612,7 @@ export function useTopicController({
         repeatedCursor ? { reason: 'duplicate' } : { itemCount: data.items.length }
       );
       notify(`已加载 ${data.items.length} 条回复`);
+      return 'completed';
     } catch (error) {
       if (isCurrentRepliesRequest()) {
         const sourceError = sourceErrorFromUnknown(detail.source, error);
@@ -562,18 +623,20 @@ export function useTopicController({
           } else {
             showYaohuoLogin(sourceError.message);
           }
-          return;
+          return 'completed';
         }
         if (detail.source === 'linuxdo' && sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
-          await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
-          return;
+          if (!suppressLinuxDoVerification) {
+            await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
+          }
+          return 'verification-required';
         }
         if (detail.source === 'nodeseek' && sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
           topicCommands.failLoad(sourceError);
           onNodeSeekTopicVerificationRequired(sourceError.message);
-          return;
+          return 'completed';
         }
         if (isCanceledRequest(error)) {
           finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
@@ -581,8 +644,10 @@ export function useTopicController({
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
         }
+        return isCanceledRequest(error) ? 'stale' : 'completed';
       } else {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
+        return 'stale';
       }
     } finally {
       if (isCurrentRepliesRequest()) {
@@ -598,7 +663,6 @@ export function useTopicController({
     topicReplyCommands.finishLoad,
     topicCommands.getCurrentKey,
     topicReplyCommands.getCurrent,
-    handleLinuxDoCloudflareForTopic,
     topicReplyCommands.isLoading,
     notify,
     repliesAbortRef,
@@ -610,8 +674,13 @@ export function useTopicController({
     topicReplyCommands.resolve,
     onNodeSeekTopicVerificationRequired,
     showYaohuoLogin,
+    showLinuxDoVerification,
     topicDetail
   ]);
+
+  refreshTopicRepliesRef.current = refreshTopicReplies;
+
+  loadMoreRepliesRef.current = loadMoreReplies;
 
   const refreshWholeTopic = useCallback(() => {
     const detail = topicDetail || selectedTopic;
@@ -620,11 +689,12 @@ export function useTopicController({
     }
   }, [openTopic, selectedTopic, topicDetail]);
 
-  const toggleLoadedQuotedPost = useCallback(async ({
-    instanceKey,
-    reference,
-    quotedPost
-  }: ToggleTopicBodyQuoteOptions) => {
+  const toggleLoadedQuotedPost = useCallback(async (
+    options: ToggleTopicBodyQuoteOptions,
+    suppressLinuxDoVerification = false,
+    onVerificationRequired?: () => void
+  ) => {
+    const { instanceKey, reference, quotedPost } = options;
     const detail = topicDetail || selectedTopic;
     const trace = beginDiagnosticTrace('reply', 'toggle-quote', {
       source: detail?.source || 'unknown',
@@ -654,6 +724,26 @@ export function useTopicController({
       return;
     }
     const requestTopicKey = topicKey(detail);
+    const isCurrentQuotedPostRequest = () => topicCommands.getCurrentKey() === requestTopicKey;
+    const linuxDoRecovery: LinuxDoReadRecovery = {
+      key: `topic-quote:${requestTopicKey}:${referenceKey}`,
+      isCurrent: isCurrentQuotedPostRequest,
+      resume: async () => {
+        if (!isCurrentQuotedPostRequest()) {
+          return 'stale';
+        }
+        let stillRequiresVerification = false;
+        await toggleLoadedQuotedPostRef.current?.(
+          options,
+          true,
+          () => { stillRequiresVerification = true; }
+        );
+        if (stillRequiresVerification) {
+          return 'verification-required';
+        }
+        return isCurrentQuotedPostRequest() ? 'completed' : 'stale';
+      }
+    };
 
     topicQuotes.changeLoading(key, true);
     const controller = new AbortController();
@@ -679,7 +769,11 @@ export function useTopicController({
         const sourceError = sourceErrorFromUnknown(reference.source, error);
         if (sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
-          await handleLinuxDoCloudflareForTopic(detail, sourceError.message);
+          if (suppressLinuxDoVerification) {
+            onVerificationRequired?.();
+          } else {
+            await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
+          }
           return;
         }
         if (isCanceledRequest(error)) {
@@ -703,7 +797,6 @@ export function useTopicController({
     topicQuotes.clearRequest,
     topicCommands.getCurrentKey,
     topicQuotes.getLoaded,
-    handleLinuxDoCloudflareForTopic,
     topicQuotes.isExpanded,
     topicQuotes.isRequest,
     notify,
@@ -711,10 +804,13 @@ export function useTopicController({
     topicQuotes.replaceRequest,
     selectedTopic,
     sourceGateway,
+    showLinuxDoVerification,
     topicQuotes.changeExpanded,
     topicQuotes.changeLoading,
     topicDetail,
   ]);
+
+  toggleLoadedQuotedPostRef.current = toggleLoadedQuotedPost;
 
   const toggleTopicBodyQuote = useCallback((options: ToggleTopicBodyQuoteOptions) => (
     toggleLoadedQuotedPost(options)
