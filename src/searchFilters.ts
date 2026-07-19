@@ -7,7 +7,8 @@ export type SearchKeywordOperator = 'or' | 'and';
 export type LinuxDoSearchOrder = 'relevance' | 'latest';
 export type LinuxDoTagMatch = 'any' | 'all';
 export type LinuxDoVisitedFilter = 'seen' | 'bookmarks' | 'likes' | 'posted' | 'created';
-export type LinuxDoSearchStatus = '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
+export type DiscourseSearchStatus = '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
+export type LinuxDoSearchStatus = DiscourseSearchStatus | 'solved' | 'unsolved';
 export type LinuxDoDateRelation = 'before' | 'after';
 export type NodeSeekSearchSort = 'replyTime' | 'postTime';
 
@@ -20,15 +21,13 @@ export type V2exSearchFilter = {
   operator: SearchKeywordOperator;
 };
 
-export type LinuxDoSearchFilter = {
-  source: 'linuxdo';
+type DiscourseSearchFilterFields = {
   scope: SearchTextScope;
   category: string;
   tags: string[];
   tagMatch: LinuxDoTagMatch;
   username: string;
   visited: LinuxDoVisitedFilter[];
-  status: LinuxDoSearchStatus;
   timeRange: SearchTimeRange;
   dateRelation: LinuxDoDateRelation;
   date: string;
@@ -36,8 +35,13 @@ export type LinuxDoSearchFilter = {
   maxPosts: number | null;
   minViews: number | null;
   maxViews: number | null;
-  expertResponse: boolean;
   order: LinuxDoSearchOrder;
+};
+
+export type LinuxDoSearchFilter = DiscourseSearchFilterFields & {
+  source: 'linuxdo';
+  status: LinuxDoSearchStatus;
+  expertResponse: boolean;
 };
 
 export type NodeSeekSearchFilter = {
@@ -51,17 +55,24 @@ export type YaohuoSearchFilter = {
   category: string;
 };
 
+export type XiaoyinsiSearchFilter = DiscourseSearchFilterFields & {
+  source: 'xiaoyinsi';
+  status: DiscourseSearchStatus;
+};
+
 export type SourceSearchFilter =
   | V2exSearchFilter
   | LinuxDoSearchFilter
   | NodeSeekSearchFilter
-  | YaohuoSearchFilter;
+  | YaohuoSearchFilter
+  | XiaoyinsiSearchFilter;
 
 export type SearchFilterState = {
   v2ex: V2exSearchFilter;
   linuxdo: LinuxDoSearchFilter;
   nodeseek: NodeSeekSearchFilter;
   yaohuo: YaohuoSearchFilter;
+  xiaoyinsi: XiaoyinsiSearchFilter;
 };
 
 export const DEFAULT_SEARCH_FILTERS: SearchFilterState = {
@@ -100,6 +111,24 @@ export const DEFAULT_SEARCH_FILTERS: SearchFilterState = {
   yaohuo: {
     source: 'yaohuo',
     category: '0'
+  },
+  xiaoyinsi: {
+    source: 'xiaoyinsi',
+    scope: 'all',
+    category: '',
+    tags: [],
+    tagMatch: 'any',
+    username: '',
+    visited: [],
+    status: '',
+    timeRange: 'all',
+    dateRelation: 'after',
+    date: '',
+    minPosts: null,
+    maxPosts: null,
+    minViews: null,
+    maxViews: null,
+    order: 'relevance'
   }
 };
 
@@ -125,8 +154,8 @@ function categoryForFilter(categories: Category[], source: Source, id: string) {
 
 export function defaultSearchFilterForSource<T extends Source>(source: T): SearchFilterState[T] {
   const filter = DEFAULT_SEARCH_FILTERS[source];
-  return (source === 'linuxdo'
-    ? { ...filter, tags: [...DEFAULT_SEARCH_FILTERS.linuxdo.tags], visited: [...DEFAULT_SEARCH_FILTERS.linuxdo.visited] }
+  return ('tags' in filter
+    ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
     : { ...filter }) as SearchFilterState[T];
 }
 
@@ -156,8 +185,8 @@ function categoryLabel(categories: Category[], source: Source, id: string) {
   return categoryForFilter(categories, source, id)?.name || id.trim();
 }
 
-function linuxDoCategoryToken(categories: Category[], id: string) {
-  const category = categoryForFilter(categories, 'linuxdo', id);
+function discourseCategoryToken(categories: Category[], source: 'linuxdo' | 'xiaoyinsi', id: string) {
+  const category = categoryForFilter(categories, source, id);
   return (category?.id || id).trim();
 }
 
@@ -178,7 +207,7 @@ function validRangeValue(value: number | null) {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-export function linuxDoSearchFilterError(filter: LinuxDoSearchFilter) {
+export function discourseSearchFilterError(filter: LinuxDoSearchFilter | XiaoyinsiSearchFilter) {
   if (filter.date.trim() && !validSearchDate(filter.date)) {
     return '请选择有效日期';
   }
@@ -195,12 +224,18 @@ export function linuxDoSearchFilterError(filter: LinuxDoSearchFilter) {
   return '';
 }
 
-export function buildLinuxDoSearchQuery(query: string, filter: LinuxDoSearchFilter, categories: Category[]) {
+export const linuxDoSearchFilterError = discourseSearchFilterError;
+
+function buildDiscourseSearchQuery(
+  query: string,
+  filter: LinuxDoSearchFilter | XiaoyinsiSearchFilter,
+  categories: Category[]
+) {
   const parts = [query.trim()];
   if (filter.scope === 'title') {
     parts.push('in:title');
   }
-  const category = linuxDoCategoryToken(categories, filter.category);
+  const category = discourseCategoryToken(categories, filter.source, filter.category);
   if (category) {
     parts.push(`category:${category}`);
   }
@@ -238,13 +273,21 @@ export function buildLinuxDoSearchQuery(query: string, filter: LinuxDoSearchFilt
       parts.push(`${name}:${value}`);
     }
   }
-  if (filter.expertResponse) {
+  if (filter.source === 'linuxdo' && filter.expertResponse) {
     parts.push('with:category_expert_response');
   }
   if (filter.order === 'latest') {
     parts.push('order:latest');
   }
   return parts.filter(Boolean).join(' ');
+}
+
+export function buildLinuxDoSearchQuery(query: string, filter: LinuxDoSearchFilter, categories: Category[]) {
+  return buildDiscourseSearchQuery(query, filter, categories);
+}
+
+export function buildXiaoyinsiSearchQuery(query: string, filter: XiaoyinsiSearchFilter, categories: Category[]) {
+  return buildDiscourseSearchQuery(query, filter, categories);
 }
 
 export function searchFilterSummary(source: Source, filter: SourceSearchFilter, categories: Category[]) {
@@ -266,12 +309,12 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
       parts.push(searchTimeRangeLabel(filter.timeRange));
     }
   }
-  if (source === 'linuxdo' && filter.source === 'linuxdo') {
+  if ((source === 'linuxdo' || source === 'xiaoyinsi') && filter.source === source) {
     if (filter.scope === 'title') {
       parts.push('标题');
     }
     if (filter.category.trim()) {
-      parts.push(categoryLabel(categories, 'linuxdo', filter.category));
+      parts.push(categoryLabel(categories, source, filter.category));
     }
     const tags = cleanLinuxDoTags(filter.tags);
     if (tags.length) {
@@ -301,7 +344,7 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
     if (minViews !== null || maxViews !== null) {
       parts.push(`浏览 ${minViews ?? 0}–${maxViews ?? '∞'}`);
     }
-    if (filter.expertResponse) {
+    if (filter.source === 'linuxdo' && filter.expertResponse) {
       parts.push('专家回应');
     }
     if (filter.order === 'latest') {
@@ -346,7 +389,7 @@ export function filterSearchResponseItems<T extends { categoryId?: string; categ
         return false;
       }
     }
-    if ('category' in filter && filter.category.trim() && filter.category !== '0') {
+    if ('category' in filter && filter.source !== 'xiaoyinsi' && filter.category.trim() && filter.category !== '0') {
       return item.categoryId === filter.category || item.category === filter.category;
     }
     return true;

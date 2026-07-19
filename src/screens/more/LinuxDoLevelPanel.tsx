@@ -26,8 +26,10 @@ function formatActivitySeconds(seconds: number) {
 export function LinuxDoLevelPanel({
   busy,
   error,
-  linuxDoSession,
+  loginButtonLabel = '打开 linux.do 登录 / 验证',
+  loginMessage = '需要先保存 linux.do 登录 Cookie，等级数据只从手机本机读取。',
   profile,
+  siteSession,
   styles,
   theme,
   onOpenLogin,
@@ -35,20 +37,22 @@ export function LinuxDoLevelPanel({
 }: {
   busy: boolean;
   error: string;
-  linuxDoSession: SiteSessionViewModel;
+  loginButtonLabel?: string;
+  loginMessage?: string;
   profile: LinuxDoLevelProfile | null;
+  siteSession: SiteSessionViewModel;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onOpenLogin: () => void;
   onRefresh: () => void;
 }) {
   const [tab, setTab] = useState<LinuxDoLevelTab>('progress');
-  if (!linuxDoSession.canWrite) {
+  if (!siteSession.canWrite) {
     return (
       <View style={styles.stack}>
-        <Text style={styles.meta}>需要先保存 linux.do 登录 Cookie，等级数据只从手机本机读取。</Text>
+        <Text style={styles.meta}>{loginMessage}</Text>
         <View style={styles.actions}>
-          <AppButton label="打开 linux.do 登录 / 验证" styles={styles} onPress={onOpenLogin} />
+          <AppButton label={loginButtonLabel} styles={styles} onPress={onOpenLogin} />
         </View>
       </View>
     );

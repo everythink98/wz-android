@@ -167,6 +167,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
   };
   return {
     actionBusy: false,
+    canUseXiaoyinsiActions: false,
     canWrite: true,
     contentWidth: 720,
     expandedQuotes: {},
@@ -417,6 +418,53 @@ describe('Topic real child components', () => {
     expect(view.queryByLabelText('回复')).toBeNull();
     expect(view.queryByLabelText('编辑回复')).toBeNull();
     expect(view.queryByLabelText('删除回复')).toBeNull();
+  });
+
+  it('[REG-XIAOYINSI-007] separates 小隐寺 reply permission from per-post interaction permissions', async () => {
+    const writableReply: Reply = {
+      ...replyProps().reply,
+      canDelete: true,
+      canEdit: true,
+      canLike: true
+    };
+    const view = await render(
+      <ReplyItem
+        {...replyProps({
+          canUseXiaoyinsiActions: true,
+          canWrite: false,
+          reply: writableReply,
+          source: 'xiaoyinsi'
+        })}
+      />
+    );
+
+    expect(view.queryByLabelText('回复')).toBeNull();
+    expect(view.getByLabelText('编辑回复')).toBeTruthy();
+    expect(view.getByLabelText('点赞')).toBeTruthy();
+    expect(view.getByLabelText('删除回复')).toBeTruthy();
+  });
+
+  it('shows 小隐寺 reply reactions without write authorization', async () => {
+    const reply: Reply = {
+      ...replyProps().reply,
+      reactionSummary: [
+        { id: 'heart', count: 2 },
+        { id: '+1', count: 1 }
+      ]
+    };
+    const view = await render(
+      <ReplyItem
+        {...replyProps({
+          canUseXiaoyinsiActions: false,
+          canWrite: false,
+          reply,
+          source: 'xiaoyinsi'
+        })}
+      />
+    );
+
+    expect(view.getByLabelText('heart 2')).toBeTruthy();
+    expect(view.getByLabelText('+1 1')).toBeTruthy();
   });
 
   it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {

@@ -108,7 +108,7 @@ export function applyReplyComposerFormat({
 }
 
 function replyComposerFormatActions(source?: Source): Array<{ action: ReplyComposerFormatAction; label: string }> {
-  if (source !== 'nodeseek' && source !== 'linuxdo' && source !== 'yaohuo') {
+  if (source !== 'nodeseek' && source !== 'linuxdo' && source !== 'xiaoyinsi' && source !== 'yaohuo') {
     return [];
   }
   return [

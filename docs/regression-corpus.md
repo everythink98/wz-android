@@ -36,7 +36,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 最低可靠自动测试层 | `UI_PASS`：必须渲染 React Native 组件；源码字符串或 `APK_SANITY` 都无法证明 Loading 唯一。 |
 | Replay 或真实验收路径 | `tests/device/feed-topic-return.ad` 验证 Feed 可用与返回状态；它不能单独证明 Loading 唯一。 |
 | 负向验证方式 | 临时让空列表 busy 状态也挂载 RefreshControl，UI 测试必须失败，随后还原。 |
-| 明确不覆盖范围 | 实时来源速度、分页数据正确性和四站解析由 `FEED-*` 其他测试与 Live 验收负责。 |
+| 明确不覆盖范围 | 实时来源速度、分页数据正确性和五站解析由 `FEED-*` 其他测试与 Live 验收负责。 |
 
 ## `REG-FEED-002` 切换来源或排序后列表没有回到顶部
 
@@ -52,6 +52,261 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | `tests/device/four-source-feed.ad` 覆盖四站及 NodeSeek“新帖子/新评论”；切换排序前必须确认“回到顶部”已出现，切换后再确认新首项可见，从而区分空数据、仍停在旧位置和真实滚顶。 |
 | 负向验证方式 | 从 `renderFeedScene` 依赖中移除分类、排序或阅读筛选，或者移除 Feed FlashList 的筛选 identity `key`，RNTL 必须保留错误滚动位置并失败；移除 `maintainVisibleContentPosition: { disabled: true }`，Vitest 必须失败；设备 Replay 必须在真实列表未回顶时失败。 |
 | 明确不覆盖范围 | 不固定动态主题标题、数量或来源当天可用性；这些仍按 Replay 动态结果规则与 Live 验收。 |
+
+## `REG-FEED-003` 小隐寺排序菜单为空
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-02`、`FEED-04` |
+| 用户症状 | 小隐寺独立 Feed 可以读取，但点击“列表筛选”只出现空弹层，无法切换“热门”或“新内容”。 |
+| 触发条件 | 当前来源为 `xiaoyinsi`，且 `shouldUseFeedFilter` 已允许显示按钮，但菜单分组白名单仍只包含原有三个排序来源。 |
+| 根因 seam | `src/screens/FeedScreen.tsx` 的排序按钮可见条件与 `feedFilterMenuGroups` 取值条件没有使用同一来源集合。 |
+| 必须保持的行为 | 小隐寺在全部分类和任一站内分类下都显示独立“最新/热门/新·所有/新·话题/新·回复”菜单；选择后关闭弹层、更新来源自己的排序状态并重新加载首项，不影响其他来源。 |
+| 精确失败 oracle | `tests/ui/feed-screen.test.tsx` 切换到小隐寺，打开“列表筛选”并选择“新·回复”，再切分类确认菜单仍可用；`tests/ui/feed-controller-xiaoyinsi.test.tsx` 证明选择后真实请求使用 `new-replies`。 |
+| 最低可靠自动测试层 | `UI_PASS` 固定菜单内容和分类组合，controller UI 测试固定实际请求；只测 `feedFilterMenuGroups` 常量或只看按钮存在会漏掉空弹层。 |
+| Replay 或真实验收路径 | 当前 debug APK 在小隐寺独立 Feed 打开“列表筛选”，分别选择“热门”和一个“新”筛选，等待 `feed-list-ready-xiaoyinsi` 再出现并打开首条主题；全程只读，未授权时 `/new.json` 的登录提示也必须明确。 |
+| 负向验证方式 | 从 `activeFeedFilterMenuGroups` 的来源集合移除 `xiaoyinsi`，UI 用例必须在找不到“新·回复”时失败；恢复后 controller 用例仍必须请求 `feedFilter=new-replies`。 |
+| 明确不覆盖范围 | 原站热门排序当天的主题数量和标题仍属动态 Live 数据，不固定为测试夹具。 |
+
+## `REG-XIAOYINSI-001` 小隐寺分类全部显示为未分类
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-02`、`TOPIC-01`、`USER-01` |
+| 用户症状 | 小隐寺主题已有有效 `category_id`，但首页、搜索、详情和用户主题仍全部显示“未分类”。 |
+| 触发条件 | Discourse 列表、主题、搜索和用户响应只返回 `category_id`，分类字典只在 `/site.json` 中返回。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 的共享分类映射；旧实现只从当前响应取字典，没有在 ID 缺失映射时回填小隐寺 `/site.json`。 |
+| 必须保持的行为 | 当前响应未携带所需分类时，小隐寺 Adapter 独立读取 `/site.json` 并按字符串 ID 回填；分类请求失败不得抹掉已成功读取的主题。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 的列表、详情、搜索和用户夹具只提供 `category_id`，分类名仅由 `/site.json` 提供；四条路径都必须得到“生活”。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：必须经过真实 Adapter 请求与映射路径；只渲染 UI 夹具或断言 `categoryId` 存在无法拦住。 |
+| Replay 或真实验收路径 | 小隐寺“最新/热门”、一条主题详情、一次搜索和一个用户主题列表均做只读对照，确认有效分类不再被统一降级。 |
+| 负向验证方式 | 移除缺失映射时的 `/site.json` 回填，Adapter 用例必须稳定恢复为“未分类”并失败。 |
+| 明确不覆盖范围 | 原站日后新增、改名或删除分类仍属 Live 数据，自动测试不固定当天分类总数。 |
+
+## `REG-XIAOYINSI-002` 小隐寺回复编辑器缺少格式栏和上传入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-04` |
+| 用户症状 | 小隐寺已经支持回复和 `/uploads.json`，但编辑器没有 Markdown 格式栏或图片入口，用户只能输入纯文本。 |
+| 触发条件 | 回复来源为 `xiaoyinsi`；底层上传已实现，但编辑器的 Markdown 来源白名单和上传 UI 矩阵没有同步新增来源。 |
+| 根因 seam | `src/screens/topic/replyComposerFormatting.ts` 的格式能力集合与 `ReplyComposerSheet` 的来源上传回调边界。 |
+| 必须保持的行为 | 小隐寺显示与 NodeSeek/linux.do 一致的 Markdown 常用格式和图片入口；点击图片只调用上传回调，不提交回复；妖火仍使用 UBB，V2EX 仍只读。 |
+| 精确失败 oracle | `src/screens/topic/replyComposerFormatting.test.ts` 的 `REG-XIAOYINSI-002` 固定 Markdown 工具栏；`tests/ui/reply-composer.test.tsx` 同编号用例固定四个可写来源的图片回调。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：领域测试固定来源能力，RNTL 固定真实入口和不误提交。 |
+| Replay 或真实验收路径 | 打开小隐寺可回复主题的编辑器，检查格式栏和图片入口；可打开/关闭并保留草稿，真实上传仍需逐次授权。 |
+| 负向验证方式 | 从 Markdown 来源集合或图片上传 UI 矩阵移除 `xiaoyinsi`，对应测试必须失败。 |
+| 明确不覆盖范围 | 不授权真实回复；远端上传文件与残留按 Agent Live 的“四站图片上传草稿”场景单独验收。 |
+
+## `REG-XIAOYINSI-003` 已收藏主题因缺少 bookmark id 无法取消
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 原站已显示主题收藏，但 App 点击取消时提示收藏记录不完整，不能恢复初始状态。 |
+| 触发条件 | Discourse 主题详情返回 `bookmarked=true`，却未返回具体 `bookmark_id`；旧实现把 Topic 和 Post 都强制绑定记录 id。 |
+| 根因 seam | `src/xiaoyinsiActions.ts` 的书签取消请求构造，以及 `src/app/useTopicActionsController.ts` 的前置门禁。 |
+| 必须保持的行为 | Topic 缺少记录 id 时使用 Discourse 主题级 `PUT /t/{topicId}/remove_bookmarks`；Post 取消仍要求具体记录 id；服务端确认后只更新当前 Topic 与活动 route snapshot 的收藏状态，不整篇重载。 |
+| 精确失败 oracle | `src/xiaoyinsiActions.test.ts` 与 `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-003` 分别固定请求和真实 controller 路由。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：请求构造和 controller 门禁都必须覆盖，单独显示按钮不能证明可取消。 |
+| Replay 或真实验收路径 | 在已获逐次授权的可恢复 Topic 上记录初始状态，收藏/取消各一次，刷新后与原站状态一致并恢复初态。 |
+| 负向验证方式 | 恢复“缺少 bookmark id 直接返回”或改用 `/bookmarks/undefined`，两层测试必须失败。 |
+| 明确不覆盖范围 | 不推断未返回 `bookmarked` 的主题状态；真实远端切换仍按授权和恢复门禁。 |
+
+## `REG-XIAOYINSI-004` 用户页把互动过的主题当成用户发帖
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `USER-01`、`NAV-03` |
+| 用户症状 | 小隐寺用户页“主题”列表混入用户只回复或互动过的帖子，作者和分页也可能错误。 |
+| 触发条件 | `/u/{name}/summary.json` 的活动摘要被直接当作 authored topics，且没有使用 Discourse 专用发帖列表及 cursor。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 的用户身份摘要与用户发帖列表生命周期被混为一个接口。 |
+| 必须保持的行为 | 身份与计数继续读取 summary；主题独立读取 `/topics/created-by/{username}.json`，作者取该响应用户表，并保留 `more_topics_url` 分页。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 的 `REG-XIAOYINSI-004` 给 summary 注入非本人主题，要求页面只返回 created-by 两页数据。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：必须经过两个真实 Adapter 端点和分页映射；UI 夹具无法区分数据来源。 |
+| Replay 或真实验收路径 | 从小隐寺 Topic 进入作者页，打开主题列表和下一页，确认可见主题作者均为该用户并能返回原用户页。 |
+| 负向验证方式 | 改回读取 summary 的 `topics`，测试必须出现错误主题 id 并失败。 |
+| 明确不覆盖范围 | 原站实时主题数量、隐私主题和被删除主题不固定为自动测试数据。 |
+
+## `REG-XIAOYINSI-005` Device Code 重授权、取消与撤销存在竞态
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-06` |
+| 用户症状 | 重授权进程恢复时可能退回旧 Token 状态；取消后迟到的 authorized 或旧 session 复核仍可能重新登录；服务端撤销成功而本机部分删除失败时，重启还可能恢复已撤销流程的 Device Code。 |
+| 触发条件 | 待授权状态与旧凭据没有明确优先级；轮询和 session 复核缺少同步 generation/Abort 门禁；撤销后的 SecureStore 与 Keystore 清理没有可跨进程恢复的 tombstone。 |
+| 根因 seam | `src/app/useXiaoyinsiAuthController.ts` 的授权生命周期所有权与 `src/xiaoyinsiAuth.ts` 的解密持久化、撤销提交边界。 |
+| 必须保持的行为 | 有效 pending 优先恢复；开始重授权、取消、撤销或卸载 hook 时同步失效轮询与旧 session 复核，迟到结果不得改写新状态；服务端撤销失败保留本机 Token，成功后先留下清理 tombstone、尝试全部本机删除并明确报告 partial；重启必须先重试清理，绝不能恢复 tombstone 后的旧 Device Code。 |
+| 精确失败 oracle | `src/xiaoyinsiAuth.test.ts` 与 `tests/ui/xiaoyinsi-auth-controller.test.tsx` 的 `REG-XIAOYINSI-005` 覆盖迟到解密、迟到 session 复核、进程恢复、取消竞态、部分清理、tombstone 和重启时清理优先级。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：SecureStore/Keystore 提交边界和 React 生命周期竞态必须分别固定。 |
+| Replay 或真实验收路径 | 账号中心检查等待、后台/前台、取消、过期和重启恢复；真实 Google/Discord 登录只由用户操作，撤销不在默认验收中执行。 |
+| 负向验证方式 | 移除 poll/session generation 或 Abort、先验证旧 Token、在清理前恢复 pending、删除 tombstone，或改用 fail-fast 清理，编号测试必须失败。 |
+| 明确不覆盖范围 | 不自动输入第三方凭据、不清 App 数据；浏览器 Cookie 不属于 App User API 会话模型。 |
+
+## `REG-XIAOYINSI-006` 父分类搜索丢弃子分类结果
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-02`、`SEARCH-03` |
+| 用户症状 | 选择小隐寺父分类后，原站已返回子分类命中，App 却把它们过滤掉，表现为少结果或空结果。 |
+| 触发条件 | Discourse `category:` 查询按父分类语义包含子分类；共享本地过滤又按 `categoryId === selectedId` 做精确比较。 |
+| 根因 seam | `src/searchFilters.ts` 在服务端筛选之后重复应用了语义不同的共享分类过滤。 |
+| 必须保持的行为 | 小隐寺分类由原站查询决定，保留其父/子分类语义；其他来源已有本地过滤契约不变。 |
+| 精确失败 oracle | `src/searchFilters.test.ts` 的 `REG-XIAOYINSI-006` 输入父分类 4 和服务端返回的子分类 15，要求结果保留。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：确定性固定来源差异与过滤边界。 |
+| Replay 或真实验收路径 | 在小隐寺选择有子分类的父分类搜索，确认子分类结果可见且打开/返回后筛选保持。 |
+| 负向验证方式 | 对小隐寺恢复共享 `categoryId` 精确过滤，编号测试必须失败。 |
+| 明确不覆盖范围 | 原站分类树当天内容与结果数量属于动态数据。 |
+
+## `REG-XIAOYINSI-007` 登录态被错误当成所有写权限且读取失效不同步
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`ACCOUNT-01`、`ACCOUNT-06`、`WRITE-01`、`WRITE-02`、`WRITE-03`、`WRITE-04` |
+| 用户症状 | 只要 App 已授权，小隐寺关闭或只读主题仍显示回复入口；反过来不能回复时，原站允许的编辑、删除或点赞也一起消失；读取遇到 Token 失效后账号中心仍可能显示已登录。 |
+| 触发条件 | UI 和 controller 只检查站点登录态，没有读取 `details.can_create_post`；主题回复权限与逐条 Post 权限共用一个 boolean；Gateway 未复核已认证读取的 401/403。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 权限映射、Topic/Reply 操作栏、`topicActionControllerHelpers` 写门禁及 `src/sources/sourceGateway.ts` 会话复核。 |
+| 必须保持的行为 | 新回复严格要求登录且 `can_create_post=true`；编辑/删除/点赞按逐条权限独立显示，已点赞仍可取消；已带 Token 的读取遇到 401/403 先用 `/session/current.json` 复核，单主题 403 不直接退出，确认失效才更新账号状态。浏览器 Cookie 不属于 App User API 会话，也不得进入 `cookieSummary` 或任何状态判断。 |
+| 精确失败 oracle | `src/app/topicActionControllerHelpers.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`tests/ui/topic-components.test.tsx` 和 `tests/ui/topic-reply-filters.test.tsx` 的 `REG-XIAOYINSI-007` 分别固定数据门禁、单站/聚合复核和用户可见按钮矩阵。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Adapter/gateway/controller 与真实渲染都必须覆盖；只看登录成功或按钮存在会漏掉权限分离。 |
+| Replay 或真实验收路径 | 已授权 App 分别打开可回复与只读主题，核对回复入口和逐条操作；验收不查看浏览器登录状态，账号中心身份只以 App `/session/current.json` 为准。 |
+| 负向验证方式 | 把 `canWriteXiaoyinsi` 恢复为纯登录态、把逐条操作重新包在回复权限内或移除 Gateway 复核，编号测试必须失败。 |
+| 明确不覆盖范围 | 自动测试不固定某个真实主题长期保持关闭或某账号永久拥有编辑/删除权限；真实写入仍需逐次授权。 |
+
+## `REG-XIAOYINSI-008` 回复成功后数量按旧值加一而非服务端总数
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-03`、`WRITE-01` |
+| 用户症状 | 小隐寺回复写入后重新读取了服务器列表，但页面回复总数仍按旧值加一，在旧值过期或分页不完整时继续错误。 |
+| 触发条件 | `RepliesResponse` 没有携带 Discourse `post_stream.stream` 的权威总数，controller 只能使用公共启发式。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 的回复响应与 `src/app/useTopicController.ts` 的 after-submit 计数合并。 |
+| 必须保持的行为 | 小隐寺回复响应返回不含首帖的 `totalCount`；写后刷新优先采用该权威值，其他来源没有该字段时保留既有启发式。 |
+| 精确失败 oracle | `src/app/useTopicController.test.ts` 的 `REG-XIAOYINSI-008` 从旧值 100 刷新为服务端 7；`src/localXiaoyinsi.test.ts` 固定 stream 到 `totalCount` 映射。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：Adapter 与 controller 两层共同固定，单次 UI 数字无法证明来源权威性。 |
+| Replay 或真实验收路径 | 不发送真实回复；只读主题进入、分页与刷新检查服务端总数一致。真实回复永久排除 Agent 自动验收。 |
+| 负向验证方式 | 删除 `totalCount` 或强制调用旧值加一，编号测试必须得到 101 并失败。 |
+| 明确不覆盖范围 | 不授权真实评论；原站并发新增/删除回复造成的实时变化由下一次权威刷新处理。 |
+
+## `REG-XIAOYINSI-009` 已点赞帖子显示取消入口但控制器拒绝取消
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 小隐寺已点赞帖子显示“取消赞”，点击后却提示当前帖子不能点赞，原站状态没有变化。 |
+| 触发条件 | Discourse 对已执行的点赞返回 `acted=true`、`can_act=false`；UI 用 `liked` 正确保留取消入口，但 controller 只看 `canLike=false`。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 把“不能新增点赞”和“不能撤销已有点赞”合并成同一个前置门禁。 |
+| 必须保持的行为 | 未点赞且 `can_act=false` 时继续禁止点赞；`liked=true` 时允许发送 DELETE 取消点赞，即使 `can_act=false`；服务端确认后只更新目标帖子及活动 route snapshot，不整篇重载。 |
+| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-009` 使用 `liked=true`、`canLike=false`，要求发送一次取消点赞 DELETE 并应用目标帖子局部状态。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：必须经过 controller 门禁和真实请求构造，只验证按钮可见会漏掉点击后的拦截。 |
+| Replay 或真实验收路径 | 仅在获得逐次写操作授权时记录初始点赞状态，取消后刷新核对原站，再恢复初始状态。 |
+| 负向验证方式 | 把门禁恢复为无条件 `canLike === false`，编号测试必须得到零请求并失败。 |
+| 明确不覆盖范围 | 不默认执行真实点赞或取消；没有已点赞对象时不为验收制造远端状态。 |
+
+## `REG-XIAOYINSI-010` 可编辑回复缺少原始 Markdown
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`WRITE-02` |
+| 用户症状 | 小隐寺自己的回复显示“编辑”，点击后却无法填入原内容或提示缺少可编辑正文。 |
+| 触发条件 | 标准 Discourse `/t/{id}.json` 和 `/t/{id}/posts.json` 默认只返回 cooked HTML；只有已认证请求显式携带 `include_raw=1` 才返回 `raw`。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 的 Topic/Posts 读取请求没有把独立 User API 会话与可编辑原文请求绑定，测试夹具又无条件提供 `raw`，掩盖了真实响应差异。 |
+| 必须保持的行为 | 只有同时具备小隐寺 User API Key 与 Client ID 的 Topic/Posts 读取添加 `include_raw=1`，并把 `raw` 映射为回复 `contentMarkdown`；匿名公开阅读不请求编辑原文，仍完整显示 cooked HTML。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 的 `REG-XIAOYINSI-010` 让测试服务端只在收到 `include_raw=1` 时返回 `raw`，要求认证详情、分页回复和楼层读取得到 Markdown，同时匿名请求不带该参数。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：必须经过 Adapter 请求构造和响应映射；UI 中只看见“编辑”按钮或给夹具硬编码 `raw` 都不能证明真实编辑链路可用。 |
+| Replay 或真实验收路径 | 已授权 App 打开原站允许编辑的本人回复，确认编辑器预填原 Markdown 后取消，不提交任何修改；匿名主题继续只读可见。 |
+| 负向验证方式 | 从认证 Topic 或 Posts 请求移除 `include_raw=1`，测试服务端将不返回 `raw`，认证回复的 `contentMarkdown` 断言必须失败。 |
+| 明确不覆盖范围 | 不自动执行真实编辑或删除；原站是否长期授予某条回复编辑权限仍由动态权限字段决定。 |
+
+## `REG-XIAOYINSI-011` 图片插入完成后编辑器仍不能立即发送
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-04` |
+| 用户症状 | 小隐寺图片已经上传并插入回复草稿，但编辑器操作仍不可用，必须收起再打开后才能继续发送。 |
+| 触发条件 | 图片上传网络请求完成，随后还要解析响应并把 Markdown 写入受控草稿；旧实现让各站 transport 各自提前结束全局 `actionBusy`，没有由完整上传工作流持有忙碌生命周期。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 的 `uploadReplyImage` 把 transport 完成误当成用户操作完成，忙碌态没有覆盖本地 Markdown apply 阶段。 |
+| 必须保持的行为 | 用户选完图片后，完整工作流只持有一份忙碌态；上传、解析和 Markdown 插入期间保持禁用，草稿写入后立即解除，图片入口本身绝不提交回复。四个可写来源使用同一生命周期，各站凭据与上传协议保持独立。 |
+| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-011` 记录事件顺序，必须严格为 `busy:true → markup → busy:false`；`tests/ui/reply-composer.test.tsx` 固定 busy 时禁止提交及图片入口不误提交。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：controller 固定跨 transport/apply 的所有权顺序，RNTL 固定该状态对发送按钮的可见影响。 |
+| Replay 或真实验收路径 | 在已授权小隐寺打开回复编辑器，选择图片并等待“图片已插入”，确认发送与格式按钮立即恢复；不得点击真实发送。真实上传仍需逐次授权并记录远端残留风险。 |
+| 负向验证方式 | 让小隐寺请求恢复默认内部 busy、在 `appendMarkup` 前结束外层 run，事件顺序会变为 `busy:true → busy:false → markup`，编号测试必须失败。 |
+| 明确不覆盖范围 | 不授权真实评论；不改变 NodeImage、linux.do、小隐寺 User API 或妖火图床的凭据模型和上传格式。 |
+
+## `REG-XIAOYINSI-012` 点赞、收藏等写操作导致整个主题闪烁重载
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-02`、`WRITE-03` |
+| 用户症状 | 小隐寺点击点赞或收藏后，主题正文和回复整体进入重新加载；回复删除、投票等同类操作也会丢失当前可视上下文。 |
+| 触发条件 | User API 写请求已经由服务器确认，但 controller 仍统一调用 `refreshWholeTopic`，而不是复用现有来源的 action-state 与定向回复刷新。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 的小隐寺写后处理绕过 `applyTopicActionUpdate`，把所有 action 都接到整篇 Topic 重读。 |
+| 必须保持的行为 | 小隐寺身份与请求继续只走独立 User API Key；点赞/取消、主题书签/取消和投票在服务器确认后局部更新目标状态，删除先本地移除再静默刷新回复切片；均同步活动 route snapshot，不刷新整篇主题。回复与编辑仍沿用既有定向回复刷新。 |
+| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-012` 分别固定点赞、取消点赞、收藏取消、投票与删除的局部 action patch，删除还必须只调用 `refreshTopicReplies`；`tests/ui/topic-session-controller.test.tsx` 的 `REG-WRITE-006` 固定活动 route snapshot 同步。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：controller 固定写后路由，Topic session UI 测试固定返回路径不会恢复旧快照；只验证 HTTP 成功无法发现整页重载。 |
+| Replay 或真实验收路径 | 获得逐次可恢复写操作授权后，记录初态并切换一次点赞或收藏，确认正文、回复列表和滚动上下文不进入整页 Loading，刷新核对原站后恢复初态。投票、编辑和删除不因本条默认获得真实写入授权。 |
+| 负向验证方式 | 把任一小隐寺 action 恢复为 `refreshWholeTopic` 或移除对应 `applyTopicActionUpdate`，编号 controller 测试必须收不到局部 patch 并失败。 |
+| 明确不覆盖范围 | 不把小隐寺接入任何 Cookie/WebView 登录；不乐观宣告服务器未确认的结果，也不伪造远端权限。 |
+
+## `REG-XIAOYINSI-013` 已授权小隐寺缺少等级入口
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-04`、`ACCOUNT-06` |
+| 用户症状 | 账号中心已能识别小隐寺用户并显示 `Lv`，但站点服务区没有“小隐寺 等级”，无法查看等级进度和活跃数据。 |
+| 触发条件 | 新来源只向账号中心注入 Device Code 授权面板，没有接入项目已有的 Discourse 等级展示；个人主页的等级标签只能表达当前级别。 |
+| 根因 seam | `src/screens/MoreScreen.tsx` 的小隐寺 `siteContent`、`src/app/useXiaoyinsiAuthController.ts` 的 User API 读取状态和 `src/localXiaoyinsi.ts` 的当前用户 summary 转换。 |
+| 必须保持的行为 | 已授权小隐寺显示独立等级入口，通过保存的 User API Key 读取 `/session/current.json` 与当前用户 summary；只共享等级展示和纯转换，不读取 linux.do Cookie、Connect 或浏览器状态。未授权时明确引导 Device Code 授权。 |
+| 精确失败 oracle | `tests/ui/more-screen.test.tsx` 固定已登录小隐寺站点服务区存在等级入口；`tests/ui/xiaoyinsi-auth-controller.test.tsx` 固定 SecureStore 凭据路由；`src/localXiaoyinsi.test.ts` 固定 User API headers、两个端点和等级/活跃数据映射。 |
+| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：Adapter 固定独立传输，controller 固定状态，RNTL 固定真实入口。 |
+| Replay 或真实验收路径 | `tests/device/more-readonly.ad` 在保留小隐寺授权的设备选中站点，点击“查看等级”并等待“等级进度”；不得清数据或打开浏览器登录。 |
+| 负向验证方式 | 移除小隐寺 `siteContent` 的等级菜单、改用无 User API headers 的 fetch，或把 controller 改读 linux.do Cookie，编号测试必须失败。 |
+| 明确不覆盖范围 | 小隐寺没有 linux.do Connect 服务，因此展示基于当前站 summary 的 Discourse 参考进度；不伪装成原站官方晋级判定。 |
+
+## `REG-XIAOYINSI-014` 小隐寺等级入口被授权管理淹没
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-04`、`ACCOUNT-06` |
+| 用户症状 | 已授权小隐寺虽然存在等级入口，但它位于长授权说明之前，与重新授权和撤销授权挤在一起，主次不清，用户不容易识别。 |
+| 触发条件 | 小隐寺账号卡片同时显示主页、授权原理、授权操作和等级服务；新增等级时只按接线顺序插入，没有按稳定使用频率和风险重新分组。 |
+| 根因 seam | `src/screens/MoreScreen.tsx` 的小隐寺 `siteContent` 顺序，以及 `src/screens/more/XiaoyinsiAuthPanel.tsx` 在已授权状态仍展示完整授权引导。 |
+| 必须保持的行为 | 已授权账号顶部保留身份与主页，中部以简短说明承载重新授权和撤销授权，底部用分隔线独立显示“查看等级”；展开后仍读取等级进度和活跃数据。未授权、授权中和清理状态继续显示完整 Device Code 或清理说明。 |
+| 精确失败 oracle | `tests/ui/more-screen.test.tsx` 的 `REG-XIAOYINSI-014` 固定已授权文案、授权操作先于“查看等级”的渲染顺序，以及点击后仍调用等级刷新。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须渲染真实账号中心并检查用户可见顺序；源码字符串或单独测试等级请求无法证明入口层级。 |
+| Replay 或真实验收路径 | `tests/device/more-readonly.ad` 在保留授权的设备进入小隐寺账号卡片，从底部“查看等级”展开并等待“等级进度”；不得撤销或重建授权。 |
+| 负向验证方式 | 把等级菜单移回授权面板之前，或在已授权状态恢复完整一次性授权引导，编号 UI 测试必须失败。 |
+| 明确不覆盖范围 | 不改变 Device Code、User API Key、Keystore、会话失效或等级计算；未授权流程仍保留完整安全说明。 |
+
+## `REG-XIAOYINSI-015` 小隐寺最新与热门复用同一非空列表
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-02`、`FEED-04` |
+| 用户症状 | 小隐寺“最新”已加载出主题后切换“热门”，页面继续显示最新列表且不发热门请求；反向切换也可能复用旧列表。 |
+| 触发条件 | 同一小隐寺分类已有非空 Feed state，再切换 latest/hot 或其他来源筛选；控制器用请求 key 判断是否可复用。 |
+| 根因 seam | `src/feedLogic.ts` 的 `feedRequestKey` 只把 linux.do、V2EX 和 NodeSeek 的筛选写入请求身份，漏掉已经拥有独立排序的小隐寺；后续 `shouldReuseFeedStateForRequest` 因而把两个筛选误判为同一请求。 |
+| 必须保持的行为 | 小隐寺来源、分类或列表筛选任一变化都必须产生独立请求身份；切换后回到首项并读取目标筛选，旧请求不得覆盖；其他来源现有复用规则不变。 |
+| 精确失败 oracle | `src/feedLogic.test.ts` 的 `REG-XIAOYINSI-015` 先建立同来源同分类但 latest/hot 不同的请求 key，修复前错误返回可复用；`tests/ui/feed-controller-xiaoyinsi.test.tsx` 使用非空响应，依次选择 hot 和 new-replies，要求 Gateway 收到各自真实筛选。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定请求 key 与状态复用规则，`UI_PASS` 固定非空真实 controller 生命周期；只测菜单常量或空列表会绕过复用分支，不能拦住本缺陷。 |
+| Replay 或真实验收路径 | 在当前身份匹配的 debug App 中进入小隐寺，先等待“最新”首条可见，再切“热门”及一个“新”筛选，等待列表重新 ready 并打开首条；全程只读，不固定动态标题或数量。 |
+| 负向验证方式 | 从 `feedRequestKey` 的筛选来源集合移除 `xiaoyinsi`，编号单元测试会得到相同 key，非空 controller 用例不会发出后续筛选请求。 |
+| 明确不覆盖范围 | 不保证原站各筛选当天都有非空主题；未授权 `/new.json` 可能要求登录，该动态权限结果由 Live 验收记录，不用假数据降级成 latest。 |
+
+## `REG-XIAOYINSI-016` 小隐寺标签候选携带 limit 后固定失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-03`、`SEARCH-04` |
+| 用户症状 | 小隐寺高级搜索能打开分类候选，但进入“标签”只显示“标签候选加载失败”，点击重试仍失败。 |
+| 触发条件 | App 请求小隐寺 `/tags/filter/search` 时沿用 linux.do 的 `limit=8` 参数；当前原站对任意 `limit` 返回 HTTP 400“Limit 无效”。 |
+| 根因 seam | `src/localXiaoyinsi.ts` 的 `searchXiaoyinsiTags` 复制了另一 Discourse 站点的候选请求参数，没有按本站真实端点契约分离传输差异。 |
+| 必须保持的行为 | 小隐寺标签候选继续携带本站独立 User API 凭据、查询、分类和已选标签，但不发送原站拒绝的 `limit`；Adapter 在解析、去重后按调用方上限本地截断。linux.do 请求不变。 |
+| 精确失败 oracle | `src/localXiaoyinsi.test.ts` 的 `REG-XIAOYINSI-016` 在请求含 `limit` 时返回同原站一致的 400，并返回多于调用方上限的成功样本；要求最终请求无 `limit` 且只保留指定数量。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定站点参数差异与本地上限；`DEVICE_REPLAY_PASS` 固定真实标签选择器至少出现一个 checkbox 候选。 |
+| Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 在小隐寺单站打开筛选与标签选择器，等待任一真实标签 checkbox 后关闭；不固定动态标签名、数量或搜索结果。 |
+| 负向验证方式 | 给 `searchXiaoyinsiTags` 恢复 `limit` 查询参数，编号单元测试会收到 400，设备 Replay 会停在标签候选错误态。 |
+| 明确不覆盖范围 | 不修改、创建或删除原站标签；当天候选名称与计数属于动态数据。 |
 
 ## `REG-SEARCH-001` linux.do 高级筛选接受任意文本或旧候选污染新查询
 

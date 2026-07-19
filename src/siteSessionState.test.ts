@@ -178,6 +178,16 @@ describe('site session state', () => {
     });
   });
 
+  it('shows 小隐寺 anonymous and failed authorization states as 未登录 instead of remaining 授权中', () => {
+    const anonymous = createSiteSessionViewModels(createSiteSessionStates()).xiaoyinsi;
+    const authorizing = reduceSiteSessionState(createSiteSessionStates().xiaoyinsi, { type: 'authorization-started' });
+    const failed = reduceSiteSessionState(authorizing, { type: 'check-failed', message: 'network failed' });
+
+    expect(anonymous).toMatchObject({ statusLabel: '未登录', summaryLabel: '未登录' });
+    expect(failed).toMatchObject({ status: 'anonymous', isVerifying: false, lastError: 'network failed' });
+    expect(createSiteSessionViewModels(createSiteSessionStates({ xiaoyinsi: failed })).xiaoyinsi.summaryLabel).toBe('未登录');
+  });
+
   it('does not describe expired or verification-required NodeSeek sessions as saved', () => {
     const viewModels = createSiteSessionViewModels(createSiteSessionStates({
       nodeseek: {

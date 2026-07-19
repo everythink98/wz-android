@@ -48,7 +48,7 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
 
 export function feedRequestKey(source: FeedSource, category = '', feedFilter?: SourceFeedFilter) {
   const base = `${source}:${category.trim()}`;
-  return feedFilter && (source === 'linuxdo' || source === 'nodeseek' || source === 'v2ex') ? `${base}:${feedFilter}` : base;
+  return feedFilter && (source === 'linuxdo' || source === 'nodeseek' || source === 'v2ex' || source === 'xiaoyinsi') ? `${base}:${feedFilter}` : base;
 }
 
 export function shouldReuseFeedStateForRequest(

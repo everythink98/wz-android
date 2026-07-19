@@ -845,61 +845,69 @@ export function useSearchController({
     void runSearch(source);
   }, [runSearch]);
 
-  const searchLinuxDoTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'>) => {
-    const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source: 'linuxdo' });
+  const searchLinuxDoTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: 'linuxdo' | 'xiaoyinsi' }) => {
+    const source = options.source || 'linuxdo';
+    const { source: _source, ...request } = options;
+    const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
     const isCurrent = () => !options.signal?.aborted;
     markDiagnosticStage(trace, 'guard', {
-      source: 'linuxdo',
+      source,
       state: 'started',
       hasQuery: Boolean(options.query?.trim()),
       selectedCount: options.selectedTags?.length || 0
     });
     try {
-      const items = await sourceGateway.searchTagOptions({ source: 'linuxdo', ...options }, { trace, isCurrent });
+      const items = await sourceGateway.searchTagOptions(source === 'xiaoyinsi'
+        ? { source: 'xiaoyinsi', ...request }
+        : { source: 'linuxdo', ...request }, { trace, isCurrent });
       if (!isCurrent()) {
-        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
         return items;
       }
-      markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: items.length });
-      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: items.length });
+      markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
+      finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
       return items;
     } catch (error) {
       if (options.signal?.aborted || isCanceledRequest(error)) {
-        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
       } else {
-        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown('linuxdo', error));
+        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown(source, error));
         finishDiagnosticTrace(
           trace,
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source: 'linuxdo', reason }
+          { source, reason }
         );
       }
       throw error;
     }
   }, [sourceGateway]);
 
-  const searchLinuxDoUsers = useCallback(async (options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'>) => {
-    const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source: 'linuxdo' });
+  const searchLinuxDoUsers = useCallback(async (options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'> & { source?: 'linuxdo' | 'xiaoyinsi' }) => {
+    const source = options.source || 'linuxdo';
+    const { source: _source, ...request } = options;
+    const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
     const isCurrent = () => !options.signal?.aborted;
-    markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started', hasQuery: Boolean(options.term.trim()) });
+    markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
     try {
-      const items = await sourceGateway.searchUserOptions({ source: 'linuxdo', ...options }, { trace, isCurrent });
+      const items = await sourceGateway.searchUserOptions(source === 'xiaoyinsi'
+        ? { source: 'xiaoyinsi', ...request }
+        : { source: 'linuxdo', ...request }, { trace, isCurrent });
       if (!isCurrent()) {
-        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
         return items;
       }
-      markDiagnosticStage(trace, 'apply', { source: 'linuxdo', itemCount: items.length });
-      finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: items.length });
+      markDiagnosticStage(trace, 'apply', { source, itemCount: items.length });
+      finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
       return items;
     } catch (error) {
       if (options.signal?.aborted || isCanceledRequest(error)) {
-        finishDiagnosticTrace(trace, 'canceled', { source: 'linuxdo', reason: 'canceled' });
+        finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
       } else {
-        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown('linuxdo', error));
+        const reason = diagnosticReasonForSearchError(sourceErrorFromUnknown(source, error));
         finishDiagnosticTrace(
           trace,
           reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
-          { source: 'linuxdo', reason }
+          { source, reason }
         );
       }
       throw error;

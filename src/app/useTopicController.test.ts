@@ -116,6 +116,31 @@ describe('topic controller helpers', () => {
     expect(replyCountAfterNewReplySubmit(1, 3)).toBe(3);
   });
 
+  it('[REG-XIAOYINSI-008] uses the authoritative 小隐寺 reply total after submitting instead of guessing old count plus one', async () => {
+    const detail: TopicDetail = {
+      source: 'xiaoyinsi',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://forum.xiaoyinsi.com/t/topic/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 100,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const reply = { author: 'bob', contentHtml: '<p>new</p>', createdAt: '2026-07-18T00:01:00.000Z', floor: 8 };
+    const { controller, topicReplyCommands } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: {
+        getReplies: vi.fn(async () => ({ items: [reply], hasMore: false, nextPage: null, totalCount: 7 }))
+      } as unknown as SourceGateway
+    });
+
+    await controller.refreshTopicReplies({ afterSubmit: true, nocache: true });
+
+    expect(topicReplyCommands.resolve).toHaveBeenCalledWith(expect.objectContaining({ replyCount: 7 }));
+  });
+
   it('REG-LINUXDO-002 resumes a blocked topic in place without a close-and-reopen navigation', async () => {
     const topic: Topic = {
       source: 'linuxdo',
@@ -215,6 +240,31 @@ describe('topic controller helpers', () => {
     await expect(recovery!.resume()).resolves.toBe('completed');
     expect(getReplies).toHaveBeenCalledTimes(2);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes a failed authoritative whole-topic refresh from a completed request', async () => {
+    const detail: TopicDetail = {
+      source: 'xiaoyinsi',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://forum.xiaoyinsi.com/t/topic/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const failed = createLinuxDoTopicController({
+      detail,
+      sourceGateway: { getTopic: vi.fn(async () => { throw new Error('network failed'); }) } as unknown as SourceGateway
+    });
+    const completed = createLinuxDoTopicController({
+      detail,
+      sourceGateway: { getTopic: vi.fn(async () => detail) } as unknown as SourceGateway
+    });
+
+    await expect(failed.controller.refreshWholeTopic()).resolves.toBe('failed');
+    await expect(completed.controller.refreshWholeTopic()).resolves.toBe('completed');
   });
 
   it('REG-LINUXDO-002 retries the exact failed Topic reply page without discarding loaded replies', async () => {

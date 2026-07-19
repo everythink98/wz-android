@@ -3,8 +3,9 @@ import { getNodeSeekBasicUserProfile, getNodeSeekCategories, getNodeSeekCurrentU
 import { checkYaohuoLoginHtml, yaohuoCategoriesResponse, parseYaohuoListHtml, parseYaohuoUserProfileHtml, parseYaohuoUserRepliesHtml } from './localYaohuo';
 import { YAOHUO_BASE_URL, YAOHUO_BBS_REFERER, requireYaohuoRequestUrl, yaohuoReplyListNextPageUrl, yaohuoTopicListNextPageUrl, yaohuoUserProfileReplyListUrl, yaohuoUserProfileTopicListUrl } from './localYaohuoHelpers';
 import { getV2exCategories, getV2exFeed, getV2exTopic, getV2exUserProfile, searchV2ex } from './localV2ex';
+import { getXiaoyinsiCategories, getXiaoyinsiCurrentUserProfile, getXiaoyinsiFeed, getXiaoyinsiReplies, getXiaoyinsiReply, getXiaoyinsiTopic, getXiaoyinsiUserProfile, searchXiaoyinsi, type XiaoyinsiApiCredentials } from './localXiaoyinsi';
 import { balanceTopicsBySource, parseSearchExpression, positiveSearchQuery, searchExpressionText, sortTopicsByCreatedAt, type SearchExpression, type SearchSort } from './feedLogic';
-import { buildLinuxDoSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
+import { buildLinuxDoSearchQuery, buildXiaoyinsiSearchQuery, filterSearchResponseItems, type SourceSearchFilter } from './searchFilters';
 import { sourceErrorFromUnknown } from './sourceErrors';
 import type {
   CategoriesResponse,
@@ -22,6 +23,7 @@ import type {
   Topic,
   TopicDetail,
   V2exFeedFilter,
+  XiaoyinsiFeedFilter,
   UserProfile
 } from './types';
 import { fetchWithTimeout, type Fetcher } from './request';
@@ -32,7 +34,7 @@ import {
   sourceDiagnosticSummary
 } from './sourceAdapterDiagnostics';
 
-const allFeedSources = ['nodeseek', 'linuxdo', 'v2ex'] as const satisfies readonly Source[];
+const allFeedSources = ['nodeseek', 'linuxdo', 'v2ex', 'xiaoyinsi'] as const satisfies readonly Source[];
 
 function mergeErrors(results: Array<PromiseSettledResult<{ errors?: SourceErrors }>>, sources: readonly Source[]) {
   const errors: SourceErrors = {};
@@ -198,6 +200,7 @@ export async function getFeed({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  xiaoyinsiCredentials,
   signal,
   timeoutMs
 }: {
@@ -212,10 +215,11 @@ export async function getFeed({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
-  const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, xiaoyinsiCredentials, signal, timeoutMs };
   if (source === 'all') {
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
@@ -224,7 +228,8 @@ export async function getFeed({
     const requestedPages = {
       nodeseek: cursor ? cursorState.nextPages?.nodeseek || page : page,
       linuxdo: cursor ? cursorState.nextPages?.linuxdo || page : page,
-      v2ex: cursor ? cursorState.nextPages?.v2ex || page : page
+      v2ex: cursor ? cursorState.nextPages?.v2ex || page : page,
+      xiaoyinsi: cursor ? cursorState.nextPages?.xiaoyinsi || page : page
     } satisfies Record<typeof allFeedSources[number], number>;
     const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
     const v2exLimit = limit;
@@ -237,7 +242,10 @@ export async function getFeed({
         : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.linuxdo ?? null, nextCursor: null }),
       fetchedSources[2]
         ? getV2exFeed({ ...options, cursor: cursorState.sourceCursors?.v2ex, limit: v2exLimit, page: requestedPages.v2ex })
-        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null, nextCursor: cursorState.sourceCursors?.v2ex ?? null })
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.v2ex ?? null, nextCursor: cursorState.sourceCursors?.v2ex ?? null }),
+      fetchedSources[3]
+        ? getXiaoyinsiFeed({ ...options, credentials: xiaoyinsiCredentials, limit: adapterLimit, page: requestedPages.xiaoyinsi })
+        : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: cursorState.nextPages?.xiaoyinsi ?? null, nextCursor: null })
     ]);
     const items = sortByTime([
       ...bufferedItems,
@@ -294,7 +302,8 @@ export async function getFeed({
   return pickSource(source, {
     nodeseek: () => getNodeSeekFeed({ ...options, feedFilter: feedFilter as NodeSeekFeedFilter | undefined }),
     linuxdo: () => getLinuxDoFeed({ ...options, linuxDoFilter: effectiveLinuxDoFilter }),
-    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined })
+    v2ex: () => getV2exFeed({ ...options, feedFilter: feedFilter as V2exFeedFilter | undefined }),
+    xiaoyinsi: () => getXiaoyinsiFeed({ ...options, credentials: xiaoyinsiCredentials, feedFilter: feedFilter as XiaoyinsiFeedFilter | undefined })
   });
 }
 
@@ -304,6 +313,7 @@ export async function getCategories({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  xiaoyinsiCredentials,
   signal,
   timeoutMs
 }: {
@@ -312,17 +322,19 @@ export async function getCategories({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
-  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, xiaoyinsiCredentials, signal, timeoutMs };
   if (source === 'all') {
-    const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex', 'yaohuo'];
+    const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi'];
     const results = await Promise.allSettled([
       getNodeSeekCategories(options),
       getLinuxDoCategories(options),
       getV2exCategories(options),
-      Promise.resolve(yaohuoCategoriesResponse())
+      Promise.resolve(yaohuoCategoriesResponse()),
+      getXiaoyinsiCategories({ ...options, credentials: xiaoyinsiCredentials })
     ]);
     const response = {
       items: results.flatMap((result) => result.status === 'fulfilled' ? result.value.items : []),
@@ -344,7 +356,8 @@ export async function getCategories({
   return pickSource(source, {
     nodeseek: () => getNodeSeekCategories(options),
     linuxdo: () => getLinuxDoCategories(options),
-    v2ex: () => getV2exCategories(options)
+    v2ex: () => getV2exCategories(options),
+    xiaoyinsi: () => getXiaoyinsiCategories({ ...options, credentials: xiaoyinsiCredentials })
   });
 }
 
@@ -355,6 +368,7 @@ export function getTopic({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  xiaoyinsiCredentials,
   signal,
   timeoutMs
 }: {
@@ -364,14 +378,16 @@ export function getTopic({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<TopicDetail> {
-  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, xiaoyinsiCredentials, signal, timeoutMs };
   return pickSource(source, {
     nodeseek: () => getNodeSeekTopic(id, options),
     linuxdo: () => getLinuxDoTopic(id, options),
-    v2ex: () => getV2exTopic(id, options)
+    v2ex: () => getV2exTopic(id, options),
+    xiaoyinsi: () => getXiaoyinsiTopic(id, { ...options, credentials: xiaoyinsiCredentials })
   });
 }
 
@@ -385,6 +401,7 @@ export function getReplies({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  xiaoyinsiCredentials,
   fillPages,
   signal,
   timeoutMs
@@ -398,11 +415,12 @@ export function getReplies({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   fillPages?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<RepliesResponse> {
-  const options = { page, limit, offset, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, fillPages, signal, timeoutMs };
+  const options = { page, limit, offset, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, xiaoyinsiCredentials, fillPages, signal, timeoutMs };
   return pickSource<RepliesResponse>(source, {
     nodeseek: () => getNodeSeekReplies(id, options),
     linuxdo: () => getLinuxDoReplies(id, options),
@@ -412,7 +430,8 @@ export function getReplies({
       validCount: 0,
       droppedCount: 0,
       isExpectedEmpty: true
-    })
+    }),
+    xiaoyinsi: () => getXiaoyinsiReplies(id, { ...options, credentials: xiaoyinsiCredentials })
   });
 }
 
@@ -421,6 +440,7 @@ export function getReply({
   id,
   floor,
   fetcher,
+  xiaoyinsiCredentials,
   signal,
   timeoutMs
 }: {
@@ -428,13 +448,16 @@ export function getReply({
   id: string;
   floor: number;
   fetcher?: Fetcher;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<Reply> {
-  if (source !== 'linuxdo') {
+  if (source !== 'linuxdo' && source !== 'xiaoyinsi') {
     throw new Error('该来源不支持按楼层读取引用');
   }
-  return getLinuxDoReply(id, floor, { fetcher, signal, timeoutMs });
+  return source === 'xiaoyinsi'
+    ? getXiaoyinsiReply(id, floor, { fetcher, credentials: xiaoyinsiCredentials, signal, timeoutMs })
+    : getLinuxDoReply(id, floor, { fetcher, signal, timeoutMs });
 }
 
 export function getUserProfile({
@@ -445,6 +468,7 @@ export function getUserProfile({
   nodeSeekCookie,
   nodeSeekUserAgent,
   yaohuoCookie,
+  xiaoyinsiCredentials,
   cursor,
   cursorType,
   signal,
@@ -457,6 +481,7 @@ export function getUserProfile({
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   yaohuoCookie?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   signal?: AbortSignal;
@@ -467,6 +492,7 @@ export function getUserProfile({
     nodeseek: () => getNodeSeekUserProfile(id || username || '', options),
     linuxdo: () => getLinuxDoUserProfile(id, username || id, { fetcher, cursor, cursorType, signal, timeoutMs }),
     v2ex: () => getV2exUserProfile(id, username || id, { fetcher, cursor, cursorType, signal, timeoutMs }),
+    xiaoyinsi: () => getXiaoyinsiUserProfile(id, username || id, { fetcher, credentials: xiaoyinsiCredentials, cursor, cursorType, signal, timeoutMs }),
     yaohuo: async () => {
       if (!yaohuoCookie) {
         throw new Error('请先登录妖火');
@@ -666,6 +692,7 @@ export function getCurrentUserProfile({
   nodeSeekUserId,
   nodeSeekUserAgent,
   yaohuoCookie,
+  xiaoyinsiCredentials,
   signal,
   timeoutMs
 }: {
@@ -677,6 +704,7 @@ export function getCurrentUserProfile({
   nodeSeekUserId?: string | number | null;
   nodeSeekUserAgent?: string;
   yaohuoCookie?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<UserProfile> {
@@ -695,6 +723,7 @@ export function getCurrentUserProfile({
     v2ex: () => {
       throw new Error('V2EX 不支持当前登录身份读取');
     },
+    xiaoyinsi: () => getXiaoyinsiCurrentUserProfile({ fetcher, credentials: xiaoyinsiCredentials, signal, timeoutMs }),
     yaohuo: async () => {
       if (!yaohuoCookie?.trim()) {
         throw new Error('请先登录妖火');
@@ -740,6 +769,7 @@ export async function searchTopics({
   fetcher,
   nodeSeekCookie,
   nodeSeekUserAgent,
+  xiaoyinsiCredentials,
   sort = 'relevance',
   filter,
   signal,
@@ -753,6 +783,7 @@ export async function searchTopics({
   fetcher?: Fetcher;
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
+  xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   sort?: SearchSort;
   filter?: SourceSearchFilter;
   signal?: AbortSignal;
@@ -760,13 +791,14 @@ export async function searchTopics({
 }): Promise<SearchResponse> {
   const adapterQuery = positiveSearchQuery(query);
   const adapterLimit = parseSearchExpression(query).exclude.length ? Math.min(100, limit * 3) : limit;
-  const options = { limit: adapterLimit, page, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
+  const options = { limit: adapterLimit, page, fetcher, nodeSeekCookie, nodeSeekUserAgent, xiaoyinsiCredentials, signal, timeoutMs };
   if (source === 'all') {
-    const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex'];
+    const sources: Source[] = ['nodeseek', 'linuxdo', 'v2ex', 'xiaoyinsi'];
     const results = await Promise.allSettled([
       searchNodeSeek(adapterQuery, options),
       searchLinuxDo(adapterQuery, options),
-      searchV2ex(adapterQuery, options)
+      searchV2ex(adapterQuery, options),
+      searchXiaoyinsi(adapterQuery, { ...options, credentials: xiaoyinsiCredentials })
     ]);
     const expression = parseSearchExpression(query);
     const response = {
@@ -805,7 +837,13 @@ export async function searchTopics({
       ...options,
       sort: activeFilter?.source === 'v2ex' ? activeFilter.sort : sort,
       filter: activeFilter?.source === 'v2ex' ? activeFilter : undefined
-    })
+    }),
+    xiaoyinsi: () => searchXiaoyinsi(
+      activeFilter?.source === 'xiaoyinsi'
+        ? buildXiaoyinsiSearchQuery(adapterQuery, activeFilter, categories)
+        : adapterQuery,
+      { ...options, credentials: xiaoyinsiCredentials }
+    )
   });
   return filterSearchItems(response, query, limit, activeFilter);
 }

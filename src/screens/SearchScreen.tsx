@@ -16,7 +16,7 @@ import {
 import type { LinuxDoAiSearchState } from '../searchControllerResults';
 import {
   defaultSearchFilterForSource,
-  linuxDoSearchFilterError,
+  discourseSearchFilterError,
   searchFilterForSource,
   searchFilterSummary,
   searchTimeRangeItems,
@@ -215,8 +215,8 @@ function SearchFilterSheet({
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   visible: boolean;
-  onSearchLinuxDoTags: (options: { query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
-  onSearchLinuxDoUsers: (options: { term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
+  onSearchLinuxDoTags: (options: { source?: 'linuxdo' | 'xiaoyinsi'; query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
+  onSearchLinuxDoUsers: (options: { source?: 'linuxdo' | 'xiaoyinsi'; term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
   onApply: (source: Source, filter: SourceSearchFilter) => void;
   onClose: () => void;
 }) {
@@ -246,7 +246,7 @@ function SearchFilterSheet({
   useEffect(() => {
     if (visible) {
       const filter = searchFilterForSource(searchFilters, source);
-      setDraftFilter(filter.source === 'linuxdo'
+      setDraftFilter(filter.source === 'linuxdo' || filter.source === 'xiaoyinsi'
         ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
         : { ...filter });
       setV2exMoreVisible(false);
@@ -270,8 +270,8 @@ function SearchFilterSheet({
   }, [source]);
 
   const applyDraft = useCallback(() => {
-    if (draftFilter.source === 'linuxdo') {
-      const error = linuxDoSearchFilterError(draftFilter);
+    if (draftFilter.source === 'linuxdo' || draftFilter.source === 'xiaoyinsi') {
+      const error = discourseSearchFilterError(draftFilter);
       if (error) {
         setFilterError(error);
         return;
@@ -281,16 +281,16 @@ function SearchFilterSheet({
     onClose();
   }, [draftFilter, onApply, onClose, source]);
   const V2exMoreChevron = v2exMoreVisible ? ChevronUp : ChevronDown;
-  const linuxDoDraft = draftFilter.source === 'linuxdo' ? draftFilter : null;
-  const linuxDoCategories = useMemo(() => sourceCategories(categories, 'linuxdo'), [categories]);
-  const categoryNames = useMemo(() => new Map(linuxDoCategories.map((category) => [category.id, category.name])), [linuxDoCategories]);
-  const filteredLinuxDoCategories = useMemo(() => {
+  const discourseDraft = draftFilter.source === 'linuxdo' || draftFilter.source === 'xiaoyinsi' ? draftFilter : null;
+  const discourseCategories = useMemo(() => discourseDraft ? sourceCategories(categories, discourseDraft.source) : [], [categories, discourseDraft?.source]);
+  const categoryNames = useMemo(() => new Map(discourseCategories.map((category) => [category.id, category.name])), [discourseCategories]);
+  const filteredDiscourseCategories = useMemo(() => {
     const query = categoryQuery.trim().toLowerCase();
-    return linuxDoCategories.filter((category) => {
+    return discourseCategories.filter((category) => {
       const parentName = category.parentId ? categoryNames.get(category.parentId) || '' : '';
       return !query || `${parentName} ${category.name} ${category.slug || ''}`.toLowerCase().includes(query);
     });
-  }, [categoryNames, categoryQuery, linuxDoCategories]);
+  }, [categoryNames, categoryQuery, discourseCategories]);
 
   useEffect(() => {
     if (!tagPickerVisible) {
@@ -302,7 +302,7 @@ function SearchFilterSheet({
   }, [tagPickerVisible, tagQuery]);
 
   useEffect(() => {
-    if (!tagPickerVisible || !linuxDoDraft) {
+    if (!tagPickerVisible || !discourseDraft) {
       return;
     }
     setTagLoading(true);
@@ -313,9 +313,10 @@ function SearchFilterSheet({
       void (async () => {
         try {
           const items = await onSearchLinuxDoTags({
+            source: discourseDraft.source,
             query: tagQuery,
-            categoryId: linuxDoDraft.category || undefined,
-            selectedTags: linuxDoDraft.tags,
+            categoryId: discourseDraft.category || undefined,
+            selectedTags: discourseDraft.tags,
             signal: controller.signal
           });
           if (requestId === tagRequestIdRef.current && !controller.signal.aborted) {
@@ -336,11 +337,11 @@ function SearchFilterSheet({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [linuxDoDraft?.category, linuxDoDraft?.tags, onSearchLinuxDoTags, tagPickerVisible, tagQuery, tagRetry]);
+  }, [discourseDraft?.category, discourseDraft?.source, discourseDraft?.tags, onSearchLinuxDoTags, tagPickerVisible, tagQuery, tagRetry]);
 
   useEffect(() => {
     const term = userQuery.trim();
-    if (!userPickerVisible || !linuxDoDraft || !term) {
+    if (!userPickerVisible || !discourseDraft || !term) {
       setUserOptions([]);
       setUserLoading(false);
       setUserError('');
@@ -355,8 +356,9 @@ function SearchFilterSheet({
       void (async () => {
         try {
           const items = await onSearchLinuxDoUsers({
+            source: discourseDraft.source,
             term,
-            categoryId: linuxDoDraft.category || undefined,
+            categoryId: discourseDraft.category || undefined,
             signal: controller.signal
           });
           if (requestId === userRequestIdRef.current && !controller.signal.aborted) {
@@ -377,12 +379,12 @@ function SearchFilterSheet({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [linuxDoDraft?.category, onSearchLinuxDoUsers, userPickerVisible, userQuery, userRetry]);
+  }, [discourseDraft?.category, discourseDraft?.source, onSearchLinuxDoUsers, userPickerVisible, userQuery, userRetry]);
 
   const toggleTag = useCallback((name: string) => {
     setFilterError('');
     setDraftFilter((current) => {
-      if (current.source !== 'linuxdo') {
+      if (current.source !== 'linuxdo' && current.source !== 'xiaoyinsi') {
         return current;
       }
       const tags = current.tags.includes(name)
@@ -395,7 +397,7 @@ function SearchFilterSheet({
   const toggleVisited = useCallback((value: LinuxDoVisitedFilter) => {
     setFilterError('');
     setDraftFilter((current) => {
-      if (current.source !== 'linuxdo') {
+      if (current.source !== 'linuxdo' && current.source !== 'xiaoyinsi') {
         return current;
       }
       const visited = current.visited.includes(value)
@@ -487,7 +489,7 @@ function SearchFilterSheet({
                 ) : null}
               </>
             ) : null}
-            {draftFilter.source === 'linuxdo' ? (
+            {draftFilter.source === 'linuxdo' || draftFilter.source === 'xiaoyinsi' ? (
               <>
                 <FilterChoiceGroup
                   title="搜索范围"
@@ -654,16 +656,18 @@ function SearchFilterSheet({
                     <FilterNumberField label="浏览量最大值" value={draftFilter.maxViews} styles={styles} theme={theme} onChange={(value) => updateDraft({ maxViews: value })} />
                   </View>
                 </View>
-                <View style={styles.searchFilterField}>
-                  <Text style={styles.searchFilterLabel}>其他</Text>
-                  <FilterCheckbox
-                    checked={draftFilter.expertResponse}
-                    label="有专家回应"
-                    styles={styles}
-                    theme={theme}
-                    onChange={(checked) => updateDraft({ expertResponse: checked })}
-                  />
-                </View>
+                {draftFilter.source === 'linuxdo' ? (
+                  <View style={styles.searchFilterField}>
+                    <Text style={styles.searchFilterLabel}>其他</Text>
+                    <FilterCheckbox
+                      checked={draftFilter.expertResponse}
+                      label="有专家回应"
+                      styles={styles}
+                      theme={theme}
+                      onChange={(checked) => updateDraft({ expertResponse: checked })}
+                    />
+                  </View>
+                ) : null}
                 <FilterChoiceGroup
                   title="排序"
                   value={draftFilter.order}
@@ -776,7 +780,7 @@ function SearchFilterSheet({
             ) : null}
             {!tagLoading && !tagError && !tagOptions.length ? <EmptyText text="没有匹配标签" styles={styles} /> : null}
             {tagOptions.map((option) => {
-              const selected = Boolean(linuxDoDraft?.tags.includes(option.name));
+              const selected = Boolean(discourseDraft?.tags.includes(option.name));
               return (
                 <Pressable
                   key={option.name}
@@ -827,19 +831,19 @@ function SearchFilterSheet({
             <Pressable
               accessibilityRole="radio"
               accessibilityLabel="分类 全部分类"
-              accessibilityState={{ checked: !linuxDoDraft?.category }}
-              style={[styles.searchFilterOption, !linuxDoDraft?.category && styles.searchFilterOptionActive]}
+              accessibilityState={{ checked: !discourseDraft?.category }}
+              style={[styles.searchFilterOption, !discourseDraft?.category && styles.searchFilterOptionActive]}
               onPress={() => {
                 updateDraft({ category: '' });
                 setCategoryPickerVisible(false);
               }}
             >
-              <Text style={[styles.searchFilterOptionText, !linuxDoDraft?.category && styles.searchFilterOptionTextActive]}>全部分类</Text>
+              <Text style={[styles.searchFilterOptionText, !discourseDraft?.category && styles.searchFilterOptionTextActive]}>全部分类</Text>
             </Pressable>
-            {filteredLinuxDoCategories.map((category) => {
+            {filteredDiscourseCategories.map((category) => {
               const parentName = category.parentId ? categoryNames.get(category.parentId) : '';
               const label = parentName ? `${parentName} / ${category.name}` : category.name;
-              const selected = linuxDoDraft?.category === category.id;
+              const selected = discourseDraft?.category === category.id;
               return (
                 <Pressable
                   key={category.id}
@@ -900,14 +904,14 @@ function SearchFilterSheet({
                 key={user.id}
                 accessibilityRole="radio"
                 accessibilityLabel={`用户 ${user.username}`}
-                accessibilityState={{ checked: linuxDoDraft?.username === user.username }}
-                style={[styles.searchFilterOption, linuxDoDraft?.username === user.username && styles.searchFilterOptionActive]}
+                accessibilityState={{ checked: discourseDraft?.username === user.username }}
+                style={[styles.searchFilterOption, discourseDraft?.username === user.username && styles.searchFilterOptionActive]}
                 onPress={() => {
                   updateDraft({ username: user.username });
                   setUserPickerVisible(false);
                 }}
               >
-                <Text style={[styles.searchFilterOptionText, linuxDoDraft?.username === user.username && styles.searchFilterOptionTextActive]}>
+                <Text style={[styles.searchFilterOptionText, discourseDraft?.username === user.username && styles.searchFilterOptionTextActive]}>
                   {user.displayName && user.displayName !== user.username ? `${user.displayName} · ` : ''}@{user.username}
                 </Text>
               </Pressable>
@@ -1109,8 +1113,8 @@ export const SearchScreen = memo(function SearchScreen({
   onRetryLinuxDoAiSearch: () => void;
   onSearch: (queryOverride?: string) => void;
   onSearchFilterApply: (source: Source, filter: SourceSearchFilter) => void;
-  onSearchLinuxDoTags: (options: { query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
-  onSearchLinuxDoUsers: (options: { term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
+  onSearchLinuxDoTags: (options: { source?: 'linuxdo' | 'xiaoyinsi'; query: string; categoryId?: string; selectedTags: string[]; signal?: AbortSignal }) => Promise<LinuxDoTagOption[]>;
+  onSearchLinuxDoUsers: (options: { source?: 'linuxdo' | 'xiaoyinsi'; term: string; categoryId?: string; signal?: AbortSignal }) => Promise<LinuxDoUserOption[]>;
   onToggleLinuxDoAiSearch: () => void;
   onSearchSourceChange: (source: FeedSource) => void;
 }) {

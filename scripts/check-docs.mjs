@@ -144,7 +144,7 @@ export function findKnowledgeContractErrors(root) {
   if (!existsSync(productMapPath) || !existsSync(regressionCorpusPath)) return errors;
 
   const productMap = readFileSync(productMapPath, 'utf8');
-  const capabilitySection = productMap.match(/## 能力清单([\s\S]*?)(?=\r?\n## 四站能力矩阵)/)?.[1] ?? '';
+  const capabilitySection = productMap.match(/## 能力清单([\s\S]*?)(?=\r?\n## (?:四|五)站能力矩阵)/)?.[1] ?? '';
   const capabilityIds = [...capabilitySection.matchAll(/^\|\s*`([A-Z]+-\d+)`\s*\|/gm)].map((match) => match[1]);
   const knownCapabilities = new Set(capabilityIds);
   for (const capabilityId of knownCapabilities) {

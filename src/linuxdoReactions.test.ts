@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  discourseReactionStats,
   linuxDoEmojiUrlMapFromData,
   linuxDoReactionStats
 } from './linuxdoReactions';
@@ -73,6 +74,18 @@ describe('linux.do reaction presentation', () => {
       label: 'unknown custom',
       value: 1
     }]);
+  });
+
+  it('keeps portable Discourse reactions text-only without linux.do assets or boosts', () => {
+    const item = {
+      likeCount: 5,
+      reactionSummary: [{ id: '+1', count: 2 }],
+      boostCount: 9
+    };
+    expect(discourseReactionStats(item)).toEqual([
+      { id: 'heart', label: 'heart', value: 5 },
+      { id: '+1', label: '+1', value: 2 }
+    ]);
   });
 
   it('parses discourse emoji groups into absolute urls', () => {

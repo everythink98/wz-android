@@ -62,7 +62,8 @@ function createFeedStates(): Record<FeedSource, FeedSourceState> {
     v2ex: createFeedSourceState(),
     linuxdo: createFeedSourceState(),
     nodeseek: createFeedSourceState(),
-    yaohuo: createFeedSourceState()
+    yaohuo: createFeedSourceState(),
+    xiaoyinsi: createFeedSourceState()
   };
 }
 
@@ -78,6 +79,9 @@ function feedFilterForRequest(source: FeedSource, category: string, filters: Fee
   }
   if (source === 'v2ex') {
     return filters.v2ex;
+  }
+  if (source === 'xiaoyinsi') {
+    return filters.xiaoyinsi;
   }
   return undefined;
 }
@@ -691,6 +695,9 @@ export function useFeedController({
       }
       if (feedSource === 'v2ex') {
         return { ...current, v2ex: filter as FeedFilterState['v2ex'] };
+      }
+      if (feedSource === 'xiaoyinsi') {
+        return { ...current, xiaoyinsi: filter as FeedFilterState['xiaoyinsi'] };
       }
       return current;
     });

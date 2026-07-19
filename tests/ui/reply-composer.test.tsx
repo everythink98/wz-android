@@ -173,8 +173,8 @@ describe('Reply composer local behavior', () => {
     expect(submitReply).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['nodeseek', 'linuxdo', 'yaohuo'] as const)(
-    'keeps the %s image upload entry on the local callback boundary',
+  it.each(['nodeseek', 'linuxdo', 'xiaoyinsi', 'yaohuo'] as const)(
+    '[REG-XIAOYINSI-002] keeps the %s image upload entry on the local callback boundary',
     async (source) => {
       submitReply.mockClear();
       const onUploadReplyImage = jest.fn();

@@ -1,4 +1,4 @@
-import type { SessionSite } from './siteSessionState';
+import type { CredentialSite } from './credentialVault';
 
 export type LoginCredentials = {
   account: string;
@@ -7,7 +7,7 @@ export type LoginCredentials = {
 
 export type LoginFormMessage = {
   type: 'login-form-probe' | 'login-form-fill';
-  site: SessionSite;
+  site: CredentialSite;
   attempt: number;
   ok: boolean;
   url: string;
@@ -22,7 +22,7 @@ export type LoginFormFailureReason =
   | 'fill-failed';
 
 export type LoginFormAdapter = {
-  site: SessionSite;
+  site: CredentialSite;
   loginUrl: string;
   matchesUrl: (url: string) => boolean;
   probeScript: (attempt: number) => string;
@@ -30,7 +30,7 @@ export type LoginFormAdapter = {
 };
 
 type LoginFormConfig = {
-  site: SessionSite;
+  site: CredentialSite;
   loginUrl: string;
   accountSelector: string;
   passwordSelector: string;
@@ -67,7 +67,7 @@ const LOGIN_FORM_CONFIGS = {
     formName: 'login',
     formMethod: 'post'
   }
-} as const satisfies Record<SessionSite, LoginFormConfig>;
+} as const satisfies Record<CredentialSite, LoginFormConfig>;
 
 function matchesConfigUrl(config: LoginFormConfig, url: string) {
   try {
@@ -168,7 +168,7 @@ function createAdapter(config: LoginFormConfig): LoginFormAdapter {
   };
 }
 
-export const LOGIN_FORM_ADAPTERS: Record<SessionSite, LoginFormAdapter> = {
+export const LOGIN_FORM_ADAPTERS: Record<CredentialSite, LoginFormAdapter> = {
   nodeseek: createAdapter(LOGIN_FORM_CONFIGS.nodeseek),
   linuxdo: createAdapter(LOGIN_FORM_CONFIGS.linuxdo),
   yaohuo: createAdapter(LOGIN_FORM_CONFIGS.yaohuo)

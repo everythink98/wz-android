@@ -22,19 +22,28 @@ const STANDARD_REACTION_EMOJIS = new Set([
   'open_mouth'
 ]);
 
-function visiblePositiveReaction(id: string, count: number | undefined, emojiUrls: LinuxDoEmojiUrlMap): LinuxDoReactionStat | null {
+function visiblePositiveReaction(
+  id: string,
+  count: number | undefined,
+  emojiUrls: LinuxDoEmojiUrlMap,
+  useLinuxDoEmojiFallback = true
+): LinuxDoReactionStat | null {
   if (typeof count !== 'number' || count <= 0) {
     return null;
   }
-  return reactionStat({ id, count }, emojiUrls);
+  return reactionStat({ id, count }, emojiUrls, useLinuxDoEmojiFallback);
 }
 
 function reactionLabel(id: string) {
   return id.replace(/_/g, ' ');
 }
 
-function reactionStat(reaction: ReactionSummary, emojiUrls: LinuxDoEmojiUrlMap): LinuxDoReactionStat {
-  const imageUrl = linuxDoEmojiUrlForReaction(reaction.id, emojiUrls);
+function reactionStat(
+  reaction: ReactionSummary,
+  emojiUrls: LinuxDoEmojiUrlMap,
+  useLinuxDoEmojiFallback = true
+): LinuxDoReactionStat {
+  const imageUrl = useLinuxDoEmojiFallback ? linuxDoEmojiUrlForReaction(reaction.id, emojiUrls) : undefined;
   return {
     id: reaction.id,
     label: reactionLabel(reaction.id),
@@ -67,6 +76,17 @@ export function linuxDoReactionStats(
     typeof item.boostCount === 'number' && item.boostCount > 0
       ? { id: 'boost', label: '加电', value: item.boostCount }
       : null
+  ].filter((stat): stat is LinuxDoReactionStat => Boolean(stat));
+}
+
+export function discourseReactionStats(
+  item: Pick<Reply | TopicDetail, 'reactionSummary' | 'likeCount'>
+) {
+  const reactions = item.reactionSummary || [];
+  const hasHeartReaction = reactions.some((reaction) => reaction.id === 'heart');
+  return [
+    hasHeartReaction ? null : visiblePositiveReaction('heart', item.likeCount, {}, false),
+    ...reactions.map((reaction) => reactionStat(reaction, {}, false))
   ].filter((stat): stat is LinuxDoReactionStat => Boolean(stat));
 }
 

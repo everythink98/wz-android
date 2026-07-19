@@ -18,6 +18,7 @@ import {
 describe('reply image upload helpers', () => {
   it('supports image uploads only where an upload path is known', () => {
     expect(replyImageUploadSupported('linuxdo')).toBe(true);
+    expect(replyImageUploadSupported('xiaoyinsi')).toBe(true);
     expect(replyImageUploadSupported('yaohuo')).toBe(true);
     expect(replyImageUploadSupported('nodeseek')).toBe(true);
   });
@@ -53,6 +54,7 @@ describe('reply image upload helpers', () => {
 
   it('builds reply markup for uploaded images', () => {
     expect(replyImageMarkupForSource('linuxdo', 'upload://abc.png', 'demo image.png')).toBe('![demo image.png](upload://abc.png)');
+    expect(replyImageMarkupForSource('xiaoyinsi', 'upload://xyz.png', 'demo.png')).toBe('![demo.png](upload://xyz.png)');
     expect(replyImageMarkupForSource('nodeseek', 'https://cdn.nodeimage.com/i/a.png', 'demo.png')).toBe('![demo.png](https://cdn.nodeimage.com/i/a.png)');
     expect(replyImageMarkupForSource('yaohuo', 'https://cdn.example.com/a.png', 'demo.png')).toBe('[img]https://cdn.example.com/a.png[/img]');
   });

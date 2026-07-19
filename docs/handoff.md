@@ -29,9 +29,9 @@
 
 ## 当前不可破坏边界
 
-- App 支持 NodeSeek、linux.do、V2EX 和妖火；四站共享阅读主干，互动能力按原站真实支持范围提供。
+- App 支持 NodeSeek、linux.do、V2EX、妖火和小隐寺；五站共享阅读主干，互动能力按原站真实支持范围提供。
 - App 的读取 controller 统一经 `src/sources/sourceGateway.ts` 进入来源层；写操作目前由 `src/app/useTopicActionsController.ts` 按 capability 调用各站 action client。
-- Cookie 和服务器代理配置只保存在 Android 本机安全存储，不进入备份 JSON；代理启用失败不能静默直连。
+- Cookie、小隐寺 User API Key 和服务器代理配置只保存在 Android 本机安全存储，不进入备份 JSON；小隐寺 RSA 私钥只存在 Android Keystore，代理启用失败不能静默直连。
 - `App.tsx`、`src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是稳定入口或兼容 facade。
 - `android/` 是生成目录；长期原生配置只改 `app.json` 与 `plugins/`。
 - 模拟器验收不得卸载 App、清 App 数据、Cookie 或登录态；默认覆盖安装并 force-stop 后重启。
@@ -43,7 +43,7 @@
 - 启动、首页、搜索：`src/app/AppRoot.tsx`、对应 controller、`src/feedLogic.ts` 与 `src/feedCategoryRail.ts`。
 - 来源读取：`src/sources/sourceGateway.ts` 及其后的读取实现；互动写入：`src/app/useTopicActionsController.ts` 及各站 action client。
 - 详情与返回：Topic controller、`src/topicSessionState.ts`、`src/screens/TopicScreen.tsx` 与 `src/screens/topic/`。
-- 账号与登录恢复：账号/session controller、站点 Cookie bridge 与 App 内 WebView 流程。
+- 账号与登录恢复：原三站使用账号/session controller、Cookie bridge 与 App 内 WebView；小隐寺使用独立 Device Code controller 与 Android Keystore，系统浏览器仅承载一次性授权页，不属于 App 会话。
 - 本机资料与备份：reader data、backup module 与相关 controller。
 - 发布：`scripts/release-android.mjs`、`scripts/check-version.mjs` 和 `scripts/smoke-android.mjs`。
 

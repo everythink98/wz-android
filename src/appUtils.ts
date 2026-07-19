@@ -15,6 +15,9 @@ export function sourceLabel(source: Source | FeedSource) {
   if (source === 'yaohuo') {
     return '妖火';
   }
+  if (source === 'xiaoyinsi') {
+    return '小隐寺';
+  }
   return 'V2EX';
 }
 
@@ -119,6 +122,13 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
       : '';
     return id && /^\d+$/.test(id) ? internalTopic('linuxdo', id, 'linux.do 主题', `https://linux.do/t/${id}`) : null;
   }
+  if (isForumHost(host, 'forum.xiaoyinsi.com')) {
+    const parts = pathname.split('/').filter(Boolean);
+    const id = parts[0]?.toLowerCase() === 't'
+      ? (/^\d+$/.test(parts[1] || '') ? parts[1] : parts[2])
+      : '';
+    return id && /^\d+$/.test(id) ? internalTopic('xiaoyinsi', id, '小隐寺主题', `https://forum.xiaoyinsi.com/t/${id}`) : null;
+  }
   if (isForumHost(host, 'v2ex.com')) {
     const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
     return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
@@ -195,6 +205,25 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       url: `${YAOHUO_BASE_URL}/bbs/userinfo.aspx?touserid=${encodeURIComponent(id)}`,
       topics: []
     } : null;
+  }
+  if (isForumHost(url.hostname, 'forum.xiaoyinsi.com')) {
+    const rawUsername = url.pathname.match(/^\/u\/([^/]+)\/?$/i)?.[1];
+    if (!rawUsername) {
+      return null;
+    }
+    try {
+      const username = decodeURIComponent(rawUsername);
+      return username ? {
+        source: 'xiaoyinsi',
+        id: username,
+        username,
+        displayName: username,
+        url: `https://forum.xiaoyinsi.com/u/${encodeURIComponent(username)}`,
+        topics: []
+      } : null;
+    } catch {
+      return null;
+    }
   }
   if (!isForumHost(url.hostname, 'v2ex.com')) {
     return null;

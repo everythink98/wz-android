@@ -39,14 +39,16 @@ import { topicActionStateKey, type InteractionType, type OptimisticActionState, 
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
 import { getLinuxDoEmojiUrls, splitLinuxDoContentHtml } from '../../localLinuxdo';
+import { splitXiaoyinsiContentHtml } from '../../localXiaoyinsi';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '../../nodeseekPolls';
-import { linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
+import { discourseReactionStats, linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import { replyImageUploadSupported } from '../../replyImageUpload';
 import {
   linuxDoQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
   topicQuotedPostInstanceKey,
+  xiaoyinsiQuotedPostReferenceFromAttributes,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
 } from '../../quotedPosts';
@@ -250,6 +252,7 @@ export const TopicScreen = memo(function TopicScreen({
   actionBusy,
   canUseLinuxDoActions,
   canUseNodeSeekActions,
+  canUseXiaoyinsiActions,
   canUseYaohuoActions,
   contentWidth,
   htmlBaseStyle,
@@ -291,6 +294,7 @@ export const TopicScreen = memo(function TopicScreen({
   onInteract,
   onLinuxDoBookmark,
   onNodeSeekCollection,
+  onXiaoyinsiBookmark,
   onShareTopic,
   onVotePoll,
   onLoadMoreReplies,
@@ -318,6 +322,7 @@ export const TopicScreen = memo(function TopicScreen({
   actionBusy: boolean;
   canUseLinuxDoActions: boolean;
   canUseNodeSeekActions: boolean;
+  canUseXiaoyinsiActions: boolean;
   canUseYaohuoActions: boolean;
   contentWidth: number;
   htmlBaseStyle: HtmlBaseStyle;
@@ -359,6 +364,7 @@ export const TopicScreen = memo(function TopicScreen({
   onInteract: (type: InteractionType, commentId?: number) => void;
   onLinuxDoBookmark: () => void;
   onNodeSeekCollection: () => void;
+  onXiaoyinsiBookmark: () => void;
   onShareTopic: () => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onLoadMoreReplies: () => void;
@@ -389,7 +395,13 @@ export const TopicScreen = memo(function TopicScreen({
   const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);
   const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
   const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
-  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo;
+  const canUseXiaoyinsiInteractions = Boolean(topic && topic.source === 'xiaoyinsi' && canUseXiaoyinsiActions);
+  const canWriteXiaoyinsi = Boolean(canUseXiaoyinsiInteractions && topic?.canCreatePost === true);
+  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo || canWriteXiaoyinsi;
+  const canOpenReplyComposer = canWrite || Boolean(
+    canUseXiaoyinsiInteractions
+    && replyEditTarget
+  );
   const replyTotalCount = item?.replyCount ?? replies.length;
   const replyDisplayCount = replyFilter === 'author' || replyFilter === 'images' || replyHighlightQuery.trim()
     ? replies.length
@@ -487,8 +499,10 @@ export const TopicScreen = memo(function TopicScreen({
           label: topicAccessRequirementText,
           detail: topicAccessRequirementDetail
         }]
-        : (topic.source === 'linuxdo'
-          ? splitLinuxDoContentHtml(topicContentHtml, topicPolls)
+        : (topic.source === 'linuxdo' || topic.source === 'xiaoyinsi'
+          ? topic.source === 'linuxdo'
+            ? splitLinuxDoContentHtml(topicContentHtml, topicPolls)
+            : splitXiaoyinsiContentHtml(topicContentHtml, topicPolls)
           : [{ type: 'html' as const, html: topicContentHtml }]
         ).flatMap((part, partIndex): TopicContentItem[] => {
           if (part.type === 'poll') {
@@ -514,12 +528,14 @@ export const TopicScreen = memo(function TopicScreen({
     && (
       (topic.source === 'nodeseek' && canWriteNodeSeek)
       || (topic.source === 'linuxdo' && canWriteLinuxDo)
+      || (topic.source === 'xiaoyinsi' && canUseXiaoyinsiInteractions)
       || (topic.source === 'yaohuo' && canWriteYaohuo)
     )
   );
   const topicHasPostActions = Boolean(topic && !topicShowsAccessNotice && (
     (topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0))
     || (topic.source === 'linuxdo' && (canWriteLinuxDo || linuxDoReactionStats(topic).length > 0))
+    || (topic.source === 'xiaoyinsi' && (canUseXiaoyinsiInteractions || discourseReactionStats(topic).length > 0))
     || (topic.source === 'yaohuo' && canWriteYaohuo)
     || (topic.source === 'v2ex' && typeof topic.upvoteCount === 'number')
   ));
@@ -661,7 +677,9 @@ export const TopicScreen = memo(function TopicScreen({
       const quoteBodyChildren = props.tnode.children.filter((child) => !quoteHeaderChildSet.has(child));
       const reference = itemSource === 'linuxdo'
         ? linuxDoQuotedPostReferenceFromAttributes(props.tnode.attributes, item?.id)
-        : null;
+        : itemSource === 'xiaoyinsi'
+          ? xiaoyinsiQuotedPostReferenceFromAttributes(props.tnode.attributes, item?.id)
+          : null;
       const referenceKey = reference ? quotedPostReferenceKey(reference) : '';
       const instanceKey = reference && item?.id ? topicQuotedPostInstanceKey(item.id, reference) : '';
       const quotedPost = reference
@@ -675,7 +693,10 @@ export const TopicScreen = memo(function TopicScreen({
         <TopicBodyQuoteCard
           completeContent={reference && completeQuotedPost ? (
             <>
-              {splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls).map((part) => part.type === 'poll' ? (
+              {(reference.source === 'xiaoyinsi'
+                ? splitXiaoyinsiContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+                : splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+              ).map((part) => part.type === 'poll' ? (
                 <TopicPolls
                   embeddedInArticle
                   key={`topic-quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
@@ -872,6 +893,7 @@ export const TopicScreen = memo(function TopicScreen({
       <View style={[styles.replyListItem, topicColumnStyle]}>
         <MemoizedReplyItem
           actionBusy={actionBusy}
+          canUseXiaoyinsiActions={canUseXiaoyinsiInteractions}
           canWrite={canWrite}
           contentWidth={contentWidth}
           expandedQuotes={expandedQuotes}
@@ -906,6 +928,7 @@ export const TopicScreen = memo(function TopicScreen({
     );
   }, [
     actionBusy,
+    canUseXiaoyinsiInteractions,
     canWrite,
     commentQuery,
     contentWidth,
@@ -965,6 +988,7 @@ export const TopicScreen = memo(function TopicScreen({
       : styles.authNoticeTextNeutral;
   const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
   const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic, linuxDoEmojiUrls) : [];
+  const xiaoyinsiTopicReactionStats = topic?.source === 'xiaoyinsi' && topic ? discourseReactionStats(topic) : [];
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
@@ -1028,7 +1052,7 @@ export const TopicScreen = memo(function TopicScreen({
         {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
       </View>
       {topicContentItems.map(renderTopicContentItem)}
-      {topic && topic.source !== 'linuxdo' && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
+      {topic && topic.source !== 'linuxdo' && topic.source !== 'xiaoyinsi' && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <TopicPolls
@@ -1092,6 +1116,19 @@ export const TopicScreen = memo(function TopicScreen({
             <View style={styles.topicPrimaryActions}>
               {canUseLinuxDoLike(topic) ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
               <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
+            </View>
+          ) : null}
+          {topic?.source === 'xiaoyinsi' && xiaoyinsiTopicReactionStats.length ? (
+            <View style={styles.topicStatRail}>
+              {xiaoyinsiTopicReactionStats.map((stat) => (
+                <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
+              ))}
+            </View>
+          ) : null}
+          {canUseXiaoyinsiInteractions ? (
+            <View style={styles.topicPrimaryActions}>
+              {topic?.canLike === true || topic?.liked ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
+              <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onXiaoyinsiBookmark} />
             </View>
           ) : null}
         </View>,
@@ -1170,7 +1207,7 @@ export const TopicScreen = memo(function TopicScreen({
           source={topic?.source}
           styles={styles}
           theme={theme}
-          visible={Boolean(canWrite && replyComposerOpen)}
+          visible={Boolean(canOpenReplyComposer && replyComposerOpen)}
           onReplyComposerOpenChange={onReplyComposerOpenChange}
           onReplyContentChange={onReplyContentChange}
           onReplyFaceChange={onReplyFaceChange}

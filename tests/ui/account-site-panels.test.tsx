@@ -262,7 +262,7 @@ describe('Account site panels', () => {
       <LinuxDoLevelPanel
         busy={false}
         error=""
-        linuxDoSession={session('linuxdo', 'anonymous')}
+        siteSession={session('linuxdo', 'anonymous')}
         profile={null}
         styles={styles}
         theme={theme}
@@ -279,7 +279,7 @@ describe('Account site panels', () => {
       <LinuxDoLevelPanel
         busy={false}
         error=""
-        linuxDoSession={session('linuxdo', 'logged-in')}
+        siteSession={session('linuxdo', 'logged-in')}
         profile={levelProfile}
         styles={styles}
         theme={theme}

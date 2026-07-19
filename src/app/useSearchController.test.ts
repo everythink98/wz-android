@@ -93,7 +93,8 @@ describe('search controller result helpers', () => {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
       linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
       nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
-      yaohuo: { source: 'yaohuo' as const, category: '0' }
+      yaohuo: { source: 'yaohuo' as const, category: '0' },
+      xiaoyinsi: { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi }
     };
 
     const retry = createNodeSeekRetrySearchOptions({
@@ -119,7 +120,8 @@ describe('search controller result helpers', () => {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
       linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
       nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
-      yaohuo: { source: 'yaohuo' as const, category: '0' }
+      yaohuo: { source: 'yaohuo' as const, category: '0' },
+      xiaoyinsi: { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi }
     };
 
     expect(createSearchMoreRequestSnapshot({

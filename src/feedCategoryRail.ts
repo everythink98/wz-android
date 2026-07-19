@@ -1,4 +1,4 @@
-import type { Category, FeedFilterSource, FeedFilterState, FeedSource, LinuxDoFeedFilter, NodeSeekFeedFilter, Source, SourceFeedFilter, V2exFeedFilter } from './types';
+import type { Category, FeedFilterSource, FeedFilterState, FeedSource, LinuxDoFeedFilter, NodeSeekFeedFilter, Source, SourceFeedFilter, V2exFeedFilter, XiaoyinsiFeedFilter } from './types';
 import type { ReadingFilter } from './feedLogic';
 
 export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
@@ -6,7 +6,8 @@ export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
   { value: 'v2ex', label: 'V2EX' },
   { value: 'linuxdo', label: 'linux.do' },
   { value: 'nodeseek', label: 'NodeSeek' },
-  { value: 'yaohuo', label: '妖火' }
+  { value: 'yaohuo', label: '妖火' },
+  { value: 'xiaoyinsi', label: '小隐寺' }
 ];
 
 export const feedSources: Source[] = feedSourceItems
@@ -23,10 +24,12 @@ export const feedReadingFilterItems = [
 export const defaultLinuxDoFeedFilter: LinuxDoFeedFilter = 'latest';
 export const defaultNodeSeekFeedFilter: NodeSeekFeedFilter = 'postTime';
 export const defaultV2exFeedFilter: V2exFeedFilter = 'all';
+export const defaultXiaoyinsiFeedFilter: XiaoyinsiFeedFilter = 'latest';
 export const defaultFeedFilters: FeedFilterState = {
   linuxdo: defaultLinuxDoFeedFilter,
   nodeseek: defaultNodeSeekFeedFilter,
-  v2ex: defaultV2exFeedFilter
+  v2ex: defaultV2exFeedFilter,
+  xiaoyinsi: defaultXiaoyinsiFeedFilter
 };
 
 export const feedLinuxDoFilterItems: Array<{ value: LinuxDoFeedFilter; label: string }> = [
@@ -48,6 +51,14 @@ export const feedV2exFilterItems: Array<{ value: V2exFeedFilter; label: string }
   { value: 'hot', label: '最热' }
 ];
 
+export const feedXiaoyinsiFilterItems: Array<{ value: XiaoyinsiFeedFilter; label: string }> = [
+  { value: 'latest', label: '最新' },
+  { value: 'hot', label: '热门' },
+  { value: 'new-all', label: '新·所有' },
+  { value: 'new-topics', label: '新·话题' },
+  { value: 'new-replies', label: '新·回复' }
+];
+
 export const feedFilterMenuGroups: Record<FeedFilterSource, Array<{ title?: string; items: Array<{ value: SourceFeedFilter; label: string }> }>> = {
   linuxdo: [
     {
@@ -66,7 +77,23 @@ export const feedFilterMenuGroups: Record<FeedFilterSource, Array<{ title?: stri
     }
   ],
   nodeseek: [{ items: feedNodeSeekFilterItems }],
-  v2ex: [{ items: feedV2exFilterItems }]
+  v2ex: [{ items: feedV2exFilterItems }],
+  xiaoyinsi: [
+    {
+      items: [
+        { value: 'latest', label: '最新' },
+        { value: 'hot', label: '热门' }
+      ]
+    },
+    {
+      title: '新',
+      items: [
+        { value: 'new-all', label: '所有' },
+        { value: 'new-topics', label: '话题' },
+        { value: 'new-replies', label: '回复' }
+      ]
+    }
+  ]
 };
 
 export function feedFilterItems(source: FeedSource): Array<{ value: SourceFeedFilter; label: string }> {
@@ -79,6 +106,9 @@ export function feedFilterItems(source: FeedSource): Array<{ value: SourceFeedFi
   if (source === 'v2ex') {
     return feedV2exFilterItems;
   }
+  if (source === 'xiaoyinsi') {
+    return feedXiaoyinsiFilterItems;
+  }
   return [];
 }
 
@@ -88,7 +118,7 @@ export function feedFilterLabel(source: FeedSource, value?: SourceFeedFilter) {
 }
 
 export function shouldUseFeedFilter(source: FeedSource, category = '') {
-  return source === 'linuxdo' || ((source === 'nodeseek' || source === 'v2ex') && !category);
+  return source === 'linuxdo' || source === 'xiaoyinsi' || ((source === 'nodeseek' || source === 'v2ex') && !category);
 }
 
 export function shouldUseReadingFilter(source: FeedSource) {

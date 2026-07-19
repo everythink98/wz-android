@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Dispatch, SetStateAction } from 'react';
 
 const actionMocks = vi.hoisted(() => ({
   fetchNodeSeekVoteInfo: vi.fn(),
   runLinuxDoAction: vi.fn(),
   runNodeSeekAction: vi.fn(),
+  runXiaoyinsiAction: vi.fn(),
   runYaohuoAction: vi.fn()
 }));
 
@@ -22,11 +24,20 @@ vi.mock('expo-document-picker', () => ({
 }));
 
 vi.mock('expo-secure-store', () => ({
-  getItemAsync: vi.fn(async () => JSON.stringify({
-    cookieHeader: 'session=fake-credential',
-    savedAt: '2026-07-10T00:00:00.000Z',
-    source: 'webview'
-  }))
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+  getItemAsync: vi.fn(async (key: string) => {
+    if (key === 'xiaoyinsi-auth.api-key') {
+      return 'fake-xiaoyinsi-user-api-key';
+    }
+    if (key === 'xiaoyinsi-auth.client-id') {
+      return 'fake-xiaoyinsi-client-id';
+    }
+    return JSON.stringify({
+      cookieHeader: 'session=fake-cookie-credential',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+  })
 }));
 
 vi.mock('../nodeseekActionClient', () => ({
@@ -42,6 +53,10 @@ vi.mock('../yaohuoActionClient', () => ({
   runYaohuoAction: actionMocks.runYaohuoAction
 }));
 
+vi.mock('../xiaoyinsiActionClient', () => ({
+  runXiaoyinsiAction: actionMocks.runXiaoyinsiAction
+}));
+
 vi.mock('../linuxdoCookieBridge', () => ({
   clearLinuxDoAccess: vi.fn(),
   clearLinuxDoAccessForGeneration: vi.fn(),
@@ -54,11 +69,12 @@ vi.mock('../linuxdoCookieBridge', () => ({
 
 import { clearLinuxDoAccessForGeneration, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { Alert } from 'react-native';
+import { getDocumentAsync } from 'expo-document-picker';
 import { createRequestOwner } from '../requestOwnership';
 import { createSiteSessionStates } from '../siteSessionState';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
 import type { Fetcher } from '../request';
-import type { Source, TopicDetail } from '../types';
+import type { Reply, Source, TopicDetail } from '../types';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
 import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
 import { useTopicActionsController } from './useTopicActionsController';
@@ -66,21 +82,31 @@ import type { TopicSessionController } from './useTopicSessionController';
 
 function createTopicActionController({
   applyUpdate = vi.fn(),
+  appendMarkup = vi.fn(),
   completeSubmission = vi.fn(),
   fetcher = vi.fn(),
   notify = vi.fn(),
   refreshTopicReplies = vi.fn(async () => undefined),
+  refreshXiaoyinsiAuthorization = vi.fn(async () => true),
   replyContent = '',
+  replyEditTarget = null,
+  setActionBusy = vi.fn(),
+  showXiaoyinsiLogin = vi.fn(),
   source = 'nodeseek',
   topicPatch = {}
 }: {
   applyUpdate?: ReturnType<typeof vi.fn>;
+  appendMarkup?: ReturnType<typeof vi.fn>;
   completeSubmission?: ReturnType<typeof vi.fn>;
   fetcher?: Fetcher;
   notify?: (message: string) => void;
   refreshTopicReplies?: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
+  refreshXiaoyinsiAuthorization?: () => Promise<boolean>;
   replyContent?: string;
-  source?: Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
+  replyEditTarget?: Reply | null;
+  setActionBusy?: ReturnType<typeof vi.fn>;
+  showXiaoyinsiLogin?: (message?: string) => void;
+  source?: Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi'>;
   topicPatch?: Partial<TopicDetail>;
 } = {}) {
   const detail: TopicDetail = {
@@ -94,11 +120,11 @@ function createTopicActionController({
     contentHtml: '<p>private body</p>',
     replies: [],
     commentId: 987654,
+    ...(source === 'xiaoyinsi' ? { canCreatePost: true } : {}),
     liked: false,
     ...topicPatch
   };
   const optimisticTopicActionsRef = { current: {} };
-  const setActionBusy = vi.fn();
   const siteSessionStates = createSiteSessionStates();
   siteSessionStates[source] = {
     site: source,
@@ -119,17 +145,19 @@ function createTopicActionController({
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
+    refreshXiaoyinsiAuthorization,
     resetLinuxDoLevelState: vi.fn(),
-    setActionBusy,
+    setActionBusy: setActionBusy as Dispatch<SetStateAction<boolean>>,
     setOptimisticTopicActions: vi.fn(),
     showLinuxDoLogin: vi.fn(),
+    showXiaoyinsiLogin,
     showYaohuoLogin: vi.fn(),
     siteSessionStates,
     topicActionRequestOwnerRef: { current: createRequestOwner('topic') },
     topicSession: {
       state: {
         replyContent,
-        replyEditTarget: null,
+        replyEditTarget,
         replyFace: undefined,
         replyTarget: null,
         selectedTopic: detail,
@@ -139,14 +167,23 @@ function createTopicActionController({
       commands: {
         actions: { applyUpdate },
         composer: {
-          appendMarkup: vi.fn(),
+          appendMarkup,
           completeSubmission
         }
       }
     } as unknown as TopicSessionController,
     updateLinuxDoSession: vi.fn()
   });
-  return { applyUpdate, completeSubmission, controller, detail, optimisticTopicActionsRef, setActionBusy };
+  return {
+    applyUpdate,
+    completeSubmission,
+    controller,
+    detail,
+    optimisticTopicActionsRef,
+    refreshXiaoyinsiAuthorization,
+    setActionBusy,
+    showXiaoyinsiLogin
+  };
 }
 
 afterEach(() => {
@@ -237,7 +274,7 @@ describe('topic action auth guards', () => {
       outcome: 'failure'
     });
     expect(applyUpdate).toHaveBeenCalledTimes(2);
-    expect(lines.join('')).not.toMatch(/987654|424242|private title|private author|private body|fake-credential|token=secret|nodeseek\.com/);
+    expect(lines.join('')).not.toMatch(/987654|424242|private title|private author|private body|fake-(?:credential|cookie-credential|xiaoyinsi)|token=secret|nodeseek\.com/);
   });
 
   it('records a submitted reply as partial when the follow-up refresh fails', async () => {
@@ -365,7 +402,180 @@ describe('topic action auth guards', () => {
       requestType: 'favorite',
       csrfSource: 'none'
     }));
-    expect(lines.join('')).not.toMatch(/csrf-token|private (?:reply|linux\.do) body|fake-credential|\/api\//i);
+    expect(lines.join('')).not.toMatch(/csrf-token|private (?:reply|linux\.do) body|fake-(?:credential|cookie-credential|xiaoyinsi)|\/api\//i);
+  });
+
+  it('[REG-XIAOYINSI-012] applies a confirmed 小隐寺 like locally without reloading the topic', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: true, liked: false }
+    });
+
+    await controller.interact('like', 987654);
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+      credentials: {
+        apiKey: 'fake-xiaoyinsi-user-api-key',
+        clientId: 'fake-xiaoyinsi-client-id'
+      },
+      request: {
+        path: '/post_actions',
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: 'id=987654&post_action_type_id=2'
+      }
+    }));
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'interaction',
+      patch: { commentId: 987654, type: 'like', mode: 'add', reactionId: 'heart' }
+    });
+    expect(setActionBusy).not.toHaveBeenCalled();
+  });
+
+  it('[REG-XIAOYINSI-011] releases image-upload busy state after inserting the Markdown', async () => {
+    vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ short_url: 'upload://test.jpeg' });
+    const events: string[] = [];
+    const setActionBusy = vi.fn((busy: boolean) => { events.push(`busy:${busy}`); });
+    const appendMarkup = vi.fn(() => { events.push('markup'); });
+    const { controller } = createTopicActionController({ source: 'xiaoyinsi', setActionBusy, appendMarkup });
+
+    await controller.uploadReplyImage();
+
+    expect(events).toEqual(['busy:true', 'markup', 'busy:false']);
+  });
+
+  it('[REG-XIAOYINSI-009] allows canceling an existing 小隐寺 like when Discourse reports can_act=false', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const notify = vi.fn();
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({
+      notify,
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: false, liked: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: {
+        path: '/post_actions/987654?post_action_type_id=2',
+        method: 'DELETE',
+        headers: {},
+        body: undefined
+      }
+    }));
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'interaction',
+      patch: { commentId: 987654, type: 'like', mode: 'remove', reactionId: 'heart' }
+    });
+    expect(setActionBusy).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('当前帖子不能点赞');
+  });
+
+  it('[REG-XIAOYINSI-003] cancels a 小隐寺 topic bookmark even when Discourse omits the bookmark record id', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const notify = vi.fn();
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({
+      notify,
+      source: 'xiaoyinsi',
+      topicPatch: { bookmarked: true, bookmarkId: undefined }
+    });
+
+    await controller.bookmarkOnXiaoyinsiSite();
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: {
+        path: '/t/424242/remove_bookmarks',
+        method: 'PUT',
+        headers: {},
+        body: undefined
+      }
+    }));
+    expect(applyUpdate).toHaveBeenCalledWith({ type: 'bookmark', bookmarked: false });
+    expect(setActionBusy).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('当前收藏记录不完整，请刷新主题后再试。');
+  });
+
+  it('[REG-XIAOYINSI-007] closes a 小隐寺 edit composer without applying unconfirmed markdown locally', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const refreshTopicReplies = vi.fn(async () => true);
+    const editTarget: Reply = {
+      commentId: 101,
+      floor: 2,
+      author: 'alice',
+      createdAt: '2026-07-10T00:01:00.000Z',
+      contentHtml: '<p>old</p>',
+      canEdit: true
+    };
+    const { applyUpdate, completeSubmission, controller } = createTopicActionController({
+      source: 'xiaoyinsi',
+      replyContent: 'server must confirm this body',
+      replyEditTarget: editTarget,
+      refreshTopicReplies,
+      topicPatch: { canCreatePost: false }
+    });
+
+    await controller.submitReply();
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ path: '/posts/101.json', method: 'PUT' })
+    }));
+    expect(completeSubmission).toHaveBeenCalledWith();
+    expect(refreshTopicReplies).toHaveBeenCalledWith(expect.objectContaining({ nocache: true, targetReply: editTarget }));
+    expect(applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rechecks 小隐寺 authorization after 403 without treating it as an automatic logout', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(Object.assign(new Error('没有权限执行该操作'), {
+      source: 'xiaoyinsi',
+      status: 403,
+      reason: 'permission',
+      authorizationCheckRequired: true
+    }));
+    const notify = vi.fn();
+    const { controller, refreshXiaoyinsiAuthorization, showXiaoyinsiLogin } = createTopicActionController({
+      notify,
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    expect(showXiaoyinsiLogin).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
+  });
+
+  it('[REG-XIAOYINSI-012] removes a confirmed 小隐寺 reply locally and refreshes only the reply slice', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const refreshTopicReplies = vi.fn(async () => true);
+    const { applyUpdate, controller } = createTopicActionController({ source: 'xiaoyinsi', refreshTopicReplies });
+    const reply: Reply = {
+      commentId: 101,
+      floor: 2,
+      author: 'alice',
+      createdAt: '2026-07-10T00:01:00.000Z',
+      contentHtml: '<p>reply</p>',
+      canDelete: true
+    };
+
+    controller.deleteReply(reply);
+    const buttons = vi.mocked(Alert.alert).mock.calls[0]?.[2] || [];
+    buttons[1]?.onPress?.();
+
+    await vi.waitFor(() => {
+      expect(applyUpdate).toHaveBeenCalledWith({ type: 'reply-deleted', reply });
+    });
+    expect(refreshTopicReplies).toHaveBeenCalledWith(expect.objectContaining({
+      silent: true,
+      afterSubmit: true,
+      targetReply: reply,
+      excludeReply: reply
+    }));
   });
 
   it('REG-WRITE-003 REG-WRITE-004 applies the confirmed yaohuo favorite locally without global busy', async () => {
@@ -546,5 +756,29 @@ describe('topic poll submission', () => {
     expect(Alert.alert).not.toHaveBeenCalled();
     expect(actionMocks.runLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(actionMocks.runYaohuoAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-XIAOYINSI-012] applies a confirmed 小隐寺 vote locally', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const { applyUpdate, controller } = createTopicActionController({ source: 'xiaoyinsi' });
+    const poll = {
+      id: 'xiaoyinsi-poll',
+      name: 'poll_name',
+      postId: '424242',
+      options: [{ id: '1', label: 'A' }]
+    };
+
+    await controller.votePoll(poll, ['1']);
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledTimes(1);
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'poll-vote',
+      patch: {
+        pollId: 'xiaoyinsi-poll',
+        pollName: 'poll_name',
+        pollPostId: '424242',
+        optionIds: ['1']
+      }
+    });
   });
 });

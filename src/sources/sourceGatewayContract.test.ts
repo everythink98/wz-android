@@ -19,6 +19,10 @@ const linuxDoMocks = vi.hoisted(() => ({
   searchLinuxDoTags: vi.fn(async (): Promise<LinuxDoTagOption[]> => []),
   searchLinuxDoUsers: vi.fn(async (): Promise<LinuxDoUserOption[]> => [])
 }));
+const xiaoyinsiMocks = vi.hoisted(() => ({
+  searchXiaoyinsiTags: vi.fn(async (): Promise<LinuxDoTagOption[]> => []),
+  searchXiaoyinsiUsers: vi.fn(async (): Promise<LinuxDoUserOption[]> => [])
+}));
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: { clearByName: vi.fn(), flush: vi.fn(), get: vi.fn(async () => ({})) }
@@ -32,6 +36,7 @@ vi.mock('react-native', () => ({ NativeModules: { LinuxDoCookieModule: {} } }));
 
 vi.mock('../forumApi', () => forumMocks);
 vi.mock('../localLinuxdo', () => linuxDoMocks);
+vi.mock('../localXiaoyinsi', () => xiaoyinsiMocks);
 vi.mock('../yaohuoApi', () => ({
   checkYaohuoLoginDirect: vi.fn(),
   getYaohuoFeedDirect: vi.fn(),
@@ -523,5 +528,77 @@ describe('source gateway read contract', () => {
       message: '妖火需要完成访问验证'
     });
     expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+  });
+
+  it('routes 小隐寺 search candidates with its independent User API credentials', async () => {
+    const credentials = { apiKey: 'secret-key', clientId: 'install-client' };
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      loadXiaoyinsiCredentialsForSource: vi.fn(async () => credentials),
+      nodeSeekUserAgent: () => ''
+    });
+    xiaoyinsiMocks.searchXiaoyinsiTags.mockResolvedValueOnce([{ name: '公告' }]);
+
+    await gateway.searchTagOptions({ source: 'xiaoyinsi', query: '公', selectedTags: [] });
+    await gateway.searchUserOptions({ source: 'xiaoyinsi', term: 'ali' });
+
+    expect(xiaoyinsiMocks.searchXiaoyinsiTags).toHaveBeenCalledWith(expect.objectContaining({
+      query: '公', credentials, fetcher: expect.any(Function)
+    }));
+    expect(xiaoyinsiMocks.searchXiaoyinsiUsers).toHaveBeenCalledWith(expect.objectContaining({
+      term: 'ali', credentials, fetcher: expect.any(Function)
+    }));
+  });
+
+  it('[REG-XIAOYINSI-007] rechecks 小隐寺 authorization after an authenticated read returns 403', async () => {
+    const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
+      nodeSeekUserAgent: () => '',
+      refreshXiaoyinsiAuthorization
+    });
+    forumMocks.getTopic.mockRejectedValueOnce(Object.assign(new Error('没有权限读取主题'), {
+      source: 'xiaoyinsi',
+      status: 403
+    }));
+
+    await expect(gateway.getTopic({ source: 'xiaoyinsi', id: '42' })).rejects.toMatchObject({
+      kind: 'permission-denied'
+    });
+    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-XIAOYINSI-007] rechecks aggregate 小隐寺 read failures but ignores stale reads', async () => {
+    const refreshXiaoyinsiAuthorization = vi.fn(async () => true);
+    const gateway = createSourceGateway({
+      clearYaohuoLoginState: vi.fn(async () => undefined),
+      fetcher: vi.fn(),
+      hasLinuxDoCredentialForSource: vi.fn(async () => false),
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      loadYaohuoCookieForSource: vi.fn(async () => undefined),
+      loadXiaoyinsiCredentialsForSource: vi.fn(async () => ({ apiKey: 'api-key', clientId: 'client-id' })),
+      nodeSeekUserAgent: () => '',
+      refreshXiaoyinsiAuthorization
+    });
+    forumMocks.getFeed.mockResolvedValue({
+      items: [],
+      errors: { xiaoyinsi: { kind: 'login-expired', message: '授权已失效' } },
+      hasMore: false,
+      nextPage: null
+    });
+
+    await gateway.getFeed({ source: 'all' });
+    await gateway.getFeed({ source: 'all' }, { isCurrent: () => false });
+
+    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
   });
 });

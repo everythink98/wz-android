@@ -110,6 +110,7 @@ export function useTopicController({
   const topicRequestOwnerRef = useRef(createRequestOwner('topic'));
   const repliesRequestOwnerRef = useRef(createRequestOwner('topic-replies'));
   const replyVisitedPageKeysRef = useRef<Record<string, Set<string>>>({});
+  const lastSuccessfulTopicRequestIdRef = useRef(0);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const loadMoreRepliesRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const refreshTopicRepliesRef = useRef<((
@@ -227,6 +228,7 @@ export function useTopicController({
         displayDetail,
         typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0
       );
+      lastSuccessfulTopicRequestIdRef.current = requestId;
       markDiagnosticStage(trace, 'apply', {
         itemCount: detail.replies?.length || 0,
         hasContent: Boolean(detail.contentHtml?.trim())
@@ -424,7 +426,7 @@ export function useTopicController({
         ? applyEditedReplyContent(mergedReplies, editedReplyContent, detail.source)
         : mergedReplies;
       const replyCount = afterSubmit && !targetReply && !excludeReply
-        ? replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length)
+        ? data.totalCount ?? replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length)
         : undefined;
       if (afterSubmit && !targetReply && !excludeReply) {
         topicReplyCommands.resolve({ replies: displayedReplies, replyCount, requestTopicKey });
@@ -682,11 +684,16 @@ export function useTopicController({
 
   loadMoreRepliesRef.current = loadMoreReplies;
 
-  const refreshWholeTopic = useCallback(() => {
+  const refreshWholeTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (detail) {
-      void openTopic(detail, true);
+      const previousSuccessfulRequestId = lastSuccessfulTopicRequestIdRef.current;
+      const outcome = await openTopic(detail, true);
+      return outcome === 'completed' && lastSuccessfulTopicRequestIdRef.current > previousSuccessfulRequestId
+        ? 'completed' as const
+        : outcome === 'completed' ? 'failed' as const : outcome;
     }
+    return 'stale' as const;
   }, [openTopic, selectedTopic, topicDetail]);
 
   const toggleLoadedQuotedPost = useCallback(async (
@@ -716,7 +723,7 @@ export function useTopicController({
       return;
     }
 
-    if (!detail || reference.source !== 'linuxdo') {
+    if (!detail || (reference.source !== 'linuxdo' && reference.source !== 'xiaoyinsi')) {
       markDiagnosticStage(trace, 'guard', { state: detail ? 'unsupported-source' : 'missing-topic' });
       finishDiagnosticTrace(trace, 'blocked', { reason: detail ? 'unsupported' : 'not_ready' });
       notify('引用楼层未加载');

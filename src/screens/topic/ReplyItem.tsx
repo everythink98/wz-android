@@ -9,7 +9,8 @@ import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
 import { splitLinuxDoContentHtml } from '../../localLinuxdo';
-import { linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
+import { splitXiaoyinsiContentHtml } from '../../localXiaoyinsi';
+import { discourseReactionStats, linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
 import { canUseLinuxDoLike } from '../../linuxdoPermissions';
 import {
   quotedPostReferenceFromReply,
@@ -106,6 +107,7 @@ function NodeSeekActionPlaceholder({ styles }: { styles: ReturnType<typeof creat
 
 export function ReplyItem({
   actionBusy,
+  canUseXiaoyinsiActions,
   canWrite,
   contentWidth,
   expandedQuotes,
@@ -137,6 +139,7 @@ export function ReplyItem({
   onToggleReplyQuote
 }: {
   actionBusy: boolean;
+  canUseXiaoyinsiActions: boolean;
   canWrite: boolean;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
@@ -170,15 +173,23 @@ export function ReplyItem({
   const { getMappingKey } = useMappingHelper();
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
-  const linuxDoContentParts = useMemo(() => (
-    source === 'linuxdo' ? splitLinuxDoContentHtml(highlightedHtml, reply.polls) : []
+  const discourseContentParts = useMemo(() => (
+    source === 'linuxdo'
+      ? splitLinuxDoContentHtml(highlightedHtml, reply.polls)
+      : source === 'xiaoyinsi'
+        ? splitXiaoyinsiContentHtml(highlightedHtml, reply.polls)
+        : []
   ), [highlightedHtml, reply.polls, source]);
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
   const canUseNodeSeekInteractions = reply.canLike !== false;
+  const canUseXiaoyinsiPostActions = source === 'xiaoyinsi'
+    && canUseXiaoyinsiActions
+    && Boolean(canWrite || reply.canEdit || reply.canDelete || reply.canLike === true || reply.liked);
   const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply, linuxDoEmojiUrls) : [];
+  const xiaoyinsiReplyReactionStats = source === 'xiaoyinsi' ? discourseReactionStats(reply) : [];
   const replyTargetUser = source && reply.replyTargetAuthor ? {
     source,
     id: reply.replyTargetAuthor,
@@ -310,8 +321,10 @@ export function ReplyItem({
                       style={[styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]}
                       testID={`reply-quote-complete-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
                     >
-                      {(source === 'linuxdo'
-                        ? splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+                      {(source === 'linuxdo' || source === 'xiaoyinsi'
+                        ? source === 'linuxdo'
+                          ? splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+                          : splitXiaoyinsiContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
                         : [{ type: 'html' as const, html: completeQuotedPost.contentHtml }]
                       ).map((part) => part.type === 'poll' ? (
                         <TopicPolls
@@ -360,9 +373,9 @@ export function ReplyItem({
             <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
           </Pressable>
         ) : null}
-        {source === 'linuxdo' ? (
+        {source === 'linuxdo' || source === 'xiaoyinsi' ? (
           <View style={styles.replyBody}>
-            {linuxDoContentParts.map((part, index) => part.type === 'poll' ? (
+            {discourseContentParts.map((part, index) => part.type === 'poll' ? (
               <TopicPolls
                 key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                 actionBusy={actionBusy}
@@ -383,7 +396,7 @@ export function ReplyItem({
                   contentWidth={replyContentWidth}
                   inlineSizedImageUrls={inlineSizedImageUrls}
                   html={part.html}
-                  trimTrailingBlockSpacing={index === linuxDoContentParts.length - 1}
+                  trimTrailingBlockSpacing={index === discourseContentParts.length - 1}
                   topicImageDeriver={topicImageDeriver}
                 />
               </Pressable>
@@ -466,6 +479,21 @@ export function ReplyItem({
             {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
           </View>
         ) : null}
+        {source === 'xiaoyinsi' && xiaoyinsiReplyReactionStats.length ? (
+          <View style={styles.replyStatRail}>
+            {xiaoyinsiReplyReactionStats.map((stat, index) => (
+              <LinuxDoReactionPill compact key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
+            ))}
+          </View>
+        ) : null}
+        {canUseXiaoyinsiPostActions ? (
+          <View style={styles.replyActionRow}>
+            {canWrite ? <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} /> : null}
+            {reply.canEdit ? <DetailActionButton alignStart accessibilityLabel="编辑回复" icon={Pencil} label="编辑" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onEditReply(reply)} /> : null}
+            {reply.canLike === true || reply.liked ? <DetailActionButton alignStart active={Boolean(reply.liked)} tone="success" accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : null}
+            {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -474,6 +502,7 @@ export function ReplyItem({
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
     previous.actionBusy !== next.actionBusy
+    || previous.canUseXiaoyinsiActions !== next.canUseXiaoyinsiActions
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
     || previous.isActionPending !== next.isActionPending

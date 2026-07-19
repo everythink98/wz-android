@@ -168,7 +168,7 @@ describe('linux.do AI search controller', () => {
       await hook.result.current.runSearch({ query: 'codex', source: 'all' });
     });
 
-    expect(searchTopics).toHaveBeenCalledTimes(4);
+    expect(searchTopics).toHaveBeenCalledTimes(5);
     expect(showLinuxDoVerification).not.toHaveBeenCalled();
   });
 

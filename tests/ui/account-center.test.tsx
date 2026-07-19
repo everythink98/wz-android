@@ -80,7 +80,7 @@ describe('Account center user authentication', () => {
       />
     );
 
-    expect(view.getByText('待处理 2 · 网站登录 1/3 · 自动填入 1/3')).toBeTruthy();
+    expect(view.getByText('待处理 2 · 网站登录 1/4 · 自动填入 1/3')).toBeTruthy();
     expect(view.getByText('Alice · 已登录')).toBeTruthy();
     await fireEvent.press(view.getByLabelText('查看主页'));
     expect(onCommand).toHaveBeenLastCalledWith({ type: 'open-user', user: currentUser });

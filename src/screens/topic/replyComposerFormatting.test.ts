@@ -40,9 +40,10 @@ describe('reply composer formatting', () => {
     })).toBe('[quote]引用[/quote]');
   });
 
-  it('shows heading only for Markdown reply sources', () => {
+  it('[REG-XIAOYINSI-002] shows the Markdown toolbar for 小隐寺 without changing non-Markdown sources', () => {
     expect(replyComposerToolbarItems('linuxdo').map((item) => item.type === 'format' ? item.action : item.accessory)).toContain('heading');
     expect(replyComposerToolbarItems('nodeseek').map((item) => item.type === 'format' ? item.action : item.accessory)).toContain('heading');
+    expect(replyComposerToolbarItems('xiaoyinsi').map((item) => item.type === 'format' ? item.action : item.accessory)).toContain('heading');
     expect(replyComposerToolbarItems('yaohuo').map((item) => item.type === 'format' ? item.action : item.accessory)).not.toContain('heading');
   });
 

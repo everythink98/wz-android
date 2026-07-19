@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SEARCH_FILTERS,
   buildLinuxDoSearchQuery,
+  buildXiaoyinsiSearchQuery,
+  filterSearchResponseItems,
   linuxDoSearchFilterError,
   searchFilterSummary
 } from './searchFilters';
@@ -9,6 +11,7 @@ import type { Category } from './types';
 
 const categories: Category[] = [
   { source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' },
+  { source: 'xiaoyinsi', id: '9', name: '闲聊', slug: 'chat' },
   { source: 'nodeseek', id: 'daily', name: '日常' },
   { source: 'yaohuo', id: '177', name: '妖火茶馆' }
 ];
@@ -121,5 +124,36 @@ describe('Android search site filters', () => {
       minViews: 1000,
       maxViews: 100
     })).toBe('浏览量最小值不能大于最大值');
+  });
+
+  it('builds the standard Discourse advanced filters confirmed by the 小隐寺 search UI', () => {
+    expect(buildXiaoyinsiSearchQuery('寺内', {
+      ...DEFAULT_SEARCH_FILTERS.xiaoyinsi,
+      scope: 'title',
+      category: '9',
+      tags: ['公告', '反馈'],
+      tagMatch: 'all',
+      visited: ['seen', 'bookmarks'],
+      status: 'solved',
+      username: 'alice',
+      dateRelation: 'before',
+      date: '2026-07-01',
+      minPosts: 1,
+      maxPosts: 20,
+      minViews: 10,
+      maxViews: 200,
+      order: 'latest'
+    }, categories)).toBe(
+      '寺内 in:title category:9 tags:公告+反馈 in:seen in:bookmarks status:solved @alice before:2026-07-01 min_posts:1 max_posts:20 min_views:10 max_views:200 order:latest'
+    );
+  });
+
+  it('[REG-XIAOYINSI-006] keeps child-category results returned by a 小隐寺 parent-category search', () => {
+    const items = [
+      { title: '父分类主题', categoryId: '4' },
+      { title: '子分类主题', categoryId: '15' }
+    ];
+
+    expect(filterSearchResponseItems(items, { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi, category: '4' }, '主题')).toEqual(items);
   });
 });

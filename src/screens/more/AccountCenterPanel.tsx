@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Alert, Keyboard, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ChevronRight, RefreshCw, User } from 'lucide-react-native';
 import { CredentialVaultError } from '../../credentialVault';
+import type { CredentialSite } from '../../credentialVault';
 import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
 import type { UserProfile } from '../../types';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
@@ -18,8 +19,8 @@ export type AccountCenterCommand =
   | { type: 'open-user'; user: UserProfile }
   | { type: 'open-login'; site: SessionSite }
   | { type: 'open-login-with-fill'; site: SessionSite }
-  | { type: 'save-credential'; site: SessionSite; account: string; password: string; allowUnprotected?: boolean }
-  | { type: 'delete-credential'; site: SessionSite };
+  | { type: 'save-credential'; site: CredentialSite; account: string; password: string; allowUnprotected?: boolean }
+  | { type: 'delete-credential'; site: CredentialSite };
 
 type CommandHandler = (command: AccountCenterCommand) => void | Promise<void>;
 type AccountCenterStyles = ReturnType<typeof createAccountCenterStyles>;
@@ -206,6 +207,7 @@ function messageFromError(error: unknown) {
 
 function CredentialEditor({
   active,
+  site,
   view,
   accountStyles,
   styles,
@@ -213,6 +215,7 @@ function CredentialEditor({
   onCommand
 }: {
   active: boolean;
+  site: CredentialSite;
   view: SiteAccountView;
   accountStyles: AccountCenterStyles;
   styles: ReturnType<typeof createStyles>;
@@ -273,7 +276,7 @@ function CredentialEditor({
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       await onCommand({
         type: 'save-credential',
-        site: view.site,
+        site,
         account,
         password,
         ...(allowUnprotected ? { allowUnprotected: true } : {})
@@ -310,7 +313,7 @@ function CredentialEditor({
           style: 'destructive',
           onPress: () => {
             setBusy(true);
-            void Promise.resolve(onCommand({ type: 'delete-credential', site: view.site }))
+            void Promise.resolve(onCommand({ type: 'delete-credential', site }))
               .then(() => {
                 clearDraft();
                 setEditing(false);
@@ -560,16 +563,19 @@ export function AccountCenterPanel({
               />
             ) : null}
           </View>
-          <CredentialEditor
-            key={selectedView.site}
-            active={expanded && forcedSite !== selectedView.site}
-            view={selectedView}
-            accountStyles={accountStyles}
-            styles={styles}
-            theme={theme}
-            onCommand={onCommand}
-          />
-          {loggedIn ? (
+          {selectedView.site !== 'xiaoyinsi' ? (
+            <CredentialEditor
+              key={selectedView.site}
+              active={expanded && forcedSite !== selectedView.site}
+              site={selectedView.site}
+              view={selectedView}
+              accountStyles={accountStyles}
+              styles={styles}
+              theme={theme}
+              onCommand={onCommand}
+            />
+          ) : null}
+          {loggedIn && selectedView.supportsCredentialFill ? (
             <View style={accountStyles.secondaryActions}>
               <AccountAction
                 compact

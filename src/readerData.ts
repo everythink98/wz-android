@@ -45,13 +45,14 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
-const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo'] as const;
+const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'] as const;
 const sensitiveUrlParamPattern = /(^|[^a-z0-9])(cookie|token|password|secret|authorization|auth|session|sidyaohuo|sid|csrf)([^a-z0-9]|$)/i;
 const sourceBaseUrls: Record<Source, string> = {
   v2ex: 'https://www.v2ex.com',
   linuxdo: 'https://linux.do',
   nodeseek: 'https://www.nodeseek.com',
-  yaohuo: 'https://www.yaohuo.me'
+  yaohuo: 'https://www.yaohuo.me',
+  xiaoyinsi: 'https://forum.xiaoyinsi.com'
 };
 const defaultReaderSettings: ReaderSettings = {
   listDensity: 'standard',

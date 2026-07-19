@@ -92,6 +92,8 @@ describe('account status diagnostics', () => {
     });
 
     const dispatchSiteSessionEvent = vi.fn();
+    const notify = vi.fn();
+    const refreshXiaoyinsiAuthorization = vi.fn(async () => null);
     const controller = useAccountStatusController({
       clearYaohuoLoginState: vi.fn(async () => undefined),
       currentYaohuoCredentialGeneration: vi.fn(() => 5),
@@ -104,7 +106,8 @@ describe('account status diagnostics', () => {
         return nodeSeekSecret;
       }),
       nodeSeekUserAgentRef: { current: 'safe-agent' },
-      notify: vi.fn(),
+      notify,
+      refreshXiaoyinsiAuthorization,
       resetLinuxDoLevelState: vi.fn(),
       saveNodeSeekCookieHeader: vi.fn(async () => nodeSeekSecret)
     });
@@ -122,8 +125,10 @@ describe('account status diagnostics', () => {
     ]));
     expect(new Set(parentEvents.map((event) => event.traceId)).size).toBe(1);
     expect(parentEvents.filter((event) => event.phase === 'finish')).toEqual([
-      expect.objectContaining({ area: 'session', outcome: 'partial', partialErrorCount: 1 })
+      expect.objectContaining({ area: 'session', outcome: 'partial', partialErrorCount: 2 })
     ]);
+    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith('账号状态部分刷新失败：NodeSeek、小隐寺');
     expect(dispatchSiteSessionEvent).toHaveBeenCalledTimes(3);
     expect(lines.join('')).not.toMatch(new RegExp([
       nodeSeekSecret,
@@ -141,6 +146,8 @@ describe('account status diagnostics', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
     const linuxDoCheck = Promise.withResolvers<{ ok: boolean; loginRequired: boolean }>();
+    const xiaoyinsiCheck = Promise.withResolvers<boolean | null>();
+    const refreshXiaoyinsiAuthorization = vi.fn(() => xiaoyinsiCheck.promise);
     mocks.getItemAsync.mockResolvedValue(null);
     mocks.currentLinuxDoAccessGeneration.mockReturnValue(2);
     mocks.loadLinuxDoAccess.mockResolvedValue({
@@ -161,15 +168,18 @@ describe('account status diagnostics', () => {
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgentRef: { current: 'safe-agent' },
       notify: vi.fn(),
+      refreshXiaoyinsiAuthorization,
       resetLinuxDoLevelState: vi.fn(),
       saveNodeSeekCookieHeader: vi.fn(async () => '')
     });
 
     const activeRefresh = controller.refreshAccountStatus();
     await vi.waitFor(() => expect(mocks.checkLinuxDoLoginAccess).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1));
     await controller.refreshAccountStatus();
     controller.abortAccountStatusRequests();
     linuxDoCheck.resolve({ ok: true, loginRequired: false });
+    xiaoyinsiCheck.resolve(false);
     await activeRefresh;
 
     const terminalEvents = lines
@@ -211,6 +221,7 @@ describe('account status diagnostics', () => {
       loadNodeSeekCookieForSource: vi.fn(async () => undefined),
       nodeSeekUserAgentRef: { current: 'safe-agent' },
       notify: vi.fn(),
+      refreshXiaoyinsiAuthorization: vi.fn(async () => false),
       resetLinuxDoLevelState: vi.fn(),
       saveNodeSeekCookieHeader: vi.fn(async () => '')
     });

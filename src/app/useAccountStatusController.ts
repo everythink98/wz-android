@@ -44,6 +44,7 @@ export function useAccountStatusController({
   fetcher,
   nodeSeekUserAgentRef,
   notify,
+  refreshXiaoyinsiAuthorization,
   resetLinuxDoLevelState,
   saveNodeSeekCookieHeader,
   dispatchSiteSessionEvent
@@ -56,6 +57,7 @@ export function useAccountStatusController({
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
+  refreshXiaoyinsiAuthorization: () => Promise<boolean | null>;
   resetLinuxDoLevelState: () => void;
   saveNodeSeekCookieHeader: (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
@@ -163,18 +165,20 @@ export function useAccountStatusController({
           });
         })
         : Promise.resolve(null);
+      const xiaoyinsiAuthorizationPromise = refreshXiaoyinsiAuthorization();
       markDiagnosticStage(trace, 'transport', {
         source: 'all',
         channel: 'direct',
         state: 'start',
-        count: 5
+        count: 6
       });
-      const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck] = await Promise.allSettled([
+      const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck, xiaoyinsiAuthorizationCheck] = await Promise.allSettled([
         yaohuoStatusPromise,
         linuxDoLoginPromise,
         nodeSeekCurrentUserPromise,
         linuxDoCurrentUserPromise,
-        yaohuoCurrentUserPromise
+        yaohuoCurrentUserPromise,
+        xiaoyinsiAuthorizationPromise
       ] as const);
       if (controller.signal.aborted) {
         finishTrace('canceled', { reason: 'canceled' });
@@ -189,7 +193,8 @@ export function useAccountStatusController({
           linuxDoLoginCheck,
           nodeSeekCurrentUserCheck,
           linuxDoCurrentUserCheck,
-          yaohuoCurrentUserCheck
+          yaohuoCurrentUserCheck,
+          xiaoyinsiAuthorizationCheck
         ].filter((result) => result.status === 'rejected').length
       });
       const failedSites: string[] = [];
@@ -348,6 +353,9 @@ export function useAccountStatusController({
           at: checkedAt
         });
       }
+      if (xiaoyinsiAuthorizationCheck.status === 'rejected' || xiaoyinsiAuthorizationCheck.value === null) {
+        failedSites.push('小隐寺');
+      }
       const uniqueFailedSites = Array.from(new Set(failedSites));
       markDiagnosticStage(trace, 'apply', {
         source: 'all',
@@ -389,6 +397,7 @@ export function useAccountStatusController({
     loadNodeSeekCookieForSource,
     nodeSeekUserAgentRef,
     notify,
+    refreshXiaoyinsiAuthorization,
     resetLinuxDoLevelState,
     saveNodeSeekCookieHeader
   ]);

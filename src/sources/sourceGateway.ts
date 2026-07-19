@@ -18,6 +18,11 @@ import {
   searchLinuxDoTags as searchLinuxDoTagsDirect,
   searchLinuxDoUsers as searchLinuxDoUsersDirect
 } from '../localLinuxdo';
+import {
+  searchXiaoyinsiTags as searchXiaoyinsiTagsDirect,
+  searchXiaoyinsiUsers as searchXiaoyinsiUsersDirect,
+  type XiaoyinsiApiCredentials
+} from '../localXiaoyinsi';
 import { REQUEST_CANCELED_MESSAGE, type Fetcher } from '../request';
 import { sourceErrorFromUnknown } from '../sourceErrors';
 import {
@@ -150,21 +155,27 @@ type SourceGatewayDependencies = {
   hasLinuxDoCredentialForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<boolean>;
   loadNodeSeekCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
   loadYaohuoCookieForSource: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<string | undefined>;
+  loadXiaoyinsiCredentialsForSource?: (source: FeedSource, options?: SourceGatewayCredentialLoadOptions) => Promise<XiaoyinsiApiCredentials | undefined>;
   nodeSeekUserAgent: () => string;
+  refreshXiaoyinsiAuthorization?: () => Promise<boolean | null>;
 };
 
 type GetCategoriesOptions = NonNullable<Parameters<typeof getForumCategories>[0]>;
 type GetReplyOptions = Parameters<typeof getForumReply>[0];
-type ManagedReadKeys = 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie';
+type ManagedReadKeys = 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie' | 'xiaoyinsiCredentials';
 type ManagedGetCategoriesOptions = Omit<GetCategoriesOptions, ManagedReadKeys>;
 type ManagedGetFeedOptions = Omit<GetFeedOptions, ManagedReadKeys>;
 type ManagedSearchTopicsOptions = Omit<SearchTopicsOptions, ManagedReadKeys>;
 type ManagedGetTopicOptions = Omit<GetTopicOptions, ManagedReadKeys>;
 type ManagedGetRepliesOptions = Omit<GetRepliesOptions, ManagedReadKeys>;
-type ManagedGetReplyOptions = Omit<GetReplyOptions, 'fetcher'>;
-type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, 'fetcher' | 'nodeSeekCookie' | 'nodeSeekUserAgent' | 'yaohuoCookie'>;
-type ManagedTagOptionSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoTagsDirect>[0]>, 'fetcher'> & { source: 'linuxdo' };
-type ManagedUserOptionSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoUsersDirect>[0]>, 'fetcher'> & { source: 'linuxdo' };
+type ManagedGetReplyOptions = Omit<GetReplyOptions, ManagedReadKeys>;
+type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, ManagedReadKeys>;
+type ManagedTagOptionSearchOptions =
+  | (Omit<NonNullable<Parameters<typeof searchLinuxDoTagsDirect>[0]>, 'fetcher'> & { source: 'linuxdo' })
+  | (Omit<NonNullable<Parameters<typeof searchXiaoyinsiTagsDirect>[0]>, 'credentials' | 'fetcher'> & { source: 'xiaoyinsi' });
+type ManagedUserOptionSearchOptions =
+  | (Omit<NonNullable<Parameters<typeof searchLinuxDoUsersDirect>[0]>, 'fetcher'> & { source: 'linuxdo' })
+  | (Omit<NonNullable<Parameters<typeof searchXiaoyinsiUsersDirect>[0]>, 'credentials' | 'fetcher'> & { source: 'xiaoyinsi' });
 type ManagedSemanticTopicSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>, 'fetcher'> & { query: string; source: 'linuxdo' };
 export type SourceGatewayReadContext = {
   isCurrent?: () => boolean;
@@ -219,10 +230,12 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
     nodeSeekCookie?: string;
     nodeSeekUserAgent?: string;
     yaohuoCookie?: string;
+    xiaoyinsiCredentials?: XiaoyinsiApiCredentials;
   }) => Promise<T>, context?: SourceGatewayReadContext) => {
     const ownsTrace = !context?.trace;
     const trace = context?.trace || beginDiagnosticTrace('source', operationName, { source });
     let yaohuoGeneration: number | undefined;
+    let hasXiaoyinsiCredentials = false;
     try {
       let hasLinuxDoCredential = false;
       let isLinuxDoCredentialKnown: boolean | undefined;
@@ -245,9 +258,13 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
           diagnosticTrace: trace
         })
         : undefined;
+      const xiaoyinsiCredentials = source === 'xiaoyinsi' || source === 'all'
+        ? await dependencies.loadXiaoyinsiCredentialsForSource?.(source, { diagnosticTrace: trace })
+        : undefined;
+      hasXiaoyinsiCredentials = Boolean(xiaoyinsiCredentials);
       markDiagnosticStage(trace, 'credential', {
         source,
-        hasCredential: Boolean(hasLinuxDoCredential || nodeSeekCookie?.trim() || yaohuoCookie?.trim()),
+        hasCredential: Boolean(hasLinuxDoCredential || nodeSeekCookie?.trim() || yaohuoCookie?.trim() || xiaoyinsiCredentials),
         ...(isLinuxDoCredentialKnown !== undefined ? { isCredentialKnown: isLinuxDoCredentialKnown } : {}),
         ...(linuxDoCredentialReason ? { reason: linuxDoCredentialReason } : {})
       });
@@ -256,8 +273,23 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         fetcher: withDiagnosticFetcher(trace, dependencies.fetcher),
         nodeSeekCookie,
         nodeSeekUserAgent: source === 'nodeseek' || source === 'all' ? dependencies.nodeSeekUserAgent() : undefined,
-        yaohuoCookie
+        yaohuoCookie,
+        xiaoyinsiCredentials
       });
+      const resultRecord = result && typeof result === 'object' ? result as Record<string, unknown> : {};
+      const resultErrors = resultRecord.errors && typeof resultRecord.errors === 'object'
+        ? resultRecord.errors as Record<string, unknown>
+        : {};
+      const xiaoyinsiResultError = resultErrors.xiaoyinsi && typeof resultErrors.xiaoyinsi === 'object'
+        ? resultErrors.xiaoyinsi as { kind?: unknown }
+        : null;
+      if (
+        hasXiaoyinsiCredentials
+        && context?.isCurrent?.() !== false
+        && (xiaoyinsiResultError?.kind === 'login-expired' || xiaoyinsiResultError?.kind === 'permission-denied')
+      ) {
+        await dependencies.refreshXiaoyinsiAuthorization?.().catch(() => false);
+      }
       const summary = summarizeReadResult(result);
       markDiagnosticStage(trace, 'parse', { source, ...summary });
       const parseEmpty = summary.isParseEmpty === true;
@@ -289,6 +321,14 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       const sourceError = sourceErrorFromUnknown(source, error);
       if (source === 'yaohuo' && sourceError.kind === 'login-expired' && context?.isCurrent?.() !== false) {
         await dependencies.clearYaohuoLoginState({ generation: yaohuoGeneration });
+      }
+      if (
+        source === 'xiaoyinsi'
+        && hasXiaoyinsiCredentials
+        && context?.isCurrent?.() !== false
+        && (sourceError.kind === 'login-expired' || sourceError.kind === 'permission-denied')
+      ) {
+        await dependencies.refreshXiaoyinsiAuthorization?.().catch(() => false);
       }
       if (ownsTrace) {
         const reason = normalizeDiagnosticReason(error);
@@ -327,17 +367,31 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         ...credentials
       }), context);
     },
-    searchTagOptions({ source, ...options }: ManagedTagOptionSearchOptions, context?: SourceGatewayReadContext) {
-      return read(source, 'searchTagOptions', ({ fetcher }) => searchLinuxDoTagsDirect({
-        ...options,
-        fetcher
-      }), context);
+    searchTagOptions(request: ManagedTagOptionSearchOptions, context?: SourceGatewayReadContext) {
+      const { source, ...options } = request;
+      return source === 'xiaoyinsi'
+        ? read(source, 'searchTagOptions', ({ fetcher, xiaoyinsiCredentials }) => searchXiaoyinsiTagsDirect({
+          ...options,
+          credentials: xiaoyinsiCredentials,
+          fetcher
+        }), context)
+        : read(source, 'searchTagOptions', ({ fetcher }) => searchLinuxDoTagsDirect({
+          ...options,
+          fetcher
+        }), context);
     },
-    searchUserOptions({ source, ...options }: ManagedUserOptionSearchOptions, context?: SourceGatewayReadContext) {
-      return read(source, 'searchUserOptions', ({ fetcher }) => searchLinuxDoUsersDirect({
-        ...options,
-        fetcher
-      }), context);
+    searchUserOptions(request: ManagedUserOptionSearchOptions, context?: SourceGatewayReadContext) {
+      const { source, ...options } = request;
+      return source === 'xiaoyinsi'
+        ? read(source, 'searchUserOptions', ({ fetcher, xiaoyinsiCredentials }) => searchXiaoyinsiUsersDirect({
+          ...options,
+          credentials: xiaoyinsiCredentials,
+          fetcher
+        }), context)
+        : read(source, 'searchUserOptions', ({ fetcher }) => searchLinuxDoUsersDirect({
+          ...options,
+          fetcher
+        }), context);
     },
     searchSemanticTopics({ query, source, ...options }: ManagedSemanticTopicSearchOptions, context?: SourceGatewayReadContext) {
       return read(source, 'searchSemanticTopics', ({ fetcher }) => searchLinuxDoSemanticDirect(query, {
@@ -358,9 +412,9 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
       }), context);
     },
     getReply(options: ManagedGetReplyOptions, context?: SourceGatewayReadContext) {
-      return read(options.source, 'getReply', ({ fetcher }) => getForumReply({
+      return read(options.source, 'getReply', (credentials) => getForumReply({
         ...options,
-        fetcher
+        ...credentials
       }), context);
     },
     getUserProfile(options: ManagedGetUserProfileOptions, context?: SourceGatewayReadContext) {

@@ -30,6 +30,7 @@
       "./plugins/withAndroidReleaseDefaults",
       "./plugins/withApkInstaller",
       "./plugins/withLinuxDoCookieModule",
+      "./plugins/withXiaoyinsiAuthModule",
       "./plugins/withNetworkProxyModule",
       [
         "expo-media-library",
@@ -39,7 +40,12 @@
           ]
         }
       ],
-      "expo-secure-store",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ],
       "expo-video",
       "@react-native-community/datetimepicker"
     ]

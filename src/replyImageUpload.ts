@@ -22,7 +22,7 @@ type NodeImageUploadError = Error & { nodeImageApiKeyExpired?: boolean };
 type NodeImageApiKeyProvider = (options?: { forceRefresh?: boolean }) => Promise<string | null | undefined>;
 
 export function replyImageUploadSupported(source?: Source) {
-  return source === 'linuxdo' || source === 'yaohuo' || source === 'nodeseek';
+  return source === 'linuxdo' || source === 'xiaoyinsi' || source === 'yaohuo' || source === 'nodeseek';
 }
 
 export function normalizeReplyImageAsset(asset: ReplyImageAsset): NormalizedReplyImageAsset {

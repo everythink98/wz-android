@@ -11,7 +11,7 @@
 
 ## 当前范围
 
-本仓库是阅坛 Android App。App 面向 NodeSeek、linux.do、V2EX 和妖火，提供本地优先的多网站发现、搜索、续读和必要互动能力。四站共享阅读主干，互动能力按原站真实支持范围提供，不要求对齐。
+本仓库是阅坛 Android App。App 面向 NodeSeek、linux.do、V2EX、妖火和小隐寺，提供本地优先的多网站发现、搜索、续读和必要互动能力。五站共享阅读主干，互动能力按原站真实支持范围提供，不要求对齐。
 
 ## 主要结构
 
@@ -21,7 +21,7 @@
 | `src/app/AppRoot.tsx` | App 根组件，组合控制器、主题、导航、Provider、全局弹层、隐藏 WebView 和页面参数 |
 | `src/app/useDeferredNavigationTask.ts` | AppRoot 的延迟导航时机，避免把 `InteractionManager` 细节留在根组件里 |
 | `src/app/use*Controller.ts` | 首页、搜索、详情、用户、账号、会话、验证、备份等运行逻辑 |
-| `src/sources/sourceGateway.ts` | App 统一来源读取入口，隐藏四站读取 adapter 差异 |
+| `src/sources/sourceGateway.ts` | App 统一来源读取入口，隐藏五站读取 adapter 差异 |
 | `src/forumApi.ts`、`src/yaohuoApi.ts` | 当前读取实现，位于 `sourceGateway` 后面 |
 | 站点 action client | 当前写入实现，由 `useTopicActionsController` 按来源和 capability 调用 |
 | `src/screens/` | 首页、搜索、收藏、更多、用户页和详情页导出入口 |
@@ -34,15 +34,15 @@
 | `src/theme.ts` | 主题兼容入口，继续保持原导出 |
 | `src/themeCore.ts` | 主题类型、颜色、字号和样式辅助函数 |
 | `src/themeStyles.ts`、`src/themeParts.ts` | `createStyles` 和拆分后的样式分组 |
-| `src/local*.ts` | 四站本机来源读取与解析 |
-| `plugins/` | Expo config plugin，持久化 Android 原生配置；服务器代理原生模块由 `plugins/withNetworkProxyModule.js` 生成 |
+| `src/local*.ts` | 五站本机来源读取与解析；`localXiaoyinsi` 保持独立于 linux.do 的 Cookie / Cloudflare 逻辑 |
+| `plugins/` | Expo config plugin，持久化 Android 原生配置；服务器代理与小隐寺 Keystore 原生模块分别由对应 plugin 生成 |
 | `scripts/` | 文档检查、Android smoke、release 打包与版本检查脚本 |
 
 ## 来源边界
 
-- App controller 通过 `src/sources/sourceGateway.ts` 的 `getFeed`、`searchTopics`、`getTopic`、`getReplies` 和用户资料 interface 读取四站数据。
-- 四站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 在 module 内组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation 和妖火失效清理；controller 只传业务参数和请求归属上下文，不再接触这些来源细节。
-- NodeSeek、linux.do 和妖火的互动请求目前仍由 `useTopicActionsController` 按来源调用各站 action client；迁移写路径时再逐项进入 gateway，不用一次性改请求格式。
+- App controller 通过 `src/sources/sourceGateway.ts` 的 `getFeed`、`searchTopics`、`getTopic`、`getReplies` 和用户资料 interface 读取五站数据。
+- 五站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 在 module 内组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation、妖火失效清理和小隐寺 User API headers；controller 只传业务参数和请求归属上下文，不再接触这些来源细节。
+- NodeSeek、linux.do、妖火和小隐寺的互动请求由 `useTopicActionsController` 按来源调用各站独立 action client；小隐寺只使用 `User-Api-Key` / `User-Api-Client-Id`，不引用 linux.do Cookie、CSRF 或 Cloudflare 逻辑。
 - App controller 使用不带 `Direct` 和站点前缀的通用读取入口；妖火的 `Direct` 命名只保留在 gateway 后的来源实现。
 - `sourceGateway` 内部仍转发到 `src/forumApi.ts` 和 `src/yaohuoApi.ts`；各站 action client 暂时是独立写入边界。
 - `src/forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
@@ -59,14 +59,15 @@
 
 - 首页聚合页只显示阅读筛选：`全部`、`未读`、`已读`、`收藏`。
 - linux.do 单站分类行右侧显示排序菜单，支持 `最新`、`热门`、`新·所有`、`新·话题`、`新·回复`；分类和排序同时进入请求 key，避免列表缓存串用。
+- 小隐寺单站支持 `最新`、`热门`、`新·所有`、`新·话题`、`新·回复`，分类和排序状态与 linux.do 完全隔离；标准 Discourse 能力可以共享查询语义，但请求、凭据和资源仍走小隐寺 adapter。
 - NodeSeek 单站在未选分类时支持 `新帖子`、`新评论`；V2EX 单站在未选分类时支持 `全部`、`最新`、`最热`。
 - 新增首页筛选状态应先放进 `src/feedCategoryRail.ts`，再通过 `src/app/useFeedController.ts` 进入 `getFeed`。
 
 ## 账号中心
 
-- More 页只有一个 `账号中心`，由 `src/screens/MoreScreen.tsx`、`src/screens/more/AccountCenterPanel.tsx` 和 `src/screens/more/accountCenter.ts` 承载；三站共用会话、身份、凭据摘要和主操作视图，同一时间只展开一个站点。
-- 账号中心顶部只有一个公共 `刷新账号状态`，一次刷新三站；主页、登录 / 验证、检测、清除登录、刷新网页、NodeImage、签到和 linux.do 等级等原入口仍按站点进入。测试工具、代理、诊断、备份和外观保持独立。
-- `src/credentialVault.ts` 使用现有 SecureStore 按站点隔离账号密码；`src/loginFormAdapters.ts` 只允许在三站声明的可信登录 URL 和字段上主动填入，触发输入事件但不提交。
+- More 页只有一个 `账号中心`，由 `src/screens/MoreScreen.tsx`、`src/screens/more/AccountCenterPanel.tsx` 和 `src/screens/more/accountCenter.ts` 承载；NodeSeek、linux.do、妖火和小隐寺共用会话、身份和主操作视图，同一时间只展开一个站点。
+- 账号中心顶部只有一个公共 `刷新账号状态`，一次刷新四个可登录来源；原三站主页、登录 / 验证、检测、清除登录、刷新网页、NodeImage、签到和 linux.do 等级入口保持不变。小隐寺已授权时显示本人主页、授权管理和底部独立的“查看等级”入口，未授权时显示 Device Code 授权。测试工具、代理、诊断、备份和外观保持独立。
+- `src/credentialVault.ts` 使用现有 SecureStore 按站点隔离原三站账号密码；`src/loginFormAdapters.ts` 只允许在这三站声明的可信登录 URL 和字段上主动填入，触发输入事件但不提交。小隐寺不保存或填入 Google / Discord 账号密码。
 - 网站 Cookie 与保存的账号密码是两套独立数据：清除网站登录不删除凭据，删除凭据也不退出当前网站登录。
 - More 页 `服务器代理` 由 `src/screens/more/NetworkProxyModal.tsx` 承载，配置 HTTP / SOCKS5 代理并可测试延迟。
 - `src/app/useAccountStatusController.ts` 负责 `refreshAccountStatus`；`src/app/useBackupStatusController.ts` 只负责备份导入导出。`AppRoot` 在本机资料加载完成后静默刷新一次，手动刷新才提示结果。
@@ -75,6 +76,8 @@
 - `SiteSessionState` 是账号中心和登录弹层的唯一登录状态来源；NodeSeek 的 WebView userId 只在 session 已登录时补充身份，不能覆盖已失效、匿名或需要验证状态。
 - NodeSeek 当前账号由账号刷新读取，普通请求优先，失败再 WebView 兜底；兜底 userId 只来自本次凭据，不使用旧页面状态。确定未登录的 session event 会清理运行时身份提示，普通 `check-failed` 不会误判退出。
 - linux.do 验证弹层由 `src/app/LinuxDoVerifyModal.tsx` 和全局 modal host 承载。
+- 小隐寺由 `src/app/useXiaoyinsiAuthController.ts` 驱动独立 Device Code 状态机：App 生成安装级 Client ID、单次 nonce 与 Android Keystore RSA 密钥；系统浏览器只承载一次性 Google / Discord 身份确认和站点授权页，不提供 Cookie 或 App 登录态。App 前台轮询并在解密后校验 nonce，之后只以 User API Key、Client ID 和 `/session/current.json` 维护身份。待授权状态可在十分钟内跨进程恢复，后台暂停轮询。
+- 小隐寺 User API Key、Client ID 与短期待授权状态使用独立 SecureStore key；RSA 私钥不导出 Keystore。撤销先请求原站，成功后才删除本机授权材料；站点不支持 Device Code 时继续匿名读取，不降级到 WebView Cookie 登录。
 
 ## 服务器代理
 
@@ -96,6 +99,7 @@
 - NodeSeek 编辑自己的回复使用原站真实评论 id；当前回复和编辑请求未传 token 时，由 `src/nodeseekActions.ts` 生成 16 位 `csrf-token`。
 - NodeSeek 图片上传通过 NodeImage；App 可从 NodeImage 授权页获取并缓存当前用户自己的 API Key，也保留手动粘贴备用入口。
 - linux.do 图片上传走原站 `/uploads.json`；妖火图片上传走图床并插入 UBB 图片标签。
+- 小隐寺图片上传走原站 `/uploads.json`；点赞、书签和投票经服务器确认后局部更新，删除先本地移除再定向静默刷新回复，回复与编辑只刷新对应回复数据；不做未确认的乐观计数或权限推断，Live 验收再通过刷新或重进核对服务器状态。
 - 删除回复只在来源解析出明确权限时显示：linux.do 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。
 
 ## 收藏页
@@ -105,7 +109,7 @@
 
 ## 数据边界
 
-- Cookie 只保存在 Android 本机安全存储。
+- Cookie 和小隐寺 User API 凭据只保存在 Android 本机安全存储；小隐寺 RSA 私钥只存在 Android Keystore。
 - 服务器代理地址、用户名和密码只保存在 Android 本机安全存储。
 - 搜索历史保存在 `AsyncStorage`，最多 20 条，单条最多 120 字符。
 - 本机资料只通过当前版本 JSON 备份 / 恢复迁移；导入会限制 JSON 大小和嵌套深度。
@@ -115,5 +119,5 @@
 
 - `App.tsx`、`src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是稳定入口或兼容 facade；保持现有导出，不把实现重新堆回入口文件。
 - `android/` 是生成目录；Android 长期配置通过 `app.json` 与 `plugins/` 持久化。
-- 不改变备份 JSON、安全存储键、Cookie、代理、签名或更新 manifest 格式，除非有单独迁移方案和兼容验证。
+- 不改变备份 JSON、安全存储键、Cookie、User API Key、代理、签名或更新 manifest 格式，除非有单独迁移方案和兼容验证。
 - 技术债务按 [用户旅程技术债务清单](code-cleanup-map.md) 分批处理，不以目录、文件大小或代码行数作为清理优先级。

@@ -1732,6 +1732,6 @@ describe('Android local forum facade', () => {
     expect(result.items).toEqual([]);
     expect(result.hasMore).toBe(false);
     expect(result.nextCursor).toBeUndefined();
-    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex']);
+    expect(Object.keys(result.errors || {})).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'xiaoyinsi']);
   });
 });

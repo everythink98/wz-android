@@ -82,7 +82,7 @@ export const FeedScreen = memo(function FeedScreen({
   const feedNavigationState = useMemo(() => ({ index: pagerIndex, routes: FEED_PAGER_ROUTES }), [pagerIndex]);
   const showFeedFilter = shouldUseFeedFilter(feedSource, categoryFilter);
   const activeFeedFilterLabel = feedFilterLabel(feedSource, feedFilter);
-  const activeFeedFilterMenuGroups = showFeedFilter && (feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'v2ex')
+  const activeFeedFilterMenuGroups = showFeedFilter && (feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'v2ex' || feedSource === 'xiaoyinsi')
     ? feedFilterMenuGroups[feedSource]
     : [];
 

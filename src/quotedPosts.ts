@@ -46,6 +46,17 @@ export function linuxDoQuotedPostReferenceFromAttributes(
   );
 }
 
+export function xiaoyinsiQuotedPostReferenceFromAttributes(
+  attributes: Record<string, string | undefined>,
+  fallbackTopicId?: string
+): QuotedPostReference | null {
+  return quotedPostReferenceFromReply(
+    'xiaoyinsi',
+    attributes['data-topic'] || fallbackTopicId,
+    positivePostNumber(attributes['data-post']) || undefined
+  );
+}
+
 export function quotedPostReferenceKey(reference: QuotedPostReference) {
   return `${reference.source}:${reference.topicId}:${reference.postNumber}`;
 }

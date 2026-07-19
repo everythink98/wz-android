@@ -23,12 +23,19 @@ export function isLinuxDoActionTopic(topic: TopicActionTopic | null): topic is T
   return topic?.source === 'linuxdo';
 }
 
+export function isXiaoyinsiActionTopic(topic: TopicActionTopic | null): topic is TopicActionTopic & { source: 'xiaoyinsi' } {
+  return topic?.source === 'xiaoyinsi';
+}
+
 export function canSubmitReplyToTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
+  if (isXiaoyinsiActionTopic(topic)) {
+    return topic.canCreatePost === true;
+  }
   return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo']);
 }
 
 export function canVotePollOnTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
-  return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo']);
+  return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']);
 }
 
 export function topicReplyActionKey(topicKey: string) {

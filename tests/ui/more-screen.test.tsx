@@ -90,6 +90,9 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     linuxDoLevelBusy: false,
     linuxDoLevelError: '',
     linuxDoLevelProfile: null,
+    xiaoyinsiLevelBusy: false,
+    xiaoyinsiLevelError: '',
+    xiaoyinsiLevelProfile: null,
     loadingLoginPage: false,
     loadingYaohuoLoginPage: false,
     networkProxyActiveProfile: null,
@@ -119,6 +122,7 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     onLoginFormMessage: () => false,
     onNodeSeekLoginWebViewState: jest.fn(),
     onRefreshLinuxDoLevel: jest.fn(),
+    onRefreshXiaoyinsiLevel: jest.fn(),
     onRememberNodeSeekCookies: jest.fn(async () => true),
     onSaveNodeImageApiKey: jest.fn(),
     onSelectNetworkProxyProfile: jest.fn(async () => undefined),
@@ -149,8 +153,31 @@ function moreProps(overrides: Partial<ComponentProps<typeof MoreScreen>> = {}): 
     webViewRef: { current: null },
     yaohuoLoginPrompt: '',
     yaohuoWebViewRef: { current: null },
+    xiaoyinsiAuth: {
+      message: '',
+      pending: null,
+      phase: 'idle',
+      secondsRemaining: 0,
+      onBegin: jest.fn(),
+      onCancel: jest.fn(),
+      onOpenBrowser: jest.fn(),
+      onRevoke: jest.fn()
+    },
     ...overrides
   };
+}
+
+function collectRenderedText(node: unknown): string[] {
+  if (typeof node === 'string') {
+    return [node];
+  }
+  if (Array.isArray(node)) {
+    return node.flatMap(collectRenderedText);
+  }
+  if (!node || typeof node !== 'object' || !('children' in node)) {
+    return [];
+  }
+  return collectRenderedText((node as { children?: unknown }).children);
 }
 
 describe('More screen state and actions', () => {
@@ -256,10 +283,105 @@ describe('More screen state and actions', () => {
     await fireEvent.press(view.getByLabelText('NodeSeek'));
     await fireEvent.press(view.getByLabelText('妖火'));
     await fireEvent.press(view.getByLabelText('linux.do'));
+    await fireEvent.press(view.getByLabelText('小隐寺'));
     expect(onToggleDevAnonymousOverride.mock.calls).toEqual([
       ['nodeseek'],
       ['yaohuo'],
-      ['linuxdo']
+      ['linuxdo'],
+      ['xiaoyinsi']
     ]);
+  });
+
+  it('shows the 小隐寺 Device Code, countdown and browser/cancel actions without credential fields', async () => {
+    const onCancel = jest.fn();
+    const onOpenBrowser = jest.fn();
+    const pending = {
+      deviceCode: 'd'.repeat(64),
+      userCode: 'ABCD-2345',
+      verificationUri: 'https://forum.xiaoyinsi.com/user-api-key/activate',
+      verificationUriWithRequest: 'https://forum.xiaoyinsi.com/user-api-key/activate?request=safe',
+      nonce: 'e'.repeat(64),
+      createdAt: 1_000,
+      expiresAt: 601_000,
+      intervalMs: 5_000
+    };
+    const view = await render(<MoreScreen {...moreProps({
+      xiaoyinsiAuth: {
+        ...moreProps().xiaoyinsiAuth,
+        pending,
+        phase: 'waiting',
+        secondsRemaining: 599,
+        onCancel,
+        onOpenBrowser
+      }
+    })} />);
+
+    expect(await view.findByLabelText('小隐寺授权验证码 ABCD-2345')).toBeTruthy();
+    expect(view.getByText('剩余 09:59 · 返回阅坛后会自动继续检测')).toBeTruthy();
+    expect(view.queryByPlaceholderText('账号')).toBeNull();
+    expect(view.queryByPlaceholderText('密码')).toBeNull();
+    expect(view.getByText('系统浏览器只打开一次性小隐寺授权页；阅坛登录态只由独立 User API Key 维护，不读取浏览器 Cookie，也不打开登录 WebView。')).toBeTruthy();
+    await fireEvent.press(view.getByLabelText('复制验证码并前往授权页'));
+    await fireEvent.press(view.getByLabelText('取消'));
+    expect(onOpenBrowser).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-XIAOYINSI-013][REG-XIAOYINSI-014] puts the level entry after authorization management for an authorized 小隐寺 account', async () => {
+    const onRefreshXiaoyinsiLevel = jest.fn();
+    const authorizedSessions = createSiteSessionViewModels(createSiteSessionStates({
+      xiaoyinsi: {
+        site: 'xiaoyinsi',
+        status: 'logged-in',
+        cookieSummary: [],
+        isVerifying: false,
+        currentUser: {
+          source: 'xiaoyinsi',
+          id: 'alice',
+          username: 'alice',
+          displayName: 'Alice',
+          url: 'https://forum.xiaoyinsi.com/u/alice',
+          topics: []
+        }
+      }
+    }));
+    const view = await render(<MoreScreen {...moreProps({ onRefreshXiaoyinsiLevel, sessionViewModels: authorizedSessions })} />);
+
+    await fireEvent.press(view.getByLabelText('展开账号中心'));
+    await fireEvent.press(view.getByTestId('account-site-xiaoyinsi'));
+
+    expect(view.getByText('授权管理')).toBeTruthy();
+    expect(view.getByText('User API Key 仅保存在本机，不读取浏览器 Cookie。')).toBeTruthy();
+    expect(view.getByText('查看等级')).toBeTruthy();
+    expect(view.getByLabelText('撤销授权')).toBeTruthy();
+    const renderedText = collectRenderedText(view.toJSON());
+    expect(renderedText.indexOf('撤销授权')).toBeLessThan(renderedText.indexOf('查看等级'));
+    await fireEvent.press(view.getByText('查看等级'));
+    expect(onRefreshXiaoyinsiLevel).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-XIAOYINSI-005] exposes persisted revocation cleanup before any stale logged-in controls', async () => {
+    const onBegin = jest.fn();
+    const view = await render(<MoreScreen {...moreProps({
+      sessionViewModels: {
+        ...sessionViewModels,
+        xiaoyinsi: {
+          ...sessionViewModels.xiaoyinsi,
+          isLoggedIn: true,
+          canWrite: true
+        }
+      },
+      xiaoyinsiAuth: {
+        ...moreProps().xiaoyinsiAuth,
+        message: '服务端授权已撤销，但本机安全材料清理未完成，请重试本机清理。',
+        phase: 'cleanup',
+        onBegin
+      }
+    })} />);
+
+    await fireEvent.press(await view.findByLabelText('重试本机清理'));
+    expect(view.queryByLabelText('重新授权')).toBeNull();
+    expect(view.queryByLabelText('撤销授权')).toBeNull();
+    expect(onBegin).toHaveBeenCalledTimes(1);
   });
 });

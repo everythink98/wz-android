@@ -45,6 +45,7 @@ import { useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
 import { useTopicActionsController } from './useTopicActionsController';
+import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
 import { takeNodeSeekVerificationRetry } from './sessionControllerHelpers';
 import {
   hasPendingOptimisticTopicAction,
@@ -92,6 +93,8 @@ import {
   type SessionSite
 } from '../siteSessionState';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
+import type { CredentialSite } from '../credentialVault';
+import { loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
 import { clearNodeImageApiKey, loadNodeImageApiKey, saveNodeImageApiKey } from '../nodeimageCredentials';
 import { nodeImageApiKeyFromResponse } from '../replyImageUpload';
 import { NODEIMAGE_AUTH_URL, NODEIMAGE_URL } from '../appUrls';
@@ -229,17 +232,17 @@ export function AppRoot() {
   const [nodeImageAuthError, setNodeImageAuthError] = useState('');
   const [webLoginUserId, setWebLoginUserId] = useState<number | null>(null);
   const credentialFailureHandlerRef = useRef<(
-    site: SessionSite,
+    site: CredentialSite,
     attempt: number,
     reason: LoginWebViewFailureReason
   ) => void>(() => undefined);
   const handleCredentialLoginWebViewFailure = useCallback((
-    site: SessionSite,
+    site: CredentialSite,
     attempt: number,
     reason: LoginWebViewFailureReason
   ) => credentialFailureHandlerRef.current(site, attempt, reason), []);
-  const credentialClearIntentHandlerRef = useRef<(site: SessionSite) => void>(() => undefined);
-  const handleClearCredentialLoginIntent = useCallback((site: SessionSite) => {
+  const credentialClearIntentHandlerRef = useRef<(site: CredentialSite) => void>(() => undefined);
+  const handleClearCredentialLoginIntent = useCallback((site: CredentialSite) => {
     credentialClearIntentHandlerRef.current(site);
   }, []);
   const accountStatusInitialRefreshRef = useRef(false);
@@ -582,6 +585,12 @@ export function AppRoot() {
     setNodeSeekWebViewUserAgent,
     setWebLoginUserId,
     webLoginDetectedRef
+  });
+
+  const xiaoyinsiAuthController = useXiaoyinsiAuthController({
+    dispatchSiteSessionEvent,
+    fetcher: networkProxyFetcher,
+    notify
   });
 
   const [devAnonymousOverrides, setDevAnonymousOverrides] = useState<DevAnonymousOverrides>({});
@@ -957,12 +966,22 @@ export function AppRoot() {
     hasLinuxDoCredentialForSource: async () => Boolean((await loadLinuxDoAccess())?.cookieHeader),
     loadNodeSeekCookieForSource,
     loadYaohuoCookieForSource,
-    nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current
+    loadXiaoyinsiCredentialsForSource: async (source) => {
+      if ((__DEV__ && isDevAnonymousSource(source, 'xiaoyinsi', devAnonymousOverrides)) || !siteSessionViewModels.xiaoyinsi.isLoggedIn) {
+        return undefined;
+      }
+      return loadXiaoyinsiCredentials();
+    },
+    nodeSeekUserAgent: () => nodeSeekWebViewUserAgentRef.current,
+    refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization
   }), [
     clearYaohuoLoginState,
     forumFetchWithWebViewFallback,
     loadNodeSeekCookieForSource,
-    loadYaohuoCookieForSource
+    loadYaohuoCookieForSource,
+    devAnonymousOverrides,
+    siteSessionViewModels.xiaoyinsi.isLoggedIn,
+    xiaoyinsiAuthController.refreshAuthorization
   ]);
 
   const {
@@ -1049,7 +1068,8 @@ export function AppRoot() {
     screenWidth: width,
     theme: theme.dark ? 'dark' as const : 'light' as const,
     versionCode: CURRENT_ANDROID_VERSION_CODE,
-    yaohuoSession: siteSessionViewModels.yaohuo.status
+    yaohuoSession: siteSessionViewModels.yaohuo.status,
+    xiaoyinsiSession: siteSessionViewModels.xiaoyinsi.status
   }), [
     fontScale,
     height,
@@ -1075,6 +1095,7 @@ export function AppRoot() {
     loadNodeSeekCookieForSource: loadStoredNodeSeekCookieForSource,
     nodeSeekUserAgentRef: nodeSeekWebViewUserAgentRef,
     notify,
+    refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
     resetLinuxDoLevelState,
     saveNodeSeekCookieHeader
   });
@@ -1271,6 +1292,15 @@ export function AppRoot() {
     notify(message);
     changeLinuxDoPanel(true);
   }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify]);
+  const showXiaoyinsiLogin = useCallback((message = '匿名可阅读，授权后才能互动。') => {
+    changeScreen('more');
+    changeNodeSeekLoginPanel(false);
+    closeYaohuoLoginPanel();
+    changeLinuxDoPanel(false);
+    setShowSettingsPanel(false);
+    notify(message);
+    void xiaoyinsiAuthController.beginAuthorization();
+  }, [changeLinuxDoPanel, changeNodeSeekLoginPanel, changeScreen, closeYaohuoLoginPanel, notify, xiaoyinsiAuthController]);
 
   openTopicRef.current = openTopic;
 
@@ -1297,8 +1327,10 @@ export function AppRoot() {
 
   const {
     bookmarkOnLinuxDoSite,
+    bookmarkOnXiaoyinsiSite,
     canUseLinuxDoActions,
     canUseNodeSeekActions,
+    canUseXiaoyinsiActions,
     canUseYaohuoActions,
     checkIn,
     collectOnNodeSeekSite,
@@ -1321,10 +1353,12 @@ export function AppRoot() {
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
+    refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
     resetLinuxDoLevelState,
     setActionBusy,
     setOptimisticTopicActions,
     showLinuxDoLogin,
+    showXiaoyinsiLogin,
     showYaohuoLogin,
     siteSessionStates: effectiveSiteSessionStates,
     topicActionRequestOwnerRef,
@@ -1668,6 +1702,7 @@ export function AppRoot() {
     changeYaohuoLoginPanel,
     linuxDoWebViewRef,
     notify,
+    onOpenXiaoyinsiAuthorization: () => { void xiaoyinsiAuthController.beginAuthorization(); },
     openUser,
     refreshAccountStatus,
     setYaohuoLoginPrompt,
@@ -1832,6 +1867,9 @@ export function AppRoot() {
       linuxDoLevelBusy,
       linuxDoLevelError,
       linuxDoLevelProfile,
+      xiaoyinsiLevelBusy: xiaoyinsiAuthController.levelBusy,
+      xiaoyinsiLevelError: xiaoyinsiAuthController.levelError,
+      xiaoyinsiLevelProfile: xiaoyinsiAuthController.levelProfile,
       nodeSeekUserId: effectiveNodeSeekUserId,
       nodeSeekWebViewUserAgent,
       nodeImageApiKeyBusy,
@@ -1860,6 +1898,16 @@ export function AppRoot() {
       networkProxyState,
       networkProxySummary,
       webViewBlockMessage: networkProxyWebViewBlockMessage,
+      xiaoyinsiAuth: {
+        message: xiaoyinsiAuthController.message,
+        pending: xiaoyinsiAuthController.pending,
+        phase: xiaoyinsiAuthController.phase,
+        secondsRemaining: xiaoyinsiAuthController.secondsRemaining,
+        onBegin: () => { void xiaoyinsiAuthController.beginAuthorization(); },
+        onCancel: () => { void xiaoyinsiAuthController.cancelAuthorization(); },
+        onOpenBrowser: () => { void xiaoyinsiAuthController.openAuthorizationBrowser(); },
+        onRevoke: () => { void xiaoyinsiAuthController.revokeAuthorization(); }
+      },
       onAccountCenterCommand: handleAccountCenterCommand,
       onCheckAppUpdate: checkAppUpdate,
       onDownloadAppUpdate: downloadAppUpdate,
@@ -1871,6 +1919,7 @@ export function AppRoot() {
       onClearNodeImageApiKey: clearNodeImageApiKeyInput,
       onCheckYaohuoLogin: checkYaohuoCookie,
       onRefreshLinuxDoLevel: refreshLinuxDoLevel,
+      onRefreshXiaoyinsiLevel: () => { void xiaoyinsiAuthController.refreshLevel(); },
       onClearLogin: clearLogin,
       onClearYaohuoLogin: clearYaohuoLogin,
       handleNodeSeekLoginNavigation,
@@ -1965,10 +2014,12 @@ export function AppRoot() {
     toggleDevAnonymousOverride,
     upsertNetworkProxyProfile,
     updateSettings,
-    yaohuoLoginPrompt
+    yaohuoLoginPrompt,
+    xiaoyinsiAuthController
   ]);
 
   const stableBookmarkOnLinuxDoSite = useLatestCallback(bookmarkOnLinuxDoSite);
+  const stableBookmarkOnXiaoyinsiSite = useLatestCallback(bookmarkOnXiaoyinsiSite);
   const stableCollectOnNodeSeekSite = useLatestCallback(collectOnNodeSeekSite);
   const stableDeleteReply = useLatestCallback(deleteReply);
   const stableFavoriteOnYaohuoSite = useLatestCallback(favoriteOnYaohuoSite);
@@ -1989,6 +2040,7 @@ export function AppRoot() {
       actionBusy,
       canUseLinuxDoActions,
       canUseNodeSeekActions,
+      canUseXiaoyinsiActions,
       canUseYaohuoActions,
       contentWidth,
       htmlBaseStyle,
@@ -2032,6 +2084,7 @@ export function AppRoot() {
       onInteract: stableInteract,
       onLinuxDoBookmark: stableBookmarkOnLinuxDoSite,
       onNodeSeekCollection: stableCollectOnNodeSeekSite,
+      onXiaoyinsiBookmark: stableBookmarkOnXiaoyinsiSite,
       onShareTopic: stableShareTopic,
       onVotePoll: stableVotePoll,
       onLoadMoreReplies: stableLoadMoreReplies,
@@ -2057,6 +2110,7 @@ export function AppRoot() {
     actionBusy,
     canUseLinuxDoActions,
     canUseNodeSeekActions,
+    canUseXiaoyinsiActions,
     canUseYaohuoActions,
     changeCommentQuery,
     changeReplyContent,
