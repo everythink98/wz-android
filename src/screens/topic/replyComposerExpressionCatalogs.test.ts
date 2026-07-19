@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   NODESEEK_STICKER_CATEGORIES,
   YAOHUO_FACE_ITEMS,
-  linuxDoEmojiCatalogFromUrlMap
+  discourseEmojiCatalogFromUrlMap
 } from './replyComposerExpressionCatalogs';
 
 describe('reply composer expression catalogs', () => {
@@ -26,15 +26,15 @@ describe('reply composer expression catalogs', () => {
     expect(NODESEEK_STICKER_CATEGORIES.find((category) => category.label === 'App')).toBeUndefined();
   });
 
-  it('builds linux.do emoji insert codes from emoji url data', () => {
-    expect(linuxDoEmojiCatalogFromUrlMap({
+  it('builds Discourse emoji insert codes from site-owned url data', () => {
+    expect(discourseEmojiCatalogFromUrlMap({
       grinning_face: 'https://linux.do/images/emoji/twemoji/grinning_face.png'
     })[0]).toEqual({
       code: ':grinning_face:',
       label: 'grinning face',
       imageUrl: 'https://linux.do/images/emoji/twemoji/grinning_face.png'
     });
-    expect(linuxDoEmojiCatalogFromUrlMap({})[0].code).toBe(':grinning_face:');
+    expect(discourseEmojiCatalogFromUrlMap({})[0].code).toBe(':grinning_face:');
   });
 
   it('keeps yaohuo faces as submitted face values', () => {

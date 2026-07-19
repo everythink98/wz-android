@@ -3,7 +3,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { ReplyEditTarget, ReplyTarget } from '../../src/appTypes';
-import type { LinuxDoEmojiUrlMap } from '../../src/linuxdoReactions';
+import type { DiscourseEmojiUrlMap } from '../../src/discourseReactions';
 import { createEmptyReaderData } from '../../src/readerData';
 import { ReplyComposer } from '../../src/screens/topic/ReplyComposer';
 import { createStyles, createTheme } from '../../src/theme';
@@ -52,7 +52,7 @@ const submitReply = jest.fn();
 function ReplyHarness({
   actionBusy = false,
   initialContent = '',
-  linuxDoEmojiUrls,
+  discourseEmojiUrls,
   onUploadReplyImage,
   replyEditTarget = null,
   replyTarget = null,
@@ -60,7 +60,7 @@ function ReplyHarness({
 }: {
   actionBusy?: boolean;
   initialContent?: string;
-  linuxDoEmojiUrls?: LinuxDoEmojiUrlMap;
+  discourseEmojiUrls?: DiscourseEmojiUrlMap;
   onUploadReplyImage?: () => void;
   replyEditTarget?: ReplyEditTarget | null;
   replyTarget?: ReplyTarget | null;
@@ -74,7 +74,7 @@ function ReplyHarness({
       {visible ? (
         <ReplyComposer
           actionBusy={actionBusy}
-          linuxDoEmojiUrls={linuxDoEmojiUrls}
+          discourseEmojiUrls={discourseEmojiUrls}
           replyContent={content}
           replyEditTarget={replyEditTarget}
           replyFace={face}
@@ -188,12 +188,19 @@ describe('Reply composer local behavior', () => {
 
   it('renders and inserts each source-specific expression through controlled state', async () => {
     const linuxDoView = await render(
-      <ReplyHarness linuxDoEmojiUrls={{ party_parrot: 'https://example.com/party.png' }} source="linuxdo" />
+      <ReplyHarness discourseEmojiUrls={{ party_parrot: 'https://example.com/party.png' }} source="linuxdo" />
     );
     await fireEvent.press(linuxDoView.getByLabelText('表情'));
     expect(linuxDoView.getByLabelText('party parrot')).toBeTruthy();
     await fireEvent.press(linuxDoView.getByLabelText('party parrot'));
     expect(linuxDoView.getByPlaceholderText('输入回复内容').props.value).toBe(':party_parrot:');
+
+    await linuxDoView.rerender(
+      <ReplyHarness key="xiaoyinsi" discourseEmojiUrls={{ waving_hand: 'https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15' }} source="xiaoyinsi" />
+    );
+    await fireEvent.press(linuxDoView.getByLabelText('表情'));
+    await fireEvent.press(linuxDoView.getByLabelText('waving hand'));
+    expect(linuxDoView.getByPlaceholderText('输入回复内容').props.value).toBe(':waving_hand:');
 
     await linuxDoView.rerender(<ReplyHarness key="yaohuo" source="yaohuo" />);
     await fireEvent.press(linuxDoView.getByLabelText('表情'));

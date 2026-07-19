@@ -1,15 +1,15 @@
 import type { SearchSort } from './feedLogic';
 import type { Category, Source } from './types';
+import { isDiscourseSource, sourceCatalog, type DiscourseSource } from './sourceCatalog';
 
 export type SearchTimeRange = 'all' | 'day' | 'week' | 'month' | 'year';
 export type SearchTextScope = 'all' | 'title';
 export type SearchKeywordOperator = 'or' | 'and';
-export type LinuxDoSearchOrder = 'relevance' | 'latest';
-export type LinuxDoTagMatch = 'any' | 'all';
-export type LinuxDoVisitedFilter = 'seen' | 'bookmarks' | 'likes' | 'posted' | 'created';
+export type DiscourseSearchOrder = 'relevance' | 'latest';
+export type DiscourseTagMatch = 'any' | 'all';
+export type DiscourseVisitedFilter = 'seen' | 'bookmarks' | 'likes' | 'posted' | 'created';
 export type DiscourseSearchStatus = '' | 'open' | 'closed' | 'public' | 'archived' | 'noreplies' | 'single_user' | 'solved' | 'unsolved';
-export type LinuxDoSearchStatus = DiscourseSearchStatus | 'solved' | 'unsolved';
-export type LinuxDoDateRelation = 'before' | 'after';
+export type DiscourseDateRelation = 'before' | 'after';
 export type NodeSeekSearchSort = 'replyTime' | 'postTime';
 
 export type V2exSearchFilter = {
@@ -25,23 +25,38 @@ type DiscourseSearchFilterFields = {
   scope: SearchTextScope;
   category: string;
   tags: string[];
-  tagMatch: LinuxDoTagMatch;
+  tagMatch: DiscourseTagMatch;
   username: string;
-  visited: LinuxDoVisitedFilter[];
+  visited: DiscourseVisitedFilter[];
   timeRange: SearchTimeRange;
-  dateRelation: LinuxDoDateRelation;
+  dateRelation: DiscourseDateRelation;
   date: string;
   minPosts: number | null;
   maxPosts: number | null;
   minViews: number | null;
   maxViews: number | null;
-  order: LinuxDoSearchOrder;
+  order: DiscourseSearchOrder;
 };
 
-export type LinuxDoSearchFilter = DiscourseSearchFilterFields & {
-  source: 'linuxdo';
-  status: LinuxDoSearchStatus;
-  expertResponse: boolean;
+interface DiscourseSearchExtensionMap {
+  linuxdo: {
+    expertResponse: boolean;
+  };
+}
+
+type DiscourseSearchExtension<Site extends DiscourseSource> = Site extends keyof DiscourseSearchExtensionMap
+  ? { siteExtension: { source: Site } & DiscourseSearchExtensionMap[Site] }
+  : { siteExtension?: never };
+
+export type DiscourseSearchFilter<Site extends DiscourseSource = DiscourseSource> = Site extends DiscourseSource
+  ? DiscourseSearchFilterFields & {
+    source: Site;
+    status: DiscourseSearchStatus;
+  } & DiscourseSearchExtension<Site>
+  : never;
+
+export function isDiscourseSearchFilter(filter: SourceSearchFilter): filter is DiscourseSearchFilter {
+  return isDiscourseSource(filter.source);
 };
 
 export type NodeSeekSearchFilter = {
@@ -55,82 +70,74 @@ export type YaohuoSearchFilter = {
   category: string;
 };
 
-export type XiaoyinsiSearchFilter = DiscourseSearchFilterFields & {
-  source: 'xiaoyinsi';
-  status: DiscourseSearchStatus;
-};
-
 export type SourceSearchFilter =
   | V2exSearchFilter
-  | LinuxDoSearchFilter
+  | DiscourseSearchFilter
   | NodeSeekSearchFilter
-  | YaohuoSearchFilter
-  | XiaoyinsiSearchFilter;
+  | YaohuoSearchFilter;
+
+type SearchFilterForSource<Site extends Source> = Site extends DiscourseSource
+  ? DiscourseSearchFilter<Site>
+  : Site extends 'v2ex'
+    ? V2exSearchFilter
+    : Site extends 'nodeseek'
+      ? NodeSeekSearchFilter
+      : Site extends 'yaohuo'
+        ? YaohuoSearchFilter
+        : never;
 
 export type SearchFilterState = {
-  v2ex: V2exSearchFilter;
-  linuxdo: LinuxDoSearchFilter;
-  nodeseek: NodeSeekSearchFilter;
-  yaohuo: YaohuoSearchFilter;
-  xiaoyinsi: XiaoyinsiSearchFilter;
+  [Site in Source]: SearchFilterForSource<Site>;
 };
 
-export const DEFAULT_SEARCH_FILTERS: SearchFilterState = {
-  v2ex: {
+function defaultSearchFilter(source: Source): SourceSearchFilter {
+  if (isDiscourseSource(source)) {
+    return {
+      source,
+      scope: 'all',
+      category: '',
+      tags: [],
+      tagMatch: 'any',
+      username: '',
+      visited: [],
+      status: '',
+      timeRange: 'all',
+      dateRelation: 'after',
+      date: '',
+      minPosts: null,
+      maxPosts: null,
+      minViews: null,
+      maxViews: null,
+      order: 'relevance',
+      ...(source === 'linuxdo' ? { siteExtension: { source: 'linuxdo' as const, expertResponse: false } } : {})
+    } as DiscourseSearchFilter;
+  }
+  if (sourceCatalog[source].searchFilter === 'v2ex') {
+    return {
     source: 'v2ex',
     sort: 'relevance',
     timeRange: 'all',
     node: '',
     username: '',
     operator: 'or'
-  },
-  linuxdo: {
-    source: 'linuxdo',
-    scope: 'all',
-    category: '',
-    tags: [],
-    tagMatch: 'any',
-    username: '',
-    visited: [],
-    status: '',
-    timeRange: 'all',
-    dateRelation: 'after',
-    date: '',
-    minPosts: null,
-    maxPosts: null,
-    minViews: null,
-    maxViews: null,
-    expertResponse: false,
-    order: 'relevance'
-  },
-  nodeseek: {
+    };
+  }
+  if (sourceCatalog[source].searchFilter === 'nodeseek') {
+    return {
     source: 'nodeseek',
     category: '',
     sort: 'replyTime'
-  },
-  yaohuo: {
+    };
+  }
+  return {
     source: 'yaohuo',
     category: '0'
-  },
-  xiaoyinsi: {
-    source: 'xiaoyinsi',
-    scope: 'all',
-    category: '',
-    tags: [],
-    tagMatch: 'any',
-    username: '',
-    visited: [],
-    status: '',
-    timeRange: 'all',
-    dateRelation: 'after',
-    date: '',
-    minPosts: null,
-    maxPosts: null,
-    minViews: null,
-    maxViews: null,
-    order: 'relevance'
-  }
-};
+  };
+}
+
+export const DEFAULT_SEARCH_FILTERS = Object.fromEntries(
+  (Object.keys(sourceCatalog) as Source[]).map((source) => [source, defaultSearchFilter(source)])
+) as SearchFilterState;
 
 export const searchTimeRangeItems: Array<{ value: SearchTimeRange; label: string }> = [
   { value: 'all', label: '不限时间' },
@@ -154,7 +161,7 @@ function categoryForFilter(categories: Category[], source: Source, id: string) {
 
 export function defaultSearchFilterForSource<T extends Source>(source: T): SearchFilterState[T] {
   const filter = DEFAULT_SEARCH_FILTERS[source];
-  return ('tags' in filter
+  return (isDiscourseSearchFilter(filter)
     ? { ...filter, tags: [...filter.tags], visited: [...filter.visited] }
     : { ...filter }) as SearchFilterState[T];
 }
@@ -185,12 +192,12 @@ function categoryLabel(categories: Category[], source: Source, id: string) {
   return categoryForFilter(categories, source, id)?.name || id.trim();
 }
 
-function discourseCategoryToken(categories: Category[], source: 'linuxdo' | 'xiaoyinsi', id: string) {
+function discourseCategoryToken(categories: Category[], source: DiscourseSource, id: string) {
   const category = categoryForFilter(categories, source, id);
   return (category?.id || id).trim();
 }
 
-function cleanLinuxDoTags(tags: string[]) {
+function cleanDiscourseTags(tags: string[]) {
   return [...new Set(tags.map((tag) => tag.trim().replace(/^#+/, '')).filter(Boolean))];
 }
 
@@ -207,7 +214,7 @@ function validRangeValue(value: number | null) {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-export function discourseSearchFilterError(filter: LinuxDoSearchFilter | XiaoyinsiSearchFilter) {
+export function discourseSearchFilterError(filter: DiscourseSearchFilter) {
   if (filter.date.trim() && !validSearchDate(filter.date)) {
     return '请选择有效日期';
   }
@@ -224,11 +231,9 @@ export function discourseSearchFilterError(filter: LinuxDoSearchFilter | Xiaoyin
   return '';
 }
 
-export const linuxDoSearchFilterError = discourseSearchFilterError;
-
-function buildDiscourseSearchQuery(
+export function buildDiscourseSearchQuery(
   query: string,
-  filter: LinuxDoSearchFilter | XiaoyinsiSearchFilter,
+  filter: DiscourseSearchFilter,
   categories: Category[]
 ) {
   const parts = [query.trim()];
@@ -239,7 +244,7 @@ function buildDiscourseSearchQuery(
   if (category) {
     parts.push(`category:${category}`);
   }
-  const tags = cleanLinuxDoTags(filter.tags);
+  const tags = cleanDiscourseTags(filter.tags);
   if (tags.length) {
     parts.push(`tags:${tags.join(filter.tagMatch === 'all' ? '+' : ',')}`);
   }
@@ -273,21 +278,13 @@ function buildDiscourseSearchQuery(
       parts.push(`${name}:${value}`);
     }
   }
-  if (filter.source === 'linuxdo' && filter.expertResponse) {
+  if (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse) {
     parts.push('with:category_expert_response');
   }
   if (filter.order === 'latest') {
     parts.push('order:latest');
   }
   return parts.filter(Boolean).join(' ');
-}
-
-export function buildLinuxDoSearchQuery(query: string, filter: LinuxDoSearchFilter, categories: Category[]) {
-  return buildDiscourseSearchQuery(query, filter, categories);
-}
-
-export function buildXiaoyinsiSearchQuery(query: string, filter: XiaoyinsiSearchFilter, categories: Category[]) {
-  return buildDiscourseSearchQuery(query, filter, categories);
 }
 
 export function searchFilterSummary(source: Source, filter: SourceSearchFilter, categories: Category[]) {
@@ -309,14 +306,14 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
       parts.push(searchTimeRangeLabel(filter.timeRange));
     }
   }
-  if ((source === 'linuxdo' || source === 'xiaoyinsi') && filter.source === source) {
+  if (isDiscourseSearchFilter(filter) && filter.source === source) {
     if (filter.scope === 'title') {
       parts.push('标题');
     }
     if (filter.category.trim()) {
       parts.push(categoryLabel(categories, source, filter.category));
     }
-    const tags = cleanLinuxDoTags(filter.tags);
+    const tags = cleanDiscourseTags(filter.tags);
     if (tags.length) {
       parts.push(tags.join(filter.tagMatch === 'all' ? ' + ' : '、'));
     }
@@ -344,7 +341,7 @@ export function searchFilterSummary(source: Source, filter: SourceSearchFilter, 
     if (minViews !== null || maxViews !== null) {
       parts.push(`浏览 ${minViews ?? 0}–${maxViews ?? '∞'}`);
     }
-    if (filter.source === 'linuxdo' && filter.expertResponse) {
+    if (filter.siteExtension?.source === 'linuxdo' && filter.siteExtension.expertResponse) {
       parts.push('专家回应');
     }
     if (filter.order === 'latest') {
@@ -389,7 +386,7 @@ export function filterSearchResponseItems<T extends { categoryId?: string; categ
         return false;
       }
     }
-    if ('category' in filter && filter.source !== 'xiaoyinsi' && filter.category.trim() && filter.category !== '0') {
+    if ('category' in filter && !isDiscourseSearchFilter(filter) && filter.category.trim() && filter.category !== '0') {
       return item.categoryId === filter.category || item.category === filter.category;
     }
     return true;

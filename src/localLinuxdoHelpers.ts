@@ -1,11 +1,11 @@
-import type { LinuxDoFeedFilter, Topic } from './types';
+import type { DiscourseFeedFilter, Topic } from './types';
 import { absoluteUrl, isRecord } from './localHtml';
 import { accessRequirementLevelValue, accessRequirementSpecificity } from './appUtils';
 
 export const LINUXDO_BASE_URL = 'https://linux.do';
 export const LINUXDO_UNCATEGORIZED_CATEGORY_NAME = '未分类';
 
-const LINUXDO_FEED_PATHS: Record<LinuxDoFeedFilter, string> = {
+const LINUXDO_FEED_PATHS: Record<DiscourseFeedFilter, string> = {
   latest: '/latest.json',
   hot: '/hot.json',
   'new-all': '/new.json',
@@ -67,11 +67,11 @@ export function preferredLinuxDoAccessRequirement(
   return topicRequirement;
 }
 
-export function linuxDoFeedPath(filter: LinuxDoFeedFilter = 'latest') {
+export function linuxDoFeedPath(filter: DiscourseFeedFilter = 'latest') {
   return LINUXDO_FEED_PATHS[filter] || LINUXDO_FEED_PATHS.latest;
 }
 
-export function linuxDoFeedParams(page: number, category?: string, filter: LinuxDoFeedFilter = 'latest') {
+export function linuxDoFeedParams(page: number, category?: string, filter: DiscourseFeedFilter = 'latest') {
   return {
     ...(filter === 'latest' ? { order: 'created', ascending: 'false' } : {}),
     ...(page > 1 ? { page: page - 1 } : {}),

@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_SEARCH_FILTERS,
-  buildLinuxDoSearchQuery,
-  buildXiaoyinsiSearchQuery,
+  buildDiscourseSearchQuery,
+  discourseSearchFilterError,
   filterSearchResponseItems,
-  linuxDoSearchFilterError,
   searchFilterSummary
 } from './searchFilters';
 import type { Category } from './types';
@@ -40,7 +39,7 @@ describe('Android search site filters', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-11T10:00:00+08:00'));
     try {
-      expect(buildLinuxDoSearchQuery('AI', {
+      expect(buildDiscourseSearchQuery('AI', {
         ...DEFAULT_SEARCH_FILTERS.linuxdo,
         scope: 'title',
         category: '4',
@@ -55,7 +54,7 @@ describe('Android search site filters', () => {
   });
 
   it('REG-SEARCH-001 builds linux.do advanced filters from selected values', () => {
-    expect(buildLinuxDoSearchQuery('AI', {
+    expect(buildDiscourseSearchQuery('AI', {
       source: 'linuxdo',
       scope: 'title',
       category: '4',
@@ -71,7 +70,7 @@ describe('Android search site filters', () => {
       maxPosts: 20,
       minViews: 100,
       maxViews: 1000,
-      expertResponse: true,
+      siteExtension: { source: 'linuxdo', expertResponse: true },
       order: 'latest'
     }, categories)).toBe(
       'AI in:title category:4 tags:人工智能+快问快答 in:seen in:bookmarks in:likes in:posted in:created status:solved @alice before:2026-07-01 min_posts:2 max_posts:20 min_views:100 max_views:1000 with:category_expert_response order:latest'
@@ -79,7 +78,7 @@ describe('Android search site filters', () => {
   });
 
   it('uses comma for any-tag matching and lets an exact date override the quick range', () => {
-    expect(buildLinuxDoSearchQuery('AI', {
+    expect(buildDiscourseSearchQuery('AI', {
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       tags: ['人工智能', '快问快答'],
       tagMatch: 'any',
@@ -92,34 +91,34 @@ describe('Android search site filters', () => {
   it.each(['open', 'closed', 'public', 'archived', 'noreplies', 'single_user', 'solved', 'unsolved'] as const)(
     'builds the linux.do %s status token',
     (status) => {
-      expect(buildLinuxDoSearchQuery('AI', { ...DEFAULT_SEARCH_FILTERS.linuxdo, status }, categories)).toBe(`AI status:${status}`);
+      expect(buildDiscourseSearchQuery('AI', { ...DEFAULT_SEARCH_FILTERS.linuxdo, status }, categories)).toBe(`AI status:${status}`);
     }
   );
 
   it('rejects invalid linux.do dates and numeric ranges before applying', () => {
-    expect(linuxDoSearchFilterError({
+    expect(discourseSearchFilterError({
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       date: '2026-02-30'
     })).toBe('请选择有效日期');
-    expect(linuxDoSearchFilterError({
+    expect(discourseSearchFilterError({
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       minPosts: 20,
       maxPosts: 2
     })).toBe('帖子数最小值不能大于最大值');
-    expect(linuxDoSearchFilterError({
+    expect(discourseSearchFilterError({
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       minViews: 100,
       maxViews: 1000
     })).toBe('');
-    expect(linuxDoSearchFilterError({
+    expect(discourseSearchFilterError({
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       minViews: -1
     })).toBe('帖子数和浏览量必须是非负整数');
-    expect(linuxDoSearchFilterError({
+    expect(discourseSearchFilterError({
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       maxPosts: 1.5
     })).toBe('帖子数和浏览量必须是非负整数');
-    expect(linuxDoSearchFilterError({
+    expect(discourseSearchFilterError({
       ...DEFAULT_SEARCH_FILTERS.linuxdo,
       minViews: 1000,
       maxViews: 100
@@ -127,7 +126,7 @@ describe('Android search site filters', () => {
   });
 
   it('builds the standard Discourse advanced filters confirmed by the 小隐寺 search UI', () => {
-    expect(buildXiaoyinsiSearchQuery('寺内', {
+    expect(buildDiscourseSearchQuery('寺内', {
       ...DEFAULT_SEARCH_FILTERS.xiaoyinsi,
       scope: 'title',
       category: '9',

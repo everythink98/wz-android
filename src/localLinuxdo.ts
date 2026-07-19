@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { CategoriesResponse, FeedResponse, LinuxDoFeedFilter, LinuxDoTagOption, LinuxDoUserOption, ReactionSummary, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, TopicPollOption, UserProfile, UserReplyActivity } from './types';
+import type { CategoriesResponse, DiscourseFeedFilter, DiscourseTagOption, DiscourseUserOption, FeedResponse, Reply, RepliesResponse, SearchResponse, Topic, TopicDetail, TopicPoll, UserProfile, UserReplyActivity } from './types';
 import {
   accessRequirementFromObject,
   accessRequirementFromText,
@@ -25,7 +25,6 @@ import {
 import {
   LINUXDO_BASE_URL as BASE_URL,
   LINUXDO_UNCATEGORIZED_CATEGORY_NAME as UNCATEGORIZED_CATEGORY_NAME,
-  isLinuxDoUncategorizedCategory as isUncategorizedCategory,
   linuxDoAvatarUrl as avatarUrl,
   linuxDoFeedParams,
   linuxDoFeedPath,
@@ -33,20 +32,17 @@ import {
   normalizeLinuxDoTopicId as normalizeTopicId,
   preferredLinuxDoAccessRequirement
 } from './localLinuxdoHelpers';
-import { linuxDoEmojiUrlMapFromData, type LinuxDoEmojiUrlMap } from './linuxdoReactions';
+import { discourseEmojiUrlMapFromData, type DiscourseEmojiUrlMap } from './discourseReactions';
 import { annotateSourceDiagnosticSummary, sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
+import { discourseCategories, discourseOriginalPoster, discoursePolls, discoursePostFields, discourseTopicFields, discourseUsersById } from './discourseModel';
+import { discoursePollPlaceholder } from './discourseContent';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
 const TOPIC_STREAM_CACHE_LIMIT = 100;
-const LINUXDO_POLL_PLACEHOLDER_TAG = 'forum-linuxdo-poll';
 const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
 let csrfTokenCache: string | null = null;
-let emojiUrlCache: LinuxDoEmojiUrlMap | null = null;
-
-export type LinuxDoContentPart =
-  | { type: 'html'; html: string }
-  | { type: 'poll'; poll: TopicPoll };
+let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
 
 interface LinuxDoOptions {
   cursor?: string | null;
@@ -59,19 +55,6 @@ interface LinuxDoOptions {
 interface LinuxDoCurrentUserOptions extends LinuxDoOptions {
   linuxDoCookie?: string;
   linuxDoUserAgent?: string;
-}
-
-function usersById(users: unknown) {
-  const map = new Map<string, Record<string, unknown>>();
-  if (!Array.isArray(users)) {
-    return map;
-  }
-  for (const user of users) {
-    if (isRecord(user) && user.id) {
-      map.set(String(user.id), user);
-    }
-  }
-  return map;
 }
 
 function categoryMapFromData(data: unknown) {
@@ -126,13 +109,6 @@ async function categoryMapForTopics(
   return nextCategoryMap;
 }
 
-function originalPoster(topic: Record<string, unknown>, users: Map<string, Record<string, unknown>>) {
-  const posters = Array.isArray(topic.posters) ? topic.posters : [];
-  const poster = posters.find((item) => isRecord(item) && /original poster/i.test(String(item.description || '')))
-    || posters.find(isRecord);
-  return isRecord(poster) ? users.get(String(poster.user_id)) : undefined;
-}
-
 function linuxDoLevelLabel(raw?: Record<string, unknown>) {
   const value = raw?.trust_level ?? raw?.trustLevel;
   const level = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
@@ -143,44 +119,30 @@ function normalizeTopic(raw: unknown, categoryMap = new Map<string, { name: stri
   if (!isRecord(raw)) {
     return null;
   }
-  const id = normalizeTopicId(raw.id);
-  if (!id) {
+  const fields = discourseTopicFields(raw);
+  if (!fields) {
     return null;
   }
-  const createdAt = toIsoString(raw.created_at) || new Date().toISOString();
-  const lastReplyAt = toIsoString(raw.bumped_at || raw.last_posted_at || raw.created_at) || createdAt;
-  const category = raw.category_id ? categoryMap.get(String(raw.category_id)) : undefined;
+  const createdAt = fields.createdAt;
+  const lastReplyAt = fields.lastReplyAt;
+  const category = fields.categoryId ? categoryMap.get(fields.categoryId) : undefined;
   const accessRequirement = preferredLinuxDoAccessRequirement(accessRequirementFromObject(raw), category?.accessRequirement);
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
   const authorName = author || String(createdBy.username || raw.last_poster_username || '');
   const authorAvatar = avatarUrl(authorData?.avatar_template || createdBy.avatar_template);
   const authorLevelLabel = linuxDoLevelLabel(authorData) || linuxDoLevelLabel(createdBy);
-  const tags = tagNames(raw.tags);
-  const acceptedAnswerFloor = acceptedAnswerPostNumber(raw);
-  const slowModeSeconds = positiveNumber(raw.slow_mode_seconds);
   return {
+    ...fields,
     source: 'linuxdo',
-    id,
-    title: decodeHtml(raw.unicode_title || raw.title || ''),
     author: authorName,
     authorId: authorName || undefined,
     authorAvatar,
     authorUrl: authorName ? userUrl(authorName) : undefined,
-    categoryId: raw.category_id ? String(raw.category_id) : undefined,
     category: category?.name || UNCATEGORIZED_CATEGORY_NAME,
-    url: `${BASE_URL}/t/${raw.slug || id}/${id}`,
+    url: `${BASE_URL}/t/${raw.slug || fields.id}/${fields.id}`,
     createdAt,
     lastReplyAt,
-    replyCount: Number(raw.posts_count ? Math.max(Number(raw.posts_count) - 1, 0) : 0),
-    viewCount: Number(raw.views || 0),
-    excerpt: textExcerpt(raw.excerpt || ''),
-    ...(tags.length ? { tags } : {}),
-    ...(raw.closed === true ? { closed: true } : {}),
-    ...(raw.archived === true ? { archived: true } : {}),
-    ...(raw.pinned === true || raw.pinned_globally === true ? { pinned: true } : {}),
-    ...(raw.has_accepted_answer === true || acceptedAnswerFloor ? { solved: true } : {}),
-    ...(acceptedAnswerFloor ? { acceptedAnswerFloor } : {}),
-    ...(slowModeSeconds ? { slowModeSeconds } : {}),
+    viewCount: fields.viewCount ?? 0,
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(accessRequirement ? { accessRequirement } : {})
   };
@@ -327,79 +289,12 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
-function nonNegativeNumber(value: unknown) {
-  if (value === undefined || value === null || value === '') {
-    return undefined;
-  }
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : undefined;
-}
-
-function likedFromActionsSummary(value: unknown) {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const likeAction = value.find((item) => isRecord(item) && Number(item.id) === 2);
-  return isRecord(likeAction) ? Boolean(likeAction.acted) : undefined;
-}
-
-function canLikeFromActionsSummary(value: unknown) {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const likeAction = value.find((item) => isRecord(item) && Number(item.id) === 2);
-  return isRecord(likeAction) && typeof likeAction.can_act === 'boolean' ? likeAction.can_act : undefined;
-}
-
-function canLikeFromPost(value: Record<string, unknown>) {
-  return value.yours === true ? false : canLikeFromActionsSummary(value.actions_summary);
-}
-
-function stringArray(value: unknown) {
-  return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : [];
-}
-
-function tagNames(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.map((item) => {
-    if (typeof item === 'string') {
-      return item.trim();
-    }
-    if (!isRecord(item)) {
-      return '';
-    }
-    return String(item.name || item.slug || '').trim();
-  }).filter(Boolean);
-}
-
-function acceptedAnswerPostNumber(value: unknown) {
-  if (!isRecord(value) || !Array.isArray(value.accepted_answers)) {
-    return undefined;
-  }
-  const answer = value.accepted_answers.find(isRecord);
-  return positiveNumber(answer?.post_number);
-}
-
-function reactionSummary(value: unknown): ReactionSummary[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  const items = value.filter(isRecord).map((item): ReactionSummary | null => {
-    const id = String(item.id || '').trim();
-    const count = positiveNumber(item.count);
-    return id && count ? { id, count } : null;
-  }).filter((item): item is ReactionSummary => Boolean(item));
-  return items.length ? items : undefined;
-}
-
 export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
   if (emojiUrlCache) {
     return emojiUrlCache;
   }
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/emojis.json', undefined, options);
-  emojiUrlCache = linuxDoEmojiUrlMapFromData(data);
+  emojiUrlCache = discourseEmojiUrlMapFromData(data, BASE_URL);
   return emojiUrlCache;
 }
 
@@ -412,62 +307,6 @@ function boostCount(value: unknown) {
 
 function boostCountFromPost(value: Record<string, unknown>) {
   return boostCount(value.boosts) ?? boostCount(value.boost_count);
-}
-
-function replyTargetAuthor(value: unknown) {
-  return isRecord(value) ? String(value.username || value.name || '').trim() : '';
-}
-
-function normalizeDiscoursePolls(post: unknown): TopicPoll[] | undefined {
-  if (!isRecord(post) || !Array.isArray(post.polls)) {
-    return undefined;
-  }
-  const votesByPoll = isRecord(post.polls_votes) ? post.polls_votes : {};
-  const postId = positiveNumber(post.id);
-  const polls = post.polls.filter(isRecord).map((poll): TopicPoll | null => {
-    const name = String(poll.name || '').trim();
-    const selectedIds = new Set(stringArray(name ? votesByPoll[name] : undefined));
-    const rawOptions = Array.isArray(poll.options) ? poll.options : [];
-    const options = rawOptions.filter(isRecord).map((option): TopicPollOption | null => {
-      const id = String(option.id || '').trim();
-      const label = textContentFromHtml(String(option.html || option.label || ''));
-      if (!id || !label) {
-        return null;
-      }
-      const count = nonNegativeNumber(option.votes);
-      return {
-        id,
-        label,
-        ...(count !== undefined ? { count } : {}),
-        selected: selectedIds.has(id)
-      };
-    }).filter((option): option is TopicPollOption => Boolean(option));
-    if (!options.length) {
-      return null;
-    }
-    const type = String(poll.type || '').trim();
-    const closedByStatus = String(poll.status || '').trim().toLowerCase() === 'closed';
-    const closedByDate = Boolean(poll.close && Date.parse(String(poll.close)) <= Date.now());
-    const participantCount = nonNegativeNumber(poll.voters);
-    const min = positiveNumber(poll.min);
-    const max = positiveNumber(poll.max);
-    return {
-      id: String(poll.id || name || '').trim() || undefined,
-      name: name || undefined,
-      postId: postId ? String(postId) : undefined,
-      title: textContentFromHtml(String(poll.title || '')).trim() || undefined,
-      public: typeof poll.public === 'boolean' ? poll.public : undefined,
-      closed: closedByStatus || closedByDate,
-      multiple: type === 'multiple',
-      ...(type === 'ranked_choice' || type === 'number' ? { type, readonly: true } : {}),
-      ...(participantCount !== undefined ? { participantCount } : {}),
-      ...(min !== undefined ? { min } : {}),
-      ...(max !== undefined ? { max } : {}),
-      voted: selectedIds.size > 0,
-      options
-    };
-  }).filter((poll): poll is TopicPoll => Boolean(poll));
-  return polls.length ? polls : undefined;
 }
 
 function escapeLinuxDoContentAttribute(value: string) {
@@ -501,7 +340,7 @@ export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | u
   root.querySelectorAll('.poll').forEach((node) => {
     const name = String(node.getAttribute('data-poll-name') || '').trim();
     if (name && pollNames.has(name)) {
-      node.replaceWith(`<${LINUXDO_POLL_PLACEHOLDER_TAG} name="${escapeLinuxDoContentAttribute(name)}"></${LINUXDO_POLL_PLACEHOLDER_TAG}>`);
+      node.replaceWith(discoursePollPlaceholder(name));
     }
   });
   root.querySelectorAll('iframe').forEach((node) => {
@@ -516,109 +355,37 @@ export function sanitizeLinuxDoContentHtml(html: unknown, polls: TopicPoll[] | u
   return sanitizeContentHtml(root.toString(), BASE_URL);
 }
 
-function linuxDoContentTagName(node: unknown) {
-  const record = node as { rawTagName?: unknown; tagName?: unknown };
-  return String(record.rawTagName || record.tagName || '').toLowerCase();
-}
-
-export function splitLinuxDoContentHtml(html: string | undefined, polls: TopicPoll[] | undefined): LinuxDoContentPart[] {
-  const clean = String(html || '').trim();
-  const pollList = polls || [];
-  if (!clean) {
-    return pollList.map((poll) => ({ type: 'poll' as const, poll }));
-  }
-  const pollsByName = new Map(pollList.flatMap((poll) => poll.name ? [[poll.name, poll] as const] : []));
-  const matchedPolls = new Set<TopicPoll>();
-  const parts: LinuxDoContentPart[] = [];
-  let currentHtml = '';
-  const pushHtml = () => {
-    const value = currentHtml.trim();
-    if (value) {
-      parts.push({ type: 'html', html: value });
-    }
-    currentHtml = '';
-  };
-  try {
-    const nodes = parseHtml(`<body>${clean}</body>`).querySelector('body')?.childNodes || [];
-    for (const node of nodes) {
-      if (linuxDoContentTagName(node) === LINUXDO_POLL_PLACEHOLDER_TAG) {
-        const name = String((node as unknown as { getAttribute?: (name: string) => string | undefined }).getAttribute?.('name') || '').trim();
-        const poll = pollsByName.get(name);
-        if (poll) {
-          pushHtml();
-          parts.push({ type: 'poll', poll });
-          matchedPolls.add(poll);
-        }
-        continue;
-      }
-      currentHtml += node.toString();
-    }
-    pushHtml();
-  } catch {
-    const withoutPlaceholders = clean.replace(new RegExp(`<${LINUXDO_POLL_PLACEHOLDER_TAG}\\b[^>]*>\\s*</${LINUXDO_POLL_PLACEHOLDER_TAG}\\s*>`, 'gi'), '').trim();
-    if (withoutPlaceholders) {
-      parts.push({ type: 'html', html: withoutPlaceholders });
-    }
-  }
-  for (const poll of pollList) {
-    if (!matchedPolls.has(poll)) {
-      parts.push({ type: 'poll', poll });
-    }
-  }
-  return parts;
-}
-
-function normalizePost(raw: unknown, index: number, topicId?: string, fallbackFloor = index + 1): Reply | null {
-  if (!isRecord(raw)) {
+function normalizePost(raw: unknown, topicId?: string): Reply | null {
+  const fields = discoursePostFields(raw);
+  if (!isRecord(raw) || !fields) {
     return null;
   }
-  if (raw.deleted_at || raw.user_deleted === true) {
-    return null;
-  }
-  const polls = normalizeDiscoursePolls(raw);
-  const contentHtml = sanitizeLinuxDoContentHtml(raw.cooked || '', polls);
+  const { cookedHtml, ...replyFields } = fields;
+  const polls = discoursePolls(raw);
+  const contentHtml = sanitizeLinuxDoContentHtml(cookedHtml, polls);
   const quotedReferences = quotedReferencesFromHtml(contentHtml, topicId);
   const visibleContentHtml = contentHtmlWithoutLocalQuoteAsides(contentHtml, topicId);
-  const liked = likedFromActionsSummary(raw.actions_summary);
-  const canLike = canLikeFromPost(raw);
-  const reactions = reactionSummary(raw.reactions);
   const rawBoostCount = boostCountFromPost(raw);
-  const targetAuthor = replyTargetAuthor(raw.reply_to_user);
-  const postType = Number(raw.post_type);
-  const isSystemAction = Number.isFinite(postType) && postType !== 1;
+  const needsApproval = raw.needs_category_expert_approval === true;
   const authorLevelLabel = linuxDoLevelLabel(raw);
-  const contentMarkdown = typeof raw.raw === 'string' ? raw.raw : '';
   return {
-    author: String(raw.username || ''),
-    authorId: String(raw.username || '') || undefined,
+    ...replyFields,
+    authorId: fields.author,
     authorAvatar: avatarUrl(raw.avatar_template),
-    authorUrl: raw.username ? userUrl(String(raw.username)) : undefined,
+    authorUrl: userUrl(fields.author),
     contentHtml: visibleContentHtml,
-    createdAt: toIsoString(raw.created_at),
-    floor: typeof raw.post_number === 'number' ? raw.post_number : fallbackFloor,
     ...(quotedReferences.floors.length ? { quotedFloors: quotedReferences.floors } : {}),
     ...(Object.keys(quotedReferences.authors).length ? { quotedAuthors: quotedReferences.authors } : {}),
     ...(Object.keys(quotedReferences.previews).length ? { quotedPreviews: quotedReferences.previews } : {}),
-    ...(positiveNumber(raw.id) ? { commentId: positiveNumber(raw.id) } : {}),
-    ...(positiveNumber(raw.like_count) !== undefined ? { likeCount: positiveNumber(raw.like_count) } : {}),
-    ...(liked !== undefined ? { liked } : {}),
-    ...(canLike !== undefined ? { canLike } : {}),
-    ...(raw.can_edit === true ? { canEdit: true } : {}),
-    ...(typeof raw.can_delete === 'boolean' ? { canDelete: raw.can_delete } : {}),
-    ...(contentMarkdown ? { contentMarkdown } : {}),
-    ...(targetAuthor ? { replyTargetAuthor: targetAuthor } : {}),
-    ...(raw.accepted_answer === true ? { acceptedAnswer: true } : {}),
-    ...(raw.wiki === true ? { wiki: true } : {}),
-    ...(raw.hidden === true || raw.deleted_at || raw.user_deleted === true ? { hidden: true } : {}),
-    ...(raw.post_folding_status ? { folded: true } : {}),
-    ...(raw.needs_category_expert_approval === true ? { needsApproval: true } : {}),
-    ...(isSystemAction ? { systemAction: true } : {}),
-    ...(raw.action_code ? { actionCode: String(raw.action_code) } : {}),
-    ...(reactions ? { reactionSummary: reactions } : {}),
-    ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
+    ...(rawBoostCount || needsApproval ? {
+      siteExtension: {
+        source: 'linuxdo' as const,
+        ...(rawBoostCount ? { boostCount: rawBoostCount } : {}),
+        ...(needsApproval ? { needsApproval: true } : {})
+      }
+    } : {}),
     ...(authorLevelLabel ? { authorLevelLabel } : {}),
     ...(polls ? { polls } : {}),
-    ...(positiveNumber(raw.bookmark_id) ? { bookmarkId: positiveNumber(raw.bookmark_id), bookmarked: true } : typeof raw.bookmarked === 'boolean' ? { bookmarked: raw.bookmarked } : {})
   };
 }
 
@@ -757,7 +524,7 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
   page?: number;
   limit?: number;
   category?: string;
-  linuxDoFilter?: LinuxDoFeedFilter;
+  linuxDoFilter?: DiscourseFeedFilter;
 } = {}): Promise<FeedResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
@@ -774,9 +541,9 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
     const data = await fetchLinuxDoJson<Record<string, unknown>>(linuxDoFeedPath(linuxDoFilter), linuxDoFeedParams(listPage, options.category, linuxDoFilter), options);
     const topics = isRecord(data.topic_list) && Array.isArray(data.topic_list.topics) ? data.topic_list.topics : [];
     categoryMap = await categoryMapForTopics(data, topics, categoryMap, options);
-    const users = usersById(data.users);
+    const users = discourseUsersById(data.users);
     const items = topics.map((topic) => {
-      const authorData = isRecord(topic) ? originalPoster(topic, users) : undefined;
+      const authorData = isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined;
       return normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
     }).filter(Boolean) as Topic[];
     droppedCount += Math.max(0, topics.length - items.length);
@@ -814,20 +581,8 @@ export async function getLinuxDoFeed(options: LinuxDoOptions & {
 export async function getLinuxDoCategories(options: LinuxDoOptions = {}): Promise<CategoriesResponse> {
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/site.json', undefined, options);
   const categories = Array.isArray(data.categories) ? data.categories : isRecord(data.category_list) && Array.isArray(data.category_list.categories) ? data.category_list.categories : [];
-  const categorySlugs = new Map(categories.filter(isRecord).map((category) => [String(category.id), String(category.slug || '')]));
   const result = {
-    items: categories.filter(isRecord).filter((category) => !isUncategorizedCategory(category)).map((category) => ({
-      source: 'linuxdo' as const,
-      id: String(category.id),
-      name: String(category.name || ''),
-      slug: typeof category.slug === 'string' ? category.slug : undefined,
-      ...(category.parent_category_id ? {
-        parentId: String(category.parent_category_id),
-        ...(categorySlugs.get(String(category.parent_category_id)) ? { parentSlug: categorySlugs.get(String(category.parent_category_id)) } : {})
-      } : {}),
-      ...(Number.isInteger(Number(category.topic_count)) && Number(category.topic_count) >= 0 ? { topicCount: Number(category.topic_count) } : {}),
-      ...(category.read_restricted === true ? { readRestricted: true } : {})
-    })).filter((category) => category.id && category.name),
+    items: discourseCategories(data, 'linuxdo', { includeParentSlug: true }),
     errors: {}
   };
   return annotateSourceDiagnosticSummary(result, {
@@ -844,7 +599,7 @@ export async function searchLinuxDoTags(options: LinuxDoOptions & {
   categoryId?: string;
   selectedTags?: string[];
   limit?: number;
-} = {}): Promise<LinuxDoTagOption[]> {
+} = {}): Promise<DiscourseTagOption[]> {
   const limit = Math.min(8, Math.max(1, Math.floor(options.limit || 8)));
   const data = await fetchLinuxDoJson<Record<string, unknown>>('/tags/filter/search', {
     q: options.query?.trim() || '',
@@ -869,7 +624,7 @@ export async function searchLinuxDoUsers(options: LinuxDoOptions & {
   term: string;
   categoryId?: string;
   limit?: number;
-}): Promise<LinuxDoUserOption[]> {
+}): Promise<DiscourseUserOption[]> {
   const term = options.term.trim();
   if (!term) {
     return [];
@@ -932,38 +687,41 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   }
   const posts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const [firstPost, ...replyPosts] = posts;
+  const firstPostFields = discoursePostFields(firstPost);
+  if (!firstPostFields) {
+    throw new Error('linux.do 主题正文解析失败');
+  }
   const categoryMap = await categoryMapForTopics(data, [data], categoryMapFromData(data), options);
-  const topic = normalizeTopic(data, categoryMap, isRecord(firstPost) ? String(firstPost.username || '') : '', isRecord(firstPost) ? firstPost : undefined);
+  const topic = normalizeTopic(data, categoryMap, firstPostFields.author, isRecord(firstPost) ? firstPost : undefined);
   if (!topic) {
     throw new Error('linux.do 主题不存在');
   }
   const replyLimit = options.replyLimit || 30;
   const stream = isRecord(data.post_stream) && Array.isArray(data.post_stream.stream) ? data.post_stream.stream : [];
   const replies = await hydrateEditableReplyContent(
-    replyPosts.slice(0, replyLimit).map((post, index) => normalizePost(post, index, topic.id, index + 2)).filter(Boolean) as Reply[],
+    replyPosts.slice(0, replyLimit).map((post) => normalizePost(post, topic.id)).filter(Boolean) as Reply[],
     options
   );
-  const totalPosts = stream.length || Number(data.posts_count || posts.length);
+  const totalPosts = stream.length || topic.replyCount + 1;
   const replyHasMore = totalPosts > replies.length + 1;
-  const polls = normalizeDiscoursePolls(firstPost);
-  const firstPostReactions = reactionSummary(isRecord(firstPost) ? firstPost.reactions : undefined);
+  const polls = discoursePolls(firstPost);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
   cacheTopicStream(id, data);
   cacheTopicStream(topic.id, data);
   const result = {
     ...topic,
-    contentHtml: sanitizeLinuxDoContentHtml(isRecord(firstPost) ? firstPost.cooked || '' : '', polls),
+    contentHtml: sanitizeLinuxDoContentHtml(firstPostFields.cookedHtml, polls),
     replies,
     replyHasMore,
     replyNextPage: replyHasMore ? 2 : null,
     replyNextOffset: replyHasMore ? replies.length : null,
-    ...(isRecord(firstPost) && positiveNumber(firstPost.id) ? { commentId: positiveNumber(firstPost.id) } : {}),
-    ...(isRecord(firstPost) && positiveNumber(firstPost.like_count) !== undefined ? { likeCount: positiveNumber(firstPost.like_count) } : {}),
-    ...(isRecord(firstPost) && likedFromActionsSummary(firstPost.actions_summary) !== undefined ? { liked: likedFromActionsSummary(firstPost.actions_summary) } : {}),
-    ...(isRecord(firstPost) && canLikeFromPost(firstPost) !== undefined ? { canLike: canLikeFromPost(firstPost) } : {}),
+    ...(firstPostFields?.commentId ? { commentId: firstPostFields.commentId } : {}),
+    ...(firstPostFields?.likeCount === undefined ? {} : { likeCount: firstPostFields.likeCount }),
+    ...(firstPostFields?.liked === undefined ? {} : { liked: firstPostFields.liked }),
+    ...(firstPostFields?.canLike === undefined ? {} : { canLike: firstPostFields.canLike }),
     ...(polls ? { polls } : {}),
-    ...(firstPostReactions ? { reactionSummary: firstPostReactions } : {}),
-    ...(firstPostBoostCount ? { boostCount: firstPostBoostCount } : {}),
+    ...(firstPostFields?.reactionSummary ? { reactionSummary: firstPostFields.reactionSummary } : {}),
+    ...(firstPostBoostCount ? { siteExtension: { source: 'linuxdo' as const, boostCount: firstPostBoostCount } } : {}),
     ...(positiveNumber(data.bookmark_id) ? { bookmarkId: positiveNumber(data.bookmark_id), bookmarked: true } : typeof data.bookmarked === 'boolean' ? { bookmarked: data.bookmarked } : {})
   };
   return annotateSourceDiagnosticSummary(result, {
@@ -1012,7 +770,7 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
   const posts = await fetchPosts(id, postIds, options);
   const hasMore = stream.length > start + limit;
   const items = await hydrateEditableReplyContent(
-    posts.map((post, index) => normalizePost(post, index, id, previousReplyCount + index + 2)).filter(Boolean) as Reply[],
+    posts.map((post) => normalizePost(post, id)).filter(Boolean) as Reply[],
     options
   );
   const result = {
@@ -1036,7 +794,7 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   const embeddedPosts = isRecord(data.post_stream) && Array.isArray(data.post_stream.posts) ? data.post_stream.posts : [];
   const embedded = embeddedPosts.find((post) => isRecord(post) && post.post_number === floor);
   if (embedded) {
-    const reply = normalizePost(embedded, floor - 1, id, floor);
+    const reply = normalizePost(embedded, id);
     if (reply) {
       return annotateSourceDiagnosticSummary(reply, {
         parserVariant: 'embedded-reply',
@@ -1054,7 +812,7 @@ export async function getLinuxDoReply(id: string, floor: number, options: LinuxD
   }
   const posts = await fetchPosts(id, [guessed], options);
   const post = posts.find((item) => isRecord(item) && item.post_number === floor);
-  const reply = normalizePost(post, floor - 1, id, floor);
+  const reply = normalizePost(post, id);
   if (!reply) {
     throw new Error('引用楼层未找到');
   }
@@ -1082,7 +840,7 @@ async function linuxDoCsrfToken(options: LinuxDoOptions) {
 }
 
 async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, options: LinuxDoOptions): Promise<{ items: Topic[]; hasMore: boolean }> {
-  const users = usersById(data.users);
+  const users = discourseUsersById(data.users);
   const postsByTopicId = new Map<string, Record<string, unknown>>();
   if (Array.isArray(data.posts)) {
     data.posts.filter(isRecord).forEach((post) => postsByTopicId.set(String(post.topic_id), post));
@@ -1091,7 +849,7 @@ async function topicsFromLinuxDoSearchData(data: Record<string, unknown>, option
   const categoryMap = await categoryMapForTopics(data, topics, categoryMapFromData(data), options);
   const items = topics.map((topic) => {
     const post = isRecord(topic) ? postsByTopicId.get(String(topic.id)) : undefined;
-    const authorData = post || (isRecord(topic) ? originalPoster(topic, users) : undefined);
+    const authorData = post || (isRecord(topic) ? discourseOriginalPoster(topic, users) : undefined);
     const normalized = normalizeTopic(topic, categoryMap, String(authorData?.username || ''), authorData);
     return normalized ? { ...normalized, excerpt: textExcerpt(post?.blurb || normalized.excerpt || '') } : null;
   }).filter(Boolean) as Topic[];

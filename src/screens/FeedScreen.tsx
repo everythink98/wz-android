@@ -5,7 +5,7 @@ import { TabView } from 'react-native-tab-view';
 import { ChevronDown, ChevronUp } from 'lucide-react-native';
 import type { Category, FeedSource, SourceFeedFilter, Topic } from '../types';
 import { topicKey } from '../readerData';
-import { feedCategoryItems, feedFilterLabel, feedFilterMenuGroups, feedReadingFilterItems, feedSourceItems, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
+import { feedCategoryItems, feedFilterLabel, feedFilterMenuGroupsFor, feedReadingFilterItems, feedSourceItems, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
 import { shouldAllowFeedAutoLoadRequest, shouldLoadMoreFeedFromScroll, shouldShowFeedFloatingActions } from '../feedFloatingActions';
 import type { ReadingFilter } from '../feedLogic';
 import { getTopicListItemStateFromIndex, type TopicListItemStateIndex } from '../topicListItemState';
@@ -82,9 +82,7 @@ export const FeedScreen = memo(function FeedScreen({
   const feedNavigationState = useMemo(() => ({ index: pagerIndex, routes: FEED_PAGER_ROUTES }), [pagerIndex]);
   const showFeedFilter = shouldUseFeedFilter(feedSource, categoryFilter);
   const activeFeedFilterLabel = feedFilterLabel(feedSource, feedFilter);
-  const activeFeedFilterMenuGroups = showFeedFilter && (feedSource === 'linuxdo' || feedSource === 'nodeseek' || feedSource === 'v2ex' || feedSource === 'xiaoyinsi')
-    ? feedFilterMenuGroups[feedSource]
-    : [];
+  const activeFeedFilterMenuGroups = showFeedFilter ? feedFilterMenuGroupsFor(feedSource) : [];
 
   const requestFeedLoadMore = useCallback((source: 'button' | 'scroll' = 'button', offsetY = 0) => {
     if (!feedHasMore || busy || loadingMore) {

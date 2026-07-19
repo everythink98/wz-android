@@ -22,8 +22,10 @@
 | `src/app/useDeferredNavigationTask.ts` | AppRoot 的延迟导航时机，避免把 `InteractionManager` 细节留在根组件里 |
 | `src/app/use*Controller.ts` | 首页、搜索、详情、用户、账号、会话、验证、备份等运行逻辑 |
 | `src/sources/sourceGateway.ts` | App 统一来源读取入口，隐藏五站读取 adapter 差异 |
-| `src/forumApi.ts`、`src/yaohuoApi.ts` | 当前读取实现，位于 `sourceGateway` 后面 |
-| 站点 action client | 当前写入实现，由 `useTopicActionsController` 按来源和 capability 调用 |
+| `src/sourceCatalog.ts` | 来源身份、基础 URL、family、聚合范围、筛选、会话与写能力的编译期注册表 |
+| `src/discourseSourceReaders.ts`、`src/forumApi.ts`、`src/yaohuoApi.ts` | 注册后的读取 adapter 与聚合实现，位于 `sourceGateway` 后面 |
+| `src/discourseModel.ts`、`src/discourseContent.ts`、`src/discoursePermissions.ts`、`src/discourseReactions.ts` | 无站点偏向的 Discourse 标准模型、正文、权限和 reaction/emoji 语义 |
+| `src/discourseActions.ts`、`src/discourseSourceActions.ts`、`src/app/discourseActionRuntime.ts`、站点 action client | 语义写操作、站点 override、鉴权 runtime 注册与各站 transport |
 | `src/screens/` | 首页、搜索、收藏、更多、用户页和详情页导出入口 |
 | `src/screens/topic/` | 详情页主体、详情页 helper 和详情页局部组件 |
 | `src/screens/more/` | More 页账号中心、备份、外观、状态检查等局部面板 |
@@ -41,13 +43,28 @@
 ## 来源边界
 
 - App controller 通过 `src/sources/sourceGateway.ts` 的 `getFeed`、`searchTopics`、`getTopic`、`getReplies` 和用户资料 interface 读取五站数据。
-- 五站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 在 module 内组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation、妖火失效清理和小隐寺 User API headers；controller 只传业务参数和请求归属上下文，不再接触这些来源细节。
-- NodeSeek、linux.do、妖火和小隐寺的互动请求由 `useTopicActionsController` 按来源调用各站独立 action client；小隐寺只使用 `User-Api-Key` / `User-Api-Client-Id`，不引用 linux.do Cookie、CSRF 或 Cloudflare 逻辑。
+- `src/sourceCatalog.ts` 是来源集合的唯一静态事实源；来源类型、聚合 Feed/Search、筛选状态、可登录站点、诊断枚举和页面 action capability 都从这里派生，不在页面中维护 LinuxDo/小隐寺成对名单。
+- 五站的首页、搜索、主题、回复和用户资料读取均已进入 managed gateway：`createSourceGateway` 组装 WebView fallback fetcher、Cookie、User-Agent、凭据 generation、妖火失效清理和按来源键控的 `discourseAuth`；controller 只传业务参数和请求归属上下文。
+- linux.do 与小隐寺是两个独立 adapter，共同实现 `src/discourseSourceReaders.ts` 的标准读取 port；两者组合 `discourseModel` 等无站点偏向模块，不继承彼此，也不共享 Cookie、CSRF、Cloudflare、User API Key 或缓存状态。
+- 标准 Discourse 回复、点赞、书签、编辑、删除、投票和上传先表达为 `DiscourseAction`，再由 `discourseSourceActions` 选择标准 request builder 或最小站点 override；小隐寺 Topic 无 bookmark id 的取消收藏是当前 override。`discourseActionRuntime` 按来源注册独立鉴权和 transport，Topic controller 只执行统一 action 生命周期。
+- Feed、Search、Topic UI 只消费语义筛选、权限和 action capability；标准 Discourse emoji 目录由各 adapter 独立读取后交给公共 presenter，linux.do boost、Cloudflare 验证、小隐寺 Device Code 等站点特性留在站点 presenter、鉴权或 transport 边界。
 - App controller 使用不带 `Direct` 和站点前缀的通用读取入口；妖火的 `Direct` 命名只保留在 gateway 后的来源实现。
-- `sourceGateway` 内部仍转发到 `src/forumApi.ts` 和 `src/yaohuoApi.ts`；各站 action client 暂时是独立写入边界。
+- `sourceGateway` 内部仍转发到 `src/forumApi.ts` 和 `src/yaohuoApi.ts`；Discourse adapter 注册集中在 `discourseSourceReaders` / `discourseSourceActions`。
 - `src/forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
 - 新增读取调用方应使用 `sourceGateway`，不要在 `src/app/*Controller.ts` 里新增对旧读取来源文件的直接调用；新增写操作复用现有 action client，并按触及路径逐项收口。
 - 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复的 `canEdit`、`canDelete` 等权限仍以原站解析结果为准。
+
+### Discourse 字段规则
+
+- 跨站身份、正文、时间、计数、标准权限和标准 action 状态进入公共模型；缺少身份或正文等必需字段时 adapter 必须报告解析失败，不能伪造。
+- 头像、标签、展示计数等可选公共字段允许缺失，UI 按缺失状态降级；写权限缺失必须 fail-closed，不得因为字段没返回就显示操作。
+- 站点新增但业务上重要的独有字段进入 `src/types.ts` 的 `SiteExtensionMap`，以 `siteExtension.source` 形成可穷尽的判别联合；当前 linux.do `boostCount` 与 `needsApproval` 即按此处理。它只能由对应 adapter 写入、对应 presenter/行为 adapter 消费，不能塞进公共顶层字段，也不能使用无类型 `Record<string, unknown>` 绕过边界。
+- `reactions[]` 与 `/emojis.json` 是标准 Discourse 语义：`discourseReactions` 负责 id、计数、图片 URL 和未知 id 的文字回退；linux.do 与小隐寺分别在自己的 adapter 内请求、绝对化并缓存目录，经 `discourseSourceReaders` port 交给 UI。目录和缓存不得跨站复用，linux.do boost 不进入公共 reaction 模型。
+- 仅用于 transport 或一次请求解析、UI 与业务都不消费的原始字段不进入领域模型。
+
+### 新 Discourse 站点接入
+
+标准 Discourse 站点的编译期接入清单是：在 `sourceCatalog` 注册身份/capability；新增独立 `local*` adapter 与 transport；在 `discourseSourceReaders`、`discourseSourceActions` 和 `discourseActionRuntime` 注册；接入独立鉴权；增加匿名与登录 fixture/contract tests。若站点只使用现有语义，不应修改 Feed、Search、Topic 页面或公共领域模型；只有出现新的业务语义时才扩展公共语义，出现重要站点私有字段时按 `SiteExtensionMap` 增加 typed extension 和站点 presenter。这里不提供 runtime plugin、hook bag、adapter 继承或版本矩阵。
 
 ## 导航与状态边界
 
@@ -96,11 +113,12 @@
 ## 回复写操作
 
 - `src/app/useTopicActionsController.ts` 负责回复、楼层回复、编辑、删除、图片上传和互动请求。
+- linux.do 与小隐寺的标准 Discourse 请求由 `discourseActions` 共享；站点差异只通过 `discourseSourceActions` override 和独立 action client/鉴权处理。
 - NodeSeek 编辑自己的回复使用原站真实评论 id；当前回复和编辑请求未传 token 时，由 `src/nodeseekActions.ts` 生成 16 位 `csrf-token`。
 - NodeSeek 图片上传通过 NodeImage；App 可从 NodeImage 授权页获取并缓存当前用户自己的 API Key，也保留手动粘贴备用入口。
 - linux.do 图片上传走原站 `/uploads.json`；妖火图片上传走图床并插入 UBB 图片标签。
-- 小隐寺图片上传走原站 `/uploads.json`；点赞、书签和投票经服务器确认后局部更新，删除先本地移除再定向静默刷新回复，回复与编辑只刷新对应回复数据；不做未确认的乐观计数或权限推断，Live 验收再通过刷新或重进核对服务器状态。
-- 删除回复只在来源解析出明确权限时显示：linux.do 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。
+- 小隐寺图片上传走原站 `/uploads.json`；Discourse 点赞和书签统一先显示 optimistic 状态、失败时恢复原状态，投票经服务器确认后局部更新；删除先本地移除再定向静默刷新回复，回复与编辑只刷新对应回复数据。权限始终来自原站明确字段，不能乐观推断，Live 验收再通过刷新或重进核对服务器状态。
+- 删除回复只在来源解析出明确权限时显示：Discourse 使用 `can_delete`，妖火使用原站删除链接；NodeSeek 未确认删除入口时不显示删除。
 
 ## 收藏页
 

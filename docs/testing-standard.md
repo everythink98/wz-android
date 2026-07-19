@@ -60,7 +60,7 @@
 | --- | --- |
 | NodeSeek | 普通正文、纯表情 / sticker、带用户留言或签名；可写时检查操作栏，不可写且有统计时检查统计栏 |
 | linux.do | 有 / 无 reaction 统计、含投票的回复；可写时检查操作栏 |
-| 小隐寺 | 有 / 无 reaction 统计、采纳 / 隐藏 / 折叠 / 系统回复；有逐条权限时检查操作栏，未授权时统计仍可见 |
+| 小隐寺 | 有 / 无 reaction 图片统计、正文或评论 inline emoji、采纳 / 隐藏 / 折叠 / 系统回复；有逐条权限时检查操作栏，未授权时统计仍可见 |
 | V2EX | 有 / 无回复目标、有 / 无感谢；本站没有评论操作栏，检查末块到分隔线及下一条评论的留白 |
 | 妖火 | 普通正文、表情 / 图片；检查回复操作栏，出现删除入口时不得改变操作栏纵向几何 |
 
@@ -95,9 +95,9 @@
 | 首页 / 分类 / 分页 | 五站来源按当前支持范围返回；分类不串站；分页不重复、不漏掉下一页；聚合首页保留来源平衡；linux.do、NodeSeek、V2EX、小隐寺单站排序参数和缓存 key 不串用；小隐寺 latest/hot/new-all/new-topics/new-replies 分别命中真实路径与 subset，非空列表切换也必须重新请求 | `src/feedLogic.test.ts`、`src/feedCategoryRail.test.ts`、`src/forumApi.test.ts`、`src/localSources.test.ts`、`src/localXiaoyinsi.test.ts`、`tests/ui/feed-controller-xiaoyinsi.test.tsx` |
 | 搜索 | 空关键词或请求进行中不重复提交；“全部”按 V2EX、linux.do、NodeSeek、妖火、小隐寺固定顺序显示每站最多 2 条预览且不分页；单站直接显示连续完整列表并可分页；结果字段完整；错误按站点隔离；筛选参数真实传给站点；小隐寺标准 Discourse 筛选必须使用本站分类/标签/作者候选和独立 User API 凭据，包含原站解决/未解决状态，不出现 linux.do 专属专家回应或 AI；登录态限制必须显示站点提示；NodeSeek 登录时走站内搜索，未登录时允许受限 Google 搜索结果，且两种状态要分开记录；小隐寺匿名搜索不被授权状态阻断 | `src/forumApi.test.ts`、`src/localSources.test.ts`、`src/localXiaoyinsi.test.ts`、`src/searchFilters.test.ts`、`src/searchListItems.test.ts`、`src/sources/sourceGateway.test.ts`、`src/sources/sourceGatewayContract.test.ts`、`tests/ui/search-screen.test.tsx`、`src/yaohuoApi.test.ts` |
 | 详情 / 回复 | 标题、正文、作者、时间、分类、回复数和权限提示正确；回复分页不丢楼层；正文引用和评论引用分别默认显示简介，展开后显示目标完整帖子，且两条渲染路径互不串样式、状态或缓存；块级正文图片冷加载只有一个全宽 4:3 占位和一个连续 Spinner，同一 ImageRef 就绪后直接显示，热重进保持真实比例，请求切换不泄漏旧图，inline 媒体不进入块图 loader；图片预览可用；返回后上一层详情状态保留 | `src/quotedPosts.test.ts`、`src/topicSessionState.test.ts`、`src/topicDerivedData.test.ts`、`src/topicContentSplit.test.ts`、`src/topicContentHtml.test.ts`、`src/topicListItemState.test.ts`、`src/localSources.test.ts`、`tests/ui/topic-image-loading.test.tsx` |
-| 回复编辑 / 图片上传 | 四个可写来源回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火 / 小隐寺上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/linuxdoUpload.test.ts`、`src/xiaoyinsiActions.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
-| 回复删除 | NodeSeek、linux.do、妖火、小隐寺只在原站明确允许时显示删除；不得靠作者名判断；删除前必须确认；小隐寺删除经服务器确认后先本地移除并定向静默刷新回复，不整篇重载，Live 验收再通过刷新或重进核对服务器状态；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/nodeseekActions.test.ts`、`src/linuxdoActions.test.ts`、`src/yaohuoActions.test.ts`、`src/xiaoyinsiActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts`、`src/localXiaoyinsi.test.ts` |
-| 互动 / 写操作 | 未登录时不发送；原三站登录后请求带正确 Cookie / CSRF / sid，小隐寺只带独立 User API headers；投票、收藏、点赞、回复的目标不串站。小隐寺点赞、书签和投票经服务器确认后局部更新目标和活动 route snapshot，不整篇重载、不做未确认的乐观计数；Live 验收通过刷新或重进核对服务器状态；单个主题 403 先复核会话而不直接全局退出。NodeSeek 投票读取失败时保留原始标记并诊断为 `partial`；提交前确认，确认后严格 `POST × 1 → GET × 1`，GET 失败不重投、不伪造票数 | `src/localSources.test.ts`、`src/xiaoyinsiActions.test.ts`、`src/xiaoyinsiActionClient.test.ts`、`src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/app/useTopicActionsController.test.ts`、`src/linuxdoActions.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
+| 回复编辑 / 图片上传 | 四个可写来源回复失败后输入框仍可点击；格式按钮按站点插入 Markdown / UBB；NodeSeek 通过 NodeImage 自动授权、缓存 Key、过期后重新授权；NodeSeek / linux.do / 妖火 / 小隐寺上传后只插入草稿，不自动发送 | `src/app/topicActionHelpers.test.ts`、`src/replyImageUpload.test.ts`、`src/discourseActions.test.ts`、`src/discourseSourceActions.test.ts`、`src/linuxdoUpload.test.ts`、`src/loginWebViewScripts.test.ts`、`src/nodeimageAuthWebViewScripts.test.ts`、`src/screens/topic/replyComposerFormatting.test.ts` |
+| 回复删除 | NodeSeek、linux.do、妖火、小隐寺只在原站明确允许时显示删除；Discourse 权限缺失必须 fail-closed，不得靠作者名判断；删除前必须确认；小隐寺删除经服务器确认后先本地移除并定向静默刷新回复，不整篇重载，Live 验收再通过刷新或重进核对服务器状态；默认不真实发回复或删除回复，真实删除只在用户明确同意后使用本次新发的临时回复 | `src/discourseModel.test.ts`、`src/discourseActions.test.ts`、`src/nodeseekActions.test.ts`、`src/yaohuoActions.test.ts`、`src/xiaoyinsiActions.test.ts`、`src/localSources.test.ts`、`src/localYaohuo.test.ts`、`src/localXiaoyinsi.test.ts` |
+| 互动 / 写操作 | 未登录时不发送；原三站登录后请求带正确 Cookie / CSRF / sid，小隐寺只带独立 User API headers；投票、收藏、点赞、回复的目标不串站。linux.do 与小隐寺的 Discourse 点赞/书签共享 optimistic 队列：先局部显示，失败恢复原状态，确认后同步活动 route snapshot；投票经服务器确认后局部更新且不整篇重载；Live 验收通过刷新或重进核对服务器状态；单个主题 403 先复核会话而不直接全局退出。NodeSeek 投票读取失败时保留原始标记并诊断为 `partial`；提交前确认，确认后严格 `POST × 1 → GET × 1`，GET 失败不重投、不伪造票数 | `src/discourseActions.test.ts`、`src/discourseSourceActions.test.ts`、`src/discoursePermissions.test.ts`、`src/localSources.test.ts`、`src/xiaoyinsiActions.test.ts`、`src/xiaoyinsiActionClient.test.ts`、`src/nodeseekActions.test.ts`、`src/nodeseekActionClient.test.ts`、`src/app/useTopicActionsController.test.ts`、`src/linuxdoActionClient.test.ts`、`src/yaohuoActions.test.ts`、`src/yaohuoActionClient.test.ts`、`src/topicActionState.test.ts` |
 | 用户页 | 五站用户资料、头像、发帖数 / 回帖数、主题列表、回复列表、分页游标正确；主题和回复的来源、分类、标题、作者、时间、楼层、摘要按原站支持范围显示；用户名和用户 ID 不混用 | `src/forumApi.test.ts`、`src/localYaohuo.test.ts`、`src/localXiaoyinsi.test.ts`、`src/yaohuoApi.test.ts`、`src/screens/user/userScreenItems.test.ts`、`src/components/TopicCard.test.ts`、`src/userNavigation.test.ts` |
 | 收藏 / 历史 / 关注 | 本机数据保存失败能暴露；列表筛选、分组、去重、备份恢复后数据一致；备份不含敏感字段 | `src/readerData.test.ts`、`src/readerDataStore.test.ts`、`src/readerBackup.test.ts`、`src/backupImportFile.test.ts`、`src/backupOperation.test.ts`、`src/appSecurity.test.ts`、`src/app/useReaderDataController.test.ts` |
 | 登录 / 验证 / Cookie / Device Code / 凭据 | `SiteSessionState` 是四个可登录来源的唯一 UI 状态投影；原三站 Cookie 与保存凭据互不删除，账号密码仅进 SecureStore且只在可信字段填入；小隐寺 App 会话只由 User API Key、Client ID 和 `/session/current.json` 决定，系统浏览器仅承载一次性 Device Code 授权页，Cookie 不进入其状态判断。RSA 私钥不导出 Keystore，User API Key、验证码、nonce 和授权 URL 查询参数不进日志或备份；页面提示区分未登录、授权中、失效、拒绝、过期和普通失败 | `src/siteSessionState.test.ts`、`src/app/sessionControllerHelpers.test.ts`、`src/xiaoyinsiAuth.test.ts`、`tests/ui/xiaoyinsi-auth-controller.test.tsx`、`src/credentialVault.test.ts`、`src/loginFormAdapters.test.ts`、`src/screens/more/accountCenter.test.ts`、`src/nodeseekCookies.test.ts`、`src/yaohuoCookies.test.ts`、`src/cookieCleanup.test.ts`、`src/appSecurity.test.ts` |
@@ -314,7 +314,7 @@ npm run typecheck
 2. NodeSeek 无 Key 或强制重新授权时，点击图片按钮应打开 App 内 NodeImage 授权页；授权成功后关闭弹层并显示已保存。
 3. force-stop 后重新打开 App，再进 NodeSeek 回复框点图片，已有 Key 时应直接打开文件选择器，不再弹授权。
 4. 默认只打开四个可写来源的文件选择器并取消，确认回复框和草稿状态没有损坏；上传请求、响应解析和草稿插入由自动测试覆盖。
-5. 只有用户明确同意真实图片上传时，才各选一张小图并确认草稿中分别出现对应 Markdown、`upload://` 或 UBB 图片；不点击真实发送。若上传文件无法清理，必须在操作前说明残留风险并单独取得同意。
+5. 只有用户明确同意真实图片上传时，才各选一张小图并确认草稿中分别出现对应 Markdown、`upload://` 或 UBB 图片；等待 UI 稳定后用 accessibility 状态确认“发送回复”和格式按钮不再是 `disabled`，按钮颜色不作为可用性证据，也不点击真实发送。若上传文件无法清理，必须在操作前说明残留风险并单独取得同意。
 6. 发送失败状态默认由自动测试覆盖；模拟器只在自然遇到失败或能安全拦截请求、不产生真实写入时复测，不得为了制造失败发送真实回复。失败后回复框必须仍可点击和编辑，不允许靠收起再展开恢复。
 7. 结束前清空草稿或收起回复框，检查 `ReactNativeJS`、`AndroidRuntime` 没有红屏、未处理异常或崩溃。
 
@@ -325,7 +325,7 @@ npm run typecheck
 ### 自动测试
 
 ```powershell
-npm test -- src/nodeseekActions.test.ts src/linuxdoActions.test.ts src/yaohuoActions.test.ts src/localSources.test.ts src/localYaohuo.test.ts
+npm test -- src/discourseActions.test.ts src/discourseModel.test.ts src/nodeseekActions.test.ts src/yaohuoActions.test.ts src/localSources.test.ts src/localYaohuo.test.ts src/localXiaoyinsi.test.ts
 npm run typecheck
 ```
 

@@ -23,7 +23,8 @@ vi.mock('react-native', () => ({
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from './linuxdoFetchFallback';
-import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers, splitLinuxDoContentHtml } from './localLinuxdo';
+import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from './localLinuxdo';
+import { splitDiscourseContentHtml } from './discourseContent';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
 import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
@@ -1347,7 +1348,7 @@ describe('Android local sources', () => {
     });
   });
 
-  it('uses the linux.do reply offset as the fallback floor on later reply pages', async () => {
+  it('drops linux.do replies that omit their required server floor', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/posts.json')) {
         return json({
@@ -1372,7 +1373,7 @@ describe('Android local sources', () => {
 
     const replies = await getReplies({ source: 'linuxdo', id: '42', page: 2, offset: 30, limit: 2, fetcher });
 
-    expect(replies.items.map((item) => item.floor)).toEqual([32, 33]);
+    expect(replies.items).toEqual([]);
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
       'https://linux.do/t/42.json',
       expect.stringContaining('https://linux.do/t/42/posts.json')
@@ -1442,13 +1443,13 @@ describe('Android local sources', () => {
         { id: 'c3', label: '方案 C', selected: false }
       ]
     }]);
-    expect(topic.contentHtml).toContain('<forum-linuxdo-poll name="poll"></forum-linuxdo-poll>');
+    expect(topic.contentHtml).toContain('<forum-discourse-poll name="poll"></forum-discourse-poll>');
     expect(topic.contentHtml).not.toContain('原始方案 A');
     expect(topic.contentHtml).not.toContain('0 投票人');
     expect(topic.contentHtml).toContain('<forum-link-card');
     expect(topic.contentHtml).toContain('href="https://www.reddit.com/r/OpenAI/comments/abc123/topic/"');
     expect(topic.contentHtml).not.toContain('嵌入内容 · embed.reddit.com');
-    expect(splitLinuxDoContentHtml(topic.contentHtml, topic.polls).map((part) => part.type)).toEqual([
+    expect(splitDiscourseContentHtml(topic.contentHtml, topic.polls).map((part) => part.type)).toEqual([
       'html',
       'poll',
       'html'
@@ -1512,7 +1513,7 @@ describe('Android local sources', () => {
       ]
     }]);
     expect(topic.replies[0].contentHtml).not.toContain('原始回复选项');
-    expect(splitLinuxDoContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)).toEqual([
+    expect(splitDiscourseContentHtml(topic.replies[0].contentHtml, topic.replies[0].polls).map((part) => part.type)).toEqual([
       'html',
       'poll',
       'html'
@@ -1713,18 +1714,17 @@ describe('Android local sources', () => {
         { id: 'heart', count: 2 },
         { id: 'laughing', count: 1 }
       ],
-      boostCount: 1
+      siteExtension: { source: 'linuxdo', boostCount: 1 }
     });
     expect(topic.replies[0]).toMatchObject({
       acceptedAnswer: true,
       wiki: true,
       hidden: true,
       folded: true,
-      needsApproval: true,
       systemAction: true,
       actionCode: 'closed.enabled',
       reactionSummary: [{ id: 'distorted_face', count: 3 }],
-      boostCount: 2
+      siteExtension: { source: 'linuxdo', boostCount: 2, needsApproval: true }
     });
   });
 
@@ -1762,8 +1762,8 @@ describe('Android local sources', () => {
 
     const topic = await getTopic({ source: 'linuxdo', id: '408', fetcher });
 
-    expect(topic.boostCount).toBe(4);
-    expect(topic.replies[0].boostCount).toBe(5);
+    expect(topic.siteExtension).toEqual({ source: 'linuxdo', boostCount: 4 });
+    expect(topic.replies[0].siteExtension).toEqual({ source: 'linuxdo', boostCount: 5 });
   });
 
   it('requests linux.do latest feed by creation time', async () => {
@@ -1822,7 +1822,7 @@ describe('Android local sources', () => {
     }));
 
     for (const item of cases) {
-      await getFeed({ source: 'linuxdo', category: '11', linuxDoFilter: item.filter, limit: 1, fetcher });
+      await getFeed({ source: 'linuxdo', category: '11', feedFilter: item.filter, limit: 1, fetcher });
     }
 
     const urls = (fetcher.mock.calls as unknown as Array<[string]>).map(([input]) => new URL(input));
@@ -1968,8 +1968,8 @@ describe('Android local sources', () => {
         return json({
           post_stream: {
             posts: [
-              { id: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
-              { id: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
+              { id: 4, post_number: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
+              { id: 5, post_number: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
             ]
           }
         });
@@ -1978,12 +1978,13 @@ describe('Android local sources', () => {
         id: 900,
         title: 'linux.do cached topic',
         created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 5,
         post_stream: {
           stream: [1, 2, 3, 4, 5],
           posts: [
-            { id: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
-            { id: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' },
-            { id: 3, username: 'reply 3', cooked: '<p>3</p>', created_at: '2026-05-20T00:03:00.000Z' }
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
+            { id: 2, post_number: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' },
+            { id: 3, post_number: 3, username: 'reply 3', cooked: '<p>3</p>', created_at: '2026-05-20T00:03:00.000Z' }
           ]
         }
       });
@@ -2011,6 +2012,7 @@ describe('Android local sources', () => {
           id: 920,
           title: 'Referenced topic',
           created_at: '2026-05-20T00:00:00.000Z',
+          posts_count: 1,
           post_stream: {
             stream: [11],
             posts: [{
@@ -2027,6 +2029,7 @@ describe('Android local sources', () => {
         id: 910,
         title: 'Topic with external quote',
         created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 1,
         post_stream: {
           stream: [1],
           posts: [{
@@ -2054,6 +2057,7 @@ describe('Android local sources', () => {
       id: 910,
       title: 'linux.do quoted author',
       created_at: '2026-05-20T00:00:00.000Z',
+      posts_count: 2,
       post_stream: {
         stream: [1, 2],
         posts: [
@@ -2086,6 +2090,7 @@ describe('Android local sources', () => {
       id: 911,
       title: 'linux.do quoted author avatar',
       created_at: '2026-05-20T00:00:00.000Z',
+      posts_count: 2,
       post_stream: {
         stream: [1, 2],
         posts: [
@@ -2130,6 +2135,7 @@ describe('Android local sources', () => {
         id: 9901,
         title: 'linux.do refresh replies',
         created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: topicJsonCalls === 1 ? 2 : 3,
         post_stream: {
           stream: topicJsonCalls === 1 ? [1, 2] : [1, 2, 3],
           posts: [
@@ -2321,7 +2327,7 @@ describe('Android local sources', () => {
         return json({
           post_stream: {
             posts: [
-              { id: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' }
+              { id: 2, post_number: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' }
             ]
           }
         });
@@ -2332,10 +2338,11 @@ describe('Android local sources', () => {
         id: Number(id),
         title: `linux.do cached topic ${id}`,
         created_at: '2026-05-20T00:00:00.000Z',
+        posts_count: 2,
         post_stream: {
           stream: [1, 2],
           posts: [
-            { id: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' }
+            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' }
           ]
         }
       });

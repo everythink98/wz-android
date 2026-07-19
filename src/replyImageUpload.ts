@@ -1,5 +1,6 @@
 import type { Source } from './types';
 import { fetchWithTimeout, type Fetcher } from './request';
+import { sourceSupportsTopicAction } from './sourceCatalog';
 
 export type ReplyImageAsset = {
   uri: string;
@@ -22,7 +23,7 @@ type NodeImageUploadError = Error & { nodeImageApiKeyExpired?: boolean };
 type NodeImageApiKeyProvider = (options?: { forceRefresh?: boolean }) => Promise<string | null | undefined>;
 
 export function replyImageUploadSupported(source?: Source) {
-  return source === 'linuxdo' || source === 'xiaoyinsi' || source === 'yaohuo' || source === 'nodeseek';
+  return sourceSupportsTopicAction(source, 'upload');
 }
 
 export function normalizeReplyImageAsset(asset: ReplyImageAsset): NormalizedReplyImageAsset {

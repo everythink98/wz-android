@@ -1,6 +1,8 @@
-import type { FeedSource, Source, UserProfile } from './types';
+import { sessionSources, type SessionSource } from './sourceCatalog';
+import type { FeedSource, UserProfile } from './types';
 
-export type SessionSite = Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi'>;
+export type SessionSite = SessionSource;
+export { sessionSources };
 export type SiteSessionStatus = 'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'authorizing' | 'expired';
 
 export type SiteSessionState = {
@@ -58,12 +60,10 @@ function createSiteState(site: SessionSite, status: SiteSessionStatus, cookieSum
 }
 
 export function createSiteSessionStates(states?: Partial<SiteSessionStates>): SiteSessionStates {
-  return {
-    nodeseek: states?.nodeseek || createSiteState('nodeseek', 'anonymous'),
-    linuxdo: states?.linuxdo || createSiteState('linuxdo', 'anonymous'),
-    yaohuo: states?.yaohuo || createSiteState('yaohuo', 'anonymous'),
-    xiaoyinsi: states?.xiaoyinsi || createSiteState('xiaoyinsi', 'anonymous')
-  };
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    states?.[site] || createSiteState(site, 'anonymous')
+  ])) as SiteSessionStates;
 }
 
 function currentUserForSite(site: SessionSite, currentUser: UserProfile | null | undefined, loggedIn?: boolean) {
@@ -77,15 +77,13 @@ function currentUserForSite(site: SessionSite, currentUser: UserProfile | null |
 }
 
 export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides: DevAnonymousOverrides = {}): SiteSessionStates {
-  if (!overrides.nodeseek && !overrides.linuxdo && !overrides.yaohuo && !overrides.xiaoyinsi) {
+  if (!sessionSources.some((site) => overrides[site])) {
     return states;
   }
-  return {
-    nodeseek: overrides.nodeseek ? createSiteState('nodeseek', 'anonymous') : states.nodeseek,
-    linuxdo: overrides.linuxdo ? createSiteState('linuxdo', 'anonymous') : states.linuxdo,
-    yaohuo: overrides.yaohuo ? createSiteState('yaohuo', 'anonymous') : states.yaohuo,
-    xiaoyinsi: overrides.xiaoyinsi ? createSiteState('xiaoyinsi', 'anonymous') : states.xiaoyinsi
-  };
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    overrides[site] ? createSiteState(site, 'anonymous') : states[site]
+  ])) as SiteSessionStates;
 }
 
 export function isDevAnonymousSource(source: FeedSource, site: SessionSite, overrides: DevAnonymousOverrides = {}) {
@@ -258,10 +256,8 @@ export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUs
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {
-  return {
-    nodeseek: createSiteSessionViewModel(states.nodeseek),
-    linuxdo: createSiteSessionViewModel(states.linuxdo),
-    yaohuo: createSiteSessionViewModel(states.yaohuo),
-    xiaoyinsi: createSiteSessionViewModel(states.xiaoyinsi)
-  };
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    createSiteSessionViewModel(states[site])
+  ])) as SiteSessionViewModels;
 }

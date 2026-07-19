@@ -1,4 +1,4 @@
-import type { LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
+import type { DiscourseEmojiUrlMap } from '../../discourseReactions';
 
 export type ReplyComposerInsertExpression = {
   code: string;
@@ -64,7 +64,7 @@ export const NODESEEK_STICKER_CATEGORIES: ReplyComposerExpressionCategory[] = [
   }
 ];
 
-const LINUXDO_EMOJI_FALLBACK_ITEMS: ReplyComposerInsertExpression[] = [
+const DISCOURSE_EMOJI_FALLBACK_ITEMS: ReplyComposerInsertExpression[] = [
   { code: ':grinning_face:', label: 'grinning face' },
   { code: ':heart:', label: 'heart' },
   { code: ':laughing:', label: 'laughing' },
@@ -72,7 +72,7 @@ const LINUXDO_EMOJI_FALLBACK_ITEMS: ReplyComposerInsertExpression[] = [
   { code: ':open_mouth:', label: 'open mouth' }
 ];
 
-export function linuxDoEmojiCatalogFromUrlMap(emojiUrls: LinuxDoEmojiUrlMap): ReplyComposerInsertExpression[] {
+export function discourseEmojiCatalogFromUrlMap(emojiUrls: DiscourseEmojiUrlMap): ReplyComposerInsertExpression[] {
   const items = Object.entries(emojiUrls)
     .map(([name, imageUrl]) => ({
       code: `:${name}:`,
@@ -80,7 +80,7 @@ export function linuxDoEmojiCatalogFromUrlMap(emojiUrls: LinuxDoEmojiUrlMap): Re
       imageUrl
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
-  return items.length ? items : LINUXDO_EMOJI_FALLBACK_ITEMS;
+  return items.length ? items : DISCOURSE_EMOJI_FALLBACK_ITEMS;
 }
 
 export const YAOHUO_FACE_ITEMS: YaohuoFaceItem[] = [

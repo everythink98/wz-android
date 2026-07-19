@@ -141,8 +141,12 @@ export function useAccountStatusController({
         ? getCurrentUserProfile({
           source: 'linuxdo',
           fetcher: diagnosticFetcher,
-          linuxDoCookie: linuxDoAccess.cookieHeader,
-          linuxDoUserAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current,
+          discourseAuth: {
+            linuxdo: {
+              cookieHeader: linuxDoAccess.cookieHeader,
+              userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current
+            }
+          },
           signal: controller.signal
         })
         : Promise.resolve(null);

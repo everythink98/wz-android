@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   getXiaoyinsiCategories,
   getXiaoyinsiCurrentUserProfile,
+  getXiaoyinsiEmojiUrls,
   getXiaoyinsiFeed,
   getXiaoyinsiLevelProfile,
   getXiaoyinsiReplies,
@@ -10,9 +11,9 @@ import {
   getXiaoyinsiUserProfile,
   searchXiaoyinsi,
   searchXiaoyinsiTags,
-  searchXiaoyinsiUsers,
-  splitXiaoyinsiContentHtml
+  searchXiaoyinsiUsers
 } from './localXiaoyinsi';
+import { splitDiscourseContentHtml } from './discourseContent';
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -98,6 +99,23 @@ function postsForRequest(url: URL) {
 }
 
 describe('xiaoyinsi adapter', () => {
+  it('loads and absolutizes the site-owned Discourse emoji catalog', async () => {
+    const fetcher = vi.fn(async (_input: string) => json({
+      'smileys_&_emotion': [
+        { name: 'heart', url: '/images/emoji/twitter/heart.png?v=15' }
+      ],
+      'people_&_body': [
+        { name: '+1', url: '/images/emoji/twitter/+1.png?v=15' }
+      ]
+    }));
+
+    await expect(getXiaoyinsiEmojiUrls({ fetcher })).resolves.toEqual({
+      heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15',
+      '+1': 'https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15'
+    });
+    expect(new URL(fetcher.mock.calls[0]?.[0] || '').pathname).toBe('/emojis.json');
+  });
+
   it('reads feed, categories, topic, replies, floor reference, search and users through its own endpoints', async () => {
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
@@ -195,7 +213,7 @@ describe('xiaoyinsi adapter', () => {
       reactionSummary: [{ id: '+1', count: 3 }]
     });
     expect(detail.replies[0].contentHtml).not.toContain('<aside');
-    expect(splitXiaoyinsiContentHtml(detail.contentHtml, detail.polls).map((part) => part.type)).toEqual(['html', 'poll']);
+    expect(splitDiscourseContentHtml(detail.contentHtml, detail.polls).map((part) => part.type)).toEqual(['html', 'poll']);
     expect(replies).toMatchObject({ totalCount: 2 });
     expect(replies.items[0]).toMatchObject({ author: 'carol', floor: 3, contentMarkdown: '原始内容 102' });
     expect(reply).toMatchObject({ author: 'bob', floor: 2, contentMarkdown: '回复' });

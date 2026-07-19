@@ -1,24 +1,13 @@
 import { type MutableRefObject } from 'react';
 import { REQUEST_CANCELED_MESSAGE } from './request';
+import { sourceCatalog } from './sourceCatalog';
 import type { AccessRequirement, FeedSource, Source, Topic, UserProfile } from './types';
 
 export function sourceLabel(source: Source | FeedSource) {
   if (source === 'all') {
     return '全部';
   }
-  if (source === 'linuxdo') {
-    return 'linux.do';
-  }
-  if (source === 'nodeseek') {
-    return 'NodeSeek';
-  }
-  if (source === 'yaohuo') {
-    return '妖火';
-  }
-  if (source === 'xiaoyinsi') {
-    return '小隐寺';
-  }
-  return 'V2EX';
+  return sourceCatalog[source].label;
 }
 
 export function forumAccessRequirementText(requirement?: AccessRequirement) {

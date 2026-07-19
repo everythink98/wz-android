@@ -1,7 +1,7 @@
 import type { XiaoyinsiApiCredentials } from './localXiaoyinsi';
 import { XIAOYINSI_BASE_URL } from './localXiaoyinsi';
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { XiaoyinsiActionRequest } from './xiaoyinsiActions';
+import type { DiscourseActionRequest } from './discourseActions';
 
 type XiaoyinsiActionErrorFields = {
   source: 'xiaoyinsi';
@@ -56,7 +56,7 @@ export async function runXiaoyinsiAction({
   timeoutMs
 }: {
   credentials: XiaoyinsiApiCredentials;
-  request: XiaoyinsiActionRequest;
+  request: DiscourseActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;

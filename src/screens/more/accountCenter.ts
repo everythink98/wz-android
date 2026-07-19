@@ -1,6 +1,6 @@
 import { sourceLabel } from '../../appUtils';
 import type { CredentialSummaries, CredentialProtection } from '../../credentialVault';
-import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
+import { sessionSources, type SessionSite, type SiteSessionViewModels } from '../../siteSessionState';
 import type { UserProfile } from '../../types';
 
 export type { CredentialSummaries } from '../../credentialVault';
@@ -27,8 +27,6 @@ export type SiteAccountView = {
   needsAttention: boolean;
   user?: UserProfile;
 };
-
-const sites = ['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi'] as const satisfies readonly SessionSite[];
 
 function primaryActionFor(view: SiteSessionViewModels[SessionSite], hasCredential: boolean) {
   if (view.site === 'xiaoyinsi') {
@@ -70,7 +68,7 @@ export function createSiteAccountViews(
   credentials: CredentialSummaries,
   nodeSeekUserId: number | null = null
 ): SiteAccountView[] {
-  return sites.map((site) => {
+  return sessionSources.map((site) => {
     const session = sessions[site];
     const supportsCredentialFill = site !== 'xiaoyinsi';
     const credential: SiteAccountCredentialView = supportsCredentialFill

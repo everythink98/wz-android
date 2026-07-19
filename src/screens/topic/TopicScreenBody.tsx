@@ -21,7 +21,7 @@ import {
   type TNode
 } from 'react-native-render-html';
 import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
-import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
+import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
 import { HTML_ALLOWED_INLINE_STYLES } from '../../htmlRenderingStyles';
@@ -38,25 +38,26 @@ import { topicWithAuthorFallback, userFromTopic } from '../../userNavigation';
 import { topicActionStateKey, type InteractionType, type OptimisticActionState, type TopicActionStateKind } from '../../topicActionState';
 import type { TopicImageDeriver } from '../../topicDerivedData';
 import { authNoticeForSourceError } from '../../siteSessionPrompts';
-import { getLinuxDoEmojiUrls, splitLinuxDoContentHtml } from '../../localLinuxdo';
-import { splitXiaoyinsiContentHtml } from '../../localXiaoyinsi';
+import { getDiscourseSourceEmojiUrls } from '../../discourseSourceReaders';
+import { splitDiscourseContentHtml } from '../../discourseContent';
 import { NODESEEK_POLL_PLACEHOLDER_TAG } from '../../nodeseekPolls';
-import { discourseReactionStats, linuxDoReactionStats, type LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
-import { canUseLinuxDoLike } from '../../linuxdoPermissions';
+import { discourseReactionStats, type DiscourseEmojiUrlMap } from '../../discourseReactions';
+import { linuxDoReactionStats } from '../../linuxdoReactions';
+import { canToggleDiscourseLike } from '../../discoursePermissions';
 import { replyImageUploadSupported } from '../../replyImageUpload';
 import {
-  linuxDoQuotedPostReferenceFromAttributes,
+  discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
   topicQuotedPostInstanceKey,
-  xiaoyinsiQuotedPostReferenceFromAttributes,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
 } from '../../quotedPosts';
+import { isDiscourseSource, sourceSupportsTopicAction, sourceUsesTopicCreatePermission, type DiscourseSource } from '../../sourceCatalog';
 import { TopicPolls } from './TopicPolls';
 import { DetailActionButton } from './TopicActionBar';
 import { TopicBodyQuoteCard } from './TopicBodyQuoteCard';
 import { MemoizedTopicContentBlock, TRIM_TRAILING_BLOCK_SPACING_ATTRIBUTE } from './TopicContentBlock';
-import { LinuxDoReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
+import { DiscourseReactionPill, MemoizedReplyItem, NodeSeekStatPill, nodeSeekTopicReactionStats } from './ReplyItem';
 import { ReplyComposerSheet } from './ReplyComposerSheet';
 import { TopicMenu } from './TopicMenu';
 import { buildReplyListItems, getReplyKey, isAccessNoticeHtml, readableTopicError, stableTextHash, topicOpeningPostAsReply, topicStatusBadges, type TopicListItem } from './topicScreenHelpers';
@@ -120,6 +121,7 @@ export type { TopicListItem };
 
 const HTML_IGNORED_DOM_TAGS = ['script', 'style', 'noscript'];
 const EMPTY_TOPIC_POLLS: TopicPoll[] = [];
+const EMPTY_DISCOURSE_EMOJI_URLS: DiscourseEmojiUrlMap = {};
 
 function trimsTrailingBlockSpacing(tnode: TNode) {
   let child = tnode;
@@ -250,10 +252,7 @@ function topicListItemType(item: TopicListItem) {
 
 export const TopicScreen = memo(function TopicScreen({
   actionBusy,
-  canUseLinuxDoActions,
-  canUseNodeSeekActions,
-  canUseXiaoyinsiActions,
-  canUseYaohuoActions,
+  sourceActionAvailability,
   contentWidth,
   htmlBaseStyle,
   htmlClassesStyles,
@@ -292,9 +291,8 @@ export const TopicScreen = memo(function TopicScreen({
   onDeleteReply,
   onEditReply,
   onInteract,
-  onLinuxDoBookmark,
+  onDiscourseBookmark,
   onNodeSeekCollection,
-  onXiaoyinsiBookmark,
   onShareTopic,
   onVotePoll,
   onLoadMoreReplies,
@@ -320,10 +318,7 @@ export const TopicScreen = memo(function TopicScreen({
   topicImageDeriver
 }: {
   actionBusy: boolean;
-  canUseLinuxDoActions: boolean;
-  canUseNodeSeekActions: boolean;
-  canUseXiaoyinsiActions: boolean;
-  canUseYaohuoActions: boolean;
+  sourceActionAvailability: Record<Source, boolean>;
   contentWidth: number;
   htmlBaseStyle: HtmlBaseStyle;
   htmlClassesStyles: HtmlClassesStyles;
@@ -362,9 +357,8 @@ export const TopicScreen = memo(function TopicScreen({
   onDeleteReply: (reply: Reply) => void;
   onEditReply: (reply: Reply) => void;
   onInteract: (type: InteractionType, commentId?: number) => void;
-  onLinuxDoBookmark: () => void;
+  onDiscourseBookmark: () => void;
   onNodeSeekCollection: () => void;
-  onXiaoyinsiBookmark: () => void;
   onShareTopic: () => void;
   onVotePoll: (poll: TopicPoll, optionIds: string[]) => void;
   onLoadMoreReplies: () => void;
@@ -392,14 +386,18 @@ export const TopicScreen = memo(function TopicScreen({
   const item = topicWithAuthorFallback(topic, selectedTopic) || selectedTopic;
   const topicLoading = topicBusy || (!topic && !topicError);
   const canShowReplies = Boolean(topic && !topicLoading);
-  const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseNodeSeekActions);
-  const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseYaohuoActions);
-  const canWriteLinuxDo = Boolean(topic && topic.source === 'linuxdo' && canUseLinuxDoActions);
-  const canUseXiaoyinsiInteractions = Boolean(topic && topic.source === 'xiaoyinsi' && canUseXiaoyinsiActions);
-  const canWriteXiaoyinsi = Boolean(canUseXiaoyinsiInteractions && topic?.canCreatePost === true);
-  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteLinuxDo || canWriteXiaoyinsi;
+  const canUseCurrentSourceActions = Boolean(topic && sourceActionAvailability[topic.source]);
+  const canWriteNodeSeek = Boolean(topic && topic.source === 'nodeseek' && canUseCurrentSourceActions);
+  const canWriteYaohuo = Boolean(topic && topic.source === 'yaohuo' && canUseCurrentSourceActions);
+  const canUseDiscourseInteractions = Boolean(topic && isDiscourseSource(topic.source) && canUseCurrentSourceActions);
+  const canWriteDiscourse = Boolean(
+    topic
+    && canUseDiscourseInteractions
+    && (!sourceUsesTopicCreatePermission(topic.source) || topic.canCreatePost === true)
+  );
+  const canWrite = canWriteNodeSeek || canWriteYaohuo || canWriteDiscourse;
   const canOpenReplyComposer = canWrite || Boolean(
-    canUseXiaoyinsiInteractions
+    canUseDiscourseInteractions
     && replyEditTarget
   );
   const replyTotalCount = item?.replyCount ?? replies.length;
@@ -445,27 +443,33 @@ export const TopicScreen = memo(function TopicScreen({
     return Math.max(...floors) - unreadReplyCount + 1;
   }, [sourceReplies, unreadReplyCount]);
   const [pollSelections, setPollSelections] = useState<Record<string, string[]>>({});
-  const [linuxDoEmojiUrls, setLinuxDoEmojiUrls] = useState<LinuxDoEmojiUrlMap>({});
+  const [discourseEmojiCatalog, setDiscourseEmojiCatalog] = useState<{
+    source: DiscourseSource;
+    urls: DiscourseEmojiUrlMap;
+  } | null>(null);
+  const discourseEmojiUrls = discourseEmojiCatalog && discourseEmojiCatalog.source === itemSource
+    ? discourseEmojiCatalog.urls
+    : EMPTY_DISCOURSE_EMOJI_URLS;
   useEffect(() => {
     setPollSelections({});
   }, [item?.id, item?.source]);
   useEffect(() => {
     let cancelled = false;
-    if (itemSource !== 'linuxdo') {
-      setLinuxDoEmojiUrls({});
+    if (!isDiscourseSource(itemSource)) {
+      setDiscourseEmojiCatalog(null);
       return () => {
         cancelled = true;
       };
     }
-    getLinuxDoEmojiUrls()
+    getDiscourseSourceEmojiUrls(itemSource)
       .then((urls) => {
         if (!cancelled) {
-          setLinuxDoEmojiUrls(urls);
+          setDiscourseEmojiCatalog({ source: itemSource, urls });
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setLinuxDoEmojiUrls({});
+          setDiscourseEmojiCatalog(null);
         }
       });
     return () => {
@@ -499,10 +503,8 @@ export const TopicScreen = memo(function TopicScreen({
           label: topicAccessRequirementText,
           detail: topicAccessRequirementDetail
         }]
-        : (topic.source === 'linuxdo' || topic.source === 'xiaoyinsi'
-          ? topic.source === 'linuxdo'
-            ? splitLinuxDoContentHtml(topicContentHtml, topicPolls)
-            : splitXiaoyinsiContentHtml(topicContentHtml, topicPolls)
+        : (isDiscourseSource(topic.source)
+          ? splitDiscourseContentHtml(topicContentHtml, topicPolls)
           : [{ type: 'html' as const, html: topicContentHtml }]
         ).flatMap((part, partIndex): TopicContentItem[] => {
           if (part.type === 'poll') {
@@ -525,17 +527,15 @@ export const TopicScreen = memo(function TopicScreen({
   })), [replies]);
   const canWriteTopicPollSource = Boolean(
     topic
-    && (
-      (topic.source === 'nodeseek' && canWriteNodeSeek)
-      || (topic.source === 'linuxdo' && canWriteLinuxDo)
-      || (topic.source === 'xiaoyinsi' && canUseXiaoyinsiInteractions)
-      || (topic.source === 'yaohuo' && canWriteYaohuo)
-    )
+    && sourceSupportsTopicAction(topic.source, 'vote')
+    && canUseCurrentSourceActions
   );
+  const discourseTopicReactionStats = topic && isDiscourseSource(topic.source)
+    ? topic.source === 'linuxdo' ? linuxDoReactionStats(topic, discourseEmojiUrls) : discourseReactionStats(topic, discourseEmojiUrls)
+    : [];
   const topicHasPostActions = Boolean(topic && !topicShowsAccessNotice && (
     (topic.source === 'nodeseek' && (canWriteNodeSeek || nodeSeekTopicReactionStats(topic).length > 0))
-    || (topic.source === 'linuxdo' && (canWriteLinuxDo || linuxDoReactionStats(topic).length > 0))
-    || (topic.source === 'xiaoyinsi' && (canUseXiaoyinsiInteractions || discourseReactionStats(topic).length > 0))
+    || (isDiscourseSource(topic.source) && (canUseDiscourseInteractions || discourseTopicReactionStats.length > 0))
     || (topic.source === 'yaohuo' && canWriteYaohuo)
     || (topic.source === 'v2ex' && typeof topic.upvoteCount === 'number')
   ));
@@ -675,11 +675,9 @@ export const TopicScreen = memo(function TopicScreen({
       const quoteHeaderChildren = quoteTitleChildren.length ? quoteTitleChildren : props.tnode.children.slice(0, 1);
       const quoteHeaderChildSet = new Set(quoteHeaderChildren);
       const quoteBodyChildren = props.tnode.children.filter((child) => !quoteHeaderChildSet.has(child));
-      const reference = itemSource === 'linuxdo'
-        ? linuxDoQuotedPostReferenceFromAttributes(props.tnode.attributes, item?.id)
-        : itemSource === 'xiaoyinsi'
-          ? xiaoyinsiQuotedPostReferenceFromAttributes(props.tnode.attributes, item?.id)
-          : null;
+      const reference = isDiscourseSource(itemSource)
+        ? discourseQuotedPostReferenceFromAttributes(itemSource, props.tnode.attributes, item?.id)
+        : null;
       const referenceKey = reference ? quotedPostReferenceKey(reference) : '';
       const instanceKey = reference && item?.id ? topicQuotedPostInstanceKey(item.id, reference) : '';
       const quotedPost = reference
@@ -693,10 +691,7 @@ export const TopicScreen = memo(function TopicScreen({
         <TopicBodyQuoteCard
           completeContent={reference && completeQuotedPost ? (
             <>
-              {(reference.source === 'xiaoyinsi'
-                ? splitXiaoyinsiContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
-                : splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
-              ).map((part) => part.type === 'poll' ? (
+              {splitDiscourseContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls).map((part) => part.type === 'poll' ? (
                 <TopicPolls
                   embeddedInArticle
                   key={`topic-quote-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
@@ -893,13 +888,13 @@ export const TopicScreen = memo(function TopicScreen({
       <View style={[styles.replyListItem, topicColumnStyle]}>
         <MemoizedReplyItem
           actionBusy={actionBusy}
-          canUseXiaoyinsiActions={canUseXiaoyinsiInteractions}
+          canUseDiscourseActions={canUseDiscourseInteractions}
           canWrite={canWrite}
           contentWidth={contentWidth}
           expandedQuotes={expandedQuotes}
           isActionPending={isOptimisticActionPending}
           inlineSizedImageUrls={inlineSizedImageUrls}
-          linuxDoEmojiUrls={linuxDoEmojiUrls}
+          discourseEmojiUrls={discourseEmojiUrls}
           topicImageDeriver={topicImageDeriver}
           topicBaseUrl={topicBaseUrl}
           loadedQuotedReplies={loadedQuotedReplies}
@@ -928,7 +923,7 @@ export const TopicScreen = memo(function TopicScreen({
     );
   }, [
     actionBusy,
-    canUseXiaoyinsiInteractions,
+    canUseDiscourseInteractions,
     canWrite,
     commentQuery,
     contentWidth,
@@ -940,7 +935,7 @@ export const TopicScreen = memo(function TopicScreen({
     isOptimisticActionPending,
     loadedQuotedReplies,
     loadingQuotedFloors,
-    linuxDoEmojiUrls,
+    discourseEmojiUrls,
     newReplyFloorStart,
     onCommentQueryChange,
     onDeleteReply,
@@ -987,8 +982,6 @@ export const TopicScreen = memo(function TopicScreen({
       ? styles.authNoticeTextWarning
       : styles.authNoticeTextNeutral;
   const topicReactionStats = topic?.source === 'nodeseek' && topic ? nodeSeekTopicReactionStats(topic) : [];
-  const linuxDoTopicReactionStats = topic?.source === 'linuxdo' && topic ? linuxDoReactionStats(topic, linuxDoEmojiUrls) : [];
-  const xiaoyinsiTopicReactionStats = topic?.source === 'xiaoyinsi' && topic ? discourseReactionStats(topic) : [];
   const listHeader = (
     <View style={styles.topicHeaderStack}>
       <View style={[styles.article, topicColumnStyle]}>
@@ -1052,7 +1045,7 @@ export const TopicScreen = memo(function TopicScreen({
         {!topic && !topicError ? <LoadingState text="正在读取主题..." styles={styles} theme={theme} /> : null}
       </View>
       {topicContentItems.map(renderTopicContentItem)}
-      {topic && topic.source !== 'linuxdo' && topic.source !== 'xiaoyinsi' && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
+      {topic && !isDiscourseSource(topic.source) && topic.source !== 'nodeseek' && !topicShowsAccessNotice && topicPolls.length ? renderTopicListItemFrame(
         <View style={[styles.replyListItem, topicColumnStyle]}>
           <View style={styles.articleBody}>
             <TopicPolls
@@ -1094,10 +1087,10 @@ export const TopicScreen = memo(function TopicScreen({
               <DetailActionButton active={Boolean(topic?.collected)} tone="favorite" accessibilityLabel={topic?.collected ? '取消原站收藏' : '原站收藏'} count={topic?.collectionCount} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'collection')} styles={styles} theme={theme} disabled={actionBusy} onPress={onNodeSeekCollection} />
             </View>
           ) : null}
-          {topic?.source === 'linuxdo' && linuxDoTopicReactionStats.length ? (
+          {isDiscourseSource(topic?.source) && discourseTopicReactionStats.length ? (
             <View style={styles.topicStatRail}>
-              {linuxDoTopicReactionStats.map((stat) => (
-                <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
+              {discourseTopicReactionStats.map((stat) => (
+                <DiscourseReactionPill compact key={stat.id} stat={stat} styles={styles} />
               ))}
             </View>
           ) : null}
@@ -1112,23 +1105,10 @@ export const TopicScreen = memo(function TopicScreen({
               />
             </View>
           ) : null}
-          {canWriteLinuxDo ? (
+          {canUseDiscourseInteractions ? (
             <View style={styles.topicPrimaryActions}>
-              {canUseLinuxDoLike(topic) ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
-              <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onLinuxDoBookmark} />
-            </View>
-          ) : null}
-          {topic?.source === 'xiaoyinsi' && xiaoyinsiTopicReactionStats.length ? (
-            <View style={styles.topicStatRail}>
-              {xiaoyinsiTopicReactionStats.map((stat) => (
-                <LinuxDoReactionPill compact key={stat.id} stat={stat} styles={styles} />
-              ))}
-            </View>
-          ) : null}
-          {canUseXiaoyinsiInteractions ? (
-            <View style={styles.topicPrimaryActions}>
-              {topic?.canLike === true || topic?.liked ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
-              <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" styles={styles} theme={theme} disabled={actionBusy} onPress={onXiaoyinsiBookmark} />
+              {canToggleDiscourseLike(topic) ? <DetailActionButton active={Boolean(topic?.liked)} tone="success" accessibilityLabel={topic?.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isOptimisticActionPending(topic?.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', topic?.commentId)} /> : null}
+              <DetailActionButton active={Boolean(topic?.bookmarked)} tone="favorite" accessibilityLabel={topic?.bookmarked ? '取消原站收藏' : '原站收藏'} icon={BookMarked} label="收藏" pending={isOptimisticActionPending(topic?.id, 'bookmark')} styles={styles} theme={theme} disabled={actionBusy} onPress={onDiscourseBookmark} />
             </View>
           ) : null}
         </View>,
@@ -1199,7 +1179,7 @@ export const TopicScreen = memo(function TopicScreen({
         />
         <ReplyComposerSheet
           actionBusy={actionBusy}
-          linuxDoEmojiUrls={linuxDoEmojiUrls}
+          discourseEmojiUrls={discourseEmojiUrls}
           replyContent={replyContent}
           replyFace={replyFace}
           replyEditTarget={replyEditTarget}

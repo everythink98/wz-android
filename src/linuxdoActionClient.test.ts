@@ -21,7 +21,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { checkLinuxDoLoginAccess, runLinuxDoAction } from './linuxdoActionClient';
-import { buildLinuxDoLikeRequest } from './linuxdoActions';
+import { buildDiscourseActionRequest } from './discourseActions';
 
 describe('linux.do action client', () => {
   it('gets a CSRF token and sends login cookies with Discourse actions', async () => {
@@ -42,7 +42,7 @@ describe('linux.do action client', () => {
     await runLinuxDoAction({
       cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
       userAgent: 'LinuxDo WebView UA',
-      request: buildLinuxDoLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
     });
 
@@ -65,7 +65,7 @@ describe('linux.do action client', () => {
   it('requires a linux.do login cookie for write actions', async () => {
     await expect(runLinuxDoAction({
       cookieHeader: 'cf_clearance=clearance',
-      request: buildLinuxDoLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher: vi.fn()
     })).rejects.toMatchObject({
       source: 'linuxdo',
@@ -83,7 +83,7 @@ describe('linux.do action client', () => {
 
     await expect(runLinuxDoAction({
       cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
-      request: buildLinuxDoLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
     })).rejects.toMatchObject({
       source: 'linuxdo',

@@ -2,6 +2,7 @@ import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '../../types';
+import { isDiscourseSource, sourceSupportsTopicAction } from '../../sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '../../topicPollDisplay';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, triggerPressFeedback } from '../../components/AppControls';
@@ -70,8 +71,8 @@ export function TopicPolls({
   if (!polls.length) {
     return null;
   }
-  const canVotePollSource = source === 'nodeseek' || source === 'linuxdo' || source === 'xiaoyinsi' || source === 'yaohuo';
-  const showPollSubmit = canVotePollSource && (source !== 'xiaoyinsi' || canWritePollSource);
+  const canVotePollSource = sourceSupportsTopicAction(source, 'vote');
+  const showPollSubmit = canVotePollSource;
   return (
     <View style={styles.pollStack}>
       {polls.map((poll, index) => {
@@ -80,7 +81,7 @@ export function TopicPolls({
         const totalVotes = pollTotalVotes(poll);
         const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
         const selectedSet = new Set(selectedOptionIds);
-        const discoursePollReady = (source !== 'linuxdo' && source !== 'xiaoyinsi') || Boolean(poll.postId && poll.name);
+        const discoursePollReady = !isDiscourseSource(source) || Boolean(poll.postId && poll.name);
         const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
         const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !discoursePollReady);
         const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);

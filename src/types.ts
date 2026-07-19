@@ -1,16 +1,19 @@
-export type Source = 'v2ex' | 'linuxdo' | 'nodeseek' | 'yaohuo' | 'xiaoyinsi';
+import type { DiscourseSource, FeedFilterSource, Source } from './sourceCatalog';
+
+export type { FeedFilterSource, Source } from './sourceCatalog';
 export type FeedSource = Source | 'all';
-export type LinuxDoFeedFilter = 'latest' | 'hot' | 'new-all' | 'new-topics' | 'new-replies';
-export type XiaoyinsiFeedFilter = LinuxDoFeedFilter;
+export type DiscourseFeedFilter = 'latest' | 'hot' | 'new-all' | 'new-topics' | 'new-replies';
 export type NodeSeekFeedFilter = 'postTime' | 'replyTime';
 export type V2exFeedFilter = 'all' | 'latest' | 'hot';
-export type FeedFilterSource = 'linuxdo' | 'nodeseek' | 'v2ex' | 'xiaoyinsi';
-export type SourceFeedFilter = LinuxDoFeedFilter | NodeSeekFeedFilter | V2exFeedFilter | XiaoyinsiFeedFilter;
+export type SourceFeedFilter = DiscourseFeedFilter | NodeSeekFeedFilter | V2exFeedFilter;
 export type FeedFilterState = {
-  linuxdo: LinuxDoFeedFilter;
-  nodeseek: NodeSeekFeedFilter;
-  v2ex: V2exFeedFilter;
-  xiaoyinsi: XiaoyinsiFeedFilter;
+  [Site in FeedFilterSource]: Site extends DiscourseSource
+    ? DiscourseFeedFilter
+    : Site extends 'nodeseek'
+      ? NodeSeekFeedFilter
+      : Site extends 'v2ex'
+        ? V2exFeedFilter
+        : never;
 };
 export type SourceErrorKind = 'login-required' | 'login-expired' | 'verification-required' | 'permission-denied' | 'ordinary';
 
@@ -24,6 +27,17 @@ export type SourceErrorInfo = {
 };
 
 export type SourceErrors = Partial<Record<FeedSource, SourceErrorInfo>>;
+
+export interface SiteExtensionMap {
+  linuxdo: {
+    boostCount?: number;
+    needsApproval?: boolean;
+  };
+}
+
+export type SiteExtension = {
+  [Site in keyof SiteExtensionMap]: { source: Site } & SiteExtensionMap[Site]
+}[keyof SiteExtensionMap];
 
 export interface AccessRequirement {
   type: 'login' | 'level' | 'permission';
@@ -60,6 +74,7 @@ export interface Topic {
   acceptedAnswerFloor?: number;
   slowModeSeconds?: number;
   isAiGenerated?: boolean;
+  siteExtension?: SiteExtension;
 }
 
 export interface ReactionSummary {
@@ -103,11 +118,10 @@ export interface Reply {
   wiki?: boolean;
   hidden?: boolean;
   folded?: boolean;
-  needsApproval?: boolean;
   systemAction?: boolean;
   actionCode?: string;
   reactionSummary?: ReactionSummary[];
-  boostCount?: number;
+  siteExtension?: SiteExtension;
   polls?: TopicPoll[];
 }
 
@@ -141,12 +155,12 @@ export interface Category {
   readRestricted?: boolean;
 }
 
-export interface LinuxDoTagOption {
+export interface DiscourseTagOption {
   name: string;
   topicCount?: number;
 }
 
-export interface LinuxDoUserOption {
+export interface DiscourseUserOption {
   id: string;
   username: string;
   displayName?: string;
@@ -199,7 +213,6 @@ export interface TopicDetail extends Topic {
   collected?: boolean;
   locked?: boolean;
   reactionSummary?: ReactionSummary[];
-  boostCount?: number;
 }
 
 export interface UserProfile {

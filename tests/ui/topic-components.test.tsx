@@ -17,13 +17,6 @@ jest.mock('@shopify/flash-list', () => ({
   })
 }));
 
-jest.mock('../../src/localLinuxdo', () => ({
-  splitLinuxDoContentHtml: (html: string | undefined, polls: TopicPoll[] | undefined) => [
-    ...(html ? [{ type: 'html' as const, html }] : []),
-    ...(polls || []).map((poll) => ({ type: 'poll' as const, poll }))
-  ]
-}));
-
 jest.mock('@gorhom/bottom-sheet', () => {
   const ReactModule = require('react') as typeof React;
   const {
@@ -110,7 +103,16 @@ jest.mock('lucide-react-native', () => {
   };
 });
 
-jest.mock('expo-image', () => ({ Image: () => null }));
+jest.mock('expo-image', () => {
+  const ReactModule = require('react') as typeof React;
+  const { View: NativeView } = require('react-native') as typeof import('react-native');
+  return {
+    Image: ({ source }: { source?: { uri?: string } }) => ReactModule.createElement(
+      NativeView,
+      { accessibilityLabel: source?.uri ? `emoji image ${source.uri}` : 'emoji image' }
+    )
+  };
+});
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resolve()) }));
 
 const readerData = createEmptyReaderData();
@@ -167,7 +169,7 @@ function replyProps(overrides: Partial<ComponentProps<typeof ReplyItem>> = {}): 
   };
   return {
     actionBusy: false,
-    canUseXiaoyinsiActions: false,
+    canUseDiscourseActions: false,
     canWrite: true,
     contentWidth: 720,
     expandedQuotes: {},
@@ -430,7 +432,7 @@ describe('Topic real child components', () => {
     const view = await render(
       <ReplyItem
         {...replyProps({
-          canUseXiaoyinsiActions: true,
+          canUseDiscourseActions: true,
           canWrite: false,
           reply: writableReply,
           source: 'xiaoyinsi'
@@ -444,7 +446,7 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('删除回复')).toBeTruthy();
   });
 
-  it('shows 小隐寺 reply reactions without write authorization', async () => {
+  it('[REG-XIAOYINSI-017] shows 小隐寺 reply reaction images without write authorization', async () => {
     const reply: Reply = {
       ...replyProps().reply,
       reactionSummary: [
@@ -455,8 +457,12 @@ describe('Topic real child components', () => {
     const view = await render(
       <ReplyItem
         {...replyProps({
-          canUseXiaoyinsiActions: false,
+          canUseDiscourseActions: false,
           canWrite: false,
+          discourseEmojiUrls: {
+            heart: 'https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15',
+            '+1': 'https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15'
+          },
           reply,
           source: 'xiaoyinsi'
         })}
@@ -465,6 +471,8 @@ describe('Topic real child components', () => {
 
     expect(view.getByLabelText('heart 2')).toBeTruthy();
     expect(view.getByLabelText('+1 1')).toBeTruthy();
+    expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/heart.png?v=15')).toBeTruthy();
+    expect(view.getByLabelText('emoji image https://forum.xiaoyinsi.com/images/emoji/twitter/+1.png?v=15')).toBeTruthy();
   });
 
   it('keeps the composer sheet visibility and close gesture connected to the parent state', async () => {
@@ -493,6 +501,11 @@ describe('Topic real child components', () => {
     );
 
     expect(view.getByPlaceholderText('输入回复内容').props.value).toBe('保留中的草稿');
+    expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false);
+    await view.rerender(<ReplyComposerSheet {...props} actionBusy />);
+    expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(true);
+    await view.rerender(<ReplyComposerSheet {...props} />);
+    expect(view.getByLabelText('发送回复').props.accessibilityState.disabled).toBe(false);
     await fireEvent.press(view.getByLabelText('模拟关闭回复面板'));
     expect(onReplyComposerOpenChange).toHaveBeenCalledWith(false);
 

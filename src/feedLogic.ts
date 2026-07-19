@@ -1,6 +1,7 @@
 import { categoryKey, topicKey, type ReaderData } from './readerData';
 import type { Category, FeedResponse, FeedSource, Reply, SourceFeedFilter, Topic } from './types';
 import { accessRequirementLevelValue, accessRequirementSpecificity, dateTime, sourceLabel } from './appUtils';
+import { sourceCatalog } from './sourceCatalog';
 
 export type ReadingFilter = 'all' | 'unread' | 'read' | 'favorite';
 export type SearchSort = 'relevance' | 'time';
@@ -48,7 +49,7 @@ export function applyFeedFilter(items: Topic[], data: ReaderData, filter: Readin
 
 export function feedRequestKey(source: FeedSource, category = '', feedFilter?: SourceFeedFilter) {
   const base = `${source}:${category.trim()}`;
-  return feedFilter && (source === 'linuxdo' || source === 'nodeseek' || source === 'v2ex' || source === 'xiaoyinsi') ? `${base}:${feedFilter}` : base;
+  return feedFilter && source !== 'all' && sourceCatalog[source].feedFilter !== 'none' ? `${base}:${feedFilter}` : base;
 }
 
 export function shouldReuseFeedStateForRequest(
@@ -216,20 +217,6 @@ export function nextFeedPageState(
     nextCursor: cursorAdvanced || nextCursor === undefined ? nextCursor : previous.nextCursor,
     hasMore: Boolean(response.hasMore && (pageAdvanced || cursorAdvanced))
   };
-}
-
-export function shouldFetchAggregatedBaseFeed({
-  page,
-  cursor,
-  hasYaohuoCookie,
-  retryWithoutCursor = false
-}: {
-  page: number;
-  cursor?: string;
-  hasYaohuoCookie: boolean;
-  retryWithoutCursor?: boolean;
-}) {
-  return page <= 1 || Boolean(cursor) || !hasYaohuoCookie || retryWithoutCursor;
 }
 
 export function mergeCategories(base: Category[], extra: Category[]) {

@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  discourseReactionStats,
-  linuxDoEmojiUrlMapFromData,
   linuxDoReactionStats
 } from './linuxdoReactions';
 
 describe('linux.do reaction presentation', () => {
-  it('renders reaction ids as emoji image items and keeps boosts as text', () => {
+  it('renders reaction ids from the provided catalog and keeps boosts as text', () => {
     const stats = linuxDoReactionStats({
       likeCount: 9,
       reactionSummary: [
@@ -16,8 +14,11 @@ describe('linux.do reaction presentation', () => {
         { id: 'distorted_face', count: 1 },
         { id: 'tieba_087', count: 1 }
       ],
-      boostCount: 3
+      siteExtension: { source: 'linuxdo', boostCount: 3 }
     }, {
+      heart: 'https://linux.do/images/emoji/twemoji/heart.png',
+      '+1': 'https://linux.do/images/emoji/twemoji/+1.png',
+      distorted_face: 'https://linux.do/images/emoji/twemoji/distorted_face.png',
       tieba_087: 'https://cdn3.ldstatic.com/original/3X/2/e/tieba.png'
     });
 
@@ -76,30 +77,4 @@ describe('linux.do reaction presentation', () => {
     }]);
   });
 
-  it('keeps portable Discourse reactions text-only without linux.do assets or boosts', () => {
-    const item = {
-      likeCount: 5,
-      reactionSummary: [{ id: '+1', count: 2 }],
-      boostCount: 9
-    };
-    expect(discourseReactionStats(item)).toEqual([
-      { id: 'heart', label: 'heart', value: 5 },
-      { id: '+1', label: '+1', value: 2 }
-    ]);
-  });
-
-  it('parses discourse emoji groups into absolute urls', () => {
-    expect(linuxDoEmojiUrlMapFromData({
-      custom: [
-        { name: 'tieba_087', url: '/uploads/default/original/3X/2/e/tieba.png?v=15' }
-      ],
-      people: [
-        { name: '+1', url: 'https://cdn.ldstatic.com/images/emoji/twemoji/+1.png?v=15' }
-      ],
-      ignored: { name: 'bad' }
-    })).toEqual({
-      '+1': 'https://cdn.ldstatic.com/images/emoji/twemoji/+1.png?v=15',
-      tieba_087: 'https://linux.do/uploads/default/original/3X/2/e/tieba.png?v=15'
-    });
-  });
 });

@@ -267,7 +267,7 @@ describe('linux.do AI search controller', () => {
         category: '4',
         tags: ['人工智能', '快问快答'],
         tagMatch: 'all',
-        expertResponse: true
+        siteExtension: { source: 'linuxdo', expertResponse: true }
       }
     };
 
@@ -507,8 +507,8 @@ describe('linux.do AI search controller', () => {
     const hook = await renderSearchController(gateway);
 
     await act(async () => {
-      await hook.result.current.searchLinuxDoTags({ query: 'private-tag', selectedTags: [] });
-      await hook.result.current.searchLinuxDoUsers({ term: 'private-user' });
+      await hook.result.current.searchDiscourseTags({ query: 'private-tag', selectedTags: [] });
+      await hook.result.current.searchDiscourseUsers({ term: 'private-user' });
     });
 
     for (const [operation, mock] of [

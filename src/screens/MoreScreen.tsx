@@ -7,7 +7,7 @@ import type { ReaderSettings } from '../readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
-import type { DevAnonymousOverrides, SessionSite, SiteSessionViewModels } from '../siteSessionState';
+import { sessionSources, type DevAnonymousOverrides, type SessionSite, type SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
@@ -231,7 +231,7 @@ export const MoreScreen = memo(function MoreScreen({
   const appVersionMeta = appUpdateInfo
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
     : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
-  const devAnonymousActiveCount = (devAnonymousOverrides.nodeseek ? 1 : 0) + (devAnonymousOverrides.yaohuo ? 1 : 0) + (devAnonymousOverrides.linuxdo ? 1 : 0) + (devAnonymousOverrides.xiaoyinsi ? 1 : 0);
+  const devAnonymousActiveCount = sessionSources.filter((site) => devAnonymousOverrides[site]).length;
   const devAnonymousMeta = devAnonymousActiveCount ? `已开启 ${devAnonymousActiveCount} 项` : '临时匿名 · 不删除 Cookie';
   const xiaoyinsiAuthForcedOpen = xiaoyinsiAuth.phase === 'requesting'
     || xiaoyinsiAuth.phase === 'waiting'

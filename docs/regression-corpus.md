@@ -106,11 +106,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 原站已显示主题收藏，但 App 点击取消时提示收藏记录不完整，不能恢复初始状态。 |
 | 触发条件 | Discourse 主题详情返回 `bookmarked=true`，却未返回具体 `bookmark_id`；旧实现把 Topic 和 Post 都强制绑定记录 id。 |
 | 根因 seam | `src/xiaoyinsiActions.ts` 的书签取消请求构造，以及 `src/app/useTopicActionsController.ts` 的前置门禁。 |
-| 必须保持的行为 | Topic 缺少记录 id 时使用 Discourse 主题级 `PUT /t/{topicId}/remove_bookmarks`；Post 取消仍要求具体记录 id；服务端确认后只更新当前 Topic 与活动 route snapshot 的收藏状态，不整篇重载。 |
-| 精确失败 oracle | `src/xiaoyinsiActions.test.ts` 与 `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-003` 分别固定请求和真实 controller 路由。 |
+| 必须保持的行为 | Topic 缺少记录 id 时使用 Discourse 主题级 `PUT /t/{topicId}/remove_bookmarks`；Post 取消仍要求具体记录 id；主题收藏先显示目标 optimistic 状态，请求失败恢复原状态，服务端确认后同步当前 Topic 与活动 route snapshot，不整篇重载。 |
+| 精确失败 oracle | `src/xiaoyinsiActions.test.ts` 与 `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-003` 分别固定请求、optimistic apply、失败 rollback 和真实 controller 路由。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：请求构造和 controller 门禁都必须覆盖，单独显示按钮不能证明可取消。 |
 | Replay 或真实验收路径 | 在已获逐次授权的可恢复 Topic 上记录初始状态，收藏/取消各一次，刷新后与原站状态一致并恢复初态。 |
-| 负向验证方式 | 恢复“缺少 bookmark id 直接返回”或改用 `/bookmarks/undefined`，两层测试必须失败。 |
+| 负向验证方式 | 恢复“缺少 bookmark id 直接返回”、改用 `/bookmarks/undefined`，或移除 optimistic rollback，编号测试必须失败。 |
 | 明确不覆盖范围 | 不推断未返回 `bookmarked` 的主题状态；真实远端切换仍按授权和恢复门禁。 |
 
 ## `REG-XIAOYINSI-004` 用户页把互动过的主题当成用户发帖
@@ -196,11 +196,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 小隐寺已点赞帖子显示“取消赞”，点击后却提示当前帖子不能点赞，原站状态没有变化。 |
 | 触发条件 | Discourse 对已执行的点赞返回 `acted=true`、`can_act=false`；UI 用 `liked` 正确保留取消入口，但 controller 只看 `canLike=false`。 |
 | 根因 seam | `src/app/useTopicActionsController.ts` 把“不能新增点赞”和“不能撤销已有点赞”合并成同一个前置门禁。 |
-| 必须保持的行为 | 未点赞且 `can_act=false` 时继续禁止点赞；`liked=true` 时允许发送 DELETE 取消点赞，即使 `can_act=false`；服务端确认后只更新目标帖子及活动 route snapshot，不整篇重载。 |
-| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-009` 使用 `liked=true`、`canLike=false`，要求发送一次取消点赞 DELETE 并应用目标帖子局部状态。 |
+| 必须保持的行为 | 未点赞且 `can_act=false` 时继续禁止点赞；`liked=true` 时允许发送 DELETE 取消点赞，即使 `can_act=false`；点赞切换先显示目标 optimistic 状态，请求失败恢复原状态，服务端确认后同步目标帖子及活动 route snapshot，不整篇重载。 |
+| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-009` 使用 `liked=true`、`canLike=false`，要求先应用取消状态、发送一次 DELETE，并在失败路径恢复原点赞状态。 |
 | 最低可靠自动测试层 | `UNIT_PASS`：必须经过 controller 门禁和真实请求构造，只验证按钮可见会漏掉点击后的拦截。 |
 | Replay 或真实验收路径 | 仅在获得逐次写操作授权时记录初始点赞状态，取消后刷新核对原站，再恢复初始状态。 |
-| 负向验证方式 | 把门禁恢复为无条件 `canLike === false`，编号测试必须得到零请求并失败。 |
+| 负向验证方式 | 把门禁恢复为无条件 `canLike === false`，或移除 optimistic rollback，编号测试必须失败。 |
 | 明确不覆盖范围 | 不默认执行真实点赞或取消；没有已点赞对象时不为验收制造远端状态。 |
 
 ## `REG-XIAOYINSI-010` 可编辑回复缺少原始 Markdown
@@ -218,21 +218,6 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 从认证 Topic 或 Posts 请求移除 `include_raw=1`，测试服务端将不返回 `raw`，认证回复的 `contentMarkdown` 断言必须失败。 |
 | 明确不覆盖范围 | 不自动执行真实编辑或删除；原站是否长期授予某条回复编辑权限仍由动态权限字段决定。 |
 
-## `REG-XIAOYINSI-011` 图片插入完成后编辑器仍不能立即发送
-
-| 字段 | 内容 |
-| --- | --- |
-| 能力 ID | `WRITE-01`、`WRITE-04` |
-| 用户症状 | 小隐寺图片已经上传并插入回复草稿，但编辑器操作仍不可用，必须收起再打开后才能继续发送。 |
-| 触发条件 | 图片上传网络请求完成，随后还要解析响应并把 Markdown 写入受控草稿；旧实现让各站 transport 各自提前结束全局 `actionBusy`，没有由完整上传工作流持有忙碌生命周期。 |
-| 根因 seam | `src/app/useTopicActionsController.ts` 的 `uploadReplyImage` 把 transport 完成误当成用户操作完成，忙碌态没有覆盖本地 Markdown apply 阶段。 |
-| 必须保持的行为 | 用户选完图片后，完整工作流只持有一份忙碌态；上传、解析和 Markdown 插入期间保持禁用，草稿写入后立即解除，图片入口本身绝不提交回复。四个可写来源使用同一生命周期，各站凭据与上传协议保持独立。 |
-| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-011` 记录事件顺序，必须严格为 `busy:true → markup → busy:false`；`tests/ui/reply-composer.test.tsx` 固定 busy 时禁止提交及图片入口不误提交。 |
-| 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：controller 固定跨 transport/apply 的所有权顺序，RNTL 固定该状态对发送按钮的可见影响。 |
-| Replay 或真实验收路径 | 在已授权小隐寺打开回复编辑器，选择图片并等待“图片已插入”，确认发送与格式按钮立即恢复；不得点击真实发送。真实上传仍需逐次授权并记录远端残留风险。 |
-| 负向验证方式 | 让小隐寺请求恢复默认内部 busy、在 `appendMarkup` 前结束外层 run，事件顺序会变为 `busy:true → busy:false → markup`，编号测试必须失败。 |
-| 明确不覆盖范围 | 不授权真实评论；不改变 NodeImage、linux.do、小隐寺 User API 或妖火图床的凭据模型和上传格式。 |
-
 ## `REG-XIAOYINSI-012` 点赞、收藏等写操作导致整个主题闪烁重载
 
 | 字段 | 内容 |
@@ -241,12 +226,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 小隐寺点击点赞或收藏后，主题正文和回复整体进入重新加载；回复删除、投票等同类操作也会丢失当前可视上下文。 |
 | 触发条件 | User API 写请求已经由服务器确认，但 controller 仍统一调用 `refreshWholeTopic`，而不是复用现有来源的 action-state 与定向回复刷新。 |
 | 根因 seam | `src/app/useTopicActionsController.ts` 的小隐寺写后处理绕过 `applyTopicActionUpdate`，把所有 action 都接到整篇 Topic 重读。 |
-| 必须保持的行为 | 小隐寺身份与请求继续只走独立 User API Key；点赞/取消、主题书签/取消和投票在服务器确认后局部更新目标状态，删除先本地移除再静默刷新回复切片；均同步活动 route snapshot，不刷新整篇主题。回复与编辑仍沿用既有定向回复刷新。 |
-| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-012` 分别固定点赞、取消点赞、收藏取消、投票与删除的局部 action patch，删除还必须只调用 `refreshTopicReplies`；`tests/ui/topic-session-controller.test.tsx` 的 `REG-WRITE-006` 固定活动 route snapshot 同步。 |
+| 必须保持的行为 | 小隐寺身份与请求继续只走独立 User API Key；点赞/取消和主题书签/取消先显示 optimistic 状态、失败 rollback、确认后同步权威状态；投票在服务器确认后局部更新，删除先本地移除再静默刷新回复切片；均同步活动 route snapshot，不刷新整篇主题。回复与编辑仍沿用既有定向回复刷新。 |
+| 精确失败 oracle | `src/app/useTopicActionsController.test.ts` 的 `REG-XIAOYINSI-012` 分别固定点赞、取消点赞、收藏取消的 optimistic/rollback、投票与删除的局部 action patch，删除还必须只调用 `refreshTopicReplies`；`tests/ui/topic-session-controller.test.tsx` 的 `REG-WRITE-006` 固定活动 route snapshot 同步。 |
 | 最低可靠自动测试层 | `UNIT_PASS` + `UI_PASS`：controller 固定写后路由，Topic session UI 测试固定返回路径不会恢复旧快照；只验证 HTTP 成功无法发现整页重载。 |
 | Replay 或真实验收路径 | 获得逐次可恢复写操作授权后，记录初态并切换一次点赞或收藏，确认正文、回复列表和滚动上下文不进入整页 Loading，刷新核对原站后恢复初态。投票、编辑和删除不因本条默认获得真实写入授权。 |
-| 负向验证方式 | 把任一小隐寺 action 恢复为 `refreshWholeTopic` 或移除对应 `applyTopicActionUpdate`，编号 controller 测试必须收不到局部 patch 并失败。 |
-| 明确不覆盖范围 | 不把小隐寺接入任何 Cookie/WebView 登录；不乐观宣告服务器未确认的结果，也不伪造远端权限。 |
+| 负向验证方式 | 把任一小隐寺 action 恢复为 `refreshWholeTopic`、移除对应 `applyTopicActionUpdate`，或让点赞/书签失败后保留目标状态，编号 controller 测试必须失败。 |
+| 明确不覆盖范围 | 不把小隐寺接入任何 Cookie/WebView 登录；只对可恢复的点赞/书签做可回滚 optimistic 展示，投票、删除和权限不得乐观推断或伪造。 |
 
 ## `REG-XIAOYINSI-013` 已授权小隐寺缺少等级入口
 
@@ -307,6 +292,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 在小隐寺单站打开筛选与标签选择器，等待任一真实标签 checkbox 后关闭；不固定动态标签名、数量或搜索结果。 |
 | 负向验证方式 | 给 `searchXiaoyinsiTags` 恢复 `limit` 查询参数，编号单元测试会收到 400，设备 Replay 会停在标签候选错误态。 |
 | 明确不覆盖范围 | 不修改、创建或删除原站标签；当天候选名称与计数属于动态数据。 |
+
+## `REG-XIAOYINSI-017` 小隐寺回应表情被渲染成英文文字
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`TOPIC-02`、`TOPIC-03`、`WRITE-01` |
+| 用户症状 | 小隐寺主题和评论下方把回应显示成 `heart 49`、`+1 4`、`distorted face 2` 等英文文字，而原站显示对应 emoji 图片；回复编辑器也没有原站表情目录入口。 |
+| 触发条件 | 小隐寺 Topic API 返回 `reactions[]`，或用户打开小隐寺回复编辑器；正文/评论 `cooked` 中的 `<img class="emoji">` 仍可能单独正常显示。 |
+| 根因 seam | `src/linuxdoReactions.ts` 同时承担通用 Discourse reaction 和 linux.do 站点资源，通用分支刻意丢弃图片 URL；表情目录只由 `localLinuxdo` 读取，页面与编辑器因此无法取得小隐寺自己的 `/emojis.json`。 |
+| 必须保持的行为 | 每个 Discourse adapter 独立读取并缓存本站 `/emojis.json`，公共 reaction presenter 只消费当前来源的 name→URL；主题和回复均显示本站 emoji 图片及计数，未知 id 才回退成可读文字。切换站点时旧目录不得短暂泄漏。小隐寺正文和评论里的 `cooked <img class="emoji">` 继续按 inline 图片渲染；编辑器插入原站接受的 `:name:`，不发送评论。linux.do 的 boost 仍是其站点特性。 |
+| 精确失败 oracle | `src/discourseReactions.test.ts` 用原站 `heart/+1` URL 固定 reaction 图片映射；`src/localXiaoyinsi.test.ts` 固定 `/emojis.json` 与本站绝对 URL；`tests/ui/topic-components.test.tsx` 要求小隐寺只读回复实际渲染两张 reaction 图片；`tests/ui/reply-composer.test.tsx` 要求小隐寺表情入口插入 `:waving_hand:`；`src/htmlImages.test.ts` 固定真实评论 emoji 仍走 inline 图片。 |
+| 最低可靠自动测试层 | 数据目录与映射使用 `UNIT_PASS`，reaction 图片与编辑器入口使用 `UI_PASS`；真实资源加载、主题与评论的视觉结果使用 `LIVE_PASS`。 |
+| Replay 或真实验收路径 | 直达 `https://forum.xiaoyinsi.com/t/topic/9`：首帖应以图片显示 heart、+1、distorted_face 及计数；回复 #2 同样显示多种图片；回复 #7 的 waving_hand 应在正文行内显示；只打开编辑器检查“表情”目录和插入草稿，不发送。 |
+| 负向验证方式 | 让小隐寺继续调用无目录参数的 `discourseReactionStats`、把 emoji reader 只注册给 linux.do，或从小隐寺 toolbar 移除 `discourse-emoji`，对应编号测试必须失败。 |
+| 明确不覆盖范围 | 不点赞、不发送真实评论；表情目录名称和数量可随原站变化，不固定完整列表或 CDN 版本。 |
 
 ## `REG-SEARCH-001` linux.do 高级筛选接受任意文本或旧候选污染新查询
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { feedCategoryItems, feedFilterItems, feedFilterLabel, feedLinuxDoFilterItems, feedReadingFilterItems, feedXiaoyinsiFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseFeedFilter, shouldUseReadingFilter } from './feedCategoryRail';
+import { feedCategoryItems, feedDiscourseFilterItems, feedFilterItems, feedFilterLabel, feedReadingFilterItems, shouldAllowFeedRemotePagination, shouldLoadCategoriesForSource, shouldUseFeedFilter, shouldUseReadingFilter } from './feedCategoryRail';
 import type { Category } from './types';
 
 const categories: Category[] = [
@@ -19,24 +19,18 @@ describe('Android feed category rail', () => {
     ]);
   });
 
-  it('keeps linux.do list filters to the original category-page choices', () => {
-    expect(feedLinuxDoFilterItems).toEqual([
+  it('offers one portable list-filter model to every Discourse source', () => {
+    expect(feedDiscourseFilterItems).toEqual([
       { value: 'latest', label: '最新' },
       { value: 'hot', label: '热门' },
       { value: 'new-all', label: '新·所有' },
       { value: 'new-topics', label: '新·话题' },
       { value: 'new-replies', label: '新·回复' }
     ]);
-  });
-
-  it('offers the same portable Discourse list filters for 小隐寺', () => {
-    expect(feedXiaoyinsiFilterItems).toEqual([
-      { value: 'latest', label: '最新' },
-      { value: 'hot', label: '热门' },
-      { value: 'new-all', label: '新·所有' },
-      { value: 'new-topics', label: '新·话题' },
-      { value: 'new-replies', label: '新·回复' }
-    ]);
+    expect(feedFilterItems('linuxdo')).toEqual(feedDiscourseFilterItems);
+    expect(feedFilterItems('xiaoyinsi')).toEqual(feedDiscourseFilterItems);
+    expect(shouldUseFeedFilter('linuxdo')).toBe(true);
+    expect(shouldUseFeedFilter('xiaoyinsi')).toBe(true);
   });
 
   it('shows only real list filters for sources that support them', () => {

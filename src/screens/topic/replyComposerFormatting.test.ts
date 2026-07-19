@@ -49,14 +49,16 @@ describe('reply composer formatting', () => {
 
   it('puts the per-site expression entry in the scrollable toolbar', () => {
     expect(replyComposerToolbarItems('nodeseek').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('nodeseek-sticker');
-    expect(replyComposerToolbarItems('linuxdo').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('linuxdo-emoji');
+    expect(replyComposerToolbarItems('linuxdo').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('discourse-emoji');
+    expect(replyComposerToolbarItems('xiaoyinsi').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('discourse-emoji');
     expect(replyComposerToolbarItems('yaohuo').map((item) => item.type === 'accessory' ? item.accessory : item.action)).toContain('yaohuo-face');
     expect(replyComposerToolbarItems('v2ex')).toEqual([]);
   });
 
   it('puts expression entries first for sources that support them', () => {
     expect(replyComposerToolbarItems('nodeseek')[0]).toMatchObject({ type: 'accessory', accessory: 'nodeseek-sticker', label: '表情' });
-    expect(replyComposerToolbarItems('linuxdo')[0]).toMatchObject({ type: 'accessory', accessory: 'linuxdo-emoji', label: '表情' });
+    expect(replyComposerToolbarItems('linuxdo')[0]).toMatchObject({ type: 'accessory', accessory: 'discourse-emoji', label: '表情' });
+    expect(replyComposerToolbarItems('xiaoyinsi')[0]).toMatchObject({ type: 'accessory', accessory: 'discourse-emoji', label: '表情' });
     expect(replyComposerToolbarItems('yaohuo')[0]).toMatchObject({ type: 'accessory', accessory: 'yaohuo-face', label: '表情' });
     expect(replyComposerToolbarItems('v2ex')).toEqual([]);
   });
@@ -69,12 +71,12 @@ describe('reply composer formatting', () => {
 
   it('keeps heavy expression panels open after inserting inline expressions', () => {
     expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('nodeseek-sticker')).toBe(true);
-    expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('linuxdo-emoji')).toBe(true);
+    expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('discourse-emoji')).toBe(true);
     expect(replyComposerKeepsAccessoryOpenAfterExpressionInsert('yaohuo-face')).toBe(false);
   });
 
   it('separates NodeSeek sticker grid scroll state by category', () => {
     expect(replyComposerExpressionGridKey('nodeseek-sticker', 'AC娘')).not.toBe(replyComposerExpressionGridKey('nodeseek-sticker', 'Fluent'));
-    expect(replyComposerExpressionGridKey('linuxdo-emoji')).toBe('linuxdo-emoji');
+    expect(replyComposerExpressionGridKey('discourse-emoji')).toBe('discourse-emoji');
   });
 });

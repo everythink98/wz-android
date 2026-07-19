@@ -36,7 +36,7 @@ vi.mock('react-native', () => ({
 import { createEmptyReaderData } from '../readerData';
 import { setDiagnosticWriter, type DiagnosticEvent, type DiagnosticTrace } from '../diagnostics';
 import type { SourceGateway } from '../sources/sourceGateway';
-import { mergedFeedResponseAfterSplitFetch, shouldWaitForReaderDataBeforeFeed, useFeedController } from './useFeedController';
+import { shouldWaitForReaderDataBeforeFeed, useFeedController } from './useFeedController';
 import type { FeedResponse, Topic } from '../types';
 
 afterEach(() => {
@@ -45,21 +45,6 @@ afterEach(() => {
 });
 
 describe('feed controller helpers', () => {
-  const response: FeedResponse = {
-    items: [],
-    errors: {},
-    hasMore: true,
-    nextPage: 3
-  };
-
-  it('does not apply partial all-feed load-more results when any source failed', () => {
-    expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: { kind: 'ordinary', message: 'HTTP 500' } }, true)).toBeNull();
-  });
-
-  it('keeps partial all-feed refresh results when a source failed', () => {
-    expect(mergedFeedResponseAfterSplitFetch([response], { yaohuo: { kind: 'ordinary', message: 'HTTP 500' } }, false)).toEqual(response);
-  });
-
   it('lets the default all feed load before reader data finishes loading', () => {
     expect(shouldWaitForReaderDataBeforeFeed('all', 'all')).toBe(false);
     expect(shouldWaitForReaderDataBeforeFeed('all', 'favorite')).toBe(true);

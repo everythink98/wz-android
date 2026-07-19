@@ -1,5 +1,5 @@
 import { fetchWithTimeout, type Fetcher } from './request';
-import type { LinuxDoActionRequest } from './linuxdoActions';
+import type { DiscourseActionRequest } from './discourseActions';
 import { isCloudflareChallengeResponse } from './cloudflareChallenge';
 import {
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
@@ -119,7 +119,7 @@ export async function runLinuxDoAction({
   userAgent
 }: {
   cookieHeader: string;
-  request: LinuxDoActionRequest;
+  request: DiscourseActionRequest;
   fetcher?: Fetcher;
   signal?: AbortSignal;
   timeoutMs?: number;

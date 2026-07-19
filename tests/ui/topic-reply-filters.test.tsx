@@ -98,12 +98,8 @@ jest.mock('lucide-react-native', () => {
 
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
-jest.mock('../../src/localLinuxdo', () => ({
-  getLinuxDoEmojiUrls: async () => ({}),
-  splitLinuxDoContentHtml: (html: string | undefined, polls: TopicPoll[] | undefined) => [
-    ...(html ? [{ type: 'html' as const, html }] : []),
-    ...(polls || []).map((poll) => ({ type: 'poll' as const, poll }))
-  ]
+jest.mock('../../src/discourseSourceReaders', () => ({
+  getDiscourseSourceEmojiUrls: async () => ({})
 }));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
@@ -208,7 +204,7 @@ jest.mock('../../src/screens/topic/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    LinuxDoReactionPill: ({ stat }: { stat: { id: string; label: string; value: number } }) => ReactModule.createElement(
+    DiscourseReactionPill: ({ stat }: { stat: { id: string; label: string; value: number } }) => ReactModule.createElement(
       NativeText,
       { testID: `reaction-${stat.id}` },
       `${stat.label} ${stat.value}`
@@ -302,7 +298,7 @@ function TopicFilterHarness({
   onYaohuoFavorite = jest.fn(),
   onVerifyNodeSeek = jest.fn(),
   onVotePoll = jest.fn(),
-  onXiaoyinsiBookmark = jest.fn(),
+  onDiscourseBookmark = jest.fn(),
   replyHasMore = false,
   selectedTopic = topic,
   topicDetail = topic,
@@ -325,7 +321,7 @@ function TopicFilterHarness({
   onYaohuoFavorite?: () => void;
   onVerifyNodeSeek?: () => void;
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
-  onXiaoyinsiBookmark?: () => void;
+  onDiscourseBookmark?: () => void;
   replyHasMore?: boolean;
   selectedTopic?: Topic;
   topicDetail?: TopicDetail | null;
@@ -356,10 +352,13 @@ function TopicFilterHarness({
       >
         <TopicScreen
         actionBusy={false}
-        canUseLinuxDoActions={canUseLinuxDoActions}
-        canUseNodeSeekActions={canUseNodeSeekActions}
-        canUseXiaoyinsiActions={canUseXiaoyinsiActions}
-        canUseYaohuoActions={canUseYaohuoActions}
+        sourceActionAvailability={{
+          linuxdo: canUseLinuxDoActions,
+          nodeseek: canUseNodeSeekActions,
+          v2ex: false,
+          xiaoyinsi: canUseXiaoyinsiActions,
+          yaohuo: canUseYaohuoActions
+        }}
         commentQuery={commentQuery}
         contentWidth={720}
         expandedQuotes={{}}
@@ -400,10 +399,9 @@ function TopicFilterHarness({
         onDeleteReply={jest.fn()}
         onEditReply={jest.fn()}
         onInteract={onInteract}
-        onLinuxDoBookmark={jest.fn()}
+        onDiscourseBookmark={onDiscourseBookmark}
         onLoadMoreReplies={onLoadMoreReplies}
         onNodeSeekCollection={jest.fn()}
-        onXiaoyinsiBookmark={onXiaoyinsiBookmark}
         onOpenOriginal={jest.fn()}
         onOpenReadingSettings={jest.fn()}
         onOpenUser={jest.fn()}
@@ -476,7 +474,7 @@ describe('Topic reply filters', () => {
       reactionSummary: [{ id: 'heart', count: 3 }]
     };
     const onInteract = jest.fn<(type: InteractionType, commentId?: number) => void>();
-    const onXiaoyinsiBookmark = jest.fn();
+    const onDiscourseBookmark = jest.fn();
 
     const anonymous = await render(
       <TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />
@@ -490,7 +488,7 @@ describe('Topic reply filters', () => {
       <TopicFilterHarness
         canUseXiaoyinsiActions
         onInteract={onInteract}
-        onXiaoyinsiBookmark={onXiaoyinsiBookmark}
+        onDiscourseBookmark={onDiscourseBookmark}
         selectedTopic={xiaoyinsiTopic}
         topicDetail={xiaoyinsiTopic}
       />
@@ -498,7 +496,7 @@ describe('Topic reply filters', () => {
     await fireEvent.press(authorized.getByLabelText('点赞'));
     await fireEvent.press(authorized.getByLabelText('原站收藏'));
     expect(onInteract).toHaveBeenCalledWith('like', 100);
-    expect(onXiaoyinsiBookmark).toHaveBeenCalledTimes(1);
+    expect(onDiscourseBookmark).toHaveBeenCalledTimes(1);
   });
 
   it('[REG-XIAOYINSI-007] hides reply entry without can_create_post while preserving allowed 小隐寺 interactions', async () => {

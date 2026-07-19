@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { runXiaoyinsiAction } from './xiaoyinsiActionClient';
-import { buildXiaoyinsiLikeRequest } from './xiaoyinsiActions';
+import { buildDiscourseActionRequest } from './discourseActions';
 
 describe('小隐寺 User API action client', () => {
   it('只携带独立 User API headers，不使用 Cookie 或 CSRF', async () => {
@@ -11,7 +11,7 @@ describe('小隐寺 User API action client', () => {
 
     await runXiaoyinsiAction({
       credentials: { apiKey: 'secret-api-key', clientId: 'installation-client-id' },
-      request: buildXiaoyinsiLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
     });
 
@@ -33,7 +33,7 @@ describe('小隐寺 User API action client', () => {
   it('缺少任一授权材料时阻止写入', async () => {
     await expect(runXiaoyinsiAction({
       credentials: { apiKey: '', clientId: 'client' },
-      request: buildXiaoyinsiLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher: vi.fn()
     })).rejects.toMatchObject({
       source: 'xiaoyinsi',
@@ -48,7 +48,7 @@ describe('小隐寺 User API action client', () => {
 
     await expect(runXiaoyinsiAction({
       credentials: { apiKey: 'key', clientId: 'client' },
-      request: buildXiaoyinsiLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
     })).rejects.toMatchObject({
       source: 'xiaoyinsi',
@@ -65,7 +65,7 @@ describe('小隐寺 User API action client', () => {
 
     const promise = runXiaoyinsiAction({
       credentials: { apiKey: 'do-not-log-this-token', clientId: 'client' },
-      request: buildXiaoyinsiLikeRequest({ postId: 101, liked: false }),
+      request: buildDiscourseActionRequest({ type: 'set-like', postId: 101, active: true }),
       fetcher
     });
     await expect(promise).rejects.toMatchObject({

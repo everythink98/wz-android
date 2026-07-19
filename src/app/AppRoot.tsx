@@ -1021,8 +1021,8 @@ export function AppRoot() {
     searchBusy,
     searchFilters,
     searchGroups,
-    searchLinuxDoTags,
-    searchLinuxDoUsers,
+    searchDiscourseTags,
+    searchDiscourseUsers,
     linuxDoAiState,
     linuxDoAiVisible,
     searchSessionNotices,
@@ -1325,18 +1325,25 @@ export function AppRoot() {
     showNodeSeekVerification(topicError?.message || 'NodeSeek 需要完成 Cloudflare 验证');
   }, [selectedTopic, showNodeSeekVerification, topicDetail, topicError]);
 
+  const discourseActionRuntimeDependencies = useMemo(() => ({
+    linuxDoUserAgent: () => linuxDoWebViewUserAgentRef.current,
+    refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
+    resetLinuxDoLevelState,
+    updateLinuxDoSession
+  }), [resetLinuxDoLevelState, updateLinuxDoSession, xiaoyinsiAuthController.refreshAuthorization]);
+  const discourseLoginPrompts = useMemo(() => ({
+    linuxdo: showLinuxDoLogin,
+    xiaoyinsi: showXiaoyinsiLogin
+  }), [showLinuxDoLogin, showXiaoyinsiLogin]);
+
   const {
-    bookmarkOnLinuxDoSite,
-    bookmarkOnXiaoyinsiSite,
-    canUseLinuxDoActions,
-    canUseNodeSeekActions,
-    canUseXiaoyinsiActions,
-    canUseYaohuoActions,
+    bookmarkOnDiscourseSite,
     checkIn,
     collectOnNodeSeekSite,
     deleteReply,
     favoriteOnYaohuoSite,
     interact,
+    sourceActionAvailability,
     submitReply,
     uploadReplyImage,
     votePoll
@@ -1345,25 +1352,21 @@ export function AppRoot() {
     clearNodeSeekLoginCookiesOnly,
     clearYaohuoLoginState,
     currentNodeSeekCredentialGeneration,
+    discourseActionRuntimeDependencies,
+    discourseLoginPrompts,
     fetcher: networkProxyFetcher,
-    linuxDoWebViewUserAgentRef,
     loadYaohuoCookieForSource,
     nodeSeekWebViewUserAgentRef,
     ensureNodeImageApiKey,
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
-    refreshXiaoyinsiAuthorization: xiaoyinsiAuthController.refreshAuthorization,
-    resetLinuxDoLevelState,
     setActionBusy,
     setOptimisticTopicActions,
-    showLinuxDoLogin,
-    showXiaoyinsiLogin,
     showYaohuoLogin,
     siteSessionStates: effectiveSiteSessionStates,
     topicActionRequestOwnerRef,
-    topicSession,
-    updateLinuxDoSession
+    topicSession
   });
 
   const pageDiagnosticStateRef = useRef('');
@@ -1786,8 +1789,8 @@ export function AppRoot() {
       onRetryLinuxDoAiSearch: retryLinuxDoAiSearch,
       onSearch: runCurrentSearch,
       onSearchFilterApply: applySearchFilter,
-      onSearchLinuxDoTags: searchLinuxDoTags,
-      onSearchLinuxDoUsers: searchLinuxDoUsers,
+      onSearchDiscourseTags: searchDiscourseTags,
+      onSearchDiscourseUsers: searchDiscourseUsers,
       onSearchSourceChange: setSearchSource,
       onRetrySearchSource: retrySearchSource,
       onToggleLinuxDoAiSearch: toggleLinuxDoAiSearch
@@ -1804,8 +1807,8 @@ export function AppRoot() {
     searchBusy,
     searchFilters,
     searchGroups,
-    searchLinuxDoTags,
-    searchLinuxDoUsers,
+    searchDiscourseTags,
+    searchDiscourseUsers,
     linuxDoAiState,
     linuxDoAiVisible,
     searchQuery,
@@ -2018,8 +2021,7 @@ export function AppRoot() {
     xiaoyinsiAuthController
   ]);
 
-  const stableBookmarkOnLinuxDoSite = useLatestCallback(bookmarkOnLinuxDoSite);
-  const stableBookmarkOnXiaoyinsiSite = useLatestCallback(bookmarkOnXiaoyinsiSite);
+  const stableBookmarkOnDiscourseSite = useLatestCallback(bookmarkOnDiscourseSite);
   const stableCollectOnNodeSeekSite = useLatestCallback(collectOnNodeSeekSite);
   const stableDeleteReply = useLatestCallback(deleteReply);
   const stableFavoriteOnYaohuoSite = useLatestCallback(favoriteOnYaohuoSite);
@@ -2038,10 +2040,7 @@ export function AppRoot() {
   const stableVotePoll = useLatestCallback(votePoll);
   const topicProps = useMemo(() => ({
       actionBusy,
-      canUseLinuxDoActions,
-      canUseNodeSeekActions,
-      canUseXiaoyinsiActions,
-      canUseYaohuoActions,
+      sourceActionAvailability,
       contentWidth,
       htmlBaseStyle,
       htmlClassesStyles,
@@ -2082,9 +2081,8 @@ export function AppRoot() {
       onDeleteReply: stableDeleteReply,
       onEditReply: editReply,
       onInteract: stableInteract,
-      onLinuxDoBookmark: stableBookmarkOnLinuxDoSite,
+      onDiscourseBookmark: stableBookmarkOnDiscourseSite,
       onNodeSeekCollection: stableCollectOnNodeSeekSite,
-      onXiaoyinsiBookmark: stableBookmarkOnXiaoyinsiSite,
       onShareTopic: stableShareTopic,
       onVotePoll: stableVotePoll,
       onLoadMoreReplies: stableLoadMoreReplies,
@@ -2108,10 +2106,6 @@ export function AppRoot() {
       onOpenUser: stableOpenUser
   }), [
     actionBusy,
-    canUseLinuxDoActions,
-    canUseNodeSeekActions,
-    canUseXiaoyinsiActions,
-    canUseYaohuoActions,
     changeCommentQuery,
     changeReplyContent,
     commentQuery,
@@ -2147,7 +2141,7 @@ export function AppRoot() {
     changeReplyFace,
     changeReplyFilter,
     selectedTopic,
-    stableBookmarkOnLinuxDoSite,
+    stableBookmarkOnDiscourseSite,
     stableCollectOnNodeSeekSite,
     stableDeleteReply,
     stableInteract,
@@ -2164,6 +2158,7 @@ export function AppRoot() {
     stableVerifyNodeSeekFromTopic,
     stableVotePoll,
     styles,
+    sourceActionAvailability,
     theme,
     toggleReplyComposer,
     toggleTopicFavorite,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FeedResponse, FeedSource, LinuxDoTagOption, LinuxDoUserOption, Source, Topic } from '../types';
+import type { DiscourseTagOption, DiscourseUserOption, FeedResponse, FeedSource, Source, Topic } from '../types';
 import { beginDiagnosticTrace, finishDiagnosticTrace, markDiagnosticStage, setDiagnosticWriter } from '../diagnostics';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { getYaohuoTopicDirect } from '../yaohuoApi';
@@ -16,12 +16,12 @@ const forumMocks = vi.hoisted(() => ({
 }));
 const linuxDoMocks = vi.hoisted(() => ({
   searchLinuxDoSemantic: vi.fn(async () => ({ items: [], errors: {}, hasMore: false, nextPage: null })),
-  searchLinuxDoTags: vi.fn(async (): Promise<LinuxDoTagOption[]> => []),
-  searchLinuxDoUsers: vi.fn(async (): Promise<LinuxDoUserOption[]> => [])
+  searchLinuxDoTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
+  searchLinuxDoUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
 }));
 const xiaoyinsiMocks = vi.hoisted(() => ({
-  searchXiaoyinsiTags: vi.fn(async (): Promise<LinuxDoTagOption[]> => []),
-  searchXiaoyinsiUsers: vi.fn(async (): Promise<LinuxDoUserOption[]> => [])
+  searchXiaoyinsiTags: vi.fn(async (): Promise<DiscourseTagOption[]> => []),
+  searchXiaoyinsiUsers: vi.fn(async (): Promise<DiscourseUserOption[]> => [])
 }));
 
 vi.mock('@react-native-cookies/cookies', () => ({

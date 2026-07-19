@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateTime } from './appUtils';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, removeReply, shouldFetchAggregatedBaseFeed, shouldReuseFeedStateForRequest } from './feedLogic';
+import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, removeReply, shouldReuseFeedStateForRequest } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -345,11 +345,4 @@ describe('Android feed logic helpers', () => {
     expect(next.nextCursor).toBe('cursor-before');
   });
 
-  it('skips the non-yaohuo aggregate feed after its cursor is exhausted while yaohuo can continue', () => {
-    expect(shouldFetchAggregatedBaseFeed({ page: 1, hasYaohuoCookie: true })).toBe(true);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, cursor: 'base-cursor', hasYaohuoCookie: true })).toBe(true);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true })).toBe(false);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true, retryWithoutCursor: true })).toBe(true);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: false })).toBe(true);
-  });
 });

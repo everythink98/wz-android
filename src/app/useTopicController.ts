@@ -38,6 +38,7 @@ import {
   normalizeDiagnosticReason
 } from '../diagnostics';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+import { isDiscourseSource } from '../sourceCatalog';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -723,7 +724,7 @@ export function useTopicController({
       return;
     }
 
-    if (!detail || (reference.source !== 'linuxdo' && reference.source !== 'xiaoyinsi')) {
+    if (!detail || !isDiscourseSource(reference.source)) {
       markDiagnosticStage(trace, 'guard', { state: detail ? 'unsupported-source' : 'missing-topic' });
       finishDiagnosticTrace(trace, 'blocked', { reason: detail ? 'unsupported' : 'not_ready' });
       notify('引用楼层未加载');

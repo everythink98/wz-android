@@ -1,3 +1,5 @@
+import { sessionSources, sourceValues as registeredSources } from './sourceCatalog';
+
 export type DiagnosticArea =
   | 'app'
   | 'navigation'
@@ -119,7 +121,7 @@ const operationValues = closedValues(
   'toggle-quote', 'topic-back', 'transport-fallback', 'uncaught-error', 'user-back',
   'vote', 'webview-transport'
 );
-const sourceValues = closedValues('all', 'linuxdo', 'nodeseek', 'unknown', 'v2ex', 'yaohuo', 'xiaoyinsi');
+const sourceValues = closedValues('all', ...registeredSources, 'unknown');
 const screenValues = closedValues('feed', 'library', 'more', 'search', 'topic', 'user', 'unknown');
 const sessionStateValues = closedValues(
   'anonymous', 'expired', 'logged-in', 'verification-required', 'verified', 'verifying', 'authorizing'
@@ -177,7 +179,7 @@ const parserVariantValues = closedValues(
 );
 const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   source: sourceValues,
-  site: closedValues('linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'),
+  site: closedValues(...sessionSources),
   variant: parserVariantValues,
   channel: closedValues('data', 'direct', 'managed', 'native', 'remote', 'unsupported', 'webview'),
   state: stateValues,

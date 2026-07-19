@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { accessRequirementFromText, decodeHtml } from './localHtml';
+import { sourceCatalog, sourceValues } from './sourceCatalog';
 import type { AccessRequirement, Category, Source, Topic, UserProfile } from './types';
 
 export const readerDataVersion = 2;
@@ -45,15 +46,7 @@ export interface ReaderData {
   settings: ReaderSettings;
 }
 
-const validSourceValues = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'] as const;
 const sensitiveUrlParamPattern = /(^|[^a-z0-9])(cookie|token|password|secret|authorization|auth|session|sidyaohuo|sid|csrf)([^a-z0-9]|$)/i;
-const sourceBaseUrls: Record<Source, string> = {
-  v2ex: 'https://www.v2ex.com',
-  linuxdo: 'https://linux.do',
-  nodeseek: 'https://www.nodeseek.com',
-  yaohuo: 'https://www.yaohuo.me',
-  xiaoyinsi: 'https://forum.xiaoyinsi.com'
-};
 const defaultReaderSettings: ReaderSettings = {
   listDensity: 'standard',
   theme: 'light',
@@ -63,7 +56,7 @@ const defaultReaderSettings: ReaderSettings = {
   fontFamily: 'sans'
 };
 
-const sourceSchema = z.enum(validSourceValues);
+const sourceSchema = z.enum(sourceValues as [Source, ...Source[]]);
 const storedStringSchema = z.string().max(MAX_READER_STRING_LENGTH);
 const requiredStoredStringSchema = storedStringSchema.min(1);
 const dateStringSchema = storedStringSchema.refine((value) => dateValue(value) > 0);
@@ -178,7 +171,7 @@ function sanitizeTopicUrl(value: unknown, source?: Source) {
     if (!raw) {
       return '';
     }
-    const url = source ? new URL(raw, sourceBaseUrls[source]) : new URL(raw);
+    const url = source ? new URL(raw, sourceCatalog[source].baseUrl) : new URL(raw);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       return '';
     }

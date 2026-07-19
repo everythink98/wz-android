@@ -137,20 +137,25 @@ function createTopicActionController({
     clearNodeSeekLoginCookiesOnly: vi.fn(async () => undefined),
     clearYaohuoLoginState: vi.fn(async () => undefined),
     currentNodeSeekCredentialGeneration: () => 1,
+    discourseActionRuntimeDependencies: {
+      linuxDoUserAgent: () => 'ua',
+      refreshXiaoyinsiAuthorization,
+      resetLinuxDoLevelState: vi.fn(),
+      updateLinuxDoSession: vi.fn()
+    },
+    discourseLoginPrompts: {
+      linuxdo: vi.fn(),
+      xiaoyinsi: showXiaoyinsiLogin
+    },
     ensureNodeImageApiKey: vi.fn(async () => null),
     fetcher,
-    linuxDoWebViewUserAgentRef: { current: 'ua' },
     loadYaohuoCookieForSource: vi.fn(async () => source === 'yaohuo' ? 'sidyaohuo=fake-credential' : undefined),
     nodeSeekWebViewUserAgentRef: { current: 'ua' },
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
-    refreshXiaoyinsiAuthorization,
-    resetLinuxDoLevelState: vi.fn(),
     setActionBusy: setActionBusy as Dispatch<SetStateAction<boolean>>,
     setOptimisticTopicActions: vi.fn(),
-    showLinuxDoLogin: vi.fn(),
-    showXiaoyinsiLogin,
     showYaohuoLogin: vi.fn(),
     siteSessionStates,
     topicActionRequestOwnerRef: { current: createRequestOwner('topic') },
@@ -171,8 +176,7 @@ function createTopicActionController({
           completeSubmission
         }
       }
-    } as unknown as TopicSessionController,
-    updateLinuxDoSession: vi.fn()
+    } as unknown as TopicSessionController
   });
   return {
     applyUpdate,
@@ -414,18 +418,20 @@ describe('topic action auth guards', () => {
 
     await controller.interact('like', 987654);
 
-    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: {
-        apiKey: 'fake-xiaoyinsi-user-api-key',
-        clientId: 'fake-xiaoyinsi-client-id'
-      },
-      request: {
-        path: '/post_actions',
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: 'id=987654&post_action_type_id=2'
-      }
-    }));
+    await vi.waitFor(() => {
+      expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+        credentials: {
+          apiKey: 'fake-xiaoyinsi-user-api-key',
+          clientId: 'fake-xiaoyinsi-client-id'
+        },
+        request: {
+          path: '/post_actions',
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: 'id=987654&post_action_type_id=2'
+        }
+      }));
+    });
     expect(applyUpdate).toHaveBeenCalledWith({
       type: 'interaction',
       patch: { commentId: 987654, type: 'like', mode: 'add', reactionId: 'heart' }
@@ -433,7 +439,7 @@ describe('topic action auth guards', () => {
     expect(setActionBusy).not.toHaveBeenCalled();
   });
 
-  it('[REG-XIAOYINSI-011] releases image-upload busy state after inserting the Markdown', async () => {
+  it('releases image-upload busy state after inserting the Markdown', async () => {
     vi.mocked(getDocumentAsync).mockResolvedValueOnce({
       canceled: false,
       assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
@@ -460,20 +466,44 @@ describe('topic action auth guards', () => {
 
     await controller.interact('like', 987654);
 
-    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
-      request: {
-        path: '/post_actions/987654?post_action_type_id=2',
-        method: 'DELETE',
-        headers: {},
-        body: undefined
-      }
-    }));
+    await vi.waitFor(() => {
+      expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+        request: {
+          path: '/post_actions/987654?post_action_type_id=2',
+          method: 'DELETE',
+          headers: {},
+          body: undefined
+        }
+      }));
+    });
     expect(applyUpdate).toHaveBeenCalledWith({
       type: 'interaction',
       patch: { commentId: 987654, type: 'like', mode: 'remove', reactionId: 'heart' }
     });
     expect(setActionBusy).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalledWith('当前帖子不能点赞');
+  });
+
+  it('[REG-XIAOYINSI-009] restores an existing 小隐寺 like when cancellation fails', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(new Error('temporary failure'));
+    const { applyUpdate, controller } = createTopicActionController({
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: false, liked: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    await vi.waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(2));
+    expect(applyUpdate.mock.calls.map(([update]) => update)).toEqual([
+      {
+        type: 'interaction',
+        patch: { commentId: 987654, type: 'like', mode: 'remove', reactionId: 'heart' }
+      },
+      {
+        type: 'interaction',
+        patch: { commentId: 987654, type: 'like', mode: 'add', reactionId: 'heart' }
+      }
+    ]);
   });
 
   it('[REG-XIAOYINSI-003] cancels a 小隐寺 topic bookmark even when Discourse omits the bookmark record id', async () => {
@@ -485,19 +515,37 @@ describe('topic action auth guards', () => {
       topicPatch: { bookmarked: true, bookmarkId: undefined }
     });
 
-    await controller.bookmarkOnXiaoyinsiSite();
+    await controller.bookmarkOnDiscourseSite();
 
-    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
-      request: {
-        path: '/t/424242/remove_bookmarks',
-        method: 'PUT',
-        headers: {},
-        body: undefined
-      }
-    }));
+    await vi.waitFor(() => {
+      expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+        request: {
+          path: '/t/424242/remove_bookmarks',
+          method: 'PUT',
+          headers: {},
+          body: undefined
+        }
+      }));
+    });
     expect(applyUpdate).toHaveBeenCalledWith({ type: 'bookmark', bookmarked: false });
     expect(setActionBusy).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalledWith('当前收藏记录不完整，请刷新主题后再试。');
+  });
+
+  it('[REG-XIAOYINSI-003] restores a 小隐寺 topic bookmark when cancellation fails', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(new Error('temporary failure'));
+    const { applyUpdate, controller } = createTopicActionController({
+      source: 'xiaoyinsi',
+      topicPatch: { bookmarked: true, bookmarkId: undefined }
+    });
+
+    await controller.bookmarkOnDiscourseSite();
+
+    await vi.waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(2));
+    expect(applyUpdate.mock.calls.map(([update]) => update)).toEqual([
+      { type: 'bookmark', bookmarked: false, bookmarkId: undefined },
+      { type: 'bookmark', bookmarked: true }
+    ]);
   });
 
   it('[REG-XIAOYINSI-007] closes a 小隐寺 edit composer without applying unconfirmed markdown locally', async () => {
@@ -545,9 +593,11 @@ describe('topic action auth guards', () => {
 
     await controller.interact('like', 987654);
 
-    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    });
     expect(showXiaoyinsiLogin).not.toHaveBeenCalled();
-    expect(notify).toHaveBeenCalledWith('没有权限执行该操作');
+    expect(notify).toHaveBeenCalledWith('没有权限执行该操作，已恢复原状态。');
   });
 
   it('[REG-XIAOYINSI-012] removes a confirmed 小隐寺 reply locally and refreshes only the reply slice', async () => {

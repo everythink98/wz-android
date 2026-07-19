@@ -165,6 +165,26 @@ describe('Android local forum facade', () => {
     expect(result.errors.v2ex).toBeTruthy();
   });
 
+  it('includes the registered yaohuo adapter in authenticated aggregate search', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('yaohuo.me')) {
+        return new Response('<div class="listdata"><a href="/bbs-321.html">妖火聚合结果</a>/alice/阅1/05-20 10:00</div>');
+      }
+      throw new Error('other source unavailable');
+    });
+
+    const result = await searchTopics({
+      source: 'all',
+      query: '妖火聚合',
+      yaohuoCookie: 'sidyaohuo=secret',
+      fetcher
+    });
+
+    expect(result.items).toEqual([
+      expect.objectContaining({ source: 'yaohuo', id: '321', title: '妖火聚合结果' })
+    ]);
+  });
+
   it('routes user profile reads to each public source site', async () => {
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('nodeseek.com/api/account/getInfo/48872?readme=1')) {
@@ -478,7 +498,11 @@ describe('Android local forum facade', () => {
     });
 
     const nodeseek = await getCurrentUserProfile({ source: 'nodeseek', fetcher, nodeSeekCookie: 'session=ok' });
-    const linuxdo = await getCurrentUserProfile({ source: 'linuxdo', fetcher, linuxDoCookie: '_t=ok' });
+    const linuxdo = await getCurrentUserProfile({
+      source: 'linuxdo',
+      fetcher,
+      discourseAuth: { linuxdo: { cookieHeader: '_t=ok' } }
+    });
     const yaohuo = await getCurrentUserProfile({ source: 'yaohuo', fetcher, yaohuoCookie: 'sidyaohuo=ok' });
 
     expect(nodeseek).toMatchObject({

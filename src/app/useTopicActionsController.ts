@@ -22,42 +22,24 @@ import {
   type YaohuoActionRequest
 } from '../yaohuoActions';
 import {
-  buildLinuxDoBookmarkRequest,
-  buildLinuxDoDeleteReplyRequest,
-  buildLinuxDoEditReplyRequest,
-  buildLinuxDoImageUploadRequest,
-  buildLinuxDoLikeRequest,
-  buildLinuxDoPollVoteRequest,
-  buildLinuxDoReplyRequest,
-  linuxDoImageUrlFromUploadResponse,
-  type LinuxDoActionRequest
-} from '../linuxdoActions';
-import { runLinuxDoAction } from '../linuxdoActionClient';
+  type DiscourseAction,
+  type DiscourseActionRequest
+} from '../discourseActions';
 import {
-  buildXiaoyinsiBookmarkRequest,
-  buildXiaoyinsiDeleteReplyRequest,
-  buildXiaoyinsiEditReplyRequest,
-  buildXiaoyinsiImageUploadRequest,
-  buildXiaoyinsiLikeRequest,
-  buildXiaoyinsiPollVoteRequest,
-  buildXiaoyinsiReplyRequest,
-  xiaoyinsiImageUrlFromUploadResponse,
-  type XiaoyinsiActionRequest
-} from '../xiaoyinsiActions';
-import { runXiaoyinsiAction } from '../xiaoyinsiActionClient';
-import { loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
+  buildDiscourseSourceActionRequest,
+  discourseSourceUploadUrl
+} from '../discourseSourceActions';
 import { fetchNodeSeekVoteInfo, runNodeSeekAction } from '../nodeseekActionClient';
 import { runYaohuoAction } from '../yaohuoActionClient';
 import {
-  linuxDoBookmarkIdFromActionResult,
+  discourseBookmarkIdFromActionResult,
   topicActionStateKey,
   type InteractionType,
   type OptimisticActionState
 } from '../topicActionState';
-import type { Reply, TopicDetail, TopicPoll } from '../types';
+import type { Reply, Source, TopicDetail, TopicPoll } from '../types';
 import { topicKey } from '../readerData';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
-import { currentLinuxDoAccessGeneration, linuxDoAccessSummary, loadLinuxDoAccess } from '../linuxdoCookieBridge';
 import {
   DEFAULT_NODESEEK_ANDROID_USER_AGENT,
   NODESEEK_ACCESS_STORAGE_KEY,
@@ -86,7 +68,13 @@ import {
   type TopicActionRunMap
 } from '../topicActionRequestOwners';
 import { errorMessage, isCanceledRequest } from '../appUtils';
-import { canUseLinuxDoLike } from '../linuxdoPermissions';
+import { canToggleDiscourseLike } from '../discoursePermissions';
+import {
+  isDiscourseSource,
+  isSessionSource,
+  sourceValues,
+  type DiscourseSource
+} from '../sourceCatalog';
 import {
   normalizeReplyImageAsset,
   replyImageMarkupForSource,
@@ -95,7 +83,7 @@ import {
   uploadNodeSeekReplyImageWithApiKey,
   uploadYaohuoReplyImage
 } from '../replyImageUpload';
-import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionEvent, type SiteSessionStates } from '../siteSessionState';
+import { createSiteSessionViewModels, isSiteLoggedIn, type SiteSessionStates } from '../siteSessionState';
 import { authActionMessageForSource } from '../siteSessionPrompts';
 import {
   beginDiagnosticTrace,
@@ -112,17 +100,20 @@ import type { CredentialClearOptions, CredentialLoadOptions } from './sessionCon
 import type { TopicSessionController } from './useTopicSessionController';
 import {
   beginOptimisticTopicAction,
-  clearExpiredLinuxDoLogin,
   runSingleTopicAction,
   isNodeSeekLoginRequiredError,
   runOptimisticActionQueue as runOptimisticActionQueueHelper
 } from './topicActionHelpers';
 import {
+  prepareDiscourseActionRuntime,
+  type DiscourseActionRuntimeDependencies,
+  type PreparedDiscourseActionRuntime
+} from './discourseActionRuntime';
+import {
   canSubmitReplyToTopic,
   canVotePollOnTopic,
   currentTopicActionTopic,
   isTopicScopedActionKey,
-  isLinuxDoActionTopic,
   isNodeSeekActionTopic,
   isXiaoyinsiActionTopic,
   isYaohuoActionTopic,
@@ -188,7 +179,8 @@ function failDiagnosticActionRequest(
 
 function actionRequestDiagnosticFields(
   source: 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi',
-  request: NodeSeekActionRequest | LinuxDoActionRequest | YaohuoActionRequest | XiaoyinsiActionRequest
+  request: NodeSeekActionRequest | DiscourseActionRequest | YaohuoActionRequest,
+  discourseCsrfSource: 'none' | 'session-endpoint' = 'none'
 ) {
   const path = request.path.split('?', 1)[0].toLowerCase();
   if (source === 'nodeseek') {
@@ -204,7 +196,7 @@ function actionRequestDiagnosticFields(
       csrfSource: requestType === 'reply' || requestType === 'edit' ? 'local-generated' : 'none'
     };
   }
-  if (source === 'linuxdo' || source === 'xiaoyinsi') {
+  if (isDiscourseSource(source)) {
     const requestType = path === '/posts.json' ? 'reply'
       : path === '/uploads.json' ? 'image-upload'
         : /^\/posts\/\d+\.json$/.test(path) ? request.method === 'PUT' ? 'edit' : 'delete'
@@ -212,7 +204,7 @@ function actionRequestDiagnosticFields(
             : path.startsWith('/bookmarks') ? 'bookmark'
               : path === '/polls/vote' ? 'vote'
                 : 'unknown';
-    return { requestType, csrfSource: source === 'linuxdo' ? 'session-endpoint' : 'none' };
+    return { requestType, csrfSource: discourseCsrfSource };
   }
   const requestType = path === '/bbs/book_re.aspx' ? 'reply'
     : path === '/bbs/book_re_del.aspx' ? 'delete'
@@ -243,49 +235,41 @@ export function useTopicActionsController({
   clearNodeSeekLoginCookiesOnly,
   clearYaohuoLoginState,
   currentNodeSeekCredentialGeneration,
+  discourseActionRuntimeDependencies,
+  discourseLoginPrompts,
   fetcher,
-  linuxDoWebViewUserAgentRef,
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
   ensureNodeImageApiKey,
   notify,
   optimisticTopicActionsRef,
   refreshTopicReplies,
-  refreshXiaoyinsiAuthorization,
-  resetLinuxDoLevelState,
   setActionBusy,
   setOptimisticTopicActions,
-  showLinuxDoLogin,
-  showXiaoyinsiLogin,
   showYaohuoLogin,
   siteSessionStates,
   topicActionRequestOwnerRef,
-  topicSession,
-  updateLinuxDoSession
+  topicSession
 }: {
   actionAbortRef: Ref<{ abort: () => void; abortAll: () => void } | null>;
   clearNodeSeekLoginCookiesOnly: (options?: CredentialClearOptions) => Promise<void>;
   clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
   currentNodeSeekCredentialGeneration: () => number;
+  discourseActionRuntimeDependencies: DiscourseActionRuntimeDependencies;
+  discourseLoginPrompts: Record<DiscourseSource, (message?: string) => void>;
   fetcher: Fetcher;
-  linuxDoWebViewUserAgentRef: Ref<string>;
   loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   ensureNodeImageApiKey: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   notify: (message: string) => void;
   optimisticTopicActionsRef: Ref<Record<string, OptimisticActionState>>;
   refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
-  refreshXiaoyinsiAuthorization: () => Promise<boolean | null>;
-  resetLinuxDoLevelState: () => void;
   setActionBusy: Dispatch<SetStateAction<boolean>>;
   setOptimisticTopicActions: Dispatch<SetStateAction<Record<string, OptimisticActionState>>>;
-  showLinuxDoLogin: (message?: string) => void;
-  showXiaoyinsiLogin: (message?: string) => void;
   showYaohuoLogin: (message?: string) => void;
   siteSessionStates: SiteSessionStates;
   topicActionRequestOwnerRef: Ref<RequestOwner>;
   topicSession: TopicSessionController;
-  updateLinuxDoSession: (event: SiteSessionEvent) => void;
 }) {
   const {
     state: { replyContent, replyEditTarget, replyFace, replyTarget, selectedTopic, topicDetail, topicReplies },
@@ -297,10 +281,12 @@ export function useTopicActionsController({
   const appendReplyMarkup = topicComposer.appendMarkup;
   const applyTopicActionUpdate = topicActions.applyUpdate;
   const completeReplySubmission = topicComposer.completeSubmission;
-  const canUseNodeSeekActions = isSiteLoggedIn(siteSessionStates.nodeseek);
-  const canUseYaohuoActions = isSiteLoggedIn(siteSessionStates.yaohuo);
-  const canUseLinuxDoActions = isSiteLoggedIn(siteSessionStates.linuxdo);
-  const canUseXiaoyinsiActions = isSiteLoggedIn(siteSessionStates.xiaoyinsi);
+  const sourceActionAvailability = Object.fromEntries(sourceValues.map((source) => [
+    source,
+    isSessionSource(source) && isSiteLoggedIn(siteSessionStates[source])
+  ])) as Record<Source, boolean>;
+  const canUseNodeSeekActions = sourceActionAvailability.nodeseek;
+  const canUseYaohuoActions = sourceActionAvailability.yaohuo;
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
   const topicActionOwnersRef = useRef<TopicActionOwnerMap>({});
   const topicActionRunsRef = useRef<TopicActionRunMap>({});
@@ -614,77 +600,73 @@ export function useTopicActionsController({
     }
   }, [canUseYaohuoActions, clearYaohuoLoginState, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, loadYaohuoCookieForSource, notify, showYaohuoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
 
-  const runLinuxDoRequest = useCallback(async (
-    requestFactory: () => LinuxDoActionRequest,
+  const runDiscourseRequest = useCallback(async (
+    source: DiscourseSource,
+    actionFactory: () => DiscourseAction,
     success: string,
     options: ActionRunOptions = {}
   ) => {
     const diagnosticTrace = options.diagnosticTrace;
-    if (!canUseLinuxDoActions) {
+    const loginPrompt = discourseLoginPrompts[source];
+    if (!sourceActionAvailability[source]) {
       if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
         if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'linuxdo', reason: 'stale' });
+          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
         }
         return false;
       }
-      const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
-      showLinuxDoLogin(actionMessage(message, options.restoreOnFailure));
-      failDiagnosticActionRequest(options, 'linuxdo', 'credential', 'blocked', 'login_required');
+      const message = authActionMessageForSource(source, siteSessionViewModels);
+      loginPrompt(actionMessage(message, options.restoreOnFailure));
+      failDiagnosticActionRequest(options, source, 'credential', 'blocked', 'login_required');
       return false;
     }
-    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || 'linuxdo-action';
+    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || `${source}-action`;
     const requestOwner = options.owner || startTopicActionRequest(actionKey);
     const busy = options.busy ?? true;
     const run = startActionRun(actionKey, busy);
+    let runtime: PreparedDiscourseActionRuntime | undefined;
     if (diagnosticTrace) {
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: 'linuxdo', hasOwner: true, isBusy: busy });
-      markDiagnosticStage(diagnosticTrace, 'credential', { source: 'linuxdo', state: 'load' });
+      markDiagnosticStage(diagnosticTrace, 'guard', { source, hasOwner: true, isBusy: busy });
+      markDiagnosticStage(diagnosticTrace, 'credential', { source, state: 'load' });
     }
-    let linuxDoGeneration: number | undefined;
-    let linuxDoAccessCookieHeader: string | undefined;
     try {
-      linuxDoGeneration = currentLinuxDoAccessGeneration();
-      const access = await loadLinuxDoAccess();
-      linuxDoAccessCookieHeader = access?.cookieHeader;
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'linuxdo', reason: 'stale' });
-        }
-        return false;
-      }
-      if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
-        const message = authActionMessageForSource('linuxdo', siteSessionViewModels);
-        updateLinuxDoSession({ type: 'login-expired', message });
-        showLinuxDoLogin(actionMessage(message, options.restoreOnFailure));
-        failDiagnosticActionRequest(options, 'linuxdo', 'credential', 'blocked', 'missing_credential');
-        return false;
-      }
-      const request = requestFactory();
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'credential', {
-          source: 'linuxdo',
-          state: 'ready',
-          hasCredential: true,
-          credentialSource: 'secure-store',
-          ...actionRequestDiagnosticFields('linuxdo', request)
-        });
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'linuxdo', state: 'start' });
-      }
-      const result = await runLinuxDoAction({
-        cookieHeader: access.cookieHeader,
-        fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher,
-        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        request,
-        signal: run.controller.signal
+      runtime = await prepareDiscourseActionRuntime(source, {
+        ...discourseActionRuntimeDependencies,
+        fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher
       });
       if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
         if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'linuxdo', reason: 'stale' });
+          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
+        }
+        return false;
+      }
+      if (!runtime.credentialReady || !runtime.execute) {
+        runtime.onMissingCredential?.();
+        const message = authActionMessageForSource(source, siteSessionViewModels);
+        loginPrompt(actionMessage(message, options.restoreOnFailure));
+        failDiagnosticActionRequest(options, source, 'credential', 'blocked', 'missing_credential');
+        return false;
+      }
+      const request = buildDiscourseSourceActionRequest(source, actionFactory());
+      if (diagnosticTrace) {
+        markDiagnosticStage(diagnosticTrace, 'credential', {
+          source,
+          state: 'ready',
+          hasCredential: true,
+          credentialSource: runtime.credentialSource,
+          ...actionRequestDiagnosticFields(source, request, runtime.csrfSource)
+        });
+        markDiagnosticStage(diagnosticTrace, 'transport', { source, state: 'start' });
+      }
+      const result = await runtime.execute(request, run.controller.signal);
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
+        if (diagnosticTrace) {
+          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
         }
         return false;
       }
       if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'linuxdo', state: 'confirmed', serverConfirmed: true });
+        markDiagnosticStage(diagnosticTrace, 'transport', { source, state: 'confirmed', serverConfirmed: true });
       }
       if (options.notifySuccess !== false && success) {
         notify(success);
@@ -694,140 +676,45 @@ export function useTopicActionsController({
       if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
         if (diagnosticTrace) {
           const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
-          finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'linuxdo', reason });
+          finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source, reason });
         }
         return false;
       }
       const diagnosticReason = normalizeDiagnosticReason(error);
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        await clearExpiredLinuxDoLogin({ error, generation: linuxDoGeneration, cookieHeader: linuxDoAccessCookieHeader, resetLinuxDoLevelState, updateLinuxDoSession });
-        if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-          if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'linuxdo', reason: 'stale' });
-          }
-          return false;
+      const loginRequired = Boolean(error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired);
+      const recovery = runtime
+        ? await runtime.recover(error)
+        : { loginRequired, phase: loginRequired ? 'credential' as const : 'transport' as const };
+      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
+        if (diagnosticTrace) {
+          finishDiagnosticTrace(diagnosticTrace, 'stale', { source, reason: 'stale' });
         }
-        showLinuxDoLogin(actionMessage(errorMessage(error), options.restoreOnFailure));
-        failDiagnosticActionRequest(options, 'linuxdo', 'credential', 'blocked', diagnosticReason);
+        return false;
+      }
+      if (recovery.loginRequired) {
+        loginPrompt(actionMessage(errorMessage(error), options.restoreOnFailure));
+        failDiagnosticActionRequest(options, source, 'credential', 'blocked', diagnosticReason);
         return false;
       }
       notify(actionMessage(errorMessage(error), options.restoreOnFailure));
-      failDiagnosticActionRequest(options, 'linuxdo', 'transport', 'failure', diagnosticReason);
+      failDiagnosticActionRequest(options, source, recovery.phase, 'failure', diagnosticReason);
       return false;
     } finally {
       finishActionRun(run, busy);
     }
-  }, [canUseLinuxDoActions, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, linuxDoWebViewUserAgentRef, notify, resetLinuxDoLevelState, showLinuxDoLogin, siteSessionViewModels, startActionRun, startTopicActionRequest, updateLinuxDoSession]);
-
-  const runXiaoyinsiRequest = useCallback(async (
-    requestFactory: () => XiaoyinsiActionRequest,
-    success: string,
-    options: ActionRunOptions = {}
-  ) => {
-    const diagnosticTrace = options.diagnosticTrace;
-    if (!canUseXiaoyinsiActions) {
-      if (options.owner && !isCurrentTopicActionRequest(options.owner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'xiaoyinsi', reason: 'stale' });
-        }
-        return false;
-      }
-      const message = authActionMessageForSource('xiaoyinsi', siteSessionViewModels);
-      showXiaoyinsiLogin(actionMessage(message, options.restoreOnFailure));
-      failDiagnosticActionRequest(options, 'xiaoyinsi', 'credential', 'blocked', 'login_required');
-      return false;
-    }
-    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || 'xiaoyinsi-action';
-    const requestOwner = options.owner || startTopicActionRequest(actionKey);
-    const busy = options.busy ?? true;
-    const run = startActionRun(actionKey, busy);
-    if (diagnosticTrace) {
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: 'xiaoyinsi', hasOwner: true, isBusy: busy });
-      markDiagnosticStage(diagnosticTrace, 'credential', { source: 'xiaoyinsi', state: 'load' });
-    }
-    try {
-      const credentials = await loadXiaoyinsiCredentials();
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'xiaoyinsi', reason: 'stale' });
-        }
-        return false;
-      }
-      if (!credentials) {
-        const message = authActionMessageForSource('xiaoyinsi', siteSessionViewModels);
-        showXiaoyinsiLogin(actionMessage(message, options.restoreOnFailure));
-        failDiagnosticActionRequest(options, 'xiaoyinsi', 'credential', 'blocked', 'missing_credential');
-        return false;
-      }
-      const request = requestFactory();
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'credential', {
-          source: 'xiaoyinsi',
-          state: 'ready',
-          hasCredential: true,
-          credentialSource: 'secure-store',
-          ...actionRequestDiagnosticFields('xiaoyinsi', request)
-        });
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'xiaoyinsi', state: 'start' });
-      }
-      const result = await runXiaoyinsiAction({
-        credentials,
-        fetcher: diagnosticTrace ? withDiagnosticFetcher(diagnosticTrace, fetcher) : fetcher,
-        request,
-        signal: run.controller.signal
-      });
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-        if (diagnosticTrace) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'xiaoyinsi', reason: 'stale' });
-        }
-        return false;
-      }
-      if (diagnosticTrace) {
-        markDiagnosticStage(diagnosticTrace, 'transport', { source: 'xiaoyinsi', state: 'confirmed', serverConfirmed: true });
-      }
-      if (options.notifySuccess !== false && success) {
-        notify(success);
-      }
-      return result ?? true;
-    } catch (error) {
-      if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner) || isCanceledRequest(error)) {
-        if (diagnosticTrace) {
-          const reason = isCanceledRequest(error) ? 'canceled' : 'stale';
-          finishDiagnosticTrace(diagnosticTrace, reason === 'canceled' ? 'canceled' : 'stale', { source: 'xiaoyinsi', reason });
-        }
-        return false;
-      }
-      const diagnosticReason = normalizeDiagnosticReason(error);
-      const requiresAuthorizationCheck = Boolean(
-        error && typeof error === 'object' && (error as { authorizationCheckRequired?: unknown }).authorizationCheckRequired
-      );
-      if (requiresAuthorizationCheck) {
-        await refreshXiaoyinsiAuthorization();
-        if (!isCurrentActionRun(run) || !isCurrentTopicActionRequest(requestOwner)) {
-          if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: 'xiaoyinsi', reason: 'stale' });
-          }
-          return false;
-        }
-      }
-      if (error && typeof error === 'object' && (error as { loginRequired?: unknown }).loginRequired) {
-        showXiaoyinsiLogin(actionMessage(errorMessage(error), options.restoreOnFailure));
-        failDiagnosticActionRequest(options, 'xiaoyinsi', 'credential', 'blocked', diagnosticReason);
-        return false;
-      }
-      notify(actionMessage(errorMessage(error), options.restoreOnFailure));
-      failDiagnosticActionRequest(
-        options,
-        'xiaoyinsi',
-        requiresAuthorizationCheck ? 'credential' : 'transport',
-        'failure',
-        diagnosticReason
-      );
-      return false;
-    } finally {
-      finishActionRun(run, busy);
-    }
-  }, [canUseXiaoyinsiActions, fetcher, finishActionRun, isCurrentActionRun, isCurrentTopicActionRequest, notify, refreshXiaoyinsiAuthorization, showXiaoyinsiLogin, siteSessionViewModels, startActionRun, startTopicActionRequest]);
+  }, [
+    discourseActionRuntimeDependencies,
+    discourseLoginPrompts,
+    fetcher,
+    finishActionRun,
+    isCurrentActionRun,
+    isCurrentTopicActionRequest,
+    notify,
+    siteSessionViewModels,
+    sourceActionAvailability,
+    startActionRun,
+    startTopicActionRequest
+  ]);
 
   const setOptimisticTopicActionState = useCallback((key: string, state?: OptimisticActionState) => {
     const next = { ...optimisticTopicActionsRef.current };
@@ -852,17 +739,18 @@ export function useTopicActionsController({
     restoreOnFailure: true
   }), [runNodeSeekRequest]);
 
-  const runLinuxDoActionForOptimisticUpdate = useCallback(async (
-    requestFactory: () => LinuxDoActionRequest,
+  const runDiscourseActionForOptimisticUpdate = useCallback(async (
+    source: DiscourseSource,
+    actionFactory: () => DiscourseAction,
     options: ActionRunOptions = {}
-  ) => runLinuxDoRequest(requestFactory, '', {
+  ) => runDiscourseRequest(source, actionFactory, '', {
     ...options,
     busy: false,
     deferDiagnosticFailure: true,
-    fallbackKey: 'linuxdo-optimistic',
+    fallbackKey: 'discourse-optimistic',
     notifySuccess: false,
     restoreOnFailure: true
-  }), [runLinuxDoRequest]);
+  }), [runDiscourseRequest]);
 
   const runOptimisticActionQueue = useCallback(async ({
     key,
@@ -956,12 +844,12 @@ export function useTopicActionsController({
       contentLength: replyContent.length
     });
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    const canEditExistingXiaoyinsiReply = Boolean(
+    const canEditExistingDiscourseReply = Boolean(
       detail
-      && isXiaoyinsiActionTopic(detail)
+      && isDiscourseSource(detail.source)
       && replyEditTarget
     );
-    if (!detail || (!canEditExistingXiaoyinsiReply && !canSubmitReplyToTopic(detail))) {
+    if (!detail || (!canEditExistingDiscourseReply && !canSubmitReplyToTopic(detail))) {
       finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
       return;
     }
@@ -972,7 +860,7 @@ export function useTopicActionsController({
       return;
     }
     if (replyEditTarget) {
-      if (!isNodeSeekActionTopic(detail) && !isLinuxDoActionTopic(detail) && !isXiaoyinsiActionTopic(detail)) {
+      if (!isNodeSeekActionTopic(detail) && !isDiscourseSource(detail.source)) {
         notify('当前来源暂不支持编辑回复');
         finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
         return;
@@ -987,14 +875,9 @@ export function useTopicActionsController({
             '回复已更新',
             { owner: requestOwner, diagnosticTrace }
           )
-          : isLinuxDoActionTopic(detail)
-            ? await runLinuxDoRequest(
-              () => buildLinuxDoEditReplyRequest({ postId: replyEditTarget.commentId, content: replyContent }),
-              '回复已更新',
-              { owner: requestOwner, diagnosticTrace }
-            )
-            : await runXiaoyinsiRequest(
-              () => buildXiaoyinsiEditReplyRequest({ postId: replyEditTarget.commentId, content: replyContent }),
+          : await runDiscourseRequest(
+              detail.source as DiscourseSource,
+              () => ({ type: 'edit-post', postId: replyEditTarget.commentId, content: replyContent }),
               '回复已更新',
               { owner: requestOwner, diagnosticTrace }
             );
@@ -1060,9 +943,11 @@ export function useTopicActionsController({
         }
         return;
       }
-      if (isLinuxDoActionTopic(detail)) {
-        const submitted = await runLinuxDoRequest(
-          () => buildLinuxDoReplyRequest({
+      if (isDiscourseSource(detail.source)) {
+        const submitted = await runDiscourseRequest(
+          detail.source,
+          () => ({
+            type: 'reply',
             topicId: detail.id,
             content: replyContent,
             replyToPostNumber: replyTarget?.floor
@@ -1076,28 +961,9 @@ export function useTopicActionsController({
             return;
           }
           completeReplySubmission();
-          markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-          await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true });
-        }
-        return;
-      }
-      if (isXiaoyinsiActionTopic(detail)) {
-        const submitted = await runXiaoyinsiRequest(
-          () => buildXiaoyinsiReplyRequest({
-            topicId: detail.id,
-            content: replyContent,
-            replyToPostNumber: replyTarget?.floor
-          }),
-          '回复已提交',
-          { owner: requestOwner, diagnosticTrace }
-        );
-        if (submitted) {
-          if (!isCurrentTopicActionRequest(requestOwner)) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            return;
-          }
-          completeReplySubmission();
-          markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'server-refresh-start' });
+          markDiagnosticStage(diagnosticTrace, 'apply', detail.source === 'xiaoyinsi'
+            ? { source: detail.source, state: 'server-refresh-start' }
+            : { source: detail.source, state: 'local', localApplied: true });
           await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true });
         }
         return;
@@ -1117,7 +983,7 @@ export function useTopicActionsController({
         await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true });
       }
     }, diagnosticTrace);
-  }, [completeReplySubmission, isCurrentTopicActionRequest, notify, refreshTopicRepliesAfterWrite, replyContent, replyEditTarget, replyFace, replyTarget, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runXiaoyinsiRequest, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+  }, [completeReplySubmission, isCurrentTopicActionRequest, notify, refreshTopicRepliesAfterWrite, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const deleteReplyConfirmed = useCallback(async (reply: Reply, diagnosticTrace: DiagnosticTrace) => {
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -1150,25 +1016,15 @@ export function useTopicActionsController({
           '回复已删除',
           { owner: requestOwner, diagnosticTrace }
         );
-      } else if (isLinuxDoActionTopic(detail)) {
+      } else if (isDiscourseSource(detail.source)) {
         if (!reply.commentId) {
           notify('当前回复缺少评论 id，刷新主题后再试。');
           finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
           return;
         }
-        deleted = await runLinuxDoRequest(
-          () => buildLinuxDoDeleteReplyRequest({ postId: reply.commentId || 0 }),
-          '回复已删除',
-          { owner: requestOwner, diagnosticTrace }
-        );
-      } else if (isXiaoyinsiActionTopic(detail)) {
-        if (!reply.commentId) {
-          notify('当前回复缺少评论 id，刷新主题后再试。');
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-          return;
-        }
-        deleted = await runXiaoyinsiRequest(
-          () => buildXiaoyinsiDeleteReplyRequest({ postId: reply.commentId || 0 }),
+        deleted = await runDiscourseRequest(
+          detail.source,
+          () => ({ type: 'delete-post', postId: reply.commentId || 0 }),
           '回复已删除',
           { owner: requestOwner, diagnosticTrace }
         );
@@ -1190,7 +1046,7 @@ export function useTopicActionsController({
       markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
       await refreshTopicRepliesAfterWrite(diagnosticTrace, { silent: true, afterSubmit: true, targetReply: reply, excludeReply: reply });
     }, diagnosticTrace);
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, refreshTopicRepliesAfterWrite, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runXiaoyinsiRequest, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, refreshTopicRepliesAfterWrite, runDiscourseRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   const deleteReply = useCallback((reply: Reply) => {
     const actionSource = topicDetail?.source || selectedTopic?.source;
@@ -1296,9 +1152,10 @@ export function useTopicActionsController({
       const uploadRun = startActionRun(`${actionKey}:lifecycle`, true);
       try {
         let imageUrl = '';
-        if (isLinuxDoActionTopic(detail)) {
-          const result = await runLinuxDoRequest(
-            () => buildLinuxDoImageUploadRequest({ file }),
+        if (isDiscourseSource(detail.source)) {
+          const result = await runDiscourseRequest(
+            detail.source,
+            () => ({ type: 'upload', file }),
             '',
             { owner: requestOwner, key: actionKey, busy: false, notifySuccess: false, diagnosticTrace }
           );
@@ -1308,20 +1165,7 @@ export function useTopicActionsController({
             }
             return;
           }
-          imageUrl = linuxDoImageUrlFromUploadResponse(result);
-        } else if (isXiaoyinsiActionTopic(detail)) {
-          const result = await runXiaoyinsiRequest(
-            () => buildXiaoyinsiImageUploadRequest({ file }),
-            '',
-            { owner: requestOwner, key: actionKey, busy: false, notifySuccess: false, diagnosticTrace }
-          );
-          if (!result || !isCurrentTopicActionRequest(requestOwner)) {
-            if (result) {
-              finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-            }
-            return;
-          }
-          imageUrl = xiaoyinsiImageUrlFromUploadResponse(result);
+          imageUrl = discourseSourceUploadUrl(detail.source, result);
         } else if (isYaohuoActionTopic(detail)) {
           markDiagnosticStage(diagnosticTrace, 'credential', {
             source: detail.source,
@@ -1377,7 +1221,7 @@ export function useTopicActionsController({
         finishActionRun(uploadRun, true);
       }
     }, diagnosticTrace);
-  }, [appendReplyMarkup, ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, replyEditTarget, runLinuxDoRequest, runSingleNonIdempotentTopicAction, runXiaoyinsiRequest, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
+  }, [appendReplyMarkup, ensureNodeImageApiKey, fetcher, finishActionRun, isCurrentTopicActionRequest, notify, replyEditTarget, runDiscourseRequest, runSingleNonIdempotentTopicAction, selectedTopic, startActionRun, startTopicActionRequest, topicDetail]);
 
   const checkIn = useCallback(async () => {
     const diagnosticTrace = beginDiagnosticTrace('topic', 'attendance', { source: 'nodeseek' });
@@ -1405,42 +1249,8 @@ export function useTopicActionsController({
       finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'not_ready' });
       return;
     }
-    if (isXiaoyinsiActionTopic(detail)) {
-      if (type !== 'like') {
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
-        return;
-      }
-      const target = [topicDetail, ...topicReplies]
-        .find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean; canLike?: boolean } | undefined);
-      if (target?.canLike === false && !target.liked) {
-        notify('当前帖子不能点赞');
-        finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'permission_denied' });
-        return;
-      }
-      const actionKey = topicActionStateKey({ topicKey: topicKey(detail), targetId: commentId, action: 'like' });
-      markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-      await runSingleNonIdempotentTopicAction(actionKey, async () => {
-        const requestOwner = startTopicActionRequest(actionKey);
-        const submitted = await runXiaoyinsiRequest(
-          () => buildXiaoyinsiLikeRequest({ postId: commentId, liked: Boolean(target?.liked) }),
-          target?.liked ? '已取消点赞' : '点赞已提交',
-          { owner: requestOwner, busy: false, diagnosticTrace }
-        );
-        if (!submitted || !isCurrentTopicActionRequest(requestOwner)) {
-          if (submitted) {
-            finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-          }
-          return;
-        }
-        applyTopicActionUpdate({
-          type: 'interaction',
-          patch: { commentId, type: 'like', mode: target?.liked ? 'remove' : 'add', reactionId: 'heart' }
-        });
-        markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-      }, diagnosticTrace);
-      return;
-    }
-    if (isLinuxDoActionTopic(detail)) {
+    if (isDiscourseSource(detail.source)) {
+      const discourseSource = detail.source;
       if (type !== 'like') {
         finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'unsupported' });
         return;
@@ -1452,8 +1262,8 @@ export function useTopicActionsController({
         topicDetail,
         ...topicReplies
       ].find((item) => (item as { commentId?: number } | null)?.commentId === commentId) as ({ liked?: boolean; canLike?: boolean } | undefined);
-      if (!canUseLinuxDoLike(target)) {
-        notify('不能给自己的帖子点赞');
+      if (!canToggleDiscourseLike(target)) {
+        notify('当前帖子不能点赞');
         finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'permission_denied' });
         return;
       }
@@ -1466,8 +1276,9 @@ export function useTopicActionsController({
           const patch = { commentId, type: 'like' as const, mode: desiredActive ? 'add' as const : 'remove' as const, reactionId: 'heart' };
           applyTopicActionUpdate({ type: 'interaction', patch });
         },
-        sendDesired: async (desiredActive) => Boolean(await runLinuxDoActionForOptimisticUpdate(
-          () => buildLinuxDoLikeRequest({ postId: commentId, liked: !desiredActive }),
+        sendDesired: async (desiredActive) => Boolean(await runDiscourseActionForOptimisticUpdate(
+          discourseSource,
+          () => ({ type: 'set-like', postId: commentId, active: desiredActive }),
           { owner: requestOwner, diagnosticTrace }
         )),
         successMessage: (active) => active ? '点赞已提交' : '已取消点赞',
@@ -1515,7 +1326,7 @@ export function useTopicActionsController({
         : type === 'upvote' ? '已取消点赞' : type === 'like' ? '已取消鸡腿' : '已取消反对',
       diagnosticTrace
     });
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, notify, runLinuxDoActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, runSingleNonIdempotentTopicAction, runXiaoyinsiRequest, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, startTopicActionRequest, topicDetail, topicReplies]);
+  }, [applyTopicActionUpdate, notify, runDiscourseActionForOptimisticUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail, topicReplies]);
 
   const favoriteOnYaohuoSite = useCallback(async () => {
     const actionSource = topicDetail?.source || selectedTopic?.source;
@@ -1598,14 +1409,15 @@ export function useTopicActionsController({
     });
   }, [applyTopicActionUpdate, runNodeSeekActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
 
-  const bookmarkOnLinuxDoSite = useCallback(async () => {
+  const bookmarkOnDiscourseSite = useCallback(async () => {
     const actionSource = topicDetail?.source || selectedTopic?.source;
     const diagnosticTrace = beginDiagnosticTrace('topic', 'bookmark', actionSource ? { source: actionSource } : {});
     const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!isLinuxDoActionTopic(detail)) {
+    if (!detail || !isDiscourseSource(detail.source)) {
       finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'unsupported' });
       return;
     }
+    const discourseSource = detail.source;
     const requestTopicKey = topicKey(detail);
     const bookmarked = Boolean((detail as TopicDetail).bookmarked);
     let bookmarkId = (detail as TopicDetail).bookmarkId;
@@ -1624,11 +1436,13 @@ export function useTopicActionsController({
         });
       },
       sendDesired: async (desiredActive) => {
-        const result = await runLinuxDoActionForOptimisticUpdate(
-          () => buildLinuxDoBookmarkRequest({
-            bookmarkableId: detail.id,
-            bookmarkableType: 'Topic',
-            bookmarked: !desiredActive,
+        const result = await runDiscourseActionForOptimisticUpdate(
+          discourseSource,
+          () => ({
+            type: 'set-bookmark',
+            targetId: detail.id,
+            targetType: 'Topic',
+            active: desiredActive,
             bookmarkId
           }),
           { owner: requestOwner, diagnosticTrace }
@@ -1643,7 +1457,7 @@ export function useTopicActionsController({
           }
         }
         if (desiredActive) {
-          const resultBookmarkId = linuxDoBookmarkIdFromActionResult(result);
+          const resultBookmarkId = discourseBookmarkIdFromActionResult(result);
           if (resultBookmarkId) {
             bookmarkId = resultBookmarkId;
             if (isCurrentTopicActionRequest(requestOwner) && optimisticTopicActionsRef.current[actionKey]?.desired === true) {
@@ -1656,42 +1470,7 @@ export function useTopicActionsController({
       successMessage: (active) => active ? '原站收藏已提交' : '已取消原站收藏',
       diagnosticTrace
     });
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, optimisticTopicActionsRef, runLinuxDoActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
-
-  const bookmarkOnXiaoyinsiSite = useCallback(async () => {
-    const actionSource = topicDetail?.source || selectedTopic?.source;
-    const diagnosticTrace = beginDiagnosticTrace('topic', 'bookmark', actionSource ? { source: actionSource } : {});
-    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
-    if (!isXiaoyinsiActionTopic(detail)) {
-      finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'unsupported' });
-      return;
-    }
-    const bookmarked = Boolean((detail as TopicDetail).bookmarked);
-    const bookmarkId = (detail as TopicDetail).bookmarkId;
-    const actionKey = topicActionStateKey({ topicKey: topicKey(detail), targetId: detail.id, action: 'bookmark' });
-    markDiagnosticStage(diagnosticTrace, 'guard', { source: detail.source, hasOwner: true, isBusy: false });
-    await runSingleNonIdempotentTopicAction(actionKey, async () => {
-      const requestOwner = startTopicActionRequest(actionKey);
-      const submitted = await runXiaoyinsiRequest(
-        () => buildXiaoyinsiBookmarkRequest({
-          bookmarkableId: detail.id,
-          bookmarkableType: 'Topic',
-          bookmarked,
-          bookmarkId
-        }),
-        bookmarked ? '已取消原站收藏' : '原站收藏已提交',
-        { owner: requestOwner, busy: false, diagnosticTrace }
-      );
-      if (!submitted || !isCurrentTopicActionRequest(requestOwner)) {
-        if (submitted) {
-          finishDiagnosticTrace(diagnosticTrace, 'stale', { source: detail.source, reason: 'stale' });
-        }
-        return;
-      }
-      applyTopicActionUpdate({ type: 'bookmark', bookmarked: !bookmarked });
-      markDiagnosticStage(diagnosticTrace, 'apply', { source: detail.source, state: 'local', localApplied: true });
-    }, diagnosticTrace);
-  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, runSingleNonIdempotentTopicAction, runXiaoyinsiRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, isCurrentTopicActionRequest, optimisticTopicActionsRef, runDiscourseActionForOptimisticUpdate, selectedTopic, startOptimisticTopicAction, startOptimisticTopicActionRequest, topicDetail]);
 
   const votePoll = useCallback(async (poll: TopicPoll, optionIds: string[]) => {
     const actionSource = topicDetail?.source || selectedTopic?.source;
@@ -1742,29 +1521,16 @@ export function useTopicActionsController({
             resultRefreshFailed = true;
           }
         }
-      } else if (isLinuxDoActionTopic(detail)) {
+      } else if (isDiscourseSource(detail.source)) {
         if (!poll.postId || !poll.name) {
           notify('当前投票信息不完整，刷新主题后再试。');
           finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
           return;
         }
-        submitted = await runLinuxDoRequest(
-          () => buildLinuxDoPollVoteRequest({
-            postId: poll.postId || '',
-            pollName: poll.name || '',
-            optionIds
-          }),
-          '投票已提交',
-          { owner: requestOwner, diagnosticTrace }
-        );
-      } else if (isXiaoyinsiActionTopic(detail)) {
-        if (!poll.postId || !poll.name) {
-          notify('当前投票信息不完整，刷新主题后再试。');
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { source: detail.source, reason: 'not_ready' });
-          return;
-        }
-        submitted = await runXiaoyinsiRequest(
-          () => buildXiaoyinsiPollVoteRequest({
+        submitted = await runDiscourseRequest(
+          detail.source,
+          () => ({
+            type: 'vote',
             postId: poll.postId || '',
             pollName: poll.name || '',
             optionIds
@@ -1848,21 +1614,17 @@ export function useTopicActionsController({
       return;
     }
     await submitVote();
-  }, [applyTopicActionUpdate, fetcher, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, runLinuxDoRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runXiaoyinsiRequest, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
+  }, [applyTopicActionUpdate, fetcher, isCurrentTopicActionRequest, nodeSeekWebViewUserAgentRef, notify, runDiscourseRequest, runNodeSeekRequest, runSingleNonIdempotentTopicAction, runYaohuoRequest, selectedTopic, startTopicActionRequest, topicDetail]);
 
   return {
-    bookmarkOnLinuxDoSite,
-    bookmarkOnXiaoyinsiSite,
-    canUseLinuxDoActions,
-    canUseNodeSeekActions,
-    canUseXiaoyinsiActions,
-    canUseYaohuoActions,
+    bookmarkOnDiscourseSite,
     checkIn,
     collectOnNodeSeekSite,
     deleteReply,
     favoriteOnYaohuoSite,
     interact,
     submitReply,
+    sourceActionAvailability,
     uploadReplyImage,
     votePoll
   };

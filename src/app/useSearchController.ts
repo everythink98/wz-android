@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { feedSources } from '../feedCategoryRail';
+import { aggregateSearchSources } from '../sourceCatalog';
 import {
   mergeTopics,
   type SearchSort
 } from '../feedLogic';
 import {
-  buildLinuxDoSearchQuery,
+  buildDiscourseSearchQuery,
   DEFAULT_SEARCH_FILTERS,
   type SearchFilterState,
   type SourceSearchFilter
@@ -33,6 +33,7 @@ import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../source
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, FeedSource, Source, SourceErrorInfo, Topic } from '../types';
+import type { DiscourseSource } from '../sourceCatalog';
 import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
@@ -401,7 +402,7 @@ export function useSearchController({
       clearLinuxDoAiSearch();
       const linuxDoFilter = requestFilters.linuxdo;
       if (requestSearchSource === 'linuxdo' && sessionViewModels.linuxdo.isLoggedIn && linuxDoFilter.order === 'relevance') {
-        runLinuxDoAiSearch(buildLinuxDoSearchQuery(query, linuxDoFilter, categories));
+        runLinuxDoAiSearch(buildDiscourseSearchQuery(query, linuxDoFilter, categories));
       }
     }
     submittedSearchQueryRef.current = query;
@@ -435,7 +436,7 @@ export function useSearchController({
     const activeSources = sourceOverride
       ? [sourceOverride]
       : requestSearchSource === 'all'
-        ? feedSources
+        ? aggregateSearchSources
         : [requestSearchSource as Source];
     const activeSort = remoteSearchSort(requestSearchSource, requestFilters);
     markDiagnosticStage(trace, 'guard', {
@@ -845,7 +846,7 @@ export function useSearchController({
     void runSearch(source);
   }, [runSearch]);
 
-  const searchLinuxDoTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: 'linuxdo' | 'xiaoyinsi' }) => {
+  const searchDiscourseTags = useCallback(async (options: Omit<Parameters<SourceGateway['searchTagOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
     const source = options.source || 'linuxdo';
     const { source: _source, ...request } = options;
     const trace = beginDiagnosticTrace('search', 'searchTagOptions', { source });
@@ -857,9 +858,7 @@ export function useSearchController({
       selectedCount: options.selectedTags?.length || 0
     });
     try {
-      const items = await sourceGateway.searchTagOptions(source === 'xiaoyinsi'
-        ? { source: 'xiaoyinsi', ...request }
-        : { source: 'linuxdo', ...request }, { trace, isCurrent });
+      const items = await sourceGateway.searchTagOptions({ source, ...request }, { trace, isCurrent });
       if (!isCurrent()) {
         finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
         return items;
@@ -882,16 +881,14 @@ export function useSearchController({
     }
   }, [sourceGateway]);
 
-  const searchLinuxDoUsers = useCallback(async (options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'> & { source?: 'linuxdo' | 'xiaoyinsi' }) => {
+  const searchDiscourseUsers = useCallback(async (options: Omit<Parameters<SourceGateway['searchUserOptions']>[0], 'source'> & { source?: DiscourseSource }) => {
     const source = options.source || 'linuxdo';
     const { source: _source, ...request } = options;
     const trace = beginDiagnosticTrace('search', 'searchUserOptions', { source });
     const isCurrent = () => !options.signal?.aborted;
     markDiagnosticStage(trace, 'guard', { source, state: 'started', hasQuery: Boolean(options.term.trim()) });
     try {
-      const items = await sourceGateway.searchUserOptions(source === 'xiaoyinsi'
-        ? { source: 'xiaoyinsi', ...request }
-        : { source: 'linuxdo', ...request }, { trace, isCurrent });
+      const items = await sourceGateway.searchUserOptions({ source, ...request }, { trace, isCurrent });
       if (!isCurrent()) {
         finishDiagnosticTrace(trace, 'canceled', { source, reason: 'canceled' });
         return items;
@@ -959,8 +956,8 @@ export function useSearchController({
     searchBusy,
     searchFilters,
     searchGroups: visibleSearchGroups,
-    searchLinuxDoTags,
-    searchLinuxDoUsers,
+    searchDiscourseTags,
+    searchDiscourseUsers,
     linuxDoAiState,
     linuxDoAiVisible,
     searchSessionNotices,
