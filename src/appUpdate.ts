@@ -247,7 +247,11 @@ export async function installVerifiedApk(installer: ApkInstaller | undefined, ur
   }
   const inspection = await installer.inspectApk(uri);
   assertDownloadedApkMatchesUpdate(update, inspection);
-  return installer.installApk(uri);
+  const opened = await installer.installApk(uri);
+  if (!opened) {
+    throw new Error('无法打开安装确认，请稍后重试。');
+  }
+  return true;
 }
 
 export async function checkGithubAppUpdate(fetcher: Fetcher = fetch, currentVersion = CURRENT_APP_VERSION) {

@@ -29,12 +29,14 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
+import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Category, FeedSource, Source, SourceErrorInfo, Topic } from '../types';
 import type { DiscourseSource } from '../sourceCatalog';
 import type { SearchGroup } from '../searchListItems';
+import { useCommitRefValue } from './useCommittedRef';
 import {
   createSearchHistoryWriteQueue,
   createNodeSeekRetrySearchOptions,
@@ -108,6 +110,9 @@ export function useSearchController({
   const loadMoreSearchSourceRef = useRef<((source: Source, page: number, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
   const lastSavedRecentSearchesRef = useRef<string[] | null>(null);
+  const recentSearchHistoryHydratedRef = useRef(false);
+  const recentSearchHistoryReadFailedRef = useRef(false);
+  const pendingRecentSearchRemovalKeysRef = useRef(new Set<string>());
   const [searchBusy, setSearchBusy] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState('');
@@ -117,36 +122,43 @@ export function useSearchController({
   const [linuxDoAiItems, setLinuxDoAiItems] = useState<Topic[]>([]);
   const [linuxDoAiState, setLinuxDoAiState] = useState<LinuxDoAiSearchState>({ status: 'idle', enabled: false, count: 0 });
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [recentSearchesLoaded, setRecentSearchesLoaded] = useState(false);
+  const [recentSearchesHydrated, setRecentSearchesHydrated] = useState(false);
+  const [recentSearchHistoryReadAttempt, setRecentSearchHistoryReadAttempt] = useState(0);
   const searchSessionNotices = useMemo(() => (
     searchSessionNoticeItems(searchSource, sessionViewModels)
   ), [searchSource, sessionViewModels]);
 
   useEffect(() => {
     let active = true;
+    recentSearchHistoryReadFailedRef.current = false;
     AsyncStorage.getItem(SEARCH_HISTORY_STORAGE_KEY)
       .then((raw) => {
         if (active) {
+          const storedHistory = mergeLoadedSearchHistory([], raw);
+          const removedKeys = new Set(pendingRecentSearchRemovalKeysRef.current);
+          recentSearchHistoryHydratedRef.current = true;
+          pendingRecentSearchRemovalKeysRef.current.clear();
+          lastSavedRecentSearchesRef.current = storedHistory;
           setRecentSearches((current) => {
-            const merged = mergeLoadedSearchHistory(current, raw);
-            lastSavedRecentSearchesRef.current = merged;
+            const merged = mergeLoadedSearchHistory(current, raw)
+              .filter((item) => !removedKeys.has(item.toLowerCase()));
             return sameSearchHistory(current, merged) ? current : merged;
           });
+          setRecentSearchesHydrated(true);
         }
       })
-      .catch(() => undefined)
-      .finally(() => {
+      .catch(() => {
         if (active) {
-          setRecentSearchesLoaded(true);
+          recentSearchHistoryReadFailedRef.current = true;
         }
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [recentSearchHistoryReadAttempt]);
 
   useEffect(() => {
-    if (!recentSearchesLoaded) {
+    if (!recentSearchesHydrated) {
       return;
     }
     if (sameSearchHistory(lastSavedRecentSearchesRef.current, recentSearches)) {
@@ -160,27 +172,40 @@ export function useSearchController({
         lastSavedRecentSearchesRef.current = nextRecentSearches;
       })
       .catch(() => undefined);
-  }, [recentSearches, recentSearchesLoaded]);
+  }, [recentSearches, recentSearchesHydrated]);
+
+  const retryRecentSearchHistoryRead = useCallback(() => {
+    if (!recentSearchHistoryHydratedRef.current && recentSearchHistoryReadFailedRef.current) {
+      recentSearchHistoryReadFailedRef.current = false;
+      setRecentSearchHistoryReadAttempt((current) => current + 1);
+    }
+  }, []);
 
   const addRecentSearch = useCallback((query: string) => {
     const clean = query.trim();
     if (!clean) {
       return;
     }
+    pendingRecentSearchRemovalKeysRef.current.delete(clean.toLowerCase());
+    retryRecentSearchHistoryRead();
     setRecentSearches((current) => {
       return normalizeSearchHistory([
         clean,
         ...current.filter((item) => item.toLowerCase() !== clean.toLowerCase())
       ]);
     });
-  }, []);
+  }, [retryRecentSearchHistoryRead]);
 
   const removeRecentSearch = useCallback((query: string) => {
+    if (!recentSearchHistoryHydratedRef.current) {
+      pendingRecentSearchRemovalKeysRef.current.add(query.toLowerCase());
+    }
+    retryRecentSearchHistoryRead();
     setRecentSearches((current) => {
       const next = current.filter((item) => item !== query);
       return next;
     });
-  }, []);
+  }, [retryRecentSearchHistoryRead]);
 
   const clearLinuxDoAiSearch = useCallback(() => {
     linuxDoAiRequestIdRef.current += 1;
@@ -316,7 +341,13 @@ export function useSearchController({
         filter: activeFilter,
         signal
       }, options);
-      const sourceError = data.errors?.[source];
+      const parserSummary = sourceDiagnosticSummary(data);
+      const sourceError = data.errors?.[source] || (parserSummary?.isParseEmpty ? {
+        kind: 'ordinary' as const,
+        message: '搜索结果返回内容无法解析，请重试。',
+        reason: 'parse_empty',
+        retryable: true
+      } : undefined);
       const sourceErrorText = sourceError?.message || undefined;
       const group = {
         source,
@@ -417,20 +448,32 @@ export function useSearchController({
     const requestFilter = requestSearchSource === 'all' ? undefined : activeFilter;
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentSearchRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, searchRequestOwnerRef)
+      && recoveryRequestId === searchRequestIdRef.current
+    );
     const linuxDoRecovery = (): LinuxDoReadRecovery => ({
       key: requestOwner.key,
-      isCurrent: isCurrentSearchRequest,
+      isCurrent: isCurrentSearchRecovery,
       resume: async () => {
-        if (!isCurrentSearchRequest()) {
+        if (!isCurrentSearchRecovery()) {
           return 'stale';
         }
-        return await runSearchRef.current?.({
+        const resumedRequest = runSearchRef.current?.({
           filters: snapshotSearchFilters(requestFilters),
           query,
           source: requestSearchSource,
           sourceOverride: 'linuxdo',
           suppressLinuxDoVerification: true
-        }) ?? 'stale';
+        });
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = searchRequestOwnerRef.current;
+        recoveryRequestId = searchRequestIdRef.current;
+        return await resumedRequest;
       }
     });
     const activeSources = sourceOverride
@@ -480,9 +523,22 @@ export function useSearchController({
           itemCount: group.items.length,
           hasMore: Boolean(group.hasMore)
         });
-        const nextGroups = searchGroupsRef.current.map((currentGroup) => (
-          currentGroup.source === source ? { ...group, loading: false } : currentGroup
-        ));
+        const nextGroups = searchGroupsRef.current.map((currentGroup) => {
+          if (currentGroup.source !== source) {
+            return currentGroup;
+          }
+          if (sourceOverride && result.kind !== 'success' && group.items.length === 0) {
+            return {
+              ...group,
+              items: currentGroup.items,
+              authNotice: group.authNotice || currentGroup.authNotice,
+              hasMore: currentGroup.hasMore,
+              nextPage: currentGroup.nextPage,
+              loading: false
+            };
+          }
+          return { ...group, loading: false };
+        });
         searchGroupsRef.current = nextGroups;
         setSearchGroups(nextGroups);
       }));
@@ -526,7 +582,7 @@ export function useSearchController({
         });
         return 'completed';
       }
-      const errors = nextGroups.filter((group) => group.error);
+      const errors = nextGroups.filter((group) => activeSources.includes(group.source) && group.error);
       if (errors.length) {
         notify(errors.map((group) => `${group.label}：${group.error}`).join('；'));
       }
@@ -539,6 +595,7 @@ export function useSearchController({
           resultCount ? 'partial' : reason === 'login_required' || reason === 'verification_required' || reason === 'permission_denied' ? 'blocked' : 'failure',
           { source: sourceOverride || requestSearchSource, reason, itemCount: resultCount, partialErrorCount: errors.length }
         );
+        return requestSearchSource === 'all' && !sourceOverride && resultCount ? 'completed' : 'failed';
       } else {
         finishTrace('success', { source: sourceOverride || requestSearchSource, itemCount: resultCount });
       }
@@ -589,7 +646,7 @@ export function useSearchController({
         }
         notify(sourceError.message);
         finishTrace(outcome, { source: failureSource, reason });
-        return 'completed';
+        return 'failed';
       }
     } finally {
       if (!traceFinished) {
@@ -670,14 +727,26 @@ export function useSearchController({
     const requestId = ++searchRequestIdRef.current;
     const requestOwner = startOwnedRequest(searchRequestOwnerRef, ownerKey);
     const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentSearchRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, searchRequestOwnerRef)
+      && recoveryRequestId === searchRequestIdRef.current
+    );
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: ownerKey,
-      isCurrent: isCurrentSearchRequest,
+      isCurrent: isCurrentSearchRecovery,
       resume: async () => {
-        if (!isCurrentSearchRequest()) {
+        if (!isCurrentSearchRecovery()) {
           return 'stale';
         }
-        return await loadMoreSearchSourceRef.current?.(source, page, true) ?? 'stale';
+        const resumedRequest = loadMoreSearchSourceRef.current?.(source, page, true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = searchRequestOwnerRef.current;
+        recoveryRequestId = searchRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     setSearchBusy(true);
@@ -698,9 +767,9 @@ export function useSearchController({
         if (group.source !== source) {
           return group;
         }
-        const mergedItems = mergeTopics(group.items, data.items);
         const visitedPages = searchVisitedPagesRef.current[visitedKey] || new Set<number>();
         const paginationFailed = result.kind !== 'success';
+        const mergedItems = paginationFailed ? group.items : mergeTopics(group.items, data.items);
         if (!paginationFailed) {
           visitedPages.add(page);
         }
@@ -756,6 +825,7 @@ export function useSearchController({
           beforeCount: currentGroup.items.length,
           afterCount: updated.items.length
         });
+        return 'failed';
       } else {
         finishTrace('success', {
           source,
@@ -800,7 +870,7 @@ export function useSearchController({
           return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
         }
         notify(sourceError.message);
-        return 'completed';
+        return 'failed';
       }
     } finally {
       if (!traceFinished) {
@@ -816,9 +886,9 @@ export function useSearchController({
     }
   }, [handleRemoteSearchAction, notify, runRemoteSearchSource, showLinuxDoVerification]);
 
-  loadMoreSearchSourceRef.current = loadMoreSearchSource;
-  runSearchRef.current = runSearch;
-  searchQueryRef.current = searchQuery;
+  useCommitRefValue(loadMoreSearchSourceRef, loadMoreSearchSource);
+  useCommitRefValue(runSearchRef, runSearch);
+  useCommitRefValue(searchQueryRef, searchQuery);
 
 
   const applySearchFilter = useCallback((source: Source, filter: SourceSearchFilter) => {

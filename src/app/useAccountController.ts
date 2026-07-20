@@ -17,6 +17,7 @@ import {
 } from '../yaohuoCookies';
 import {
   clearLinuxDoAccess,
+  currentLinuxDoAccessGeneration,
   linuxDoAccessSummary,
   loadLinuxDoAccess,
   parseLinuxDoDocumentCookie,
@@ -33,6 +34,7 @@ import { checkYaohuoLogin, getLinuxDoLevelProfile, type LinuxDoLevelProfile } fr
 import type { Fetcher } from '../request';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { NODESEEK_LOGIN_PROBE_SCRIPT } from '../loginWebViewScripts';
+import { shouldOpenLoginWebViewUrl } from '../loginWebViewNavigation';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
 import type { LoginWebViewFailureReason } from './accountCredentialDiagnostics';
 import {
@@ -46,6 +48,7 @@ import {
 } from '../diagnostics';
 
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL];
+const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
 
 type Ref<T> = MutableRefObject<T>;
 export type LoginWebViewDiagnosticState = 'start' | 'ready' | 'error' | 'renderer-gone' | 'timeout';
@@ -54,6 +57,7 @@ export function useAccountController({
   checkingRequestIdRef,
   clearNodeSeekLoginState,
   clearYaohuoLoginState,
+  currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
   forumFetchWithWebViewFallback,
   linuxDoLevelRequestIdRef,
@@ -86,8 +90,9 @@ export function useAccountController({
   yaohuoWebViewRef
 }: {
   checkingRequestIdRef: Ref<number>;
-  clearNodeSeekLoginState: () => Promise<void>;
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
+  clearNodeSeekLoginState: () => Promise<boolean>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
+  currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
   forumFetchWithWebViewFallback: Fetcher;
   linuxDoLevelRequestIdRef: Ref<number>;
@@ -299,6 +304,10 @@ export function useAccountController({
         userAgent?: string;
         cookie?: string;
       };
+      if (data.type === 'nodeseek-login'
+        && !shouldOpenLoginWebViewUrl(event.nativeEvent.url, NODESEEK_MESSAGE_HOSTS)) {
+        return;
+      }
       if (data.type === 'nodeseek-login') {
         if (nodeSeekTerminalRequestRef.current !== nodeSeekLoginPanelRequestRef.current) {
           const trace = currentNodeSeekLoginTrace('open');
@@ -390,9 +399,14 @@ export function useAccountController({
 
   const rememberCurrentNodeSeekCookies = useCallback(async ({ silent = false, isCurrent = () => true }: { silent?: boolean; isCurrent?: () => boolean } = {}) => {
     const trace = currentNodeSeekLoginTrace('manual');
+    const credentialGeneration = currentNodeSeekCredentialGeneration();
+    const isCurrentCookieRead = () => (
+      isCurrent()
+      && credentialGeneration === currentNodeSeekCredentialGeneration()
+    );
     try {
       const cookies = await readCurrentNodeSeekCookies(trace);
-      if (!isCurrent()) {
+      if (!isCurrentCookieRead()) {
         finishNodeSeekLoginTrace(trace, 'stale', { reason: 'stale' });
         return false;
       }
@@ -408,6 +422,10 @@ export function useAccountController({
         state: 'started',
         hasCredential: summary.names.length > 0
       });
+      if (!isCurrentCookieRead()) {
+        finishNodeSeekLoginTrace(trace, 'stale', { reason: 'stale' });
+        return false;
+      }
       const cookieHeader = await saveNodeSeekCookieHeader(cookies, {
         verifiedByPage: webLoginDetectedRef.current,
         isCurrent,
@@ -447,12 +465,16 @@ export function useAccountController({
       finishNodeSeekLoginTrace(trace, 'blocked', { reason: 'missing_credential' });
       return false;
     } catch (error) {
+      if (!isCurrentCookieRead()) {
+        finishNodeSeekLoginTrace(trace, 'stale', { reason: 'stale' });
+        return false;
+      }
       finishNodeSeekLoginTrace(trace, 'failure', {
         reason: normalizeDiagnosticReason(error)
       });
       throw error;
     }
-  }, [currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, nodeSeekCurrentUserId, notify, readCurrentNodeSeekCookies, saveNodeSeekCookieHeader, webLoginDetectedRef]);
+  }, [currentNodeSeekCredentialGeneration, currentNodeSeekLoginTrace, finishNodeSeekLoginTrace, nodeSeekCurrentUserId, notify, readCurrentNodeSeekCookies, saveNodeSeekCookieHeader, webLoginDetectedRef]);
 
   const checkLogin = useCallback(async () => {
     const trace = currentNodeSeekLoginTrace('manual');
@@ -488,6 +510,10 @@ export function useAccountController({
     };
     const requestId = ++checkingRequestIdRef.current;
     const yaohuoGeneration = currentYaohuoCredentialGeneration();
+    const isCurrentYaohuoCheck = () => (
+      requestId === checkingRequestIdRef.current
+      && yaohuoGeneration === currentYaohuoCredentialGeneration()
+    );
     markDiagnosticStage(trace, 'guard', {
       source: 'yaohuo',
       state: 'open'
@@ -501,7 +527,7 @@ export function useAccountController({
       });
       await CookieManager.flush();
       const cookieMaps = await Promise.all(YAOHUO_COOKIE_URLS.map(async (url) => CookieManager.get(url)));
-      if (requestId !== checkingRequestIdRef.current) {
+      if (!isCurrentYaohuoCheck()) {
         finishTrace('stale', { reason: 'stale' });
         return;
       }
@@ -530,7 +556,7 @@ export function useAccountController({
         state: 'started'
       });
       const yaohuoLoginCheck = await checkYaohuoLogin({ yaohuoCookie: cookieHeader, yaohuoFetcher: forumFetchWithWebViewFallback });
-      if (requestId !== checkingRequestIdRef.current) {
+      if (!isCurrentYaohuoCheck()) {
         finishTrace('stale', { reason: 'stale' });
         return;
       }
@@ -546,12 +572,40 @@ export function useAccountController({
             generation: yaohuoGeneration,
             state: 'expired'
           });
-          updateYaohuoSession({ type: 'login-expired', message: yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。' });
-          await clearYaohuoLoginState({ generation: yaohuoGeneration });
-          if (requestId !== checkingRequestIdRef.current) {
+          const expiredMessage = yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。';
+          updateYaohuoSession({ type: 'login-expired', message: expiredMessage });
+          try {
+            const cleared = await clearYaohuoLoginState({ generation: yaohuoGeneration, expiredMessage });
+            if (!cleared) {
+              finishTrace('stale', { reason: 'stale' });
+              return;
+            }
+          } catch (cleanupError) {
+            if (!isCurrentYaohuoCheck()) {
+              finishTrace('stale', { reason: 'stale' });
+              return;
+            }
+            const cleanupMessage = `${expiredMessage} 本机 Cookie 清理未完成，请重试。`;
+            updateYaohuoSession({ type: 'login-expired', message: cleanupMessage });
+            markDiagnosticStage(trace, 'persist', {
+              source: 'yaohuo',
+              generation: yaohuoGeneration,
+              store: 'multi-store',
+              state: 'partial',
+              reason: normalizeDiagnosticReason(cleanupError)
+            });
+            notify(cleanupMessage);
+            finishTrace('partial', { reason: normalizeDiagnosticReason(cleanupError) });
+            return;
+          }
+          if (!isCurrentYaohuoCheck()) {
             finishTrace('stale', { reason: 'stale' });
             return;
           }
+          updateYaohuoSession({
+            type: 'login-expired',
+            message: yaohuoLoginCheck.message || '妖火登录已失效，请重新登录。'
+          });
           markDiagnosticStage(trace, 'apply', {
             source: 'yaohuo',
             generation: yaohuoGeneration,
@@ -575,14 +629,14 @@ export function useAccountController({
       });
       const saved = await saveYaohuoCookieHeader(cookieHeader, {
         generation: yaohuoGeneration,
-        isCurrent: () => requestId === checkingRequestIdRef.current,
+        isCurrent: isCurrentYaohuoCheck,
         diagnosticTrace: trace
       });
       if (!saved) {
         finishTrace('stale', { reason: 'stale' });
         return;
       }
-      if (requestId !== checkingRequestIdRef.current) {
+      if (!isCurrentYaohuoCheck()) {
         finishTrace('stale', { reason: 'stale' });
         return;
       }
@@ -609,7 +663,7 @@ export function useAccountController({
         isLoggedIn: true
       });
     } catch (error) {
-      if (requestId !== checkingRequestIdRef.current) {
+      if (!isCurrentYaohuoCheck()) {
         finishTrace('stale', { reason: 'stale' });
         return;
       }
@@ -620,11 +674,39 @@ export function useAccountController({
             generation: yaohuoGeneration,
             state: 'expired'
           });
-          await clearYaohuoLoginState({ generation: yaohuoGeneration });
-          if (requestId !== checkingRequestIdRef.current) {
+          updateYaohuoSession({ type: 'login-expired', message: '妖火登录已失效，请重新登录。' });
+          try {
+            const cleared = await clearYaohuoLoginState({
+              generation: yaohuoGeneration,
+              expiredMessage: '妖火登录已失效，请重新登录。'
+            });
+            if (!cleared) {
+              finishTrace('stale', { reason: 'stale' });
+              return;
+            }
+          } catch (cleanupError) {
+            if (!isCurrentYaohuoCheck()) {
+              finishTrace('stale', { reason: 'stale' });
+              return;
+            }
+            const cleanupMessage = '妖火登录已失效，本机 Cookie 清理未完成，请重试。';
+            updateYaohuoSession({ type: 'login-expired', message: cleanupMessage });
+            markDiagnosticStage(trace, 'persist', {
+              source: 'yaohuo',
+              generation: yaohuoGeneration,
+              store: 'multi-store',
+              state: 'partial',
+              reason: normalizeDiagnosticReason(cleanupError)
+            });
+            notify(cleanupMessage);
+            finishTrace('partial', { reason: normalizeDiagnosticReason(cleanupError) });
+            return;
+          }
+          if (!isCurrentYaohuoCheck()) {
             finishTrace('stale', { reason: 'stale' });
             return;
           }
+          updateYaohuoSession({ type: 'login-expired', message: '妖火登录已失效，请重新登录。' });
           notify('妖火登录已失效，请重新登录。');
         } else {
           notify(errorMessage(error));
@@ -636,8 +718,8 @@ export function useAccountController({
       finishTrace('failure', { reason: normalizeDiagnosticReason(error) });
     } finally {
       if (yaohuoLoginTraceRef.current?.trace === trace) {
-        finishTrace(requestId === checkingRequestIdRef.current ? 'failure' : 'stale', {
-          reason: requestId === checkingRequestIdRef.current ? 'unknown' : 'stale'
+        finishTrace(isCurrentYaohuoCheck() ? 'failure' : 'stale', {
+          reason: isCurrentYaohuoCheck() ? 'unknown' : 'stale'
         });
       }
       if (requestId === checkingRequestIdRef.current) {
@@ -647,19 +729,36 @@ export function useAccountController({
   }, [checkingRequestIdRef, clearYaohuoLoginState, currentYaohuoCredentialGeneration, currentYaohuoLoginTrace, finishYaohuoLoginTrace, forumFetchWithWebViewFallback, notify, saveYaohuoCookieHeader, setChecking, updateYaohuoSession]);
 
   const clearLogin = useCallback(async () => {
-    await clearNodeSeekLoginState();
+    if (!await clearNodeSeekLoginState()) {
+      return;
+    }
     webViewRef.current?.reload();
     notify('已清除本机保存的 NodeSeek Cookie。');
   }, [clearNodeSeekLoginState, notify, webViewRef]);
 
   const clearYaohuoLogin = useCallback(async () => {
-    await clearYaohuoLoginState();
+    if (!await clearYaohuoLoginState()) {
+      return;
+    }
     yaohuoWebViewRef.current?.reload();
     notify('已清除本机保存的妖火 Cookie。');
   }, [clearYaohuoLoginState, notify, yaohuoWebViewRef]);
 
   const clearLinuxDoCookie = useCallback(async () => {
-    const access = await clearLinuxDoAccess();
+    const pendingClear = clearLinuxDoAccess();
+    const clearGeneration = currentLinuxDoAccessGeneration();
+    let access;
+    try {
+      access = await pendingClear;
+    } catch (error) {
+      if (clearGeneration !== currentLinuxDoAccessGeneration()) {
+        return;
+      }
+      throw error;
+    }
+    if (clearGeneration !== currentLinuxDoAccessGeneration()) {
+      return;
+    }
     const summary = linuxDoAccessSummary(access);
     const cookieSummary = summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names;
     updateLinuxDoSession(summary.hasClearance
@@ -672,10 +771,15 @@ export function useAccountController({
 
   const refreshLinuxDoLevel = useCallback(async () => {
     const requestId = ++linuxDoLevelRequestIdRef.current;
+    const credentialGeneration = currentLinuxDoAccessGeneration();
+    const isCredentialCurrent = () => credentialGeneration === currentLinuxDoAccessGeneration();
     setLinuxDoLevelBusy(true);
     setLinuxDoLevelError('');
     try {
       const access = await loadLinuxDoAccess();
+      if (!isCredentialCurrent()) {
+        return;
+      }
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
         setLinuxDoLevelProfile(null);
         setLinuxDoLevelError('请先完成 linux.do 登录 / 验证。');
@@ -684,15 +788,16 @@ export function useAccountController({
       const profile = await getLinuxDoLevelProfile({
         cookieHeader: access.cookieHeader,
         userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        fetcher: forumFetchWithWebViewFallback
+        fetcher: forumFetchWithWebViewFallback,
+        isCurrent: isCredentialCurrent
       });
-      if (requestId !== linuxDoLevelRequestIdRef.current) {
+      if (requestId !== linuxDoLevelRequestIdRef.current || !isCredentialCurrent()) {
         return;
       }
       setLinuxDoLevelProfile(profile);
       notify('linux.do 等级已更新。');
     } catch (error) {
-      if (requestId !== linuxDoLevelRequestIdRef.current) {
+      if (requestId !== linuxDoLevelRequestIdRef.current || !isCredentialCurrent()) {
         return;
       }
       if (isLinuxDoCloudflareError(error)) {

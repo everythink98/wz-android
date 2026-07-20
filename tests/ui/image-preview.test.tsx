@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 import { Image as RNImage } from 'react-native';
 import { ImagePreviewModal } from '../../src/components/ImagePreviewModal';
@@ -12,7 +12,7 @@ jest.mock('expo-image', () => {
   return {
     Image: ({ contentFit, ...props }: { contentFit?: string }) => ReactModule.createElement(
       NativeView,
-      { ...props, testID: contentFit === 'contain' ? 'active-preview-image' : undefined }
+      { ...props, testID: contentFit === 'contain' ? 'active-preview-image' : 'preview-thumbnail-image' }
     )
   };
 });
@@ -102,9 +102,79 @@ describe('Image preview', () => {
   });
 
   it('replaces the loading state with a visible failure message when the image cannot load', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      headers: { get: () => 'image/png' },
+      ok: true
+    } as unknown as Response);
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={{ urls: ['https://example.com/broken.png'], index: 0 }}
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      );
+
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      await fireEvent(view.getByTestId('active-preview-image'), 'error');
+      await waitFor(() => expect(view.getByText('图片加载失败')).toBeTruthy());
+      expect(view.queryByText('图片加载中...')).toBeNull();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-018 retries an Android-incompatible remote SVG with the compatible source', async () => {
+    const imageUrl = 'https://example.com/dynamic-preview.png';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      headers: {
+        get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml' : null
+      },
+      ok: true,
+      text: async () => '<svg xmlns="http://www.w3.org/2000/svg"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>'
+    } as Response);
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={{ urls: [imageUrl], index: 0 }}
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      );
+
+      await fireEvent(view.getByTestId('active-preview-image'), 'error');
+
+      await waitFor(() => expect(view.getByTestId('active-preview-image').props.source).toEqual(
+        expect.objectContaining({ uri: expect.stringMatching(/^data:image\/svg\+xml;base64,/) })
+      ));
+      expect(view.queryByText('图片加载失败')).toBeNull();
+      expect(view.getByText('图片加载中...')).toBeTruthy();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-019 keeps NodeSeek media credentials in the full-screen preview request', async () => {
+    const imageUrl = 'https://www.nodeseek.com/uploads/private-topic.png';
+    const sizeWithHeaders = jest.spyOn(RNImage, 'getSizeWithHeaders').mockImplementation(((_uri, _headers, success) => {
+      success(1200, 800);
+    }) as typeof RNImage.getSizeWithHeaders);
     const view = await render(
       <ImagePreviewModal
-        preview={{ urls: ['https://example.com/broken.png'], index: 0 }}
+        preview={{ urls: [imageUrl], index: 0 }}
+        nodeSeekMediaCookieHeader="session=preview-test"
+        nodeSeekMediaUserAgent="WZ-Preview-Test"
         styles={styles}
         theme={theme}
         onClose={jest.fn()}
@@ -115,9 +185,52 @@ describe('Image preview', () => {
       />
     );
 
-    expect(view.getByText('图片加载中...')).toBeTruthy();
-    await fireEvent(view.getByTestId('active-preview-image'), 'error');
-    expect(view.queryByText('图片加载中...')).toBeNull();
-    expect(view.getByText('图片加载失败')).toBeTruthy();
+    expect(sizeWithHeaders).toHaveBeenCalledWith(imageUrl, expect.objectContaining({
+      Cookie: 'session=preview-test',
+      'User-Agent': 'WZ-Preview-Test'
+    }), expect.any(Function), expect.any(Function));
+    expect(view.getByTestId('active-preview-image').props.source).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({
+        Cookie: 'session=preview-test',
+        'User-Agent': 'WZ-Preview-Test'
+      })
+    }));
+  });
+
+  it('REG-TOPIC-020 recovers incompatible SVG thumbnails before they are selected', async () => {
+    const firstUrl = 'https://example.com/dynamic-thumbnail-one.png';
+    const secondUrl = 'https://example.com/dynamic-thumbnail-two.png';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      headers: {
+        get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml' : null
+      },
+      ok: true,
+      text: async () => '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>'
+    } as Response);
+    try {
+      const view = await render(
+        <ImagePreviewModal
+          preview={{ urls: [firstUrl, secondUrl], index: 0 }}
+          styles={styles}
+          theme={theme}
+          onClose={jest.fn()}
+          onNext={jest.fn()}
+          onPrevious={jest.fn()}
+          onSave={jest.fn()}
+          onSelect={jest.fn()}
+        />
+      );
+
+      await fireEvent(view.getAllByTestId('preview-thumbnail-image')[1], 'error');
+
+      await waitFor(() => expect(view.getAllByTestId('preview-thumbnail-image')[1].props.source).toEqual(
+        expect.objectContaining({ uri: expect.stringMatching(/^data:image\/svg\+xml;base64,/) })
+      ));
+      expect(fetchSpy).toHaveBeenCalledWith(secondUrl, expect.objectContaining({
+        headers: expect.objectContaining({ Accept: expect.stringContaining('image/svg+xml') })
+      }));
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

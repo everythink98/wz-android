@@ -48,14 +48,10 @@ jest.mock('../../src/xiaoyinsiAuth', () => {
   };
 });
 
-jest.mock('../../src/localXiaoyinsi', () => ({
-  getXiaoyinsiLevelProfile: jest.fn()
-}));
-
 import * as XiaoyinsiAuth from '../../src/xiaoyinsiAuth';
-import * as LocalXiaoyinsi from '../../src/localXiaoyinsi';
 import { useXiaoyinsiAuthController } from '../../src/app/useXiaoyinsiAuthController';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../../src/diagnostics';
+import type { SourceGateway } from '../../src/sources/sourceGateway';
 
 const mockBegin = jest.mocked(XiaoyinsiAuth.beginXiaoyinsiDeviceAuth);
 const mockCancel = jest.mocked(XiaoyinsiAuth.cancelXiaoyinsiDeviceAuth);
@@ -66,8 +62,6 @@ const mockPoll = jest.mocked(XiaoyinsiAuth.pollXiaoyinsiDeviceAuth);
 const mockRevoke = jest.mocked(XiaoyinsiAuth.revokeXiaoyinsiAuthorization);
 const mockRetryCleanup = jest.mocked(XiaoyinsiAuth.retryXiaoyinsiRevocationCleanup);
 const mockVerify = jest.mocked(XiaoyinsiAuth.verifyXiaoyinsiCredentials);
-const mockGetLevelProfile = jest.mocked(LocalXiaoyinsi.getXiaoyinsiLevelProfile);
-
 const levelProfile = {
   username: 'alice',
   currentLevel: 1,
@@ -122,14 +116,19 @@ const pending = {
 
 async function renderController(dispatchSiteSessionEvent = jest.fn(), notify = jest.fn()) {
   const fetcher = jest.fn(async () => new Response('{}'));
+  const sourceGateway = {
+    getLevelProfile: jest.fn(async () => levelProfile)
+  } as unknown as SourceGateway;
   return {
     dispatchSiteSessionEvent,
     hook: await renderHook(() => useXiaoyinsiAuthController({
       dispatchSiteSessionEvent,
       fetcher,
-      notify
+      notify,
+      sourceGateway
     })),
-    notify
+    notify,
+    sourceGateway
   };
 }
 
@@ -142,7 +141,6 @@ describe('小隐寺授权 controller', () => {
     mockPoll.mockImplementation(() => new Promise(() => undefined));
     mockRetryCleanup.mockResolvedValue(completeCleanup);
     mockRevoke.mockResolvedValue(completeCleanup);
-    mockGetLevelProfile.mockResolvedValue(levelProfile);
     mockVerify.mockResolvedValue({
       source: 'xiaoyinsi',
       id: 'alice',
@@ -267,20 +265,29 @@ describe('小隐寺授权 controller', () => {
   });
 
   it('[REG-XIAOYINSI-013] uses the saved User API authorization to refresh the current account level', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
     mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
-    const { hook, notify } = await renderController();
+    const { hook, notify, sourceGateway } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+    lines.length = 0;
 
     await act(async () => {
       await hook.result.current.refreshLevel();
     });
 
-    expect(mockGetLevelProfile).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: { apiKey: 'key', clientId: 'client' }
-    }));
+    expect(sourceGateway.getLevelProfile).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'xiaoyinsi' }),
+      expect.any(Object)
+    );
     expect(hook.result.current.levelProfile).toEqual(levelProfile);
     expect(hook.result.current.levelError).toBe('');
     expect(notify).toHaveBeenCalledWith('小隐寺等级已更新。');
+    const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
+    const context = jest.mocked(sourceGateway.getLevelProfile).mock.calls.at(-1)?.[1];
+    expect(context?.trace?.traceId).toBe(events[0]?.traceId);
+    expect(events.map((event) => event.phase)).toEqual(['intent', 'guard', 'apply', 'finish']);
+    expect(events.at(-1)).toMatchObject({ area: 'session', operation: 'refresh', outcome: 'success' });
   });
 
   const terminalCases: Array<[
@@ -343,6 +350,59 @@ describe('小隐寺授权 controller', () => {
     expect(notify).not.toHaveBeenCalledWith('小隐寺授权成功。');
   });
 
+  it('[REG-XIAOYINSI-005] 取消进行中从后台返回也不得启动新轮询', async () => {
+    jest.useFakeTimers();
+    let appStateListener: ((state: string) => void) | undefined;
+    const cancel = Promise.withResolvers<void>();
+    Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((_, listener) => {
+      appStateListener = listener as (state: string) => void;
+      return { remove: jest.fn() } as never;
+    });
+    mockLoadPending.mockResolvedValue(pending);
+    mockCancel.mockReturnValueOnce(cancel.promise);
+    mockPoll.mockResolvedValue({ status: 'authorization_pending' });
+    const { hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('waiting'));
+
+    const cancellation = hook.result.current.cancelAuthorization();
+    await waitFor(() => expect(mockCancel).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      appStateListener?.('active');
+    });
+    await act(async () => {
+      jest.advanceTimersByTime(0);
+    });
+
+    expect(mockPoll).not.toHaveBeenCalled();
+    mockLoadPending.mockResolvedValue(undefined);
+    cancel.resolve();
+    await act(async () => {
+      await cancellation;
+    });
+  });
+
+  it('[REG-XIAOYINSI-005] 取消进行中不得再打开已经作废的授权页', async () => {
+    const cancel = Promise.withResolvers<void>();
+    Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
+    mockLoadPending.mockResolvedValue(pending);
+    mockCancel.mockReturnValueOnce(cancel.promise);
+    const { hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('waiting'));
+
+    const cancellation = hook.result.current.cancelAuthorization();
+    await waitFor(() => expect(mockCancel).toHaveBeenCalledTimes(1));
+    await expect(hook.result.current.openAuthorizationBrowser()).resolves.toBe(false);
+
+    expect(Clipboard.setStringAsync).not.toHaveBeenCalled();
+    expect(Linking.openURL).not.toHaveBeenCalled();
+    mockLoadPending.mockResolvedValue(undefined);
+    cancel.resolve();
+    await act(async () => {
+      await cancellation;
+    });
+  });
+
   it('后台暂停轮询，回到前台后立即恢复', async () => {
     let appStateListener: ((state: string) => void) | undefined;
     Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
@@ -389,11 +449,38 @@ describe('小隐寺授权 controller', () => {
     }));
   });
 
+  it('[REG-XIAOYINSI-020] 重新授权被拒绝后旧授权复核暂时失败时保留可信会话', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'old-key', clientId: 'old-client' });
+    const { hook, dispatchSiteSessionEvent } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+
+    mockBegin.mockResolvedValueOnce({ ...pending, intervalMs: 1 });
+    mockPoll.mockResolvedValueOnce({ status: 'access_denied' });
+    mockVerify.mockRejectedValueOnce(new Error('temporary session failure'));
+    await act(async () => {
+      await hook.result.current.beginAuthorization();
+    });
+
+    await waitFor(() => expect(hook.result.current.phase).toBe('error'));
+    expect(hook.result.current.message).toContain('无法检测小隐寺授权');
+    expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+      site: 'xiaoyinsi',
+      type: 'check-failed'
+    }));
+    expect(dispatchSiteSessionEvent).not.toHaveBeenLastCalledWith({
+      site: 'xiaoyinsi',
+      type: 'cleared'
+    });
+  });
+
   it('[REG-XIAOYINSI-005] 服务端撤销成功但本机清理不完整时仍退出登录并明确警告', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
     mockLoadCredentials.mockResolvedValue({ apiKey: 'old-key', clientId: 'old-client' });
     mockRevoke.mockResolvedValueOnce(partialCleanup);
     const { hook, dispatchSiteSessionEvent, notify } = await renderController();
     await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+    lines.length = 0;
 
     await act(async () => {
       await hook.result.current.revokeAuthorization();
@@ -403,7 +490,11 @@ describe('小隐寺授权 controller', () => {
     expect(hook.result.current.message).toContain('服务端授权已撤销');
     expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith({ site: 'xiaoyinsi', type: 'cleared' });
     expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('本机安全材料清理未完成'));
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+      store: 'multi-store'
+    });
 
+    lines.length = 0;
     mockRetryCleanup.mockResolvedValueOnce(completeCleanup);
     await act(async () => {
       await hook.result.current.beginAuthorization();
@@ -412,9 +503,14 @@ describe('小隐寺授权 controller', () => {
     expect(mockRetryCleanup).toHaveBeenCalledTimes(1);
     expect(mockBegin).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe('idle');
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+      store: 'multi-store'
+    });
   });
 
   it('[REG-XIAOYINSI-005] 重启时先重试撤销清理，不得恢复旧 Device Code', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
     mockHasCleanup.mockResolvedValue(true);
     mockRetryCleanup.mockResolvedValueOnce(partialCleanup);
     mockLoadPending.mockResolvedValue(pending);
@@ -422,8 +518,12 @@ describe('小隐寺授权 controller', () => {
 
     await waitFor(() => expect(first.hook.result.current.phase).toBe('cleanup'));
     expect(mockLoadPending).not.toHaveBeenCalled();
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+      store: 'multi-store'
+    });
     await first.hook.unmount();
 
+    lines.length = 0;
     mockRetryCleanup.mockResolvedValueOnce(completeCleanup);
     const second = await renderController();
     await waitFor(() => expect(mockRetryCleanup).toHaveBeenCalledTimes(2));
@@ -431,6 +531,9 @@ describe('小隐寺授权 controller', () => {
     expect(second.hook.result.current.phase).toBe('idle');
     expect(mockLoadPending).not.toHaveBeenCalled();
     expect(second.dispatchSiteSessionEvent).toHaveBeenLastCalledWith({ site: 'xiaoyinsi', type: 'cleared' });
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).find((event) => event.phase === 'persist')).toMatchObject({
+      store: 'multi-store'
+    });
     await second.hook.unmount();
   });
 
@@ -448,6 +551,26 @@ describe('小隐寺授权 controller', () => {
       site: 'xiaoyinsi',
       type: 'check-failed'
     }));
+  });
+
+  it('[REG-XIAOYINSI-019] retries the saved authorization after a transient post-poll session failure', async () => {
+    mockLoadPending.mockResolvedValueOnce({ ...pending, intervalMs: 1 }).mockResolvedValue(undefined);
+    mockPoll.mockImplementationOnce(async () => {
+      mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+      return { status: 'authorized', credentials: { apiKey: 'key', clientId: 'client' } };
+    });
+    mockVerify.mockRejectedValueOnce(new Error('network request failed'));
+    const { hook } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('error'));
+
+    await act(async () => {
+      await hook.result.current.beginAuthorization();
+    });
+
+    expect(mockVerify).toHaveBeenCalledTimes(2);
+    expect(mockBegin).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe('authorized');
+    expect(hook.result.current.message).toBe('现有授权已恢复。');
   });
 
   it('授权诊断只记录阶段，不记录 Token、验证码、nonce 或授权 URL 查询参数', async () => {

@@ -76,10 +76,11 @@ export function useAppUpdateController({ beforeRequest, fetcher, notify }: UseAp
 
   const downloadAppUpdate = useCallback(async () => {
     const trace = beginDiagnosticTrace('update', 'download');
-    if (!appUpdateInfo || appUpdateDownloadingRef.current) {
-      markDiagnosticStage(trace, 'guard', { state: appUpdateDownloadingRef.current ? 'busy' : 'missing-update' });
+    if (!appUpdateInfo || appUpdateBusyRef.current || appUpdateDownloadingRef.current) {
+      const busy = appUpdateBusyRef.current || appUpdateDownloadingRef.current;
+      markDiagnosticStage(trace, 'guard', { state: busy ? 'busy' : 'missing-update' });
       finishDiagnosticTrace(trace, 'blocked', {
-        reason: appUpdateDownloadingRef.current ? 'busy' : 'not_ready'
+        reason: busy ? 'busy' : 'not_ready'
       });
       return;
     }

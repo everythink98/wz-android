@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getXiaoyinsiCurrentUserProfile, type XiaoyinsiApiCredentials, XIAOYINSI_BASE_URL } from './localXiaoyinsi';
 import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
 import type { UserProfile } from './types';
@@ -10,6 +11,17 @@ const DEVICE_CODE_PATH = '/user-api-key/device.json';
 const DEVICE_POLL_PATH = '/user-api-key/device/poll.json';
 const AUTH_CAPABILITY_PATH = '/user-api-key/new';
 const REVOKE_PATH = '/user-api-key/revoke';
+
+let xiaoyinsiCredentialGeneration = 0;
+
+function advanceXiaoyinsiCredentialGeneration() {
+  xiaoyinsiCredentialGeneration += 1;
+  return xiaoyinsiCredentialGeneration;
+}
+
+export function currentXiaoyinsiCredentialGeneration() {
+  return xiaoyinsiCredentialGeneration;
+}
 
 export const XIAOYINSI_AUTH_STORAGE_KEYS = {
   apiKey: 'xiaoyinsi-auth.api-key',
@@ -227,11 +239,27 @@ export async function loadXiaoyinsiPendingAuthorization() {
   return pending;
 }
 
-export async function loadXiaoyinsiCredentials(): Promise<XiaoyinsiApiCredentials | undefined> {
-  const [apiKeyValue, clientIdValue] = await Promise.all([
-    SecureStore.getItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, secureStoreOptions),
-    SecureStore.getItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, secureStoreOptions)
-  ]);
+export async function loadXiaoyinsiCredentials(options: {
+  captureGeneration?: (generation: number) => void;
+} = {}): Promise<XiaoyinsiApiCredentials | undefined> {
+  const generation = currentXiaoyinsiCredentialGeneration();
+  options.captureGeneration?.(generation);
+  let values: [string | null, string | null];
+  try {
+    values = await Promise.all([
+      SecureStore.getItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, secureStoreOptions),
+      SecureStore.getItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, secureStoreOptions)
+    ]);
+  } catch (error) {
+    if (generation !== currentXiaoyinsiCredentialGeneration()) {
+      return undefined;
+    }
+    throw error;
+  }
+  if (generation !== currentXiaoyinsiCredentialGeneration()) {
+    return undefined;
+  }
+  const [apiKeyValue, clientIdValue] = values;
   const apiKey = apiKeyValue?.trim() || '';
   const clientId = clientIdValue?.trim() || '';
   return apiKey && clientId ? { apiKey, clientId } : undefined;
@@ -266,6 +294,7 @@ export async function checkXiaoyinsiDeviceCodeCapability(dependencies: Xiaoyinsi
 }
 
 export async function beginXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDependencies = {}) {
+  advanceXiaoyinsiCredentialGeneration();
   await checkXiaoyinsiDeviceCodeCapability(dependencies);
   const keystore = dependencies.keystore || xiaoyinsiKeystore;
   try {
@@ -304,10 +333,27 @@ async function clearPending(keystore: XiaoyinsiKeystore, deleteKey: boolean) {
   }
 }
 
+async function persistRevocationCleanupMarker() {
+  const results = await Promise.allSettled([
+    SecureStore.setItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup, '1', secureStoreOptions),
+    AsyncStorage.setItem(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup, '1')
+  ]);
+  return results.some((result) => result.status === 'fulfilled');
+}
+
+async function clearRevocationCleanupMarkers() {
+  const results = await Promise.allSettled([
+    SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup, secureStoreOptions),
+    AsyncStorage.removeItem(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup)
+  ]);
+  return results.every((result) => result.status === 'fulfilled');
+}
+
 async function clearRevokedLocalAuthorization(
   keystore: XiaoyinsiKeystore,
   cleanupMarkerPersisted: boolean
 ): Promise<XiaoyinsiRevocationCleanupResult> {
+  advanceXiaoyinsiCredentialGeneration();
   const [apiKeyDeletion, pendingDeletion, keyDeletion] = await Promise.allSettled([
     SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, secureStoreOptions),
     SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.pending, secureStoreOptions),
@@ -330,13 +376,11 @@ async function clearRevokedLocalAuthorization(
     }
   }
   let markerStillPersisted = cleanupMarkerPersisted;
+  if ((!apiKeyDeleted || !pendingDeleted || !keystoreDeleted) && !markerStillPersisted) {
+    markerStillPersisted = await persistRevocationCleanupMarker();
+  }
   if (apiKeyDeleted && pendingDeleted && keystoreDeleted && cleanupMarkerPersisted) {
-    try {
-      await SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup, secureStoreOptions);
-      markerStillPersisted = false;
-    } catch {
-      markerStillPersisted = true;
-    }
+    markerStillPersisted = !(await clearRevocationCleanupMarkers());
   }
   return {
     complete: apiKeyDeleted && pendingDeleted && keystoreDeleted && !markerStillPersisted,
@@ -349,10 +393,18 @@ async function clearRevokedLocalAuthorization(
 }
 
 export async function hasXiaoyinsiRevocationCleanupPending() {
-  return Boolean((await SecureStore.getItemAsync(
-    XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup,
-    secureStoreOptions
-  ))?.trim());
+  const results = await Promise.allSettled([
+    SecureStore.getItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup, secureStoreOptions),
+    AsyncStorage.getItem(XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup)
+  ]);
+  if (results.some((result) => result.status === 'fulfilled' && Boolean(result.value?.trim()))) {
+    return true;
+  }
+  const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+  if (failure) {
+    throw failure.reason;
+  }
+  return false;
 }
 
 export async function retryXiaoyinsiRevocationCleanup(
@@ -433,13 +485,16 @@ export async function pollXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDepende
     await clearPending(keystore, true);
     throw new XiaoyinsiAuthError('missing-client-id', '小隐寺安装标识已丢失，请重新授权。');
   }
+  advanceXiaoyinsiCredentialGeneration();
   await SecureStore.setItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, apiKey, secureStoreOptions);
   if (dependencies.signal?.aborted) {
+    advanceXiaoyinsiCredentialGeneration();
     await restoreApiKey(previousApiKey);
     assertNotCanceled(dependencies);
   }
   await SecureStore.deleteItemAsync(XIAOYINSI_AUTH_STORAGE_KEYS.pending, secureStoreOptions);
   if (dependencies.signal?.aborted) {
+    advanceXiaoyinsiCredentialGeneration();
     await restoreApiKey(previousApiKey);
     assertNotCanceled(dependencies);
   }
@@ -447,6 +502,7 @@ export async function pollXiaoyinsiDeviceAuth(dependencies: XiaoyinsiAuthDepende
 }
 
 export async function cancelXiaoyinsiDeviceAuth(dependencies: Pick<XiaoyinsiAuthDependencies, 'keystore'> = {}) {
+  advanceXiaoyinsiCredentialGeneration();
   await clearPending(dependencies.keystore || xiaoyinsiKeystore, true);
 }
 
@@ -464,6 +520,7 @@ export async function verifyXiaoyinsiCredentials(dependencies: XiaoyinsiAuthDepe
 }
 
 export async function revokeXiaoyinsiAuthorization(dependencies: XiaoyinsiAuthDependencies = {}) {
+  advanceXiaoyinsiCredentialGeneration();
   const credentials = await loadXiaoyinsiCredentials();
   if (!credentials) {
     throw new Error('请先授权小隐寺');
@@ -473,17 +530,7 @@ export async function revokeXiaoyinsiAuthorization(dependencies: XiaoyinsiAuthDe
     'User-Api-Client-Id': credentials.clientId
   });
   await responseJson(response, '小隐寺撤销授权返回内容格式不正确。');
-  let cleanupMarkerPersisted = false;
-  try {
-    await SecureStore.setItemAsync(
-      XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup,
-      '1',
-      secureStoreOptions
-    );
-    cleanupMarkerPersisted = true;
-  } catch {
-    cleanupMarkerPersisted = false;
-  }
+  const cleanupMarkerPersisted = await persistRevocationCleanupMarker();
   return clearRevokedLocalAuthorization(
     dependencies.keystore || xiaoyinsiKeystore,
     cleanupMarkerPersisted

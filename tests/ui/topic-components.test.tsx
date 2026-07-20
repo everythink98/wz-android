@@ -427,7 +427,9 @@ describe('Topic real child components', () => {
       ...replyProps().reply,
       canDelete: true,
       canEdit: true,
-      canLike: true
+      canLike: true,
+      contentHtml: '<p>回复正文</p><div class="poll" data-poll-name="poll-1"></div>',
+      polls: [multiplePoll]
     };
     const view = await render(
       <ReplyItem
@@ -444,6 +446,8 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('编辑回复')).toBeTruthy();
     expect(view.getByLabelText('点赞')).toBeTruthy();
     expect(view.getByLabelText('删除回复')).toBeTruthy();
+    expect(view.getByText('可投票')).toBeTruthy();
+    expect(view.getAllByRole('checkbox').every((option) => !option.props.accessibilityState.disabled)).toBe(true);
   });
 
   it('[REG-XIAOYINSI-017] shows 小隐寺 reply reaction images without write authorization', async () => {

@@ -43,13 +43,40 @@ describe('account credential diagnostics', () => {
       return summaries[site];
     });
 
-    expect(result).toEqual({ ok: false, error: privateError });
+    expect(result).toEqual({
+      ok: false,
+      error: privateError,
+      summaries: {
+        nodeseek: summaries.nodeseek,
+        yaohuo: summaries.yaohuo
+      }
+    });
     const events = lines.map((line) => JSON.parse(line) as DiagnosticEvent);
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ operation: 'load-summary', phase: 'credential', site: 'linuxdo', reason: 'storage_error' }),
-      expect.objectContaining({ operation: 'load-summary', phase: 'finish', outcome: 'failure', partialErrorCount: 1 })
+      expect.objectContaining({ operation: 'load-summary', phase: 'finish', outcome: 'partial', partialErrorCount: 1 })
     ]));
     expect(lines.join('')).not.toContain('PRIVATE_STORAGE_ERROR_WITH_ACCOUNT');
+  });
+
+  it('REG-ACCOUNT-006 returns successful credential summaries when one site fails', async () => {
+    const privateError = new Error('one site unavailable');
+
+    const result = await loadCredentialSummariesWithTrace(async (site) => {
+      if (site === 'linuxdo') {
+        throw privateError;
+      }
+      return summaries[site];
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: privateError,
+      summaries: {
+        nodeseek: summaries.nodeseek,
+        yaohuo: summaries.yaohuo
+      }
+    });
   });
 
   it('finishes only the matching automatic-fill trace on WebView failure', () => {

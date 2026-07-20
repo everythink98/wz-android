@@ -37,6 +37,20 @@ describe('reply image upload helpers', () => {
     });
   });
 
+  it('[REG-WRITE-014] keeps a selected image whose system uri contains malformed percent encoding', () => {
+    expect(normalizeReplyImageAsset({
+      uri: 'file:///cache/photo%broken.jpg',
+      name: '',
+      mimeType: '',
+      size: 1024
+    })).toEqual({
+      uri: 'file:///cache/photo%broken.jpg',
+      name: 'photo%broken.jpg',
+      mimeType: 'image/jpeg',
+      size: 1024
+    });
+  });
+
   it('rejects non-images and oversized files', () => {
     expect(() => normalizeReplyImageAsset({
       uri: 'file:///cache/file.txt',

@@ -7,7 +7,7 @@ vi.mock('../linuxdoCookieBridge', () => ({
   summarizeLinuxDoCookies: vi.fn(() => ({ names: [] }))
 }));
 
-import { runOptimisticActionQueue, runSingleTopicAction } from './topicActionHelpers';
+import { runOptimisticActionQueue, runSingleTopicAction, shareTopicWithClipboardFallback } from './topicActionHelpers';
 import type { OptimisticActionState } from '../topicActionState';
 
 describe('topic action helpers', () => {
@@ -59,6 +59,18 @@ describe('topic action helpers', () => {
       pendingActions,
       task: async () => 'retry'
     })).resolves.toBe('retry');
+  });
+
+  it('REG-TOPIC-017 consumes a clipboard fallback failure and tells the user', async () => {
+    const notify = vi.fn();
+
+    await expect(shareTopicWithClipboardFallback({
+      copy: async () => { throw new Error('clipboard unavailable'); },
+      notify,
+      share: async () => { throw new Error('share unavailable'); }
+    })).resolves.toBe(false);
+
+    expect(notify).toHaveBeenCalledWith('分享失败，且无法复制链接，请重试。');
   });
 
   it('does not let an expired optimistic queue clear a newer owner state', async () => {

@@ -475,7 +475,7 @@ export const TopicScreen = memo(function TopicScreen({
     return () => {
       cancelled = true;
     };
-  }, [itemSource]);
+  }, [itemSource, topic]);
   const togglePollSelection = useCallback((key: string, poll: TopicPoll, optionId: string) => {
     setPollSelections((current) => {
       const selected = current[key] || [];

@@ -1,16 +1,68 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Image as RNImage, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Image as RNImage, Modal, Pressable, ScrollView, Text, useWindowDimensions, View, type ImageURISource } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ResumableZoom, fitContainer } from 'react-native-zoom-toolkit';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react-native';
 import { imageRequestHeadersForUrl, imageSourceFromUrl, visibleImagePreviewThumbnails, type ImagePreviewList } from '../htmlImages';
 import { createStyles, type ReaderTheme } from '../theme';
+import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
 
 const EMPTY_PREVIEW_URLS: string[] = [];
 
+function CompatiblePreviewThumbnail({
+  url,
+  nodeSeekCookieHeader,
+  nodeSeekUserAgent,
+  styles
+}: {
+  url: string;
+  nodeSeekCookieHeader?: string;
+  nodeSeekUserAgent?: string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const originalSource = useMemo(
+    () => imageSourceFromUrl(url, undefined, nodeSeekCookieHeader, nodeSeekUserAgent) as ImageURISource,
+    [nodeSeekCookieHeader, nodeSeekUserAgent, url]
+  );
+  const requestIdentity = compatibleImageRequestIdentity(originalSource);
+  const requestIdentityRef = useRef(requestIdentity);
+  const recoveryIdentityRef = useRef('');
+  const [compatibleSource, setCompatibleSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
+  const activeFallbackSource = compatibleSource?.requestIdentity === requestIdentity
+    ? compatibleSource.source
+    : cachedCompatibleImageSource(originalSource);
+
+  useEffect(() => {
+    requestIdentityRef.current = requestIdentity;
+    recoveryIdentityRef.current = '';
+  }, [requestIdentity]);
+
+  return (
+    <ExpoImage
+      source={activeFallbackSource || originalSource}
+      style={styles.imagePreviewThumbnailImage}
+      contentFit="cover"
+      recyclingKey={`thumbnail:${url}:${activeFallbackSource ? 'compatible' : 'native'}`}
+      onError={() => {
+        if (activeFallbackSource || recoveryIdentityRef.current === requestIdentity) {
+          return;
+        }
+        recoveryIdentityRef.current = requestIdentity;
+        void recoverCompatibleSvgImageSource(originalSource).then((fallbackSource) => {
+          if (requestIdentityRef.current === requestIdentity && fallbackSource) {
+            setCompatibleSource({ requestIdentity, source: fallbackSource });
+          }
+        });
+      }}
+    />
+  );
+}
+
 export function ImagePreviewModal({
   preview,
+  nodeSeekMediaCookieHeader,
+  nodeSeekMediaUserAgent,
   styles,
   theme,
   onClose,
@@ -20,6 +72,8 @@ export function ImagePreviewModal({
   onSelect
 }: {
   preview: ImagePreviewList | null;
+  nodeSeekMediaCookieHeader?: string;
+  nodeSeekMediaUserAgent?: string;
   styles: ReturnType<typeof createStyles>;
   theme: ReaderTheme;
   onClose: () => void;
@@ -37,19 +91,36 @@ export function ImagePreviewModal({
   const activeIndex = preview?.index ?? 0;
   const activeUri = previewUrls[activeIndex] || '';
   const previewKey = `${activeIndex}:${activeUri}`;
+  const originalImageSource = useMemo(() => imageSourceFromUrl(
+    activeUri,
+    undefined,
+    nodeSeekMediaCookieHeader,
+    nodeSeekMediaUserAgent
+  ) as ImageURISource, [activeUri, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent]);
+  const imageRequestIdentity = compatibleImageRequestIdentity(originalImageSource);
+  const imageRequestIdentityRef = useRef(imageRequestIdentity);
+  const recoveryIdentityRef = useRef('');
+  const [compatibleImageSource, setCompatibleImageSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
+  const cachedFallbackSource = cachedCompatibleImageSource(originalImageSource);
+  const activeFallbackSource = compatibleImageSource?.requestIdentity === imageRequestIdentity
+    ? compatibleImageSource.source
+    : cachedFallbackSource;
+  const activeImageSource = activeFallbackSource || originalImageSource;
   const thumbnailItems = useMemo(() => (previewCount ? visibleImagePreviewThumbnails(previewUrls, activeIndex) : []), [activeIndex, previewCount, previewUrls]);
   useEffect(() => {
+    imageRequestIdentityRef.current = imageRequestIdentity;
+    recoveryIdentityRef.current = '';
     setImagePreviewLoading(previewCount > 0);
     setImagePreviewFailed(false);
     setImagePreviewResolution(null);
-  }, [activeUri, previewCount]);
+  }, [imageRequestIdentity, previewCount]);
 
   useEffect(() => {
     if (!activeUri) {
       return;
     }
     let canceled = false;
-    const headers = imageRequestHeadersForUrl(activeUri);
+    const headers = imageRequestHeadersForUrl(activeUri, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent);
     const onSuccess = (nextWidth: number, nextHeight: number) => {
       if (!canceled) {
         setImagePreviewResolution({ width: nextWidth, height: nextHeight });
@@ -68,7 +139,7 @@ export function ImagePreviewModal({
     return () => {
       canceled = true;
     };
-  }, [activeUri, height, width]);
+  }, [activeUri, height, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent, width]);
 
   const imagePreviewSize = useMemo(() => {
     if (!imagePreviewResolution?.width || !imagePreviewResolution.height) {
@@ -113,19 +184,58 @@ export function ImagePreviewModal({
           >
             <ExpoImage
               contentFit="contain"
-              recyclingKey={activeUri}
-              source={imageSourceFromUrl(activeUri)}
+              recyclingKey={`${activeUri}:${activeFallbackSource ? 'compatible' : 'native'}`}
+              source={activeImageSource}
               style={[styles.imagePreviewImage, imagePreviewSize]}
               onLoadStart={() => {
                 setImagePreviewLoading(true);
                 setImagePreviewFailed(false);
               }}
+              onLoad={(event) => {
+                const source = event.source;
+                if (source.width > 0 && source.height > 0) {
+                  setImagePreviewResolution({ width: source.width, height: source.height });
+                }
+              }}
               onLoadEnd={() => {
-                setImagePreviewLoading(false);
+                if (activeFallbackSource) {
+                  recoveryIdentityRef.current = '';
+                  setImagePreviewLoading(false);
+                } else if (recoveryIdentityRef.current !== imageRequestIdentity) {
+                  setImagePreviewLoading(false);
+                }
               }}
               onError={() => {
-                setImagePreviewLoading(false);
-                setImagePreviewFailed(true);
+                if (imageRequestIdentityRef.current !== imageRequestIdentity) {
+                  return;
+                }
+                if (activeFallbackSource) {
+                  recoveryIdentityRef.current = '';
+                  setImagePreviewLoading(false);
+                  setImagePreviewFailed(true);
+                  return;
+                }
+                recoveryIdentityRef.current = imageRequestIdentity;
+                setImagePreviewLoading(true);
+                setImagePreviewFailed(false);
+                void recoverCompatibleSvgImageSource(originalImageSource).then((fallbackSource) => {
+                  if (imageRequestIdentityRef.current !== imageRequestIdentity) {
+                    return;
+                  }
+                  if (fallbackSource) {
+                    setCompatibleImageSource({ requestIdentity: imageRequestIdentity, source: fallbackSource });
+                    return;
+                  }
+                  recoveryIdentityRef.current = '';
+                  setImagePreviewLoading(false);
+                  setImagePreviewFailed(true);
+                }, () => {
+                  if (imageRequestIdentityRef.current === imageRequestIdentity) {
+                    recoveryIdentityRef.current = '';
+                    setImagePreviewLoading(false);
+                    setImagePreviewFailed(true);
+                  }
+                });
               }}
             />
           </ResumableZoom>
@@ -145,7 +255,12 @@ export function ImagePreviewModal({
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.imagePreviewThumbnailRail} contentContainerStyle={styles.imagePreviewThumbnailContent}>
             {thumbnailItems.map(({ url, index }) => (
               <Pressable key={`${url}-${index}`} accessibilityRole="button" accessibilityLabel={`查看第 ${index + 1} 张图片`} style={[styles.imagePreviewThumbnail, index === activeIndex && styles.imagePreviewThumbnailActive]} onPress={() => onSelect(index)}>
-                <ExpoImage source={imageSourceFromUrl(url)} style={styles.imagePreviewThumbnailImage} contentFit="cover" />
+                <CompatiblePreviewThumbnail
+                  url={url}
+                  nodeSeekCookieHeader={nodeSeekMediaCookieHeader}
+                  nodeSeekUserAgent={nodeSeekMediaUserAgent}
+                  styles={styles}
+                />
               </Pressable>
             ))}
           </ScrollView>

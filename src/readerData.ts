@@ -117,6 +117,9 @@ function userProfileUrl(source: Source, id: string, fallback = '') {
   if (source === 'v2ex') {
     return `https://www.v2ex.com/member/${encodeURIComponent(cleanId)}`;
   }
+  if (source === 'xiaoyinsi') {
+    return `https://forum.xiaoyinsi.com/u/${encodeURIComponent(cleanId)}`;
+  }
   return `https://www.yaohuo.me/bbs/userinfo.aspx?touserid=${encodeURIComponent(cleanId)}`;
 }
 
@@ -242,9 +245,12 @@ function userSummary(user: UserProfile): UserProfile {
   const displayName = cleanUserDisplayName(user);
   const topicCount = cleanUserStat(user.source, user.topicCount);
   const replyCount = cleanUserStat(user.source, user.replyCount);
+  const derivedPostCount = topicCount !== undefined && replyCount !== undefined
+    ? topicCount + replyCount
+    : undefined;
   const postCount = user.source === 'yaohuo'
-    ? topicCount && replyCount ? topicCount + replyCount : undefined
-    : cleanUserStat(user.source, user.postCount) || (topicCount && replyCount ? topicCount + replyCount : undefined);
+    ? derivedPostCount
+    : cleanUserStat(user.source, user.postCount) ?? derivedPostCount;
   const topics = Array.isArray(user.topics)
     ? user.topics.filter(isTopic).map(topicSummary).map((topic) => (
       user.source === 'yaohuo' && isPollutedYaohuoUserText(topic.author)
@@ -289,13 +295,13 @@ function cleanUserDisplayName(user: UserProfile) {
 }
 
 function cleanUserStat(source: Source, value: unknown) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     return undefined;
   }
   if (source === 'yaohuo' && value > 999_999) {
     return undefined;
   }
-  return value;
+  return Math.round(value);
 }
 
 function isPollutedYaohuoUserText(value: unknown) {

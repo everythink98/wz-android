@@ -18,6 +18,7 @@ export const sourceCatalog = {
     searchFilter: 'v2ex',
     topicActions: [],
     replyPermission: 'session',
+    searchOrder: 1,
     sortOrder: 3
   },
   linuxdo: {
@@ -30,6 +31,7 @@ export const sourceCatalog = {
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     replyPermission: 'session',
+    searchOrder: 2,
     sortOrder: 2
   },
   nodeseek: {
@@ -40,8 +42,9 @@ export const sourceCatalog = {
     family: 'nodeseek',
     feedFilter: 'nodeseek',
     searchFilter: 'nodeseek',
-    topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
+    topicActions: ['reply', 'like', 'bookmark', 'edit', 'vote', 'upload'],
     replyPermission: 'session',
+    searchOrder: 3,
     sortOrder: 1
   },
   yaohuo: {
@@ -54,6 +57,7 @@ export const sourceCatalog = {
     searchFilter: 'yaohuo',
     topicActions: ['reply', 'bookmark', 'delete', 'vote', 'upload'],
     replyPermission: 'session',
+    searchOrder: 4,
     sortOrder: 4
   },
   xiaoyinsi: {
@@ -66,6 +70,7 @@ export const sourceCatalog = {
     searchFilter: 'discourse',
     topicActions: ['reply', 'like', 'bookmark', 'edit', 'delete', 'vote', 'upload'],
     replyPermission: 'topic',
+    searchOrder: 5,
     sortOrder: 5
   }
 } as const;
@@ -89,7 +94,8 @@ export const aggregateFeedSources = sourceValues
   .filter((source) => sourceCatalog[source].aggregateFeed);
 
 export const aggregateSearchSources = sourceValues
-  .filter((source) => sourceCatalog[source].aggregateSearch);
+  .filter((source) => sourceCatalog[source].aggregateSearch)
+  .sort((left, right) => sourceCatalog[left].searchOrder - sourceCatalog[right].searchOrder);
 
 export const sessionSources = sourceValues
   .filter((source): source is SessionSource => sourceCatalog[source].topicActions.length > 0);

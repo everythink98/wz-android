@@ -1,14 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
+  useLayoutEffect: (effect: () => void) => effect(),
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value })
 }));
 
 import { replyCountAfterNewReplySubmit } from '../androidFeatureHelpers';
 import { LinuxDoCloudflareError } from '../cloudflareChallenge';
+import { setDiagnosticWriter } from '../diagnostics';
 import { createEmptyReaderData } from '../readerData';
+import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import type { SourceGateway } from '../sources/sourceGateway';
 import type { Topic, TopicDetail } from '../types';
 import { useTopicController } from './useTopicController';
@@ -51,7 +54,10 @@ function createLinuxDoTopicController({
     isExpanded: vi.fn((key: string) => expandedQuotes.has(key)),
     isRequest: vi.fn((key: string, controller: AbortController) => quoteRequests.get(key) === controller),
     remember: vi.fn((key: string, reply: TopicDetail['replies'][number]) => { loadedQuotes.set(key, reply); }),
-    replaceRequest: vi.fn((key: string, controller: AbortController) => { quoteRequests.set(key, controller); })
+    replaceRequest: vi.fn((key: string, controller: AbortController) => {
+      quoteRequests.get(key)?.abort();
+      quoteRequests.set(key, controller);
+    })
   };
   const topicReplyCommands = {
     beginLoad: vi.fn(),
@@ -106,10 +112,14 @@ function createLinuxDoTopicController({
       snapshot: vi.fn()
     } as never
   });
-  return { controller, showLinuxDoVerification, topicQuotes, topicReplyCommands };
+  return { controller, showLinuxDoVerification, topicCommands, topicQuotes, topicReplyCommands };
 }
 
 describe('topic controller helpers', () => {
+  afterEach(() => {
+    setDiagnosticWriter(null);
+  });
+
   it('increments visible reply count after a new reply submit', () => {
     expect(replyCountAfterNewReplySubmit(0, 1)).toBe(1);
     expect(replyCountAfterNewReplySubmit(100, 30)).toBe(101);
@@ -141,6 +151,33 @@ describe('topic controller helpers', () => {
     expect(topicReplyCommands.resolve).toHaveBeenCalledWith(expect.objectContaining({ replyCount: 7 }));
   });
 
+  it('[REG-XIAOYINSI-008] applies the authoritative 小隐寺 reply total during a manual reply refresh', async () => {
+    const detail: TopicDetail = {
+      source: 'xiaoyinsi',
+      id: '43',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://forum.xiaoyinsi.com/t/topic/43',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 100,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const { controller, topicReplyCommands } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: {
+        getReplies: vi.fn(async () => ({ items: [], hasMore: false, nextPage: null, totalCount: 7 }))
+      } as unknown as SourceGateway
+    });
+
+    await controller.refreshTopicReplies({ nocache: true });
+
+    expect(topicReplyCommands.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      replyCount: 7,
+      requestTopicKey: 'xiaoyinsi:43'
+    }));
+  });
+
   it('REG-LINUXDO-002 resumes a blocked topic in place without a close-and-reopen navigation', async () => {
     const topic: Topic = {
       source: 'linuxdo',
@@ -153,6 +190,7 @@ describe('topic controller helpers', () => {
     };
     const detail: TopicDetail = { ...topic, contentHtml: '<p>body</p>', replies: [] };
     const getTopic = vi.fn()
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockResolvedValueOnce(detail);
     const showLinuxDoVerification = vi.fn();
@@ -208,8 +246,10 @@ describe('topic controller helpers', () => {
 
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
     expect(recovery).toMatchObject({ key: expect.stringContaining('topic:linuxdo:42') });
+    await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(recovery.isCurrent()).toBe(true);
     await expect(recovery.resume()).resolves.toBe('completed');
-    expect(getTopic).toHaveBeenCalledTimes(2);
+    expect(getTopic).toHaveBeenCalledTimes(3);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
@@ -227,6 +267,7 @@ describe('topic controller helpers', () => {
     };
     const getReplies = vi.fn()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockResolvedValueOnce({ items: [], hasMore: false, nextPage: null, nextOffset: null });
     const { controller, showLinuxDoVerification } = createLinuxDoTopicController({
       detail,
@@ -237,8 +278,10 @@ describe('topic controller helpers', () => {
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
 
     expect(recovery).toBeDefined();
+    await expect(recovery!.resume()).resolves.toBe('verification-required');
+    expect(recovery!.isCurrent()).toBe(true);
     await expect(recovery!.resume()).resolves.toBe('completed');
-    expect(getReplies).toHaveBeenCalledTimes(2);
+    expect(getReplies).toHaveBeenCalledTimes(3);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
@@ -265,6 +308,35 @@ describe('topic controller helpers', () => {
 
     await expect(failed.controller.refreshWholeTopic()).resolves.toBe('failed');
     await expect(completed.controller.refreshWholeTopic()).resolves.toBe('completed');
+  });
+
+  it('[REG-TOPIC-005] does not report a failed V2EX comment refresh as successful', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const detail: TopicDetail = {
+      source: 'v2ex',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://www.v2ex.com/t/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 1,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const { controller } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: {
+        getTopic: vi.fn(async () => { throw new Error('V2EX refresh failed'); })
+      } as unknown as SourceGateway
+    });
+
+    await controller.refreshTopicReplies();
+
+    const terminal = lines
+      .map((line) => JSON.parse(line))
+      .find((event) => event.area === 'reply' && event.operation === 'refresh' && event.phase === 'finish');
+    expect(terminal).toMatchObject({ outcome: 'failure' });
   });
 
   it('REG-LINUXDO-002 retries the exact failed Topic reply page without discarding loaded replies', async () => {
@@ -295,6 +367,7 @@ describe('topic controller helpers', () => {
     };
     const getReplies = vi.fn()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockResolvedValueOnce({ items: [nextReply], hasMore: false, nextPage: null, nextOffset: null });
     const { controller, showLinuxDoVerification, topicReplyCommands } = createLinuxDoTopicController({
       detail,
@@ -307,13 +380,116 @@ describe('topic controller helpers', () => {
     await expect(controller.loadMoreReplies()).resolves.toBe('verification-required');
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
     expect(recovery).toBeDefined();
+    await expect(recovery!.resume()).resolves.toBe('verification-required');
+    expect(recovery!.isCurrent()).toBe(true);
     await expect(recovery!.resume()).resolves.toBe('completed');
 
     expect(getReplies).toHaveBeenNthCalledWith(1, expect.objectContaining({ page: 2, offset: 30 }), expect.any(Object));
     expect(getReplies).toHaveBeenNthCalledWith(2, expect.objectContaining({ page: 2, offset: 30 }), expect.any(Object));
+    expect(getReplies).toHaveBeenNthCalledWith(3, expect.objectContaining({ page: 2, offset: 30 }), expect.any(Object));
     expect(topicReplyCommands.resolve).toHaveBeenCalledWith(expect.objectContaining({
       replies: [loadedReply, nextReply]
     }));
+  });
+
+  it('REG-TOPIC-007 ignores a superseded quoted-post response that resolves after its abort', async () => {
+    const detail: TopicDetail = {
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const staleReply: TopicDetail['replies'][number] = {
+      author: 'stale-author',
+      contentHtml: '<p>stale</p>',
+      createdAt: '2026-07-18T00:01:00.000Z',
+      floor: 7,
+      commentId: 70
+    };
+    const currentReply: TopicDetail['replies'][number] = {
+      ...staleReply,
+      author: 'current-author',
+      contentHtml: '<p>current</p>',
+      commentId: 71
+    };
+    let resolveStale!: (reply: TopicDetail['replies'][number]) => void;
+    let resolveCurrent!: (reply: TopicDetail['replies'][number]) => void;
+    const staleRequest = new Promise<TopicDetail['replies'][number]>((resolve) => { resolveStale = resolve; });
+    const currentRequest = new Promise<TopicDetail['replies'][number]>((resolve) => { resolveCurrent = resolve; });
+    const getReply = vi.fn()
+      .mockReturnValueOnce(staleRequest)
+      .mockReturnValueOnce(currentRequest);
+    const { controller, topicQuotes } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: { getReply } as unknown as SourceGateway
+    });
+    const options = {
+      instanceKey: 'quote-instance',
+      reference: { source: 'linuxdo' as const, topicId: '99', postNumber: 7 }
+    };
+
+    const staleOutcome = controller.toggleTopicBodyQuote(options);
+    const currentOutcome = controller.toggleTopicBodyQuote(options);
+    resolveStale(staleReply);
+
+    await expect(staleOutcome).resolves.toBe('stale');
+    expect(topicQuotes.remember).not.toHaveBeenCalled();
+    expect(topicQuotes.changeExpanded).not.toHaveBeenCalledWith('quote-instance', true);
+
+    resolveCurrent(currentReply);
+    await expect(currentOutcome).resolves.toBe('completed');
+    expect(topicQuotes.remember).toHaveBeenCalledTimes(1);
+    expect(topicQuotes.remember).toHaveBeenCalledWith('linuxdo:99:7', currentReply);
+    expect(topicQuotes.changeExpanded).toHaveBeenCalledWith('quote-instance', true);
+  });
+
+  it('REG-TOPIC-007 invalidates an old quoted-post verification recovery when a newer request takes ownership', async () => {
+    const detail: TopicDetail = {
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const currentReply: TopicDetail['replies'][number] = {
+      author: 'current-author',
+      contentHtml: '<p>current</p>',
+      createdAt: '2026-07-18T00:01:00.000Z',
+      floor: 7,
+      commentId: 71
+    };
+    let resolveCurrent!: (reply: TopicDetail['replies'][number]) => void;
+    const currentRequest = new Promise<TopicDetail['replies'][number]>((resolve) => { resolveCurrent = resolve; });
+    const getReply = vi.fn()
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockReturnValueOnce(currentRequest);
+    const { controller, showLinuxDoVerification } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: { getReply } as unknown as SourceGateway
+    });
+    const options = {
+      instanceKey: 'quote-instance',
+      reference: { source: 'linuxdo' as const, topicId: '99', postNumber: 7 }
+    };
+
+    await expect(controller.toggleTopicBodyQuote(options)).resolves.toBe('verification-required');
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    expect(recovery?.isCurrent()).toBe(true);
+
+    const currentOutcome = controller.toggleTopicBodyQuote(options);
+    expect(recovery?.isCurrent()).toBe(false);
+
+    resolveCurrent(currentReply);
+    await expect(currentOutcome).resolves.toBe('completed');
   });
 
   it('REG-LINUXDO-002 resumes the exact quoted linux.do post through the visible verification flow', async () => {
@@ -395,5 +571,69 @@ describe('topic controller helpers', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
     expect(topicQuotes.remember).not.toHaveBeenCalled();
     expect(topicQuotes.changeExpanded).not.toHaveBeenCalled();
+  });
+
+  it('REG-LINUXDO-003 reports an ordinary quoted-post recovery failure instead of guessing success', async () => {
+    const detail: TopicDetail = {
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const getReply = vi.fn()
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new Error('引用恢复网络失败'));
+    const { controller, showLinuxDoVerification } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: { getReply } as unknown as SourceGateway
+    });
+
+    await controller.toggleTopicBodyQuote({
+      instanceKey: 'quote-instance',
+      reference: { source: 'linuxdo', topicId: '99', postNumber: 7 }
+    });
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await expect(recovery!.resume()).resolves.toBe('failed');
+  });
+
+  it('REG-SOURCE-002 does not apply a topic detail whose candidates all failed to parse', async () => {
+    const detail: TopicDetail = {
+      source: 'linuxdo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/42',
+      createdAt: '2026-07-18T00:00:00.000Z',
+      replyCount: 0,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    const parsedEmpty = annotateSourceDiagnosticSummary({
+      ...detail,
+      title: '',
+      author: '',
+      contentHtml: '',
+      replies: []
+    }, {
+      parserVariant: 'html-topic',
+      candidateCount: 1,
+      validCount: 0,
+      droppedCount: 1,
+      isExpectedEmpty: false
+    });
+    const { controller, topicCommands } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: { getTopic: vi.fn(async () => parsedEmpty) } as unknown as SourceGateway
+    });
+
+    await expect(controller.openTopic(detail, true)).resolves.toBe('failed');
+    expect(topicCommands.resolveLoad).not.toHaveBeenCalled();
+    expect(topicCommands.failLoad).toHaveBeenCalled();
   });
 });

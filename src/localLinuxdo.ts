@@ -289,6 +289,14 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+function nonNegativeNumber(value: unknown) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
 export async function getLinuxDoEmojiUrls(options: LinuxDoOptions = {}) {
   if (emojiUrlCache) {
     return emojiUrlCache;
@@ -1097,9 +1105,9 @@ export async function getLinuxDoUserProfile(id: string, username: string, option
     avatar,
     url: userUrl(resolvedUsername),
     bio: typeof user.bio_raw === 'string' ? user.bio_raw : typeof user.bio_excerpt === 'string' ? user.bio_excerpt : undefined,
-    topicCount: Number(summary.topic_count || 0) || visibleTopics.length || undefined,
-    replyCount: Number(summary.reply_count || 0) || undefined,
-    postCount: Number(summary.post_count || 0) || undefined,
+    topicCount: nonNegativeNumber(summary.topic_count) ?? (visibleTopics.length || undefined),
+    replyCount: nonNegativeNumber(summary.reply_count),
+    postCount: nonNegativeNumber(summary.post_count),
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics,
     hasMoreTopics: false,

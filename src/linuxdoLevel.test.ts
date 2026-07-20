@@ -29,6 +29,25 @@ describe('linux.do level profile', () => {
     vi.clearAllMocks();
   });
 
+  it('REG-ACCOUNT-009 cancels a level read before fallback or snapshot persistence when credentials change', async () => {
+    let current = true;
+    const fetcher = vi.fn(async () => {
+      current = false;
+      return new Response(JSON.stringify({ username: 'old-user', trust_level: 1 }), {
+        headers: { 'content-type': 'application/json' }
+      });
+    });
+
+    await expect(getLinuxDoLevelProfile({
+      cookieHeader: '_t=old',
+      fetcher,
+      isCurrent: () => current
+    })).rejects.toThrow('请求已取消');
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(AsyncStorage.setItem).not.toHaveBeenCalled();
+  });
+
   it('calculates level 1 progress from summary statistics', () => {
     const profile = buildLinuxDoLevelProfileFromSummary({
       username: 'alice',

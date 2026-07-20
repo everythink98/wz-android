@@ -1746,6 +1746,67 @@ describe('Android local forum facade', () => {
     expect(nodeSeekCalls).toBe(2);
   });
 
+  it('[REG-SOURCE-001] skips an unavailable aggregate source and retries its original page after credentials recover', async () => {
+    const nodeSeekPage = Buffer.from(JSON.stringify({
+      rotateTopics: [{
+        postId: 730,
+        titleText: 'NodeSeek credential recovered',
+        titleLink: '/post-730-1',
+        op: { name: 'alice' },
+        time: { createdDate: '2026-05-20T00:03:00.000Z' }
+      }]
+    })).toString('base64');
+    let nodeSeekCalls = 0;
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('nodeseek.com')) {
+        nodeSeekCalls += 1;
+        return new Response(`<script>${nodeSeekPage}</script>`);
+      }
+      if (input.includes('linux.do')) {
+        return new Response(JSON.stringify({
+          topic_list: {
+            topics: [{
+              id: 740,
+              title: 'linux.do available topic',
+              slug: 'linux-do-available-topic',
+              created_at: '2026-05-20T00:02:00.000Z',
+              posts_count: 1
+            }]
+          },
+          categories: []
+        }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      if (input.includes('xiaoyinsi.com')) {
+        return new Response(JSON.stringify({ topic_list: { topics: [] }, categories: [] }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+      return new Response('');
+    });
+
+    const first = await getFeed({
+      source: 'all',
+      limit: 2,
+      unavailableSources: ['nodeseek'],
+      fetcher
+    });
+    const second = await getFeed({
+      source: 'all',
+      page: first.nextPage ?? 2,
+      cursor: first.nextCursor ?? undefined,
+      limit: 2,
+      fetcher
+    });
+
+    expect(first.items.map((item) => `${item.source}:${item.id}`)).toEqual(['linuxdo:740']);
+    expect(first.errors.nodeseek).toBeTruthy();
+    expect(first.nextCursor).toBeTruthy();
+    expect(second.items.map((item) => `${item.source}:${item.id}`)).toEqual(['nodeseek:730']);
+    expect(nodeSeekCalls).toBe(1);
+  });
+
   it('does not create an empty retry cursor when all aggregated Android feed sources fail', async () => {
     const fetcher = vi.fn(async () => {
       throw new Error('temporary failure');

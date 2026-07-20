@@ -131,15 +131,9 @@ export function useReaderDataController({
   const readerDataRef = useRef<ReaderData>(readerData);
   const readerDataLoadedRef = useRef(false);
   const readerDataWriteSuspendedRef = useRef(false);
-  const readerDataStateRef = useRef<ReaderData>(readerData);
   const lastPersistedReaderDataRef = useRef<ReaderData>(readerData);
   const lastPersistedReaderDataJsonRef = useRef(JSON.stringify(readerData));
   const saveQueueRef = useRef(Promise.resolve());
-
-  if (readerDataStateRef.current !== readerData) {
-    readerDataStateRef.current = readerData;
-    readerDataRef.current = readerData;
-  }
 
   const persistReaderData = useCallback((
     next: ReaderData,
@@ -159,6 +153,12 @@ export function useReaderDataController({
       .catch(() => undefined)
       .then(waitForNextSaveTurn)
       .then((): Promise<{ nextJson: string | null; saved: ReaderData }> | null => {
+        const recoveryWrite = readerDataWriteSuspendedRef.current
+          && options?.mutationReason === 'backup-imported';
+        if (readerDataWriteSuspendedRef.current && !recoveryWrite) {
+          finishDiagnosticTrace(trace, 'blocked', { reason: 'storage_error' });
+          return null;
+        }
         if (options?.skipIfSuperseded && readerDataRef.current !== next) {
           finishDiagnosticTrace(trace, 'stale', { reason: 'superseded' });
           return null;
@@ -167,11 +167,18 @@ export function useReaderDataController({
           count: readerDataRecordCount(next),
           state: 'started'
         });
-        if (options?.mutationReason === 'settings-updated' && previous && isSettingsOnlyCommit(previous, next)) {
+        if (
+          options?.mutationReason === 'settings-updated'
+          && isSettingsOnlyCommit(lastPersistedReaderDataRef.current, next)
+        ) {
           return saveReaderSettings(next.settings).then(() => ({ nextJson: null, saved: next }));
         }
         const nextJson: string | null = JSON.stringify(next);
-        return saveCleanReaderData(next, lastPersistedReaderDataJsonRef.current, nextJson)
+        return saveCleanReaderData(
+          next,
+          recoveryWrite ? undefined : lastPersistedReaderDataJsonRef.current,
+          nextJson
+        )
           .then((saved) => ({ nextJson, saved }));
       })
       .then((result) => {
@@ -187,36 +194,36 @@ export function useReaderDataController({
           count: readerDataRecordCount(saved),
           state: 'persisted'
         });
-        setReaderData((latest) => {
-          if (latest !== next) {
-            return latest;
-          }
+        if (readerDataRef.current === next) {
           readerDataRef.current = saved;
-          return saved;
-        });
+          setReaderData(saved);
+        }
         finishDiagnosticTrace(trace, 'success', { count: readerDataRecordCount(saved) });
       })
       .catch((error) => {
+        const recoveryRequired = error instanceof AggregateError;
+        if (recoveryRequired) {
+          readerDataWriteSuspendedRef.current = true;
+        }
         if (previous) {
           const latestBeforeRollback = readerDataRef.current;
-          const projectedRollback = rollbackFailedReaderDataSave(
-            latestBeforeRollback,
-            next,
-            previous,
-            lastPersistedReaderDataRef.current
-          );
+          const projectedRollback = recoveryRequired
+            ? lastPersistedReaderDataRef.current
+            : rollbackFailedReaderDataSave(
+                latestBeforeRollback,
+                next,
+                previous,
+                lastPersistedReaderDataRef.current
+              );
           markDiagnosticStage(trace, 'rollback', {
             before: readerDataRecordCount(latestBeforeRollback),
             after: readerDataRecordCount(projectedRollback),
             didRollback: projectedRollback !== latestBeforeRollback
           });
-          setReaderData((latest) => {
-            const restored = rollbackFailedReaderDataSave(latest, next, previous, lastPersistedReaderDataRef.current);
-            if (restored !== latest) {
-              readerDataRef.current = restored;
-            }
-            return restored;
-          });
+          if (projectedRollback !== latestBeforeRollback) {
+            readerDataRef.current = projectedRollback;
+            setReaderData(projectedRollback);
+          }
         }
         finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
         notify(errorMessage(error));
@@ -311,7 +318,6 @@ export function useReaderDataController({
     readerDataLoaded,
     readerDataRef,
     replaceReaderData,
-    setReaderData,
     waitForReaderDataSave
   };
 }

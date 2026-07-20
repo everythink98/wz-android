@@ -200,4 +200,14 @@ describe('app update release parsing', () => {
 
     expect(installer.installApk).toHaveBeenCalledWith('file:///cache/wz.apk');
   });
+
+  it('[REG-UPDATE-002] rejects when Android does not open the install confirmation', async () => {
+    const installer = {
+      inspectApk: vi.fn(async () => manifest()),
+      installApk: vi.fn(async () => false)
+    };
+    const update = getAppUpdateFromRelease('1.3.6', release(newerTag), manifest());
+
+    await expect(installVerifiedApk(installer, 'file:///cache/wz.apk', update!)).rejects.toThrow('无法打开安装确认');
+  });
 });

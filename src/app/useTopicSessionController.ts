@@ -26,6 +26,7 @@ import {
 } from '../topicSessionState';
 import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail } from '../types';
 import { applyEditedReplyContent } from './topicActionControllerHelpers';
+import { useCommittedRef } from './useCommittedRef';
 
 type TopicSessionInteractionPatch = Parameters<typeof applyInteractionToTopic>[1];
 type TopicSessionPollVotePatch = Parameters<typeof applyPollVoteToTopic>[1];
@@ -58,6 +59,13 @@ export function topicDetailAfterActionUpdate(topicDetail: TopicDetail | null, up
   }
   if (update.type === 'poll-vote') {
     return applyPollVoteToTopic(topicDetail, update.patch);
+  }
+  if (update.type === 'reply-deleted' && topicDetail) {
+    return {
+      ...topicDetail,
+      replies: removeReply(topicDetail.replies || [], update.reply),
+      replyCount: Math.max(0, topicDetail.replyCount - 1)
+    };
   }
   return topicDetail;
 }
@@ -151,14 +159,12 @@ export function useTopicSessionController({
   const topicRouteSessionStoreRef = useRef(createTopicRouteSessionStore());
   const topicScrollYRef = useRef(0);
   const topicBackStackRef = useRef<TopicSnapshot[]>([]);
-  const topicRepliesRef = useRef<Reply[]>(topicReplies);
+  const topicRepliesRef = useCommittedRef(topicReplies);
   const loadingMoreRepliesRef = useRef(false);
   const expandedQuotesRef = useRef<Record<string, boolean>>({});
   const loadedQuotedRepliesRef = useRef<Record<string, Reply>>({});
   const loadingQuotedFloorsRef = useRef<Record<string, boolean>>({});
   const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
-
-  topicRepliesRef.current = topicReplies;
 
   const setLoadingMoreReplies = useCallback((loading: boolean) => {
     loadingMoreRepliesRef.current = loading;
@@ -364,10 +370,10 @@ export function useTopicSessionController({
   const resolveReplies = useCallback((result: ResolvedReplies) => {
     setTopicReplies(result.replies);
     if (typeof result.replyCount === 'number' && result.requestTopicKey) {
-      setTopicDetail((current) => current && topicKey(current) === result.requestTopicKey && result.replyCount! > current.replyCount
+      setTopicDetail((current) => current && topicKey(current) === result.requestTopicKey && result.replyCount !== current.replyCount
         ? { ...current, replyCount: result.replyCount! }
         : current);
-      setSelectedTopic((current) => current && topicKey(current) === result.requestTopicKey && result.replyCount! > current.replyCount
+      setSelectedTopic((current) => current && topicKey(current) === result.requestTopicKey && result.replyCount !== current.replyCount
         ? { ...current, replyCount: result.replyCount! }
         : current);
     }

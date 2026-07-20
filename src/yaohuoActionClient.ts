@@ -206,7 +206,8 @@ export async function runYaohuoAction({
     timeoutMs
   });
 
-  if (request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(new URL(request.path, YAOHUO_BASE_URL).pathname)) {
+  const requestUrl = new URL(request.path, YAOHUO_BASE_URL);
+  if (request.method === 'GET' && YAOHUO_REPLY_DELETE_PATH_PATTERN.test(requestUrl.pathname)) {
     const confirmationPath = deleteConfirmationPath(html);
     if (confirmationPath) {
       ({ html, responseUrl } = await fetchYaohuoActionHtml({
@@ -217,6 +218,8 @@ export async function runYaohuoAction({
         signal,
         timeoutMs
       }));
+    } else if (requestUrl.searchParams.get('action')?.toLowerCase() !== 'godel') {
+      return { ok: true, message: '操作结果无法确认，请刷新原帖核对' };
     }
   }
 

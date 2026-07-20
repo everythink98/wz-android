@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   clearExpiredLinuxDoLogin: vi.fn(async () => undefined),
+  currentXiaoyinsiCredentialGeneration: vi.fn(() => 11),
   loadLinuxDoAccess: vi.fn(),
   loadXiaoyinsiCredentials: vi.fn(),
   runLinuxDoAction: vi.fn(async () => ({ ok: true })),
@@ -15,7 +16,10 @@ vi.mock('../linuxdoCookieBridge', () => ({
   loadLinuxDoAccess: mocks.loadLinuxDoAccess
 }));
 vi.mock('../xiaoyinsiActionClient', () => ({ runXiaoyinsiAction: mocks.runXiaoyinsiAction }));
-vi.mock('../xiaoyinsiAuth', () => ({ loadXiaoyinsiCredentials: mocks.loadXiaoyinsiCredentials }));
+vi.mock('../xiaoyinsiAuth', () => ({
+  currentXiaoyinsiCredentialGeneration: mocks.currentXiaoyinsiCredentialGeneration,
+  loadXiaoyinsiCredentials: mocks.loadXiaoyinsiCredentials
+}));
 vi.mock('./topicActionHelpers', () => ({ clearExpiredLinuxDoLogin: mocks.clearExpiredLinuxDoLogin }));
 
 import {
@@ -38,6 +42,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: 'sid=test', userAgent: 'saved-agent' });
   mocks.loadXiaoyinsiCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+  mocks.currentXiaoyinsiCredentialGeneration.mockReturnValue(11);
 });
 
 describe('Discourse action runtime registry', () => {
@@ -63,5 +68,22 @@ describe('Discourse action runtime registry', () => {
     expect(mocks.runXiaoyinsiAction).toHaveBeenCalledOnce();
     expect(linuxdo.csrfSource).toBe('session-endpoint');
     expect(xiaoyinsi.csrfSource).toBe('none');
+  });
+
+  it('treats a Xiaoyinsi action as stale after its credential generation changes', async () => {
+    let generation = 11;
+    mocks.currentXiaoyinsiCredentialGeneration.mockImplementation(() => generation);
+    const context = runtimeContext();
+    const runtime = await prepareDiscourseActionRuntime('xiaoyinsi', context);
+
+    expect(runtime.isCredentialCurrent?.()).toBe(true);
+    generation += 1;
+
+    expect(runtime.isCredentialCurrent?.()).toBe(false);
+    await expect(runtime.recover({ authorizationCheckRequired: true })).resolves.toMatchObject({
+      phase: 'credential',
+      stale: true
+    });
+    expect(context.refreshXiaoyinsiAuthorization).not.toHaveBeenCalled();
   });
 });

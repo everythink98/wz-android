@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const fallbackStore = vi.hoisted(() => new Map<string, string>());
+
+vi.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: vi.fn(async (key: string) => fallbackStore.get(key) ?? null),
+    removeItem: vi.fn(async (key: string) => { fallbackStore.delete(key); }),
+    setItem: vi.fn(async (key: string, value: string) => { fallbackStore.set(key, value); })
+  }
+}));
+
 vi.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'when-unlocked-this-device-only',
   getItemAsync: vi.fn(async () => null),
@@ -13,10 +23,13 @@ vi.mock('react-native', () => ({
 }));
 
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   beginXiaoyinsiDeviceAuth,
   cancelXiaoyinsiDeviceAuth,
+  currentXiaoyinsiCredentialGeneration,
   deviceAuthCountdown,
+  hasXiaoyinsiRevocationCleanupPending,
   loadXiaoyinsiCredentials,
   nextXiaoyinsiPollDelay,
   pollXiaoyinsiDeviceAuth,
@@ -59,10 +72,34 @@ function keystore(): XiaoyinsiKeystore {
 describe('xiaoyinsi Device Code auth', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    fallbackStore.clear();
+    vi.mocked(AsyncStorage.getItem).mockImplementation(async (key) => fallbackStore.get(key) ?? null);
+    vi.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => { fallbackStore.delete(key); });
+    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key, value) => { fallbackStore.set(key, value); });
   });
 
   afterEach(() => {
     setDiagnosticWriter(null);
+  });
+
+  it('[REG-XIAOYINSI-005] ignores a credential read superseded by a newer authorization mutation', async () => {
+    const apiKey = Promise.withResolvers<string | null>();
+    const clientId = Promise.withResolvers<string | null>();
+    vi.mocked(SecureStore.getItemAsync).mockImplementation((key) => (
+      key === XIAOYINSI_AUTH_STORAGE_KEYS.apiKey ? apiKey.promise : clientId.promise
+    ));
+    let capturedGeneration = -1;
+    const read = loadXiaoyinsiCredentials({
+      captureGeneration: (generation) => { capturedGeneration = generation; }
+    });
+    await vi.waitFor(() => expect(SecureStore.getItemAsync).toHaveBeenCalledTimes(2));
+
+    await cancelXiaoyinsiDeviceAuth({ keystore: keystore() });
+    apiKey.resolve('old-key');
+    clientId.resolve('old-client');
+
+    await expect(read).resolves.toBeUndefined();
+    expect(currentXiaoyinsiCredentialGeneration()).toBeGreaterThan(capturedGeneration);
   });
 
   it('checks capability and persists a ten-minute read/write device request without callback fields', async () => {
@@ -378,7 +415,46 @@ describe('xiaoyinsi Device Code auth', () => {
     expect(crypto.deleteKey).toHaveBeenCalledTimes(1);
   });
 
-  it('[REG-XIAOYINSI-005] retries local cleanup even when the revocation tombstone could not be persisted', async () => {
+  it('[REG-XIAOYINSI-005] retries durable tombstone persistence after both initial writes fail', async () => {
+    const store = memoryStore();
+    const crypto = keystore();
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
+    store.set(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey, 'revoked-secret');
+    vi.mocked(SecureStore.setItemAsync).mockImplementation(async (key, value) => {
+      if (key === XIAOYINSI_AUTH_STORAGE_KEYS.revokedCleanup) {
+        throw new Error('cleanup marker unavailable');
+      }
+      store.set(key, value);
+    });
+    vi.mocked(AsyncStorage.setItem).mockRejectedValueOnce(new Error('fallback marker unavailable'));
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => {
+      if (key === XIAOYINSI_AUTH_STORAGE_KEYS.apiKey) {
+        throw new Error('secure store unavailable');
+      }
+      store.delete(key);
+    });
+
+    await expect(revokeXiaoyinsiAuthorization({
+      fetcher: async () => json({ success: 'OK' }),
+      keystore: crypto
+    })).resolves.toMatchObject({
+      complete: false,
+      apiKeyDeleted: false,
+      cleanupMarkerPersisted: true
+    });
+    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('revoked-secret');
+    await expect(hasXiaoyinsiRevocationCleanupPending()).resolves.toBe(true);
+
+    vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => { store.delete(key); });
+    await expect(retryXiaoyinsiRevocationCleanup({ keystore: crypto })).resolves.toMatchObject({
+      complete: true,
+      cleanupMarkerPersisted: false
+    });
+    expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe(false);
+    expect(crypto.deleteKey).toHaveBeenCalledTimes(2);
+  });
+
+  it('[REG-XIAOYINSI-005] persists a fallback tombstone when SecureStore cannot write it', async () => {
     const store = memoryStore();
     const crypto = keystore();
     store.set(XIAOYINSI_AUTH_STORAGE_KEYS.clientId, 'client');
@@ -402,17 +478,16 @@ describe('xiaoyinsi Device Code auth', () => {
     })).resolves.toMatchObject({
       complete: false,
       apiKeyDeleted: false,
-      cleanupMarkerPersisted: false
+      cleanupMarkerPersisted: true
     });
-    expect(store.get(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe('revoked-secret');
+    await expect(hasXiaoyinsiRevocationCleanupPending()).resolves.toBe(true);
 
     vi.mocked(SecureStore.deleteItemAsync).mockImplementation(async (key) => { store.delete(key); });
     await expect(retryXiaoyinsiRevocationCleanup({ keystore: crypto })).resolves.toMatchObject({
       complete: true,
       cleanupMarkerPersisted: false
     });
-    expect(store.has(XIAOYINSI_AUTH_STORAGE_KEYS.apiKey)).toBe(false);
-    expect(crypto.deleteKey).toHaveBeenCalledTimes(2);
+    await expect(hasXiaoyinsiRevocationCleanupPending()).resolves.toBe(false);
   });
 
   it('rejects unsupported Device Code capability without creating key material', async () => {

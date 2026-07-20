@@ -343,6 +343,22 @@ describe('Android reader data helpers', () => {
     expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe('https://www.v2ex.com/member/neo');
   });
 
+  it('[REG-USER-002] restores a missing Xiaoyinsi profile url to the Xiaoyinsi user page', () => {
+    const partialProfile: UserProfile = {
+      source: 'xiaoyinsi',
+      id: 'temple-user',
+      username: 'temple-user',
+      displayName: 'temple-user',
+      url: '',
+      topics: []
+    };
+
+    const data = toggleFollowedUser(createEmptyReaderData(), partialProfile);
+
+    expect(data.followedUsers[userKey(partialProfile)]?.user.url).toBe('https://forum.xiaoyinsi.com/u/temple-user');
+    expect(sanitizeReaderData(data).followedUsers[userKey(partialProfile)]?.user.url).toBe('https://forum.xiaoyinsi.com/u/temple-user');
+  });
+
   it('drops polluted yaohuo followed user display names during sanitizing', () => {
     const data = sanitizeReaderData({
       version: 2,
@@ -380,6 +396,40 @@ describe('Android reader data helpers', () => {
     expect(data.followedUsers['yaohuo:36925']?.user.replyCount).toBeUndefined();
     expect(data.followedUsers['yaohuo:36925']?.user.postCount).toBeUndefined();
     expect(data.followedUsers['yaohuo:36925']?.user.topics[0].author).toBe('李慕婉o');
+  });
+
+  it('REG-DATA-005 sanitizes followed-user statistics as non-negative integers', () => {
+    const data = sanitizeReaderData({
+      ...createEmptyReaderData(),
+      followedUsers: {
+        'nodeseek:48872': {
+          user: {
+            ...profile,
+            topicCount: -1,
+            replyCount: 1.6,
+            postCount: -3
+          },
+          followedAt: '2026-05-28T15:31:33.012Z'
+        },
+        'yaohuo:7': {
+          user: {
+            source: 'yaohuo',
+            id: '7',
+            username: '火友',
+            url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=7',
+            topicCount: 0,
+            replyCount: 4,
+            topics: []
+          },
+          followedAt: '2026-05-28T15:31:33.012Z'
+        }
+      }
+    });
+
+    expect(data.followedUsers['nodeseek:48872']?.user).toMatchObject({ replyCount: 2 });
+    expect(data.followedUsers['nodeseek:48872']?.user.topicCount).toBeUndefined();
+    expect(data.followedUsers['nodeseek:48872']?.user.postCount).toBeUndefined();
+    expect(data.followedUsers['yaohuo:7']?.user.postCount).toBe(4);
   });
 
   it('removes followed users with deletion markers', () => {

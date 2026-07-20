@@ -23,11 +23,11 @@ vi.mock('react-native', () => ({
 import { getCategories, getFeed, getReplies, getReply, getTopic, searchTopics } from './forumApi';
 import { isLinuxDoCloudflareError } from './appUtils';
 import { createLinuxDoWebViewFallbackFetcher, LinuxDoHiddenBrowserFailureError } from './linuxdoFetchFallback';
-import { searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from './localLinuxdo';
+import { getLinuxDoUserProfile, searchLinuxDoSemantic, searchLinuxDoTags, searchLinuxDoUsers } from './localLinuxdo';
 import { splitDiscourseContentHtml } from './discourseContent';
 import { textContentFromHtml } from './localHtml';
 import { createNodeSeekWebViewFallbackFetcher, isNodeSeekBrowserFetchUrl } from './nodeseekFetchFallback';
-import { getNodeSeekReplies, getNodeSeekTopic } from './localNodeseek';
+import { getNodeSeekReplies, getNodeSeekTopic, getNodeSeekUserProfile } from './localNodeseek';
 import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 import { DEFAULT_SEARCH_FILTERS } from './searchFilters';
 import {
@@ -1960,6 +1960,44 @@ describe('Android local sources', () => {
       topicCount: 88,
       readRestricted: true
     });
+  });
+
+  it('REG-USER-005 preserves explicit zero statistics for a new linux.do user', async () => {
+    const fetcher = vi.fn(async () => json({
+      user_summary: {
+        topic_count: 0,
+        reply_count: 0,
+        post_count: 0,
+        user: { id: 7, username: 'newbie', name: 'Newbie' }
+      },
+      topics: []
+    }));
+
+    const profile = await getLinuxDoUserProfile('newbie', 'newbie', {
+      cursorType: 'topics',
+      fetcher
+    });
+
+    expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
+  });
+
+  it('REG-USER-005 preserves explicit zero statistics for a new NodeSeek user', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/account/getInfo/7')) {
+        return json({
+          success: true,
+          detail: { member_id: 7, member_name: 'newbie', nPost: 0, nComment: 0 }
+        });
+      }
+      if (input.includes('/api/content/list-discussions')) {
+        return json({ discussions: [] });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profile = await getNodeSeekUserProfile('7', { cursorType: 'topics', fetcher });
+
+    expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
   it('reuses the cached linux.do reply stream after reading topic details', async () => {
@@ -4488,6 +4526,38 @@ describe('Android local sources', () => {
       replyTargetAuthor: 'alice',
       thanksCount: 2
     });
+  });
+
+  it('REG-TOPIC-016 keeps the V2EX thanks count when an icon attribute contains a quoted greater-than sign', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      if (input.includes('/api/topics/show.json')) {
+        return json([{
+          id: 815,
+          title: 'V2EX quoted icon attribute',
+          url: 'https://www.v2ex.com/t/815',
+          created: 1780000000,
+          replies: 1,
+          member: { username: 'neo' }
+        }]);
+      }
+      if (input.includes('/api/replies/show.json')) {
+        return json([]);
+      }
+      if (input === 'https://www.v2ex.com/t/815') {
+        return html(`
+          <div id="r_8015" class="cell">
+            <span class="no">1</span>
+            <span class="small fade"><img title="1 > 0" src="/static/img/heart.png"> 2</span>
+            <div class="reply_content">reply</div>
+          </div>
+        `);
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const topic = await getTopic({ source: 'v2ex', id: '815', fetcher });
+
+    expect(topic.replies[0]).toMatchObject({ commentId: 8015, thanksCount: 2 });
   });
 
   it('ignores malformed V2EX reply target links without dropping replies', async () => {

@@ -238,7 +238,11 @@ export function appendFileToFormData(body: FormData, fieldName: string, file: No
 function fileNameFromUri(uri: string) {
   const clean = uri.split(/[?#]/)[0] || '';
   const name = clean.slice(clean.lastIndexOf('/') + 1);
-  return decodeURIComponent(name || '').trim();
+  try {
+    return decodeURIComponent(name || '').trim();
+  } catch {
+    return name.trim();
+  }
 }
 
 function imageMimeTypeFromName(name: string) {

@@ -30,10 +30,15 @@ describe('source capability catalog', () => {
     expect(sourceUsesTopicCreatePermission('xiaoyinsi')).toBe(true);
   });
 
+  it('[REG-WRITE-013] does not advertise NodeSeek reply deletion when the original site exposes no confirmed delete action', () => {
+    expect(sourceSupportsTopicAction('nodeseek', 'edit')).toBe(true);
+    expect(sourceSupportsTopicAction('nodeseek', 'delete')).toBe(false);
+  });
+
   it('derives aggregate registration from the catalog', () => {
     expect(sourceValues).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
     expect(aggregateFeedSources).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
-    expect(aggregateSearchSources).toEqual(['nodeseek', 'linuxdo', 'v2ex', 'yaohuo', 'xiaoyinsi']);
+    expect(aggregateSearchSources).toEqual(['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi']);
     expect(sessionSources).toEqual(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']);
   });
 });

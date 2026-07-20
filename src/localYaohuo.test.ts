@@ -125,4 +125,12 @@ describe('yaohuo reply parsing', () => {
       displayTimeText: '2026-05-20 10:30'
     });
   });
+
+  it('REG-USER-005 preserves explicit zero statistics for a new Yaohuo user', () => {
+    const profile = parseYaohuoUserProfileHtml(`
+      <div class="content">昵称:新用户<br/>贴子(0).回复(0)</div>
+    `, { id: '7', username: '新用户' });
+
+    expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
+  });
 });

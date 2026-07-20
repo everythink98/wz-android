@@ -24,6 +24,7 @@ import {
   YAOHUO_FACE_ITEMS,
   type ReplyComposerInsertExpression
 } from './replyComposerExpressionCatalogs';
+import { useCommittedRef } from '../../app/useCommittedRef';
 
 type ReplyComposerInputHandle = {
   blur: () => void;
@@ -70,8 +71,7 @@ export function ReplyComposer({
   const [activeAccessory, setActiveAccessory] = useState<ReplyComposerAccessory | null>(null);
   const [activeNodeSeekStickerCategory, setActiveNodeSeekStickerCategory] = useState(NODESEEK_STICKER_CATEGORIES[0]?.label || '');
   const selectionRef = useRef(selection);
-  const replyContentRef = useRef(replyContent);
-  replyContentRef.current = replyContent;
+  const replyContentRef = useCommittedRef(replyContent);
   const toolbarItems = replyComposerToolbarItems(source);
   const discourseEmojiItems = useMemo(() => discourseEmojiCatalogFromUrlMap(discourseEmojiUrls), [discourseEmojiUrls]);
   const selectedFaceLabel = YAOHUO_FACE_ITEMS.find((item) => item.value === replyFace)?.label;

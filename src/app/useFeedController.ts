@@ -30,8 +30,10 @@ import {
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import { isFeedFilterSource, sourceValues } from '../sourceCatalog';
+import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import type { Category, FeedFilterState, FeedSource, FeedResponse, SourceErrorInfo, SourceFeedFilter, SourceErrors, Topic } from '../types';
+import { useCommitRefValue, useCommittedRef } from './useCommittedRef';
 
 type FeedSourceState = {
   hasMore: boolean;
@@ -107,18 +109,12 @@ export function useFeedController({
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [feedStates, setFeedStates] = useState<Record<FeedSource, FeedSourceState>>(() => createFeedStates());
-  const feedStatesRef = useRef(feedStates);
-  if (feedStatesRef.current !== feedStates) {
-    feedStatesRef.current = feedStates;
-  }
+  const feedStatesRef = useCommittedRef(feedStates);
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const [categories, setCategories] = useState<Category[]>([]);
-  const categoriesRef = useRef(categories);
-  if (categoriesRef.current !== categories) {
-    categoriesRef.current = categories;
-  }
+  const categoriesRef = useCommittedRef(categories);
 
   const activeFeedState = feedStates[feedSource];
   const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
@@ -154,20 +150,22 @@ export function useFeedController({
         });
         return;
       }
-      if (source !== 'all' && !data.items.length) {
+      const errors = Object.entries(data.errors || {});
+      if (source !== 'all' && !data.items.length && !errors.length) {
         finishTrace('noop', { source, reason: 'parse_empty' });
         return;
       }
-      const currentCategories = categoriesRef.current;
-      const nextCategories = source === 'all' ? mergeCategories(data.items, []) : mergeCategories(currentCategories, data.items);
-      markDiagnosticStage(trace, 'apply', {
-        source,
-        beforeCount: currentCategories.length,
-        afterCount: nextCategories.length,
-        itemCount: data.items.length
-      });
-      setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
-      const errors = Object.entries(data.errors || {});
+      if (data.items.length || source === 'all') {
+        const currentCategories = categoriesRef.current;
+        const nextCategories = source === 'all' ? mergeCategories(data.items, []) : mergeCategories(currentCategories, data.items);
+        markDiagnosticStage(trace, 'apply', {
+          source,
+          beforeCount: currentCategories.length,
+          afterCount: nextCategories.length,
+          itemCount: data.items.length
+        });
+        setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
+      }
       if (errors.length) {
         const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
         const outcome = data.items.length ? 'partial' : reason === 'verification_required' || reason === 'login_required' || reason === 'permission_denied' ? 'blocked' : 'failure';
@@ -279,14 +277,20 @@ export function useFeedController({
     const requestId = ++feedRequestIdRef.current;
     const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentFeedRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, feedRequestOwnerRef)
+      && recoveryRequestId === feedRequestIdRef.current
+    );
     const linuxDoRecovery = (): LinuxDoReadRecovery => ({
       key: `feed:${requestKey}:${page}:${cursor || ''}`,
-      isCurrent: isCurrentFeedRequest,
+      isCurrent: isCurrentFeedRecovery,
       resume: async () => {
-        if (!isCurrentFeedRequest()) {
+        if (!isCurrentFeedRecovery()) {
           return 'stale';
         }
-        return await loadFeedRef.current?.({
+        const resumedRequest = loadFeedRef.current?.({
           page,
           cursor,
           reset,
@@ -297,7 +301,13 @@ export function useFeedController({
           clearItems: false,
           successMessage,
           suppressLinuxDoVerification: true
-        }) || 'stale';
+        });
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = feedRequestOwnerRef.current;
+        recoveryRequestId = feedRequestIdRef.current;
+        return await resumedRequest;
       }
     });
     feedSourceRequestIdRef.current[requestSource] = requestId;
@@ -383,8 +393,17 @@ export function useFeedController({
         });
         return 'stale';
       }
-      applyFeedResponse(data);
       const finalErrors: SourceErrors = data.errors || {};
+      const errors = Object.entries(finalErrors);
+      const diagnosticSummary = sourceDiagnosticSummary(data);
+      const parseEmpty = diagnosticSummary?.isParseEmpty === true;
+      const parseEmptyFailure = parseEmpty && (
+        isLoadMore || Number(diagnosticSummary.validCount || 0) === 0
+      );
+      const canApplyPartialAggregate = requestSource === 'all' && !isLoadMore && data.items.length > 0;
+      if ((!errors.length || canApplyPartialAggregate) && !parseEmptyFailure) {
+        applyFeedResponse(data);
+      }
       if (!isCurrentFeedRequest()) {
         finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
           source: requestSource,
@@ -392,8 +411,16 @@ export function useFeedController({
         });
         return 'stale';
       }
-      const errors = Object.entries(finalErrors);
-      if (errors.length) {
+      if (parseEmptyFailure && !errors.length) {
+        if (isLoadMore) {
+          markFeedLoadMoreFailed(requestSource);
+        }
+        notify(isLoadMore
+          ? `加载下一页失败：${requestSource === 'all' ? '部分来源' : sourceLabel(requestSource)}返回内容无法解析，请重试。`
+          : `${sourceLabel(requestSource)} 返回内容无法解析，请重试。`);
+        finishTrace('failure', { source: requestSource, reason: 'parse_empty' });
+        return 'failed';
+      } else if (errors.length) {
         const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
         const outcome = appliedFeedResponse
           ? 'partial'
@@ -431,6 +458,7 @@ export function useFeedController({
           notify(message);
         }
         finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
+        return requestSource === 'all' && appliedFeedResponse ? 'completed' : 'failed';
       } else if (successMessage) {
         notify(successMessage);
       }
@@ -486,7 +514,7 @@ export function useFeedController({
         }
         notify(notice);
         finishTrace(outcome, { source: requestSource, reason });
-        return 'completed';
+        return 'failed';
       }
     } finally {
       if (!traceFinished) {
@@ -524,7 +552,7 @@ export function useFeedController({
     sourceGateway
   ]);
 
-  loadFeedRef.current = loadFeed;
+  useCommitRefValue(loadFeedRef, loadFeed);
 
   useEffect(() => {
     if (!readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter)) {

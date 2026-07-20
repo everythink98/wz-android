@@ -14,7 +14,7 @@ export type CredentialFillTraceState = { site: CredentialSite; attempt: number; 
 export type CredentialSummaryLoadResult =
   | { ok: true; summaries: CredentialSummaries }
   | { ok: false; stale: true }
-  | { ok: false; error: unknown };
+  | { ok: false; error: unknown; summaries: Partial<CredentialSummaries> };
 
 export async function loadCredentialSummariesWithTrace(
   loadSummary: (site: CredentialSite) => Promise<CredentialSummary>,
@@ -53,12 +53,15 @@ export async function loadCredentialSummariesWithTrace(
     return { ok: false, stale: true };
   }
   if (failures.length) {
-    finishDiagnosticTrace(trace, 'failure', {
+    const summaries = Object.fromEntries(results.flatMap((result) => (
+      result.ok ? [[result.summary.site, result.summary] as const] : []
+    ))) as Partial<CredentialSummaries>;
+    finishDiagnosticTrace(trace, 'partial', {
       source: 'all',
       reason: 'storage_error',
       partialErrorCount: failures.length
     });
-    return { ok: false, error: failures[0].error };
+    return { ok: false, error: failures[0].error, summaries };
   }
   const summaries = Object.fromEntries(results.map((result) => {
     const summary = result.ok ? result.summary : null;

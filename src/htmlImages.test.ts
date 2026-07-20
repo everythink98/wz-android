@@ -327,6 +327,14 @@ describe('Android HTML image preview helpers', () => {
     expect(result).not.toContain('<img class="sticker"');
   });
 
+  it('REG-TOPIC-011 keeps quoted greater-than signs inside sticker attributes', () => {
+    const html = '<p>正文 <img class="sticker" title="1 > 0" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> 结尾</p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-media-line>正文 <forum-sticker class="sticker" title="1 &gt; 0" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01">ac01</forum-sticker> 结尾</forum-inline-media-line>');
+    expect(result).not.toContain('0" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> 结尾');
+  });
+
   it('keeps small no-dimension NodeSeek xhj stickers inline with surrounding text', () => {
     const html = '<p>应该可以类比成公交车和出租车 <img class="sticker" src="https://www.nodeseek.com/static/image/sticker/xhj/001.png" alt="xhj001"><br>公交车便宜，但是路程不是直达，会绕路</p>';
     const result = flowInlineImagesInMixedParagraphs(html);

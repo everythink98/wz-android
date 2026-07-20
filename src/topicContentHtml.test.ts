@@ -26,6 +26,10 @@ describe('Android topic content HTML', () => {
     expect(normalizeRenderableHtml('<p><a href="/u/alice">alice</a></p>')).toBe('<p><a href="/u/alice">alice</a></p>');
   });
 
+  it('REG-TOPIC-012 keeps mention recognition intact when another attribute contains a greater-than sign', () => {
+    expect(normalizeRenderableHtml('<p><a title="1 > 0" href="/u/alice">@alice</a> hello</p>')).toBe('<p><a title="1 &gt; 0" href="/u/alice" class="forum-user-mention">@alice</a> hello</p>');
+  });
+
   it('extracts leading NodeSeek mention and floor links as a reply reference row', () => {
     const html = [
       '<p>',

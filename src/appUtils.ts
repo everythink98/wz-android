@@ -59,6 +59,7 @@ const YAOHUO_CATEGORY_NAMES: Record<string, string> = {
 };
 const YAOHUO_BASE_URL = 'https://www.yaohuo.me';
 const YAOHUO_HOST = 'www.yaohuo.me';
+const YAOHUO_BARE_HOST = 'yaohuo.me';
 
 function forumLinkUrl(value: string, baseUrl?: string) {
   try {
@@ -71,6 +72,15 @@ function forumLinkUrl(value: string, baseUrl?: string) {
 function isForumHost(hostname: string, rootHost: string) {
   const host = hostname.toLowerCase();
   return host === rootHost || host.endsWith(`.${rootHost}`);
+}
+
+function isYaohuoContentHost(hostname: string) {
+  const host = hostname.toLowerCase();
+  return host === YAOHUO_HOST || host === YAOHUO_BARE_HOST;
+}
+
+function discourseProfileUsername(pathname: string) {
+  return pathname.match(/^\/u\/([^/]+)(?:\/(?:summary|activity))?\/?$/i)?.[1] || '';
 }
 
 function internalTopic(source: Source, id: string, title: string, url: string, extra: Partial<Topic> = {}): Topic {
@@ -122,7 +132,7 @@ export function parseForumTopicLink(href: string, baseUrl?: string): Topic | nul
     const id = pathname.match(/^\/t\/(\d+)(?:\/)?$/i)?.[1];
     return id ? internalTopic('v2ex', id, 'V2EX 主题', `https://www.v2ex.com/t/${id}`) : null;
   }
-  if (host === YAOHUO_HOST) {
+  if (isYaohuoContentHost(host)) {
     const id = pathname.match(/^\/bbs-(\d+)\.html$/i)?.[1]
       || (/\/(?:view|book_re|book_view)\.aspx$/i.test(pathname) ? url.searchParams.get('id') || '' : '');
     if (!id || !/^\d+$/.test(id)) {
@@ -148,6 +158,25 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
   const url = forumLinkUrl(href, baseUrl);
   if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
     return null;
+  }
+  if (isForumHost(url.hostname, 'linux.do')) {
+    const rawUsername = discourseProfileUsername(url.pathname);
+    if (!rawUsername) {
+      return null;
+    }
+    try {
+      const username = decodeURIComponent(rawUsername);
+      return username ? {
+        source: 'linuxdo',
+        id: username,
+        username,
+        displayName: username,
+        url: `https://linux.do/u/${encodeURIComponent(username)}`,
+        topics: []
+      } : null;
+    } catch {
+      return null;
+    }
   }
   if (isForumHost(url.hostname, 'nodeseek.com')) {
     const id = url.pathname.match(/^\/space\/(\d+)\/?$/i)?.[1];
@@ -180,7 +209,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
       topics: []
     } : null;
   }
-  if (url.hostname.toLowerCase() === YAOHUO_HOST) {
+  if (isYaohuoContentHost(url.hostname)) {
     if (!/^\/(?:bbs\/)?userinfo\.aspx$/i.test(url.pathname)) {
       return null;
     }
@@ -196,7 +225,7 @@ export function parseForumUserLink(href: string, baseUrl?: string, candidates: F
     } : null;
   }
   if (isForumHost(url.hostname, 'forum.xiaoyinsi.com')) {
-    const rawUsername = url.pathname.match(/^\/u\/([^/]+)\/?$/i)?.[1];
+    const rawUsername = discourseProfileUsername(url.pathname);
     if (!rawUsername) {
       return null;
     }

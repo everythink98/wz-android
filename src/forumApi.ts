@@ -203,6 +203,13 @@ function pickSource<T>(source: Source, handlers: Partial<Record<Source, () => Pr
   return handler();
 }
 
+function unavailableSourceRead(source: Source) {
+  return Promise.reject(Object.assign(new Error(`${source} 凭据暂不可用`), {
+    source,
+    reason: 'credential_unavailable'
+  }));
+}
+
 export async function getFeed({
   source,
   page = 1,
@@ -216,6 +223,7 @@ export async function getFeed({
   nodeSeekUserAgent,
   discourseAuth,
   yaohuoCookie,
+  unavailableSources,
   signal,
   timeoutMs
 }: {
@@ -231,11 +239,13 @@ export async function getFeed({
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   yaohuoCookie?: string;
+  unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<FeedResponse> {
   const options = { page, limit, cursor, category, nocache, fetcher, nodeSeekCookie, nodeSeekUserAgent, signal, timeoutMs };
   if (source === 'all') {
+    const unavailableSourceSet = new Set(unavailableSources);
     const cursorState = decodeAllFeedCursor(cursor);
     const bufferedItems = allFeedSources.flatMap((item) => cursorState.buffers?.[item] || []);
     const shouldFetchSource = (item: Source) => !cursor || (Boolean(cursorState.nextPages?.[item]) && (cursorState.buffers?.[item]?.length || 0) < limit);
@@ -246,6 +256,9 @@ export async function getFeed({
     ])) as Record<typeof allFeedSources[number], number>;
     const adapterLimit = limit < 30 ? limit * allFeedSources.length : limit;
     const results = await Promise.allSettled(allFeedSources.map((item, index) => {
+      if (unavailableSourceSet.has(item)) {
+        return unavailableSourceRead(item);
+      }
       if (!fetchedSources[index]) {
         return Promise.resolve({
           items: [],
@@ -368,6 +381,7 @@ export async function getCategories({
   nodeSeekCookie,
   nodeSeekUserAgent,
   discourseAuth,
+  unavailableSources,
   signal,
   timeoutMs
 }: {
@@ -377,6 +391,7 @@ export async function getCategories({
   nodeSeekCookie?: string;
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
+  unavailableSources?: readonly Source[];
   signal?: AbortSignal;
   timeoutMs?: number;
 } = {}): Promise<CategoriesResponse> {
@@ -384,6 +399,9 @@ export async function getCategories({
   if (source === 'all') {
     const sources = sourceValues;
     const results = await Promise.allSettled(sources.map((item) => {
+      if (unavailableSources?.includes(item)) {
+        return unavailableSourceRead(item);
+      }
       if (isDiscourseSource(item)) {
         return getDiscourseSourceCategories(item, {
           auth: discourseAuth,
@@ -876,6 +894,7 @@ export async function searchTopics({
   nodeSeekUserAgent,
   discourseAuth,
   yaohuoCookie,
+  unavailableSources,
   sort = 'relevance',
   filter,
   signal,
@@ -891,6 +910,7 @@ export async function searchTopics({
   nodeSeekUserAgent?: string;
   discourseAuth?: DiscourseReadAuth;
   yaohuoCookie?: string;
+  unavailableSources?: readonly Source[];
   sort?: SearchSort;
   filter?: SourceSearchFilter;
   signal?: AbortSignal;
@@ -902,6 +922,9 @@ export async function searchTopics({
   if (source === 'all') {
     const sources = aggregateSearchSources;
     const results = await Promise.allSettled(sources.map((item) => {
+      if (unavailableSources?.includes(item)) {
+        return unavailableSourceRead(item);
+      }
       if (isDiscourseSource(item)) {
         return searchDiscourseSourceTopics(item, adapterQuery, {
           auth: discourseAuth,

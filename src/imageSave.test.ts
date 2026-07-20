@@ -55,7 +55,9 @@ describe('image library saving', () => {
 
     await expect(saveImageUriToLibrary('https://cdn.example.com/missing.jpg', fetcher)).rejects.toThrow('图片下载失败');
 
-    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/missing.jpg', undefined);
+    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/missing.jpg', expect.objectContaining({
+      signal: expect.any(AbortSignal)
+    }));
     expect(FileSystem.writeAsStringAsync).not.toHaveBeenCalled();
     expect(MediaLibrary.saveToLibraryAsync).not.toHaveBeenCalled();
     expect(FileSystem.deleteAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg', { idempotent: true });
@@ -118,7 +120,9 @@ describe('image library saving', () => {
 
     await saveImageUriToLibrary('https://cdn.example.com/photo.jpg', fetcher);
 
-    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/photo.jpg', undefined);
+    expect(fetcher).toHaveBeenCalledWith('https://cdn.example.com/photo.jpg', expect.objectContaining({
+      signal: expect.any(AbortSignal)
+    }));
     expect(FileSystem.downloadAsync).not.toHaveBeenCalled();
     expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
       'file:///cache/forum-image-1234.jpg',
@@ -126,5 +130,100 @@ describe('image library saving', () => {
       { encoding: FileSystem.EncodingType.Base64 }
     );
     expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.jpg');
+  });
+
+  it('REG-TOPIC-019 keeps NodeSeek media credentials when saving a protected image', async () => {
+    const fetcher = vi.fn<Fetcher>(async () => new Response('image-bytes', {
+      headers: { 'content-type': 'image/png' },
+      status: 200
+    }));
+
+    await saveImageUriToLibrary(
+      'https://www.nodeseek.com/uploads/private-topic.png',
+      fetcher,
+      undefined,
+      {
+        nodeSeekCookieHeader: 'session=save-test',
+        nodeSeekUserAgent: 'WZ-Save-Test'
+      }
+    );
+
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://www.nodeseek.com/uploads/private-topic.png',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Cookie: 'session=save-test',
+          'User-Agent': 'WZ-Save-Test'
+        }),
+        signal: expect.any(AbortSignal)
+      })
+    );
+  });
+
+  it('REG-TOPIC-015 preserves modern remote image extensions when saving', async () => {
+    const fetcher = vi.fn<Fetcher>(async () => new Response('avif-bytes', {
+      headers: { 'content-type': 'image/avif' },
+      status: 200
+    }));
+
+    await saveImageUriToLibrary('https://cdn.example.com/photo.avif#original', fetcher);
+
+    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
+      'file:///cache/forum-image-1234.avif',
+      Buffer.from('avif-bytes').toString('base64'),
+      { encoding: FileSystem.EncodingType.Base64 }
+    );
+    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.avif');
+  });
+
+  it('REG-TOPIC-015 prefers the response image type when the URL suffix is misleading', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+    const fetcher = vi.fn<Fetcher>(async () => new Response(svg, {
+      headers: { 'content-type': 'image/svg+xml; charset=utf-8' },
+      status: 200
+    }));
+
+    await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', fetcher);
+
+    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
+      'file:///cache/forum-image-1234.svg',
+      Buffer.from(svg).toString('base64'),
+      { encoding: FileSystem.EncodingType.Base64 }
+    );
+    expect(MediaLibrary.saveToLibraryAsync).toHaveBeenCalledWith('file:///cache/forum-image-1234.svg');
+  });
+
+  it('REG-TOPIC-015 recognizes the legacy SVG response type used by the compatible preview', async () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+    const fetcher = vi.fn<Fetcher>(async () => new Response(svg, {
+      headers: { 'content-type': 'application/svg+xml' },
+      status: 200
+    }));
+
+    await saveImageUriToLibrary('https://cdn.example.com/dynamic-report.png', fetcher);
+
+    expect(FileSystem.writeAsStringAsync).toHaveBeenCalledWith(
+      'file:///cache/forum-image-1234.svg',
+      Buffer.from(svg).toString('base64'),
+      { encoding: FileSystem.EncodingType.Base64 }
+    );
+  });
+
+  it('REG-TOPIC-014 times out a remote image download when native fetch never settles', async () => {
+    vi.useFakeTimers();
+    const fetcher = vi.fn<Fetcher>(() => new Promise<Response>(() => {}));
+    try {
+      const save = saveImageUriToLibrary('https://cdn.example.com/stuck.jpg', fetcher);
+      const observed = Promise.race([
+        save.then(() => 'saved', (error: unknown) => error instanceof Error ? error.message : String(error)),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still-pending'), 16_000))
+      ]);
+
+      await vi.advanceTimersByTimeAsync(16_000);
+
+      await expect(observed).resolves.toBe('请求超时，请稍后重试');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

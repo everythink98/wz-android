@@ -86,9 +86,11 @@ export function useAccountCredentialController({
       }
     );
     if (!result.ok) {
-      if (!('stale' in result)) {
-        notify(`读取保存的登录信息失败：${errorMessage(result.error)}`);
+      if ('stale' in result) {
+        return false;
       }
+      setCredentialSummaries((current) => ({ ...current, ...result.summaries }));
+      notify(`读取保存的登录信息失败：${errorMessage(result.error)}`);
       return false;
     }
     setCredentialSummaries(result.summaries);

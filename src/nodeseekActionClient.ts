@@ -55,7 +55,7 @@ export async function fetchNodeSeekVoteInfo({
 }) {
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
-    throw new Error('请先检测 NodeSeek 登录');
+    throw nodeSeekActionError(null, 401);
   }
   const cleanPollId = pollId.trim();
   if (!/^\d+$/.test(cleanPollId)) {
@@ -108,7 +108,7 @@ export async function runNodeSeekAction({
 }) {
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
-    throw new Error('请先检测 NodeSeek 登录');
+    throw nodeSeekActionError(null, 401);
   }
   const cleanUserAgent = userAgent?.trim();
 

@@ -183,7 +183,7 @@ export async function loadNetworkProxyState() {
   try {
     return normalizeNetworkProxyState(JSON.parse(raw));
   } catch {
-    return createEmptyNetworkProxyState();
+    throw new Error('代理配置已损坏，请重新保存或删除该配置。');
   }
 }
 

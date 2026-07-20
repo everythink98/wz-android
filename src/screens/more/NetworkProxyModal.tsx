@@ -315,6 +315,16 @@ export function NetworkProxyModal({
         {applyError ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{applyError}</Text>
+            {applyStatus === 'failed' ? (
+              <AppButton
+                compact
+                disabled={busy}
+                label="重置为直连"
+                variant="ghost"
+                styles={styles}
+                onPress={() => { void run(() => onSetEnabled(false)); }}
+              />
+            ) : null}
           </View>
         ) : null}
       <ScrollView style={[styles.flex, { backgroundColor: pageColor }]} contentContainerStyle={proxyStyles.content}>

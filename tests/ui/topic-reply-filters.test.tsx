@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '../../src/types';
@@ -12,6 +12,8 @@ import { TopicScreen, YaohuoFavoriteStateProvider } from '../../src/screens/topi
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
 import type { InteractionType } from '../../src/topicActionState';
+
+const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -99,7 +101,7 @@ jest.mock('lucide-react-native', () => {
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
 jest.mock('../../src/discourseSourceReaders', () => ({
-  getDiscourseSourceEmojiUrls: async () => ({})
+  getDiscourseSourceEmojiUrls: () => mockGetDiscourseSourceEmojiUrls()
 }));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
@@ -430,6 +432,29 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
+  it('[REG-XIAOYINSI-017] retries the emoji catalog after a same-topic refresh', async () => {
+    const xiaoyinsiTopic: TopicDetail = {
+      ...topic,
+      source: 'xiaoyinsi',
+      url: 'https://forum.xiaoyinsi.com/t/topic-1'
+    };
+    mockGetDiscourseSourceEmojiUrls.mockClear();
+    mockGetDiscourseSourceEmojiUrls
+      .mockRejectedValueOnce(new Error('temporary emoji failure'))
+      .mockResolvedValue({ heart: 'https://forum.xiaoyinsi.com/heart.png' });
+    const view = await render(
+      <TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />
+    );
+    await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(1));
+
+    const refreshedTopic = { ...xiaoyinsiTopic, title: '刷新后的主题' };
+    await view.rerender(
+      <TopicFilterHarness selectedTopic={refreshedTopic} topicDetail={refreshedTopic} />
+    );
+
+    await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
+  });
+
   it.each(['linuxdo', 'yaohuo', 'xiaoyinsi'] as const)('wires %s topic polls through the source-specific writable path', async (source) => {
     const onVotePoll = jest.fn<(poll: TopicPoll, optionIds: string[]) => void>();
     const sourceTopic: TopicDetail = {

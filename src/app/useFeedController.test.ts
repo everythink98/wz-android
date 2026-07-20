@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
   useEffect: () => undefined,
+  useLayoutEffect: (effect: () => void) => effect(),
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value }),
   useState: <T,>(initial: T | (() => T)) => {
@@ -34,6 +35,7 @@ vi.mock('react-native', () => ({
 }));
 
 import { createEmptyReaderData } from '../readerData';
+import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { setDiagnosticWriter, type DiagnosticEvent, type DiagnosticTrace } from '../diagnostics';
 import type { SourceGateway } from '../sources/sourceGateway';
 import { shouldWaitForReaderDataBeforeFeed, useFeedController } from './useFeedController';
@@ -166,6 +168,170 @@ describe('feed controller helpers', () => {
     expect(recovery.isCurrent()).toBe(true);
     await expect(recovery.resume()).resolves.toBe('completed');
     expect(sourceGateway.getFeed).toHaveBeenCalledTimes(2);
+  });
+
+  it('REG-LINUXDO-002 keeps the feed recovery current when the resumed read still needs verification', async () => {
+    const verificationFailure = {
+      items: [],
+      errors: {
+        linuxdo: {
+          kind: 'verification-required' as const,
+          message: 'linux.do 需要验证',
+          verificationRequired: true
+        }
+      },
+      hasMore: false,
+      nextPage: null
+    };
+    const showLinuxDoVerification = vi.fn();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn()
+        .mockResolvedValueOnce(verificationFailure)
+        .mockResolvedValueOnce(verificationFailure)
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await expect(controller.loadFeed({ source: 'linuxdo', reset: true, nocache: true })).resolves.toBe('verification-required');
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(recovery.isCurrent()).toBe(true);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-LINUXDO-003 reports an ordinary resumed feed failure to the verification owner', async () => {
+    const showLinuxDoVerification = vi.fn();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn()
+        .mockResolvedValueOnce({
+          items: [],
+          errors: {
+            linuxdo: {
+              kind: 'verification-required',
+              message: 'linux.do 需要验证',
+              verificationRequired: true
+            }
+          },
+          hasMore: false,
+          nextPage: null
+        })
+        .mockRejectedValueOnce(new Error('恢复读取网络失败'))
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await controller.loadFeed({ source: 'linuxdo', reset: true, nocache: true });
+
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    await expect(recovery.resume()).resolves.toBe('failed');
+  });
+
+  it('REG-SOURCE-002 rejects an HTTP-success feed result whose candidates all failed to parse', async () => {
+    const notify = vi.fn();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn(async () => annotateSourceDiagnosticSummary({
+        items: [],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      }, {
+        parserVariant: 'rendered-list',
+        candidateCount: 2,
+        validCount: 0,
+        droppedCount: 2,
+        isExpectedEmpty: false
+      }))
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify,
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await expect(controller.loadFeed({ source: 'nodeseek', reset: true })).resolves.toBe('failed');
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('无法解析'));
+  });
+
+  it('REG-SOURCE-002 rejects an aggregate first page when every source candidate failed to parse', async () => {
+    const notify = vi.fn();
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn(async () => annotateSourceDiagnosticSummary({
+        items: [],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      }, {
+        parserVariant: 'aggregate-feed',
+        candidateCount: 5,
+        validCount: 0,
+        droppedCount: 5,
+        isExpectedEmpty: false
+      }))
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify,
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await expect(controller.loadFeed({ source: 'all', reset: true, nocache: true })).resolves.toBe('failed');
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('无法解析'));
+  });
+
+  it('REG-SOURCE-002 does not apply a failed single-source feed page', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const sourceGateway = {
+      hasYaohuoCredential: vi.fn(async () => false),
+      getFeed: vi.fn(async () => ({
+        items: [],
+        errors: {
+          nodeseek: { kind: 'ordinary' as const, message: '第二页请求失败' }
+        },
+        hasMore: false,
+        nextPage: null
+      }))
+    } as unknown as SourceGateway;
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway
+    });
+
+    await expect(controller.loadFeed({ source: 'nodeseek', page: 2 })).resolves.toBe('failed');
+
+    expect(lines.map((line) => JSON.parse(line).phase)).not.toContain('apply');
   });
 
   it('REG-LINUXDO-002 retries the exact failed linux.do feed page and cursor', async () => {

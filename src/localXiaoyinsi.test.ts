@@ -14,6 +14,7 @@ import {
   searchXiaoyinsiUsers
 } from './localXiaoyinsi';
 import { splitDiscourseContentHtml } from './discourseContent';
+import { sourceDiagnosticSummary } from './sourceAdapterDiagnostics';
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -99,6 +100,23 @@ function postsForRequest(url: URL) {
 }
 
 describe('xiaoyinsi adapter', () => {
+  it('drops feed topics when the original author identity is missing', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/latest.json') {
+        return json({
+          users: [],
+          topic_list: {
+            topics: [{ ...topic, posters: [], last_poster_username: 'last-replier' }]
+          }
+        });
+      }
+      return json({ categories: [{ id: 5, name: '生活' }] });
+    });
+
+    await expect(getXiaoyinsiFeed({ fetcher })).resolves.toMatchObject({ items: [] });
+  });
+
   it('loads and absolutizes the site-owned Discourse emoji catalog', async () => {
     const fetcher = vi.fn(async (_input: string) => json({
       'smileys_&_emotion': [
@@ -233,6 +251,38 @@ describe('xiaoyinsi adapter', () => {
       .filter((url) => url.pathname === '/t/42.json' || url.pathname === '/t/42/posts.json');
     expect(postReadUrls.length).toBeGreaterThan(0);
     expect(postReadUrls.every((url) => url.searchParams.get('include_raw') === '1')).toBe(true);
+  });
+
+  it('[REG-XIAOYINSI-018] uses only a reliable topic OP when search matches a reply', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/search.json') {
+        return json({
+          topics: [topic, { ...topic, id: 43, posters: [], last_poster_username: 'last-replier' }],
+          posts: [
+            { topic_id: 42, post_number: 2, username: 'bob', blurb: '命中回复' },
+            { topic_id: 43, post_number: 2, username: 'carol', blurb: '没有楼主身份' }
+          ],
+          users: [{ id: 7, username: 'alice' }, { id: 8, username: 'bob' }],
+          grouped_search_result: { more_full_page_results: false }
+        });
+      }
+      if (url.pathname === '/site.json') {
+        return json({ categories: [{ id: 5, name: '生活' }] });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const result = await searchXiaoyinsi('回复', { fetcher });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ author: 'alice', excerpt: '命中回复' });
+    expect(sourceDiagnosticSummary(result)).toMatchObject({
+      candidateCount: 2,
+      validCount: 1,
+      droppedCount: 1,
+      isExpectedEmpty: false
+    });
   });
 
   it('[REG-XIAOYINSI-010] requests editable raw Markdown only for the independent User API session', async () => {
@@ -391,7 +441,10 @@ describe('xiaoyinsi adapter', () => {
       if (new URL(input).pathname === '/site.json') {
         throw new Error('category service unavailable');
       }
-      return json({ topic_list: { topics: [topic] } });
+      return json({
+        users: [{ id: 7, username: 'alice' }],
+        topic_list: { topics: [topic] }
+      });
     });
 
     const feed = await getXiaoyinsiFeed({ fetcher });
@@ -438,6 +491,33 @@ describe('xiaoyinsi adapter', () => {
     expect(profile).toMatchObject({ hasMoreTopics: true, nextTopicsCursor: '1' });
     expect(nextProfile.topics).toEqual([expect.objectContaining({ id: '43', author: 'alice' })]);
     expect(nextProfile).toMatchObject({ hasMoreTopics: false, nextTopicsCursor: null });
+  });
+
+  it('REG-USER-005 preserves explicit zero statistics for a new Xiaoyinsi user', async () => {
+    const fetcher = vi.fn(async (input: string) => {
+      const url = new URL(input);
+      if (url.pathname === '/u/newbie/summary.json') {
+        return json({
+          user_summary: {
+            topic_count: 0,
+            reply_count: 0,
+            post_count: 0,
+            user: { id: 7, username: 'newbie', name: 'Newbie' }
+          }
+        });
+      }
+      if (url.pathname === '/topics/created-by/newbie.json') {
+        return json({ topic_list: { topics: [] } });
+      }
+      throw new Error(`unexpected ${input}`);
+    });
+
+    const profile = await getXiaoyinsiUserProfile('newbie', 'newbie', {
+      cursorType: 'topics',
+      fetcher
+    });
+
+    expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
   it('requires both credentials before reading the current identity', async () => {

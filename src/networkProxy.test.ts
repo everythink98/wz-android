@@ -14,6 +14,7 @@ import {
   NETWORK_PROXY_STORAGE_KEY,
   applyNetworkProxy,
   createNetworkProxyProfile,
+  loadNetworkProxyState,
   networkProxyModuleFromReactNativeImport,
   networkProxySummary,
   normalizeNetworkProxyState,
@@ -118,6 +119,12 @@ describe('network proxy settings', () => {
       NETWORK_PROXY_STORAGE_KEY,
       expect.stringContaining('demo-password')
     );
+  });
+
+  it('[REG-PROXY-001] rejects a corrupted saved proxy value instead of silently allowing direct traffic', async () => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce('{broken-json');
+
+    await expect(loadNetworkProxyState()).rejects.toThrow('代理配置已损坏');
   });
 
   it('blocks enabled proxy mode when the native module is missing', async () => {

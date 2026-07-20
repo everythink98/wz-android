@@ -41,6 +41,7 @@ import { FORUM_REPLY_REFERENCE_TAG } from '../topicContentHtml';
 import { FORUM_LINK_CARD_TAG, FORUM_TERMINAL_REPORT_TAG, FORUM_TERMINAL_TAB_TAG, FORUM_VIDEO_STICKER_TAG, FORUM_VIDEO_TAG } from '../localHtml';
 import { ForumContentVideo } from '../components/ForumContentVideo';
 import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
+import { cachedCompatibleImageSource, compatibleImageRequestIdentity, recoverCompatibleSvgImageSource } from '../compatibleImageSources';
 
 function isVideoStickerUrl(url: string) {
   return /\.(?:webm|mp4|mov)(?:[?#].*)?$/i.test(url);
@@ -237,19 +238,55 @@ function PreviewImageBlock({
   const headerCookie = headers?.Cookie || '';
   const headerReferer = headers?.Referer || '';
   const headerUserAgent = headers?.['User-Agent'] || '';
-  const requestIdentity = [src, headerAccept, headerCookie, headerReferer, headerUserAgent].join('\u0000');
+  const requestIdentity = compatibleImageRequestIdentity(imageSource);
   const requestIdentityRef = useRef(requestIdentity);
-  requestIdentityRef.current = requestIdentity;
   const [resolvedImage, setResolvedImage] = useState<{ image: ImageRef; requestIdentity: string } | null>(null);
+  const [compatibleImageSource, setCompatibleImageSource] = useState<{ requestIdentity: string; source: ImageURISource } | null>(null);
   const [failedRequestIdentity, setFailedRequestIdentity] = useState('');
   const contentWidth = Math.max(1, imageProps.contentWidth || 1);
-  const imageRef = useImage(imageSource, {
-    maxWidth: Math.ceil(contentWidth * PixelRatio.get()),
-    onError: () => setFailedRequestIdentity(requestIdentityRef.current)
-  }, [headerAccept, headerCookie, headerReferer, headerUserAgent]);
+  const cachedFallbackSource = cachedCompatibleImageSource(imageSource);
+  const activeFallbackSource = compatibleImageSource?.requestIdentity === requestIdentity
+    ? compatibleImageSource.source
+    : cachedFallbackSource;
+  const activeImageSource = activeFallbackSource || imageSource;
+  const maxImageWidth = Math.ceil(contentWidth * PixelRatio.get());
+  const compatibleAspectRatio = activeFallbackSource?.width && activeFallbackSource.height
+    ? activeFallbackSource.height / activeFallbackSource.width
+    : 0;
   useEffect(() => {
+    requestIdentityRef.current = requestIdentity;
+  }, [requestIdentity]);
+  const imageRef = useImage(activeImageSource, {
+    maxWidth: maxImageWidth,
+    ...(compatibleAspectRatio > 0 ? { maxHeight: Math.ceil(maxImageWidth * compatibleAspectRatio) } : {}),
+    onError: () => {
+      if (requestIdentityRef.current !== requestIdentity) {
+        return;
+      }
+      if (activeFallbackSource) {
+        setFailedRequestIdentity(requestIdentity);
+        return;
+      }
+      void recoverCompatibleSvgImageSource(imageSource).then((fallbackSource) => {
+        if (requestIdentityRef.current !== requestIdentity) {
+          return;
+        }
+        if (fallbackSource) {
+          setCompatibleImageSource({ requestIdentity, source: fallbackSource });
+          return;
+        }
+        setFailedRequestIdentity(requestIdentity);
+      }, () => {
+        if (requestIdentityRef.current === requestIdentity) {
+          setFailedRequestIdentity(requestIdentity);
+        }
+      });
+    }
+  }, [activeImageSource.uri, headerAccept, headerCookie, headerReferer, headerUserAgent]);
+  useEffect(() => {
+    // A request-identity change alone must not relabel the previous ImageRef as the new response.
     if (imageRef) {
-      setResolvedImage({ image: imageRef, requestIdentity: requestIdentityRef.current });
+      setResolvedImage({ image: imageRef, requestIdentity });
     }
   }, [imageRef]);
   const activeImageRef = resolvedImage?.requestIdentity === requestIdentity ? resolvedImage.image : null;

@@ -7,6 +7,10 @@ describe('Android local HTML helpers', () => {
     expect(textContentFromHtml('<style>.x{color:red}</style><p>A&nbsp;B<br>C</p><script>alert(1)</script>')).toBe('A B C');
   });
 
+  it('REG-TOPIC-012 does not leak quoted HTML attributes into visible text', () => {
+    expect(textContentFromHtml('<p>正文<img alt="1 > 0" src="photo.png"></p><p>结尾</p>')).toBe('正文 结尾');
+  });
+
   it('removes unsafe link and media protocols from sanitized content', () => {
     const result = sanitizeContentHtml(`
       <a href="javascript:alert(1)">js</a>

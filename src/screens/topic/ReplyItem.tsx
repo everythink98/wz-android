@@ -380,7 +380,7 @@ export function ReplyItem({
               <TopicPolls
                 key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                 actionBusy={actionBusy}
-                canWritePollSource={canWrite}
+                canWritePollSource={canUseDiscourseActions}
                 keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
                 onTogglePollSelection={onTogglePollSelection}
                 onVotePoll={onVotePoll}

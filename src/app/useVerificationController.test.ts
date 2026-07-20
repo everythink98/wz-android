@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
+  useLayoutEffect: (effect: () => void) => effect(),
   useRef: <T,>(value: T) => ({ current: value })
 }));
 
@@ -54,6 +55,7 @@ const ref = <T,>(current: T) => ({ current });
 function createController() {
   const showLinuxDoPanelRef = ref(false);
   const linuxDoWebViewSessionRef = ref(0);
+  const linuxDoWebViewCookieHeaderRef = ref('');
   const linuxDoWebViewRef = ref({
     injectJavaScript: vi.fn(),
     stopLoading: vi.fn()
@@ -70,7 +72,7 @@ function createController() {
     linuxDoPanelCloseSettleTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoRequireFreshClearanceRef: ref(false),
     linuxDoWebViewCookieHeader: '',
-    linuxDoWebViewCookieHeaderRef: ref(''),
+    linuxDoWebViewCookieHeaderRef,
     linuxDoWebViewMountTimerRef: ref<ReturnType<typeof setTimeout> | null>(null),
     linuxDoWebViewRef: linuxDoWebViewRef as never,
     linuxDoWebViewSessionRef,
@@ -97,7 +99,15 @@ function createController() {
     updateLinuxDoSession,
     updateNodeSeekSession: vi.fn()
   });
-  return { controller, linuxDoWebViewSessionRef, onLoginWebViewFailure, showLinuxDoPanelRef, updateLinuxDoSession };
+  const handleLinuxDoMessage = controller.handleLinuxDoMessage;
+  controller.handleLinuxDoMessage = (event, webViewKey) => handleLinuxDoMessage({
+    ...event,
+    nativeEvent: {
+      ...event.nativeEvent,
+      url: event.nativeEvent.url || 'https://linux.do/latest'
+    }
+  }, webViewKey);
+  return { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewRef, linuxDoWebViewSessionRef, onLoginWebViewFailure, showLinuxDoPanelRef, updateLinuxDoSession };
 }
 
 afterEach(() => {
@@ -108,6 +118,24 @@ afterEach(() => {
 });
 
 describe('linux.do visible verification diagnostics', () => {
+  it('rejects a forged verification message from a third-party frame', () => {
+    const { controller, linuxDoWebViewCookieHeaderRef, linuxDoWebViewSessionRef, showLinuxDoPanelRef } = createController();
+    showLinuxDoPanelRef.current = true;
+
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          cookie: 'FORGED_COOKIE_SECRET',
+          userAgent: 'FORGED_USER_AGENT_SECRET'
+        }),
+        url: 'https://evil.example/frame'
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+
+    expect(linuxDoWebViewCookieHeaderRef.current).toBe('');
+  });
+
   it('keeps the Account manual panel open and records an explicit check as cookie-loaded', async () => {
     vi.useFakeTimers();
     linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
@@ -201,6 +229,42 @@ describe('linux.do visible verification diagnostics', () => {
     await explicitCheck;
 
     expect(resume).toHaveBeenCalledTimes(2);
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('REG-LINUXDO-003 does not claim success when the resumed read fails normally', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue(null);
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
+      cf_clearance: { name: 'PRIVATE_COOKIE_NAME', value: 'COOKIE_VALUE_SECRET' }
+    });
+    linuxDoMocks.saveLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'COOKIE_VALUE_SECRET',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+    const resume = vi.fn(async () => 'failed' as const);
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+
+    await controller.showLinuxDoVerification('需要验证', {
+      key: 'feed:linuxdo:ordinary-failure',
+      isCurrent: () => true,
+      resume
+    });
+    await vi.advanceTimersByTimeAsync(80);
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    await vi.runAllTimersAsync();
+
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(updateLinuxDoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'verification-succeeded' }));
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
@@ -516,12 +580,13 @@ describe('linux.do visible verification diagnostics', () => {
     ]);
   });
 
-  it('finishes LinuxDo verification when another verification panel replaces it', () => {
+  it('finishes and invalidates LinuxDo verification when another verification panel replaces it', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
-    const { controller } = createController();
+    const { controller, linuxDoWebViewRef, linuxDoWebViewSessionRef } = createController();
 
     controller.changeLinuxDoPanel(true);
+    const previousSession = linuxDoWebViewSessionRef.current;
     controller.showNodeSeekVerification();
 
     const terminalEvents = lines
@@ -530,6 +595,8 @@ describe('linux.do visible verification diagnostics', () => {
     expect(terminalEvents).toEqual([
       expect.objectContaining({ outcome: 'canceled', reason: 'superseded' })
     ]);
+    expect(linuxDoWebViewSessionRef.current).toBeGreaterThan(previousSession);
+    expect(linuxDoWebViewRef.current.stopLoading).toHaveBeenCalled();
   });
 
   it('records renderer loss as the terminal WebView failure', () => {

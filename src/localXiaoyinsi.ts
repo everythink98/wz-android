@@ -126,6 +126,14 @@ function positiveNumber(value: unknown) {
   return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
+function nonNegativeNumber(value: unknown) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
+    return undefined;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
 function topicId(value: unknown) {
   const text = String(value || '').trim();
   return /^\d+$/.test(text) && Number(text) > 0 ? text : '';
@@ -203,15 +211,18 @@ function normalizeTopic(
     return null;
   }
   const createdBy = isRecord(raw.details) && isRecord(raw.details.created_by) ? raw.details.created_by : {};
-  const author = String(authorData?.username || createdBy.username || raw.last_poster_username || '').trim();
+  const author = String(authorData?.username || createdBy.username || '').trim();
+  if (!author) {
+    return null;
+  }
   const trustLevel = levelLabel(authorData) || levelLabel(createdBy);
   return {
     ...fields,
     source: 'xiaoyinsi',
     author,
-    authorId: author || undefined,
+    authorId: author,
     authorAvatar: avatarUrl(authorData?.avatar_template || createdBy.avatar_template),
-    authorUrl: author ? userUrl(author) : undefined,
+    authorUrl: userUrl(author),
     category: fields.categoryId ? categories.get(fields.categoryId) || '未分类' : '未分类',
     url: `${XIAOYINSI_BASE_URL}/t/${raw.slug || fields.id}/${fields.id}`,
     createdAt: fields.createdAt,
@@ -483,12 +494,12 @@ async function topicsFromSearch(data: Record<string, unknown>, options: Xiaoyins
       return [];
     }
     const post = postsByTopic.get(String(raw.id));
-    const authorData = post || discourseOriginalPoster(raw, users);
+    const authorData = discourseOriginalPoster(raw, users) || (Number(post?.post_number) === 1 ? post : undefined);
     const topic = normalizeTopic(raw, categories, authorData);
     return topic ? [{ ...topic, excerpt: textExcerpt(post?.blurb || topic.excerpt || '') }] : [];
   });
   const grouped = isRecord(data.grouped_search_result) ? data.grouped_search_result : {};
-  return { items, hasMore: Boolean(grouped.more_full_page_results), options };
+  return { items, candidateCount: rawTopics.length, hasMore: Boolean(grouped.more_full_page_results) };
 }
 
 export async function searchXiaoyinsi(query: string, options: XiaoyinsiOptions & { page?: number; limit?: number } = {}): Promise<SearchResponse> {
@@ -503,10 +514,10 @@ export async function searchXiaoyinsi(query: string, options: XiaoyinsiOptions &
   const items = parsed.items.slice(0, limit);
   return annotateSourceDiagnosticSummary({ items, errors: {}, hasMore: parsed.hasMore, nextPage: parsed.hasMore ? page + 1 : null }, {
     parserVariant: 'xiaoyinsi-discourse-search',
-    candidateCount: parsed.items.length,
+    candidateCount: parsed.candidateCount,
     validCount: items.length,
-    droppedCount: Math.max(0, parsed.items.length - items.length),
-    isExpectedEmpty: parsed.items.length === 0
+    droppedCount: Math.max(0, parsed.candidateCount - items.length),
+    isExpectedEmpty: parsed.candidateCount === 0
   });
 }
 
@@ -650,9 +661,9 @@ export async function getXiaoyinsiUserProfile(id: string, username: string, opti
     avatar: avatarUrl(user.avatar_template),
     url: userUrl(resolvedUsername),
     bio: typeof user.bio_raw === 'string' ? user.bio_raw : typeof user.bio_excerpt === 'string' ? user.bio_excerpt : undefined,
-    topicCount: positiveNumber(summary.topic_count) || topics.length || undefined,
-    replyCount: positiveNumber(summary.reply_count),
-    postCount: positiveNumber(summary.post_count),
+    topicCount: nonNegativeNumber(summary.topic_count) ?? (topics.length || undefined),
+    replyCount: nonNegativeNumber(summary.reply_count),
+    postCount: nonNegativeNumber(summary.post_count),
     ...(trustLevel ? { levelLabel: trustLevel } : {}),
     topics: sortTopicsByCreatedAt(topics),
     hasMoreTopics: Boolean(topicList.more_topics_url),

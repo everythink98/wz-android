@@ -9,7 +9,7 @@ import {
   type DiscourseLevelRequirement,
   type DiscourseSummaryInput
 } from './discourseLevel';
-import { fetchWithTimeout, type Fetcher } from './request';
+import { fetchWithTimeout, REQUEST_CANCELED_MESSAGE, type Fetcher } from './request';
 
 const BASE_URL = 'https://linux.do';
 const CONNECT_URL = 'https://connect.linux.do/';
@@ -360,15 +360,29 @@ export async function getLinuxDoLevelProfile({
   cookieHeader,
   userAgent,
   fetcher = fetch,
+  isCurrent = () => true,
   signal,
   timeoutMs
 }: {
   cookieHeader: string;
   userAgent?: string;
   fetcher?: Fetcher;
+  isCurrent?: () => boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }) {
+  const assertCurrent = () => {
+    if (!isCurrent() || signal?.aborted) {
+      throw new Error(REQUEST_CANCELED_MESSAGE);
+    }
+  };
+  const throwIfCanceled = (error: unknown) => {
+    assertCurrent();
+    if (error instanceof Error && error.message === REQUEST_CANCELED_MESSAGE) {
+      throw error;
+    }
+  };
+  assertCurrent();
   const cleanCookie = cookieHeader.trim();
   if (!cleanCookie) {
     throw new Error('请先登录 linux.do');
@@ -384,15 +398,21 @@ export async function getLinuxDoLevelProfile({
   let currentUser: LinuxDoCurrentUser | null = null;
   try {
     data = await fetchLinuxDoJson('/my/summary.json', requestOptions);
-  } catch {
+    assertCurrent();
+  } catch (error) {
+    throwIfCanceled(error);
     currentUser = await fetchCurrentUser(requestOptions);
+    assertCurrent();
     data = await fetchLinuxDoJson(`/u/${encodeURIComponent(currentUser.username)}/summary.json`, requestOptions);
+    assertCurrent();
   }
   const summary = normalizeSummaryPayload(data);
   if (!currentUser && (!hasTrustLevel(summary) || !hasUsername(summary))) {
     try {
       currentUser = await fetchCurrentUser(requestOptions);
-    } catch {
+      assertCurrent();
+    } catch (error) {
+      throwIfCanceled(error);
       currentUser = null;
     }
   }
@@ -401,13 +421,18 @@ export async function getLinuxDoLevelProfile({
   if (profile.currentLevel >= 2) {
     try {
       const html = await fetchLinuxDoConnectHtml(requestOptions);
+      assertCurrent();
       nextProfile = parseLinuxDoConnectProgress(html, profile);
-    } catch {
+    } catch (error) {
+      throwIfCanceled(error);
       nextProfile = profile;
     }
   }
+  assertCurrent();
   const snapshot = await loadSnapshot(nextProfile.username);
+  assertCurrent();
   const profileWithChange = withSnapshotChange(nextProfile, snapshot);
   await saveSnapshot(nextProfile);
+  assertCurrent();
   return profileWithChange;
 }

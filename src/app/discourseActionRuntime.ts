@@ -9,7 +9,7 @@ import type { Fetcher } from '../request';
 import type { DiscourseSource } from '../sourceCatalog';
 import type { SiteSessionEvent } from '../siteSessionState';
 import { runXiaoyinsiAction } from '../xiaoyinsiActionClient';
-import { loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
+import { currentXiaoyinsiCredentialGeneration, loadXiaoyinsiCredentials } from '../xiaoyinsiAuth';
 import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
 
 export type DiscourseActionRuntimeDependencies = {
@@ -26,6 +26,7 @@ export type DiscourseActionRuntimeContext = DiscourseActionRuntimeDependencies &
 export type DiscourseActionRuntimeRecovery = {
   loginRequired: boolean;
   phase: 'credential' | 'transport';
+  stale?: boolean;
 };
 
 export type PreparedDiscourseActionRuntime = {
@@ -33,6 +34,7 @@ export type PreparedDiscourseActionRuntime = {
   credentialSource: 'secure-store';
   csrfSource: 'none' | 'session-endpoint';
   execute?: (request: DiscourseActionRequest, signal: AbortSignal) => Promise<unknown>;
+  isCredentialCurrent?: () => boolean;
   onMissingCredential?: () => void;
   recover: (error: unknown) => Promise<DiscourseActionRuntimeRecovery>;
 };
@@ -49,12 +51,14 @@ const discourseActionRuntimes = {
   linuxdo: {
     prepare: async (context) => {
       const generation = currentLinuxDoAccessGeneration();
+      const isCredentialCurrent = () => currentLinuxDoAccessGeneration() === generation;
       const access = await loadLinuxDoAccess();
       const credentialReady = Boolean(access?.cookieHeader && linuxDoAccessSummary(access).loggedIn);
       return {
         credentialReady,
         credentialSource: 'secure-store',
         csrfSource: 'session-endpoint',
+        isCredentialCurrent,
         ...(!credentialReady ? {
           onMissingCredential: () => context.updateLinuxDoSession({
             type: 'login-expired',
@@ -70,16 +74,22 @@ const discourseActionRuntimes = {
           })
         }),
         recover: async (error: unknown) => {
+          if (!isCredentialCurrent()) {
+            return { loginRequired: false, phase: 'credential' as const, stale: true };
+          }
           if (!hasFlag(error, 'loginRequired')) {
             return { loginRequired: false, phase: 'transport' as const };
           }
-          await clearExpiredLinuxDoLogin({
+          const recovered = await clearExpiredLinuxDoLogin({
             error,
             generation,
             cookieHeader: access?.cookieHeader,
             resetLinuxDoLevelState: context.resetLinuxDoLevelState,
             updateLinuxDoSession: context.updateLinuxDoSession
           });
+          if (!recovered || !isCredentialCurrent()) {
+            return { loginRequired: false, phase: 'credential' as const, stale: true };
+          }
           return { loginRequired: true, phase: 'credential' as const };
         }
       };
@@ -87,11 +97,14 @@ const discourseActionRuntimes = {
   },
   xiaoyinsi: {
     prepare: async (context) => {
+      const generation = currentXiaoyinsiCredentialGeneration();
+      const isCredentialCurrent = () => currentXiaoyinsiCredentialGeneration() === generation;
       const credentials = await loadXiaoyinsiCredentials();
       return {
         credentialReady: Boolean(credentials),
         credentialSource: 'secure-store',
         csrfSource: 'none',
+        isCredentialCurrent,
         ...(credentials ? {
           execute: (request: DiscourseActionRequest, signal: AbortSignal) => runXiaoyinsiAction({
             credentials,
@@ -101,12 +114,22 @@ const discourseActionRuntimes = {
           })
         } : {}),
         recover: async (error: unknown) => {
+          if (!isCredentialCurrent()) {
+            return { loginRequired: false, phase: 'credential' as const, stale: true };
+          }
           const authorizationCheckRequired = hasFlag(error, 'authorizationCheckRequired');
+          let authorizationStillValid: boolean | null | undefined;
           if (authorizationCheckRequired) {
-            await context.refreshXiaoyinsiAuthorization();
+            authorizationStillValid = await context.refreshXiaoyinsiAuthorization();
+            if (authorizationStillValid === null) {
+              throw new Error('小隐寺授权状态复核未完成');
+            }
+          }
+          if (!isCredentialCurrent()) {
+            return { loginRequired: false, phase: 'credential' as const, stale: true };
           }
           return {
-            loginRequired: hasFlag(error, 'loginRequired'),
+            loginRequired: hasFlag(error, 'loginRequired') || authorizationStillValid === false,
             phase: authorizationCheckRequired ? 'credential' as const : 'transport' as const
           };
         }
