@@ -40,8 +40,11 @@ import { setDiagnosticWriter, type DiagnosticEvent, type DiagnosticTrace } from 
 import type { SourceGateway } from '../sources/sourceGateway';
 import { shouldWaitForReaderDataBeforeFeed, useFeedController } from './useFeedController';
 import type { FeedResponse, Topic } from '../types';
+import { appQueryClient } from './serverState';
+import { REQUEST_CANCELED_MESSAGE } from '../request';
 
 afterEach(() => {
+  appQueryClient.clear();
   setDiagnosticWriter(null);
   vi.clearAllMocks();
 });
@@ -130,6 +133,43 @@ describe('feed controller helpers', () => {
       expect.objectContaining({ outcome: 'success' })
     ]));
     expect(new Set(terminalEvents.map((event) => event.traceId)).size).toBe(2);
+  });
+
+  it('deduplicates concurrent resets for the same feed key while only the latest caller applies the result', async () => {
+    const topic: Topic = {
+      source: 'nodeseek',
+      id: '1',
+      title: 'result',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-1-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const pending = Promise.withResolvers<void>();
+    const getFeed = vi.fn(async (_options: unknown, context?: { isCurrent?: () => boolean }) => {
+      await pending.promise;
+      if (context?.isCurrent?.() === false) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
+      return { items: [topic], errors: {}, hasMore: false, nextPage: null };
+    });
+    const controller = useFeedController({
+      notify: vi.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { getFeed } as unknown as SourceGateway
+    });
+
+    const first = controller.loadFeed({ source: 'nodeseek', reset: true });
+    await vi.waitFor(() => expect(getFeed).toHaveBeenCalledTimes(1));
+    const second = controller.loadFeed({ source: 'nodeseek', reset: true });
+    pending.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['stale', 'completed']);
+    expect(getFeed).toHaveBeenCalledTimes(1);
   });
 
   it('gives linux.do verification an exact read recovery that reports the resumed outcome', async () => {

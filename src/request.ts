@@ -10,6 +10,62 @@ export interface FetchWithTimeoutOptions {
   timeoutMs?: number;
 }
 
+let requestTimeoutsActive = true;
+const requestTimeoutStateListeners = new Set<(active: boolean) => void>();
+
+export function setRequestTimeoutsActive(active: boolean) {
+  if (requestTimeoutsActive === active) {
+    return;
+  }
+  requestTimeoutsActive = active;
+  [...requestTimeoutStateListeners].forEach((listener) => listener(active));
+}
+
+export function scheduleRequestTimeout(callback: () => void, timeoutMs: number) {
+  let remainingMs = timeoutMs;
+  let startedAt = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let canceled = false;
+
+  const stopTimer = (subtractElapsed: boolean) => {
+    if (timer === undefined) {
+      return;
+    }
+    clearTimeout(timer);
+    timer = undefined;
+    if (subtractElapsed) {
+      remainingMs = Math.max(0, remainingMs - (Date.now() - startedAt));
+    }
+  };
+  const schedule = () => {
+    if (canceled || !requestTimeoutsActive || timer !== undefined) {
+      return;
+    }
+    startedAt = Date.now();
+    timer = setTimeout(() => {
+      timer = undefined;
+      canceled = true;
+      requestTimeoutStateListeners.delete(handleActiveChange);
+      callback();
+    }, remainingMs);
+  };
+  const handleActiveChange = (active: boolean) => {
+    if (active) {
+      schedule();
+    } else {
+      stopTimer(true);
+    }
+  };
+
+  requestTimeoutStateListeners.add(handleActiveChange);
+  schedule();
+  return () => {
+    canceled = true;
+    stopTimer(false);
+    requestTimeoutStateListeners.delete(handleActiveChange);
+  };
+}
+
 export async function fetchWithTimeout(
   input: string,
   init: RequestInit = {},
@@ -21,7 +77,7 @@ export async function fetchWithTimeout(
 ) {
   const controller = new AbortController();
   let timedOut = false;
-  let abortTimeout: ReturnType<typeof setTimeout> | undefined;
+  let cancelTimeout: (() => void) | undefined;
   const signals = [init.signal, signal].filter(Boolean) as AbortSignal[];
   const abortFromParent = () => controller.abort();
   for (const item of signals) {
@@ -42,9 +98,9 @@ export async function fetchWithTimeout(
   });
   const timeoutPromise = timeoutMs > 0
     ? new Promise<never>((_resolve, reject) => {
-      abortTimeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
+      cancelTimeout = scheduleRequestTimeout(() => {
+        timedOut = true;
+        controller.abort();
         reject(new Error(REQUEST_TIMEOUT_MESSAGE));
       }, timeoutMs);
     })
@@ -60,9 +116,7 @@ export async function fetchWithTimeout(
       });
     return await Promise.race(timeoutPromise ? [fetchPromise, abortPromise, timeoutPromise] : [fetchPromise, abortPromise]);
   } finally {
-    if (abortTimeout) {
-      clearTimeout(abortTimeout);
-    }
+    cancelTimeout?.();
     for (const item of signals) {
       item.removeEventListener('abort', abortFromParent);
     }

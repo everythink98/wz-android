@@ -49,6 +49,7 @@ import {
   shouldHandleBrowserHttpError,
   shouldKeepQueuedBrowserFetchRequest,
   shouldPreemptBrowserFetchRequest,
+  siteSessionEventInvalidatesForumQueries,
   startNextBrowserFetchRequest,
   takeNodeSeekVerificationRetry,
   type BrowserFetchQueueRequest,
@@ -95,6 +96,46 @@ function createTestSessionController(
 }
 
 describe('session controller helpers', () => {
+  it('invalidates source queries only when session credentials can have changed', () => {
+    expect(siteSessionEventInvalidatesForumQueries({
+      type: 'cookie-loaded',
+      cookieSummary: ['session'],
+      hasVerification: true,
+      loggedIn: true
+    })).toBe(false);
+    expect(siteSessionEventInvalidatesForumQueries({
+      type: 'session-updated',
+      cookieSummary: ['session'],
+      hasVerification: true,
+      loggedIn: true
+    })).toBe(true);
+    expect(siteSessionEventInvalidatesForumQueries({ type: 'check-failed', message: 'offline' })).toBe(false);
+    expect(siteSessionEventInvalidatesForumQueries({ type: 'login-detected' })).toBe(true);
+    expect(siteSessionEventInvalidatesForumQueries({
+      type: 'verification-succeeded',
+      loggedIn: false,
+      at: '2026-07-20T00:00:00.000Z'
+    })).toBe(false);
+    expect(siteSessionEventInvalidatesForumQueries({ type: 'login-expired' })).toBe(true);
+    expect(siteSessionEventInvalidatesForumQueries({ type: 'cleared' })).toBe(true);
+  });
+
+  it('publishes an explicit credential update when a new NodeSeek cookie generation is saved', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+
+    await controller.saveNodeSeekCookieHeader({
+      session: { name: 'session', value: 'new-login-cookie' }
+    });
+
+    expect(lines.map((line) => JSON.parse(line))).toContainEqual(expect.objectContaining({
+      area: 'session',
+      operation: 'state-transition',
+      eventType: 'session-updated'
+    }));
+  });
+
   it.each([
     ['NodeSeek', 'clearNodeSeekLoginState'],
     ['妖火', 'clearYaohuoLoginState']

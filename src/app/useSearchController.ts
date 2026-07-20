@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isCancelledError } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { aggregateSearchSources } from '../sourceCatalog';
 import {
@@ -22,13 +23,7 @@ import {
   type DiagnosticOutcome,
   type DiagnosticReason
 } from '../diagnostics';
-import {
-  finishAbortableRequest,
-  isCanceledRequest,
-  sourceLabel,
-  startAbortableRequest
-} from '../appUtils';
-import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
+import { isCanceledRequest, sourceLabel } from '../appUtils';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
@@ -54,6 +49,11 @@ import {
   type SearchRunOptions
 } from '../searchControllerResults';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+import {
+  appQueryClient,
+  forumQueryKeys,
+  subscribeForumSourceResets
+} from './serverState';
 
 const SEARCH_HISTORY_STORAGE_KEY = 'reader-search-history';
 type SearchRunInput = Source | (Partial<SearchRunOptions> & { suppressLinuxDoVerification?: boolean });
@@ -72,6 +72,14 @@ function diagnosticReasonForSearchError(error?: SourceErrorInfo): DiagnosticReas
   if (error?.kind === 'verification-required') return 'verification_required';
   if (error?.kind === 'permission-denied') return 'permission_denied';
   return error ? normalizeDiagnosticReason(error.message) : 'unknown';
+}
+
+function isCanceledSearchQuery(error: unknown) {
+  return isCancelledError(error) || isCanceledRequest(error);
+}
+
+export function hasNextSearchPage(hasMore: boolean | undefined, nextPage: number | null | undefined, requestedPage: number) {
+  return Boolean(hasMore && nextPage && nextPage !== requestedPage);
 }
 
 export function useSearchController({
@@ -93,11 +101,13 @@ export function useSearchController({
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
 }) {
-  const searchRequestIdRef = useRef(0);
-  const searchRequestOwnerRef = useRef(createRequestOwner('search'));
-  const searchAbortRef = useRef<AbortController | null>(null);
-  const linuxDoAiAbortRef = useRef<AbortController | null>(null);
-  const linuxDoAiRequestIdRef = useRef(0);
+  const searchRecoveryGenerationRef = useRef(0);
+  const activeSearchRecoveryRef = useRef<{
+    key: string;
+    lane: 'root' | 'more';
+    source: Source;
+  } | null>(null);
+  const linuxDoAiGenerationRef = useRef(0);
   const linuxDoAiQueryRef = useRef('');
   const searchGroupsRef = useRef<SearchGroup[]>([]);
   const searchQueryRef = useRef('');
@@ -105,7 +115,6 @@ export function useSearchController({
   const submittedSearchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
   const submittedSearchSourceRef = useRef<FeedSource>('all');
   const searchFiltersRef = useRef<SearchFilterState>(DEFAULT_SEARCH_FILTERS);
-  const searchVisitedPagesRef = useRef<Record<string, Set<number>>>({});
   const runSearchRef = useRef<((options?: SearchRunInput) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const loadMoreSearchSourceRef = useRef<((source: Source, page: number, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const recentSearchWriteQueueRef = useRef(createSearchHistoryWriteQueue());
@@ -208,17 +217,17 @@ export function useSearchController({
   }, [retryRecentSearchHistoryRead]);
 
   const clearLinuxDoAiSearch = useCallback(() => {
-    linuxDoAiRequestIdRef.current += 1;
-    linuxDoAiAbortRef.current?.abort();
-    linuxDoAiAbortRef.current = null;
+    linuxDoAiGenerationRef.current += 1;
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'semantic-search'
+    });
     linuxDoAiQueryRef.current = '';
     setLinuxDoAiItems([]);
     setLinuxDoAiState({ status: 'idle', enabled: false, count: 0 });
   }, []);
 
   const runLinuxDoAiSearch = useCallback((fullQuery: string) => {
-    const controller = startAbortableRequest(linuxDoAiAbortRef);
-    const requestId = ++linuxDoAiRequestIdRef.current;
+    const requestGeneration = ++linuxDoAiGenerationRef.current;
     const trace = beginDiagnosticTrace('search', 'searchSemanticTopics', { source: 'linuxdo' });
     let traceFinished = false;
     const finishTrace = (outcome: DiagnosticOutcome, fields: DiagnosticFields = {}) => {
@@ -227,22 +236,34 @@ export function useSearchController({
         finishDiagnosticTrace(trace, outcome, fields);
       }
     };
-    const isCurrent = () => requestId === linuxDoAiRequestIdRef.current && !controller.signal.aborted;
+    let querySignal: AbortSignal | undefined;
+    const isCurrent = () => requestGeneration === linuxDoAiGenerationRef.current && !querySignal?.aborted;
+    const queryKey = forumQueryKeys.semanticSearch('linuxdo', fullQuery);
     linuxDoAiQueryRef.current = fullQuery;
     setLinuxDoAiItems([]);
     setLinuxDoAiState({ status: 'loading', enabled: false, count: 0 });
     markDiagnosticStage(trace, 'guard', { source: 'linuxdo', state: 'started' });
     void (async () => {
       try {
-        const result = await sourceGateway.searchSemanticTopics({
-          source: 'linuxdo',
-          query: fullQuery,
-          signal: controller.signal
-        }, { trace, isCurrent });
+        const result = await appQueryClient.fetchQuery({
+          queryKey,
+          queryFn: async ({ signal }) => {
+            querySignal = signal;
+            const result = await sourceGateway.searchSemanticTopics({
+              source: 'linuxdo',
+              query: fullQuery,
+              signal
+            }, { trace, isCurrent: () => !signal.aborted });
+            if (!result) {
+              throw new Error('AI 搜索未返回结果');
+            }
+            return result;
+          }
+        });
         if (!isCurrent()) {
-          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
             source: 'linuxdo',
-            reason: controller.signal.aborted ? 'canceled' : 'superseded'
+            reason: querySignal?.aborted ? 'canceled' : 'superseded'
           });
           return;
         }
@@ -253,11 +274,11 @@ export function useSearchController({
           : { status: 'empty', enabled: false, count: 0, message: '未找到 AI 结果' });
         finishTrace('success', { source: 'linuxdo', itemCount: result.items.length });
       } catch (error) {
-        if (controller.signal.aborted || isCanceledRequest(error)) {
+        if (isCanceledSearchQuery(error)) {
           finishTrace('canceled', { source: 'linuxdo', reason: 'canceled' });
           return;
         }
-        if (requestId !== linuxDoAiRequestIdRef.current) {
+        if (requestGeneration !== linuxDoAiGenerationRef.current) {
           finishTrace('stale', { source: 'linuxdo', reason: 'superseded' });
           return;
         }
@@ -271,19 +292,48 @@ export function useSearchController({
         );
       } finally {
         if (!traceFinished) {
-          finishTrace(isCurrent() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+          finishTrace(isCurrent() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
             source: 'linuxdo',
-            reason: isCurrent() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+            reason: isCurrent() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
           });
         }
-        finishAbortableRequest(linuxDoAiAbortRef, controller);
       }
     })();
   }, [sourceGateway]);
 
+  useEffect(() => subscribeForumSourceResets(({ source, preserveRecoveryKey }) => {
+    const activeRecovery = activeSearchRecoveryRef.current;
+    const preservedRecovery = activeRecovery
+      && activeRecovery.key === preserveRecoveryKey
+      && activeRecovery.source === source
+      ? activeRecovery
+      : null;
+    if (submittedSearchSourceRef.current === source && !preservedRecovery) {
+      searchRecoveryGenerationRef.current += 1;
+      setSearchBusy(false);
+    }
+    if (!preservedRecovery) {
+      activeSearchRecoveryRef.current = null;
+    }
+    const nextGroups = preservedRecovery
+      ? searchGroupsRef.current.map((group) => group.source === source
+        ? preservedRecovery.lane === 'more'
+          ? { ...group, loading: false, loadingMore: false, error: undefined, errorKind: undefined }
+          : { ...group, items: [], loading: false, loadingMore: false, error: undefined, errorKind: undefined, hasMore: false, nextPage: null }
+        : group)
+      : searchGroupsRef.current.filter((group) => group.source !== source);
+    searchGroupsRef.current = nextGroups;
+    setSearchGroups(nextGroups);
+    if (source === 'linuxdo') {
+      clearLinuxDoAiSearch();
+    }
+  }), [clearLinuxDoAiSearch]);
+
   const clearSearchResults = useCallback(() => {
-    searchRequestIdRef.current += 1;
-    searchAbortRef.current?.abort();
+    searchRecoveryGenerationRef.current += 1;
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'search'
+    });
     setSearchGroups([]);
     searchGroupsRef.current = [];
     setSearchBusy(false);
@@ -440,22 +490,19 @@ export function useSearchController({
     submittedSearchFiltersRef.current = snapshotSearchFilters(requestFilters);
     submittedSearchSourceRef.current = requestSearchSource;
     setSubmittedSearchQuery(query);
-    const controller = startAbortableRequest(searchAbortRef);
-    const requestId = ++searchRequestIdRef.current;
+    const requestGeneration = ++searchRecoveryGenerationRef.current;
+    activeSearchRecoveryRef.current = null;
     const activeFilter = requestSearchSource === 'all'
       ? undefined
       : requestFilters[(sourceOverride || requestSearchSource) as Source];
     const requestFilter = requestSearchSource === 'all' ? undefined : activeFilter;
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`);
-    const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
-    let recoveryRequestOwner = requestOwner;
-    let recoveryRequestId = requestId;
+    let recoveryGeneration = requestGeneration;
+    const isCurrentSearchRequest = () => searchRecoveryGenerationRef.current === requestGeneration;
     const isCurrentSearchRecovery = () => (
-      isCurrentOwnedRequest(recoveryRequestOwner, searchRequestOwnerRef)
-      && recoveryRequestId === searchRequestIdRef.current
+      searchRecoveryGenerationRef.current === recoveryGeneration
     );
     const linuxDoRecovery = (): LinuxDoReadRecovery => ({
-      key: requestOwner.key,
+      key: `search:${sourceOverride || requestSearchSource}:${query}:${JSON.stringify(activeFilter || {})}`,
       isCurrent: isCurrentSearchRecovery,
       resume: async () => {
         if (!isCurrentSearchRecovery()) {
@@ -471,9 +518,9 @@ export function useSearchController({
         if (!resumedRequest) {
           return 'stale';
         }
-        recoveryRequestOwner = searchRequestOwnerRef.current;
-        recoveryRequestId = searchRequestIdRef.current;
-        return await resumedRequest;
+        const outcome = await resumedRequest;
+        recoveryGeneration = searchRecoveryGenerationRef.current;
+        return outcome;
       }
     });
     const activeSources = sourceOverride
@@ -487,9 +534,6 @@ export function useSearchController({
       state: sourceOverride ? 'retry' : 'started',
       count: activeSources.length
     });
-    if (!sourceOverride) {
-      searchVisitedPagesRef.current = {};
-    }
     if (sourceOverride) {
       const nextGroups = searchGroupsRef.current.map((group) => (
         group.source === sourceOverride ? { ...group, loading: true, loadingMore: false, error: undefined } : { ...group, loading: false, loadingMore: false }
@@ -506,12 +550,43 @@ export function useSearchController({
       addRecentSearch(query);
       const resultsBySource: Partial<Record<Source, RemoteSearchSourceResult>> = {};
       await Promise.all(activeSources.map(async (source) => {
-        const result = await runRemoteSearchSource(source, query, 1, controller.signal, activeSort, requestFilter, {
-          isCurrent: () => isCurrentSearchRequest(),
-          trace
-        });
+        const sourceFilter = requestFilter?.source === source ? requestFilter : undefined;
+        const requestKey = JSON.stringify({ query, page: 1, sort: activeSort, filter: sourceFilter || null });
+        const queryKey = forumQueryKeys.search(source, requestKey);
+        if (sourceOverride) {
+          void appQueryClient.cancelQueries({ queryKey, exact: true });
+          appQueryClient.removeQueries({ queryKey, exact: true });
+        }
+        let result: RemoteSearchSourceResult;
+        try {
+          result = await appQueryClient.fetchQuery({
+            queryKey,
+            staleTime: 0,
+            queryFn: ({ signal }) => runRemoteSearchSource(source, query, 1, signal, activeSort, sourceFilter, {
+              isCurrent: () => !signal.aborted,
+              trace
+            })
+          });
+        } catch (error) {
+          if (
+            isCanceledSearchQuery(error)
+            && requestSearchSource === 'all'
+            && !sourceOverride
+            && isCurrentSearchRequest()
+          ) {
+            markDiagnosticStage(trace, 'apply', {
+              source,
+              state: 'session-reset'
+            });
+            return;
+          }
+          throw error;
+        }
         if (!isCurrentSearchRequest()) {
           return;
+        }
+        if (result.kind !== 'success') {
+          appQueryClient.removeQueries({ queryKey, exact: true });
         }
         resultsBySource[source] = result;
         const group = groupFromRemoteSearchResult(result);
@@ -543,9 +618,9 @@ export function useSearchController({
         setSearchGroups(nextGroups);
       }));
       if (!isCurrentSearchRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace('stale', {
           source: sourceOverride || requestSearchSource,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: 'superseded'
         });
         return 'stale';
       }
@@ -564,7 +639,9 @@ export function useSearchController({
             itemCount: resultCount
           });
           if (requestSearchSource === 'linuxdo' && !runOptions.suppressLinuxDoVerification) {
-            await showLinuxDoVerification(action.message, linuxDoRecovery());
+            const recovery = linuxDoRecovery();
+            activeSearchRecoveryRef.current = { key: recovery.key, lane: 'root', source: 'linuxdo' };
+            await showLinuxDoVerification(action.message, recovery);
           }
           return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
         }
@@ -601,7 +678,7 @@ export function useSearchController({
       }
       return 'completed';
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledSearchQuery(error)) {
         finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
           source: sourceOverride || requestSearchSource,
           reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
@@ -640,7 +717,9 @@ export function useSearchController({
         if (failureSource === 'linuxdo' && sourceError.kind === 'verification-required') {
           finishTrace(outcome, { source: failureSource, reason });
           if (requestSearchSource === 'linuxdo' && !runOptions.suppressLinuxDoVerification) {
-            await showLinuxDoVerification(sourceError.message, linuxDoRecovery());
+            const recovery = linuxDoRecovery();
+            activeSearchRecoveryRef.current = { key: recovery.key, lane: 'root', source: 'linuxdo' };
+            await showLinuxDoVerification(sourceError.message, recovery);
           }
           return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
         }
@@ -650,15 +729,14 @@ export function useSearchController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentSearchRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(isCurrentSearchRequest() ? 'failure' : 'stale', {
           source: sourceOverride || requestSearchSource,
-          reason: isCurrentSearchRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: isCurrentSearchRequest() ? 'unknown' : 'superseded'
         });
       }
       if (isCurrentSearchRequest()) {
         setSearchBusy(false);
       }
-      finishAbortableRequest(searchAbortRef, controller);
     }
   }, [
     addRecentSearch,
@@ -703,7 +781,7 @@ export function useSearchController({
       finishTrace('blocked', { source, reason: 'not_ready' });
       return 'completed';
     }
-    const { activeFilter, ownerKey, query, sort, visitedKey } = requestSnapshot;
+    const { activeFilter, ownerKey, query, sort } = requestSnapshot;
     const currentGroup = searchGroupsRef.current.find((group) => group.source === source);
     if (!currentGroup || currentGroup.loading || currentGroup.loadingMore || !currentGroup.hasMore) {
       const busy = Boolean(currentGroup?.loading || currentGroup?.loadingMore);
@@ -723,15 +801,14 @@ export function useSearchController({
     ));
     searchGroupsRef.current = markedGroups;
     setSearchGroups(markedGroups);
-    const controller = startAbortableRequest(searchAbortRef);
-    const requestId = ++searchRequestIdRef.current;
-    const requestOwner = startOwnedRequest(searchRequestOwnerRef, ownerKey);
-    const isCurrentSearchRequest = () => isCurrentOwnedRequest(requestOwner, searchRequestOwnerRef) && requestId === searchRequestIdRef.current;
-    let recoveryRequestOwner = requestOwner;
-    let recoveryRequestId = requestId;
+    const requestGeneration = ++searchRecoveryGenerationRef.current;
+    activeSearchRecoveryRef.current = null;
+    let recoveryGeneration = requestGeneration;
+    let querySignal: AbortSignal | undefined;
+    const isLatestSearchRequest = () => searchRecoveryGenerationRef.current === requestGeneration;
+    const isCurrentSearchRequest = () => isLatestSearchRequest() && !querySignal?.aborted;
     const isCurrentSearchRecovery = () => (
-      isCurrentOwnedRequest(recoveryRequestOwner, searchRequestOwnerRef)
-      && recoveryRequestId === searchRequestIdRef.current
+      searchRecoveryGenerationRef.current === recoveryGeneration
     );
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: ownerKey,
@@ -744,37 +821,52 @@ export function useSearchController({
         if (!resumedRequest) {
           return 'stale';
         }
-        recoveryRequestOwner = searchRequestOwnerRef.current;
-        recoveryRequestId = searchRequestIdRef.current;
-        return await resumedRequest;
+        const outcome = await resumedRequest;
+        recoveryGeneration = searchRecoveryGenerationRef.current;
+        return outcome;
       }
     };
+    const queryKey = forumQueryKeys.search(source, ownerKey);
     setSearchBusy(true);
     try {
-      const result = await runRemoteSearchSource(source, query, page, controller.signal, sort, activeFilter, {
-        isCurrent: () => isCurrentSearchRequest(),
-        trace
+      const result = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: ({ signal }) => {
+          querySignal = signal;
+          return runRemoteSearchSource(source, query, page, signal, sort, activeFilter, {
+            isCurrent: () => !signal.aborted,
+            trace
+          });
+        }
       });
       if (!isCurrentSearchRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
       }
       const data = groupFromRemoteSearchResult(result);
+      if (result.kind !== 'success') {
+        appQueryClient.removeQueries({ queryKey, exact: true });
+      }
       const nextGroups = searchGroupsRef.current.map((group) => {
         if (group.source !== source) {
           return group;
         }
-        const visitedPages = searchVisitedPagesRef.current[visitedKey] || new Set<number>();
         const paginationFailed = result.kind !== 'success';
         const mergedItems = paginationFailed ? group.items : mergeTopics(group.items, data.items);
-        if (!paginationFailed) {
-          visitedPages.add(page);
-        }
-        searchVisitedPagesRef.current[visitedKey] = visitedPages;
-        const canLoadNext = Boolean(data.hasMore && data.nextPage && !visitedPages.has(data.nextPage));
+        const nextRequest = data.nextPage ? createSearchMoreRequestSnapshot({
+          filters: requestFilters,
+          page: data.nextPage,
+          searchSource: requestSearchSource,
+          source,
+          submittedQuery: query
+        }) : null;
+        const canLoadNext = Boolean(
+          nextRequest
+          && hasNextSearchPage(data.hasMore, data.nextPage, page)
+        );
         return {
           ...data,
           items: mergedItems,
@@ -802,6 +894,7 @@ export function useSearchController({
             itemCount: updated?.items.length || 0
           });
           if (requestSearchSource === 'linuxdo' && !suppressLinuxDoVerification) {
+            activeSearchRecoveryRef.current = { key: linuxDoRecovery.key, lane: 'more', source };
             await showLinuxDoVerification(result.action.message, linuxDoRecovery);
           }
           return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
@@ -836,7 +929,7 @@ export function useSearchController({
       }
       return 'completed';
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledSearchQuery(error)) {
         finishTrace(isCurrentSearchRequest() ? 'canceled' : 'stale', {
           source,
           reason: isCurrentSearchRequest() ? 'canceled' : 'superseded'
@@ -865,6 +958,7 @@ export function useSearchController({
         );
         if (source === 'linuxdo' && sourceError.kind === 'verification-required') {
           if (requestSearchSource === 'linuxdo' && !suppressLinuxDoVerification) {
+            activeSearchRecoveryRef.current = { key: linuxDoRecovery.key, lane: 'more', source };
             await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
           }
           return requestSearchSource === 'linuxdo' ? 'verification-required' : 'completed';
@@ -874,15 +968,14 @@ export function useSearchController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentSearchRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(isCurrentSearchRequest() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
           source,
-          reason: isCurrentSearchRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: isCurrentSearchRequest() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
         });
       }
-      if (isCurrentSearchRequest()) {
+      if (isLatestSearchRequest()) {
         setSearchBusy(false);
       }
-      finishAbortableRequest(searchAbortRef, controller);
     }
   }, [handleRemoteSearchAction, notify, runRemoteSearchSource, showLinuxDoVerification]);
 
@@ -1008,8 +1101,15 @@ export function useSearchController({
   }, [linuxDoAiState.status, runLinuxDoAiSearch]);
 
   const abortSearchRequests = useCallback(() => {
-    searchAbortRef.current?.abort();
-    linuxDoAiAbortRef.current?.abort();
+    searchRecoveryGenerationRef.current += 1;
+    linuxDoAiGenerationRef.current += 1;
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => (
+        queryKey[0] === 'forum'
+        && typeof queryKey[2] === 'string'
+        && (queryKey[2].startsWith('search') || queryKey[2] === 'semantic-search')
+      )
+    });
   }, []);
 
   useEffect(() => abortSearchRequests, [abortSearchRequests]);

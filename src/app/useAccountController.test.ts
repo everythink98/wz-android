@@ -8,7 +8,11 @@ vi.mock('react', () => ({
 
 const mocks = vi.hoisted(() => ({
   checkYaohuoLogin: vi.fn(),
-  clearLinuxDoAccess: vi.fn(async () => null),
+  clearLinuxDoAccess: vi.fn(async (): Promise<{
+    cookieHeader: string;
+    savedAt: string;
+    source: 'webview';
+  } | null> => null),
   currentLinuxDoAccessGeneration: vi.fn(() => 1),
   getLinuxDoLevelProfile: vi.fn(),
   linuxDoAccessSummary: vi.fn(() => ({ hasClearance: false, loggedIn: false })),
@@ -68,6 +72,7 @@ vi.mock('../sources/sourceGateway', () => ({
 }));
 
 import { setDiagnosticWriter, type DiagnosticEvent, type DiagnosticTrace } from '../diagnostics';
+import { appQueryClient } from './serverState';
 import { useAccountController } from './useAccountController';
 
 const ref = <T,>(current: T) => ({ current });
@@ -80,7 +85,6 @@ function createController(overrides: Partial<Parameters<typeof useAccountControl
     currentNodeSeekCredentialGeneration: vi.fn(() => 3),
     currentYaohuoCredentialGeneration: vi.fn(() => 4),
     forumFetchWithWebViewFallback: vi.fn(),
-    linuxDoLevelRequestIdRef: ref(0),
     linuxDoWebViewUserAgentRef: ref(''),
     nodeSeekLoginPanelRequestRef: ref(7),
     nodeSeekCurrentUserId: null,
@@ -113,6 +117,7 @@ function createController(overrides: Partial<Parameters<typeof useAccountControl
 }
 
 afterEach(() => {
+  appQueryClient.clear();
   setDiagnosticWriter(null);
   vi.clearAllMocks();
   mocks.clearLinuxDoAccess.mockResolvedValue(null);
@@ -131,8 +136,9 @@ describe('visible account WebView diagnostics', () => {
     mocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: '_t=old', userAgent: 'old-agent' });
     mocks.getLinuxDoLevelProfile.mockReturnValueOnce(profile.promise);
     const notify = vi.fn();
+    const setLinuxDoLevelBusy = vi.fn();
     const setLinuxDoLevelProfile = vi.fn();
-    const controller = createController({ notify, setLinuxDoLevelProfile });
+    const controller = createController({ notify, setLinuxDoLevelBusy, setLinuxDoLevelProfile });
 
     const refresh = controller.refreshLinuxDoLevel();
     await vi.waitFor(() => expect(mocks.getLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
@@ -142,6 +148,7 @@ describe('visible account WebView diagnostics', () => {
 
     expect(setLinuxDoLevelProfile).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalledWith('linux.do 等级已更新。');
+    expect(setLinuxDoLevelBusy).toHaveBeenLastCalledWith(false);
   });
 
   it('REG-ACCOUNT-009 does not report or reload a superseded manual NodeSeek clear', async () => {
@@ -200,6 +207,25 @@ describe('visible account WebView diagnostics', () => {
     expect(resetLinuxDoLevelState).not.toHaveBeenCalled();
     expect(resetLinuxDoWebView).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('publishes a session transition when linux.do login is cleared but clearance remains', async () => {
+    mocks.clearLinuxDoAccess.mockResolvedValueOnce({
+      cookieHeader: 'cf_clearance=retained',
+      savedAt: '2026-07-20T00:00:00.000Z',
+      source: 'webview'
+    });
+    mocks.linuxDoAccessSummary.mockReturnValueOnce({ hasClearance: true, loggedIn: false });
+    const updateLinuxDoSession = vi.fn();
+    const controller = createController({ updateLinuxDoSession });
+
+    await controller.clearLinuxDoCookie();
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'session-updated',
+      hasVerification: true,
+      loggedIn: false
+    }));
   });
 
   it('REG-ACCOUNT-005 ignores NodeSeek login payloads from an allowed non-NodeSeek challenge host', () => {

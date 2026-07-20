@@ -64,35 +64,10 @@ export async function clearExpiredLinuxDoLogin({
   const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
   const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
   updateLinuxDoSession(remainingAccess?.cookieHeader
-    ? { type: 'cookie-loaded', cookieSummary: remainingSummary.names, hasVerification: remainingSummary.hasClearance, loggedIn: false, at: new Date().toISOString() }
+    ? { type: 'session-updated', cookieSummary: remainingSummary.names, hasVerification: remainingSummary.hasClearance, loggedIn: false, at: new Date().toISOString() }
     : { type: 'login-expired', message: errorMessage(error) });
   resetLinuxDoLevelState();
   return true;
-}
-
-export async function runSingleTopicAction<T>({
-  key,
-  notifyDuplicate,
-  pendingActions,
-  task
-}: {
-  key: string;
-  notifyDuplicate?: () => void;
-  pendingActions: MutableRefObject<Record<string, true>>;
-  task: () => Promise<T>;
-}) {
-  if (pendingActions.current[key]) {
-    notifyDuplicate?.();
-    return undefined;
-  }
-  pendingActions.current = { ...pendingActions.current, [key]: true };
-  try {
-    return await task();
-  } finally {
-    const next = { ...pendingActions.current };
-    delete next[key];
-    pendingActions.current = next;
-  }
 }
 
 export async function shareTopicWithClipboardFallback({

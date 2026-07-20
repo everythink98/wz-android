@@ -48,25 +48,19 @@ import {
   nodeSeekAccessRecord,
   parseNodeSeekAccessRecord
 } from '../nodeseekCookies';
-import type { RequestOwner } from '../requestOwnership';
 import type { Fetcher } from '../request';
 import {
   abortTopicActionRuns,
   clearBusyTopicActionRuns,
-  currentTopicActionRequestOwner,
   finishBusyTopicActionRun,
-  isCurrentTopicActionRequestOwner,
   finishTopicActionRun,
   isCurrentTopicActionRun,
   trackBusyTopicActionRun,
-  startTopicActionRequestOwner,
   type TopicActionBusyRunSet,
-  type TopicActionOwnerMap,
-  type TopicActionRequestOwner,
   startTopicActionRun,
   type TopicActionRun,
   type TopicActionRunMap
-} from '../topicActionRequestOwners';
+} from './topicActionRuns';
 import { errorMessage, isCanceledRequest } from '../appUtils';
 import { canToggleDiscourseLike } from '../discoursePermissions';
 import {
@@ -101,10 +95,10 @@ import type { CredentialClearOptions, CredentialLoadOptions } from './sessionCon
 import type { TopicSessionController } from './useTopicSessionController';
 import {
   beginOptimisticTopicAction,
-  runSingleTopicAction,
   isNodeSeekLoginRequiredError,
   runOptimisticActionQueue as runOptimisticActionQueueHelper
 } from './topicActionHelpers';
+import { appQueryClient, forumMutationKeys, forumQueryKeys } from './serverState';
 import {
   prepareDiscourseActionRuntime,
   type DiscourseActionRuntimeDependencies,
@@ -128,6 +122,14 @@ import {
 } from './topicActionControllerHelpers';
 
 type Ref<T> = MutableRefObject<T>;
+export type TopicActionContext = {
+  generation: number;
+  key: string;
+};
+type TopicActionRequestOwner = {
+  actionKey: string;
+  context: TopicActionContext;
+};
 type ActionRunOptions = {
   busy?: boolean;
   deferDiagnosticFailure?: boolean;
@@ -154,9 +156,8 @@ type OptimisticTopicActionOptions = {
 function optimisticOwnerKey(requestOwner: TopicActionRequestOwner) {
   return [
     requestOwner.context.key,
-    requestOwner.context.token,
-    requestOwner.action.key,
-    requestOwner.action.token
+    requestOwner.context.generation,
+    requestOwner.actionKey
   ].join(':');
 }
 function actionMessage(message: string, restoreOnFailure?: boolean) {
@@ -251,7 +252,7 @@ export function useTopicActionsController({
   setOptimisticTopicActions,
   showYaohuoLogin,
   siteSessionStates,
-  topicActionRequestOwnerRef,
+  topicActionContextRef,
   topicSession
 }: {
   actionAbortRef: Ref<{ abort: () => void; abortAll: () => void } | null>;
@@ -272,7 +273,7 @@ export function useTopicActionsController({
   setOptimisticTopicActions: Dispatch<SetStateAction<Record<string, OptimisticActionState>>>;
   showYaohuoLogin: (message?: string) => void;
   siteSessionStates: SiteSessionStates;
-  topicActionRequestOwnerRef: Ref<RequestOwner>;
+  topicActionContextRef: Ref<TopicActionContext>;
   topicSession: TopicSessionController;
 }) {
   const {
@@ -292,25 +293,23 @@ export function useTopicActionsController({
   const canUseNodeSeekActions = sourceActionAvailability.nodeseek;
   const canUseYaohuoActions = sourceActionAvailability.yaohuo;
   const siteSessionViewModels = useMemo(() => createSiteSessionViewModels(siteSessionStates), [siteSessionStates]);
-  const topicActionOwnersRef = useRef<TopicActionOwnerMap>({});
   const topicActionRunsRef = useRef<TopicActionRunMap>({});
   const detachedActionRunsRef = useRef<TopicActionRunMap>({});
   const busyActionRunsRef = useRef<TopicActionBusyRunSet>(new Set());
-  const pendingTopicActionsRef = useRef<Record<string, true>>({});
 
-  const startTopicActionRequest = useCallback((key: string) => (
-    startTopicActionRequestOwner(topicActionRequestOwnerRef, topicActionOwnersRef, key)
-  ), [topicActionRequestOwnerRef]);
+  const startTopicActionRequest = useCallback((key: string): TopicActionRequestOwner => ({
+    actionKey: key,
+    context: { ...topicActionContextRef.current }
+  }), [topicActionContextRef]);
 
   const startOptimisticTopicActionRequest = useCallback((key: string) => (
-    optimisticTopicActionsRef.current[key]?.inFlight
-      ? currentTopicActionRequestOwner(topicActionRequestOwnerRef, topicActionOwnersRef, key)
-      : startTopicActionRequest(key)
-  ), [optimisticTopicActionsRef, startTopicActionRequest, topicActionRequestOwnerRef]);
+    startTopicActionRequest(key)
+  ), [startTopicActionRequest]);
 
   const isCurrentTopicActionRequest = useCallback((requestOwner: TopicActionRequestOwner) => (
-    isCurrentTopicActionRequestOwner(requestOwner, topicActionRequestOwnerRef, topicActionOwnersRef)
-  ), [topicActionRequestOwnerRef]);
+    requestOwner.context.generation === topicActionContextRef.current.generation
+    && requestOwner.context.key === topicActionContextRef.current.key
+  ), [topicActionContextRef]);
 
   const startActionRun = useCallback((key: string, busy: boolean, cancelOnTopicChange = true): ActionRun => {
     const run = {
@@ -356,33 +355,53 @@ export function useTopicActionsController({
     }
   }, [actionAbortRef, setActionBusy]);
 
-  const runSingleNonIdempotentTopicAction = useCallback(<T,>(key: string, task: () => Promise<T>, diagnosticTrace?: DiagnosticTrace) => (
-    runSingleTopicAction({
-      key,
-      notifyDuplicate: () => {
-        notify('操作正在提交，请稍后。');
-        if (diagnosticTrace) {
-          markDiagnosticStage(diagnosticTrace, 'guard', { isBusy: true, reason: 'duplicate' });
-          finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'duplicate' });
-        }
-      },
-      pendingActions: pendingTopicActionsRef,
-      task: async () => {
-        try {
-          const result = await task();
-          if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'success');
-          }
-          return result;
-        } catch (error) {
-          if (diagnosticTrace) {
-            finishDiagnosticTrace(diagnosticTrace, 'failure', { reason: normalizeDiagnosticReason(error) });
-          }
-          throw error;
+  const executeTopicMutation = useCallback(<T,>(key: string, task: () => Promise<T>) => {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    const source = detail?.source || 'nodeseek';
+    const topicId = detail?.id || 'global';
+    const mutationKey = forumMutationKeys.topicAction(source, topicId, key);
+    const mutation = appQueryClient.getMutationCache().build<T, unknown, void, unknown>(appQueryClient, {
+      mutationKey,
+      mutationFn: task,
+      scope: { id: mutationKey.join(':') },
+      onSettled: () => {
+        if (detail) {
+          void appQueryClient.invalidateQueries({
+            queryKey: forumQueryKeys.topic(detail.source, detail.id),
+            refetchType: 'none'
+          });
         }
       }
-    })
-  ), [notify]);
+    });
+    return mutation.execute(undefined);
+  }, [selectedTopic, topicDetail]);
+
+  const runSingleNonIdempotentTopicAction = useCallback(<T,>(key: string, task: () => Promise<T>, diagnosticTrace?: DiagnosticTrace) => {
+    const detail = currentTopicActionTopic(topicDetail, selectedTopic);
+    const mutationKey = forumMutationKeys.topicAction(detail?.source || 'nodeseek', detail?.id || 'global', key);
+    if (appQueryClient.isMutating({ mutationKey, exact: true })) {
+      notify('操作正在提交，请稍后。');
+      if (diagnosticTrace) {
+        markDiagnosticStage(diagnosticTrace, 'guard', { isBusy: true, reason: 'duplicate' });
+        finishDiagnosticTrace(diagnosticTrace, 'blocked', { reason: 'duplicate' });
+      }
+      return Promise.resolve(undefined);
+    }
+    return executeTopicMutation(key, async () => {
+      try {
+        const result = await task();
+        if (diagnosticTrace) {
+          finishDiagnosticTrace(diagnosticTrace, 'success');
+        }
+        return result;
+      } catch (error) {
+        if (diagnosticTrace) {
+          finishDiagnosticTrace(diagnosticTrace, 'failure', { reason: normalizeDiagnosticReason(error) });
+        }
+        throw error;
+      }
+    });
+  }, [executeTopicMutation, notify, selectedTopic, topicDetail]);
 
   const refreshTopicRepliesAfterWrite = useCallback(async (diagnosticTrace: DiagnosticTrace, options: TopicRepliesRefreshOptions) => {
     try {
@@ -420,7 +439,7 @@ export function useTopicActionsController({
       }
       return false;
     }
-    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || 'nodeseek-action';
+    const actionKey = options.key || options.owner?.actionKey || success || options.fallbackKey || 'nodeseek-action';
     const topicScoped = isTopicScopedActionKey(actionKey);
     const requestOwner = options.owner || (topicScoped ? startTopicActionRequest(actionKey) : undefined);
     const busy = options.busy ?? true;
@@ -536,7 +555,7 @@ export function useTopicActionsController({
     }
     const requestOwner = options.owner || startTopicActionRequest(options.key || success);
     const busy = options.busy ?? true;
-    const run = startActionRun(options.key || requestOwner.action.key || success, busy);
+    const run = startActionRun(options.key || requestOwner.actionKey || success, busy);
     if (diagnosticTrace) {
       markDiagnosticStage(diagnosticTrace, 'guard', { source: 'yaohuo', hasOwner: true, isBusy: busy });
       markDiagnosticStage(diagnosticTrace, 'credential', { source: 'yaohuo', state: 'load' });
@@ -658,7 +677,7 @@ export function useTopicActionsController({
       failDiagnosticActionRequest(options, source, 'credential', 'blocked', 'login_required');
       return false;
     }
-    const actionKey = options.key || options.owner?.action.key || success || options.fallbackKey || `${source}-action`;
+    const actionKey = options.key || options.owner?.actionKey || success || options.fallbackKey || `${source}-action`;
     const requestOwner = options.owner || startTopicActionRequest(actionKey);
     const busy = options.busy ?? true;
     const run = startActionRun(actionKey, busy);
@@ -822,26 +841,26 @@ export function useTopicActionsController({
     diagnosticTrace
   }: Omit<OptimisticTopicActionOptions, 'currentActive'>) => {
     let lastResult: boolean | undefined;
-    await runOptimisticActionQueueHelper({
-      key,
-      requestOwner,
-      applyDisplayed,
-      sendDesired: async (desiredActive) => {
-        try {
-          lastResult = await sendDesired(desiredActive);
-          return lastResult;
-        } catch (error) {
-          lastResult = false;
-          throw error;
-        }
-      },
-      successMessage,
-      isCurrentRequest: isCurrentTopicActionRequest,
-      notify,
-      optimisticActions: optimisticTopicActionsRef,
-      ownerKey: optimisticOwnerKey(requestOwner),
-      setOptimisticActionState: setOptimisticTopicActionState
-    });
+    await executeTopicMutation(key, () => runOptimisticActionQueueHelper({
+        key,
+        requestOwner,
+        applyDisplayed,
+        sendDesired: async (desiredActive) => {
+          try {
+            lastResult = await sendDesired(desiredActive);
+            return lastResult;
+          } catch (error) {
+            lastResult = false;
+            throw error;
+          }
+        },
+        successMessage,
+        isCurrentRequest: isCurrentTopicActionRequest,
+        notify,
+        optimisticActions: optimisticTopicActionsRef,
+        ownerKey: optimisticOwnerKey(requestOwner),
+        setOptimisticActionState: setOptimisticTopicActionState
+      }));
     if (!isCurrentTopicActionRequest(requestOwner)) {
       finishDiagnosticTrace(diagnosticTrace, 'stale', { reason: 'stale' });
       return;
@@ -855,7 +874,7 @@ export function useTopicActionsController({
     } else {
       finishDiagnosticTrace(diagnosticTrace, 'stale', { reason: 'stale' });
     }
-  }, [isCurrentTopicActionRequest, notify, optimisticTopicActionsRef, setOptimisticTopicActionState]);
+  }, [executeTopicMutation, isCurrentTopicActionRequest, notify, optimisticTopicActionsRef, setOptimisticTopicActionState]);
 
   const startOptimisticTopicAction = useCallback(({
     key,

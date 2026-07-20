@@ -886,6 +886,92 @@ describe('Search state', () => {
     await waitFor(() => expect(view.getByLabelText('用户 new-user')).toBeTruthy());
   });
 
+  it('REG-SEARCH-001 shows the empty-author prompt without a permanent loading state', async () => {
+    const onSearchDiscourseUsers = jest.fn(async () => []);
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseUsers });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择作者'));
+
+    expect(view.getByText('输入用户名后选择')).toBeTruthy();
+    expect(view.queryByText('正在加载作者...')).toBeNull();
+    expect(onSearchDiscourseUsers).not.toHaveBeenCalled();
+  });
+
+  it('REG-SEARCH-001 hides tag candidates from the previous category while the new request is pending', async () => {
+    const categoryResponse = Promise.withResolvers<Array<{ name: string }>>();
+    const onSearchDiscourseTags = jest.fn(({
+      categoryId,
+      query: term
+    }: {
+      categoryId?: string;
+      query: string;
+    }) => {
+      if (term !== '') {
+        return Promise.resolve([]);
+      }
+      return categoryId === '4'
+        ? categoryResponse.promise
+        : Promise.resolve([{ name: '旧分类候选' }]);
+    });
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(view.getByLabelText('标签 旧分类候选')).toBeTruthy());
+    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByLabelText('选择分类'));
+    await fireEvent.press(view.getByLabelText('分类 技术 / 开发调优'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({
+      categoryId: '4',
+      query: ''
+    })));
+
+    expect(view.queryByLabelText('标签 旧分类候选')).toBeNull();
+    await act(async () => {
+      categoryResponse.resolve([{ name: '新分类候选' }]);
+      await categoryResponse.promise;
+    });
+    await waitFor(() => expect(view.getByLabelText('标签 新分类候选')).toBeTruthy());
+  });
+
+  it('REG-SEARCH-001 hides tag candidates from the previous source while the new request is pending', async () => {
+    const xiaoyinsiResponse = Promise.withResolvers<Array<{ name: string }>>();
+    const onSearchDiscourseTags = jest.fn(({
+      source: candidateSource
+    }: {
+      source?: Source;
+    }) => candidateSource === 'xiaoyinsi'
+      ? xiaoyinsiResponse.promise
+      : Promise.resolve([{ name: 'linux.do 专属候选' }]));
+    const view = await renderSearchScreen({ searchSource: 'linuxdo', onSearchDiscourseTags });
+
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(view.getByLabelText('标签 linux.do 专属候选')).toBeTruthy());
+    await fireEvent.press(view.getByText('完成'));
+    await fireEvent.press(view.getByTestId('search-filter-close'));
+    await act(async () => {
+      view.rerender(<SearchScreen {...createSearchScreenProps({
+        searchSource: 'xiaoyinsi',
+        onSearchDiscourseTags
+      })} />);
+    });
+    await fireEvent.press(view.getByLabelText('打开搜索筛选，当前默认'));
+    await fireEvent.press(view.getByLabelText('选择标签'));
+    await waitFor(() => expect(onSearchDiscourseTags).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'xiaoyinsi'
+    })));
+
+    expect(view.queryByLabelText('标签 linux.do 专属候选')).toBeNull();
+    await act(async () => {
+      xiaoyinsiResponse.resolve([{ name: '小隐寺专属候选' }]);
+      await xiaoyinsiResponse.promise;
+    });
+    await waitFor(() => expect(view.getByLabelText('标签 小隐寺专属候选')).toBeTruthy());
+  });
+
   it('selects a hierarchical linux.do category and author from searchable candidates', async () => {
     const view = await render(<SearchHarness initialSource="linuxdo" />);
 

@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { isCancelledError } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
 import { checkLinuxDoLoginAccess, checkYaohuoLogin, getCurrentUserProfile } from '../sources/sourceGateway';
-import {
-  errorMessage,
-  finishAbortableRequest,
-  isCanceledRequest,
-  startAbortableRequest
-} from '../appUtils';
+import { errorMessage, isCanceledRequest } from '../appUtils';
 import { summarizeYaohuoCookies, yaohuoCookieMapFromHeader } from '../yaohuoCookies';
 import { parseNodeSeekDocumentCookie, summarizeNodeSeekCookies } from '../nodeseekCookies';
 import {
@@ -22,6 +18,7 @@ import type { FeedSource, Source } from '../types';
 import type { Fetcher } from '../request';
 import type { CredentialClearOptions, CredentialLoadOptions } from './sessionControllerHelpers';
 import { isLinuxDoLoginCheckUnknown } from './accountStatusHelpers';
+import { appQueryClient, forumQueryKeys } from './serverState';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -35,6 +32,10 @@ import {
 
 const YAOHUO_COOKIE_STORAGE_KEY = 'yaohuo-cookie-header';
 type RefreshAccountStatusOptions = { silent?: boolean };
+
+function isCanceledStatusQuery(error: unknown) {
+  return isCancelledError(error) || isCanceledRequest(error);
+}
 
 export function useAccountStatusController({
   clearYaohuoLoginState,
@@ -70,7 +71,7 @@ export function useAccountStatusController({
   ) => Promise<string>;
   setLinuxDoWebViewCookieHeader: (cookieHeader: string) => void;
 }) {
-  const statusAbortRef = useRef<AbortController | null>(null);
+  const statusRequestGenerationRef = useRef(0);
   const statusBusyRef = useRef(false);
   const [statusBusy, setStatusBusy] = useState(false);
 
@@ -93,7 +94,8 @@ export function useAccountStatusController({
     }
     markDiagnosticStage(trace, 'guard', { state: 'ready' });
     statusBusyRef.current = true;
-    const controller = startAbortableRequest(statusAbortRef);
+    const requestGeneration = ++statusRequestGenerationRef.current;
+    const isCurrentStatusRequest = () => statusRequestGenerationRef.current === requestGeneration;
     setStatusBusy(true);
     try {
       const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
@@ -110,7 +112,7 @@ export function useAccountStatusController({
         }),
         loadLinuxDoAccess()
       ] as const);
-      if (controller.signal.aborted) {
+      if (!isCurrentStatusRequest()) {
         finishTrace('canceled', { reason: 'canceled' });
         return;
       }
@@ -149,39 +151,57 @@ export function useAccountStatusController({
           reason: normalizeDiagnosticReason(yaohuoCredentialCheck.reason)
         } : {})
       });
-      const linuxDoLoginPromise = linuxDoCredentialCurrent && linuxDoAccess?.cookieHeader && access.loggedIn
-        ? checkLinuxDoLoginAccess({
-          cookieHeader: linuxDoAccess.cookieHeader,
-          fetcher: diagnosticFetcher,
-          userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current,
-          signal: controller.signal
+      const linuxDoCookieHeader = linuxDoAccess?.cookieHeader || '';
+      const linuxDoUserAgent = linuxDoAccess?.userAgent || linuxDoUserAgentRef.current;
+      const linuxDoLoginPromise = linuxDoCredentialCurrent && linuxDoCookieHeader && access.loggedIn
+        ? appQueryClient.fetchQuery({
+          queryKey: forumQueryKeys.accountStatus('linuxdo', linuxDoGeneration, 'login'),
+          staleTime: 0,
+          queryFn: ({ signal }) => checkLinuxDoLoginAccess({
+            cookieHeader: linuxDoCookieHeader,
+            fetcher: diagnosticFetcher,
+            userAgent: linuxDoUserAgent,
+            signal
+          })
         })
         : Promise.resolve(undefined);
       const nodeSeekCurrentUserPromise = nodeSeekCredentialCurrent && nodeSeekSummary.loggedIn
-        ? getCurrentUserProfile({
-          source: 'nodeseek',
-          fetcher: diagnosticFetcher,
-          nodeSeekCookie,
-          nodeSeekUserId: nodeSeekCredentialUserId,
-          nodeSeekUserAgent: nodeSeekUserAgentRef.current,
-          signal: controller.signal
+        ? appQueryClient.fetchQuery({
+          queryKey: forumQueryKeys.accountStatus('nodeseek', nodeSeekGeneration, 'profile'),
+          staleTime: 0,
+          queryFn: ({ signal }) => getCurrentUserProfile({
+            source: 'nodeseek',
+            fetcher: diagnosticFetcher,
+            nodeSeekCookie,
+            nodeSeekUserId: nodeSeekCredentialUserId,
+            nodeSeekUserAgent: nodeSeekUserAgentRef.current,
+            signal
+          })
         })
         : Promise.resolve(null);
-      const linuxDoCurrentUserPromise = linuxDoCredentialCurrent && linuxDoAccess?.cookieHeader && access.loggedIn
-        ? getCurrentUserProfile({
-          source: 'linuxdo',
-          fetcher: diagnosticFetcher,
-          discourseAuth: {
-            linuxdo: {
-              cookieHeader: linuxDoAccess.cookieHeader,
-              userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current
-            }
-          },
-          signal: controller.signal
+      const linuxDoCurrentUserPromise = linuxDoCredentialCurrent && linuxDoCookieHeader && access.loggedIn
+        ? appQueryClient.fetchQuery({
+          queryKey: forumQueryKeys.accountStatus('linuxdo', linuxDoGeneration, 'profile'),
+          staleTime: 0,
+          queryFn: ({ signal }) => getCurrentUserProfile({
+            source: 'linuxdo',
+            fetcher: diagnosticFetcher,
+            discourseAuth: {
+              linuxdo: {
+                cookieHeader: linuxDoCookieHeader,
+                userAgent: linuxDoUserAgent
+              }
+            },
+            signal
+          })
         })
         : Promise.resolve(null);
       const yaohuoStatusPromise = yaohuoCredentialCurrent && yaohuoCookie
-        ? checkYaohuoLogin({ yaohuoCookie, yaohuoFetcher: diagnosticFetcher, signal: controller.signal })
+        ? appQueryClient.fetchQuery({
+          queryKey: forumQueryKeys.accountStatus('yaohuo', yaohuoGeneration, 'login'),
+          staleTime: 0,
+          queryFn: ({ signal }) => checkYaohuoLogin({ yaohuoCookie, yaohuoFetcher: diagnosticFetcher, signal })
+        })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
       const yaohuoCurrentUserPromise = yaohuoCredentialCurrent && yaohuoCookie
         ? yaohuoStatusPromise.then((check) => {
@@ -191,11 +211,15 @@ export function useAccountStatusController({
           if (!check.ok || check.loginRequired) {
             return null;
           }
-          return getCurrentUserProfile({
-            source: 'yaohuo',
-            fetcher: diagnosticFetcher,
-            yaohuoCookie,
-            signal: controller.signal
+          return appQueryClient.fetchQuery({
+            queryKey: forumQueryKeys.accountStatus('yaohuo', yaohuoGeneration, 'profile'),
+            staleTime: 0,
+            queryFn: ({ signal }) => getCurrentUserProfile({
+              source: 'yaohuo',
+              fetcher: diagnosticFetcher,
+              yaohuoCookie,
+              signal
+            })
           });
         })
         : Promise.resolve(null);
@@ -214,7 +238,7 @@ export function useAccountStatusController({
         yaohuoCurrentUserPromise,
         xiaoyinsiAuthorizationPromise
       ] as const);
-      if (controller.signal.aborted) {
+      if (!isCurrentStatusRequest()) {
         finishTrace('canceled', { reason: 'canceled' });
         return;
       }
@@ -276,7 +300,7 @@ export function useAccountStatusController({
             reason: normalizeDiagnosticReason(error)
           });
         }
-        if (controller.signal.aborted) {
+        if (!isCurrentStatusRequest()) {
           finishTrace('canceled', { reason: 'canceled' });
           return;
         }
@@ -319,7 +343,7 @@ export function useAccountStatusController({
             reason: normalizeDiagnosticReason(error)
           });
         }
-        if (controller.signal.aborted) {
+        if (!isCurrentStatusRequest()) {
           finishTrace('canceled', { reason: 'canceled' });
           return;
         }
@@ -543,21 +567,22 @@ export function useAccountStatusController({
         partialErrorCount: uniqueFailedSites.length
       });
     } catch (error) {
-      if (controller.signal.aborted || isCanceledRequest(error)) {
+      const canceled = !isCurrentStatusRequest() || isCanceledStatusQuery(error);
+      if (canceled) {
         finishTrace('canceled', { reason: 'canceled' });
       } else {
         finishTrace('failure', { reason: normalizeDiagnosticReason(error) });
       }
-      if (!options.silent && !controller.signal.aborted && !isCanceledRequest(error)) {
+      if (!options.silent && !canceled) {
         notify(errorMessage(error));
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'failure', {
-          reason: controller.signal.aborted ? 'canceled' : 'unknown'
+        finishTrace(isCurrentStatusRequest() ? 'failure' : 'canceled', {
+          reason: isCurrentStatusRequest() ? 'unknown' : 'canceled'
         });
       }
-      if (finishAbortableRequest(statusAbortRef, controller)) {
+      if (isCurrentStatusRequest()) {
         statusBusyRef.current = false;
         setStatusBusy(false);
       }
@@ -580,7 +605,12 @@ export function useAccountStatusController({
   ]);
 
   const abortAccountStatusRequests = useCallback(() => {
-    statusAbortRef.current?.abort();
+    statusRequestGenerationRef.current += 1;
+    statusBusyRef.current = false;
+    setStatusBusy(false);
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'account'
+    });
   }, []);
 
   useEffect(() => abortAccountStatusRequests, [abortAccountStatusRequests]);

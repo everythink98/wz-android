@@ -7,7 +7,8 @@ import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '../../src/search
 import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
 import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
-import type { SearchResponse, Topic } from '../../src/types';
+import type { SearchResponse, Source, Topic } from '../../src/types';
+import { appQueryClient, resetForumSourceQueries } from '../../src/app/serverState';
 
 const mockStorageGetItem = jest.fn<(key: string) => Promise<string | null>>(async () => null);
 const mockStorageSetItem = jest.fn<(key: string, value: string) => Promise<void>>(async () => undefined);
@@ -51,11 +52,16 @@ function createGateway({
   searchSemanticTopics,
   searchTopics
 }: {
-  searchSemanticTopics: SourceGateway['searchSemanticTopics'];
+  searchSemanticTopics?: SourceGateway['searchSemanticTopics'];
   searchTopics: SourceGateway['searchTopics'];
 }) {
   return {
-    searchSemanticTopics,
+    searchSemanticTopics: searchSemanticTopics ?? jest.fn<SourceGateway['searchSemanticTopics']>(async () => ({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    })),
     searchTagOptions: jest.fn(async () => []),
     searchUserOptions: jest.fn(async () => []),
     searchTopics
@@ -139,6 +145,80 @@ describe('linux.do AI search controller', () => {
       await expect(recovery.resume()).resolves.toBe('completed');
     });
     expect(searchTopics).toHaveBeenCalledTimes(2);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-LINUXDO-002 preserves the loaded search page across session reset before resuming pagination', async () => {
+    const secondPageTopic: Topic = {
+      ...standardTopic,
+      id: '2',
+      title: '第二页结果',
+      url: 'https://linux.do/t/2'
+    };
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        errors: {
+          linuxdo: {
+            kind: 'verification-required',
+            message: 'linux.do 需要验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      })
+      .mockResolvedValueOnce({
+        items: [secondPageTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }), jest.fn(), showLinuxDoVerification);
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({
+        filters: {
+          ...DEFAULT_SEARCH_FILTERS,
+          linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo, order: 'latest' }
+        },
+        query: 'codex',
+        source: 'linuxdo'
+      });
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+    expect(recovery).toBeDefined();
+    await act(async () => {
+      resetForumSourceQueries('linuxdo', appQueryClient, 'session-updated', recovery.key);
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      source: 'linuxdo',
+      items: [standardTopic],
+      hasMore: true,
+      nextPage: 2,
+      loadingMore: false
+    });
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    expect(searchTopics).toHaveBeenCalledTimes(3);
+    expect(hook.result.current.searchGroups[0]?.items).toEqual([standardTopic, secondPageTopic]);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
@@ -889,5 +969,117 @@ describe('linux.do AI search controller', () => {
     expect(searchSemanticTopics).not.toHaveBeenCalled();
     expect(hook.result.current.linuxDoAiVisible).toBe(false);
     expect(hook.result.current.linuxDoAiState.status).toBe('idle');
+  });
+
+  it('removes only the changed source presentation when its credential session expires', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>().mockResolvedValue({
+      items: [],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const hook = await renderSearchController(createGateway({ searchSemanticTopics, searchTopics }));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'session result', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups).toHaveLength(1));
+
+    await act(async () => {
+      resetForumSourceQueries('linuxdo', appQueryClient, 'login-expired');
+    });
+
+    expect(hook.result.current.searchGroups).toEqual([]);
+    expect(hook.result.current.searchBusy).toBe(false);
+    expect(hook.result.current.linuxDoAiState.status).toBe('idle');
+  });
+
+  it('keeps an unrelated source search in flight when another credential session changes', async () => {
+    const pendingSearch = Promise.withResolvers<SearchResponse>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(() => pendingSearch.promise);
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+
+    await act(async () => {
+      hook.result.current.setSearchSource('v2ex');
+      hook.result.current.setSearchQuery('v2ex request');
+    });
+    await waitFor(() => {
+      expect(hook.result.current.searchSource).toBe('v2ex');
+      expect(hook.result.current.searchQuery).toBe('v2ex request');
+    });
+
+    let outcome: Awaited<ReturnType<typeof hook.result.current.runSearch>> | undefined;
+    await act(async () => {
+      void hook.result.current.runSearch({ query: 'v2ex request', source: 'v2ex' }).then((value) => { outcome = value; });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+    expect(hook.result.current.searchBusy).toBe(true);
+
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient, 'session-updated');
+    });
+    expect(hook.result.current.searchBusy).toBe(true);
+
+    await act(async () => {
+      pendingSearch.resolve({ items: [standardTopic], errors: {}, hasMore: false, nextPage: null });
+      await pendingSearch.promise;
+    });
+
+    await waitFor(() => expect(outcome).toBe('completed'));
+    expect(hook.result.current.searchGroups).toEqual([
+      expect.objectContaining({ source: 'v2ex', items: [standardTopic], loading: false })
+    ]);
+  });
+
+  it('lets unaffected aggregate search sources finish when one source session changes', async () => {
+    const sources: Source[] = ['v2ex', 'linuxdo', 'nodeseek', 'yaohuo', 'xiaoyinsi'];
+    const pendingSearches = new Map(sources.map((source) => [
+      source,
+      Promise.withResolvers<SearchResponse>()
+    ]));
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(({ source }) => (
+      pendingSearches.get(source as Source)!.promise
+    ));
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+
+    let outcome: Awaited<ReturnType<typeof hook.result.current.runSearch>> | undefined;
+    await act(async () => {
+      void hook.result.current.runSearch({ query: 'aggregate request', source: 'all' }).then((value) => { outcome = value; });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(5));
+    expect(hook.result.current.searchBusy).toBe(true);
+
+    await act(async () => {
+      resetForumSourceQueries('nodeseek', appQueryClient, 'session-updated');
+    });
+    expect(hook.result.current.searchBusy).toBe(true);
+    expect(outcome).toBeUndefined();
+
+    await act(async () => {
+      for (const source of sources) {
+        pendingSearches.get(source)!.resolve({
+          items: source === 'nodeseek' ? [] : [{ ...standardTopic, source, id: source }],
+          errors: {},
+          hasMore: false,
+          nextPage: null
+        });
+      }
+      await Promise.all([...pendingSearches.values()].map(({ promise }) => promise));
+    });
+
+    await waitFor(() => expect(outcome).toBe('completed'));
+    expect(hook.result.current.searchBusy).toBe(false);
+    expect(hook.result.current.searchGroups.map(({ source }) => source)).toEqual([
+      'v2ex',
+      'linuxdo',
+      'yaohuo',
+      'xiaoyinsi'
+    ]);
   });
 });

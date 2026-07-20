@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
+import { isCancelledError } from '@tanstack/react-query';
 import CookieManager from '@react-native-cookies/cookies';
 import { type WebView, type WebViewMessageEvent } from 'react-native-webview';
 import {
@@ -26,6 +27,7 @@ import {
 import { YAOHUO_URL } from '../appUrls';
 import {
   errorMessage,
+  isCanceledRequest,
   isLinuxDoCloudflareError,
   isYaohuoLoginExpiredError,
   isYaohuoLoginRequiredError
@@ -46,6 +48,7 @@ import {
   type DiagnosticOutcome,
   type DiagnosticTrace
 } from '../diagnostics';
+import { appQueryClient, forumQueryKeys } from './serverState';
 
 const YAOHUO_COOKIE_URLS = [YAOHUO_URL];
 const NODESEEK_MESSAGE_HOSTS = ['nodeseek.com'];
@@ -60,7 +63,6 @@ export function useAccountController({
   currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
   forumFetchWithWebViewFallback,
-  linuxDoLevelRequestIdRef,
   linuxDoWebViewUserAgentRef,
   nodeSeekLoginPanelRequestRef,
   nodeSeekCurrentUserId,
@@ -95,7 +97,6 @@ export function useAccountController({
   currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
   forumFetchWithWebViewFallback: Fetcher;
-  linuxDoLevelRequestIdRef: Ref<number>;
   linuxDoWebViewUserAgentRef: Ref<string>;
   nodeSeekLoginPanelRequestRef: Ref<number>;
   nodeSeekCurrentUserId: string | number | null;
@@ -136,6 +137,7 @@ export function useAccountController({
   const yaohuoTerminalRequestRef = useRef<number | null>(null);
   const wasYaohuoLoginPanelVisibleRef = useRef(false);
   const observedYaohuoLoginPanelRequestRef = useRef(yaohuoLoginPanelRequestRef.current);
+  const linuxDoLevelRequestGenerationRef = useRef(0);
 
   const finishNodeSeekLoginTrace = useCallback((
     trace: DiagnosticTrace,
@@ -762,7 +764,7 @@ export function useAccountController({
     const summary = linuxDoAccessSummary(access);
     const cookieSummary = summarizeLinuxDoCookies(parseLinuxDoDocumentCookie(access?.cookieHeader || '')).names;
     updateLinuxDoSession(summary.hasClearance
-      ? { type: 'cookie-loaded', cookieSummary, hasVerification: true, loggedIn: false, at: new Date().toISOString() }
+      ? { type: 'session-updated', cookieSummary, hasVerification: true, loggedIn: false, at: new Date().toISOString() }
       : { type: 'cleared' });
     resetLinuxDoLevelState();
     resetLinuxDoWebView();
@@ -770,14 +772,17 @@ export function useAccountController({
   }, [notify, resetLinuxDoLevelState, resetLinuxDoWebView, updateLinuxDoSession]);
 
   const refreshLinuxDoLevel = useCallback(async () => {
-    const requestId = ++linuxDoLevelRequestIdRef.current;
+    const requestGeneration = ++linuxDoLevelRequestGenerationRef.current;
+    const isLatestRequest = () => requestGeneration === linuxDoLevelRequestGenerationRef.current;
     const credentialGeneration = currentLinuxDoAccessGeneration();
     const isCredentialCurrent = () => credentialGeneration === currentLinuxDoAccessGeneration();
+    const queryKey = forumQueryKeys.levelProfile('linuxdo', credentialGeneration);
+    let querySignal: AbortSignal | undefined;
     setLinuxDoLevelBusy(true);
     setLinuxDoLevelError('');
     try {
       const access = await loadLinuxDoAccess();
-      if (!isCredentialCurrent()) {
+      if (!isLatestRequest() || !isCredentialCurrent()) {
         return;
       }
       if (!access?.cookieHeader || !linuxDoAccessSummary(access).loggedIn) {
@@ -785,19 +790,28 @@ export function useAccountController({
         setLinuxDoLevelError('请先完成 linux.do 登录 / 验证。');
         return;
       }
-      const profile = await getLinuxDoLevelProfile({
-        cookieHeader: access.cookieHeader,
-        userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
-        fetcher: forumFetchWithWebViewFallback,
-        isCurrent: isCredentialCurrent
+      await appQueryClient.cancelQueries({ queryKey, exact: true });
+      appQueryClient.removeQueries({ queryKey, exact: true });
+      const profile = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: ({ signal }) => {
+          querySignal = signal;
+          return getLinuxDoLevelProfile({
+            cookieHeader: access.cookieHeader,
+            userAgent: access.userAgent || linuxDoWebViewUserAgentRef.current,
+            fetcher: forumFetchWithWebViewFallback,
+            isCurrent: isCredentialCurrent,
+            signal
+          });
+        }
       });
-      if (requestId !== linuxDoLevelRequestIdRef.current || !isCredentialCurrent()) {
+      if (!isLatestRequest() || querySignal?.aborted || !isCredentialCurrent()) {
         return;
       }
       setLinuxDoLevelProfile(profile);
       notify('linux.do 等级已更新。');
     } catch (error) {
-      if (requestId !== linuxDoLevelRequestIdRef.current || !isCredentialCurrent()) {
+      if (!isLatestRequest() || querySignal?.aborted || !isCredentialCurrent() || isCancelledError(error) || isCanceledRequest(error)) {
         return;
       }
       if (isLinuxDoCloudflareError(error)) {
@@ -808,13 +822,12 @@ export function useAccountController({
       }
       setLinuxDoLevelError(errorMessage(error));
     } finally {
-      if (requestId === linuxDoLevelRequestIdRef.current) {
+      if (isLatestRequest()) {
         setLinuxDoLevelBusy(false);
       }
     }
   }, [
     forumFetchWithWebViewFallback,
-    linuxDoLevelRequestIdRef,
     linuxDoWebViewUserAgentRef,
     notify,
     setLinuxDoLevelBusy,

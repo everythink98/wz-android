@@ -83,7 +83,6 @@ vi.mock('../linuxdoCookieBridge', () => ({
 import { clearLinuxDoAccessForGeneration, currentLinuxDoAccessGeneration, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { Alert } from 'react-native';
 import { getDocumentAsync } from 'expo-document-picker';
-import { createRequestOwner } from '../requestOwnership';
 import { createSiteSessionStates } from '../siteSessionState';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
 import type { Fetcher } from '../request';
@@ -93,6 +92,7 @@ import type { SiteSessionEvent } from '../siteSessionState';
 import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
 import type { CredentialClearOptions } from './sessionControllerHelpers';
 import { useTopicActionsController } from './useTopicActionsController';
+import { appQueryClient } from './serverState';
 import type { TopicSessionController } from './useTopicSessionController';
 
 function createTopicActionController({
@@ -195,7 +195,7 @@ function createTopicActionController({
     setOptimisticTopicActions: vi.fn(),
     showYaohuoLogin,
     siteSessionStates,
-    topicActionRequestOwnerRef: { current: createRequestOwner('topic') },
+    topicActionContextRef: { current: { generation: 1, key: `${source}:424242` } },
     topicSession: {
       state: {
         replyContent,
@@ -228,6 +228,7 @@ function createTopicActionController({
 }
 
 afterEach(() => {
+  appQueryClient.clear();
   setDiagnosticWriter(null);
   vi.clearAllMocks();
   vi.mocked(currentLinuxDoAccessGeneration).mockReturnValue(1);
@@ -257,7 +258,7 @@ describe('topic action auth guards', () => {
     expect(resetLinuxDoLevelState).toHaveBeenCalledTimes(1);
   });
 
-  it('records retained linux.do clearance as cookie-loaded instead of verification success', async () => {
+  it('records retained linux.do clearance as a real session transition', async () => {
     vi.mocked(currentLinuxDoAccessGeneration).mockReturnValue(3);
     vi.mocked(clearLinuxDoAccessForGeneration).mockResolvedValueOnce({
       cookieHeader: 'cf_clearance=retained',
@@ -280,7 +281,7 @@ describe('topic action auth guards', () => {
     });
 
     expect(updateLinuxDoSession).toHaveBeenCalledWith({
-      type: 'cookie-loaded',
+      type: 'session-updated',
       cookieSummary: ['cf_clearance'],
       hasVerification: true,
       loggedIn: false,
@@ -866,6 +867,26 @@ describe('topic action auth guards', () => {
 
     expect(clearNodeSeekLoginCookiesOnly).toHaveBeenCalledWith(expect.objectContaining({ generation: 1 }));
     expect(notify).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+  });
+
+  it('keeps one non-idempotent mutation per topic action key while the first request is pending', async () => {
+    const request = Promise.withResolvers<object>();
+    actionMocks.runNodeSeekAction.mockReturnValueOnce(request.promise);
+    const notify = vi.fn();
+    const { controller } = createTopicActionController({
+      notify,
+      replyContent: 'reply body'
+    });
+
+    const first = controller.submitReply();
+    await vi.waitFor(() => expect(actionMocks.runNodeSeekAction).toHaveBeenCalledTimes(1));
+    await controller.submitReply();
+
+    expect(actionMocks.runNodeSeekAction).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith('操作正在提交，请稍后。');
+
+    request.resolve({});
+    await first;
   });
 
   it('REG-ACCOUNT-009 suppresses an old NodeSeek action failure after a newer login is saved', async () => {

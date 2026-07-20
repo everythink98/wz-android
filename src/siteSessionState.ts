@@ -35,6 +35,7 @@ export type SiteSessionViewModels = Record<SessionSite, SiteSessionViewModel>;
 
 export type SiteSessionEvent =
   | { type: 'cookie-loaded'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; at?: string }
+  | { type: 'session-updated'; cookieSummary?: string[]; hasVerification?: boolean; loggedIn?: boolean; currentUser?: UserProfile | null; recoveryKey?: string; at?: string }
   | { type: 'login-detected'; cookieSummary?: string[]; currentUser?: UserProfile | null; at?: string }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
@@ -42,7 +43,7 @@ export type SiteSessionEvent =
   | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; currentUser?: UserProfile | null; at: string }
   | { type: 'login-expired'; message?: string; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
-  | { type: 'cleared'; at?: string };
+  | { type: 'cleared'; recoveryKey?: string; at?: string };
 export type ScopedSiteSessionEvent = SiteSessionEvent & { site: SessionSite };
 
 function cleanCookieSummary(cookieSummary: string[] = []) {
@@ -114,7 +115,7 @@ function stateWithCookieFacts(state: SiteSessionState, event: {
 }
 
 export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessionEvent): SiteSessionState {
-  if (event.type === 'cookie-loaded') {
+  if (event.type === 'cookie-loaded' || event.type === 'session-updated') {
     return stateWithCookieFacts(state, event);
   }
   if (event.type === 'login-detected') {

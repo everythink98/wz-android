@@ -257,7 +257,7 @@ describe('小隐寺授权 controller', () => {
     expect(mockVerify).toHaveBeenCalled();
     expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
       site: 'xiaoyinsi',
-      type: 'login-detected',
+      type: 'session-updated',
       currentUser: expect.objectContaining({ username: 'alice' })
     }));
     expect(dispatchSiteSessionEvent.mock.calls.at(-1)?.[0]).not.toHaveProperty('cookieSummary');
@@ -445,7 +445,7 @@ describe('小隐寺授权 controller', () => {
     expect(hook.result.current.message).toBe('重新授权未开始，原授权仍然有效。');
     expect(dispatchSiteSessionEvent).toHaveBeenLastCalledWith(expect.objectContaining({
       site: 'xiaoyinsi',
-      type: 'login-detected'
+      type: 'cookie-loaded'
     }));
   });
 

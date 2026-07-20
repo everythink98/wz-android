@@ -44,7 +44,7 @@ import { useUserController } from './useUserController';
 import { useVerificationController } from './useVerificationController';
 import { useAccountController } from './useAccountController';
 import { useAccountCredentialController } from './useAccountCredentialController';
-import { useTopicActionsController } from './useTopicActionsController';
+import { useTopicActionsController, type TopicActionContext } from './useTopicActionsController';
 import { useXiaoyinsiAuthController } from './useXiaoyinsiAuthController';
 import { nodeSeekMediaCookieHeaderAfterCredentialLoad, takeNodeSeekVerificationRetry } from './sessionControllerHelpers';
 import {
@@ -85,7 +85,9 @@ import { hasSameYaohuoTopicLayout } from '../screens/topic/topicScreenHelpers';
 import { UserScreen } from '../screens/UserScreen';
 import type { TopicListItem } from '../screens/TopicScreen';
 import type { LoginNavigationRequest, Screen, TopicSnapshot } from '../appTypes';
-import { createRequestOwner, startOwnedRequest } from '../requestOwnership';
+import { setRequestTimeoutsActive } from '../request';
+import { focusManager } from '@tanstack/react-query';
+import { appQueryClient, forumQueryKeys } from './serverState';
 import {
   applyDevAnonymousOverrides,
   createSiteSessionViewModels,
@@ -170,13 +172,9 @@ export function AppRoot() {
   const nodeImageApiKeyBusyRef = useRef(false);
   const yaohuoLoginPanelRequestRef = useRef(0);
   const webLoginDetectedRef = useRef(false);
-  const topicRequestIdRef = useRef(0);
-  const topicAbortRef = useRef<AbortController | null>(null);
   const checkingRequestIdRef = useRef(0);
-  const topicActionRequestOwnerRef = useRef(createRequestOwner('topic-action'));
+  const topicActionContextRef = useRef<TopicActionContext>({ generation: 0, key: 'none' });
   const actionAbortRef = useRef<{ abort: () => void; abortAll: () => void } | null>(null);
-  const repliesAbortRef = useRef<AbortController | null>(null);
-  const repliesRequestIdRef = useRef(0);
   const topicScrollRef = useRef<FlashListRef<TopicListItem> | null>(null);
   const topicReturnScreenRef = useRef<Exclude<Screen, 'topic'>>('feed');
   const userReturnScreenRef = useRef<Exclude<Screen, 'user'>>('feed');
@@ -198,7 +196,6 @@ export function AppRoot() {
   const linuxDoWebViewUserAgentRef = useRef(DEFAULT_LINUXDO_ANDROID_USER_AGENT);
   const linuxDoClearanceBeforeVerifyRef = useRef<string | null>(null);
   const linuxDoRequireFreshClearanceRef = useRef(false);
-  const linuxDoLevelRequestIdRef = useRef(0);
   const {
     cancelDeferredNavigationTask,
     flushDeferredNavigationTask,
@@ -259,8 +256,16 @@ export function AppRoot() {
     credentialClearIntentHandlerRef.current(site);
   }, []);
   const accountStatusInitialRefreshRef = useRef(false);
+  const abortTopicReadRequests = useCallback(() => {
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'topic'
+    });
+  }, []);
   const invalidateTopicActionRequests = useCallback((nextTopicKey: string | null) => {
-    startOwnedRequest(topicActionRequestOwnerRef, `topic-action-context:${nextTopicKey || 'none'}`);
+    topicActionContextRef.current = {
+      generation: topicActionContextRef.current.generation + 1,
+      key: nextTopicKey || 'none'
+    };
     actionAbortRef.current?.abort();
   }, []);
   const {
@@ -273,7 +278,8 @@ export function AppRoot() {
   } = useReaderDataController({ notify });
 
   const resetLinuxDoLevelState = useCallback(() => {
-    linuxDoLevelRequestIdRef.current += 1;
+    void appQueryClient.cancelQueries({ queryKey: forumQueryKeys.level('linuxdo') });
+    appQueryClient.removeQueries({ queryKey: forumQueryKeys.level('linuxdo') });
     setLinuxDoLevelProfile(null);
     setLinuxDoLevelError('');
     setLinuxDoLevelBusy(false);
@@ -504,7 +510,6 @@ export function AppRoot() {
     commands: {
       composer: topicComposer,
       navigation: topicNavigation,
-      quotes: topicQuotes,
       topic: topicLifecycle,
       view: topicView
     },
@@ -512,7 +517,6 @@ export function AppRoot() {
     snapshot: topicSnapshot
   } = topicSession;
   const topicLayoutDetail = useStableTopicLayoutDetail(topicDetail);
-  const abortQuotedReplyRequests = topicQuotes.abortRequests;
   const activateTopicRoute = topicNavigation.activateRoute;
   const changeCommentQuery = topicView.changeCommentQuery;
   const changeReplyContent = topicComposer.changeContent;
@@ -841,8 +845,7 @@ export function AppRoot() {
     handleLoginNavigation(request, LINUXDO_LOGIN_HOSTS)
   ), [handleLoginNavigation]);
   useEffect(() => () => {
-    topicAbortRef.current?.abort();
-    repliesAbortRef.current?.abort();
+    abortTopicReadRequests();
     actionAbortRef.current?.abortAll();
     const resolveNodeImageAuth = nodeImageAuthResolverRef.current;
     const previousNodeImageApiKey = nodeImageAuthPreviousApiKeyRef.current;
@@ -859,7 +862,7 @@ export function AppRoot() {
     }
     resolveNodeImageAuth?.(null);
     cancelDeferredNavigationTask();
-  }, [cancelDeferredNavigationTask]);
+  }, [abortTopicReadRequests, cancelDeferredNavigationTask]);
   const topicStateIndex = useMemo(() => createTopicListItemStateIndex(readerData), [
     readerData.favorites,
     readerData.history,
@@ -994,7 +997,6 @@ export function AppRoot() {
     currentNodeSeekCredentialGeneration,
     currentYaohuoCredentialGeneration,
     forumFetchWithWebViewFallback,
-    linuxDoLevelRequestIdRef,
     linuxDoWebViewUserAgentRef,
     nodeSeekLoginPanelRequestRef,
     nodeSeekCurrentUserId: siteSessionViewModels.nodeseek.currentUser?.id ?? null,
@@ -1025,12 +1027,22 @@ export function AppRoot() {
   });
 
   useEffect(() => {
+    const initialActive = AppState.currentState !== 'background' && AppState.currentState !== 'inactive';
+    setRequestTimeoutsActive(initialActive);
+    focusManager.setFocused(initialActive);
     const subscription = AppState.addEventListener('change', (next) => {
+      const active = next === 'active';
+      setRequestTimeoutsActive(active);
+      focusManager.setFocused(active);
       if (next !== 'active') {
         stopLinuxDoVerificationForInactiveApp();
       }
     });
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+      setRequestTimeoutsActive(true);
+      focusManager.setFocused(undefined);
+    };
   }, [stopLinuxDoVerificationForInactiveApp]);
 
   const closeMorePanels = useCallback(() => {
@@ -1259,11 +1271,7 @@ export function AppRoot() {
       closeMorePanels();
     }
     if (leavingTopicForUser) {
-      topicRequestIdRef.current += 1;
-      repliesRequestIdRef.current += 1;
-      topicAbortRef.current?.abort();
-      repliesAbortRef.current?.abort();
-      abortQuotedReplyRequests();
+      abortTopicReadRequests();
       if (shouldInvalidateTopicActions) {
         invalidateTopicActionRequests(null);
       }
@@ -1272,11 +1280,7 @@ export function AppRoot() {
     if (nextScreen !== 'topic' && !leavingTopicForUser) {
       clearTopicBackStack();
       clearTopicRoutes();
-      topicRequestIdRef.current += 1;
-      repliesRequestIdRef.current += 1;
-      topicAbortRef.current?.abort();
-      repliesAbortRef.current?.abort();
-      abortQuotedReplyRequests();
+      abortTopicReadRequests();
       invalidateTopicActionRequests(null);
       stopTopicWork(true);
     }
@@ -1288,7 +1292,7 @@ export function AppRoot() {
       setScreen(nextScreen);
     }
     finishDiagnosticTrace(trace, 'success', { state: 'applied' });
-  }, [abortQuotedReplyRequests, activateTopicRoute, clearTopicBackStack, clearTopicRoutes, closeMorePanels, invalidateTopicActionRequests, restoreTopicRoute, stopTopicWork]);
+  }, [abortTopicReadRequests, activateTopicRoute, clearTopicBackStack, clearTopicRoutes, closeMorePanels, invalidateTopicActionRequests, restoreTopicRoute, stopTopicWork]);
 
   const rememberVisibleNodeSeekCookiesAndRetrySearch = useCallback(async (options?: { silent?: boolean }) => {
     const saved = await rememberVisibleNodeSeekCookies(options);
@@ -1383,15 +1387,11 @@ export function AppRoot() {
     readerData,
     readerDataRef,
     reopenExistingTopicScreenRef,
-    repliesAbortRef,
-    repliesRequestIdRef,
     getCurrentScreen,
     screen,
     showLinuxDoVerification,
     showYaohuoLogin,
     sourceGateway,
-    topicAbortRef,
-    topicRequestIdRef,
     topicReturnScreenRef,
     topicSession
   });
@@ -1477,7 +1477,7 @@ export function AppRoot() {
     setOptimisticTopicActions,
     showYaohuoLogin,
     siteSessionStates: effectiveSiteSessionStates,
-    topicActionRequestOwnerRef,
+    topicActionContextRef,
     topicSession
   });
 
@@ -1579,7 +1579,6 @@ export function AppRoot() {
 
   const goBackFromTopic = useCallback((parentTrace?: DiagnosticTrace) => {
     const trace = parentTrace || beginDiagnosticTrace('navigation', 'topic-back');
-    abortQuotedReplyRequests();
     cancelDeferredNavigationTask();
     const closingRouteKey = currentTopicRouteKey();
     const returningRouteKey = previousTopicRouteKey();
@@ -1591,10 +1590,7 @@ export function AppRoot() {
       hasSnapshot: Boolean(previousTopic)
     });
     if (returningRouteKey || previousTopic) {
-      topicRequestIdRef.current += 1;
-      repliesRequestIdRef.current += 1;
-      topicAbortRef.current?.abort();
-      repliesAbortRef.current?.abort();
+      abortTopicReadRequests();
       const restoredByRoute = returningRouteKey ? restoreTopicRoute(returningRouteKey) : false;
       if (!restoredByRoute && previousTopic) {
         restoreTopicSnapshot(previousTopic);
@@ -1620,7 +1616,7 @@ export function AppRoot() {
     }
     changeScreen(topicReturnScreenRef.current);
     finishDiagnosticTrace(trace, 'success', { state: 'return-screen' });
-  }, [abortQuotedReplyRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicRoute, restoreTopicSnapshot]);
+  }, [abortTopicReadRequests, cancelDeferredNavigationTask, changeScreen, forgetTopicRoute, popTopicBackStack, restoreTopicRoute, restoreTopicSnapshot]);
 
   const goBackFromUser = useCallback((parentTrace?: DiagnosticTrace) => {
     const trace = parentTrace || beginDiagnosticTrace('navigation', 'user-back');

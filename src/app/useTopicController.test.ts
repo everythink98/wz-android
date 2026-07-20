@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
+  useEffect: () => undefined,
   useLayoutEffect: (effect: () => void) => effect(),
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value })
@@ -14,8 +15,11 @@ import { createEmptyReaderData } from '../readerData';
 import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import type { SourceGateway } from '../sources/sourceGateway';
 import type { Topic, TopicDetail } from '../types';
+import { siteSessionEventInvalidatesForumQueries } from './sessionControllerHelpers';
 import { useTopicController } from './useTopicController';
 import type { LinuxDoReadRecovery } from './useVerificationController';
+import { appQueryClient, forumQueryKeys, resetForumSourceQueries } from './serverState';
+import { REQUEST_CANCELED_MESSAGE } from '../request';
 
 type ShowLinuxDoVerificationMock = ReturnType<typeof vi.fn<(
   message?: string,
@@ -40,24 +44,15 @@ function createLinuxDoTopicController({
   const currentKey = `${detail.source}:${detail.id}`;
   const expandedQuotes = new Set<string>();
   const loadedQuotes = new Map<string, TopicDetail['replies'][number]>();
-  const quoteRequests = new Map<string, AbortController>();
   const topicQuotes = {
     changeExpanded: vi.fn((key: string, expanded: boolean) => {
       if (expanded) expandedQuotes.add(key);
       else expandedQuotes.delete(key);
     }),
     changeLoading: vi.fn(),
-    clearRequest: vi.fn((key: string, controller: AbortController) => {
-      if (quoteRequests.get(key) === controller) quoteRequests.delete(key);
-    }),
     getLoaded: vi.fn((key: string) => loadedQuotes.get(key)),
     isExpanded: vi.fn((key: string) => expandedQuotes.has(key)),
-    isRequest: vi.fn((key: string, controller: AbortController) => quoteRequests.get(key) === controller),
-    remember: vi.fn((key: string, reply: TopicDetail['replies'][number]) => { loadedQuotes.set(key, reply); }),
-    replaceRequest: vi.fn((key: string, controller: AbortController) => {
-      quoteRequests.get(key)?.abort();
-      quoteRequests.set(key, controller);
-    })
+    remember: vi.fn((key: string, reply: TopicDetail['replies'][number]) => { loadedQuotes.set(key, reply); })
   };
   const topicReplyCommands = {
     beginLoad: vi.fn(),
@@ -85,15 +80,11 @@ function createLinuxDoTopicController({
     readerData,
     readerDataRef: { current: readerData },
     reopenExistingTopicScreenRef: { current: false },
-    repliesAbortRef: { current: null },
-    repliesRequestIdRef: { current: 0 },
     getCurrentScreen: () => 'topic',
     screen: 'topic',
     showLinuxDoVerification,
     showYaohuoLogin: vi.fn(),
     sourceGateway,
-    topicAbortRef: { current: null },
-    topicRequestIdRef: { current: 0 },
     topicReturnScreenRef: { current: 'feed' },
     topicSession: {
       state: {
@@ -117,6 +108,7 @@ function createLinuxDoTopicController({
 
 describe('topic controller helpers', () => {
   afterEach(() => {
+    appQueryClient.clear();
     setDiagnosticWriter(null);
   });
 
@@ -214,15 +206,11 @@ describe('topic controller helpers', () => {
       readerData,
       readerDataRef: { current: readerData },
       reopenExistingTopicScreenRef: { current: false },
-      repliesAbortRef: { current: null },
-      repliesRequestIdRef: { current: 0 },
       getCurrentScreen: () => currentScreen,
       screen: 'feed',
       showLinuxDoVerification,
       showYaohuoLogin: vi.fn(),
       sourceGateway: { getTopic } as unknown as SourceGateway,
-      topicAbortRef: { current: null },
-      topicRequestIdRef: { current: 0 },
       topicReturnScreenRef: { current: 'feed' },
       topicSession: {
         state: {
@@ -251,6 +239,236 @@ describe('topic controller helpers', () => {
     await expect(recovery.resume()).resolves.toBe('completed');
     expect(getTopic).toHaveBeenCalledTimes(3);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-TOPIC-022 keeps a topic request alive when credential loading only observes the stored cookie', async () => {
+    const topic: Topic = {
+      source: 'nodeseek',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-42-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const detail: TopicDetail = { ...topic, contentHtml: '<p>body</p>', replies: [] };
+    let currentScreen: 'feed' | 'topic' = 'feed';
+    let currentKey: string | null = null;
+    const topicCommands = {
+      beginLoad: vi.fn(() => { currentKey = 'nodeseek:42'; }),
+      beginRefresh: vi.fn(),
+      failLoad: vi.fn(),
+      finishLoad: vi.fn(),
+      getCurrentKey: vi.fn(() => currentKey),
+      resolveLoad: vi.fn(),
+      reuse: vi.fn()
+    };
+    const readerData = createEmptyReaderData();
+    const getTopic = vi.fn(async () => {
+      const credentialObservation = {
+        type: 'cookie-loaded' as const,
+        cookieSummary: ['session'],
+        hasVerification: true,
+        loggedIn: true
+      };
+      if (siteSessionEventInvalidatesForumQueries(credentialObservation)) {
+        resetForumSourceQueries('nodeseek');
+        await Promise.resolve();
+      }
+      return detail;
+    });
+    const controller = useTopicController({
+      changeScreen: vi.fn((screen) => { currentScreen = screen as typeof currentScreen; }),
+      commitReaderData: vi.fn(),
+      notify: vi.fn(),
+      onNodeSeekTopicVerificationRequired: vi.fn(),
+      pushTopicScreen: vi.fn(),
+      readerData,
+      readerDataRef: { current: readerData },
+      reopenExistingTopicScreenRef: { current: false },
+      getCurrentScreen: () => currentScreen,
+      screen: 'feed',
+      showLinuxDoVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { getTopic } as unknown as SourceGateway,
+      topicReturnScreenRef: { current: 'feed' },
+      topicSession: {
+        state: {
+          replyNextOffset: null,
+          replyNextPage: null,
+          selectedTopic: null,
+          topicDetail: null,
+          topicReplies: []
+        },
+        commands: {
+          navigation: { clearBackStack: vi.fn(), pushBackStack: vi.fn() },
+          quotes: {},
+          replies: {},
+          topic: topicCommands
+        },
+        snapshot: vi.fn()
+      } as never
+    });
+
+    await expect(controller.openTopic(topic)).resolves.toBe('completed');
+    expect(topicCommands.resolveLoad).toHaveBeenCalledWith(detail, 0);
+  });
+
+  it('REG-TOPIC-022 settles the active loading state when a real session transition cancels its query', async () => {
+    const topic: Topic = {
+      source: 'yaohuo',
+      id: '42',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://yaohuo.me/bbs/book_view.aspx?id=42',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    let currentKey: string | null = null;
+    const topicCommands = {
+      beginLoad: vi.fn(() => { currentKey = 'yaohuo:42'; }),
+      beginRefresh: vi.fn(),
+      failLoad: vi.fn(),
+      finishLoad: vi.fn(),
+      getCurrentKey: vi.fn(() => currentKey),
+      resolveLoad: vi.fn(),
+      reuse: vi.fn()
+    };
+    const readerData = createEmptyReaderData();
+    const controller = useTopicController({
+      changeScreen: vi.fn(),
+      commitReaderData: vi.fn(),
+      notify: vi.fn(),
+      onNodeSeekTopicVerificationRequired: vi.fn(),
+      pushTopicScreen: vi.fn(),
+      readerData,
+      readerDataRef: { current: readerData },
+      reopenExistingTopicScreenRef: { current: false },
+      getCurrentScreen: () => 'feed',
+      screen: 'feed',
+      showLinuxDoVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: {
+        getTopic: vi.fn(async () => {
+          resetForumSourceQueries('yaohuo', appQueryClient, 'login-expired');
+          await Promise.resolve();
+          throw Object.assign(new Error('登录已失效'), { kind: 'login-expired' });
+        })
+      } as unknown as SourceGateway,
+      topicReturnScreenRef: { current: 'feed' },
+      topicSession: {
+        state: { replyNextOffset: null, replyNextPage: null, selectedTopic: null, topicDetail: null, topicReplies: [] },
+        commands: {
+          navigation: { clearBackStack: vi.fn(), pushBackStack: vi.fn() },
+          quotes: {},
+          replies: {},
+          topic: topicCommands
+        },
+        snapshot: vi.fn()
+      } as never
+    });
+
+    await expect(controller.openTopic(topic)).resolves.toBe('stale');
+
+    expect(topicCommands.finishLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates concurrent opens for the same topic while only the latest caller applies the result', async () => {
+    const topic: Topic = {
+      source: 'nodeseek',
+      id: '84',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-84-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const detail: TopicDetail = { ...topic, contentHtml: '<p>body</p>', replies: [] };
+    const pending = Promise.withResolvers<void>();
+    const getTopic = vi.fn(async (_options, context) => {
+      await pending.promise;
+      if (context?.isCurrent?.() === false) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
+      return detail;
+    });
+    let currentKey: string | null = null;
+    const topicCommands = {
+      beginLoad: vi.fn(() => { currentKey = 'nodeseek:84'; }),
+      beginRefresh: vi.fn(),
+      failLoad: vi.fn(),
+      finishLoad: vi.fn(),
+      getCurrentKey: vi.fn(() => currentKey),
+      resolveLoad: vi.fn(),
+      reuse: vi.fn()
+    };
+    const readerData = createEmptyReaderData();
+    const controller = useTopicController({
+      changeScreen: vi.fn(),
+      commitReaderData: vi.fn(),
+      notify: vi.fn(),
+      onNodeSeekTopicVerificationRequired: vi.fn(),
+      pushTopicScreen: vi.fn(),
+      readerData,
+      readerDataRef: { current: readerData },
+      reopenExistingTopicScreenRef: { current: false },
+      getCurrentScreen: () => 'feed',
+      screen: 'feed',
+      showLinuxDoVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { getTopic } as unknown as SourceGateway,
+      topicReturnScreenRef: { current: 'feed' },
+      topicSession: {
+        state: { replyNextOffset: null, replyNextPage: null, selectedTopic: null, topicDetail: null, topicReplies: [] },
+        commands: {
+          navigation: { clearBackStack: vi.fn(), pushBackStack: vi.fn() },
+          quotes: {},
+          replies: {},
+          topic: topicCommands
+        },
+        snapshot: vi.fn()
+      } as never
+    });
+
+    const first = controller.openTopic(topic);
+    await vi.waitFor(() => expect(getTopic).toHaveBeenCalledTimes(1));
+    const second = controller.openTopic(topic);
+    pending.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['stale', 'completed']);
+    expect(getTopic).toHaveBeenCalledTimes(1);
+    expect(topicCommands.resolveLoad).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a valid next reply page reachable when that page is already cached but not displayed', async () => {
+    const detail: TopicDetail = {
+      source: 'linuxdo',
+      id: 'cached-page',
+      title: 'Topic',
+      author: 'alice',
+      url: 'https://linux.do/t/cached-page',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 1,
+      contentHtml: '<p>body</p>',
+      replies: []
+    };
+    appQueryClient.setQueryData(
+      forumQueryKeys.replyPage('linuxdo', detail.id, 2, null),
+      { items: [{ author: 'cached', contentHtml: '<p>cached</p>', createdAt: '', floor: 2 }], hasMore: false, nextPage: null }
+    );
+    const { controller, topicReplyCommands } = createLinuxDoTopicController({
+      detail,
+      sourceGateway: {
+        getReplies: vi.fn(async () => ({ items: [], hasMore: true, nextPage: 2, nextOffset: null }))
+      } as unknown as SourceGateway
+    });
+
+    await controller.refreshTopicReplies();
+
+    expect(topicReplyCommands.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      hasMore: true,
+      nextPage: 2
+    }));
   });
 
   it('REG-LINUXDO-002 reports a resumed reply refresh as completed instead of stale', async () => {
@@ -392,7 +610,7 @@ describe('topic controller helpers', () => {
     }));
   });
 
-  it('REG-TOPIC-007 ignores a superseded quoted-post response that resolves after its abort', async () => {
+  it('REG-TOPIC-007 deduplicates the same quoted-post transport while only the latest caller applies it', async () => {
     const detail: TopicDetail = {
       source: 'linuxdo',
       id: '42',
@@ -404,26 +622,15 @@ describe('topic controller helpers', () => {
       contentHtml: '<p>body</p>',
       replies: []
     };
-    const staleReply: TopicDetail['replies'][number] = {
-      author: 'stale-author',
-      contentHtml: '<p>stale</p>',
-      createdAt: '2026-07-18T00:01:00.000Z',
-      floor: 7,
-      commentId: 70
-    };
     const currentReply: TopicDetail['replies'][number] = {
-      ...staleReply,
       author: 'current-author',
       contentHtml: '<p>current</p>',
+      createdAt: '2026-07-18T00:01:00.000Z',
+      floor: 7,
       commentId: 71
     };
-    let resolveStale!: (reply: TopicDetail['replies'][number]) => void;
-    let resolveCurrent!: (reply: TopicDetail['replies'][number]) => void;
-    const staleRequest = new Promise<TopicDetail['replies'][number]>((resolve) => { resolveStale = resolve; });
-    const currentRequest = new Promise<TopicDetail['replies'][number]>((resolve) => { resolveCurrent = resolve; });
-    const getReply = vi.fn()
-      .mockReturnValueOnce(staleRequest)
-      .mockReturnValueOnce(currentRequest);
+    const request = Promise.withResolvers<TopicDetail['replies'][number]>();
+    const getReply = vi.fn(() => request.promise);
     const { controller, topicQuotes } = createLinuxDoTopicController({
       detail,
       sourceGateway: { getReply } as unknown as SourceGateway
@@ -435,14 +642,11 @@ describe('topic controller helpers', () => {
 
     const staleOutcome = controller.toggleTopicBodyQuote(options);
     const currentOutcome = controller.toggleTopicBodyQuote(options);
-    resolveStale(staleReply);
+    request.resolve(currentReply);
 
     await expect(staleOutcome).resolves.toBe('stale');
-    expect(topicQuotes.remember).not.toHaveBeenCalled();
-    expect(topicQuotes.changeExpanded).not.toHaveBeenCalledWith('quote-instance', true);
-
-    resolveCurrent(currentReply);
     await expect(currentOutcome).resolves.toBe('completed');
+    expect(getReply).toHaveBeenCalledTimes(1);
     expect(topicQuotes.remember).toHaveBeenCalledTimes(1);
     expect(topicQuotes.remember).toHaveBeenCalledWith('linuxdo:99:7', currentReply);
     expect(topicQuotes.changeExpanded).toHaveBeenCalledWith('quote-instance', true);

@@ -17,8 +17,9 @@
 
 | 路径 | 作用 |
 | --- | --- |
-| `App.tsx` | 应用入口，只加载 `AppRoot` |
+| `App.tsx` | 应用入口，提供唯一 `QueryClientProvider` 并加载 `AppRoot` |
 | `src/app/AppRoot.tsx` | App 根组件，组合控制器、主题、导航、Provider、全局弹层、隐藏 WebView 和页面参数 |
+| `src/app/serverState.ts` | TanStack Query 的唯一 client、五站 query/mutation key 和按来源清理边界 |
 | `src/app/useDeferredNavigationTask.ts` | AppRoot 的延迟导航时机，避免把 `InteractionManager` 细节留在根组件里 |
 | `src/app/use*Controller.ts` | 首页、搜索、详情、用户、账号、会话、验证、备份等运行逻辑 |
 | `src/sources/sourceGateway.ts` | App 统一来源读取入口，隐藏五站读取 adapter 差异 |
@@ -53,6 +54,17 @@
 - `src/forumApi.ts` 仍是现有读取实现的一部分，不应从文档中当作已删除文件处理。
 - 新增读取调用方应使用 `sourceGateway`，不要在 `src/app/*Controller.ts` 里新增对旧读取来源文件的直接调用；新增写操作复用现有 action client，并按触及路径逐项收口。
 - 来源静态 capability 只说明该站可能支持某项能力；当前主题或回复的 `canEdit`、`canDelete` 等权限仍以原站解析结果为准。
+
+## 服务器状态与请求生命周期
+
+- Feed、Search、Topic/回复/引用、User 和 Account/等级读取由 `src/app/serverState.ts` 的 TanStack Query client 统一拥有。key 固定以 `forum -> source -> resource` 开头，并包含会改变响应身份的筛选、排序、页码或 cursor；只有账号检查等按凭据快照执行的 workflow 才把 generation 放进 key。页面不得再新建 transport request id/owner map。
+- Query `queryFn` 的有效性只由 TanStack 提供的 `AbortSignal` 决定，并把它直接传给 `sourceGateway`；相同 key 的并发读取共享一个 transport。页面 generation 只阻止较旧调用方应用共享结果或覆盖 Loading，不得反向取消仍被较新调用方需要的 Query。`sourceGateway` 仍只负责凭据 generation 校验、adapter、transport 和标准化错误，不承担 UI 请求归属。来源返回失败、需要验证或 `parse_empty` 时不保存为可信数据。
+- 默认不自动 retry，不因 mount、重连或回到前台自动重发。Android Home 只更新 TanStack focus 和 `src/request.ts` 的 active-time timeout 时钟，不取消在飞详情请求；离开 Topic route 才取消对应读取。
+- 读取已保存凭据和原站身份只发布 `cookie-loaded` 观察事件，不得取消当前 Query；小隐寺的被动授权复核也遵守这一语义。新凭据提交、Device Code 授权完成发布 `session-updated`，登录确认变化、凭据过期和明确清除也是会话 transition。`useSessionController` 对这些 transition 只取消并移除对应 source 以及可能混入它的 `all` 聚合 Query，并同步清除 Feed/Search/Topic/User 的该来源页面投影；其他来源保持不变，聚合 Search 中未受影响来源继续结算。
+- linux.do 打开验证前先清理旧 clearance；该次 transition 无论落为 `session-updated` 还是 `cleared` 都携带 recovery key。新凭据保存后只在 recovery 仍 current 时再次携带同一个 key；stale recovery 不得借 session transition 保活。各 controller 只按 key、source、lane 完全相等保留触发验证的精确 Feed/Search/Topic/User 请求；首屏 lane 清旧投影后重读，分页、回复和引用 lane 保留已加载数据与 cursor 作为合并基线。恢复成功后的 `verification-succeeded` 只是状态观察，不得再次失效 Query 或擦除刚恢复的页面。见 `REG-LINUXDO-002`、`REG-TOPIC-022`。
+- Query cache 里已经存在下一页，不代表页面已经展示了下一页；Feed、Search、Topic 和 User 只能比较服务端返回的 next cursor 与本次请求 cursor 来判断是否还有更多，缓存页仍须经过当前页面的追加与去重逻辑。
+- Topic 非幂等写操作进入 MutationCache，以 source/topic/action key 防重、串行同 scope 并使该 Topic 读缓存失效。TanStack Mutation 不提供 transport cancel，所以 `src/app/topicActionRuns.ts` 只保留写请求的 `AbortController`、Topic 离开取消和 busy 收口；乐观切换队列仍是业务状态，不是另一层服务器缓存。
+- Cloudflare/WebView 恢复、小隐寺 Device Code 轮询、凭据存储 transaction 和导航快照是多步 workflow，仍可使用受限 generation 防止过期恢复落地；不得用它们重新实现 Query 已有的 dedupe、cache 或取消所有权。
 
 ### Discourse 字段规则
 

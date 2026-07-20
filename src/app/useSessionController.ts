@@ -65,6 +65,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticTrace
 } from '../diagnostics';
+import { appQueryClient, resetForumSourceQueries } from './serverState';
 import {
   createSiteSessionViewModels,
   createSiteSessionStates,
@@ -88,6 +89,7 @@ import {
   runBestEffortTask,
   settleBrowserFetchRequestOnce,
   shouldKeepQueuedBrowserFetchRequest,
+  siteSessionEventInvalidatesForumQueries,
   startNextBrowserFetchRequest,
   type CredentialClearOptions,
   type CredentialLoadOptions
@@ -374,12 +376,21 @@ export function useSessionController({
       source: event.site,
       eventType: event.type
     });
+    if (siteSessionEventInvalidatesForumQueries(event)) {
+      resetForumSourceQueries(
+        event.site,
+        appQueryClient,
+        event.type,
+        'recoveryKey' in event ? event.recoveryKey : undefined
+      );
+    }
     if (event.site === 'nodeseek' && (
       event.type === 'login-expired'
       || event.type === 'cleared'
       || event.type === 'verification-required'
       || event.type === 'verification-started'
       || (event.type === 'cookie-loaded' && event.loggedIn !== true)
+      || (event.type === 'session-updated' && event.loggedIn !== true)
       || (event.type === 'verification-succeeded' && event.loggedIn !== true)
     )) {
       setWebLoginUserId(null);
@@ -626,7 +637,7 @@ export function useSessionController({
         }
         publishNodeSeekCookieHeader(cookieHeader);
         updateNodeSeekSession({
-          type: 'cookie-loaded',
+          type: generation === undefined ? 'session-updated' : 'cookie-loaded',
           cookieSummary: summary.names,
           hasVerification: true,
           loggedIn: summary.loggedIn,

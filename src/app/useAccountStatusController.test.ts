@@ -55,14 +55,50 @@ vi.mock('../linuxdoCookieBridge', () => ({
 }));
 
 import { setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
+import { appQueryClient, resetForumSourceQueries } from './serverState';
 import { useAccountStatusController } from './useAccountStatusController';
 
 afterEach(() => {
+  appQueryClient.clear();
   setDiagnosticWriter(null);
   vi.clearAllMocks();
 });
 
 describe('account status diagnostics', () => {
+  it('keeps an explicit 小隐寺 expiry result fulfilled when it resets source queries', async () => {
+    mocks.getItemAsync.mockResolvedValue(null);
+    mocks.currentLinuxDoAccessGeneration.mockReturnValue(0);
+    mocks.loadLinuxDoAccess.mockResolvedValue(null);
+    mocks.getCurrentUserProfile.mockResolvedValue(null);
+    const notify = vi.fn();
+    const refreshXiaoyinsiAuthorization = vi.fn(async () => {
+      resetForumSourceQueries('xiaoyinsi', appQueryClient, 'login-expired');
+      await Promise.resolve();
+      return false;
+    });
+    const controller = useAccountStatusController({
+      clearYaohuoLoginState: vi.fn(async () => true),
+      currentNodeSeekCredentialGeneration: vi.fn(() => 0),
+      currentYaohuoCredentialGeneration: vi.fn(() => 0),
+      dispatchSiteSessionEvent: vi.fn(),
+      fetcher: vi.fn(),
+      linuxDoWebViewCookieHeaderRef: { current: '' },
+      setLinuxDoWebViewCookieHeader: vi.fn(),
+      linuxDoUserAgentRef: { current: 'safe-agent' },
+      loadNodeSeekCookieForSource: vi.fn(async () => undefined),
+      nodeSeekUserAgentRef: { current: 'safe-agent' },
+      notify,
+      refreshXiaoyinsiAuthorization,
+      resetLinuxDoLevelState: vi.fn(),
+      saveNodeSeekCookieHeader: vi.fn(async () => '')
+    });
+
+    await controller.refreshAccountStatus();
+
+    expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('小隐寺'));
+  });
+
   it('links multi-site credential checks, a partial result, and final apply with one parent trace', async () => {
     const nodeSeekSecret = 'NODESEEK_COOKIE_SHOULD_NOT_LEAK';
     const linuxDoSecret = 'LINUXDO_COOKIE_SHOULD_NOT_LEAK';

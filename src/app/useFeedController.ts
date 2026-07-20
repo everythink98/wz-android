@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isCancelledError } from '@tanstack/react-query';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import type { SourceGateway } from '../sources/sourceGateway';
 import { defaultFeedFilters, shouldLoadCategoriesForSource, shouldAllowFeedRemotePagination, shouldUseFeedFilter, shouldUseReadingFilter } from '../feedCategoryRail';
@@ -21,19 +22,17 @@ import {
   type DiagnosticOutcome,
   type DiagnosticReason
 } from '../diagnostics';
-import {
-  errorMessage,
-  finishAbortableRequest,
-  isCanceledRequest,
-  sourceLabel,
-  startAbortableRequest
-} from '../appUtils';
-import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
+import { errorMessage, isCanceledRequest, sourceLabel } from '../appUtils';
 import { isFeedFilterSource, sourceValues } from '../sourceCatalog';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
 import type { Category, FeedFilterState, FeedSource, FeedResponse, SourceErrorInfo, SourceFeedFilter, SourceErrors, Topic } from '../types';
 import { useCommitRefValue, useCommittedRef } from './useCommittedRef';
+import {
+  appQueryClient,
+  forumQueryKeys,
+  subscribeForumSourceResets
+} from './serverState';
 
 type FeedSourceState = {
   hasMore: boolean;
@@ -44,6 +43,12 @@ type FeedSourceState = {
   page: number;
   refreshing: boolean;
   requestKey?: string;
+};
+
+type FeedRecoveryLane = {
+  key: string;
+  lane: 'root' | 'more';
+  source: FeedSource;
 };
 
 function createFeedSourceState(): FeedSourceState {
@@ -82,6 +87,10 @@ function diagnosticReasonForSourceError(error?: SourceErrorInfo): DiagnosticReas
   return error ? normalizeDiagnosticReason(error.message) : 'unknown';
 }
 
+function isCanceledFeedQuery(error: unknown) {
+  return isCancelledError(error) || isCanceledRequest(error);
+}
+
 export function useFeedController({
   notify,
   readerData,
@@ -99,13 +108,10 @@ export function useFeedController({
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
 }) {
-  const feedRequestIdRef = useRef(0);
-  const feedRequestOwnerRef = useRef(createRequestOwner('feed'));
-  const feedSourceRequestIdRef = useRef<Partial<Record<FeedSource, number>>>({});
+  const feedRecoveryGenerationRef = useRef(0);
+  const activeFeedRecoveryRef = useRef<FeedRecoveryLane | null>(null);
   const feedLoadingRef = useRef(false);
-  const feedAbortRef = useRef<AbortController | null>(null);
-  const categoriesRequestIdRef = useRef(0);
-  const categoriesAbortRef = useRef<AbortController | null>(null);
+  const categoriesGenerationRef = useRef(0);
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [feedStates, setFeedStates] = useState<Record<FeedSource, FeedSourceState>>(() => createFeedStates());
@@ -114,7 +120,46 @@ export function useFeedController({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [sourceResetVersion, setSourceResetVersion] = useState(0);
   const categoriesRef = useCommittedRef(categories);
+
+  useEffect(() => subscribeForumSourceResets(({ source, preserveRecoveryKey }) => {
+    const activeSourceAffected = feedSource === 'all' || feedSource === source;
+    const activeRecovery = activeFeedRecoveryRef.current;
+    const preservedRecovery = activeRecovery
+      && activeRecovery.key === preserveRecoveryKey
+      && (activeRecovery.source === source || activeRecovery.source === 'all')
+      ? activeRecovery
+      : null;
+    if (activeSourceAffected) {
+      if (!preservedRecovery) {
+        feedRecoveryGenerationRef.current += 1;
+        setSourceResetVersion((current) => current + 1);
+      }
+      categoriesGenerationRef.current += 1;
+      feedLoadingRef.current = false;
+      setFeedBusy(false);
+    }
+    if (!preservedRecovery) {
+      activeFeedRecoveryRef.current = null;
+    }
+    setFeedStates((current) => {
+      const next = {
+        ...current,
+        all: createFeedSourceState(),
+        [source]: createFeedSourceState()
+      };
+      if (preservedRecovery?.lane === 'more') {
+        next[preservedRecovery.source] = {
+          ...current[preservedRecovery.source],
+          refreshing: false,
+          loadingMore: false
+        };
+      }
+      return next;
+    });
+    setCategories((current) => current.filter((category) => category.source !== source));
+  }), [feedSource]);
 
   const activeFeedState = feedStates[feedSource];
   const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
@@ -132,26 +177,34 @@ export function useFeedController({
         finishDiagnosticTrace(trace, outcome, fields);
       }
     };
-    const requestId = ++categoriesRequestIdRef.current;
-    const controller = startAbortableRequest(categoriesAbortRef);
-    const isLatestCategoriesRequest = () => requestId === categoriesRequestIdRef.current;
-    const isCurrentCategoriesRequest = () => isLatestCategoriesRequest() && !controller.signal.aborted;
+    const requestGeneration = ++categoriesGenerationRef.current;
+    let querySignal: AbortSignal | undefined;
+    const isLatestCategoriesRequest = () => requestGeneration === categoriesGenerationRef.current;
+    const isCurrentCategoriesRequest = () => isLatestCategoriesRequest() && !querySignal?.aborted;
+    const queryKey = forumQueryKeys.categories(source);
     markDiagnosticStage(trace, 'guard', { source, state: 'started' });
     try {
-      const data = await sourceGateway.getCategories({
-        source,
-        nocache: true,
-        signal: controller.signal
-      }, { isCurrent: isCurrentCategoriesRequest, trace });
+      const data = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: ({ signal }) => {
+          querySignal = signal;
+          return sourceGateway.getCategories({
+            source,
+            nocache: true,
+            signal
+          }, { isCurrent: () => !signal.aborted, trace });
+        }
+      });
       if (!isCurrentCategoriesRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return;
       }
       const errors = Object.entries(data.errors || {});
       if (source !== 'all' && !data.items.length && !errors.length) {
+        appQueryClient.removeQueries({ queryKey, exact: true });
         finishTrace('noop', { source, reason: 'parse_empty' });
         return;
       }
@@ -167,6 +220,7 @@ export function useFeedController({
         setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
       }
       if (errors.length) {
+        appQueryClient.removeQueries({ queryKey, exact: true });
         const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
         const outcome = data.items.length ? 'partial' : reason === 'verification_required' || reason === 'login_required' || reason === 'permission_denied' ? 'blocked' : 'failure';
         const verificationMessage = nodeSeekVerificationNavigationMessage(source, data.errors);
@@ -181,7 +235,7 @@ export function useFeedController({
       }
       finishTrace('success', { source, itemCount: data.items.length });
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledFeedQuery(error)) {
         finishTrace(isLatestCategoriesRequest() ? 'canceled' : 'stale', {
           source,
           reason: isLatestCategoriesRequest() ? 'canceled' : 'superseded'
@@ -199,7 +253,6 @@ export function useFeedController({
           reason: isCurrentCategoriesRequest() ? 'unknown' : 'superseded'
         });
       }
-      finishAbortableRequest(categoriesAbortRef, controller);
     }
   }, [notify, showNodeSeekVerification, sourceGateway]);
 
@@ -273,15 +326,14 @@ export function useFeedController({
     const requestFeedFilter = feedFilter ?? feedFilterForRequest(requestSource, category, feedFilters);
     const requestKey = feedRequestKey(requestSource, category, requestFeedFilter);
     feedLoadingRef.current = true;
-    const controller = startAbortableRequest(feedAbortRef);
-    const requestId = ++feedRequestIdRef.current;
-    const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
-    const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
-    let recoveryRequestOwner = requestOwner;
-    let recoveryRequestId = requestId;
+    const requestGeneration = ++feedRecoveryGenerationRef.current;
+    activeFeedRecoveryRef.current = null;
+    let recoveryGeneration = requestGeneration;
+    let querySignal: AbortSignal | undefined;
+    const isLatestFeedRequest = () => feedRecoveryGenerationRef.current === requestGeneration;
+    const isCurrentFeedRequest = () => isLatestFeedRequest() && !querySignal?.aborted;
     const isCurrentFeedRecovery = () => (
-      isCurrentOwnedRequest(recoveryRequestOwner, feedRequestOwnerRef)
-      && recoveryRequestId === feedRequestIdRef.current
+      feedRecoveryGenerationRef.current === recoveryGeneration
     );
     const linuxDoRecovery = (): LinuxDoReadRecovery => ({
       key: `feed:${requestKey}:${page}:${cursor || ''}`,
@@ -305,12 +357,16 @@ export function useFeedController({
         if (!resumedRequest) {
           return 'stale';
         }
-        recoveryRequestOwner = feedRequestOwnerRef.current;
-        recoveryRequestId = feedRequestIdRef.current;
-        return await resumedRequest;
+        const outcome = await resumedRequest;
+        recoveryGeneration = feedRecoveryGenerationRef.current;
+        return outcome;
       }
     });
-    feedSourceRequestIdRef.current[requestSource] = requestId;
+    const queryKey = forumQueryKeys.feedPage(requestSource, requestKey, page, cursor);
+    if (nocache) {
+      void appQueryClient.cancelQueries({ queryKey, exact: true });
+      appQueryClient.removeQueries({ queryKey, exact: true });
+    }
     markDiagnosticStage(trace, 'guard', {
       source: requestSource,
       state: isLoadMore ? 'load-more' : reset ? 'reset' : 'initial',
@@ -349,7 +405,7 @@ export function useFeedController({
     try {
       let appliedFeedResponse: FeedResponse | null = null;
       const applyFeedResponse = (data: FeedResponse) => {
-        if (!isCurrentFeedRequest() || controller.signal.aborted) {
+        if (!isCurrentFeedRequest()) {
           return;
         }
         appliedFeedResponse = appliedFeedResponse ? mergeFeedResponses(appliedFeedResponse, data) : data;
@@ -376,20 +432,26 @@ export function useFeedController({
           };
         });
       };
-      const data = await sourceGateway.getFeed({
-        source,
-        page,
-        cursor,
-        limit: 30,
-        category: category || undefined,
-        feedFilter: requestFeedFilter,
-        nocache,
-        signal: controller.signal
-      }, { isCurrent: isCurrentFeedRequest, trace });
+      const data = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: ({ signal }) => {
+          querySignal = signal;
+          return sourceGateway.getFeed({
+            source,
+            page,
+            cursor,
+            limit: 30,
+            category: category || undefined,
+            feedFilter: requestFeedFilter,
+            nocache: true,
+            signal
+          }, { isCurrent: () => !signal.aborted, trace });
+        }
+      });
       if (!isCurrentFeedRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source: requestSource,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
       }
@@ -405,13 +467,14 @@ export function useFeedController({
         applyFeedResponse(data);
       }
       if (!isCurrentFeedRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source: requestSource,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
       }
       if (parseEmptyFailure && !errors.length) {
+        appQueryClient.removeQueries({ queryKey, exact: true });
         if (isLoadMore) {
           markFeedLoadMoreFailed(requestSource);
         }
@@ -421,6 +484,9 @@ export function useFeedController({
         finishTrace('failure', { source: requestSource, reason: 'parse_empty' });
         return 'failed';
       } else if (errors.length) {
+        if (!canApplyPartialAggregate) {
+          appQueryClient.removeQueries({ queryKey, exact: true });
+        }
         const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
         const outcome = appliedFeedResponse
           ? 'partial'
@@ -442,9 +508,15 @@ export function useFeedController({
             markFeedLoadMoreFailed(requestSource);
           }
           if (!suppressLinuxDoVerification) {
+            const recovery = linuxDoRecovery();
+            activeFeedRecoveryRef.current = {
+              key: recovery.key,
+              lane: isLoadMore ? 'more' : 'root',
+              source: requestSource
+            };
             await showLinuxDoVerification(
               isLoadMore ? `加载下一页失败：${linuxDoVerificationMessage}` : linuxDoVerificationMessage,
-              linuxDoRecovery()
+              recovery
             );
           }
           finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
@@ -472,7 +544,7 @@ export function useFeedController({
       }
       return 'completed';
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledFeedQuery(error)) {
         finishTrace(isCurrentFeedRequest() ? 'canceled' : 'stale', {
           source: requestSource,
           reason: isCurrentFeedRequest() ? 'canceled' : 'superseded'
@@ -507,7 +579,13 @@ export function useFeedController({
         }
         if (requestSource === 'linuxdo' && sourceError.kind === 'verification-required') {
           if (!suppressLinuxDoVerification) {
-            await showLinuxDoVerification(notice, linuxDoRecovery());
+            const recovery = linuxDoRecovery();
+            activeFeedRecoveryRef.current = {
+              key: recovery.key,
+              lane: isLoadMore ? 'more' : 'root',
+              source: requestSource
+            };
+            await showLinuxDoVerification(notice, recovery);
           }
           finishTrace(outcome, { source: requestSource, reason });
           return 'verification-required';
@@ -518,13 +596,12 @@ export function useFeedController({
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentFeedRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(isCurrentFeedRequest() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
           source: requestSource,
-          reason: isCurrentFeedRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: isCurrentFeedRequest() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
         });
       }
-      const isLatestForFeedSource = feedSourceRequestIdRef.current[requestSource] === requestId;
-      if (isLatestForFeedSource) {
+      if (feedRecoveryGenerationRef.current === requestGeneration) {
         setFeedStates((current) => ({
           ...current,
           [requestSource]: {
@@ -534,11 +611,10 @@ export function useFeedController({
           }
         }));
       }
-      if (isCurrentFeedRequest()) {
+      if (isLatestFeedRequest()) {
         setFeedBusy(false);
         feedLoadingRef.current = false;
       }
-      finishAbortableRequest(feedAbortRef, controller);
     }
   }, [
     categoryFilter,
@@ -564,11 +640,11 @@ export function useFeedController({
       return;
     }
     void loadFeedRef.current?.({ reset: true, page: 1, source: feedSource, category: categoryFilter, feedFilter: requestFeedFilter, nocache: true, clearItems: true });
-  }, [categoryFilter, feedFilters, feedSource, readerDataLoaded, readingFilter]);
+  }, [categoryFilter, feedFilters, feedSource, feedStatesRef, readerDataLoaded, readingFilter, sourceResetVersion]);
 
   useEffect(() => {
     void loadCategories();
-  }, [loadCategories]);
+  }, [loadCategories, sourceResetVersion]);
 
   useEffect(() => {
     if (shouldLoadCategoriesForSource(categories, feedSource)) {
@@ -605,8 +681,14 @@ export function useFeedController({
   }, [feedSource]);
 
   const abortFeedRequests = useCallback(() => {
-    feedAbortRef.current?.abort();
-    categoriesAbortRef.current?.abort();
+    feedRecoveryGenerationRef.current += 1;
+    categoriesGenerationRef.current += 1;
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => (
+        queryKey[0] === 'forum'
+        && (queryKey[2] === 'feed' || queryKey[2] === 'categories')
+      )
+    });
   }, []);
 
   useEffect(() => abortFeedRequests, [abortFeedRequests]);

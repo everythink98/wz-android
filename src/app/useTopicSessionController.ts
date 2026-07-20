@@ -164,7 +164,6 @@ export function useTopicSessionController({
   const expandedQuotesRef = useRef<Record<string, boolean>>({});
   const loadedQuotedRepliesRef = useRef<Record<string, Reply>>({});
   const loadingQuotedFloorsRef = useRef<Record<string, boolean>>({});
-  const quotedReplyAbortRefs = useRef<Record<string, AbortController>>({});
 
   const setLoadingMoreReplies = useCallback((loading: boolean) => {
     loadingMoreRepliesRef.current = loading;
@@ -200,18 +199,12 @@ export function useTopicSessionController({
     setQuoteStateVersion((current) => current + 1);
   }, []);
 
-  const abortQuotedReplyRequests = useCallback(() => {
-    Object.values(quotedReplyAbortRefs.current).forEach((controller) => controller.abort());
-    quotedReplyAbortRefs.current = {};
-  }, []);
-
   const resetQuoteState = useCallback(() => {
-    abortQuotedReplyRequests();
     expandedQuotesRef.current = {};
     loadedQuotedRepliesRef.current = {};
     loadingQuotedFloorsRef.current = {};
     setQuoteStateVersion((current) => current + 1);
-  }, [abortQuotedReplyRequests]);
+  }, []);
 
   const toggleReplyComposer = useCallback((open: boolean) => {
     setReplyComposerOpen(open);
@@ -408,6 +401,50 @@ export function useTopicSessionController({
     setTopicBusy(false);
   }, [setLoadingMoreReplies]);
 
+  const invalidateTopicSource = useCallback((
+    source: Source,
+    { preserveCurrent = false }: { preserveCurrent?: boolean } = {}
+  ) => {
+    for (const [routeKey, routeSnapshot] of topicRouteSessionStoreRef.current) {
+      const routeTopic = routeSnapshot.topicDetail || routeSnapshot.selectedTopic;
+      if (routeTopic?.source === source) {
+        topicRouteSessionStoreRef.current.delete(routeKey);
+      }
+    }
+    topicBackStackRef.current = topicBackStackRef.current.filter((routeSnapshot) => {
+      const routeTopic = routeSnapshot.topicDetail || routeSnapshot.selectedTopic;
+      return routeTopic?.source !== source;
+    });
+    const current = topicDetail || selectedTopic;
+    if (!current || current.source !== source) {
+      return;
+    }
+    invalidateTopicActionRequests(null);
+    setTopicBusy(false);
+    setLoadingMoreReplies(false);
+    setReplyComposerOpen(false);
+    setReplyContent('');
+    setReplyFace('');
+    setReplyTarget(null);
+    setReplyEditTarget(null);
+    resetQuoteState();
+    if (preserveCurrent) {
+      setTopicError(null);
+      return;
+    }
+    setTopicDetail(null);
+    setTopicError({
+      kind: 'ordinary',
+      message: '账号会话已变化，请重新加载主题。',
+      retryable: true
+    });
+    setTopicReplies([]);
+    setReplyHasMore(false);
+    setReplyNextPage(null);
+    setReplyNextOffset(null);
+    setUnreadReplyCount(0);
+  }, [invalidateTopicActionRequests, resetQuoteState, selectedTopic, setLoadingMoreReplies, topicDetail]);
+
   const snapshot = useCallback((): TopicSnapshot => {
     const currentTopic = topicDetail || selectedTopic;
     const session = currentTopic ? createEmptyTopicSession(currentTopic) : createInactiveTopicSession();
@@ -437,7 +474,6 @@ export function useTopicSessionController({
 
   const restore = useCallback((topicSnapshot: TopicSnapshot) => {
     const session = topicSessionFromSnapshot(topicSnapshot);
-    abortQuotedReplyRequests();
     setSelectedTopic(session.selectedTopic);
     setTopicDetail(session.topicDetail);
     setTopicReplies(session.topicReplies);
@@ -465,7 +501,7 @@ export function useTopicSessionController({
     const restoredTopicKey = restoredTopic ? topicKey(restoredTopic) : null;
     invalidateTopicActionRequests(restoredTopicKey);
     currentTopicKeyRef.current = restoredTopicKey;
-  }, [abortQuotedReplyRequests, invalidateTopicActionRequests, setLoadingMoreReplies]);
+  }, [invalidateTopicActionRequests, setLoadingMoreReplies]);
 
   const getCurrentTopicKey = useCallback(() => currentTopicKeyRef.current, []);
   const isLoadingMoreReplies = useCallback(() => loadingMoreRepliesRef.current, []);
@@ -483,16 +519,6 @@ export function useTopicSessionController({
   }, []);
   const isQuoteExpanded = useCallback((key: string) => Boolean(expandedQuotesRef.current[key]), []);
   const getLoadedQuotedReply = useCallback((referenceKey: string) => loadedQuotedRepliesRef.current[referenceKey], []);
-  const replaceQuotedReplyRequest = useCallback((key: string, controller: AbortController) => {
-    quotedReplyAbortRefs.current[key]?.abort();
-    quotedReplyAbortRefs.current[key] = controller;
-  }, []);
-  const isQuotedReplyRequest = useCallback((key: string, controller: AbortController) => quotedReplyAbortRefs.current[key] === controller, []);
-  const clearQuotedReplyRequest = useCallback((key: string, controller: AbortController) => {
-    if (quotedReplyAbortRefs.current[key] === controller) {
-      delete quotedReplyAbortRefs.current[key];
-    }
-  }, []);
   const setTopicScrollY = useCallback((value: number) => {
     topicScrollYRef.current = Math.max(0, value);
   }, []);
@@ -580,15 +606,11 @@ export function useTopicSessionController({
         saveRoute: saveTopicRoute
       },
       quotes: {
-        abortRequests: abortQuotedReplyRequests,
         changeExpanded: changeQuoteExpanded,
         changeLoading: changeQuoteLoading,
-        clearRequest: clearQuotedReplyRequest,
         getLoaded: getLoadedQuotedReply,
         isExpanded: isQuoteExpanded,
-        isRequest: isQuotedReplyRequest,
-        remember: rememberQuotedReply,
-        replaceRequest: replaceQuotedReplyRequest
+        remember: rememberQuotedReply
       },
       replies: {
         beginLoad: beginRepliesLoad,
@@ -603,6 +625,7 @@ export function useTopicSessionController({
         failLoad: failTopicLoad,
         finishLoad: finishTopicLoad,
         getCurrentKey: getCurrentTopicKey,
+        invalidateSource: invalidateTopicSource,
         resolveLoad: resolveTopicLoad,
         reuse: reuseTopic,
         stopWork: stopTopicWork

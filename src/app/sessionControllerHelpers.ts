@@ -1,5 +1,6 @@
 import type { BrowserFetchIntent } from '../browserFetchIntent';
 import type { DiagnosticTrace } from '../diagnostics';
+import type { SiteSessionEvent } from '../siteSessionState';
 
 export type BrowserFetchRequestCleanupTarget = {
   timeout?: ReturnType<typeof setTimeout>;
@@ -23,6 +24,19 @@ export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
 };
+
+export type ForumQueryInvalidatingSessionEvent = Extract<SiteSessionEvent, {
+  type: 'session-updated' | 'login-detected' | 'login-expired' | 'cleared';
+}>;
+
+export function siteSessionEventInvalidatesForumQueries(
+  event: SiteSessionEvent
+): event is ForumQueryInvalidatingSessionEvent {
+  return event.type === 'session-updated'
+    || event.type === 'login-detected'
+    || event.type === 'login-expired'
+    || event.type === 'cleared';
+}
 
 export type BrowserFetchQueueRequest = BrowserFetchRequestCleanupTarget & {
   id: number;

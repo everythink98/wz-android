@@ -7,60 +7,10 @@ vi.mock('../linuxdoCookieBridge', () => ({
   summarizeLinuxDoCookies: vi.fn(() => ({ names: [] }))
 }));
 
-import { runOptimisticActionQueue, runSingleTopicAction, shareTopicWithClipboardFallback } from './topicActionHelpers';
+import { runOptimisticActionQueue, shareTopicWithClipboardFallback } from './topicActionHelpers';
 import type { OptimisticActionState } from '../topicActionState';
 
 describe('topic action helpers', () => {
-  it('skips duplicate non-idempotent topic actions while one is pending', async () => {
-    const pendingActions = { current: {} as Record<string, true> };
-    let resolveFirst: (value: string) => void = () => undefined;
-    const first = runSingleTopicAction({
-      key: 'reply:nodeseek:1',
-      pendingActions,
-      task: () => new Promise<string>((resolve) => {
-        resolveFirst = resolve;
-      })
-    });
-    const duplicateTask = vi.fn(async () => 'duplicate');
-    const notifyDuplicate = vi.fn();
-
-    const duplicate = await runSingleTopicAction({
-      key: 'reply:nodeseek:1',
-      notifyDuplicate,
-      pendingActions,
-      task: duplicateTask
-    });
-    resolveFirst('saved');
-
-    await expect(first).resolves.toBe('saved');
-    expect(duplicate).toBeUndefined();
-    expect(duplicateTask).not.toHaveBeenCalled();
-    expect(notifyDuplicate).toHaveBeenCalledTimes(1);
-    await expect(runSingleTopicAction({
-      key: 'reply:nodeseek:1',
-      pendingActions,
-      task: async () => 'next'
-    })).resolves.toBe('next');
-  });
-
-  it('clears pending non-idempotent actions after failure', async () => {
-    const pendingActions = { current: {} as Record<string, true> };
-
-    await expect(runSingleTopicAction({
-      key: 'vote:linuxdo:1',
-      pendingActions,
-      task: async () => {
-        throw new Error('failed');
-      }
-    })).rejects.toThrow('failed');
-
-    await expect(runSingleTopicAction({
-      key: 'vote:linuxdo:1',
-      pendingActions,
-      task: async () => 'retry'
-    })).resolves.toBe('retry');
-  });
-
   it('REG-TOPIC-017 consumes a clipboard fallback failure and tells the user', async () => {
     const notify = vi.fn();
 

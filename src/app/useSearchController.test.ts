@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
@@ -37,9 +37,21 @@ import {
   snapshotSearchFilters,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
-import { useSearchController } from './useSearchController';
+import { hasNextSearchPage, useSearchController } from './useSearchController';
+import { appQueryClient } from './serverState';
+import { REQUEST_CANCELED_MESSAGE } from '../request';
+
+afterEach(() => {
+  appQueryClient.clear();
+});
 
 describe('search controller result helpers', () => {
+  it('keeps an undisplayed cached search page reachable and only rejects a repeated page', () => {
+    expect(hasNextSearchPage(true, 3, 2)).toBe(true);
+    expect(hasNextSearchPage(true, 2, 2)).toBe(false);
+    expect(hasNextSearchPage(false, 3, 2)).toBe(false);
+  });
+
   it('keeps successful groups while surfacing the first required action', () => {
     const results: RemoteSearchSourceResult[] = [
       {
@@ -248,6 +260,43 @@ describe('search controller result helpers', () => {
       }), expect.any(Object));
     }
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates concurrent searches for the same key while only the latest caller applies the result', async () => {
+    const topic: Topic = {
+      source: 'nodeseek',
+      id: '1',
+      title: 'result',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-1-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const pending = Promise.withResolvers<void>();
+    const searchTopics = vi.fn(async (_options: unknown, context?: { isCurrent?: () => boolean }) => {
+      await pending.promise;
+      if (context?.isCurrent?.() === false) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
+      return { items: [topic], errors: {}, hasMore: false, nextPage: null };
+    });
+    const controller = useSearchController({
+      categories: [],
+      notify: vi.fn(),
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { searchTopics } as unknown as SourceGateway
+    });
+
+    const first = controller.runSearch({ query: 'same query', source: 'nodeseek' });
+    await vi.waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+    const second = controller.runSearch({ query: 'same query', source: 'nodeseek' });
+    pending.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['stale', 'completed']);
+    expect(searchTopics).toHaveBeenCalledTimes(1);
   });
 
   it('REG-LINUXDO-002 keeps a search recovery inside the same panel when the failed page still requires verification', async () => {

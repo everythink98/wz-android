@@ -24,14 +24,23 @@ import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../siteSessionState';
 import type { SourceGateway } from '../sources/sourceGateway';
 import type { UserProfile } from '../types';
-import { useUserController, userSourceRecoveryTarget } from './useUserController';
+import { hasNextUserPage, useUserController, userSourceRecoveryTarget } from './useUserController';
+import { appQueryClient } from './serverState';
+import { REQUEST_CANCELED_MESSAGE } from '../request';
 
 afterEach(() => {
+  appQueryClient.clear();
   reactStateOverrides.values = [];
   vi.clearAllMocks();
 });
 
 describe('user source recovery routing', () => {
+  it('keeps an undisplayed cached cursor reachable and only rejects a repeated cursor', () => {
+    expect(hasNextUserPage(true, 'cursor-2', 'cursor-1')).toBe(true);
+    expect(hasNextUserPage(true, 'cursor-1', 'cursor-1')).toBe(false);
+    expect(hasNextUserPage(false, 'cursor-2', 'cursor-1')).toBe(false);
+  });
+
   it('routes Yaohuo verification errors back to the in-app login and verification surface', () => {
     expect(userSourceRecoveryTarget('yaohuo', {
       kind: 'verification-required',
@@ -81,6 +90,44 @@ describe('user source recovery routing', () => {
     await expect(recovery.resume()).resolves.toBe('completed');
     expect(getUserProfile).toHaveBeenCalledTimes(3);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates concurrent opens for the same user while only the latest caller applies the result', async () => {
+    const user: UserProfile = {
+      source: 'nodeseek',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice',
+      url: 'https://www.nodeseek.com/space/1',
+      topics: []
+    };
+    const pending = Promise.withResolvers<void>();
+    const getUserProfile = vi.fn(async (_options: unknown, context?: { isCurrent?: () => boolean }) => {
+      await pending.promise;
+      if (context?.isCurrent?.() === false) {
+        throw new Error(REQUEST_CANCELED_MESSAGE);
+      }
+      return user;
+    });
+    const controller = useUserController({
+      notify: vi.fn(),
+      onOpenUserScreen: vi.fn(),
+      readerData: createEmptyReaderData(),
+      screen: 'user',
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { getUserProfile } as unknown as SourceGateway
+    });
+
+    const first = controller.openUser(user);
+    await vi.waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+    const second = controller.openUser(user);
+    pending.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual(['stale', 'completed']);
+    expect(getUserProfile).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -136,7 +183,7 @@ describe('user source recovery routing', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('REG-USER-001 releases a superseded topic cursor when reply pagination takes ownership', async () => {
+  it('REG-USER-001 keeps topic and reply pagination independent without repeating either cursor', async () => {
     const user: UserProfile = {
       source: 'linuxdo',
       id: 'alice',
@@ -180,14 +227,11 @@ describe('user source recovery routing', () => {
     await vi.waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
     await expect(controller.loadMoreUserReplies()).resolves.toBe('completed');
     firstTopicsPage.resolve(user);
-    await expect(topicsRequest).resolves.toBe('stale');
+    await expect(topicsRequest).resolves.toBe('completed');
 
     await expect(controller.loadMoreUserTopics()).resolves.toBe('completed');
-    expect(getUserProfile).toHaveBeenCalledTimes(3);
-    expect(getUserProfile).toHaveBeenLastCalledWith(
-      expect.objectContaining({ cursor: 'topics-cursor', cursorType: 'topics' }),
-      expect.any(Object)
-    );
+    expect(getUserProfile).toHaveBeenCalledTimes(2);
+    expect(getUserProfile.mock.calls.map(([options]) => options.cursorType)).toEqual(['topics', 'replies']);
   });
 
   it('REG-SOURCE-002 does not accept a user profile whose identity and entries all failed to parse', async () => {

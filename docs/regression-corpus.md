@@ -418,11 +418,11 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `SEARCH-02`、`SEARCH-03`、`SEARCH-04` |
-| 用户症状 | linux.do 标签和发帖人原本是可任意手输的文本框，可能提交站点不存在的值；快速改词时旧候选或旧 AI 响应还可能覆盖当前查询，分页或详情返回后筛选也可能退回浅拷贝中的旧数组。 |
-| 触发条件 | 标签/作者未经过原站候选接口；300ms 防抖请求先发后到；提交快照只浅拷贝数组；新查询、筛选、排序或来源变化时未取消并失效 AI 请求。 |
+| 用户症状 | linux.do 标签和发帖人原本是可任意手输的文本框，可能提交站点不存在的值；快速改词时旧候选或旧 AI 响应还可能覆盖当前查询；空作者输入可能永久显示 Loading；关闭标签选择、切换分类再重开时，上一分类的同词候选可能重新出现并可点击；分页或详情返回后筛选也可能退回浅拷贝中的旧数组。 |
+| 触发条件 | 标签/作者未经过原站候选接口；300ms 防抖请求先发后到；空 term 的 debounce sentinel 被当成进行中；Query placeholder 只核对输入文本而未核对来源和分类；提交快照只浅拷贝数组；新查询、筛选、排序或来源变化时未取消并失效 AI 请求。 |
 | 根因 seam | `src/screens/SearchScreen.tsx` 的候选草稿交互、`src/app/useSearchController.ts` 的普通/AI 请求归属、`src/searchControllerResults.ts` 的深快照和合并、`src/localLinuxdo.ts` 的候选接口。 |
-| 必须保持的行为 | 分类、标签和发帖人只能从站点候选选择；双标签可选任意/全部；旧标签、作者或 AI 响应不得改变新查询。已应用数组在第一页、普通分页和详情返回中保持独立快照。AI 开关只读当前查询的缓存，普通顺序优先并按话题 ID 去重；关闭不重复请求。 |
-| 精确失败 oracle | `tests/ui/search-screen.test.tsx` 断言页面没有自由标签/作者提交入口、只接受候选，并让旧标签 Promise 晚于新 Promise 完成后仍只显示新候选；`tests/ui/search-controller-ai.test.tsx` 让旧 AI Promise 晚到，断言新查询状态、去重顺序、开关缓存和普通分页不被污染；`src/app/useSearchController.test.ts` 修改原草稿数组后要求已提交快照不变。 |
+| 必须保持的行为 | 分类、标签和发帖人只能从站点候选选择；双标签可选任意/全部；空作者输入只显示输入提示且不请求；候选投影必须匹配当前来源、分类和输入，旧标签、作者或 AI 响应不得改变新查询。已应用数组在第一页、普通分页和详情返回中保持独立快照。AI 开关只读当前查询的缓存，普通顺序优先并按话题 ID 去重；关闭不重复请求。 |
+| 精确失败 oracle | `tests/ui/search-screen.test.tsx` 断言页面没有自由标签/作者提交入口、只接受候选，空作者不显示 Loading 或发请求，旧标签 Promise 晚于新 Promise 完成后仍只显示新候选，并在上一分类已有候选、下一分类请求悬空时断言旧候选立即不可见；`tests/ui/search-controller-ai.test.tsx` 让旧 AI Promise 晚到，断言新查询状态、去重顺序、开关缓存和普通分页不被污染；`src/app/useSearchController.test.ts` 修改原草稿数组后要求已提交快照不变。 |
 | 最低可靠自动测试层 | `UNIT_PASS` 固定 token、深快照、Gateway 和合并规则；`UI_PASS` 固定防抖、过期响应、草稿、并发和用户可见标识。只有源码字符串、App 可启动或单次 Live 成功都不能证明请求竞争安全。 |
 | Replay 或真实验收路径 | `tests/device/search-multi-source.ad` 先检查 linux.do 候选筛选入口和 AI 入口，再执行真实查询、打开详情并返回；Live 在保留登录态的 App 内验证双标签、作者、状态、日期、范围、专家回应、普通分页和 AI 开关，不固定动态标题或数量。 |
 | 负向验证方式 | 临时移除候选 request ID/Abort 保护、把标签恢复为文本输入、让快照复用原数组，或将 AI 结果直接替换普通结果；相应用例必须精确失败，随后还原。 |
@@ -441,7 +441,7 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 最低可靠自动测试层 | `UNIT_PASS` 固定概览/单站模式和首屏/分页错误的列表构建顺序；`UI_PASS` 固定真实控制器 cursor、用户可见旧结果、非点击哨兵、滚动触发和两类重试路由。源码字符串或单次 Live 成功不能证明 viewability 回调竞争安全。 |
 | Replay 或真实验收路径 | `tests/device/search-topic-user-return.ad` 与 `tests/device/search-multi-source.ad` 固定“全部”预览进入单站、搜索、详情和返回链；单站自动分页由确定性 RNTL 固定成功、末页、重复可见和失败保留结果，Live 在保留 Cookie 的 App 内分别验证已登录 NodeSeek、临时匿名 fallback 和真实单站下滑续页。“全部”不得出现分页入口。动态来源不要求当天必须存在第二页，也不强制制造真实分页失败。 |
 | 负向验证方式 | 临时恢复 `group.error` 的无条件提前返回，或让分页错误按钮调用 `onRetrySearchSource`，`REG-SEARCH-002` 的列表/UI 用例必须分别失败；临时移除 arm 或 pending 门禁，重复回调用例必须失败；给“全部”恢复分页哨兵时概览用例必须失败，随后还原。 |
-| 明确不覆盖范围 | 不改四站搜索 API、Cookie Mock、SourceGateway、筛选快照、去重、重复页或 request ownership；不预取整站、不自动重试失败请求，也不固定动态第二页的标题或数量。 |
+| 明确不覆盖范围 | 不改四站搜索 API、Cookie Mock、SourceGateway、筛选快照、去重、重复页或 server-state key 归属；不预取整站、不自动重试失败请求，也不固定动态第二页的标题或数量。 |
 
 ## `REG-SEARCH-003` linux.do 搜索作者和头像丢失
 
@@ -481,9 +481,9 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 用户症状 | 读取触发验证后，面板没有自动检测和保存新 Cookie；用户关闭后原 Topic 被重新打开，又立即命中 CF 并再次打开验证，形成 close/reopen 循环。 |
 | 触发条件 | 可见 WebView 得到 clearance，但恢复逻辑由 pending Topic、dismissed key、verified retry 和 `InteractionManager` 关闭后导航共同驱动；Cookie 保存被误当成原读取成功，或旧 WebView 消息在关闭后回流。 |
 | 根因 seam | `src/app/useVerificationController.ts` 的验证生命周期和 Cookie generation、各前台 read controller 的请求 snapshot/ownership、`src/app/useSessionController.ts` 的隐藏 Cookie 事件语义。 |
-| 必须保持的行为 | 验证 overlay 覆盖当前页面；clearance 候选先持久化，再在 overlay 仍可见时精确 `resume()` 原 Feed/Search/Topic/User 首屏或分页。只有原读取不再返回 CF 才关闭；仍为 CF 时保持打开且不 remount、不递归弹窗、不自动二次重试，用户可点“检测状态”再次尝试。用户关闭取消 recovery 并忽略迟到事件，同一失败链路绝不自动重开；Account 手动入口只更新 Cookie 状态并保持打开。聚合、后台 AI/预取和写操作不自动弹出或重放。 |
-| 精确失败 oracle | `src/app/useVerificationController.test.ts` 固定自动恢复仅一次、恢复期间面板可见、仍为 CF 时保持打开、显式检测可再试、same-value clearance 在已确认清除后可进入最终原读 oracle、成功后才发送 `verification-succeeded` 并关闭，以及用户关闭、closing latest-wins、迟到检查和 recovery supersede 隔离；`src/app/useFeedController.test.ts`、`tests/ui/search-controller-ai.test.tsx`、`src/app/useTopicController.test.ts`、`src/app/useUserController.test.ts` 固定首屏、Feed 页码/cursor、Topic 回复刷新/分页和 User 双 cursor 的原请求 recovery/suppress；`src/localSources.test.ts` 固定非 GET 写请求不得进入隐藏 WebView；`src/app/sessionControllerHelpers.test.ts` 固定隐藏读取只能发送 `cookie-loaded`。 |
-| 最低可靠自动测试层 | `UNIT_PASS` 固定状态机、request ownership、snapshot 和 Cookie 事件；`UI_PASS` 固定 Search 与隐藏 WebView 交互。源码字符串、拿到 `cf_clearance`、Modal 已关闭或 App 可启动都不能证明恢复成功。 |
+| 必须保持的行为 | 验证 overlay 覆盖当前页面；清旧 clearance 的 transition 先以当前 recovery key 失效旧 Query，新 clearance 候选再持久化，并在 overlay 仍可见时精确 `resume()` 原 Feed/Search/Topic/User 首屏或分页。key、source 与 lane 必须完全相等；首屏重读，分页、Topic 回复/引用和 User 双 cursor 保留原页面基线再合并。stale recovery 不得把 key 广播给 session reset；准备阶段的 baseline 读取或 clearance 清理即使抛出存储异常，也必须结束 trace、清除 recovery、回到可重试 idle 并提示当次准备失败，不能让后续 Account 手动验证继承旧状态；若 recovery 已 stale 或被替换则静默收尾，不误提示旧错误。只有原读取不再返回 CF 才关闭；仍为 CF 时保持打开且不 remount、不递归弹窗、不自动二次重试，用户可点“检测状态”再次尝试。用户关闭取消 recovery 并忽略迟到事件，同一失败链路绝不自动重开；Account 手动入口只更新 Cookie 状态并保持打开，baseline 读取失败也不得产生 unhandled rejection 或关闭面板；baseline 未知时仅有 clearance 必须 fail-closed，只有同时检测到明确登录 Cookie 才允许继续保存；较新的成功检测一旦建立可信 baseline，旧 baseline Promise 的迟到 resolve/reject 都不得覆盖它。聚合、后台 AI/预取和写操作不自动弹出或重放。 |
+| 精确失败 oracle | `src/app/useVerificationController.test.ts` 固定自动恢复仅一次、恢复期间面板可见、仍为 CF 时保持打开、显式检测可再试、same-value clearance 在已确认清除后可进入最终原读 oracle、清旧 clearance 的 `session-updated/cleared` 只在事件发布瞬间 recovery 仍 current 时携带精确 key、清理 pending 期间或保存新凭据前变 stale 都不携带 key、baseline 读取与 clearance 清理 reject 时各提示一次且随后都能手动重开并完成检测、stale 后到的存储错误不提示、手动 baseline reject 不产生 unhandled rejection且对 clearance-only fail-closed、明确登录 Cookie 仍可保存、明确登录成功后旧 baseline 的迟到 resolve/reject 都不能让同值 clearance 再次保存、原读取成功后才发送观察型 `verification-succeeded` 并关闭，以及用户关闭、closing latest-wins、迟到检查和 recovery supersede 隔离；`tests/ui/feed-controller-xiaoyinsi.test.tsx`、`tests/ui/search-controller-ai.test.tsx`、`tests/ui/topic-session-controller.test.tsx`、`tests/ui/user-controller-session.test.tsx` 固定 `session reset → 精确 key → resume` 后 Feed/Search 分页、Topic 回复/引用和 User 双 cursor 都保留基线并合并第二页；各 read controller 单测继续固定首屏、原页/cursor recovery 与 suppress；`src/localSources.test.ts` 固定非 GET 写请求不得进入隐藏 WebView；`src/app/sessionControllerHelpers.test.ts` 固定隐藏读取只能发送 `cookie-loaded`。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定状态机、Query key/取消、snapshot 和 Cookie 事件；`UI_PASS` 固定 Search 与隐藏 WebView 交互。源码字符串、拿到 `cf_clearance`、Modal 已关闭或 App 可启动都不能证明恢复成功。 |
 | Replay 或真实验收路径 | challenge 自然出现时，在单站前台读取完成验证：原页面和已有列表保持，原请求只恢复一次，overlay 只关闭一次且不重开；Account 手动入口检测后保持打开。无法自然触发时明确记 `NOT_VERIFIED`，不得用普通页面冒充。 |
 | 负向验证方式 | 临时让 Cookie 保存直接关闭面板、恢复旧 pending Topic/close settle 导航、移除 suppress，或把恢复仍为 CF 当成功；`REG-LINUXDO-002` 的状态机和 controller 用例必须失败，随后还原。 |
 | 明确不覆盖范围 | 不自动重放发帖、回复、点赞、投票、收藏等写操作；不新增持久化 schema、feature flag 或外部 API；聚合来源和后台任务保持局部失败。 |
@@ -930,12 +930,12 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 能力 ID | `TOPIC-04`、`MORE-02` |
 | 用户症状 | V2EX 详情中执行“仅刷新评论”遇到网络失败时，页面提示失败，但同一次评论刷新诊断仍以 `success` 结束，导出的诊断会误导排障。 |
 | 触发条件 | V2EX 评论刷新委托给整篇 Topic 刷新；被委托请求返回已处理的 `completed`，但没有成功应用新详情。 |
-| 根因 seam | `src/app/useTopicController.ts` 的 V2EX `refreshTopicReplies` 委托分支只判断 Promise 已结束，没有核对成功请求 generation 是否推进。 |
-| 必须保持的行为 | 委托前后用已成功应用的 Topic request id 判定结果；只有新详情实际落地才记录成功，失败、stale 或 blocked 分别保留真实终态，同时保持旧详情可见。 |
+| 根因 seam | `src/app/useTopicController.ts` 的 V2EX `refreshTopicReplies` 委托分支只判断 Promise 已结束，没有核对 Topic Query 是否成功写入了新数据。 |
+| 必须保持的行为 | 委托前后对比 Topic Query 的 `dataUpdateCount`；只有新详情实际落地才记录成功，失败、stale 或 blocked 分别保留真实终态，同时保持旧详情可见。 |
 | 精确失败 oracle | `src/app/useTopicController.test.ts` 让 V2EX `getTopic` 抛错，要求 `reply/refresh` trace 的唯一终态为 `failure`；修复前同一测试收到 `success`。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：controller 与诊断 writer 足以固定委托和成功 generation；只看错误 Toast 或 Topic 子 trace 会漏掉错误的父终态。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：controller、Query state 与诊断 writer 足以固定委托和成功 cache update；只看错误 Toast 或 Topic 子 trace 会漏掉错误的父终态。 |
 | Replay 或真实验收路径 | 不主动制造真实来源故障；正常 V2EX 详情“仅刷新评论”仍做只读成功路径，确定性失败由自动测试固定。 |
-| 负向验证方式 | 移除委托前后的成功 request id 对照并无条件 finish success，编号测试必须失败。 |
+| 负向验证方式 | 移除委托前后的 Query `dataUpdateCount` 对照并无条件 finish success，编号测试必须失败。 |
 | 明确不覆盖范围 | 不改变 V2EX 回复获取协议、重试策略或页面错误文案，也不把普通网络失败自动重试。 |
 
 ## `REG-TOPIC-006` 图片保存快速双击写入重复文件
@@ -953,19 +953,19 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 `saveBusyRef` 的进入检查或在 await 之后才置 busy，编号测试会观察到两次媒体库调用。 |
 | 明确不覆盖范围 | 不改变图片格式、命名、相册位置、代理协议或权限申请语义，也不授权测试真实保存。 |
 
-## `REG-TOPIC-007` 被取消的旧引用请求仍展开并覆盖新请求
+## `REG-TOPIC-007` 同 key 的旧引用调用方仍展开并覆盖最新状态
 
 | 字段 | 内容 |
 | --- | --- |
 | 能力 ID | `TOPIC-02`、`TOPIC-03` |
-| 用户症状 | 同一正文或评论引用快速触发两次加载时，后一次已经接管并取消前一次，但前一次迟到响应仍会展开并缓存旧内容；旧请求还可能提前关闭新请求的 Loading，或让已被替代的 linux.do 验证恢复继续执行。 |
-| 触发条件 | 底层请求在收到 AbortSignal 后仍以成功或验证错误结束，同时用户仍停留在同一 Topic，并对同一个引用实例发起了更新请求。 |
-| 根因 seam | `src/app/useTopicController.ts` 的引用读取只用当前 Topic key 判断结果归属，没有同时核对引用实例 generation、当前 AbortController 身份和 aborted 状态；验证恢复沿用了同一个过宽判断。 |
-| 必须保持的行为 | 同一引用实例只有最新请求可缓存、展开、提示和结束 Loading；被替代请求无论迟到成功或失败都返回 stale。正文与评论的不同引用实例仍可独立并发。linux.do 验证恢复在同一逻辑链内可重复精确重试，但该引用被新的用户请求接管或离开原 Topic 后必须失效。 |
-| 精确失败 oracle | `src/app/useTopicController.test.ts` 的两个 `REG-TOPIC-007` 用 pending Promise 固定竞态：第二个请求 abort 并接管后，先返回的旧响应必须得到 `stale` 且不得调用 `remember`/展开；已有验证恢复在新请求开始后 `isCurrent()` 必须变为 false。修复前分别收到 `completed` 和 true。 |
-| 最低可靠自动测试层 | `UNIT_PASS`：controller 测试必须同时经过真实 quote request registry、AbortController 和恢复回调；只测 fetch abort 或最终展开内容无法证明迟到提交与 Loading 归属。 |
+| 用户症状 | 同一正文或评论引用快速触发两次加载时，两个调用方收到同一 transport 结果后都尝试展开、缓存或结束 Loading；已被替代的 linux.do 验证恢复也可能继续执行。 |
+| 触发条件 | TanStack Query 对同一引用 key 的并发读取只发出一个 transport，但 transport 结果会交给每个等待它的调用方；用户仍停留在同一 Topic，并对同一个引用实例发起了更新请求。 |
+| 根因 seam | `src/app/useTopicController.ts` 把 Query transport 所有权误当成 UI 调用方所有权，只比较当前 Topic key 或 Query signal，没有用引用实例 generation 决定哪个调用方可以应用共享结果和收口 Loading。 |
+| 必须保持的行为 | 同一引用 key 的并发读取只发一个 transport，同一引用实例只有最新调用方可缓存、展开、提示和结束 Loading；被替代调用方返回 stale。正文与评论的不同引用实例仍可独立并发。linux.do 验证恢复在同一逻辑链内可重复精确重试，但该引用被新的用户请求接管或离开原 Topic 后必须失效。 |
+| 精确失败 oracle | `src/app/useTopicController.test.ts` 的两个 `REG-TOPIC-007` 用一个 pending Promise 固定竞态：两个同 key 调用只允许 `getReply × 1`，旧调用方必须得到 `stale`，最新调用方得到 `completed` 且只应用一次；已有验证恢复在新调用开始后 `isCurrent()` 必须变为 false。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：controller 测试必须同时经过真实 TanStack Query 去重、引用实例 generation 和恢复回调；只测最终展开内容或 transport cancel 无法证明调用方应用与 Loading 归属。 |
 | Replay 或真实验收路径 | 只读打开含正文引用和评论引用的 linux.do Topic，分别展开、收起、再次展开并核对完整被引帖；不主动制造 Cloudflare 或依赖网络时序复现确定性竞态。 |
-| 负向验证方式 | 把结果、catch、gateway `isCurrent` 或 Loading 收尾任一处恢复成只比较 Topic key，或让验证恢复不比较引用 generation，对应编号测试必须失败。 |
+| 负向验证方式 | 移除结果、catch、Loading 收尾或验证恢复的引用 generation 判断，或在同 key 读取前主动 `cancelQueries`，对应编号测试必须观察到旧调用方落地或两个 transport。 |
 | 明确不覆盖范围 | 不改变引用内容解析、缓存键、Cloudflare 验证协议或跨引用并发策略；不通过延迟、重试或隐藏 Loading 掩盖竞态。 |
 
 ## `REG-WRITE-001` 首次投票后参与人数未更新
@@ -1537,6 +1537,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 在上述 NodeSeek 三图主题打开预览，保持第 2 张为当前图时确认尚未选择的第 3 张缩略图也自动出现，再打开第 3 张核对完整内容。 |
 | 负向验证方式 | 删除缩略图 `onError` 恢复，编号测试保持原 URL，真机对应缩略图为空框。 |
 | 明确不覆盖范围 | 不预抓取图库外图片，不为普通非 SVG 错误隐藏空态，也不执行保存。 |
+
+## `REG-TOPIC-021` NodeSeek 短后台恢复被超时抢先判失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01` |
+| 用户症状 | NodeSeek 详情请求发出后立即按 Home，App 进程仍存活且网络已在恢复瞬间返回 200，回到 App 却先显示“请求超时”，只能手动重试。 |
+| 触发条件 | 请求进入 Android 短后台后 JavaScript timer 暂停；恢复前台时，已经超过墙钟时限的外层 timeout 与原请求完成回调一起恢复执行，timeout 先结算。 |
+| 根因 seam | `src/request.ts` 的共享请求 timeout 预算、`src/app/AppRoot.tsx` 的 `AppState` 生命周期桥接，以及 `src/nodeseekFetchFallback.ts` 的 NodeSeek direct timeout。 |
+| 必须保持的行为 | App 处于 `background` 或 `inactive` 时不消耗请求 timeout 预算；回到 `active` 后原请求继续使用剩余预算并可正常结算，不自动重复发起同一详情；真正卡住的请求仍在累计完剩余前台预算后超时。 |
+| 精确失败 oracle | `src/localSources.test.ts` 的 `REG-TOPIC-021` 固定 direct Response 已返回但 challenge body 尚未读取完成，模拟 35 秒后台后要求请求仍未失败，恢复时由原 direct 请求成功返回且不调用 WebView fallback。 |
+| 最低可靠自动测试层 | `UNIT_PASS`；Android `AppState` 与真实 transport 时序仍需 `LIVE_PASS`。 |
+| Replay 或真实验收路径 | NodeSeek 首页点入一个仍在请求的主题后立即按 Home，保持同一 PID 15 秒；开启飞行模式作为离线屏障后恢复 App，详情应无需重试完整显示，且恢复前台后不重新发起同一详情。 |
+| 负向验证方式 | 将共享 timeout 恢复为连续墙钟 `setTimeout`，编号测试在 35 秒后台阶段先收到“请求超时”。 |
+| 明确不覆盖范围 | 不保证进程被系统回收、锁屏、Doze 或持久后台任务；不新增 Service、WorkManager 或后台执行权限。 |
+
+## `REG-TOPIC-022` 凭据观察事件取消正在执行的同站 Query
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-01`、`USER-01`；共享回归 `FEED-01`、`FEED-02`、`SEARCH-01`、`SEARCH-02`、`ACCOUNT-01` |
+| 用户症状 | NodeSeek 主题详情或关注用户页进入后长期停在“正在读取”；网络请求本可成功，但页面既不显示结果也不进入可重试失败态。真实登录切换、过期或清除时还可能继续显示旧会话的首页、搜索、详情或用户数据。妖火及其他复用同一会话事件边界的读取存在同类风险。 |
+| 触发条件 | Query 的 `queryFn` 读取已保存 Cookie；凭据 loader 在当前读取期间发送 `cookie-loaded`，Session controller 随即取消并移除正在执行它的 Query；或真实会话 transition 只清 Query cache，没有同步清除 controller 已投影到页面的旧数据和 busy 状态。 |
+| 根因 seam | `src/app/useSessionController.ts` 的会话事件分类、`src/app/serverState.ts` 的 source/aggregate 缓存边界、Feed/Search/Topic/User 页面投影，以及 TanStack Query 的取消结算语义。 |
+| 必须保持的行为 | `cookie-loaded` 只是本地凭据或身份观察，只更新会话视图，不取消或移除任何 Query；验证恢复完成后的 `verification-succeeded` 同样是观察事件。新凭据保存或 Device Code 授权完成发布 `session-updated`。`session-updated`、`login-detected`、`login-expired` 和 `cleared` 必须取消并移除对应来源及 `all` 聚合 Query，同时清除 Feed/Search/Topic/User 的该来源页面投影并释放 Loading，保留可重试目标；linux.do 的 `recoveryKey` 只有在 key、source、lane 完全相等时保留该 lane，子页 lane 还必须保留已加载数据和 cursor 作为恢复合并基线。其他来源、前缀相似或 stale lane 的缓存、页面状态和在飞聚合子请求不得被错误保活。 |
+| 精确失败 oracle | `src/app/useTopicController.test.ts` 的 `REG-TOPIC-022` 固定观察事件不自取消、真实 reset 后最新调用仍释放 Loading，以及同 key 并发读取只发一个 transport 且由最新调用方应用；`src/app/sessionControllerHelpers.test.ts` 固定 `cookie-loaded`/`verification-succeeded` 的观察分类和 NodeSeek 凭据替换事件；`src/app/serverState.test.ts` 固定 source + `all` 清理、其他来源隔离和 `recoveryKey` 透传；`useVerificationController` 固定清旧 clearance 与保存新凭据的 current/stale key 语义；Feed/Search/Topic/User UI 会话测试固定 `reset → resume → 完整页面` 的分页、回复、引用与双 cursor 合并，并固定聚合 Search 中其他来源继续完成。 |
+| 最低可靠自动测试层 | `UNIT_PASS` 固定 Query 取消、去重、事件分类、cursor 和页面投影；`UI_PASS` 固定真实 controller 渲染后的来源隔离；`DEVICE_REPLAY_PASS` 固定 Feed → Topic 与 Library → User 不再永久 Loading；五站动态读取仍需 `LIVE_PASS`。 |
+| Replay 或真实验收路径 | 执行 `feed-topic-return.ad`、`four-source-feed.ad` 与 `library-return.ad`；真实五站逐站打开详情，确认请求完成且没有同站自取消或恢复后重复请求。 |
+| 负向验证方式 | 临时把 `cookie-loaded` 加回来源失效集合，观察事件用例必须无法提交详情；去掉 controller 的 source reset subscription，UI 用例必须继续显示旧会话数据或永久 Loading；只清 source、不清 `all` 时 aggregate cache 断言必须失败。 |
+| 明确不覆盖范围 | 不跳过真实新凭据、登录、退出或明确凭据失效后的缓存隔离；不把账号状态事件改成缓存数据，也不新增另一套请求 owner。 |
 
 ## `REG-UPDATE-002` 系统未打开安装确认却提示已开始
 

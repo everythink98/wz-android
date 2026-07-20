@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isCancelledError } from '@tanstack/react-query';
 import type { SourceGateway } from '../sources/sourceGateway';
 import { mergeTopics } from '../feedLogic';
 import {
@@ -16,13 +17,8 @@ import {
   type FollowedUserRecord,
   type ReaderData
 } from '../readerData';
-import {
-  finishAbortableRequest,
-  isCanceledRequest,
-  startAbortableRequest
-} from '../appUtils';
+import { isCanceledRequest } from '../appUtils';
 import { nodeSeekUserIdFromValue } from '../userNavigation';
-import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import { authHintForSource } from '../siteSessionPrompts';
 import { sourceErrorFromUnknown } from '../sourceErrors';
 import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
@@ -31,6 +27,11 @@ import type { Source, SourceErrorInfo, UserProfile, UserReplyActivity } from '..
 import type { Screen } from '../appTypes';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import { useCommitRefValue } from './useCommittedRef';
+import {
+  appQueryClient,
+  forumQueryKeys,
+  subscribeForumSourceResets
+} from './serverState';
 
 function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
   const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
@@ -78,6 +79,16 @@ function diagnosticUserFields(user?: Pick<UserProfile, 'source' | 'id' | 'userna
   };
 }
 
+function isCanceledUserQuery(error: unknown) {
+  return isCancelledError(error) || isCanceledRequest(error);
+}
+
+type UserRecoveryLane = 'profile' | 'topics' | 'replies';
+
+export function hasNextUserPage(hasMore: boolean | undefined, nextCursor: string | null | undefined, requestedCursor: string | null | undefined) {
+  return Boolean(hasMore && nextCursor && nextCursor !== requestedCursor);
+}
+
 export function useUserController({
   notify,
   onOpenUserScreen,
@@ -99,15 +110,14 @@ export function useUserController({
   showYaohuoLogin: (message?: string) => void;
   sourceGateway: SourceGateway;
 }) {
-  const userRequestIdRef = useRef(0);
-  const userRequestOwnerRef = useRef(createRequestOwner('user'));
-  const userAbortRef = useRef<AbortController | null>(null);
+  const userRecoveryGenerationRef = useRef({ profile: 0, topics: 0, replies: 0 });
+  const activeUserRecoveryRef = useRef<{
+    key: string;
+    lane: UserRecoveryLane;
+    source: Source;
+  } | null>(null);
   const userLoadingMoreTopicCursorRef = useRef<string | null>(null);
   const userLoadingMoreReplyCursorRef = useRef<string | null>(null);
-  const userTopicsPaginationRequestIdRef = useRef(0);
-  const userRepliesPaginationRequestIdRef = useRef(0);
-  const userVisitedTopicCursorsRef = useRef<Set<string>>(new Set());
-  const userVisitedReplyCursorsRef = useRef<Set<string>>(new Set());
   const openUserRef = useRef<((user: UserProfile, nocache?: boolean, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const loadMoreUserTopicsRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const loadMoreUserRepliesRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
@@ -118,6 +128,40 @@ export function useUserController({
   const [userLoadingMoreReplies, setUserLoadingMoreReplies] = useState(false);
   const [userError, setUserError] = useState<SourceErrorInfo | null>(null);
 
+  useEffect(() => subscribeForumSourceResets(({ source, preserveRecoveryKey }) => {
+    const current = userProfile || selectedUser;
+    if (!current || current.source !== source) {
+      return;
+    }
+    const activeRecovery = activeUserRecoveryRef.current;
+    const preservedRecovery = activeRecovery
+      && activeRecovery.key === preserveRecoveryKey
+      && activeRecovery.source === source
+      ? activeRecovery
+      : null;
+    for (const lane of ['profile', 'topics', 'replies'] as const) {
+      if (preservedRecovery?.lane !== lane) {
+        userRecoveryGenerationRef.current[lane] += 1;
+      }
+    }
+    if (!preservedRecovery) {
+      activeUserRecoveryRef.current = null;
+    }
+    userLoadingMoreTopicCursorRef.current = null;
+    userLoadingMoreReplyCursorRef.current = null;
+    if (!preservedRecovery || preservedRecovery.lane === 'profile') {
+      setUserProfile(null);
+    }
+    setUserBusy(false);
+    setUserLoadingMoreTopics(false);
+    setUserLoadingMoreReplies(false);
+    setUserError(preservedRecovery ? null : {
+      kind: 'ordinary',
+      message: '账号会话已变化，请重新加载用户主页。',
+      retryable: true
+    });
+  }), [selectedUser, userProfile]);
+
   const followedUserRecords = useMemo<FollowedUserRecord[]>(
     () => Object.values(readerData.followedUsers).sort((left, right) => Date.parse(right.followedAt) - Date.parse(left.followedAt)),
     [readerData.followedUsers]
@@ -125,17 +169,17 @@ export function useUserController({
   const currentUserFollowed = Boolean((userProfile || selectedUser) && isUserFollowed(readerData, (userProfile || selectedUser) as UserProfile));
 
   const cancelUserRequests = useCallback(() => {
-    userRequestIdRef.current += 1;
-    userAbortRef.current?.abort();
+    userRecoveryGenerationRef.current.profile += 1;
+    userRecoveryGenerationRef.current.topics += 1;
+    userRecoveryGenerationRef.current.replies += 1;
+    void appQueryClient.cancelQueries({
+      predicate: ({ queryKey }) => queryKey[0] === 'forum' && queryKey[2] === 'user'
+    });
     setUserBusy(false);
     setUserLoadingMoreTopics(false);
     setUserLoadingMoreReplies(false);
     userLoadingMoreTopicCursorRef.current = null;
     userLoadingMoreReplyCursorRef.current = null;
-    userTopicsPaginationRequestIdRef.current += 1;
-    userRepliesPaginationRequestIdRef.current += 1;
-    userVisitedTopicCursorsRef.current = new Set();
-    userVisitedReplyCursorsRef.current = new Set();
   }, []);
 
   useEffect(() => {
@@ -146,9 +190,10 @@ export function useUserController({
 
   useEffect(() => cancelUserRequests, [cancelUserRequests]);
 
-  const handleUserSourceError = useCallback(async ({ error, recovery, source, suppressLinuxDoVerification = false }: {
+  const handleUserSourceError = useCallback(async ({ error, recovery, recoveryLane, source, suppressLinuxDoVerification = false }: {
     error: unknown;
     recovery?: LinuxDoReadRecovery;
+    recoveryLane?: UserRecoveryLane;
     source: Source;
     suppressLinuxDoVerification?: boolean;
   }): Promise<LinuxDoReadResumeOutcome> => {
@@ -163,6 +208,13 @@ export function useUserController({
     const recoveryTarget = userSourceRecoveryTarget(source, sourceError);
     if (recoveryTarget === 'linuxdo-verification') {
       if (!suppressLinuxDoVerification) {
+        if (recovery && recoveryLane) {
+          activeUserRecoveryRef.current = {
+            key: recovery.key,
+            lane: recoveryLane,
+            source
+          };
+        }
         await showLinuxDoVerification(sourceError.message, recovery);
       }
       return 'verification-required';
@@ -216,17 +268,19 @@ export function useUserController({
       url: user.url || '',
       topics: user.topics || []
     };
-    const requestId = ++userRequestIdRef.current;
-    const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${requestUser.source}:${requestUser.id || requestUser.username}:${nocache ? 'nocache' : 'cache'}`);
-    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
-    let recoveryRequestOwner = requestOwner;
-    let recoveryRequestId = requestId;
+    const userIdentity = requestUser.id || requestUser.username;
+    const requestGeneration = ++userRecoveryGenerationRef.current.profile;
+    userRecoveryGenerationRef.current.topics += 1;
+    userRecoveryGenerationRef.current.replies += 1;
+    let recoveryGeneration = requestGeneration;
+    let querySignal: AbortSignal | undefined;
+    const isLatestUserRequest = () => userRecoveryGenerationRef.current.profile === requestGeneration;
+    const isCurrentUserRequest = () => isLatestUserRequest() && !querySignal?.aborted;
     const isCurrentUserRecovery = () => (
-      isCurrentOwnedRequest(recoveryRequestOwner, userRequestOwnerRef)
-      && recoveryRequestId === userRequestIdRef.current
+      userRecoveryGenerationRef.current.profile === recoveryGeneration
     );
     const linuxDoRecovery: LinuxDoReadRecovery = {
-      key: requestOwner.key,
+      key: `user:${requestUser.source}:${userIdentity}`,
       isCurrent: isCurrentUserRecovery,
       resume: async () => {
         if (!isCurrentUserRecovery()) {
@@ -236,9 +290,9 @@ export function useUserController({
         if (!resumedRequest) {
           return 'stale';
         }
-        recoveryRequestOwner = userRequestOwnerRef.current;
-        recoveryRequestId = userRequestIdRef.current;
-        return await resumedRequest;
+        const outcome = await resumedRequest;
+        recoveryGeneration = userRecoveryGenerationRef.current.profile;
+        return outcome;
       }
     };
     setSelectedUser(requestUser);
@@ -257,27 +311,34 @@ export function useUserController({
     setUserLoadingMoreReplies(false);
     userLoadingMoreTopicCursorRef.current = null;
     userLoadingMoreReplyCursorRef.current = null;
-    userTopicsPaginationRequestIdRef.current += 1;
-    userRepliesPaginationRequestIdRef.current += 1;
-    userVisitedTopicCursorsRef.current = new Set();
-    userVisitedReplyCursorsRef.current = new Set();
-    const controller = startAbortableRequest(userAbortRef);
+    const queryKey = forumQueryKeys.user(requestUser.source, userIdentity);
+    if (nocache) {
+      void appQueryClient.cancelQueries({ queryKey });
+      appQueryClient.removeQueries({ queryKey });
+    }
     try {
-      const profile = await sourceGateway.getUserProfile({
-        source: requestUser.source,
-        id: requestUser.id,
-        username: requestUser.username,
-        signal: controller.signal
-      }, { isCurrent: isCurrentUserRequest, trace });
+      const profile = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: async ({ signal }) => {
+          querySignal = signal;
+          const loaded = await sourceGateway.getUserProfile({
+            source: requestUser.source,
+            id: requestUser.id,
+            username: requestUser.username,
+            signal
+          }, { isCurrent: () => !signal.aborted, trace });
+          if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
+            throw new Error('用户主页解析为空，无法显示，请重试。');
+          }
+          return loaded;
+        }
+      });
       if (!isCurrentUserRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source: requestUser.source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
-      }
-      if (sourceDiagnosticSummary(profile)?.isParseEmpty) {
-        throw new Error('用户主页解析为空，无法显示，请重试。');
       }
       markDiagnosticStage(trace, 'apply', {
         source: requestUser.source,
@@ -299,7 +360,7 @@ export function useUserController({
       });
       return 'completed';
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledUserQuery(error)) {
         finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
           source: requestUser.source,
           reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
@@ -318,23 +379,23 @@ export function useUserController({
         return await handleUserSourceError({
           error,
           recovery: requestUser.source === 'linuxdo' ? linuxDoRecovery : undefined,
+          recoveryLane: 'profile',
           source: requestUser.source,
           suppressLinuxDoVerification
         });
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentUserRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(isCurrentUserRequest() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
           source: requestUser.source,
-          reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: isCurrentUserRequest() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
         });
       }
-      if (isCurrentUserRequest()) {
+      if (isLatestUserRequest()) {
         setUserBusy(false);
         setUserLoadingMoreTopics(false);
         setUserLoadingMoreReplies(false);
       }
-      finishAbortableRequest(userAbortRef, controller);
     }
   }, [
     handleUserSourceError,
@@ -371,17 +432,17 @@ export function useUserController({
       return 'completed';
     }
     markDiagnosticStage(trace, 'guard', { source: current.source, state: 'load-more', hasCursor: true });
-    const requestId = ++userRequestIdRef.current;
-    const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more:${current.nextTopicsCursor}`);
-    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
-    let recoveryRequestOwner = requestOwner;
-    let recoveryRequestId = requestId;
+    const userIdentity = current.id || current.username;
+    const requestGeneration = ++userRecoveryGenerationRef.current.topics;
+    let recoveryGeneration = requestGeneration;
+    let querySignal: AbortSignal | undefined;
+    const isLatestUserRequest = () => userRecoveryGenerationRef.current.topics === requestGeneration;
+    const isCurrentUserRequest = () => isLatestUserRequest() && !querySignal?.aborted;
     const isCurrentUserRecovery = () => (
-      isCurrentOwnedRequest(recoveryRequestOwner, userRequestOwnerRef)
-      && recoveryRequestId === userRequestIdRef.current
+      userRecoveryGenerationRef.current.topics === recoveryGeneration
     );
     const linuxDoRecovery: LinuxDoReadRecovery = {
-      key: requestOwner.key,
+      key: `user:${current.source}:${userIdentity}:topics:${current.nextTopicsCursor}`,
       isCurrent: isCurrentUserRecovery,
       resume: async () => {
         if (!isCurrentUserRecovery()) {
@@ -391,34 +452,40 @@ export function useUserController({
         if (!resumedRequest) {
           return 'stale';
         }
-        recoveryRequestOwner = userRequestOwnerRef.current;
-        recoveryRequestId = userRequestIdRef.current;
-        return await resumedRequest;
+        const outcome = await resumedRequest;
+        recoveryGeneration = userRecoveryGenerationRef.current.topics;
+        return outcome;
       }
     };
-    const controller = startAbortableRequest(userAbortRef);
-    const paginationRequestId = ++userTopicsPaginationRequestIdRef.current;
+    const queryKey = forumQueryKeys.userPage(current.source, userIdentity, 'topics', current.nextTopicsCursor);
     userLoadingMoreTopicCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMoreTopics(true);
     setUserError(null);
     try {
-      const nextProfile = await sourceGateway.getUserProfile({
-        source: current.source,
-        id: current.id,
-        username: current.username,
-        cursor: current.nextTopicsCursor,
-        cursorType: 'topics',
-        signal: controller.signal
-      }, { isCurrent: isCurrentUserRequest, trace });
+      const nextProfile = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: async ({ signal }) => {
+          querySignal = signal;
+          const loaded = await sourceGateway.getUserProfile({
+            source: current.source,
+            id: current.id,
+            username: current.username,
+            cursor: current.nextTopicsCursor,
+            cursorType: 'topics',
+            signal
+          }, { isCurrent: () => !signal.aborted, trace });
+          if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
+            throw new Error('用户帖子解析为空，无法加载下一页，请重试。');
+          }
+          return loaded;
+        }
+      });
       if (!isCurrentUserRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source: current.source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
-      }
-      if (sourceDiagnosticSummary(nextProfile)?.isParseEmpty) {
-        throw new Error('用户帖子解析为空，无法加载下一页，请重试。');
       }
       const expectedAfterCount = mergeTopics(current.topics, nextProfile.topics).length;
       markDiagnosticStage(trace, 'apply', {
@@ -428,11 +495,10 @@ export function useUserController({
         itemCount: nextProfile.topics.length,
         hasMore: Boolean(nextProfile.hasMoreTopics)
       });
-      userVisitedTopicCursorsRef.current.add(current.nextTopicsCursor);
-      const canLoadNext = Boolean(
-        nextProfile.hasMoreTopics
-        && nextProfile.nextTopicsCursor
-        && !userVisitedTopicCursorsRef.current.has(nextProfile.nextTopicsCursor)
+      const canLoadNext = hasNextUserPage(
+        nextProfile.hasMoreTopics,
+        nextProfile.nextTopicsCursor,
+        current.nextTopicsCursor
       );
       setUserProfile((previous) => {
         if (!previous || previous.source !== current.source || previous.id !== current.id) {
@@ -455,7 +521,7 @@ export function useUserController({
       });
       return 'completed';
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledUserQuery(error)) {
         finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
           source: current.source,
           reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
@@ -474,22 +540,22 @@ export function useUserController({
         return await handleUserSourceError({
           error,
           recovery: current.source === 'linuxdo' ? linuxDoRecovery : undefined,
+          recoveryLane: 'topics',
           source: current.source,
           suppressLinuxDoVerification
         });
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentUserRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(isCurrentUserRequest() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
           source: current.source,
-          reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: isCurrentUserRequest() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
         });
       }
-      if (userTopicsPaginationRequestIdRef.current === paginationRequestId) {
+      if (userRecoveryGenerationRef.current.topics === requestGeneration) {
         setUserLoadingMoreTopics(false);
         userLoadingMoreTopicCursorRef.current = null;
       }
-      finishAbortableRequest(userAbortRef, controller);
     }
   }, [
     handleUserSourceError,
@@ -527,17 +593,17 @@ export function useUserController({
       return 'completed';
     }
     markDiagnosticStage(trace, 'guard', { source: current.source, state: 'load-more', hasCursor: true });
-    const requestId = ++userRequestIdRef.current;
-    const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more-replies:${current.nextRepliesCursor}`);
-    const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
-    let recoveryRequestOwner = requestOwner;
-    let recoveryRequestId = requestId;
+    const userIdentity = current.id || current.username;
+    const requestGeneration = ++userRecoveryGenerationRef.current.replies;
+    let recoveryGeneration = requestGeneration;
+    let querySignal: AbortSignal | undefined;
+    const isLatestUserRequest = () => userRecoveryGenerationRef.current.replies === requestGeneration;
+    const isCurrentUserRequest = () => isLatestUserRequest() && !querySignal?.aborted;
     const isCurrentUserRecovery = () => (
-      isCurrentOwnedRequest(recoveryRequestOwner, userRequestOwnerRef)
-      && recoveryRequestId === userRequestIdRef.current
+      userRecoveryGenerationRef.current.replies === recoveryGeneration
     );
     const linuxDoRecovery: LinuxDoReadRecovery = {
-      key: requestOwner.key,
+      key: `user:${current.source}:${userIdentity}:replies:${current.nextRepliesCursor}`,
       isCurrent: isCurrentUserRecovery,
       resume: async () => {
         if (!isCurrentUserRecovery()) {
@@ -547,34 +613,40 @@ export function useUserController({
         if (!resumedRequest) {
           return 'stale';
         }
-        recoveryRequestOwner = userRequestOwnerRef.current;
-        recoveryRequestId = userRequestIdRef.current;
-        return await resumedRequest;
+        const outcome = await resumedRequest;
+        recoveryGeneration = userRecoveryGenerationRef.current.replies;
+        return outcome;
       }
     };
-    const controller = startAbortableRequest(userAbortRef);
-    const paginationRequestId = ++userRepliesPaginationRequestIdRef.current;
+    const queryKey = forumQueryKeys.userPage(current.source, userIdentity, 'replies', current.nextRepliesCursor);
     userLoadingMoreReplyCursorRef.current = current.nextRepliesCursor;
     setUserLoadingMoreReplies(true);
     setUserError(null);
     try {
-      const nextProfile = await sourceGateway.getUserProfile({
-        source: current.source,
-        id: current.id,
-        username: current.username,
-        cursor: current.nextRepliesCursor,
-        cursorType: 'replies',
-        signal: controller.signal
-      }, { isCurrent: isCurrentUserRequest, trace });
+      const nextProfile = await appQueryClient.fetchQuery({
+        queryKey,
+        queryFn: async ({ signal }) => {
+          querySignal = signal;
+          const loaded = await sourceGateway.getUserProfile({
+            source: current.source,
+            id: current.id,
+            username: current.username,
+            cursor: current.nextRepliesCursor,
+            cursorType: 'replies',
+            signal
+          }, { isCurrent: () => !signal.aborted, trace });
+          if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
+            throw new Error('用户回复解析为空，无法加载下一页，请重试。');
+          }
+          return loaded;
+        }
+      });
       if (!isCurrentUserRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(querySignal?.aborted ? 'canceled' : 'stale', {
           source: current.source,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: querySignal?.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
-      }
-      if (sourceDiagnosticSummary(nextProfile)?.isParseEmpty) {
-        throw new Error('用户回复解析为空，无法加载下一页，请重试。');
       }
       const expectedAfterCount = mergeUserReplies(current.replies || [], nextProfile.replies || []).length;
       markDiagnosticStage(trace, 'apply', {
@@ -584,11 +656,10 @@ export function useUserController({
         itemCount: nextProfile.replies?.length || 0,
         hasMore: Boolean(nextProfile.hasMoreReplies)
       });
-      userVisitedReplyCursorsRef.current.add(current.nextRepliesCursor);
-      const canLoadNext = Boolean(
-        nextProfile.hasMoreReplies
-        && nextProfile.nextRepliesCursor
-        && !userVisitedReplyCursorsRef.current.has(nextProfile.nextRepliesCursor)
+      const canLoadNext = hasNextUserPage(
+        nextProfile.hasMoreReplies,
+        nextProfile.nextRepliesCursor,
+        current.nextRepliesCursor
       );
       setUserProfile((previous) => {
         if (!previous || previous.source !== current.source || previous.id !== current.id) {
@@ -611,7 +682,7 @@ export function useUserController({
       });
       return 'completed';
     } catch (error) {
-      if (isCanceledRequest(error)) {
+      if (isCanceledUserQuery(error)) {
         finishTrace(isCurrentUserRequest() ? 'canceled' : 'stale', {
           source: current.source,
           reason: isCurrentUserRequest() ? 'canceled' : 'superseded'
@@ -630,22 +701,22 @@ export function useUserController({
         return await handleUserSourceError({
           error,
           recovery: current.source === 'linuxdo' ? linuxDoRecovery : undefined,
+          recoveryLane: 'replies',
           source: current.source,
           suppressLinuxDoVerification
         });
       }
     } finally {
       if (!traceFinished) {
-        finishTrace(isCurrentUserRequest() ? 'failure' : controller.signal.aborted ? 'canceled' : 'stale', {
+        finishTrace(isCurrentUserRequest() ? 'failure' : querySignal?.aborted ? 'canceled' : 'stale', {
           source: current.source,
-          reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
+          reason: isCurrentUserRequest() ? 'unknown' : querySignal?.aborted ? 'canceled' : 'superseded'
         });
       }
-      if (userRepliesPaginationRequestIdRef.current === paginationRequestId) {
+      if (userRecoveryGenerationRef.current.replies === requestGeneration) {
         setUserLoadingMoreReplies(false);
         userLoadingMoreReplyCursorRef.current = null;
       }
-      finishAbortableRequest(userAbortRef, controller);
     }
   }, [
     handleUserSourceError,
