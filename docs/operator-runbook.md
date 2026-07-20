@@ -52,7 +52,7 @@ npm run smoke:android
 
 - 功能验证按 `docs/testing-standard.md` 执行；只打开 App 不算完整测试。
 - 当前模拟器功能基线记录在 `docs/emulator-baseline.md`；只使用 Git revision、App 版本和 APK 身份匹配的记录，不能按日期猜测，也不能用“能打开 App”代替验收。
-- NodeSeek、linux.do 和妖火 Cookie 不进入备份 JSON。
+- NodeSeek、linux.do 和妖火 Cookie，以及小隐寺 User API Key、Client ID、nonce 和待授权状态不进入备份 JSON。
 - 服务器代理配置不进入备份 JSON，只保存在 Android 安全存储。
 - `android/` 是生成目录，不作为长期配置来源。
 - 发布版本号以 `app.json` 和 `package*.json` 为准；每次发布递增 `expo.android.versionCode`。
@@ -67,7 +67,7 @@ npm run smoke:android
 - 首页、搜索、详情、回复和用户页的读取不应直接 import `forumApi`、`yaohuoApi` 或 `local*` 来源文件，应通过 `src/sources/sourceGateway.ts`；已有互动 action client 按触及路径逐项迁移，不改变请求格式。
 - `App.tsx` 应保持入口职责，不承载 WebView、Cookie、来源读取和业务回调。
 - `src/theme.ts` 和 `src/screens/TopicScreen.tsx` 是兼容入口，不应重新塞回大段实现。
-- More 页只有一个 `账号中心`：统一显示三站网站登录态、当前身份、自动填入状态（本机保存账号密码）和原有站点服务，并提供 `刷新账号状态`；测试工具、代理、诊断、备份和外观保持独立。
+- More 页只有一个 `账号中心`：统一显示四个可登录来源的状态和当前身份；自动填入仍只服务原三站，小隐寺只提供 Device Code 授权 / 重新授权 / 撤销授权，并提供公共 `刷新账号状态`；测试工具、代理、诊断、备份和外观保持独立。
 - More 页 `服务器代理` 支持 HTTP / SOCKS5；启用失败时网络请求不应静默直连。
 - 账号状态刷新由 `src/app/useAccountStatusController.ts` 提供，备份 I/O 由 `src/app/useBackupStatusController.ts` 提供；启动后由 `AppRoot` 静默刷新一次，进入 More 页本身不应触发刷新。
 - 模拟器验证最新代码时禁止使用 `adb uninstall`、`adb shell pm clear`、清空模拟器数据或重置 emulator。
@@ -81,14 +81,15 @@ npm run smoke:android
 - 涉及首页来源、分类、单站排序或分页缓存时，至少运行 `npm test -- src/feedLogic.test.ts src/feedCategoryRail.test.ts src/forumApi.test.ts src/localSources.test.ts` 和 `npm run typecheck`，并在模拟器检查对应单站筛选。
 - 涉及登录、验证、Cookie、写操作、详情返回或来源解析时，运行相关来源 / 安全 / 体验测试和 `npm run typecheck`。
 - 涉及来源 gateway 时，至少运行 `npm test -- src/forumApi.test.ts src/localSources.test.ts src/sources/sourceGateway.test.ts src/sources/sourceGatewayContract.test.ts` 和 `npm run typecheck`。
-- 涉及账号区时，至少运行账号中心、会话、凭据仓库、登录表单 adapter 和来源测试及 `npm run typecheck`；统一 UI 位于 `src/screens/more/AccountCenterPanel.tsx`，视图规则位于 `src/screens/more/accountCenter.ts`，凭据和填入边界位于 `src/credentialVault.ts`、`src/loginFormAdapters.ts`。
+- 涉及账号区时，至少运行账号中心、会话、凭据仓库、登录表单 adapter、小隐寺 Device Code 和来源测试及 `npm run typecheck`；统一 UI 位于 `src/screens/more/AccountCenterPanel.tsx`，视图规则位于 `src/screens/more/accountCenter.ts`，原三站凭据和填入边界位于 `src/credentialVault.ts`、`src/loginFormAdapters.ts`，小隐寺授权边界位于 `src/xiaoyinsiAuth.ts`。
+- 改 `plugins/withXiaoyinsiAuthModule.js` 或 `app.json` 的小隐寺 plugin / SecureStore 配置后，至少运行 Expo config、clean prebuild 和 Android debug 构建，确认生成的 Keystore module、MainApplication 注册和备份排除规则可编译；正式发布仍只在明确发布任务中运行 `npm run release:android`。
 - 涉及服务器代理时，至少运行 `npm test -- src/networkProxy.test.ts src/networkProxyControllerGuard.test.ts src/networkProxyModalGuard.test.ts src/webViewProxyGuard.test.ts src/appUpdateProxyGuard.test.ts src/releasePackaging.test.ts` 和 `npm run typecheck`；改 `plugins/withNetworkProxyModule.js` 后发布前必须跑 `npm run release:android`。
 - 涉及主题或详情页拆分时，至少运行 `npm test -- src/theme.test.ts src/topicDerivedData.test.ts src/topicContentSplit.test.ts src/topicContentHtml.test.ts src/topicListItemState.test.ts src/topicSessionState.test.ts` 和 `npm run typecheck`，并在模拟器上验证外观设置与详情页打开 / 返回。
 - 发布前运行 `npm run release:android`；它已经包含 `npm run verify`、APK 签名校验、只读设备 smoke 和 SHA-256 输出。
 
 ### 直接打开主题链接
 
-用户给出 NodeSeek、linux.do、V2EX 或妖火主题 URL 并要求查看、验证或排障时，URL 本身就是目标，不是搜索词：
+用户给出 NodeSeek、linux.do、V2EX、妖火或小隐寺主题 URL 并要求查看、验证或排障时，URL 本身就是目标，不是搜索词：
 
 1. 用 `src/appUtils.ts` 的 `parseForumTopicLink` 规则解析来源和主题 id，并使用解析结果中的规范化 URL。
 2. 确认模拟器中的 `com.wz.reader` 已运行当前代码；优先调用 agent-device `open`，传入 `app=com.wz.reader` 和 `url=exp+wz-android://open-topic?url=<encoded canonical URL>`。
@@ -105,7 +106,7 @@ adb shell am start -W -a android.intent.action.VIEW -d "exp+wz-android://open-to
 
 - 普通版本聚合几个小功能或 bug 后发布；崩溃、数据或隐私风险、核心来源不可用才单独 hotfix。
 - 发布候选依次通过 `npm run verify`、正式签名构建与 signer 校验，再由同代码的开发签名 x86_64 APK 在唯一登录态设备上完成只读 smoke；最后按授权执行 `full` Agent Live。
-- `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分在覆盖安装后先读取设备 epoch、再于第一次启动前写入唯一 logcat marker，通过 `logcat -T` 有界读取该时间之后的日志并以包名/PID 裁剪首次启动窗口，继续检查 session relaunch、前台包名、Feed readiness 及日志中的崩溃、ANR、RedBox，输出 `APK_SANITY`。它不清空全局 logcat。Feed/Search/Library/账号与四站旅程由 tracked `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
+- `npm run smoke:android` 使用覆盖安装保留 App 数据；其 Smoke 部分在覆盖安装后先读取设备 epoch、再于第一次启动前写入唯一 logcat marker，通过 `logcat -T` 有界读取该时间之后的日志并以包名/PID 裁剪首次启动窗口，继续检查 session relaunch、前台包名、Feed readiness 及日志中的崩溃、ANR、RedBox，输出 `APK_SANITY`。它不清空全局 logcat。Feed/Search/Library/账号与 tracked 来源旅程由 `.ad` 执行并单独输出 `DEVICE_REPLAY_PASS`；任一证据失败都不能宣称完整通过。
 - 实时来源只断言关键字段存在且结果可打开，不固定结果数量；本批次触及某个来源时，再按 `docs/testing-standard.md` 做该来源的登录态或原站专项验收。
 - smoke 不执行回复、编辑、删除、上传、点赞、投票、收藏切换、清除登录或其他真实写操作。
 - smoke 通过后才上传 `app-arm64-v8a-release.apk` 与 `release-manifest.json`；发布说明记录 APK SHA-256，不记录签名 SHA-256。

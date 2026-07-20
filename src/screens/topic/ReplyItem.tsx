@@ -8,9 +8,11 @@ import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../t
 import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
 import { imageSourceFromUrl } from '../../htmlImages';
-import { splitLinuxDoContentHtml } from '../../localLinuxdo';
-import { linuxDoReactionStats, type LinuxDoEmojiUrlMap, type LinuxDoReactionStat } from '../../linuxdoReactions';
-import { canUseLinuxDoLike } from '../../linuxdoPermissions';
+import { splitDiscourseContentHtml } from '../../discourseContent';
+import { discourseReactionStats, type DiscourseEmojiUrlMap, type DiscourseReactionStat } from '../../discourseReactions';
+import { linuxDoReactionStats } from '../../linuxdoReactions';
+import { canToggleDiscourseLike } from '../../discoursePermissions';
+import { isDiscourseSource } from '../../sourceCatalog';
 import {
   quotedPostReferenceFromReply,
   quotedPostReferenceKey,
@@ -70,13 +72,13 @@ export function NodeSeekStatPill({
   );
 }
 
-export function LinuxDoReactionPill({
+export function DiscourseReactionPill({
   compact = false,
   stat,
   styles
 }: {
   compact?: boolean;
-  stat: LinuxDoReactionStat;
+  stat: DiscourseReactionStat;
   styles: ReturnType<typeof createStyles>;
 }) {
   return (
@@ -106,6 +108,7 @@ function NodeSeekActionPlaceholder({ styles }: { styles: ReturnType<typeof creat
 
 export function ReplyItem({
   actionBusy,
+  canUseDiscourseActions,
   canWrite,
   contentWidth,
   expandedQuotes,
@@ -114,7 +117,7 @@ export function ReplyItem({
   loadedQuotedReplies,
   loadingQuotedFloors,
   inlineSizedImageUrls,
-  linuxDoEmojiUrls,
+  discourseEmojiUrls,
   onTogglePollSelection,
   pollSelections,
   query,
@@ -137,12 +140,13 @@ export function ReplyItem({
   onToggleReplyQuote
 }: {
   actionBusy: boolean;
+  canUseDiscourseActions: boolean;
   canWrite: boolean;
   contentWidth: number;
   expandedQuotes: Record<string, boolean>;
   isActionPending: (targetId: string | number | undefined, action: TopicActionStateKind) => boolean;
   inlineSizedImageUrls: Record<string, true>;
-  linuxDoEmojiUrls?: LinuxDoEmojiUrlMap;
+  discourseEmojiUrls?: DiscourseEmojiUrlMap;
   isNew?: boolean;
   loadedQuotedReplies: Record<string, Reply>;
   loadingQuotedFloors: Record<string, boolean>;
@@ -168,17 +172,25 @@ export function ReplyItem({
   onToggleReplyQuote: (options: ToggleReplyQuoteOptions) => void;
 }) {
   const { getMappingKey } = useMappingHelper();
+  const isDiscourse = isDiscourseSource(source);
   const quotedFloors = useMemo(() => Array.from(new Set(reply.quotedFloors || [])), [reply.quotedFloors]);
   const highlightedHtml = useMemo(() => highlightHtml(reply.contentHtml, query), [query, reply.contentHtml]);
-  const linuxDoContentParts = useMemo(() => (
-    source === 'linuxdo' ? splitLinuxDoContentHtml(highlightedHtml, reply.polls) : []
-  ), [highlightedHtml, reply.polls, source]);
+  const discourseContentParts = useMemo(() => (
+    isDiscourse ? splitDiscourseContentHtml(highlightedHtml, reply.polls) : []
+  ), [highlightedHtml, isDiscourse, reply.polls]);
   const replyContentWidth = Math.max(220, contentWidth - 42);
   const replyUser = userFromReply(reply, source);
   const isTopicAuthorReply = Boolean(reply.isOp || (source === 'v2ex' && topicAuthor && reply.author && reply.author === topicAuthor));
   const nodeSeekReplyReactionStats = source === 'nodeseek' ? nodeSeekReactionStats(reply) : [];
   const canUseNodeSeekInteractions = reply.canLike !== false;
-  const linuxDoReplyReactionStats = source === 'linuxdo' ? linuxDoReactionStats(reply, linuxDoEmojiUrls) : [];
+  const canUseDiscoursePostActions = isDiscourse && Boolean(
+    canWrite
+    || (canUseDiscourseActions
+      && (reply.canEdit || reply.canDelete || canToggleDiscourseLike(reply)))
+  );
+  const discourseReplyReactionStats = isDiscourse
+    ? source === 'linuxdo' ? linuxDoReactionStats(reply, discourseEmojiUrls) : discourseReactionStats(reply, discourseEmojiUrls)
+    : [];
   const replyTargetUser = source && reply.replyTargetAuthor ? {
     source,
     id: reply.replyTargetAuthor,
@@ -234,7 +246,9 @@ export function ReplyItem({
             {reply.wiki ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text> : null}
             {reply.hidden ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text> : null}
             {reply.folded ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text> : null}
-            {reply.needsApproval ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text> : null}
+            {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval
+              ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
+              : null}
             {reply.systemAction ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}>系统</Text> : null}
           </View>
           <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
@@ -310,8 +324,8 @@ export function ReplyItem({
                       style={[styles.quoteBody, styles.quotePanelBody, styles.replyQuotePanelBody]}
                       testID={`reply-quote-complete-${replyFloor}-${reference.topicId}-${reference.postNumber}`}
                     >
-                      {(source === 'linuxdo'
-                        ? splitLinuxDoContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
+                      {(isDiscourse
+                        ? splitDiscourseContentHtml(completeQuotedPost.contentHtml, completeQuotedPost.polls)
                         : [{ type: 'html' as const, html: completeQuotedPost.contentHtml }]
                       ).map((part) => part.type === 'poll' ? (
                         <TopicPolls
@@ -360,13 +374,13 @@ export function ReplyItem({
             <Text style={styles.replyTargetText}>回复 @{reply.replyTargetAuthor}</Text>
           </Pressable>
         ) : null}
-        {source === 'linuxdo' ? (
+        {isDiscourse ? (
           <View style={styles.replyBody}>
-            {linuxDoContentParts.map((part, index) => part.type === 'poll' ? (
+            {discourseContentParts.map((part, index) => part.type === 'poll' ? (
               <TopicPolls
                 key={`poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
                 actionBusy={actionBusy}
-                canWritePollSource={canWrite}
+                canWritePollSource={canUseDiscourseActions}
                 keyPrefix={`reply-${reply.floor ?? reply.commentId ?? replyFloor}`}
                 onTogglePollSelection={onTogglePollSelection}
                 onVotePoll={onVotePoll}
@@ -383,7 +397,7 @@ export function ReplyItem({
                   contentWidth={replyContentWidth}
                   inlineSizedImageUrls={inlineSizedImageUrls}
                   html={part.html}
-                  trimTrailingBlockSpacing={index === linuxDoContentParts.length - 1}
+                  trimTrailingBlockSpacing={index === discourseContentParts.length - 1}
                   topicImageDeriver={topicImageDeriver}
                 />
               </Pressable>
@@ -430,10 +444,10 @@ export function ReplyItem({
         {source === 'v2ex' && typeof reply.thanksCount === 'number' && reply.thanksCount > 0 ? (
           <Text style={styles.replyThanksText}>{reply.thanksCount} 感谢</Text>
         ) : null}
-        {source === 'linuxdo' && linuxDoReplyReactionStats.length ? (
+        {isDiscourse && discourseReplyReactionStats.length ? (
           <View style={styles.replyStatRail}>
-            {linuxDoReplyReactionStats.map((stat, index) => (
-              <LinuxDoReactionPill compact key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
+            {discourseReplyReactionStats.map((stat, index) => (
+              <DiscourseReactionPill compact key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
             ))}
           </View>
         ) : null}
@@ -458,11 +472,11 @@ export function ReplyItem({
             {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
           </View>
         ) : null}
-        {canWrite && source === 'linuxdo' ? (
+        {canUseDiscoursePostActions ? (
           <View style={styles.replyActionRow}>
-            <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} />
+            {canWrite ? <DetailActionButton alignStart accessibilityLabel="回复" icon={MessageCircle} label="回复" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onReplyToFloor(reply)} /> : null}
             {reply.canEdit ? <DetailActionButton alignStart accessibilityLabel="编辑回复" icon={Pencil} label="编辑" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onEditReply(reply)} /> : null}
-            {canUseLinuxDoLike(reply) ? <DetailActionButton alignStart active={Boolean(reply.liked)} tone="success" accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : null}
+            {canToggleDiscourseLike(reply) ? <DetailActionButton alignStart active={Boolean(reply.liked)} tone="success" accessibilityLabel={reply.liked ? '取消赞' : '点赞'} icon={ThumbsUp} label="赞" pending={isActionPending(reply.commentId, 'like')} styles={styles} theme={theme} disabled={actionBusy} onPress={() => onInteract('like', reply.commentId)} /> : null}
             {reply.canDelete ? <DetailActionButton alignStart accessibilityLabel="删除回复" icon={Trash2} label="删除" styles={styles} theme={theme} disabled={actionBusy} onPress={() => onDeleteReply(reply)} /> : null}
           </View>
         ) : null}
@@ -474,12 +488,13 @@ export function ReplyItem({
 export const MemoizedReplyItem = memo(ReplyItem, (previous, next) => {
   if (
     previous.actionBusy !== next.actionBusy
+    || previous.canUseDiscourseActions !== next.canUseDiscourseActions
     || previous.canWrite !== next.canWrite
     || previous.contentWidth !== next.contentWidth
     || previous.isActionPending !== next.isActionPending
     || inlineSizedImageSignatureForReply(previous.reply, previous.inlineSizedImageUrls) !== inlineSizedImageSignatureForReply(next.reply, next.inlineSizedImageUrls)
     || previous.isNew !== next.isNew
-    || previous.linuxDoEmojiUrls !== next.linuxDoEmojiUrls
+    || previous.discourseEmojiUrls !== next.discourseEmojiUrls
     || previous.onDeleteReply !== next.onDeleteReply
     || previous.onEditReply !== next.onEditReply
     || previous.onInteract !== next.onInteract

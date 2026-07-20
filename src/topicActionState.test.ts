@@ -9,7 +9,7 @@ import {
   applyPollVoteToTopic,
   beginOptimisticAction,
   completeOptimisticAction,
-  linuxDoBookmarkIdFromActionResult,
+  discourseBookmarkIdFromActionResult,
   topicActionStateKey
 } from './topicActionState';
 
@@ -230,11 +230,11 @@ describe('topic action state patches', () => {
     expect(readdedWithoutId?.bookmarkId).toBeUndefined();
   });
 
-  it('reads linux.do bookmark ids from common Discourse response shapes', () => {
-    expect(linuxDoBookmarkIdFromActionResult({ id: 88 })).toBe(88);
-    expect(linuxDoBookmarkIdFromActionResult({ bookmark_id: 89 })).toBe(89);
-    expect(linuxDoBookmarkIdFromActionResult({ bookmark: { id: 90 } })).toBe(90);
-    expect(linuxDoBookmarkIdFromActionResult({ success: true })).toBeUndefined();
+  it('reads bookmark ids from common Discourse response shapes', () => {
+    expect(discourseBookmarkIdFromActionResult({ id: 88 })).toBe(88);
+    expect(discourseBookmarkIdFromActionResult({ bookmark_id: 89 })).toBe(89);
+    expect(discourseBookmarkIdFromActionResult({ bookmark: { id: 90 } })).toBe(90);
+    expect(discourseBookmarkIdFromActionResult({ success: true })).toBeUndefined();
   });
 
   it('marks a submitted poll vote locally', () => {

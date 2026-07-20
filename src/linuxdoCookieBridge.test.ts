@@ -33,8 +33,10 @@ vi.mock('react-native', () => ({
 import {
   loadLinuxDoAccess,
   readLinuxDoCookiesFromStores,
+  saveLinuxDoAccess,
   setLinuxDoDevAnonymousOverride
 } from './linuxdoCookieBridge';
+import * as SecureStore from 'expo-secure-store';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -60,6 +62,27 @@ describe('linux.do cookie bridge dev anonymous override', () => {
     await expect(loadLinuxDoAccess()).resolves.toMatchObject({
       cookieHeader: '_t=token; _forum_session=session; cf_clearance=clearance'
     });
+  });
+
+  it('REG-ACCOUNT-009 suppresses an old storage error after a newer linux.do credential save starts', async () => {
+    const oldRead = Promise.withResolvers<string | null>();
+    vi.mocked(SecureStore.getItemAsync).mockReturnValueOnce(oldRead.promise);
+
+    const load = loadLinuxDoAccess();
+    const save = saveLinuxDoAccess('_t=new-token; _forum_session=new-session');
+    oldRead.reject(new Error('old SecureStore read failed'));
+
+    await expect(load).resolves.toBeNull();
+    await expect(save).resolves.toMatchObject({
+      cookieHeader: '_t=new-token; _forum_session=new-session'
+    });
+  });
+
+  it('[REG-ACCOUNT-014] rejects a corrupted saved linux.do session instead of treating it as anonymous', async () => {
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValueOnce('{bad json');
+
+    await expect(loadLinuxDoAccess()).rejects.toThrow('linux.do 登录配置已损坏');
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalled();
   });
 
   it('records a partial multi-store timeout without logging Cookie values', async () => {

@@ -25,11 +25,12 @@ describe('account center view', () => {
 
     const views = createSiteAccountViews(sessions, credentials);
 
-    expect(views.map((view) => view.site)).toEqual(['nodeseek', 'linuxdo', 'yaohuo']);
+    expect(views.map((view) => view.site)).toEqual(['nodeseek', 'linuxdo', 'yaohuo', 'xiaoyinsi']);
     expect(views[0]).toMatchObject({ primaryAction: 'open-login-with-fill', primaryLabel: '重新登录并填入' });
     expect(views[1]).toMatchObject({ isLoggedIn: true, primaryAction: 'none', primaryLabel: '已登录' });
     expect(views[2]).toMatchObject({ primaryAction: 'open-login', primaryLabel: '去验证' });
-    expect(accountCenterSummary(views)).toBe('待处理 2 · 网站登录 1/3 · 自动填入 1/3');
+    expect(views[3]).toMatchObject({ primaryAction: 'open-login', primaryLabel: '授权登录', supportsCredentialFill: false });
+    expect(accountCenterSummary(views)).toBe('待处理 2 · 网站登录 1/4 · 自动填入 1/3');
   });
 
   it('keeps the zero-attention count visible', () => {
@@ -40,8 +41,27 @@ describe('account center view', () => {
     }));
 
     expect(accountCenterSummary(createSiteAccountViews(sessions, emptyCredentialSummaries()))).toBe(
-      '待处理 0 · 网站登录 3/3 · 自动填入 0/3'
+      '待处理 0 · 网站登录 3/4 · 自动填入 0/3'
     );
+  });
+
+  it('opens the identified 小隐寺 account profile after login', () => {
+    const sessions = createSiteSessionViewModels(createSiteSessionStates({
+      xiaoyinsi: {
+        site: 'xiaoyinsi',
+        status: 'logged-in',
+        cookieSummary: [],
+        isVerifying: false,
+        currentUser: {
+          source: 'xiaoyinsi', id: 'alice', username: 'alice', displayName: 'Alice', url: '', topics: []
+        }
+      }
+    }));
+
+    expect(createSiteAccountViews(sessions, emptyCredentialSummaries()).find((view) => view.site === 'xiaoyinsi')).toMatchObject({
+      primaryAction: 'open-user',
+      primaryLabel: '查看我的主页'
+    });
   });
 
   it('keeps invalidated login information visible and actionable', () => {
@@ -60,7 +80,7 @@ describe('account center view', () => {
     const views = createSiteAccountViews(sessions, credentials);
 
     expect(views[0].rowSummary).toContain('自动填入需重新设置');
-    expect(accountCenterSummary(views)).toBe('待处理 1 · 网站登录 3/3 · 自动填入 0/3');
+    expect(accountCenterSummary(views)).toBe('待处理 1 · 网站登录 3/4 · 自动填入 0/3');
   });
 
   it('opens an identified logged-in account profile', () => {

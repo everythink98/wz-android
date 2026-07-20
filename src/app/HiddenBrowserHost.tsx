@@ -46,7 +46,8 @@ export function HiddenBrowserHost({
 }) {
   const linuxDoBrowserFetchRequest = state.linuxDo.request;
   const nodeSeekBrowserFetchRequest = state.nodeSeek.request;
-  const [hiddenBrowserWebViewGeneration, setHiddenBrowserWebViewGeneration] = useState(0);
+  const [linuxDoWebViewGeneration, setLinuxDoWebViewGeneration] = useState(0);
+  const [nodeSeekWebViewGeneration, setNodeSeekWebViewGeneration] = useState(0);
   useEffect(() => {
     if (!blockedMessage) {
       return;
@@ -78,22 +79,26 @@ export function HiddenBrowserHost({
     }
     return false;
   }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
-  const handleHiddenBrowserRenderProcessGone = useCallback(() => {
-    setHiddenBrowserWebViewGeneration((current) => current + 1);
-    if (nodeSeekBrowserFetchRequest) {
-      failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', { skipStopLoading: true });
+  const handleNodeSeekBrowserRenderProcessGone = useCallback(() => {
+    setNodeSeekWebViewGeneration((current) => current + 1);
+    if (!nodeSeekBrowserFetchRequest) {
+      return;
     }
+    failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, 'NodeSeek 页面读取进程已停止', { skipStopLoading: true });
+  }, [failNodeSeekBrowserFetchById, nodeSeekBrowserFetchRequest]);
+  const handleLinuxDoBrowserRenderProcessGone = useCallback(() => {
+    setLinuxDoWebViewGeneration((current) => current + 1);
     if (linuxDoBrowserFetchRequest) {
       failLinuxDoBrowserFetchById(linuxDoBrowserFetchRequest.id, 'linux.do 页面读取进程已停止', { skipStopLoading: true });
     }
-  }, [failLinuxDoBrowserFetchById, failNodeSeekBrowserFetchById, linuxDoBrowserFetchRequest, nodeSeekBrowserFetchRequest]);
+  }, [failLinuxDoBrowserFetchById, linuxDoBrowserFetchRequest]);
 
   return (
     <>
       {!blockedMessage && nodeSeekBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
           <WebView
-            key={`nodeseek-browser-fetch-${hiddenBrowserWebViewGeneration}-${nodeSeekBrowserFetchRequest.id}`}
+            key={`nodeseek-browser-fetch-${nodeSeekWebViewGeneration}-${nodeSeekBrowserFetchRequest.id}`}
             ref={nodeSeekBrowserWebViewRef}
             source={{
               uri: nodeSeekBrowserFetchRequest.url,
@@ -131,7 +136,7 @@ export function HiddenBrowserHost({
               }
               failNodeSeekBrowserFetchById(nodeSeekBrowserFetchRequest.id, `NodeSeek 页面返回错误 ${event.nativeEvent.statusCode}`);
             }}
-            onRenderProcessGone={handleHiddenBrowserRenderProcessGone}
+            onRenderProcessGone={handleNodeSeekBrowserRenderProcessGone}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />
         </View>
@@ -139,7 +144,7 @@ export function HiddenBrowserHost({
       {!blockedMessage && linuxDoBrowserFetchRequest ? (
         <View pointerEvents="none" style={styles.hiddenBrowserWebViewHost}>
           <WebView
-            key={`linuxdo-browser-fetch-${hiddenBrowserWebViewGeneration}-${linuxDoBrowserFetchRequest.id}`}
+            key={`linuxdo-browser-fetch-${linuxDoWebViewGeneration}-${linuxDoBrowserFetchRequest.id}`}
             ref={linuxDoBrowserWebViewRef}
             source={{
               uri: linuxDoBrowserFetchRequest.url,
@@ -176,7 +181,7 @@ export function HiddenBrowserHost({
               }
               onLinuxDoHttpErrorStatus(linuxDoBrowserFetchRequest.id, event.nativeEvent.statusCode);
             }}
-            onRenderProcessGone={handleHiddenBrowserRenderProcessGone}
+            onRenderProcessGone={handleLinuxDoBrowserRenderProcessGone}
             renderError={() => <View style={styles.hiddenBrowserWebView} />}
           />
         </View>

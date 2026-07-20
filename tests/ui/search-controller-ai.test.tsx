@@ -5,6 +5,7 @@ import type { LinuxDoReadRecovery } from '../../src/app/useVerificationControlle
 import { setDiagnosticWriter } from '../../src/diagnostics';
 import { DEFAULT_SEARCH_FILTERS, type SearchFilterState } from '../../src/searchFilters';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
+import { annotateSourceDiagnosticSummary } from '../../src/sourceAdapterDiagnostics';
 import type { SourceGateway } from '../../src/sources/sourceGateway';
 import type { SearchResponse, Topic } from '../../src/types';
 
@@ -168,8 +169,65 @@ describe('linux.do AI search controller', () => {
       await hook.result.current.runSearch({ query: 'codex', source: 'all' });
     });
 
-    expect(searchTopics).toHaveBeenCalledTimes(4);
+    expect(searchTopics).toHaveBeenCalledTimes(5);
     expect(showLinuxDoVerification).not.toHaveBeenCalled();
+  });
+
+  it('REG-SEARCH-004 judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
+    const notify = jest.fn<(message: string) => void>();
+    let nodeSeekAttempts = 0;
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => {
+      if (source === 'linuxdo') {
+        return {
+          items: [],
+          errors: { linuxdo: { kind: 'ordinary' as const, message: 'linux.do 暂时失败' } },
+          hasMore: false,
+          nextPage: null
+        };
+      }
+      if (source === 'nodeseek') {
+        nodeSeekAttempts += 1;
+        return nodeSeekAttempts === 1
+          ? {
+            items: [],
+            errors: { nodeseek: { kind: 'ordinary' as const, message: 'NodeSeek 暂时失败' } },
+            hasMore: false,
+            nextPage: null
+          }
+          : {
+            items: [{ ...standardTopic, source: 'nodeseek', id: 'ns-1', url: 'https://www.nodeseek.com/post-1-1' }],
+            errors: {},
+            hasMore: false,
+            nextPage: null
+          };
+      }
+      return { items: [], errors: {}, hasMore: false, nextPage: null };
+    });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }), notify);
+    await act(async () => {
+      hook.result.current.setSearchQuery('codex');
+    });
+    await waitFor(() => expect(hook.result.current.searchQuery).toBe('codex'));
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+    notify.mockClear();
+
+    let outcome: Awaited<ReturnType<typeof hook.result.current.runSearch>> | undefined;
+    await act(async () => {
+      outcome = await hook.result.current.runSearch('nodeseek');
+    });
+
+    expect(outcome).toBe('completed');
+    expect(hook.result.current.searchGroups.find((group) => group.source === 'nodeseek')).toMatchObject({
+      items: [expect.objectContaining({ id: 'ns-1' })],
+      error: undefined
+    });
+    expect(hook.result.current.searchGroups.find((group) => group.source === 'linuxdo')?.error).toBe('linux.do 暂时失败');
+    expect(notify).not.toHaveBeenCalled();
   });
 
   afterEach(() => {
@@ -244,6 +302,86 @@ describe('linux.do AI search controller', () => {
     }));
   });
 
+  it('persists a search submitted before saved history finishes loading', async () => {
+    const storedHistory = Promise.withResolvers<string | null>();
+    mockStorageGetItem.mockImplementationOnce(async () => storedHistory.promise);
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'new query', source: 'linuxdo' });
+    });
+    expect(hook.result.current.recentSearches).toEqual(['new query']);
+
+    await act(async () => {
+      storedHistory.resolve(JSON.stringify(['saved query']));
+      await storedHistory.promise;
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.recentSearches).toEqual(['new query', 'saved query']);
+      expect(mockStorageSetItem).toHaveBeenCalledWith(
+        'reader-search-history',
+        JSON.stringify(['new query', 'saved query'])
+      );
+    });
+  });
+
+  it('does not overwrite saved history when the initial storage read fails', async () => {
+    const storedHistory = Promise.withResolvers<string | null>();
+    mockStorageGetItem.mockImplementationOnce(async () => storedHistory.promise);
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics: jest.fn<SourceGateway['searchTopics']>()
+    }));
+
+    await act(async () => {
+      storedHistory.reject(new Error('storage unavailable'));
+      await storedHistory.promise.catch(() => undefined);
+    });
+
+    expect(hook.result.current.recentSearches).toEqual([]);
+    expect(mockStorageSetItem).not.toHaveBeenCalled();
+  });
+
+  it('retries a failed history read before persisting a new search', async () => {
+    mockStorageGetItem
+      .mockRejectedValueOnce(new Error('storage unavailable'))
+      .mockResolvedValueOnce(JSON.stringify(['saved query']));
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await waitFor(() => expect(mockStorageGetItem).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'new query', source: 'linuxdo' });
+    });
+
+    await waitFor(() => {
+      expect(mockStorageGetItem).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.recentSearches).toEqual(['new query', 'saved query']);
+      expect(mockStorageSetItem).toHaveBeenCalledWith(
+        'reader-search-history',
+        JSON.stringify(['new query', 'saved query'])
+      );
+    });
+  });
+
   it('runs AI in parallel, caches it behind the switch, and keeps it after standard pagination', async () => {
     const diagnosticLines: string[] = [];
     setDiagnosticWriter((line) => { diagnosticLines.push(line); });
@@ -267,7 +405,7 @@ describe('linux.do AI search controller', () => {
         category: '4',
         tags: ['人工智能', '快问快答'],
         tagMatch: 'all',
-        expertResponse: true
+        siteExtension: { source: 'linuxdo', expertResponse: true }
       }
     };
 
@@ -369,6 +507,156 @@ describe('linux.do AI search controller', () => {
       error: undefined,
       hasMore: false,
       nextPage: null
+    });
+  });
+
+  it('REG-SEARCH-005 does not append partial items from a failed search page', async () => {
+    const partialTopic: Topic = {
+      ...standardTopic,
+      id: 'partial-2',
+      title: '失败页的非权威条目',
+      url: 'https://linux.do/t/partial-2'
+    };
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockResolvedValueOnce({
+        items: [partialTopic],
+        errors: {
+          linuxdo: {
+            kind: 'ordinary',
+            message: '第二页只返回了部分结果'
+          }
+        },
+        hasMore: true,
+        nextPage: 3
+      });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      error: '第二页只返回了部分结果',
+      hasMore: true,
+      loadingMore: false,
+      nextPage: 2
+    });
+  });
+
+  it('REG-SOURCE-002 treats a parse-empty search page as retryable instead of advancing the cursor', async () => {
+    const secondPageTopic: Topic = {
+      ...standardTopic,
+      id: '2',
+      title: '普通第二页',
+      url: 'https://linux.do/t/2'
+    };
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockResolvedValueOnce(annotateSourceDiagnosticSummary({
+        items: [],
+        errors: {},
+        hasMore: true,
+        nextPage: 3
+      }, {
+        parserVariant: 'discourse-search',
+        candidateCount: 2,
+        validCount: 0,
+        droppedCount: 2,
+        isExpectedEmpty: false
+      }))
+      .mockResolvedValueOnce({
+        items: [secondPageTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      });
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await prepareLinuxDoSearch(hook, 'codex');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      error: expect.stringContaining('无法解析'),
+      hasMore: true,
+      loadingMore: false,
+      nextPage: 2
+    });
+
+    await act(async () => {
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 2]);
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' }), expect.objectContaining({ id: '2' })],
+      error: undefined,
+      hasMore: false,
+      nextPage: null
+    });
+  });
+
+  it('REG-SOURCE-002 preserves existing results when a whole-source retry parses empty', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      })
+      .mockResolvedValueOnce(annotateSourceDiagnosticSummary({
+        items: [],
+        errors: {},
+        hasMore: true,
+        nextPage: 2
+      }, {
+        parserVariant: 'discourse-search',
+        candidateCount: 2,
+        validCount: 0,
+        droppedCount: 2,
+        isExpectedEmpty: false
+      }));
+    const hook = await renderSearchController(createGateway({
+      searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
+      searchTopics
+    }));
+    await prepareLinuxDoSearch(hook, 'codex');
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'linuxdo', filters: DEFAULT_SEARCH_FILTERS });
+    });
+
+    await act(async () => {
+      await hook.result.current.runSearch('linuxdo');
+    });
+
+    expect(hook.result.current.searchGroups[0]).toMatchObject({
+      items: [expect.objectContaining({ id: '1' })],
+      error: expect.stringContaining('无法解析'),
+      hasMore: true,
+      nextPage: 2
     });
   });
 
@@ -507,8 +795,8 @@ describe('linux.do AI search controller', () => {
     const hook = await renderSearchController(gateway);
 
     await act(async () => {
-      await hook.result.current.searchLinuxDoTags({ query: 'private-tag', selectedTags: [] });
-      await hook.result.current.searchLinuxDoUsers({ term: 'private-user' });
+      await hook.result.current.searchDiscourseTags({ query: 'private-tag', selectedTags: [] });
+      await hook.result.current.searchDiscourseUsers({ term: 'private-user' });
     });
 
     for (const [operation, mock] of [

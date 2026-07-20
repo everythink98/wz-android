@@ -277,7 +277,7 @@ export function applyPollVoteToReplies(
   });
 }
 
-export function linuxDoBookmarkIdFromActionResult(value: unknown): number | undefined {
+export function discourseBookmarkIdFromActionResult(value: unknown): number | undefined {
   if (!value || typeof value !== 'object') {
     return undefined;
   }

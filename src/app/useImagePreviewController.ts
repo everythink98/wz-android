@@ -15,6 +15,7 @@ import {
   markDiagnosticStage,
   normalizeDiagnosticReason
 } from '../diagnostics';
+import { useCommittedRef } from './useCommittedRef';
 
 function normalizeImageCacheKey(url: string) {
   return normalizeImagePreviewUrl(url).trim();
@@ -31,6 +32,8 @@ export function useImagePreviewController({
   fetcher,
   htmlParts,
   inlineSizedImageUrls,
+  nodeSeekMediaCookieHeader,
+  nodeSeekMediaUserAgent,
   notify,
   topicImageDeriver
 }: {
@@ -38,12 +41,14 @@ export function useImagePreviewController({
   fetcher?: Fetcher;
   htmlParts: HtmlPartsSource;
   inlineSizedImageUrls: Record<string, true>;
+  nodeSeekMediaCookieHeader?: string;
+  nodeSeekMediaUserAgent?: string;
   notify: (message: string) => void;
   topicImageDeriver: TopicImageDeriver;
 }) {
   const [imagePreview, setImagePreview] = useState<ImagePreviewList | null>(null);
-  const inlineSizedImageUrlsRef = useRef(inlineSizedImageUrls);
-  inlineSizedImageUrlsRef.current = inlineSizedImageUrls;
+  const saveBusyRef = useRef(false);
+  const inlineSizedImageUrlsRef = useCommittedRef(inlineSizedImageUrls);
   const resolveImagePreview = useMemo(() => {
     let catalog: ReturnType<typeof createImagePreviewCatalog> | null = null;
     return (tappedUrl: string) => {
@@ -55,8 +60,7 @@ export function useImagePreviewController({
       return imagePreviewListFromCatalog(catalog, tappedUrl);
     };
   }, [htmlParts, inlineSizedImageUrls, topicImageDeriver]);
-  const resolveImagePreviewRef = useRef(resolveImagePreview);
-  resolveImagePreviewRef.current = resolveImagePreview;
+  const resolveImagePreviewRef = useCommittedRef(resolveImagePreview);
 
   const openImagePreview = useCallback((url: string) => {
     const clean = normalizeImageCacheKey(url);
@@ -96,11 +100,20 @@ export function useImagePreviewController({
       finishDiagnosticTrace(trace, 'noop', { reason: 'not_ready' });
       return;
     }
+    if (saveBusyRef.current) {
+      markDiagnosticStage(trace, 'guard', { state: 'busy' });
+      finishDiagnosticTrace(trace, 'blocked', { reason: 'busy' });
+      return;
+    }
+    saveBusyRef.current = true;
     try {
       const uri = imagePreview.urls[imagePreview.index] || imagePreview.urls[0];
       markDiagnosticStage(trace, 'guard', { state: 'network-ready' });
       await beforeSave?.();
-      await saveImageUriToLibrary(uri, fetcher, trace);
+      await saveImageUriToLibrary(uri, fetcher, trace, {
+        nodeSeekCookieHeader: nodeSeekMediaCookieHeader,
+        nodeSeekUserAgent: nodeSeekMediaUserAgent
+      });
       markDiagnosticStage(trace, 'apply', { state: 'saved' });
       finishDiagnosticTrace(trace, 'success');
       notify('图片已保存');
@@ -108,8 +121,10 @@ export function useImagePreviewController({
       const reason = normalizeDiagnosticReason(error);
       finishDiagnosticTrace(trace, reason === 'permission_denied' ? 'blocked' : 'failure', { reason });
       notify(errorMessage(error));
+    } finally {
+      saveBusyRef.current = false;
     }
-  }, [beforeSave, fetcher, imagePreview, notify]);
+  }, [beforeSave, fetcher, imagePreview, nodeSeekMediaCookieHeader, nodeSeekMediaUserAgent, notify]);
 
   return {
     closeImagePreview,

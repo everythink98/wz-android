@@ -8,7 +8,11 @@ vi.mock('react', () => ({
 
 const mocks = vi.hoisted(() => ({
   checkYaohuoLogin: vi.fn(),
+  clearLinuxDoAccess: vi.fn(async () => null),
+  currentLinuxDoAccessGeneration: vi.fn(() => 1),
   getLinuxDoLevelProfile: vi.fn(),
+  linuxDoAccessSummary: vi.fn(() => ({ hasClearance: false, loggedIn: false })),
+  loadLinuxDoAccess: vi.fn(async () => null as { cookieHeader: string; userAgent?: string } | null),
   readNodeSeekCookiesFromStores: vi.fn(),
   cookieFlush: vi.fn(),
   cookieGet: vi.fn()
@@ -50,9 +54,10 @@ vi.mock('../yaohuoCookies', () => ({
 }));
 
 vi.mock('../linuxdoCookieBridge', () => ({
-  clearLinuxDoAccess: vi.fn(async () => null),
-  linuxDoAccessSummary: () => ({ hasClearance: false, loggedIn: false }),
-  loadLinuxDoAccess: vi.fn(async () => null),
+  clearLinuxDoAccess: mocks.clearLinuxDoAccess,
+  currentLinuxDoAccessGeneration: mocks.currentLinuxDoAccessGeneration,
+  linuxDoAccessSummary: mocks.linuxDoAccessSummary,
+  loadLinuxDoAccess: mocks.loadLinuxDoAccess,
   parseLinuxDoDocumentCookie: () => ({}),
   summarizeLinuxDoCookies: () => ({ names: [] })
 }));
@@ -70,8 +75,9 @@ const ref = <T,>(current: T) => ({ current });
 function createController(overrides: Partial<Parameters<typeof useAccountController>[0]> = {}) {
   return useAccountController({
     checkingRequestIdRef: ref(0),
-    clearNodeSeekLoginState: vi.fn(async () => undefined),
-    clearYaohuoLoginState: vi.fn(async () => undefined),
+    clearNodeSeekLoginState: vi.fn(async () => true),
+    clearYaohuoLoginState: vi.fn(async () => true),
+    currentNodeSeekCredentialGeneration: vi.fn(() => 3),
     currentYaohuoCredentialGeneration: vi.fn(() => 4),
     forumFetchWithWebViewFallback: vi.fn(),
     linuxDoLevelRequestIdRef: ref(0),
@@ -109,10 +115,121 @@ function createController(overrides: Partial<Parameters<typeof useAccountControl
 afterEach(() => {
   setDiagnosticWriter(null);
   vi.clearAllMocks();
+  mocks.clearLinuxDoAccess.mockResolvedValue(null);
+  mocks.currentLinuxDoAccessGeneration.mockReturnValue(1);
+  mocks.linuxDoAccessSummary.mockReturnValue({ hasClearance: false, loggedIn: false });
+  mocks.loadLinuxDoAccess.mockResolvedValue(null);
   vi.useRealTimers();
 });
 
 describe('visible account WebView diagnostics', () => {
+  it('REG-ACCOUNT-009 does not apply a linux.do level response from superseded credentials', async () => {
+    let generation = 4;
+    const profile = Promise.withResolvers<{ username: string }>();
+    mocks.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
+    mocks.linuxDoAccessSummary.mockReturnValue({ hasClearance: true, loggedIn: true });
+    mocks.loadLinuxDoAccess.mockResolvedValue({ cookieHeader: '_t=old', userAgent: 'old-agent' });
+    mocks.getLinuxDoLevelProfile.mockReturnValueOnce(profile.promise);
+    const notify = vi.fn();
+    const setLinuxDoLevelProfile = vi.fn();
+    const controller = createController({ notify, setLinuxDoLevelProfile });
+
+    const refresh = controller.refreshLinuxDoLevel();
+    await vi.waitFor(() => expect(mocks.getLinuxDoLevelProfile).toHaveBeenCalledTimes(1));
+    generation += 1;
+    profile.resolve({ username: 'old-user' });
+    await refresh;
+
+    expect(setLinuxDoLevelProfile).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('linux.do 等级已更新。');
+  });
+
+  it('REG-ACCOUNT-009 does not report or reload a superseded manual NodeSeek clear', async () => {
+    const notify = vi.fn();
+    const reload = vi.fn();
+    const controller = createController({
+      clearNodeSeekLoginState: vi.fn(async () => false) as never,
+      notify,
+      webViewRef: ref({ injectJavaScript: vi.fn(), reload }) as never
+    });
+
+    await controller.clearLogin();
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('已清除本机保存的 NodeSeek Cookie。');
+  });
+
+  it('REG-ACCOUNT-009 does not report or reload a superseded manual Yaohuo clear', async () => {
+    const notify = vi.fn();
+    const reload = vi.fn();
+    const controller = createController({
+      clearYaohuoLoginState: vi.fn(async () => false) as never,
+      notify,
+      yaohuoWebViewRef: ref({ reload }) as never
+    });
+
+    await controller.clearYaohuoLogin();
+
+    expect(reload).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('已清除本机保存的妖火 Cookie。');
+  });
+
+  it('REG-ACCOUNT-009 does not reset a newer linux.do session after an old manual clear settles', async () => {
+    const clear = Promise.withResolvers<null>();
+    let generation = 10;
+    mocks.clearLinuxDoAccess.mockReturnValueOnce(clear.promise);
+    mocks.currentLinuxDoAccessGeneration.mockImplementation(() => generation);
+    const notify = vi.fn();
+    const resetLinuxDoLevelState = vi.fn();
+    const resetLinuxDoWebView = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+    const controller = createController({
+      notify,
+      resetLinuxDoLevelState,
+      resetLinuxDoWebView,
+      updateLinuxDoSession
+    });
+
+    const staleClear = controller.clearLinuxDoCookie();
+    await vi.waitFor(() => expect(mocks.clearLinuxDoAccess).toHaveBeenCalledTimes(1));
+    generation = 11;
+    clear.resolve(null);
+    await staleClear;
+
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(resetLinuxDoLevelState).not.toHaveBeenCalled();
+    expect(resetLinuxDoWebView).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('REG-ACCOUNT-005 ignores NodeSeek login payloads from an allowed non-NodeSeek challenge host', () => {
+    const setWebLoginUserId = vi.fn();
+    const setNodeSeekWebViewUserAgent = vi.fn();
+    const updateNodeSeekSession = vi.fn();
+    const controller = createController({
+      setNodeSeekWebViewUserAgent,
+      setWebLoginUserId,
+      updateNodeSeekSession
+    });
+
+    controller.handleLoginMessage({
+      nativeEvent: {
+        url: 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/',
+        data: JSON.stringify({
+          type: 'nodeseek-login',
+          loggedIn: true,
+          userId: 9487,
+          userAgent: 'challenge-agent',
+          cookie: 'session=wrong-origin'
+        })
+      }
+    } as never);
+
+    expect(setWebLoginUserId).not.toHaveBeenCalled();
+    expect(setNodeSeekWebViewUserAgent).not.toHaveBeenCalled();
+    expect(updateNodeSeekSession).not.toHaveBeenCalled();
+  });
+
   it('links a NodeSeek WebView message, probe, cookie detection, and save without leaking payloads', async () => {
     vi.useFakeTimers();
     const lines: string[] = [];
@@ -129,6 +246,7 @@ describe('visible account WebView diagnostics', () => {
 
     controller.handleLoginMessage({
       nativeEvent: {
+        url: 'https://www.nodeseek.com/',
         data: JSON.stringify({
           type: 'nodeseek-login',
           loggedIn: true,
@@ -166,6 +284,7 @@ describe('visible account WebView diagnostics', () => {
 
     controller.handleLoginMessage({
       nativeEvent: {
+        url: 'https://www.nodeseek.com/',
         data: JSON.stringify({ type: 'nodeseek-login', loggedIn: true, userId: 9999 })
       }
     } as never);
@@ -173,6 +292,30 @@ describe('visible account WebView diagnostics', () => {
     await vi.advanceTimersByTimeAsync(250);
     await changedAccount;
     expect(saveNodeSeekCookieHeader.mock.calls[1]?.[1]?.resetCurrentUser).toBe(true);
+  });
+
+  it('REG-ACCOUNT-009 does not let an old NodeSeek cookie read overwrite a newer credential', async () => {
+    vi.useFakeTimers();
+    mocks.cookieFlush.mockResolvedValue(undefined);
+    const cookieRead = Promise.withResolvers<Record<string, { name: string; value: string }>>();
+    mocks.readNodeSeekCookiesFromStores.mockReturnValueOnce(cookieRead.promise);
+    let credentialGeneration = 3;
+    const saveNodeSeekCookieHeader = vi.fn(async () => 'STALE_NODESEEK_COOKIE');
+    const controller = createController({
+      currentNodeSeekCredentialGeneration: vi.fn(() => credentialGeneration),
+      saveNodeSeekCookieHeader
+    });
+
+    const staleCheck = controller.checkLogin();
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => expect(mocks.readNodeSeekCookiesFromStores).toHaveBeenCalledTimes(1));
+    credentialGeneration = 4;
+    cookieRead.resolve({
+      session: { name: 'session', value: 'old-session' }
+    });
+    await staleCheck;
+
+    expect(saveNodeSeekCookieHeader).not.toHaveBeenCalled();
   });
 
   it('links Yaohuo cookie detection, server confirmation, and save with one sanitized terminal trace', async () => {
@@ -215,6 +358,99 @@ describe('visible account WebView diagnostics', () => {
       expect.objectContaining({ traceId: parentEvents[0].traceId })
     );
     expect(lines.join('')).not.toMatch(/PRIVATE_YAOHUO_COOKIE_NAME|YAOHUO_NATIVE_COOKIE_SECRET|YAOHUO_COOKIE_VALUE_SECRET/);
+  });
+
+  it('REG-ACCOUNT-004 keeps confirmed Yaohuo expiry as the final state after credential cleanup', async () => {
+    mocks.cookieFlush.mockResolvedValue(undefined);
+    mocks.cookieGet.mockResolvedValue({
+      sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' }
+    });
+    mocks.checkYaohuoLogin.mockResolvedValue({
+      ok: false,
+      loginRequired: true,
+      reason: 'expired',
+      message: '妖火登录已失效，请重新登录。'
+    });
+    const updateYaohuoSession = vi.fn();
+    const clearYaohuoLoginState = vi.fn(async () => {
+      updateYaohuoSession({ type: 'cleared' });
+      return true;
+    });
+    const controller = createController({ clearYaohuoLoginState, updateYaohuoSession });
+
+    await controller.checkYaohuoCookie();
+
+    expect(clearYaohuoLoginState).toHaveBeenCalledWith({
+      generation: 4,
+      expiredMessage: '妖火登录已失效，请重新登录。'
+    });
+    expect(updateYaohuoSession).toHaveBeenLastCalledWith({
+      type: 'login-expired',
+      message: '妖火登录已失效，请重新登录。'
+    });
+  });
+
+  it('REG-ACCOUNT-009 ignores an old Yaohuo expiry check after a newer credential takes ownership', async () => {
+    mocks.cookieFlush.mockResolvedValue(undefined);
+    mocks.cookieGet.mockResolvedValue({
+      sidyaohuo: { name: 'sidyaohuo', value: 'old-session' }
+    });
+    const check = Promise.withResolvers<{
+      ok: false;
+      loginRequired: true;
+      reason: 'expired';
+      message: string;
+    }>();
+    mocks.checkYaohuoLogin.mockReturnValueOnce(check.promise);
+    let credentialGeneration = 4;
+    const clearYaohuoLoginState = vi.fn(async () => true);
+    const updateYaohuoSession = vi.fn();
+    const controller = createController({
+      clearYaohuoLoginState,
+      currentYaohuoCredentialGeneration: vi.fn(() => credentialGeneration),
+      updateYaohuoSession
+    });
+
+    const staleCheck = controller.checkYaohuoCookie();
+    await vi.waitFor(() => expect(mocks.checkYaohuoLogin).toHaveBeenCalledTimes(1));
+    credentialGeneration = 5;
+    check.resolve({
+      ok: false,
+      loginRequired: true,
+      reason: 'expired',
+      message: '旧 Cookie 已失效'
+    });
+    await staleCheck;
+
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+    expect(updateYaohuoSession).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'login-expired' }));
+  });
+
+  it('REG-ACCOUNT-007 keeps a typed Yaohuo expiry when automatic cleanup also fails', async () => {
+    mocks.cookieFlush.mockResolvedValue(undefined);
+    mocks.cookieGet.mockResolvedValue({
+      sidyaohuo: { name: 'sidyaohuo', value: 'saved-session' }
+    });
+    mocks.checkYaohuoLogin.mockRejectedValue(Object.assign(new Error('妖火登录已失效'), {
+      loginRequired: true,
+      reason: 'expired',
+      source: 'yaohuo'
+    }));
+    const updateYaohuoSession = vi.fn();
+    const notify = vi.fn();
+    const controller = createController({
+      clearYaohuoLoginState: vi.fn(async () => { throw new Error('WebView cookie cleanup failed'); }),
+      notify,
+      updateYaohuoSession
+    });
+
+    await expect(controller.checkYaohuoCookie()).resolves.toBeUndefined();
+
+    expect(updateYaohuoSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: 'login-expired',
+      message: expect.stringContaining('清理未完成')
+    }));
+    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('清理未完成'));
   });
 
   it('finishes a visible login trace at the real WebView failure stage', () => {

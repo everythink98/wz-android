@@ -165,6 +165,27 @@ describe('topic block image loading', () => {
     await waitFor(() => expect(mockExpoImageProps).toHaveBeenCalledWith(expect.objectContaining({ source: secondImageRef })));
   });
 
+  it('ignores a stale image failure after the request headers change', async () => {
+    const errorCallbacks: Array<NonNullable<typeof mockImageLoadOptions>['onError']> = [];
+    mockSourceHeaders = { Cookie: 'session=one' };
+    mockUseImageImplementation = (_source, options) => {
+      const onError = (options as typeof mockImageLoadOptions)?.onError;
+      if (onError) {
+        errorCallbacks.push(onError);
+      }
+      return null;
+    };
+    const screen = await render(<TopicImageHarness />);
+    const staleError = errorCallbacks.at(-1);
+
+    mockSourceHeaders = { Cookie: 'session=two' };
+    await screen.rerender(<TopicImageHarness />);
+    await act(() => staleError?.(new Error('old request failed'), jest.fn()));
+
+    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+    expect(screen.queryByText('测试图片')).toBeNull();
+  });
+
   it('reuses natural dimensions on the first frame when the same URL is rendered again', async () => {
     const cachedImageUrl = 'https://img.example.com/portrait-cache.png';
     const attributes = { alt: '纵向图片', src: cachedImageUrl };
@@ -183,13 +204,53 @@ describe('topic block image loading', () => {
   });
 
   it('stops loading and shows alt text when decoding fails', async () => {
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      headers: { get: () => 'image/png' },
+      ok: true
+    } as unknown as Response);
     const screen = await render(<TopicImageHarness />);
 
     await act(() => mockImageLoadOptions?.onError?.(new Error('decode failed'), jest.fn()));
 
-    expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
-    expect(screen.getByText('测试图片')).toBeTruthy();
-    expect(mockExpoImageProps).not.toHaveBeenCalled();
+    try {
+      await waitFor(() => expect(screen.getByText('测试图片')).toBeTruthy());
+      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(0);
+      expect(mockExpoImageProps).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('REG-TOPIC-018 recovers an SVG response whose png URL the Android decoder rejects', async () => {
+    const svgImageUrl = 'https://img.example.com/dynamic-report.png';
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="920" height="1025"><text><a href="https://example.com"><tspan>report</tspan></a></text></svg>';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      headers: {
+        get: (name: string) => name.toLowerCase() === 'content-type' ? 'image/svg+xml; charset=utf-8' : null
+      },
+      ok: true,
+      text: async () => svg
+    } as Response);
+    try {
+      const screen = await render(<TopicImageHarness attributes={{ alt: '测试图片', src: svgImageUrl }} />);
+
+      await act(() => mockImageLoadOptions?.onError?.(new Error('Cannot load SVG from stream'), jest.fn()));
+
+      await waitFor(() => expect(mockUseImage).toHaveBeenLastCalledWith(
+        expect.objectContaining({ uri: expect.stringMatching(/^data:image\/svg\+xml;base64,/) }),
+        expect.any(Object),
+        expect.any(Array)
+      ));
+      const fallbackSource = mockUseImage.mock.calls.at(-1)?.[0];
+      const encodedSvg = String(fallbackSource?.uri || '').split(',')[1] || '';
+      expect(Buffer.from(encodedSvg, 'base64').toString('utf8')).toContain('<tspan>report</tspan>');
+      expect(Buffer.from(encodedSvg, 'base64').toString('utf8')).not.toMatch(/<\/?a\b/i);
+      expect(screen.root?.queryAll((instance) => instance.type === 'ActivityIndicator')).toHaveLength(1);
+      expect(screen.queryByText('测试图片')).toBeNull();
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('keeps inline emoji on the native inline renderer without starting the block loader', async () => {

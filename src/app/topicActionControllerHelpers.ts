@@ -1,5 +1,6 @@
 import type { ReplyEditTarget, Screen, TopicSnapshot } from '../appTypes';
 import { nodeSeekMarkdownToHtml } from '../nodeSeekMarkdown';
+import { sourceSupportsTopicAction, sourceUsesTopicCreatePermission } from '../sourceCatalog';
 import type { OptimisticActionState } from '../topicActionState';
 import type { Reply, Source, Topic, TopicDetail, TopicPoll, UserProfile } from '../types';
 
@@ -23,12 +24,19 @@ export function isLinuxDoActionTopic(topic: TopicActionTopic | null): topic is T
   return topic?.source === 'linuxdo';
 }
 
+export function isXiaoyinsiActionTopic(topic: TopicActionTopic | null): topic is TopicActionTopic & { source: 'xiaoyinsi' } {
+  return topic?.source === 'xiaoyinsi';
+}
+
 export function canSubmitReplyToTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
-  return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo']);
+  if (!topic || !sourceSupportsTopicAction(topic.source, 'reply')) {
+    return false;
+  }
+  return !sourceUsesTopicCreatePermission(topic.source) || topic.canCreatePost === true;
 }
 
 export function canVotePollOnTopic(topic: TopicActionTopic | null): topic is TopicActionTopic {
-  return isActionSource(topic?.source, ['nodeseek', 'linuxdo', 'yaohuo']);
+  return Boolean(topic && sourceSupportsTopicAction(topic.source, 'vote'));
 }
 
 export function topicReplyActionKey(topicKey: string) {
@@ -151,8 +159,4 @@ function isCurrentNodeSeekReply(reply: Reply, currentUser: UserProfile | undefin
 function positiveId(value: unknown) {
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isInteger(number) && number > 0 ? String(number) : '';
-}
-
-function isActionSource(source: Source | undefined, supportedSources: Source[]) {
-  return Boolean(source && supportedSources.includes(source));
 }

@@ -1,6 +1,6 @@
 import type { SearchGroup } from './searchListItems';
 import type { SearchSort } from './feedLogic';
-import type { SearchFilterState, SourceSearchFilter } from './searchFilters';
+import { DEFAULT_SEARCH_FILTERS, type SearchFilterState, type SourceSearchFilter } from './searchFilters';
 import type { FeedSource, Source, Topic } from './types';
 
 export type SearchHistoryWriteQueue = {
@@ -38,7 +38,13 @@ export function snapshotSearchFilters(filters: SearchFilterState): SearchFilterS
     v2ex: { ...filters.v2ex },
     linuxdo: { ...filters.linuxdo, tags: [...filters.linuxdo.tags], visited: [...filters.linuxdo.visited] },
     nodeseek: { ...filters.nodeseek },
-    yaohuo: { ...filters.yaohuo }
+    yaohuo: { ...filters.yaohuo },
+    xiaoyinsi: {
+      ...DEFAULT_SEARCH_FILTERS.xiaoyinsi,
+      ...filters.xiaoyinsi,
+      tags: [...(filters.xiaoyinsi.tags || [])],
+      visited: [...(filters.xiaoyinsi.visited || [])]
+    }
   };
 }
 

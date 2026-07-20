@@ -7,7 +7,7 @@ import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
 import { createStyles, type ReaderTheme } from '../../theme';
 import { AppButton } from '../../components/AppControls';
 import type { Source } from '../../types';
-import type { LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
+import type { DiscourseEmojiUrlMap } from '../../discourseReactions';
 import { imageSourceFromUrl } from '../../htmlImages';
 import {
   applyReplyComposerFormat,
@@ -19,11 +19,12 @@ import {
   type ReplyComposerFormatAction
 } from './replyComposerFormatting';
 import {
-  linuxDoEmojiCatalogFromUrlMap,
+  discourseEmojiCatalogFromUrlMap,
   NODESEEK_STICKER_CATEGORIES,
   YAOHUO_FACE_ITEMS,
   type ReplyComposerInsertExpression
 } from './replyComposerExpressionCatalogs';
+import { useCommittedRef } from '../../app/useCommittedRef';
 
 type ReplyComposerInputHandle = {
   blur: () => void;
@@ -33,7 +34,7 @@ type ReplyComposerInputHandle = {
 
 export function ReplyComposer({
   actionBusy,
-  linuxDoEmojiUrls = {},
+  discourseEmojiUrls = {},
   replyContent,
   replyEditTarget,
   replyFace,
@@ -49,7 +50,7 @@ export function ReplyComposer({
   onUploadReplyImage
 }: {
   actionBusy: boolean;
-  linuxDoEmojiUrls?: LinuxDoEmojiUrlMap;
+  discourseEmojiUrls?: DiscourseEmojiUrlMap;
   replyContent: string;
   replyFace: string;
   replyEditTarget?: ReplyEditTarget | null;
@@ -70,10 +71,9 @@ export function ReplyComposer({
   const [activeAccessory, setActiveAccessory] = useState<ReplyComposerAccessory | null>(null);
   const [activeNodeSeekStickerCategory, setActiveNodeSeekStickerCategory] = useState(NODESEEK_STICKER_CATEGORIES[0]?.label || '');
   const selectionRef = useRef(selection);
-  const replyContentRef = useRef(replyContent);
-  replyContentRef.current = replyContent;
+  const replyContentRef = useCommittedRef(replyContent);
   const toolbarItems = replyComposerToolbarItems(source);
-  const linuxDoEmojiItems = useMemo(() => linuxDoEmojiCatalogFromUrlMap(linuxDoEmojiUrls), [linuxDoEmojiUrls]);
+  const discourseEmojiItems = useMemo(() => discourseEmojiCatalogFromUrlMap(discourseEmojiUrls), [discourseEmojiUrls]);
   const selectedFaceLabel = YAOHUO_FACE_ITEMS.find((item) => item.value === replyFace)?.label;
   const replyTargetAuthor = replyTarget?.author?.trim().replace(/^@+/, '');
   const replyTargetTitle = replyTarget
@@ -219,8 +219,8 @@ export function ReplyComposer({
         </View>
       );
     }
-    if (activeAccessory === 'linuxdo-emoji') {
-      const renderLinuxDoEmojiItem = ({ item }: { item: ReplyComposerInsertExpression }) => (
+    if (activeAccessory === 'discourse-emoji') {
+      const renderDiscourseEmojiItem = ({ item }: { item: ReplyComposerInsertExpression }) => (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={item.label}
@@ -235,9 +235,9 @@ export function ReplyComposer({
       return (
         <BottomSheetFlatList
           key={replyComposerExpressionGridKey(activeAccessory)}
-          data={linuxDoEmojiItems}
+          data={discourseEmojiItems}
           keyExtractor={(item) => item.code}
-          renderItem={renderLinuxDoEmojiItem}
+          renderItem={renderDiscourseEmojiItem}
           nestedScrollEnabled
           numColumns={2}
           keyboardShouldPersistTaps="handled"
@@ -269,7 +269,7 @@ export function ReplyComposer({
         ))}
       </GestureScrollView>
     );
-  }, [actionBusy, activeAccessory, activeNodeSeekStickerCategory, insertExpression, linuxDoEmojiItems, onReplyFaceChange, replyFace, styles]);
+  }, [actionBusy, activeAccessory, activeNodeSeekStickerCategory, discourseEmojiItems, insertExpression, onReplyFaceChange, replyFace, styles]);
 
   return (
     <View style={[styles.replyBox, styles.replyComposerSheetBox]}>

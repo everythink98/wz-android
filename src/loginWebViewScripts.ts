@@ -47,9 +47,14 @@ true;
 
 export const LINUXDO_WEBVIEW_PROBE_SCRIPT = `
 (() => {
+  const hasLoggedInMarker = Boolean(document.querySelector('.d-header .current-user, header .current-user, #current-user'));
+  const hasLoggedOutMarker = Boolean(document.querySelector('.d-header .login-button, header .login-button, button.login-button'));
+  const status = hasLoggedInMarker ? "logged-in" : hasLoggedOutMarker ? "logged-out" : "unknown";
   window.ReactNativeWebView.postMessage(JSON.stringify({
     type: "linuxdo-webview",
     documentKey: String(location.href || "") + ":" + String(performance.timeOrigin || 0),
+    status,
+    loggedIn: status === "logged-in" ? true : status === "logged-out" ? false : undefined,
     userAgent: navigator.userAgent || "",
     cookie: document.cookie || ""
   }));

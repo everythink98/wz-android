@@ -93,9 +93,13 @@ describe('topic session controller helpers', () => {
     expect(topicRepliesAfterActionUpdate([reply], replyUpdate)[0]).toMatchObject({ liked: true, likeCount: 4 });
   });
 
-  it('removes a deleted reply and closes a composer that targets it', () => {
+  it('[REG-WRITE-011] removes a deleted reply from the detail and updates its count', () => {
     const update = { type: 'reply-deleted' as const, reply };
 
+    expect(topicDetailAfterActionUpdate({ ...topic, replyCount: 1, replies: [reply] }, update)).toMatchObject({
+      replies: [],
+      replyCount: 0
+    });
     expect(topicRepliesAfterActionUpdate([reply], update)).toEqual([]);
     expect(actionUpdateClosesReplyComposer(update, {
       replyTarget: { floor: 2, author: reply.author, commentId: reply.commentId },

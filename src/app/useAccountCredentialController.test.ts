@@ -37,6 +37,7 @@ function createController(overrides: Partial<Parameters<typeof useAccountCredent
     changeYaohuoLoginPanel: vi.fn(),
     linuxDoWebViewRef: { current: null },
     notify,
+    onOpenXiaoyinsiAuthorization: vi.fn(),
     openUser: vi.fn(async () => undefined),
     refreshAccountStatus: vi.fn(async () => undefined),
     setYaohuoLoginPrompt: vi.fn(),

@@ -136,6 +136,14 @@ describe('Android app utils', () => {
     });
   });
 
+  it('REG-TOPIC-013 keeps bare-domain Yaohuo topic links inside the app', () => {
+    expect(parseForumTopicLink('https://yaohuo.me/bbs-654.html')).toMatchObject({
+      source: 'yaohuo',
+      id: '654',
+      url: 'https://www.yaohuo.me/bbs-654.html'
+    });
+  });
+
   it('opens only supported forum topics from the internal app link', () => {
     const targets = [
       ['linuxdo', '123456', 'https://linux.do/t/topic/123456'],
@@ -178,6 +186,38 @@ describe('Android app utils', () => {
     expect(parseForumUserLink('https://www.v2ex.com/t/1222389', 'https://www.v2ex.com/t/1222389')).toBeNull();
     expect(parseForumUserLink('mailto:test@example.com', 'https://www.v2ex.com/t/1222389')).toBeNull();
     expect(parseForumUserLink('https://www.v2ex.com/member/%E0%A4%A', 'https://www.v2ex.com/t/1222389')).toBeNull();
+  });
+
+  it('[REG-TOPIC-008] recognizes linux.do user links as app users', () => {
+    expect(parseForumUserLink('/u/alice', 'https://linux.do/t/123456')).toMatchObject({
+      source: 'linuxdo',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'alice',
+      url: 'https://linux.do/u/alice'
+    });
+    expect(parseForumUserLink('https://www.linux.do/u/%E5%BC%A0%E4%B8%89')).toMatchObject({
+      source: 'linuxdo',
+      id: '张三',
+      username: '张三',
+      url: 'https://linux.do/u/%E5%BC%A0%E4%B8%89'
+    });
+    expect(parseForumUserLink('https://linux.do/t/123456')).toBeNull();
+    expect(parseForumUserLink('https://evil.example/u/alice', 'https://linux.do/t/123456')).toBeNull();
+  });
+
+  it('REG-USER-004 opens public Discourse profile tabs as app users', () => {
+    expect(parseForumUserLink('https://linux.do/u/alice/summary')).toMatchObject({
+      source: 'linuxdo',
+      id: 'alice',
+      url: 'https://linux.do/u/alice'
+    });
+    expect(parseForumUserLink('https://forum.xiaoyinsi.com/u/temple-user/activity')).toMatchObject({
+      source: 'xiaoyinsi',
+      id: 'temple-user',
+      url: 'https://forum.xiaoyinsi.com/u/temple-user'
+    });
+    expect(parseForumUserLink('https://linux.do/u/alice/preferences')).toBeNull();
   });
 
   it('recognizes NodeSeek user links that should stay inside the app', () => {
@@ -233,6 +273,14 @@ describe('Android app utils', () => {
     });
     expect(parseForumUserLink('https://www.yaohuo.me/bbs/userinfo.aspx', 'https://www.yaohuo.me/bbs-1540797.html')).toBeNull();
     expect(parseForumUserLink('https://evil.example/bbs/userinfo.aspx?touserid=30878', 'https://www.yaohuo.me/bbs-1540797.html')).toBeNull();
+  });
+
+  it('REG-USER-003 keeps bare-domain Yaohuo user links inside the app', () => {
+    expect(parseForumUserLink('https://yaohuo.me/bbs/userinfo.aspx?touserid=30878')).toMatchObject({
+      source: 'yaohuo',
+      id: '30878',
+      url: 'https://www.yaohuo.me/bbs/userinfo.aspx?touserid=30878'
+    });
   });
 
   it('uses active time for V2EX list display time', () => {

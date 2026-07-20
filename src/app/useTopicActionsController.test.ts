@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { Dispatch, SetStateAction } from 'react';
 
 const actionMocks = vi.hoisted(() => ({
   fetchNodeSeekVoteInfo: vi.fn(),
   runLinuxDoAction: vi.fn(),
   runNodeSeekAction: vi.fn(),
+  runXiaoyinsiAction: vi.fn(),
   runYaohuoAction: vi.fn()
 }));
 
@@ -22,11 +24,20 @@ vi.mock('expo-document-picker', () => ({
 }));
 
 vi.mock('expo-secure-store', () => ({
-  getItemAsync: vi.fn(async () => JSON.stringify({
-    cookieHeader: 'session=fake-credential',
-    savedAt: '2026-07-10T00:00:00.000Z',
-    source: 'webview'
-  }))
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+  getItemAsync: vi.fn(async (key: string) => {
+    if (key === 'xiaoyinsi-auth.api-key') {
+      return 'fake-xiaoyinsi-user-api-key';
+    }
+    if (key === 'xiaoyinsi-auth.client-id') {
+      return 'fake-xiaoyinsi-client-id';
+    }
+    return JSON.stringify({
+      cookieHeader: 'session=fake-cookie-credential',
+      savedAt: '2026-07-10T00:00:00.000Z',
+      source: 'webview'
+    });
+  })
 }));
 
 vi.mock('../nodeseekActionClient', () => ({
@@ -41,6 +52,23 @@ vi.mock('../linuxdoActionClient', () => ({
 vi.mock('../yaohuoActionClient', () => ({
   runYaohuoAction: actionMocks.runYaohuoAction
 }));
+const nodeImageMocks = vi.hoisted(() => ({
+  currentGeneration: vi.fn(() => 1),
+  upload: vi.fn()
+}));
+
+vi.mock('../xiaoyinsiActionClient', () => ({
+  runXiaoyinsiAction: actionMocks.runXiaoyinsiAction
+}));
+
+vi.mock('../nodeimageCredentials', () => ({
+  currentNodeImageApiKeyGeneration: nodeImageMocks.currentGeneration
+}));
+
+vi.mock('../replyImageUpload', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../replyImageUpload')>()),
+  uploadNodeSeekReplyImageWithApiKey: nodeImageMocks.upload
+}));
 
 vi.mock('../linuxdoCookieBridge', () => ({
   clearLinuxDoAccess: vi.fn(),
@@ -52,36 +80,67 @@ vi.mock('../linuxdoCookieBridge', () => ({
   summarizeLinuxDoCookies: vi.fn(() => ({ names: [], hasClearance: false }))
 }));
 
-import { clearLinuxDoAccessForGeneration, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
+import { clearLinuxDoAccessForGeneration, currentLinuxDoAccessGeneration, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { Alert } from 'react-native';
+import { getDocumentAsync } from 'expo-document-picker';
 import { createRequestOwner } from '../requestOwnership';
 import { createSiteSessionStates } from '../siteSessionState';
 import type { TopicRepliesRefreshOptions } from '../appTypes';
 import type { Fetcher } from '../request';
-import type { Source, TopicDetail } from '../types';
+import type { Reply, Source, TopicDetail } from '../types';
 import { setDiagnosticWriter, type DiagnosticEvent } from '../diagnostics';
+import type { SiteSessionEvent } from '../siteSessionState';
 import { clearExpiredLinuxDoLogin } from './topicActionHelpers';
+import type { CredentialClearOptions } from './sessionControllerHelpers';
 import { useTopicActionsController } from './useTopicActionsController';
 import type { TopicSessionController } from './useTopicSessionController';
 
 function createTopicActionController({
   applyUpdate = vi.fn(),
+  appendMarkup = vi.fn(),
+  clearNodeSeekLoginCookiesOnly = vi.fn(async () => undefined),
+  clearYaohuoLoginState = vi.fn(async () => true),
   completeSubmission = vi.fn(),
+  currentNodeSeekCredentialGeneration = () => 1,
+  currentYaohuoCredentialGeneration = () => 1,
+  ensureNodeImageApiKey = vi.fn(async () => null),
   fetcher = vi.fn(),
   notify = vi.fn(),
   refreshTopicReplies = vi.fn(async () => undefined),
+  refreshXiaoyinsiAuthorization = vi.fn(async () => true),
+  resetLinuxDoLevelState = vi.fn(),
   replyContent = '',
+  replyEditTarget = null,
+  setActionBusy = vi.fn(),
+  showLinuxDoLogin = vi.fn(),
+  showYaohuoLogin = vi.fn(),
+  showXiaoyinsiLogin = vi.fn(),
   source = 'nodeseek',
-  topicPatch = {}
+  topicPatch = {},
+  updateLinuxDoSession = vi.fn()
 }: {
   applyUpdate?: ReturnType<typeof vi.fn>;
+  appendMarkup?: ReturnType<typeof vi.fn>;
+  clearNodeSeekLoginCookiesOnly?: (options?: CredentialClearOptions) => Promise<void>;
+  clearYaohuoLoginState?: (options?: CredentialClearOptions) => Promise<boolean>;
   completeSubmission?: ReturnType<typeof vi.fn>;
+  currentNodeSeekCredentialGeneration?: () => number;
+  currentYaohuoCredentialGeneration?: () => number;
+  ensureNodeImageApiKey?: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   fetcher?: Fetcher;
   notify?: (message: string) => void;
   refreshTopicReplies?: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
+  refreshXiaoyinsiAuthorization?: () => Promise<boolean | null>;
+  resetLinuxDoLevelState?: () => void;
   replyContent?: string;
-  source?: Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
+  replyEditTarget?: Reply | null;
+  setActionBusy?: ReturnType<typeof vi.fn>;
+  showLinuxDoLogin?: (message?: string) => void;
+  showYaohuoLogin?: (message?: string) => void;
+  showXiaoyinsiLogin?: (message?: string) => void;
+  source?: Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo' | 'xiaoyinsi'>;
   topicPatch?: Partial<TopicDetail>;
+  updateLinuxDoSession?: (event: SiteSessionEvent) => void;
 } = {}) {
   const detail: TopicDetail = {
     source,
@@ -94,11 +153,11 @@ function createTopicActionController({
     contentHtml: '<p>private body</p>',
     replies: [],
     commentId: 987654,
+    ...(source === 'xiaoyinsi' ? { canCreatePost: true } : {}),
     liked: false,
     ...topicPatch
   };
   const optimisticTopicActionsRef = { current: {} };
-  const setActionBusy = vi.fn();
   const siteSessionStates = createSiteSessionStates();
   siteSessionStates[source] = {
     site: source,
@@ -108,28 +167,39 @@ function createTopicActionController({
   };
   const controller = useTopicActionsController({
     actionAbortRef: { current: null },
-    clearNodeSeekLoginCookiesOnly: vi.fn(async () => undefined),
-    clearYaohuoLoginState: vi.fn(async () => undefined),
-    currentNodeSeekCredentialGeneration: () => 1,
-    ensureNodeImageApiKey: vi.fn(async () => null),
+    clearNodeSeekLoginCookiesOnly,
+    clearYaohuoLoginState,
+    currentNodeSeekCredentialGeneration,
+    currentYaohuoCredentialGeneration,
+    discourseActionRuntimeDependencies: {
+      linuxDoUserAgent: () => 'ua',
+      refreshXiaoyinsiAuthorization,
+      resetLinuxDoLevelState,
+      updateLinuxDoSession
+    },
+    discourseLoginPrompts: {
+      linuxdo: showLinuxDoLogin,
+      xiaoyinsi: showXiaoyinsiLogin
+    },
+    ensureNodeImageApiKey,
     fetcher,
-    linuxDoWebViewUserAgentRef: { current: 'ua' },
-    loadYaohuoCookieForSource: vi.fn(async () => source === 'yaohuo' ? 'sidyaohuo=fake-credential' : undefined),
+    loadYaohuoCookieForSource: vi.fn(async (_source, options) => {
+      options?.captureGeneration?.(1);
+      return source === 'yaohuo' ? 'sidyaohuo=fake-credential' : undefined;
+    }),
     nodeSeekWebViewUserAgentRef: { current: 'ua' },
     notify,
     optimisticTopicActionsRef,
     refreshTopicReplies,
-    resetLinuxDoLevelState: vi.fn(),
-    setActionBusy,
+    setActionBusy: setActionBusy as Dispatch<SetStateAction<boolean>>,
     setOptimisticTopicActions: vi.fn(),
-    showLinuxDoLogin: vi.fn(),
-    showYaohuoLogin: vi.fn(),
+    showYaohuoLogin,
     siteSessionStates,
     topicActionRequestOwnerRef: { current: createRequestOwner('topic') },
     topicSession: {
       state: {
         replyContent,
-        replyEditTarget: null,
+        replyEditTarget,
         replyFace: undefined,
         replyTarget: null,
         selectedTopic: detail,
@@ -139,23 +209,34 @@ function createTopicActionController({
       commands: {
         actions: { applyUpdate },
         composer: {
-          appendMarkup: vi.fn(),
+          appendMarkup,
           completeSubmission
         }
       }
-    } as unknown as TopicSessionController,
-    updateLinuxDoSession: vi.fn()
+    } as unknown as TopicSessionController
   });
-  return { applyUpdate, completeSubmission, controller, detail, optimisticTopicActionsRef, setActionBusy };
+  return {
+    applyUpdate,
+    completeSubmission,
+    controller,
+    detail,
+    optimisticTopicActionsRef,
+    refreshXiaoyinsiAuthorization,
+    setActionBusy,
+    showXiaoyinsiLogin
+  };
 }
 
 afterEach(() => {
   setDiagnosticWriter(null);
   vi.clearAllMocks();
+  vi.mocked(currentLinuxDoAccessGeneration).mockReturnValue(1);
+  nodeImageMocks.currentGeneration.mockReturnValue(1);
 });
 
 describe('topic action auth guards', () => {
   it('marks linux.do expired only when an expired request clears stored access', async () => {
+    vi.mocked(currentLinuxDoAccessGeneration).mockReturnValue(3);
     vi.mocked(clearLinuxDoAccessForGeneration).mockResolvedValueOnce(null);
     const resetLinuxDoLevelState = vi.fn();
     const updateLinuxDoSession = vi.fn();
@@ -177,6 +258,7 @@ describe('topic action auth guards', () => {
   });
 
   it('records retained linux.do clearance as cookie-loaded instead of verification success', async () => {
+    vi.mocked(currentLinuxDoAccessGeneration).mockReturnValue(3);
     vi.mocked(clearLinuxDoAccessForGeneration).mockResolvedValueOnce({
       cookieHeader: 'cf_clearance=retained',
       savedAt: '2026-07-18T00:00:00.000Z',
@@ -237,7 +319,7 @@ describe('topic action auth guards', () => {
       outcome: 'failure'
     });
     expect(applyUpdate).toHaveBeenCalledTimes(2);
-    expect(lines.join('')).not.toMatch(/987654|424242|private title|private author|private body|fake-credential|token=secret|nodeseek\.com/);
+    expect(lines.join('')).not.toMatch(/987654|424242|private title|private author|private body|fake-(?:credential|cookie-credential|xiaoyinsi)|token=secret|nodeseek\.com/);
   });
 
   it('records a submitted reply as partial when the follow-up refresh fails', async () => {
@@ -319,6 +401,28 @@ describe('topic action auth guards', () => {
     expect(completeSubmission).toHaveBeenCalledTimes(1);
   });
 
+  it('REG-LINUXDO-003 records an explicit failed follow-up refresh as partial', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => {
+      lines.push(line);
+    });
+    actionMocks.runNodeSeekAction.mockResolvedValueOnce({});
+    const refreshTopicReplies = vi.fn(async () => 'failed' as const);
+    const { controller } = createTopicActionController({
+      refreshTopicReplies,
+      replyContent: 'reply body'
+    });
+
+    await controller.submitReply();
+
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent).filter((event) => event.phase === 'finish')).toEqual([
+      expect.objectContaining({ outcome: 'partial', reason: 'refresh_failed' })
+    ]);
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).not.toContainEqual(
+      expect.objectContaining({ refreshSucceeded: true })
+    );
+  });
+
   it('distinguishes local-generated and absent NodeSeek CSRF without logging request data', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => {
@@ -365,7 +469,277 @@ describe('topic action auth guards', () => {
       requestType: 'favorite',
       csrfSource: 'none'
     }));
-    expect(lines.join('')).not.toMatch(/csrf-token|private (?:reply|linux\.do) body|fake-credential|\/api\//i);
+    expect(lines.join('')).not.toMatch(/csrf-token|private (?:reply|linux\.do) body|fake-(?:credential|cookie-credential|xiaoyinsi)|\/api\//i);
+  });
+
+  it('[REG-XIAOYINSI-012] applies a confirmed 小隐寺 like locally without reloading the topic', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: true, liked: false }
+    });
+
+    await controller.interact('like', 987654);
+
+    await vi.waitFor(() => {
+      expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+        credentials: {
+          apiKey: 'fake-xiaoyinsi-user-api-key',
+          clientId: 'fake-xiaoyinsi-client-id'
+        },
+        request: {
+          path: '/post_actions',
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: 'id=987654&post_action_type_id=2'
+        }
+      }));
+    });
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'interaction',
+      patch: { commentId: 987654, type: 'like', mode: 'add', reactionId: 'heart' }
+    });
+    expect(setActionBusy).not.toHaveBeenCalled();
+  });
+
+  it('releases image-upload busy state after inserting the Markdown', async () => {
+    vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ short_url: 'upload://test.jpeg' });
+    const events: string[] = [];
+    const setActionBusy = vi.fn((busy: boolean) => { events.push(`busy:${busy}`); });
+    const appendMarkup = vi.fn(() => { events.push('markup'); });
+    const { controller } = createTopicActionController({ source: 'xiaoyinsi', setActionBusy, appendMarkup });
+
+    await controller.uploadReplyImage();
+
+    expect(events).toEqual(['busy:true', 'markup', 'busy:false']);
+  });
+
+  it('REG-ACCOUNT-010 does not insert a NodeImage upload completed by a cleared API key', async () => {
+    let generation = 5;
+    const upload = Promise.withResolvers<string>();
+    nodeImageMocks.currentGeneration.mockImplementation(() => generation);
+    nodeImageMocks.upload.mockReturnValueOnce(upload.promise);
+    vi.mocked(getDocumentAsync).mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ uri: 'file:///cache/test.png', name: 'test.png', mimeType: 'image/png', lastModified: 0 }]
+    });
+    const appendMarkup = vi.fn();
+    const notify = vi.fn();
+    const { controller } = createTopicActionController({
+      appendMarkup,
+      ensureNodeImageApiKey: vi.fn(async () => 'old-key'),
+      notify,
+      source: 'nodeseek'
+    });
+
+    const pending = controller.uploadReplyImage();
+    await vi.waitFor(() => expect(nodeImageMocks.upload).toHaveBeenCalledTimes(1));
+    generation += 1;
+    upload.resolve('https://nodeimage.com/late.png');
+    await pending;
+
+    expect(appendMarkup).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('图片已插入');
+  });
+
+  it('[REG-XIAOYINSI-009] allows canceling an existing 小隐寺 like when Discourse reports can_act=false', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const notify = vi.fn();
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({
+      notify,
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: false, liked: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    await vi.waitFor(() => {
+      expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+        request: {
+          path: '/post_actions/987654?post_action_type_id=2',
+          method: 'DELETE',
+          headers: {},
+          body: undefined
+        }
+      }));
+    });
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'interaction',
+      patch: { commentId: 987654, type: 'like', mode: 'remove', reactionId: 'heart' }
+    });
+    expect(setActionBusy).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('当前帖子不能点赞');
+  });
+
+  it('[REG-XIAOYINSI-009] restores an existing 小隐寺 like when cancellation fails', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(new Error('temporary failure'));
+    const { applyUpdate, controller } = createTopicActionController({
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: false, liked: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    await vi.waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(2));
+    expect(applyUpdate.mock.calls.map(([update]) => update)).toEqual([
+      {
+        type: 'interaction',
+        patch: { commentId: 987654, type: 'like', mode: 'remove', reactionId: 'heart' }
+      },
+      {
+        type: 'interaction',
+        patch: { commentId: 987654, type: 'like', mode: 'add', reactionId: 'heart' }
+      }
+    ]);
+  });
+
+  it('[REG-XIAOYINSI-003] cancels a 小隐寺 topic bookmark even when Discourse omits the bookmark record id', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const notify = vi.fn();
+    const { applyUpdate, controller, setActionBusy } = createTopicActionController({
+      notify,
+      source: 'xiaoyinsi',
+      topicPatch: { bookmarked: true, bookmarkId: undefined }
+    });
+
+    await controller.bookmarkOnDiscourseSite();
+
+    await vi.waitFor(() => {
+      expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+        request: {
+          path: '/t/424242/remove_bookmarks',
+          method: 'PUT',
+          headers: {},
+          body: undefined
+        }
+      }));
+    });
+    expect(applyUpdate).toHaveBeenCalledWith({ type: 'bookmark', bookmarked: false });
+    expect(setActionBusy).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalledWith('当前收藏记录不完整，请刷新主题后再试。');
+  });
+
+  it('[REG-XIAOYINSI-003] restores a 小隐寺 topic bookmark when cancellation fails', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(new Error('temporary failure'));
+    const { applyUpdate, controller } = createTopicActionController({
+      source: 'xiaoyinsi',
+      topicPatch: { bookmarked: true, bookmarkId: undefined }
+    });
+
+    await controller.bookmarkOnDiscourseSite();
+
+    await vi.waitFor(() => expect(applyUpdate).toHaveBeenCalledTimes(2));
+    expect(applyUpdate.mock.calls.map(([update]) => update)).toEqual([
+      { type: 'bookmark', bookmarked: false, bookmarkId: undefined },
+      { type: 'bookmark', bookmarked: true }
+    ]);
+  });
+
+  it('[REG-XIAOYINSI-007] closes a 小隐寺 edit composer without applying unconfirmed markdown locally', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const refreshTopicReplies = vi.fn(async () => true);
+    const editTarget: Reply = {
+      commentId: 101,
+      floor: 2,
+      author: 'alice',
+      createdAt: '2026-07-10T00:01:00.000Z',
+      contentHtml: '<p>old</p>',
+      canEdit: true
+    };
+    const { applyUpdate, completeSubmission, controller } = createTopicActionController({
+      source: 'xiaoyinsi',
+      replyContent: 'server must confirm this body',
+      replyEditTarget: editTarget,
+      refreshTopicReplies,
+      topicPatch: { canCreatePost: false }
+    });
+
+    await controller.submitReply();
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({ path: '/posts/101.json', method: 'PUT' })
+    }));
+    expect(completeSubmission).toHaveBeenCalledWith();
+    expect(refreshTopicReplies).toHaveBeenCalledWith(expect.objectContaining({ nocache: true, targetReply: editTarget }));
+    expect(applyUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rechecks 小隐寺 authorization after 403 without treating it as an automatic logout', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(Object.assign(new Error('没有权限执行该操作'), {
+      source: 'xiaoyinsi',
+      status: 403,
+      reason: 'permission',
+      authorizationCheckRequired: true
+    }));
+    const notify = vi.fn();
+    const { controller, refreshXiaoyinsiAuthorization, showXiaoyinsiLogin } = createTopicActionController({
+      notify,
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    await vi.waitFor(() => {
+      expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    });
+    expect(showXiaoyinsiLogin).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledWith('没有权限执行该操作，已恢复原状态。');
+  });
+
+  it('[REG-XIAOYINSI-022] opens authorization when an action recheck confirms the saved grant expired', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(Object.assign(new Error('无效的 API key'), {
+      source: 'xiaoyinsi',
+      status: 401,
+      authorizationCheckRequired: true
+    }));
+    const refreshXiaoyinsiAuthorization = vi.fn(async () => false);
+    const showXiaoyinsiLogin = vi.fn();
+    const { controller } = createTopicActionController({
+      refreshXiaoyinsiAuthorization,
+      showXiaoyinsiLogin,
+      source: 'xiaoyinsi',
+      topicPatch: { canLike: true }
+    });
+
+    await controller.interact('like', 987654);
+
+    await vi.waitFor(() => {
+      expect(refreshXiaoyinsiAuthorization).toHaveBeenCalledTimes(1);
+    });
+    expect(showXiaoyinsiLogin).toHaveBeenCalledWith(expect.stringContaining('无效的 API key'));
+  });
+
+  it('[REG-XIAOYINSI-012] removes a confirmed 小隐寺 reply locally and refreshes only the reply slice', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const refreshTopicReplies = vi.fn(async () => true);
+    const { applyUpdate, controller } = createTopicActionController({ source: 'xiaoyinsi', refreshTopicReplies });
+    const reply: Reply = {
+      commentId: 101,
+      floor: 2,
+      author: 'alice',
+      createdAt: '2026-07-10T00:01:00.000Z',
+      contentHtml: '<p>reply</p>',
+      canDelete: true
+    };
+
+    controller.deleteReply(reply);
+    const buttons = vi.mocked(Alert.alert).mock.calls[0]?.[2] || [];
+    buttons[1]?.onPress?.();
+
+    await vi.waitFor(() => {
+      expect(applyUpdate).toHaveBeenCalledWith({ type: 'reply-deleted', reply });
+    });
+    expect(refreshTopicReplies).toHaveBeenCalledWith(expect.objectContaining({
+      silent: true,
+      afterSubmit: true,
+      targetReply: reply,
+      excludeReply: reply
+    }));
   });
 
   it('REG-WRITE-003 REG-WRITE-004 applies the confirmed yaohuo favorite locally without global busy', async () => {
@@ -409,6 +783,208 @@ describe('topic action auth guards', () => {
       bookmarked: false,
       bookmarkId: undefined
     });
+  });
+
+  it('REG-ACCOUNT-009 ignores linux.do expiry cleanup after a newer credential generation exists', async () => {
+    vi.mocked(currentLinuxDoAccessGeneration).mockReturnValue(2);
+    const resetLinuxDoLevelState = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+
+    await clearExpiredLinuxDoLogin({
+      error: new Error('old login expired'),
+      generation: 1,
+      cookieHeader: '_t=old-login',
+      resetLinuxDoLevelState,
+      updateLinuxDoSession
+    });
+
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(resetLinuxDoLevelState).not.toHaveBeenCalled();
+  });
+
+  it('REG-ACCOUNT-007 does not let Yaohuo expiry cleanup failure escape a failed action', async () => {
+    actionMocks.runYaohuoAction.mockRejectedValueOnce(Object.assign(new Error('妖火登录已失效'), {
+      loginRequired: true,
+      reason: 'expired',
+      source: 'yaohuo'
+    }));
+    const clearYaohuoLoginState = vi.fn(async () => { throw new Error('WebView cookie cleanup failed'); });
+    const showYaohuoLogin = vi.fn();
+    const { controller } = createTopicActionController({
+      clearYaohuoLoginState,
+      showYaohuoLogin,
+      source: 'yaohuo'
+    });
+
+    await expect(controller.favoriteOnYaohuoSite()).resolves.toBeUndefined();
+
+    expect(clearYaohuoLoginState).toHaveBeenCalledWith(expect.objectContaining({ generation: 1 }));
+    expect(showYaohuoLogin).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+  });
+
+  it('REG-ACCOUNT-009 suppresses an old Yaohuo action failure after a newer login is saved', async () => {
+    let generation = 1;
+    const request = Promise.withResolvers<never>();
+    actionMocks.runYaohuoAction.mockReturnValueOnce(request.promise);
+    const clearYaohuoLoginState = vi.fn(async () => true);
+    const showYaohuoLogin = vi.fn();
+    const { controller } = createTopicActionController({
+      clearYaohuoLoginState,
+      currentYaohuoCredentialGeneration: () => generation,
+      showYaohuoLogin,
+      source: 'yaohuo'
+    });
+
+    const action = controller.favoriteOnYaohuoSite();
+    await vi.waitFor(() => expect(actionMocks.runYaohuoAction).toHaveBeenCalledTimes(1));
+    generation += 1;
+    request.reject(Object.assign(new Error('旧妖火登录已失效'), {
+      loginRequired: true,
+      reason: 'expired',
+      source: 'yaohuo'
+    }));
+    await action;
+
+    expect(clearYaohuoLoginState).not.toHaveBeenCalled();
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+  });
+
+  it('REG-ACCOUNT-007 does not let NodeSeek expiry cleanup failure escape a failed action', async () => {
+    actionMocks.runNodeSeekAction.mockRejectedValueOnce(Object.assign(new Error('NodeSeek 登录已失效'), {
+      loginRequired: true,
+      source: 'nodeseek'
+    }));
+    const clearNodeSeekLoginCookiesOnly = vi.fn(async () => { throw new Error('SecureStore cleanup failed'); });
+    const notify = vi.fn();
+    const { controller } = createTopicActionController({
+      clearNodeSeekLoginCookiesOnly,
+      notify,
+      replyContent: 'reply body'
+    });
+
+    await expect(controller.submitReply()).resolves.toBeUndefined();
+
+    expect(clearNodeSeekLoginCookiesOnly).toHaveBeenCalledWith(expect.objectContaining({ generation: 1 }));
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+  });
+
+  it('REG-ACCOUNT-009 suppresses an old NodeSeek action failure after a newer login is saved', async () => {
+    let generation = 1;
+    const request = Promise.withResolvers<never>();
+    actionMocks.runNodeSeekAction.mockReturnValueOnce(request.promise);
+    const clearNodeSeekLoginCookiesOnly = vi.fn(async () => undefined);
+    const notify = vi.fn();
+    const { controller } = createTopicActionController({
+      clearNodeSeekLoginCookiesOnly,
+      currentNodeSeekCredentialGeneration: () => generation,
+      notify,
+      replyContent: 'reply body'
+    });
+
+    const action = controller.submitReply();
+    await vi.waitFor(() => expect(actionMocks.runNodeSeekAction).toHaveBeenCalledTimes(1));
+    generation += 1;
+    request.reject(Object.assign(new Error('旧 NodeSeek 登录已失效'), {
+      loginRequired: true,
+      source: 'nodeseek'
+    }));
+    await action;
+
+    expect(clearNodeSeekLoginCookiesOnly).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('REG-ACCOUNT-007 keeps linux.do expired when local cleanup fails after a rejected action', async () => {
+    actionMocks.runLinuxDoAction.mockRejectedValueOnce(Object.assign(new Error('linux.do 登录已失效'), {
+      loginRequired: true,
+      source: 'linuxdo'
+    }));
+    vi.mocked(clearLinuxDoAccessForGeneration).mockRejectedValueOnce(new Error('SecureStore cleanup failed'));
+    const showLinuxDoLogin = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+    const { controller } = createTopicActionController({
+      replyContent: 'reply body',
+      showLinuxDoLogin,
+      source: 'linuxdo',
+      updateLinuxDoSession
+    });
+
+    await expect(controller.submitReply()).resolves.toBeUndefined();
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'login-expired',
+      message: expect.stringContaining('清理未完成')
+    }));
+    expect(showLinuxDoLogin).toHaveBeenCalledWith(expect.stringContaining('清理未完成'));
+  });
+
+  it('REG-ACCOUNT-009 suppresses an old linux.do action failure after a newer login is saved', async () => {
+    let generation = 1;
+    const request = Promise.withResolvers<never>();
+    vi.mocked(currentLinuxDoAccessGeneration).mockImplementation(() => generation);
+    actionMocks.runLinuxDoAction.mockReturnValueOnce(request.promise);
+    const showLinuxDoLogin = vi.fn();
+    const updateLinuxDoSession = vi.fn();
+    const { controller } = createTopicActionController({
+      replyContent: 'reply body',
+      showLinuxDoLogin,
+      source: 'linuxdo',
+      updateLinuxDoSession
+    });
+
+    const action = controller.submitReply();
+    await vi.waitFor(() => expect(actionMocks.runLinuxDoAction).toHaveBeenCalledTimes(1));
+    generation += 1;
+    request.reject(Object.assign(new Error('旧 linux.do 登录已失效'), {
+      loginRequired: true,
+      source: 'linuxdo'
+    }));
+    await action;
+
+    expect(clearLinuxDoAccessForGeneration).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).not.toHaveBeenCalled();
+    expect(showLinuxDoLogin).not.toHaveBeenCalled();
+  });
+
+  it('REG-XIAOYINSI-021 preserves the action error when authorization recovery also fails', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(Object.assign(new Error('没有权限执行该操作'), {
+      authorizationCheckRequired: true,
+      source: 'xiaoyinsi',
+      status: 403
+    }));
+    const notify = vi.fn();
+    const refreshXiaoyinsiAuthorization = vi.fn(async () => { throw new Error('authorization refresh failed'); });
+    const { controller } = createTopicActionController({
+      notify,
+      refreshXiaoyinsiAuthorization,
+      replyContent: 'reply body',
+      source: 'xiaoyinsi'
+    });
+
+    await expect(controller.submitReply()).resolves.toBeUndefined();
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('没有权限执行该操作'));
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('复核未完成'));
+  });
+
+  it('REG-XIAOYINSI-021 treats an inconclusive authorization recheck as a recovery failure', async () => {
+    actionMocks.runXiaoyinsiAction.mockRejectedValueOnce(Object.assign(new Error('没有权限执行该操作'), {
+      authorizationCheckRequired: true,
+      source: 'xiaoyinsi',
+      status: 403
+    }));
+    const notify = vi.fn();
+    const { controller } = createTopicActionController({
+      notify,
+      refreshXiaoyinsiAuthorization: vi.fn(async () => null),
+      replyContent: 'reply body',
+      source: 'xiaoyinsi'
+    });
+
+    await expect(controller.submitReply()).resolves.toBeUndefined();
+
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('没有权限执行该操作'));
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('复核未完成'));
   });
 });
 
@@ -546,5 +1122,29 @@ describe('topic poll submission', () => {
     expect(Alert.alert).not.toHaveBeenCalled();
     expect(actionMocks.runLinuxDoAction).toHaveBeenCalledTimes(1);
     expect(actionMocks.runYaohuoAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-XIAOYINSI-012] applies a confirmed 小隐寺 vote locally', async () => {
+    actionMocks.runXiaoyinsiAction.mockResolvedValueOnce({ success: true });
+    const { applyUpdate, controller } = createTopicActionController({ source: 'xiaoyinsi' });
+    const poll = {
+      id: 'xiaoyinsi-poll',
+      name: 'poll_name',
+      postId: '424242',
+      options: [{ id: '1', label: 'A' }]
+    };
+
+    await controller.votePoll(poll, ['1']);
+
+    expect(actionMocks.runXiaoyinsiAction).toHaveBeenCalledTimes(1);
+    expect(applyUpdate).toHaveBeenCalledWith({
+      type: 'poll-vote',
+      patch: {
+        pollId: 'xiaoyinsi-poll',
+        pollName: 'poll_name',
+        pollPostId: '424242',
+        optionIds: ['1']
+      }
+    });
   });
 });

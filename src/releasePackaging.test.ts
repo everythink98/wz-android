@@ -178,7 +178,7 @@ describe('Android release packaging guards', () => {
   it('keeps SecureStore and expo-video native config plugins enabled', () => {
     const app = JSON.parse(readProjectFile('app.json'));
 
-    expect(app.expo.plugins).toContain('expo-secure-store');
+    expect(app.expo.plugins).toContainEqual(['expo-secure-store', { configureAndroidBackup: true }]);
     expect(app.expo.plugins).toContain('expo-video');
   });
 

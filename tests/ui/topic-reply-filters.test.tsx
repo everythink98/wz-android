@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '../../src/types';
@@ -11,6 +11,9 @@ import { createEmptyReaderData } from '../../src/readerData';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '../../src/screens/topic/TopicScreenBody';
 import { createStyles, createTheme } from '../../src/theme';
 import { createTopicImageDeriver } from '../../src/topicDerivedData';
+import type { InteractionType } from '../../src/topicActionState';
+
+const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -97,12 +100,8 @@ jest.mock('lucide-react-native', () => {
 
 jest.mock('../../src/components/Avatar', () => ({ Avatar: () => null }));
 jest.mock('../../src/components/ForumContentVideo', () => ({ ForumContentVideo: () => null }));
-jest.mock('../../src/localLinuxdo', () => ({
-  getLinuxDoEmojiUrls: async () => ({}),
-  splitLinuxDoContentHtml: (html: string | undefined, polls: TopicPoll[] | undefined) => [
-    ...(html ? [{ type: 'html' as const, html }] : []),
-    ...(polls || []).map((poll) => ({ type: 'poll' as const, poll }))
-  ]
+jest.mock('../../src/discourseSourceReaders', () => ({
+  getDiscourseSourceEmojiUrls: () => mockGetDiscourseSourceEmojiUrls()
 }));
 jest.mock('../../src/screens/topic/TopicActionBar', () => {
   const ReactModule = require('react') as typeof React;
@@ -207,7 +206,11 @@ jest.mock('../../src/screens/topic/ReplyItem', () => {
   const ReactModule = require('react') as typeof React;
   const { Text: NativeText } = require('react-native') as typeof import('react-native');
   return {
-    LinuxDoReactionPill: () => null,
+    DiscourseReactionPill: ({ stat }: { stat: { id: string; label: string; value: number } }) => ReactModule.createElement(
+      NativeText,
+      { testID: `reaction-${stat.id}` },
+      `${stat.label} ${stat.value}`
+    ),
     MemoizedReplyItem: ({ reply }: { reply: Reply }) => ReactModule.createElement(
       NativeText,
       { testID: `reply-floor-${reply.floor}` },
@@ -285,16 +288,19 @@ function HtmlRendererIdentityHarness({
 function TopicFilterHarness({
   canUseLinuxDoActions = false,
   canUseNodeSeekActions = false,
+  canUseXiaoyinsiActions = false,
   canUseYaohuoActions = false,
   filteredCommentQuery,
   loadingMoreReplies = false,
   onLoadMoreReplies = jest.fn(),
+  onInteract = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
   onReplyComposerOpenChange = jest.fn(),
   onToggleFavorite = jest.fn(),
   onYaohuoFavorite = jest.fn(),
   onVerifyNodeSeek = jest.fn(),
   onVotePoll = jest.fn(),
+  onDiscourseBookmark = jest.fn(),
   replyHasMore = false,
   selectedTopic = topic,
   topicDetail = topic,
@@ -305,16 +311,19 @@ function TopicFilterHarness({
 }: {
   canUseLinuxDoActions?: boolean;
   canUseNodeSeekActions?: boolean;
+  canUseXiaoyinsiActions?: boolean;
   canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
   loadingMoreReplies?: boolean;
   onLoadMoreReplies?: () => void;
+  onInteract?: (type: InteractionType, commentId?: number) => void;
   onRefreshWholeTopic?: () => void;
   onReplyComposerOpenChange?: (open: boolean) => void;
   onToggleFavorite?: (topic: Topic) => void;
   onYaohuoFavorite?: () => void;
   onVerifyNodeSeek?: () => void;
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
+  onDiscourseBookmark?: () => void;
   replyHasMore?: boolean;
   selectedTopic?: Topic;
   topicDetail?: TopicDetail | null;
@@ -345,9 +354,13 @@ function TopicFilterHarness({
       >
         <TopicScreen
         actionBusy={false}
-        canUseLinuxDoActions={canUseLinuxDoActions}
-        canUseNodeSeekActions={canUseNodeSeekActions}
-        canUseYaohuoActions={canUseYaohuoActions}
+        sourceActionAvailability={{
+          linuxdo: canUseLinuxDoActions,
+          nodeseek: canUseNodeSeekActions,
+          v2ex: false,
+          xiaoyinsi: canUseXiaoyinsiActions,
+          yaohuo: canUseYaohuoActions
+        }}
         commentQuery={commentQuery}
         contentWidth={720}
         expandedQuotes={{}}
@@ -387,8 +400,8 @@ function TopicFilterHarness({
         onCommentQueryChange={setCommentQuery}
         onDeleteReply={jest.fn()}
         onEditReply={jest.fn()}
-        onInteract={jest.fn()}
-        onLinuxDoBookmark={jest.fn()}
+        onInteract={onInteract}
+        onDiscourseBookmark={onDiscourseBookmark}
         onLoadMoreReplies={onLoadMoreReplies}
         onNodeSeekCollection={jest.fn()}
         onOpenOriginal={jest.fn()}
@@ -419,7 +432,30 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
-  it.each(['linuxdo', 'yaohuo'] as const)('wires %s topic polls through the source-specific writable path', async (source) => {
+  it('[REG-XIAOYINSI-017] retries the emoji catalog after a same-topic refresh', async () => {
+    const xiaoyinsiTopic: TopicDetail = {
+      ...topic,
+      source: 'xiaoyinsi',
+      url: 'https://forum.xiaoyinsi.com/t/topic-1'
+    };
+    mockGetDiscourseSourceEmojiUrls.mockClear();
+    mockGetDiscourseSourceEmojiUrls
+      .mockRejectedValueOnce(new Error('temporary emoji failure'))
+      .mockResolvedValue({ heart: 'https://forum.xiaoyinsi.com/heart.png' });
+    const view = await render(
+      <TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />
+    );
+    await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(1));
+
+    const refreshedTopic = { ...xiaoyinsiTopic, title: '刷新后的主题' };
+    await view.rerender(
+      <TopicFilterHarness selectedTopic={refreshedTopic} topicDetail={refreshedTopic} />
+    );
+
+    await waitFor(() => expect(mockGetDiscourseSourceEmojiUrls).toHaveBeenCalledTimes(2));
+  });
+
+  it.each(['linuxdo', 'yaohuo', 'xiaoyinsi'] as const)('wires %s topic polls through the source-specific writable path', async (source) => {
     const onVotePoll = jest.fn<(poll: TopicPoll, optionIds: string[]) => void>();
     const sourceTopic: TopicDetail = {
       ...topic,
@@ -427,12 +463,15 @@ describe('Topic reply filters', () => {
       id: `${source}-poll-topic`,
       url: source === 'linuxdo'
         ? 'https://linux.do/t/topic/2'
-        : 'https://yaohuo.me/bbs-2.html',
+        : source === 'xiaoyinsi'
+          ? 'https://forum.xiaoyinsi.com/t/topic/2'
+          : 'https://yaohuo.me/bbs-2.html',
       polls: [topicPoll]
     };
     const view = await render(
       <TopicFilterHarness
         canUseLinuxDoActions={source === 'linuxdo'}
+        canUseXiaoyinsiActions={source === 'xiaoyinsi'}
         canUseYaohuoActions={source === 'yaohuo'}
         onVotePoll={onVotePoll}
         selectedTopic={sourceTopic}
@@ -444,6 +483,71 @@ describe('Topic reply filters', () => {
     expect(view.getByText('可投票')).toBeTruthy();
     await fireEvent.press(view.getByLabelText(`提交 ${source} 投票`));
     expect(onVotePoll).toHaveBeenCalledWith(topicPoll, ['yes']);
+  });
+
+  it('shows 小隐寺 write actions only after authorization and wires them independently', async () => {
+    const xiaoyinsiTopic: TopicDetail = {
+      ...topic,
+      source: 'xiaoyinsi',
+      id: 'xiaoyinsi-actions',
+      url: 'https://forum.xiaoyinsi.com/t/topic/42',
+      commentId: 100,
+      canCreatePost: true,
+      canLike: true,
+      liked: false,
+      bookmarked: false,
+      reactionSummary: [{ id: 'heart', count: 3 }]
+    };
+    const onInteract = jest.fn<(type: InteractionType, commentId?: number) => void>();
+    const onDiscourseBookmark = jest.fn();
+
+    const anonymous = await render(
+      <TopicFilterHarness selectedTopic={xiaoyinsiTopic} topicDetail={xiaoyinsiTopic} />
+    );
+    expect(anonymous.getByTestId('reaction-heart')).toBeTruthy();
+    expect(anonymous.queryByLabelText('点赞')).toBeNull();
+    expect(anonymous.queryByLabelText('原站收藏')).toBeNull();
+    await anonymous.unmount();
+
+    const authorized = await render(
+      <TopicFilterHarness
+        canUseXiaoyinsiActions
+        onInteract={onInteract}
+        onDiscourseBookmark={onDiscourseBookmark}
+        selectedTopic={xiaoyinsiTopic}
+        topicDetail={xiaoyinsiTopic}
+      />
+    );
+    await fireEvent.press(authorized.getByLabelText('点赞'));
+    await fireEvent.press(authorized.getByLabelText('原站收藏'));
+    expect(onInteract).toHaveBeenCalledWith('like', 100);
+    expect(onDiscourseBookmark).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-XIAOYINSI-007] hides reply entry without can_create_post while preserving allowed 小隐寺 interactions', async () => {
+    const readOnlyTopic: TopicDetail = {
+      ...topic,
+      source: 'xiaoyinsi',
+      id: 'xiaoyinsi-read-only',
+      url: 'https://forum.xiaoyinsi.com/t/topic/43',
+      commentId: 101,
+      canCreatePost: false,
+      canLike: true,
+      liked: false,
+      bookmarked: false
+    };
+
+    const view = await render(
+      <TopicFilterHarness
+        canUseXiaoyinsiActions
+        selectedTopic={readOnlyTopic}
+        topicDetail={readOnlyTopic}
+      />
+    );
+
+    expect(view.queryByText('写回复')).toBeNull();
+    expect(view.getByLabelText('点赞')).toBeTruthy();
+    expect(view.getByLabelText('原站收藏')).toBeTruthy();
   });
 
   it('[REG-WRITE-009] renders a NodeSeek poll at its marker between body blocks', async () => {

@@ -7,14 +7,14 @@ import BottomSheet, {
 } from '@gorhom/bottom-sheet';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ReplyEditTarget, ReplyTarget } from '../../appTypes';
-import type { LinuxDoEmojiUrlMap } from '../../linuxdoReactions';
+import type { DiscourseEmojiUrlMap } from '../../discourseReactions';
 import { createStyles, type ReaderTheme } from '../../theme';
 import type { Source } from '../../types';
 import { ReplyComposer } from './ReplyComposer';
 
 export function ReplyComposerSheet({
   actionBusy,
-  linuxDoEmojiUrls = {},
+  discourseEmojiUrls = {},
   replyContent,
   replyEditTarget,
   replyFace,
@@ -30,7 +30,7 @@ export function ReplyComposerSheet({
   onUploadReplyImage
 }: {
   actionBusy: boolean;
-  linuxDoEmojiUrls?: LinuxDoEmojiUrlMap;
+  discourseEmojiUrls?: DiscourseEmojiUrlMap;
   replyContent: string;
   replyFace: string;
   replyEditTarget?: ReplyEditTarget | null;
@@ -112,7 +112,7 @@ export function ReplyComposerSheet({
         <ReplyComposer
           actionBusy={actionBusy}
           focusSignal={focusSignal}
-          linuxDoEmojiUrls={linuxDoEmojiUrls}
+          discourseEmojiUrls={discourseEmojiUrls}
           replyContent={replyContent}
           replyFace={replyFace}
           replyEditTarget={replyEditTarget}

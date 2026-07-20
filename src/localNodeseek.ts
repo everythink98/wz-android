@@ -123,6 +123,14 @@ function optionalInteger(value: unknown) {
   return match ? Number(match[0]) : undefined;
 }
 
+function optionalNonNegativeInteger(value: unknown) {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : undefined;
+  }
+  const text = typeof value === 'string' ? value.replace(/,/g, '').trim() : '';
+  return /^\d+$/.test(text) ? Number(text) : undefined;
+}
+
 function optionalBoolean(value: unknown) {
   if (typeof value === 'boolean') {
     return value;
@@ -1671,9 +1679,9 @@ export async function getNodeSeekUserProfile(id: string, options: NodeSeekOption
     url: nodeSeekSpaceUrl(userId),
     bio,
     joinedAt: joinedAt || undefined,
-    topicCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
-    postCount: parsePositiveInteger(user.nPost) || visibleTopics.length || undefined,
-    replyCount: parsePositiveInteger(user.nComment) || undefined,
+    topicCount: optionalNonNegativeInteger(user.nPost) ?? (visibleTopics.length || undefined),
+    postCount: optionalNonNegativeInteger(user.nPost) ?? (visibleTopics.length || undefined),
+    replyCount: optionalNonNegativeInteger(user.nComment),
     ...(levelLabel ? { levelLabel } : {}),
     topics: visibleTopics,
     hasMoreTopics: wantsTopics && visibleTopics.length > 0,

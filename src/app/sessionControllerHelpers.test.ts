@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
   useEffect: (effect: () => void | (() => void)) => { effect(); },
+  useLayoutEffect: (effect: () => void) => effect(),
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value }),
   useState: <T,>(initial: T | (() => T)) => {
@@ -29,6 +30,8 @@ vi.mock('expo-secure-store', () => ({
   setItemAsync: vi.fn(async () => undefined)
 }));
 vi.mock('react-native', () => ({ NativeModules: { LinuxDoCookieModule: {} } }));
+import * as SecureStore from 'expo-secure-store';
+import CookieManager from '@react-native-cookies/cookies';
 import {
   advanceCredentialWriteGeneration,
   createCredentialWriteGate,
@@ -36,6 +39,7 @@ import {
   enqueueCredentialWrite,
   enqueueLatestBrowserFetchRequest,
   isCredentialWriteCurrent,
+  nodeSeekMediaCookieHeaderAfterCredentialLoad,
   nodeSeekBrowserResponse,
   preemptActiveBrowserFetchRequest,
   replaceCredentialWrite,
@@ -58,12 +62,18 @@ import {
 } from '../diagnostics';
 import type { Fetcher } from '../request';
 import { useSessionController } from './useSessionController';
+import { saveLinuxDoAccess } from '../linuxdoCookieBridge';
 
 afterEach(() => {
   setDiagnosticWriter(null);
 });
 
-function createTestSessionController(defaultFetcher: Fetcher = vi.fn(), setWebLoginUserId = vi.fn()) {
+function createTestSessionController(
+  defaultFetcher: Fetcher = vi.fn(),
+  setWebLoginUserId = vi.fn(),
+  notify = vi.fn(),
+  overrides: Partial<Parameters<typeof useSessionController>[0]> = {}
+) {
   return useSessionController({
     defaultFetcher,
     linuxDoBrowserWebViewRef: { current: null },
@@ -73,16 +83,329 @@ function createTestSessionController(defaultFetcher: Fetcher = vi.fn(), setWebLo
     nodeSeekBrowserWebViewRef: { current: null },
     nodeSeekWebViewCookieHeaderRef: { current: '' },
     nodeSeekWebViewUserAgentRef: { current: '' },
-    notify: vi.fn(),
+    notify,
     setLinuxDoWebViewCookieHeader: vi.fn(),
     setLinuxDoWebViewUserAgent: vi.fn(),
+    setNodeSeekMediaCookieHeader: vi.fn(),
     setNodeSeekWebViewUserAgent: vi.fn(),
     setWebLoginUserId,
-    webLoginDetectedRef: { current: false }
+    webLoginDetectedRef: { current: false },
+    ...overrides
   });
 }
 
 describe('session controller helpers', () => {
+  it.each([
+    ['NodeSeek', 'clearNodeSeekLoginState'],
+    ['妖火', 'clearYaohuoLoginState']
+  ] as const)('REG-ACCOUNT-007 does not report %s cleared when WebView cookie cleanup fails', async (siteLabel, command) => {
+    const lines: string[] = [];
+    const getCookies = vi.mocked(CookieManager.get);
+    getCookies.mockResolvedValue({});
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    getCookies.mockRejectedValueOnce(new Error('WebView cookie store unavailable'));
+
+    await expect(controller[command]()).rejects.toThrow('WebView cookie store unavailable');
+
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.at(-1)).toMatchObject({ eventType: 'check-failed' });
+    expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
+    expect(transitions.at(-1)?.source).toBe(siteLabel === 'NodeSeek' ? 'nodeseek' : 'yaohuo');
+  });
+
+  it('REG-ACCOUNT-007 clears the Yaohuo WebView cookies after deleting the stored header', async () => {
+    const lines: string[] = [];
+    const getCookies = vi.mocked(CookieManager.get);
+    getCookies.mockResolvedValue({ sidyaohuo: { name: 'sidyaohuo', value: 'saved' } });
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    getCookies.mockClear();
+
+    await controller.clearYaohuoLoginState();
+
+    expect(getCookies).toHaveBeenCalledWith('https://www.yaohuo.me');
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.at(-1)).toMatchObject({ source: 'yaohuo', eventType: 'cleared' });
+  });
+
+  it('REG-ACCOUNT-009 stops a stale NodeSeek clear before WebView cleanup and session commit', async () => {
+    const lines: string[] = [];
+    const firstDelete = Promise.withResolvers<void>();
+    const deleteItemAsync = vi.mocked(SecureStore.deleteItemAsync);
+    deleteItemAsync.mockReset();
+    deleteItemAsync.mockImplementationOnce(() => firstDelete.promise);
+    deleteItemAsync.mockResolvedValue(undefined);
+    vi.mocked(CookieManager.get).mockReset();
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    vi.mocked(CookieManager.get).mockClear();
+
+    const clear = controller.clearNodeSeekLoginState();
+    await vi.waitFor(() => expect(deleteItemAsync).toHaveBeenCalled());
+    const save = controller.saveNodeSeekCookieHeader({
+      session: { name: 'session', value: 'new-login-cookie' }
+    });
+    firstDelete.resolve();
+    await Promise.all([clear, save]);
+
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
+    expect(vi.mocked(CookieManager.get)).not.toHaveBeenCalled();
+  });
+
+  it('REG-ACCOUNT-009 preserves the newer NodeSeek media credential when an old load returns empty', () => {
+    expect(nodeSeekMediaCookieHeaderAfterCredentialLoad({
+      currentHeader: 'session=new-login-cookie',
+      loadedHeader: undefined,
+      generationIsCurrent: false
+    })).toBe('session=new-login-cookie');
+  });
+
+  it('REG-ACCOUNT-009 reports a superseded Yaohuo clear and leaves the newer WebView session alone', async () => {
+    const lines: string[] = [];
+    const firstDelete = Promise.withResolvers<void>();
+    const deleteItemAsync = vi.mocked(SecureStore.deleteItemAsync);
+    deleteItemAsync.mockReset();
+    deleteItemAsync.mockImplementationOnce(() => firstDelete.promise);
+    deleteItemAsync.mockResolvedValue(undefined);
+    vi.mocked(CookieManager.get).mockReset();
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    vi.mocked(CookieManager.get).mockClear();
+
+    const clear = controller.clearYaohuoLoginState();
+    await vi.waitFor(() => expect(deleteItemAsync).toHaveBeenCalled());
+    const save = controller.saveYaohuoCookieHeader('sidyaohuo=new-login-cookie');
+    firstDelete.resolve();
+    const [cleared] = await Promise.all([clear, save]);
+
+    expect(cleared).toBe(false);
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
+    expect(vi.mocked(CookieManager.get)).not.toHaveBeenCalled();
+  });
+
+  it('REG-ACCOUNT-009 stops a NodeSeek clear superseded during WebView cookie discovery', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    const cookieRead = Promise.withResolvers<Record<string, { name: string; value: string }>>();
+    vi.mocked(CookieManager.get).mockReset();
+    vi.mocked(CookieManager.get).mockReturnValue(cookieRead.promise);
+    vi.mocked(CookieManager.setFromResponse).mockClear();
+
+    const clear = controller.clearNodeSeekLoginState();
+    await vi.waitFor(() => expect(CookieManager.get).toHaveBeenCalled());
+    const save = controller.saveNodeSeekCookieHeader({
+      session: { name: 'session', value: 'new-login-cookie' }
+    });
+    cookieRead.resolve({ session: { name: 'session', value: 'old-login-cookie' } });
+    const [cleared] = await Promise.all([clear, save]);
+
+    expect(cleared).toBe(false);
+    expect(CookieManager.setFromResponse).not.toHaveBeenCalled();
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
+  });
+
+  it('REG-ACCOUNT-009 stops a Yaohuo clear superseded during WebView cookie discovery', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    const cookieRead = Promise.withResolvers<Record<string, { name: string; value: string }>>();
+    vi.mocked(CookieManager.get).mockReset();
+    vi.mocked(CookieManager.get).mockReturnValue(cookieRead.promise);
+    vi.mocked(CookieManager.setFromResponse).mockClear();
+
+    const clear = controller.clearYaohuoLoginState();
+    await vi.waitFor(() => expect(CookieManager.get).toHaveBeenCalled());
+    const save = controller.saveYaohuoCookieHeader('sidyaohuo=new-login-cookie');
+    cookieRead.resolve({ sidyaohuo: { name: 'sidyaohuo', value: 'old-login-cookie' } });
+    const [cleared] = await Promise.all([clear, save]);
+
+    expect(cleared).toBe(false);
+    expect(CookieManager.setFromResponse).not.toHaveBeenCalled();
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.map(({ eventType }) => eventType)).not.toContain('cleared');
+  });
+
+  it('REG-ACCOUNT-009 suppresses an old Yaohuo storage error after a newer credential save starts', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    const oldRead = Promise.withResolvers<string | null>();
+    vi.mocked(SecureStore.getItemAsync).mockReset();
+    vi.mocked(SecureStore.getItemAsync).mockReturnValueOnce(oldRead.promise);
+
+    const load = controller.loadYaohuoCookieForSource('yaohuo');
+    const save = controller.saveYaohuoCookieHeader('sidyaohuo=new-login-cookie');
+    oldRead.reject(new Error('old SecureStore read failed'));
+
+    await expect(load).resolves.toBeUndefined();
+    await expect(save).resolves.toBe(true);
+  });
+
+  it('REG-ACCOUNT-009 suppresses an old NodeSeek storage error after a newer credential save starts', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    const oldRead = Promise.withResolvers<string | null>();
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    vi.mocked(SecureStore.getItemAsync).mockReset();
+    vi.mocked(SecureStore.getItemAsync).mockReturnValueOnce(oldRead.promise);
+    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
+
+    const load = controller.loadNodeSeekCookieForSource('nodeseek');
+    await vi.waitFor(() => expect(SecureStore.getItemAsync).toHaveBeenCalled());
+    const save = controller.saveNodeSeekCookieHeader(
+      { session: { name: 'session', value: 'new-login-cookie' } },
+      { csrfToken: null, userId: null }
+    );
+    oldRead.reject(new Error('old SecureStore read failed'));
+
+    await expect(load).resolves.toBeUndefined();
+    await expect(save).resolves.toBeTruthy();
+  });
+
+  it('[REG-ACCOUNT-014] rejects a corrupted saved NodeSeek session instead of treating it as anonymous', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    vi.mocked(SecureStore.getItemAsync).mockReset();
+    vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key) => (
+      key === 'nodeseek-access' ? '{bad json' : null
+    ));
+    vi.mocked(SecureStore.deleteItemAsync).mockClear();
+
+    await expect(controller.loadNodeSeekCookieForSource('nodeseek')).rejects.toThrow('NodeSeek 登录配置已损坏');
+    expect(SecureStore.deleteItemAsync).not.toHaveBeenCalledWith('nodeseek-access');
+  });
+
+  it('REG-ACCOUNT-007 keeps NodeSeek expired when login-cookie cleanup cannot read the store', async () => {
+    const lines: string[] = [];
+    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+    getItemAsync.mockResolvedValue(null);
+    vi.mocked(CookieManager.get).mockResolvedValue({});
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController();
+    await vi.waitFor(() => expect(lines.some((line) => {
+      const event = JSON.parse(line);
+      return event.operation === 'load-stored' && event.phase === 'finish';
+    })).toBe(true));
+    lines.length = 0;
+    getItemAsync.mockRejectedValueOnce(new Error('SecureStore unavailable'));
+
+    await expect(controller.clearNodeSeekLoginCookiesOnly({
+      expiredMessage: 'NodeSeek 登录已失效'
+    })).rejects.toThrow('SecureStore unavailable');
+
+    const transitions = lines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+    expect(transitions.at(-1)).toMatchObject({
+      source: 'nodeseek',
+      eventType: 'login-expired'
+    });
+  });
+
+  it('REG-ACCOUNT-003 restores unaffected sessions when one startup credential read fails', async () => {
+    const lines: string[] = [];
+    const notify = vi.fn();
+    const getItemAsync = vi.mocked(SecureStore.getItemAsync);
+    getItemAsync.mockImplementation(async (key) => {
+      if (key === 'nodeseek-access') {
+        throw new Error('NodeSeek storage unavailable');
+      }
+      if (key === 'yaohuo-cookie-header') {
+        return 'sidyaohuo=saved-session';
+      }
+      if (key === 'linuxdo-clearance') {
+        return JSON.stringify({
+          cookieHeader: '_t=saved-login; cf_clearance=saved-clearance',
+          savedAt: '2026-07-19T00:00:00.000Z',
+          source: 'webview'
+        });
+      }
+      return null;
+    });
+    setDiagnosticWriter((line) => { lines.push(line); });
+
+    createTestSessionController(vi.fn(), vi.fn(), notify);
+
+    await vi.waitFor(() => {
+      const transitions = lines
+        .map((line) => JSON.parse(line))
+        .filter(({ operation, phase }) => operation === 'state-transition' && phase === 'intent');
+      expect(transitions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: 'nodeseek', eventType: 'check-failed' }),
+        expect.objectContaining({ source: 'linuxdo', eventType: 'cookie-loaded' }),
+        expect.objectContaining({ source: 'yaohuo', eventType: 'cookie-loaded' })
+      ]));
+    });
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('NodeSeek'));
+    expect(notify).not.toHaveBeenCalledWith(expect.stringContaining('LinuxDo storage unavailable'));
+
+    getItemAsync.mockResolvedValue(null);
+  });
+
   it('records a session transition without cookie facts or raw errors', () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
@@ -232,6 +555,204 @@ describe('session controller helpers', () => {
       expect.objectContaining({ phase: 'guard', channel: 'webview', state: 'queued' }),
       expect.objectContaining({ phase: 'parse', channel: 'webview', status: 200 })
     ]));
+  });
+
+  it('REG-ACCOUNT-009 does not let an old NodeSeek hidden read replace a newer in-memory session', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const nodeSeekWebViewCookieHeaderRef = { current: '' };
+    const setNodeSeekWebViewUserAgent = vi.fn();
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )), vi.fn(), vi.fn(), {
+      nodeSeekWebViewCookieHeaderRef,
+      setNodeSeekWebViewUserAgent
+    });
+    const url = 'https://www.nodeseek.com/post-credential-generation-1';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.saveNodeSeekCookieHeader({
+      session: { name: 'session', value: 'new-session' }
+    }, { verifiedByPage: true });
+    nodeSeekWebViewCookieHeaderRef.current = 'session=new-session';
+    setNodeSeekWebViewUserAgent.mockClear();
+
+    await controller.completeNodeSeekBrowserFetch({
+      id: 1,
+      url,
+      html: '<html>old session body</html>',
+      cookie: 'session=old-session',
+      userAgent: 'old-user-agent'
+    });
+    await expect(responsePromise).rejects.toThrow('请求已取消');
+
+    expect(nodeSeekWebViewCookieHeaderRef.current).toBe('session=new-session');
+    expect(setNodeSeekWebViewUserAgent).not.toHaveBeenCalledWith('old-user-agent');
+  });
+
+  it('REG-ACCOUNT-012 preserves the current NodeSeek session when a hidden read reports only document cookies', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const nodeSeekWebViewCookieHeaderRef = { current: 'session=current-session' };
+    const setNodeSeekMediaCookieHeader = vi.fn();
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )), vi.fn(), vi.fn(), {
+      nodeSeekWebViewCookieHeaderRef,
+      setNodeSeekMediaCookieHeader
+    });
+    const url = 'https://www.nodeseek.com/post-document-cookie-merge-1';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeNodeSeekBrowserFetch({
+      id: 1,
+      url,
+      html: '<html>rendered body</html>',
+      cookie: 'cf_clearance=fresh-clearance'
+    });
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+
+    expect(nodeSeekWebViewCookieHeaderRef.current).toContain('session=current-session');
+    expect(nodeSeekWebViewCookieHeaderRef.current).toContain('cf_clearance=fresh-clearance');
+    expect(setNodeSeekMediaCookieHeader).toHaveBeenCalledWith(expect.stringContaining('session=current-session'));
+    expect(setNodeSeekMediaCookieHeader).toHaveBeenCalledWith(expect.stringContaining('cf_clearance=fresh-clearance'));
+  });
+
+  it('REG-ACCOUNT-012 clears the NodeSeek media credential with the stored session', async () => {
+    const nodeSeekWebViewCookieHeaderRef = { current: 'session=current-session' };
+    const setNodeSeekMediaCookieHeader = vi.fn();
+    const controller = createTestSessionController(vi.fn(), vi.fn(), vi.fn(), {
+      nodeSeekWebViewCookieHeaderRef,
+      setNodeSeekMediaCookieHeader
+    });
+    setNodeSeekMediaCookieHeader.mockClear();
+
+    await controller.clearStoredNodeSeekLoginState();
+
+    expect(nodeSeekWebViewCookieHeaderRef.current).toBe('');
+    expect(setNodeSeekMediaCookieHeader).toHaveBeenCalledWith('');
+  });
+
+  it('REG-ACCOUNT-009 does not let an old linux.do hidden read replace a newer in-memory session', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const linuxDoWebViewCookieHeaderRef = { current: '' };
+    const setLinuxDoWebViewCookieHeader = vi.fn();
+    const setLinuxDoWebViewUserAgent = vi.fn();
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 429, headers: { 'cf-mitigated': 'challenge' } }
+    )), vi.fn(), vi.fn(), {
+      linuxDoWebViewCookieHeaderRef,
+      setLinuxDoWebViewCookieHeader,
+      setLinuxDoWebViewUserAgent
+    });
+    const url = 'https://linux.do/latest.json';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await saveLinuxDoAccess('cf_clearance=new-clearance; _t=new-session', 'new-user-agent');
+    linuxDoWebViewCookieHeaderRef.current = 'cf_clearance=new-clearance; _t=new-session';
+    setLinuxDoWebViewCookieHeader.mockClear();
+    setLinuxDoWebViewUserAgent.mockClear();
+
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      body: '{"topic_list":{"topics":[]}}',
+      challenge: false,
+      cookie: 'cf_clearance=old-clearance; _t=old-session',
+      userAgent: 'old-user-agent'
+    });
+    await expect(responsePromise).rejects.toThrow('请求已取消');
+
+    expect(linuxDoWebViewCookieHeaderRef.current).toBe('cf_clearance=new-clearance; _t=new-session');
+    expect(setLinuxDoWebViewCookieHeader).not.toHaveBeenCalledWith('cf_clearance=old-clearance; _t=old-session');
+    expect(setLinuxDoWebViewUserAgent).not.toHaveBeenCalledWith('old-user-agent');
+  });
+
+  it('REG-ACCOUNT-012 preserves the current linux.do session when a hidden read reports only document cookies', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const linuxDoWebViewCookieHeaderRef = { current: '_t=current-session; cf_clearance=old-clearance' };
+    const setLinuxDoWebViewCookieHeader = vi.fn();
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 429, headers: { 'cf-mitigated': 'challenge' } }
+    )), vi.fn(), vi.fn(), {
+      linuxDoWebViewCookieHeaderRef,
+      setLinuxDoWebViewCookieHeader
+    });
+    const url = 'https://linux.do/latest.json';
+
+    const responsePromise = controller.forumFetchWithWebViewFallback(url);
+    await vi.waitFor(() => expect(lines.some((line) => JSON.parse(line).state === 'queued')).toBe(true));
+    await controller.completeLinuxDoBrowserFetch({
+      id: 1,
+      url,
+      body: '{"topic_list":{"topics":[]}}',
+      challenge: false,
+      cookie: 'cf_clearance=fresh-clearance'
+    });
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+
+    expect(linuxDoWebViewCookieHeaderRef.current).toContain('_t=current-session');
+    expect(linuxDoWebViewCookieHeaderRef.current).toContain('cf_clearance=fresh-clearance');
+    expect(setLinuxDoWebViewCookieHeader).toHaveBeenCalledWith(expect.stringContaining('_t=current-session'));
+  });
+
+  it('REG-ACCOUNT-009 does not activate a queued NodeSeek hidden read after credentials change', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 403, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const firstUrl = 'https://www.nodeseek.com/post-generation-queue-1';
+    const secondUrl = 'https://www.nodeseek.com/post-generation-queue-2';
+
+    const first = controller.forumFetchWithWebViewFallback(firstUrl);
+    await vi.waitFor(() => expect(lines.filter((line) => JSON.parse(line).state === 'queued')).toHaveLength(1));
+    const second = controller.forumFetchWithWebViewFallback(secondUrl);
+    const secondOutcome = second.then(() => 'resolved', (error) => (error as Error).message);
+    await vi.waitFor(() => expect(lines.filter((line) => JSON.parse(line).state === 'queued')).toHaveLength(2));
+    await controller.saveNodeSeekCookieHeader({
+      session: { name: 'session', value: 'new-session' }
+    }, { verifiedByPage: true });
+
+    await controller.completeNodeSeekBrowserFetch({ id: 1, url: firstUrl, html: '<html>first</html>' });
+    await expect(first).rejects.toThrow('请求已取消');
+    await controller.completeNodeSeekBrowserFetch({ id: 2, url: secondUrl, html: '<html>second</html>' });
+
+    await expect(secondOutcome).resolves.toContain('请求已取消');
+  });
+
+  it('REG-ACCOUNT-009 does not activate a queued linux.do hidden read after credentials change', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const controller = createTestSessionController(vi.fn(async () => new Response(
+      '<html><div class="cf-turnstile"></div></html>',
+      { status: 429, headers: { 'cf-mitigated': 'challenge' } }
+    )));
+    const firstUrl = 'https://linux.do/latest.json?page=1';
+    const secondUrl = 'https://linux.do/latest.json?page=2';
+
+    const first = controller.forumFetchWithWebViewFallback(firstUrl);
+    await vi.waitFor(() => expect(lines.filter((line) => JSON.parse(line).state === 'queued')).toHaveLength(1));
+    const second = controller.forumFetchWithWebViewFallback(secondUrl);
+    const secondOutcome = second.then(() => 'resolved', (error) => (error as Error).message);
+    await vi.waitFor(() => expect(lines.filter((line) => JSON.parse(line).state === 'queued')).toHaveLength(2));
+    await saveLinuxDoAccess('cf_clearance=new-clearance; _t=new-session', 'new-user-agent');
+
+    await controller.completeLinuxDoBrowserFetch({ id: 1, url: firstUrl, body: '{}', challenge: false });
+    await expect(first).rejects.toThrow('请求已取消');
+    await controller.completeLinuxDoBrowserFetch({ id: 2, url: secondUrl, body: '{}', challenge: false });
+
+    await expect(secondOutcome).resolves.toContain('请求已取消');
   });
 
   it('rejects a confirmed linux.do WebView challenge as a typed verification error', async () => {

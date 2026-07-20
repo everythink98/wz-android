@@ -102,6 +102,30 @@ describe('reader data store', () => {
     await expect(loadReaderData()).resolves.toMatchObject({ settings: { theme: 'dark' } });
   });
 
+  it('[REG-DATA-003] restores the previous full snapshot when the paired settings write fails', async () => {
+    const previous = createEmptyReaderData();
+    const next = {
+      ...previous,
+      settings: { ...previous.settings, theme: 'dark' as const }
+    };
+    const previousJson = JSON.stringify(previous);
+    const nextJson = JSON.stringify(next);
+    asyncStorage.__store.set('reader-data', previousJson);
+    asyncStorage.__store.set('reader-settings', JSON.stringify(previous.settings));
+    let settingsWriteCount = 0;
+    vi.mocked(AsyncStorage.setItem).mockImplementation(async (key: string, value: string) => {
+      if (key === 'reader-settings' && ++settingsWriteCount === 1) {
+        throw new Error('settings write failed');
+      }
+      asyncStorage.__store.set(key, value);
+    });
+
+    await expect(saveCleanReaderData(next, previousJson, nextJson)).rejects.toThrow('settings write failed');
+
+    expect(asyncStorage.__store.get('reader-data')).toBe(previousJson);
+    expect(asyncStorage.__store.get('reader-settings')).toBe(JSON.stringify(previous.settings));
+  });
+
   it('rejects oversized clean data before writing AsyncStorage', async () => {
     const data = createEmptyReaderData();
     const largeText = 'x'.repeat(4096);

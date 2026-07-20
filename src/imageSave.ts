@@ -3,7 +3,7 @@ import * as MediaLibrary from 'expo-media-library';
 import { Buffer } from 'buffer';
 import { safeFileName } from './backupFiles';
 import { dataImageFileFromUrl, imageRequestHeadersForUrl, isHttpOrHttpsUrl } from './htmlImages';
-import type { Fetcher } from './request';
+import { fetchWithTimeout, type Fetcher } from './request';
 import {
   beginDiagnosticTrace,
   finishDiagnosticTrace,
@@ -13,12 +13,55 @@ import {
   type DiagnosticTrace
 } from './diagnostics';
 
+export interface ImageSaveRequestOptions {
+  nodeSeekCookieHeader?: string;
+  nodeSeekUserAgent?: string;
+}
+
 function imageFileExtension(uri: string) {
-  return uri.match(/\.(png|jpe?g|webp|gif)(?:\?|$)/i)?.[1]?.replace('jpeg', 'jpg') || 'jpg';
+  const extension = uri.match(/\.(apng|avif|bmp|gif|heic|heif|jpe?g|png|webp)(?:[?#]|$)/i)?.[1]?.toLowerCase();
+  return extension === 'jpeg' ? 'jpg' : extension || 'jpg';
 }
 
 function responseContentType(response: Response) {
   return response.headers.get('content-type') || '';
+}
+
+function imageFileExtensionFromContentType(contentType: string) {
+  switch (contentType.split(';', 1)[0]?.trim().toLowerCase()) {
+    case 'image/apng':
+      return 'apng';
+    case 'image/avif':
+      return 'avif';
+    case 'image/bmp':
+    case 'image/x-ms-bmp':
+      return 'bmp';
+    case 'image/gif':
+      return 'gif';
+    case 'image/heic':
+      return 'heic';
+    case 'image/heif':
+      return 'heif';
+    case 'image/jpeg':
+    case 'image/jpg':
+    case 'image/pjpeg':
+      return 'jpg';
+    case 'image/png':
+    case 'image/x-png':
+      return 'png';
+    case 'application/svg+xml':
+    case 'image/svg+xml':
+      return 'svg';
+    case 'image/webp':
+      return 'webp';
+    default:
+      return '';
+  }
+}
+
+function isImageContentType(contentType: string) {
+  const mimeType = contentType.split(';', 1)[0]?.trim().toLowerCase() || '';
+  return mimeType.startsWith('image/') || mimeType === 'application/svg+xml';
 }
 
 function assertDownloadedImage(response: Response) {
@@ -26,7 +69,7 @@ function assertDownloadedImage(response: Response) {
     throw new Error('图片下载失败');
   }
   const contentType = responseContentType(response);
-  if (contentType && !/^image\//i.test(contentType)) {
+  if (contentType && !isImageContentType(contentType)) {
     throw new Error('下载内容不是图片');
   }
 }
@@ -38,16 +81,31 @@ async function assertReadableImageFile(uri: string) {
   }
 }
 
-async function downloadImageWithFetcher(uri: string, target: string, fetcher: Fetcher, trace: DiagnosticTrace) {
-  const headers = imageRequestHeadersForUrl(uri);
-  const response = await withDiagnosticFetcher(trace, fetcher)(uri, headers ? { headers } : undefined);
+async function downloadImageWithFetcher(
+  uri: string,
+  fetcher: Fetcher,
+  trace: DiagnosticTrace,
+  requestOptions: ImageSaveRequestOptions
+) {
+  const headers = imageRequestHeadersForUrl(uri, requestOptions.nodeSeekCookieHeader, requestOptions.nodeSeekUserAgent);
+  const response = await fetchWithTimeout(uri, headers ? { headers } : {}, {
+    fetcher: withDiagnosticFetcher(trace, fetcher)
+  });
   assertDownloadedImage(response);
-  markDiagnosticStage(trace, 'parse', { contentType: responseContentType(response) || 'unknown' });
-  const content = Buffer.from(await response.arrayBuffer()).toString('base64');
-  await FileSystem.writeAsStringAsync(target, content, { encoding: FileSystem.EncodingType.Base64 });
+  const contentType = responseContentType(response);
+  markDiagnosticStage(trace, 'parse', { contentType: contentType || 'unknown' });
+  return {
+    base64: Buffer.from(await response.arrayBuffer()).toString('base64'),
+    extension: imageFileExtensionFromContentType(contentType)
+  };
 }
 
-export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetch, parentTrace?: DiagnosticTrace) {
+export async function saveImageUriToLibrary(
+  uri: string,
+  fetcher: Fetcher = fetch,
+  parentTrace?: DiagnosticTrace,
+  requestOptions: ImageSaveRequestOptions = {}
+) {
   const dataImage = dataImageFileFromUrl(uri);
   const trace = parentTrace || beginDiagnosticTrace('media', 'save-image', {
     channel: dataImage ? 'data' : isHttpOrHttpsUrl(uri) ? 'remote' : 'unsupported'
@@ -69,13 +127,17 @@ export async function saveImageUriToLibrary(uri: string, fetcher: Fetcher = fetc
     const shouldDeleteFile = baseDirectory === FileSystem.cacheDirectory;
     let savedUri = '';
     try {
-      const target = `${baseDirectory}${safeFileName('forum-image', dataImage?.extension || imageFileExtension(uri))}`;
-      savedUri = target;
+      const fallbackExtension = dataImage?.extension || imageFileExtension(uri);
+      savedUri = `${baseDirectory}${safeFileName('forum-image', fallbackExtension)}`;
       markDiagnosticStage(trace, 'persist', { state: 'temporary-file' });
       if (dataImage) {
-        await FileSystem.writeAsStringAsync(target, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
+        await FileSystem.writeAsStringAsync(savedUri, dataImage.base64, { encoding: FileSystem.EncodingType.Base64 });
       } else {
-        await downloadImageWithFetcher(uri, target, fetcher, trace);
+        const downloaded = await downloadImageWithFetcher(uri, fetcher, trace, requestOptions);
+        if (downloaded.extension && downloaded.extension !== fallbackExtension) {
+          savedUri = `${baseDirectory}${safeFileName('forum-image', downloaded.extension)}`;
+        }
+        await FileSystem.writeAsStringAsync(savedUri, downloaded.base64, { encoding: FileSystem.EncodingType.Base64 });
       }
       await assertReadableImageFile(savedUri);
       markDiagnosticStage(trace, 'parse', { state: 'file-readable' });

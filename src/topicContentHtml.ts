@@ -1,4 +1,4 @@
-import { elementText, parseHtml } from './localHtml';
+import { elementText, escapeQuotedHtmlTagDelimiters, parseHtml } from './localHtml';
 
 export const FORUM_REPLY_REFERENCE_TAG = 'forum-reply-reference';
 const FORUM_USER_MENTION_CLASS = 'forum-user-mention';
@@ -41,7 +41,7 @@ function mentionLabel(label: string) {
 }
 
 function markForumUserMentions(html: string) {
-  return html
+  return escapeQuotedHtmlTagDelimiters(html)
     .replace(/@<a\b([^>]*\bhref=(["'])[^"']+\2[^>]*)>([^<]+)<\/a>/gi, (match, attributes: string, _quote: string, label: string) => (
       isForumUserMentionHref(hrefAttribute(attributes))
         ? `<a${addHtmlClass(attributes, FORUM_USER_MENTION_CLASS)}>${mentionLabel(label)}</a>`

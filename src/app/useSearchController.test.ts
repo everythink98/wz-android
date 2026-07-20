@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
   useEffect: () => undefined,
+  useLayoutEffect: (effect: () => void) => effect(),
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value }),
   useState: <T,>(initial: T | (() => T)) => {
@@ -93,7 +94,8 @@ describe('search controller result helpers', () => {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
       linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
       nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
-      yaohuo: { source: 'yaohuo' as const, category: '0' }
+      yaohuo: { source: 'yaohuo' as const, category: '0' },
+      xiaoyinsi: { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi }
     };
 
     const retry = createNodeSeekRetrySearchOptions({
@@ -119,7 +121,8 @@ describe('search controller result helpers', () => {
       v2ex: { source: 'v2ex' as const, sort: 'relevance' as const, timeRange: 'all' as const, node: '', username: '', operator: 'or' as const },
       linuxdo: { ...DEFAULT_SEARCH_FILTERS.linuxdo },
       nodeseek: { source: 'nodeseek' as const, category: 'tech', sort: 'replyTime' as const },
-      yaohuo: { source: 'yaohuo' as const, category: '0' }
+      yaohuo: { source: 'yaohuo' as const, category: '0' },
+      xiaoyinsi: { ...DEFAULT_SEARCH_FILTERS.xiaoyinsi }
     };
 
     expect(createSearchMoreRequestSnapshot({
@@ -289,7 +292,43 @@ describe('search controller result helpers', () => {
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
 
     await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(recovery.isCurrent()).toBe(true);
     expect(searchTopics).toHaveBeenCalledTimes(3);
+    expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-LINUXDO-002 keeps a first-page search recovery current across another verification response', async () => {
+    const verificationFailure = {
+      items: [],
+      errors: {
+        linuxdo: {
+          kind: 'verification-required' as const,
+          message: 'linux.do 需要验证',
+          verificationRequired: true
+        }
+      },
+      hasMore: false,
+      nextPage: null
+    };
+    const searchTopics = vi.fn()
+      .mockResolvedValueOnce(verificationFailure)
+      .mockResolvedValueOnce(verificationFailure);
+    const showLinuxDoVerification = vi.fn();
+    const controller = useSearchController({
+      categories: [],
+      notify: vi.fn(),
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification,
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { searchTopics } as unknown as SourceGateway
+    });
+
+    await expect(controller.runSearch({ query: 'stable query', source: 'linuxdo' })).resolves.toBe('verification-required');
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+
+    await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(recovery.isCurrent()).toBe(true);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 });

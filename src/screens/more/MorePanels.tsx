@@ -23,7 +23,9 @@ import {
   NODESEEK_REPLAY_READY_MESSAGE
 } from '../../loginWebViewScripts';
 import { LOGIN_FORM_ADAPTERS } from '../../loginFormAdapters';
+import { shouldOpenLoginWebViewUrl } from '../../loginWebViewNavigation';
 import { LinuxDoLevelPanel } from './LinuxDoLevelPanel';
+import { useCommittedRef } from '../../app/useCommittedRef';
 
 const YAOHUO_LOGIN_URL = YAOHUO_URL + '/waplogin.aspx?siteid=1000';
 const YAOHUO_SESSION_URL = YAOHUO_URL + '/wapindex.aspx?sid=-2';
@@ -282,7 +284,10 @@ export function NodeSeekLoginPanel({
                 }
               }}
               onMessage={(event) => {
-                if (event.nativeEvent.data === NODESEEK_REPLAY_READY_MESSAGE) {
+                if (
+                  event.nativeEvent.data === NODESEEK_REPLAY_READY_MESSAGE
+                  && shouldOpenLoginWebViewUrl(event.nativeEvent.url, ['nodeseek.com'])
+                ) {
                   setWebViewReadyForReplay(true);
                   return;
                 }
@@ -609,8 +614,7 @@ function FontScaleSetting({
   const sliderRef = useRef<View>(null);
   const trackLeftRef = useRef(0);
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  const onChangeRef = useCommittedRef(onChange);
   const percent = Math.round(draftValue * 100);
   const thumbTranslateX = useMemo(() => Animated.multiply(progressValue, trackWidth), [progressValue, trackWidth]);
 

@@ -19,7 +19,8 @@ export type SearchSessionNoticeLightTone = AuthNoticeTone | 'success';
 const searchSessionSources: Array<{ source: Source; label: string }> = [
   { source: 'nodeseek', label: 'NodeSeek' },
   { source: 'linuxdo', label: 'linux.do' },
-  { source: 'yaohuo', label: '妖火' }
+  { source: 'yaohuo', label: '妖火' },
+  { source: 'xiaoyinsi', label: '小隐寺' }
 ];
 
 function notice(kind: AuthNoticeKind, message: string, tone: AuthNoticeTone): AuthNotice {
@@ -31,6 +32,18 @@ export function authNoticeForSource(source: FeedSource, sessions: SiteSessionVie
     return null;
   }
   const session = sessions[source];
+  if (source === 'xiaoyinsi') {
+    if (session.status === 'logged-in') {
+      return notice('logged-in', '小隐寺已授权。', 'neutral');
+    }
+    if (session.status === 'authorizing') {
+      return notice('verification-required', '正在等待小隐寺授权。', 'warning');
+    }
+    if (session.status === 'expired') {
+      return notice('login-expired', '小隐寺授权已失效，请重新授权。', 'danger');
+    }
+    return notice('anonymous', surface === 'action' ? '请先授权小隐寺后再互动。' : '匿名可阅读，授权后才能互动。', 'neutral');
+  }
   if (source === 'nodeseek') {
     if (session.status === 'logged-in') {
       return notice('logged-in', surface === 'search' ? '已登录搜索。' : 'NodeSeek 已登录。', 'neutral');

@@ -62,10 +62,30 @@ export async function saveCleanReaderData(clean: ReaderData, previousJson?: stri
   const json = cleanJson;
   assertBackupJsonSize(json);
   if (json !== previousJson) {
-    await Promise.all([
-      AsyncStorage.setItem(READER_DATA_STORAGE_KEY, json),
-      saveReaderSettings(clean.settings)
-    ]);
+    const previousSettings = await AsyncStorage.getItem(READER_SETTINGS_STORAGE_KEY);
+    await AsyncStorage.setItem(READER_DATA_STORAGE_KEY, json);
+    try {
+      await saveReaderSettings(clean.settings);
+    } catch (error) {
+      const rollbackResults = await Promise.allSettled([
+        previousJson == null
+          ? AsyncStorage.removeItem(READER_DATA_STORAGE_KEY)
+          : AsyncStorage.setItem(READER_DATA_STORAGE_KEY, previousJson),
+        previousSettings == null
+          ? AsyncStorage.removeItem(READER_SETTINGS_STORAGE_KEY)
+          : AsyncStorage.setItem(READER_SETTINGS_STORAGE_KEY, previousSettings)
+      ]);
+      const rollbackErrors = rollbackResults.flatMap((result) => (
+        result.status === 'rejected' ? [result.reason] : []
+      ));
+      if (rollbackErrors.length) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          '本机资料保存失败，且无法恢复先前快照。'
+        );
+      }
+      throw error;
+    }
   }
   return clean;
 }

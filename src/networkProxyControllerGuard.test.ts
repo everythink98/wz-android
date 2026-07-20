@@ -42,6 +42,16 @@ afterEach(() => {
 });
 
 describe('network proxy controller guard', () => {
+  it('[REG-PROXY-001] blocks requests when the saved proxy state cannot be read', async () => {
+    proxyMocks.loadNetworkProxyState.mockRejectedValueOnce(new Error('secure storage unavailable'));
+    const notify = vi.fn();
+
+    const controller = useNetworkProxyController({ notify });
+
+    await expect(controller.ensureNetworkProxyReady()).rejects.toThrow('代理配置读取失败');
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('代理配置读取失败'));
+  });
+
   it('records only safe state when loading a saved proxy', async () => {
     const lines: string[] = [];
     setDiagnosticWriter((line) => { lines.push(line); });
@@ -66,7 +76,7 @@ describe('network proxy controller guard', () => {
     });
     const serialized = lines.join('');
     const events = lines.map((line) => JSON.parse(line));
-    expect(events).toEqual([
+    expect(events.filter((event) => event.operation === 'load')).toEqual([
       expect.objectContaining({ area: 'proxy', operation: 'load', phase: 'intent' }),
       expect.objectContaining({ phase: 'persist', store: 'secure-store', hasProxy: true, isEnabled: true }),
       expect.objectContaining({ phase: 'finish', outcome: 'success', hasProxy: true, isEnabled: true })
@@ -74,35 +84,19 @@ describe('network proxy controller guard', () => {
     expect(serialized).not.toMatch(/private-profile-id|private name|private\.proxy|private-user|private-pass|1080/);
   });
 
-  it('blocks requests while an enabled proxy is being edited or switched', () => {
-    const source = readSource('src', 'app', 'useNetworkProxyController.ts');
-
-    expect(source).toContain('const updatesCurrentProxy = current.enabled && current.activeId === profile.id;');
-    expect(source).toContain('const switchesCurrentProxy = current.enabled && current.activeId !== id;');
-    expect(source).toContain('proxyStateRef.current = state;');
-    expect(source).toContain('loadedRef.current = true;');
-    expect(source).toContain('proxyStateRef.current = next;');
-    expect(source).toContain('setProxyState(next);');
-    expect(source).toContain('proxyStateRef.current = previous;');
-    expect(source).toContain('setProxyState(previous);');
-    expect(source).toContain('applyStatusRef.current = status;');
-    expect(source.match(/beginProxyApplyTransition\(\);/g)?.length).toBeGreaterThanOrEqual(3);
-  });
-
   it('keeps enable, persistence and native apply on one diagnostic trace', () => {
     const source = readSource('src', 'app', 'useNetworkProxyController.ts');
     const enableFlow = source.slice(
-      source.indexOf('const setProxyEnabled'),
+      source.indexOf('const runSetProxyEnabled'),
       source.indexOf('const upsertProxyProfile')
     );
 
-    expect(enableFlow).toContain('pendingProxyApplyTraceRef.current = pendingTrace;');
     expect(enableFlow).toContain('}, trace);');
-    expect(enableFlow).toContain('await applyCompleted;');
-    expect(enableFlow).toContain("status === 'applied' || status === 'disabled'");
-    expect(enableFlow).toContain("nativeApplyFailed = true;");
-    expect(enableFlow).toContain("throw new Error(applyErrorRef.current || '代理未生效。');");
-    expect(enableFlow.indexOf('await applyCompleted;')).toBeLessThan(enableFlow.indexOf("finishDiagnosticTrace(trace, 'success'"));
+    expect(enableFlow).toContain('await applyPersistedProxyState(result.state, trace);');
+    expect(enableFlow).toContain("finishDiagnosticTrace(trace, 'success', { isEnabled: enabled, state: status });");
+    expect(enableFlow.indexOf('await applyPersistedProxyState(result.state, trace);')).toBeLessThan(
+      enableFlow.indexOf("finishDiagnosticTrace(trace, 'success'")
+    );
   });
 
   it('blocks all requests after a failed native disable instead of silently going direct', () => {

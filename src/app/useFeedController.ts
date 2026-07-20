@@ -8,7 +8,6 @@ import {
   mergeCategories,
   mergeFeedResponses,
   nextFeedPageState,
-  shouldFetchAggregatedBaseFeed,
   shouldReuseFeedStateForRequest,
   type ReadingFilter
 } from '../feedLogic';
@@ -30,11 +29,13 @@ import {
   startAbortableRequest
 } from '../appUtils';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
+import { isFeedFilterSource, sourceValues } from '../sourceCatalog';
+import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { formatSourceErrorMessages, linuxDoVerificationNavigationMessage, nodeSeekVerificationNavigationMessage, sourceErrorFromUnknown, yaohuoErrorRequiresLoginPanel } from '../sourceErrors';
-import type { Category, FeedFilterState, FeedSource, FeedResponse, LinuxDoFeedFilter, SourceErrorInfo, SourceFeedFilter, SourceErrors, Topic } from '../types';
+import type { Category, FeedFilterState, FeedSource, FeedResponse, SourceErrorInfo, SourceFeedFilter, SourceErrors, Topic } from '../types';
+import { useCommitRefValue, useCommittedRef } from './useCommittedRef';
 
 type FeedSourceState = {
-  baseFeedRetryPending?: boolean;
   hasMore: boolean;
   items: Topic[];
   loadMoreFailureSignal: number;
@@ -57,44 +58,21 @@ function createFeedSourceState(): FeedSourceState {
 }
 
 function createFeedStates(): Record<FeedSource, FeedSourceState> {
-  return {
-    all: createFeedSourceState(),
-    v2ex: createFeedSourceState(),
-    linuxdo: createFeedSourceState(),
-    nodeseek: createFeedSourceState(),
-    yaohuo: createFeedSourceState()
-  };
+  return Object.fromEntries(['all', ...sourceValues].map((source) => [
+    source,
+    createFeedSourceState()
+  ])) as Record<FeedSource, FeedSourceState>;
 }
 
 function feedFilterForRequest(source: FeedSource, category: string, filters: FeedFilterState): SourceFeedFilter | undefined {
   if (!shouldUseFeedFilter(source, category)) {
     return undefined;
   }
-  if (source === 'linuxdo') {
-    return filters.linuxdo;
-  }
-  if (source === 'nodeseek') {
-    return filters.nodeseek;
-  }
-  if (source === 'v2ex') {
-    return filters.v2ex;
-  }
-  return undefined;
+  return source !== 'all' && isFeedFilterSource(source) ? filters[source] : undefined;
 }
 
 export function shouldWaitForReaderDataBeforeFeed(source: FeedSource, readingFilter: ReadingFilter) {
   return shouldUseReadingFilter(source) && readingFilter !== 'all';
-}
-
-export function mergedFeedResponseAfterSplitFetch(responses: FeedResponse[], errors: SourceErrors, isLoadMore: boolean) {
-  if (!responses.length || (isLoadMore && Object.keys(errors).length > 0)) {
-    return null;
-  }
-  let merged: FeedResponse | null = null;
-  for (const response of responses) {
-    merged = merged ? mergeFeedResponses(merged, response) : response;
-  }
-  return merged;
 }
 
 function diagnosticReasonForSourceError(error?: SourceErrorInfo): DiagnosticReason {
@@ -131,18 +109,12 @@ export function useFeedController({
   const [feedBusy, setFeedBusy] = useState(false);
   const [feedSource, setFeedSource] = useState<FeedSource>('all');
   const [feedStates, setFeedStates] = useState<Record<FeedSource, FeedSourceState>>(() => createFeedStates());
-  const feedStatesRef = useRef(feedStates);
-  if (feedStatesRef.current !== feedStates) {
-    feedStatesRef.current = feedStates;
-  }
+  const feedStatesRef = useCommittedRef(feedStates);
   const [readingFilter, setReadingFilter] = useState<ReadingFilter>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [feedFilters, setFeedFilters] = useState<FeedFilterState>(defaultFeedFilters);
   const [categories, setCategories] = useState<Category[]>([]);
-  const categoriesRef = useRef(categories);
-  if (categoriesRef.current !== categories) {
-    categoriesRef.current = categories;
-  }
+  const categoriesRef = useCommittedRef(categories);
 
   const activeFeedState = feedStates[feedSource];
   const feedAllowsRemotePagination = shouldAllowFeedRemotePagination(feedSource, readingFilter);
@@ -178,20 +150,22 @@ export function useFeedController({
         });
         return;
       }
-      if (source !== 'all' && !data.items.length) {
+      const errors = Object.entries(data.errors || {});
+      if (source !== 'all' && !data.items.length && !errors.length) {
         finishTrace('noop', { source, reason: 'parse_empty' });
         return;
       }
-      const currentCategories = categoriesRef.current;
-      const nextCategories = source === 'all' ? mergeCategories(data.items, []) : mergeCategories(currentCategories, data.items);
-      markDiagnosticStage(trace, 'apply', {
-        source,
-        beforeCount: currentCategories.length,
-        afterCount: nextCategories.length,
-        itemCount: data.items.length
-      });
-      setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
-      const errors = Object.entries(data.errors || {});
+      if (data.items.length || source === 'all') {
+        const currentCategories = categoriesRef.current;
+        const nextCategories = source === 'all' ? mergeCategories(data.items, []) : mergeCategories(currentCategories, data.items);
+        markDiagnosticStage(trace, 'apply', {
+          source,
+          beforeCount: currentCategories.length,
+          afterCount: nextCategories.length,
+          itemCount: data.items.length
+        });
+        setCategories((current) => source === 'all' ? mergeCategories(data.items, []) : mergeCategories(current, data.items));
+      }
       if (errors.length) {
         const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
         const outcome = data.items.length ? 'partial' : reason === 'verification_required' || reason === 'login_required' || reason === 'permission_denied' ? 'blocked' : 'failure';
@@ -303,14 +277,20 @@ export function useFeedController({
     const requestId = ++feedRequestIdRef.current;
     const requestOwner = startOwnedRequest(feedRequestOwnerRef, `feed:${requestKey}:${page}:${cursor || ''}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentFeedRequest = () => isCurrentOwnedRequest(requestOwner, feedRequestOwnerRef) && requestId === feedRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentFeedRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, feedRequestOwnerRef)
+      && recoveryRequestId === feedRequestIdRef.current
+    );
     const linuxDoRecovery = (): LinuxDoReadRecovery => ({
       key: `feed:${requestKey}:${page}:${cursor || ''}`,
-      isCurrent: isCurrentFeedRequest,
+      isCurrent: isCurrentFeedRecovery,
       resume: async () => {
-        if (!isCurrentFeedRequest()) {
+        if (!isCurrentFeedRecovery()) {
           return 'stale';
         }
-        return await loadFeedRef.current?.({
+        const resumedRequest = loadFeedRef.current?.({
           page,
           cursor,
           reset,
@@ -321,7 +301,13 @@ export function useFeedController({
           clearItems: false,
           successMessage,
           suppressLinuxDoVerification: true
-        }) || 'stale';
+        });
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = feedRequestOwnerRef.current;
+        recoveryRequestId = feedRequestIdRef.current;
+        return await resumedRequest;
       }
     });
     feedSourceRequestIdRef.current[requestSource] = requestId;
@@ -390,7 +376,16 @@ export function useFeedController({
           };
         });
       };
-      const hasYaohuoCredential = source === 'all' ? await sourceGateway.hasYaohuoCredential() : false;
+      const data = await sourceGateway.getFeed({
+        source,
+        page,
+        cursor,
+        limit: 30,
+        category: category || undefined,
+        feedFilter: requestFeedFilter,
+        nocache,
+        signal: controller.signal
+      }, { isCurrent: isCurrentFeedRequest, trace });
       if (!isCurrentFeedRequest()) {
         finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
           source: requestSource,
@@ -398,115 +393,34 @@ export function useFeedController({
         });
         return 'stale';
       }
-      let finalErrors: SourceErrors = {};
-      if (source === 'all' && hasYaohuoCredential) {
-        const shouldFetchBaseFeed = shouldFetchAggregatedBaseFeed({
-          page,
-          cursor,
-          hasYaohuoCookie: hasYaohuoCredential,
-          retryWithoutCursor: Boolean(requestBaseState.baseFeedRetryPending)
-        });
-        const basePromise = shouldFetchBaseFeed
-          ? sourceGateway.getFeed({
-            source,
-            page,
-            cursor,
-            limit: 30,
-          category: category || undefined,
-          feedFilter: requestFeedFilter,
-            nocache,
-            signal: controller.signal
-          }, { isCurrent: isCurrentFeedRequest, trace })
-          : Promise.resolve({ items: [], errors: {}, hasMore: false, nextPage: null });
-        const yaohuoPromise = sourceGateway.getFeed({
-          source: 'yaohuo',
-          page,
-          limit: 30,
-          signal: controller.signal
-        }, { isCurrent: isCurrentFeedRequest, trace });
-        const [baseResult, yaohuoResult] = await Promise.allSettled([basePromise, yaohuoPromise]);
-        if (baseResult.status === 'rejected' && isCanceledRequest(baseResult.reason)) {
-          throw baseResult.reason;
-        }
-        if (yaohuoResult.status === 'rejected' && isCanceledRequest(yaohuoResult.reason)) {
-          throw yaohuoResult.reason;
-        }
-        if (baseResult.status === 'rejected' && yaohuoResult.status === 'rejected') {
-          throw baseResult.reason;
-        }
-        if (!isCurrentFeedRequest()) {
-          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-            source: requestSource,
-            reason: controller.signal.aborted ? 'canceled' : 'superseded'
-          });
-          return 'stale';
-        }
-        setFeedStates((current) => ({
-          ...current,
-          [requestSource]: {
-            ...current[requestSource],
-            baseFeedRetryPending: baseResult.status === 'rejected' && yaohuoResult.status === 'fulfilled'
-          }
-        }));
-        finalErrors = {
-          ...(baseResult.status === 'fulfilled' ? (baseResult.value.errors || {}) : { all: sourceErrorFromUnknown('all', baseResult.reason) }),
-          ...(yaohuoResult.status === 'fulfilled' ? (yaohuoResult.value.errors || {}) : { yaohuo: sourceErrorFromUnknown('yaohuo', yaohuoResult.reason) })
-        };
-        const splitResponse = mergedFeedResponseAfterSplitFetch([
-          ...(baseResult.status === 'fulfilled' ? [baseResult.value] : []),
-          ...(yaohuoResult.status === 'fulfilled' ? [yaohuoResult.value] : [])
-        ], finalErrors, isLoadMore);
-        if (splitResponse) {
-          applyFeedResponse(splitResponse);
-        }
-      } else if (source === 'yaohuo') {
-        const data = await sourceGateway.getFeed({
-          source: 'yaohuo',
-          page,
-          limit: 30,
-          category: category || undefined,
-          signal: controller.signal
-        }, { isCurrent: isCurrentFeedRequest, trace });
-        if (!isCurrentFeedRequest()) {
-          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-            source: requestSource,
-            reason: controller.signal.aborted ? 'canceled' : 'superseded'
-          });
-          return 'stale';
-        }
-        applyFeedResponse(data);
-        finalErrors = data.errors || {};
-      } else {
-        const data = await sourceGateway.getFeed({
-          source,
-          page,
-          cursor,
-          limit: 30,
-          category: category || undefined,
-          feedFilter: requestFeedFilter,
-          linuxDoFilter: requestSource === 'linuxdo' ? requestFeedFilter as LinuxDoFeedFilter | undefined : undefined,
-          nocache,
-          signal: controller.signal
-        }, { isCurrent: isCurrentFeedRequest, trace });
-        if (!isCurrentFeedRequest()) {
-          finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-            source: requestSource,
-            reason: controller.signal.aborted ? 'canceled' : 'superseded'
-          });
-          return 'stale';
-        }
-        applyFeedResponse(data);
-        finalErrors = data.errors || {};
-      }
-      if (!isCurrentFeedRequest()) {
-        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
-          source: requestSource,
-          reason: controller.signal.aborted ? 'canceled' : 'superseded'
-        });
-        return 'stale';
-      }
+      const finalErrors: SourceErrors = data.errors || {};
       const errors = Object.entries(finalErrors);
-      if (errors.length) {
+      const diagnosticSummary = sourceDiagnosticSummary(data);
+      const parseEmpty = diagnosticSummary?.isParseEmpty === true;
+      const parseEmptyFailure = parseEmpty && (
+        isLoadMore || Number(diagnosticSummary.validCount || 0) === 0
+      );
+      const canApplyPartialAggregate = requestSource === 'all' && !isLoadMore && data.items.length > 0;
+      if ((!errors.length || canApplyPartialAggregate) && !parseEmptyFailure) {
+        applyFeedResponse(data);
+      }
+      if (!isCurrentFeedRequest()) {
+        finishTrace(controller.signal.aborted ? 'canceled' : 'stale', {
+          source: requestSource,
+          reason: controller.signal.aborted ? 'canceled' : 'superseded'
+        });
+        return 'stale';
+      }
+      if (parseEmptyFailure && !errors.length) {
+        if (isLoadMore) {
+          markFeedLoadMoreFailed(requestSource);
+        }
+        notify(isLoadMore
+          ? `加载下一页失败：${requestSource === 'all' ? '部分来源' : sourceLabel(requestSource)}返回内容无法解析，请重试。`
+          : `${sourceLabel(requestSource)} 返回内容无法解析，请重试。`);
+        finishTrace('failure', { source: requestSource, reason: 'parse_empty' });
+        return 'failed';
+      } else if (errors.length) {
         const reason = diagnosticReasonForSourceError(errors[0]?.[1]);
         const outcome = appliedFeedResponse
           ? 'partial'
@@ -544,6 +458,7 @@ export function useFeedController({
           notify(message);
         }
         finishTrace(outcome, { source: requestSource, reason, partialErrorCount: errors.length });
+        return requestSource === 'all' && appliedFeedResponse ? 'completed' : 'failed';
       } else if (successMessage) {
         notify(successMessage);
       }
@@ -599,7 +514,7 @@ export function useFeedController({
         }
         notify(notice);
         finishTrace(outcome, { source: requestSource, reason });
-        return 'completed';
+        return 'failed';
       }
     } finally {
       if (!traceFinished) {
@@ -637,7 +552,7 @@ export function useFeedController({
     sourceGateway
   ]);
 
-  loadFeedRef.current = loadFeed;
+  useCommitRefValue(loadFeedRef, loadFeed);
 
   useEffect(() => {
     if (!readerDataLoaded && shouldWaitForReaderDataBeforeFeed(feedSource, readingFilter)) {
@@ -683,16 +598,9 @@ export function useFeedController({
 
   const setFeedFilter = useCallback((filter: SourceFeedFilter) => {
     setFeedFilters((current) => {
-      if (feedSource === 'linuxdo') {
-        return { ...current, linuxdo: filter as LinuxDoFeedFilter };
-      }
-      if (feedSource === 'nodeseek') {
-        return { ...current, nodeseek: filter as FeedFilterState['nodeseek'] };
-      }
-      if (feedSource === 'v2ex') {
-        return { ...current, v2ex: filter as FeedFilterState['v2ex'] };
-      }
-      return current;
+      return feedSource !== 'all' && isFeedFilterSource(feedSource)
+        ? { ...current, [feedSource]: filter } as FeedFilterState
+        : current;
     });
   }, [feedSource]);
 

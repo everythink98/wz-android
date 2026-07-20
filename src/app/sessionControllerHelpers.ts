@@ -18,7 +18,7 @@ export type CredentialLoadOptions = {
   captureNodeSeekUserId?: (userId: number | null) => void;
   diagnosticTrace?: DiagnosticTrace;
 };
-export type CredentialClearOptions = { generation?: number; force?: boolean };
+export type CredentialClearOptions = { generation?: number; force?: boolean; expiredMessage?: string };
 export type CredentialWriteGate = {
   generation: number;
   queue: Promise<void>;
@@ -178,6 +178,7 @@ function browserFetchRequestView(request: BrowserFetchQueueRequest): BrowserFetc
 }
 
 export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>({
+  canStart,
   currentRef,
   queueRef,
   setActiveRequest,
@@ -185,6 +186,7 @@ export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>
   timeoutMessage,
   rejectCurrent
 }: {
+  canStart?: (request: T) => boolean;
   currentRef: MutableRef<T | null>;
   queueRef: MutableRef<T[]>;
   setActiveRequest: (request: BrowserFetchRequestView | null) => void;
@@ -202,6 +204,10 @@ export function startNextBrowserFetchRequest<T extends BrowserFetchQueueRequest>
       continue;
     }
     if (candidate.abortSignal?.aborted) {
+      settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
+      continue;
+    }
+    if (canStart && !canStart(candidate)) {
       settleBrowserFetchRequestOnce(candidate, () => candidate.reject(new Error('请求已取消')));
       continue;
     }
@@ -355,6 +361,18 @@ export function createCredentialWriteGate(): CredentialWriteGate {
 
 export function isCredentialWriteCurrent(gate: CredentialWriteGate, generation: number) {
   return gate.generation === generation;
+}
+
+export function nodeSeekMediaCookieHeaderAfterCredentialLoad({
+  currentHeader,
+  loadedHeader,
+  generationIsCurrent
+}: {
+  currentHeader: string;
+  loadedHeader?: string;
+  generationIsCurrent: boolean;
+}) {
+  return generationIsCurrent ? loadedHeader || '' : currentHeader;
 }
 
 export function advanceCredentialWriteGeneration(gate: CredentialWriteGate) {

@@ -263,6 +263,15 @@ describe('Android HTML image preview helpers', () => {
     expect(result).not.toContain('<img class="emoji"');
   });
 
+  it('[REG-XIAOYINSI-017] keeps 小隐寺 topic and reply emoji on the inline image path', () => {
+    const html = '<p>哈喽，各位<img src="https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15" title=":waving_hand:" class="emoji" alt=":waving_hand:" width="20" height="20"></p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-image src="https://forum.xiaoyinsi.com/images/emoji/twitter/waving_hand.png?v=15"');
+    expect(result).toContain('class="emoji"');
+    expect(result).not.toContain('<img');
+  });
+
   it('renders Yaohuo face images through the inline image path', () => {
     const html = '<p>红包可能不一样 <img src="https://yaohuo.me/bbs/face/淡定.gif" class="ubbimg" alt="淡定"></p>';
     const result = flowInlineImagesInMixedParagraphs(html);
@@ -316,6 +325,14 @@ describe('Android HTML image preview helpers', () => {
     expect(result).not.toContain('<forum-inline-image class="sticker"');
     expect(result).not.toContain('<forum-sticker-row>');
     expect(result).not.toContain('<img class="sticker"');
+  });
+
+  it('REG-TOPIC-011 keeps quoted greater-than signs inside sticker attributes', () => {
+    const html = '<p>正文 <img class="sticker" title="1 > 0" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> 结尾</p>';
+    const result = flowInlineImagesInMixedParagraphs(html);
+
+    expect(result).toContain('<forum-inline-media-line>正文 <forum-sticker class="sticker" title="1 &gt; 0" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01">ac01</forum-sticker> 结尾</forum-inline-media-line>');
+    expect(result).not.toContain('0" src="https://www.nodeseek.com/static/image/sticker/ac/01.png" alt="ac01"> 结尾');
   });
 
   it('keeps small no-dimension NodeSeek xhj stickers inline with surrounding text', () => {

@@ -75,8 +75,37 @@ export function decodeHtml(value: unknown) {
   });
 }
 
+export function escapeQuotedHtmlTagDelimiters(value: unknown) {
+  let inTag = false;
+  let quote = '';
+  let result = '';
+  for (const char of String(value || '')) {
+    if (!inTag) {
+      inTag = char === '<';
+      result += char;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) {
+        quote = '';
+        result += char;
+      } else {
+        result += char === '>' ? '&gt;' : char;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '>') {
+      inTag = false;
+    }
+    result += char;
+  }
+  return result;
+}
+
 export function textContentFromHtml(value: unknown) {
-  return decodeHtml(String(value || '')
+  return decodeHtml(escapeQuotedHtmlTagDelimiters(value)
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<br\s*\/?>/gi, '\n')

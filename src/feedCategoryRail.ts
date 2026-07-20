@@ -1,17 +1,25 @@
-import type { Category, FeedFilterSource, FeedFilterState, FeedSource, LinuxDoFeedFilter, NodeSeekFeedFilter, Source, SourceFeedFilter, V2exFeedFilter } from './types';
+import { sourceCatalog } from './sourceCatalog';
+import type {
+  Category,
+  DiscourseFeedFilter,
+  FeedFilterSource,
+  FeedFilterState,
+  FeedSource,
+  NodeSeekFeedFilter,
+  Source,
+  SourceFeedFilter,
+  V2exFeedFilter
+} from './types';
 import type { ReadingFilter } from './feedLogic';
+
+const registeredSources = Object.keys(sourceCatalog) as Source[];
 
 export const feedSourceItems: Array<{ value: FeedSource; label: string }> = [
   { value: 'all', label: '全部' },
-  { value: 'v2ex', label: 'V2EX' },
-  { value: 'linuxdo', label: 'linux.do' },
-  { value: 'nodeseek', label: 'NodeSeek' },
-  { value: 'yaohuo', label: '妖火' }
+  ...registeredSources.map((source) => ({ value: source, label: sourceCatalog[source].label }))
 ];
 
-export const feedSources: Source[] = feedSourceItems
-  .filter((item) => item.value !== 'all')
-  .map((item) => item.value as Source);
+export const feedSources: Source[] = [...registeredSources];
 
 export const feedReadingFilterItems = [
   { value: 'all', label: '全部' },
@@ -20,16 +28,7 @@ export const feedReadingFilterItems = [
   { value: 'favorite', label: '收藏' }
 ];
 
-export const defaultLinuxDoFeedFilter: LinuxDoFeedFilter = 'latest';
-export const defaultNodeSeekFeedFilter: NodeSeekFeedFilter = 'postTime';
-export const defaultV2exFeedFilter: V2exFeedFilter = 'all';
-export const defaultFeedFilters: FeedFilterState = {
-  linuxdo: defaultLinuxDoFeedFilter,
-  nodeseek: defaultNodeSeekFeedFilter,
-  v2ex: defaultV2exFeedFilter
-};
-
-export const feedLinuxDoFilterItems: Array<{ value: LinuxDoFeedFilter; label: string }> = [
+export const feedDiscourseFilterItems: Array<{ value: DiscourseFeedFilter; label: string }> = [
   { value: 'latest', label: '最新' },
   { value: 'hot', label: '热门' },
   { value: 'new-all', label: '新·所有' },
@@ -48,38 +47,82 @@ export const feedV2exFilterItems: Array<{ value: V2exFeedFilter; label: string }
   { value: 'hot', label: '最热' }
 ];
 
-export const feedFilterMenuGroups: Record<FeedFilterSource, Array<{ title?: string; items: Array<{ value: SourceFeedFilter; label: string }> }>> = {
-  linuxdo: [
-    {
-      items: [
-        { value: 'latest', label: '最新' },
-        { value: 'hot', label: '热门' }
-      ]
-    },
-    {
-      title: '新',
-      items: [
-        { value: 'new-all', label: '所有' },
-        { value: 'new-topics', label: '话题' },
-        { value: 'new-replies', label: '回复' }
-      ]
-    }
-  ],
-  nodeseek: [{ items: feedNodeSeekFilterItems }],
-  v2ex: [{ items: feedV2exFilterItems }]
+function defaultFeedFilter(source: FeedFilterSource): SourceFeedFilter {
+  switch (sourceCatalog[source].feedFilter) {
+    case 'discourse':
+      return 'latest';
+    case 'nodeseek':
+      return 'postTime';
+    case 'v2ex':
+      return 'all';
+  }
+}
+
+export const defaultFeedFilters = Object.fromEntries(
+  registeredSources
+    .filter((source): source is FeedFilterSource => sourceCatalog[source].feedFilter !== 'none')
+    .map((source) => [source, defaultFeedFilter(source)])
+) as FeedFilterState;
+
+type FeedFilterMenuGroup = {
+  title?: string;
+  items: Array<{ value: SourceFeedFilter; label: string }>;
 };
 
+const discourseFilterMenuGroups: FeedFilterMenuGroup[] = [
+  {
+    items: [
+      { value: 'latest', label: '最新' },
+      { value: 'hot', label: '热门' }
+    ]
+  },
+  {
+    title: '新',
+    items: [
+      { value: 'new-all', label: '所有' },
+      { value: 'new-topics', label: '话题' },
+      { value: 'new-replies', label: '回复' }
+    ]
+  }
+];
+
+function feedFilterGroups(source: FeedFilterSource): FeedFilterMenuGroup[] {
+  switch (sourceCatalog[source].feedFilter) {
+    case 'discourse':
+      return discourseFilterMenuGroups;
+    case 'nodeseek':
+      return [{ items: feedNodeSeekFilterItems }];
+    case 'v2ex':
+      return [{ items: feedV2exFilterItems }];
+  }
+}
+
+export const feedFilterMenuGroups = Object.fromEntries(
+  registeredSources
+    .filter((source): source is FeedFilterSource => sourceCatalog[source].feedFilter !== 'none')
+    .map((source) => [source, feedFilterGroups(source)])
+) as Record<FeedFilterSource, FeedFilterMenuGroup[]>;
+
+export function feedFilterMenuGroupsFor(source: FeedSource) {
+  return source !== 'all' && sourceCatalog[source].feedFilter !== 'none'
+    ? feedFilterMenuGroups[source as FeedFilterSource]
+    : [];
+}
+
 export function feedFilterItems(source: FeedSource): Array<{ value: SourceFeedFilter; label: string }> {
-  if (source === 'linuxdo') {
-    return feedLinuxDoFilterItems;
+  if (source === 'all') {
+    return [];
   }
-  if (source === 'nodeseek') {
-    return feedNodeSeekFilterItems;
+  switch (sourceCatalog[source].feedFilter) {
+    case 'discourse':
+      return feedDiscourseFilterItems;
+    case 'nodeseek':
+      return feedNodeSeekFilterItems;
+    case 'v2ex':
+      return feedV2exFilterItems;
+    case 'none':
+      return [];
   }
-  if (source === 'v2ex') {
-    return feedV2exFilterItems;
-  }
-  return [];
 }
 
 export function feedFilterLabel(source: FeedSource, value?: SourceFeedFilter) {
@@ -88,7 +131,12 @@ export function feedFilterLabel(source: FeedSource, value?: SourceFeedFilter) {
 }
 
 export function shouldUseFeedFilter(source: FeedSource, category = '') {
-  return source === 'linuxdo' || ((source === 'nodeseek' || source === 'v2ex') && !category);
+  if (source === 'all') {
+    return false;
+  }
+  const filterKind = sourceCatalog[source].feedFilter;
+  return filterKind === 'discourse'
+    || ((filterKind === 'nodeseek' || filterKind === 'v2ex') && !category);
 }
 
 export function shouldUseReadingFilter(source: FeedSource) {

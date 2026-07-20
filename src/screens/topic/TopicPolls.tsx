@@ -2,6 +2,7 @@ import { Pressable, Text, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { CheckCircle, CheckSquare, Circle, Square, Users } from 'lucide-react-native';
 import type { Source, TopicPoll } from '../../types';
+import { isDiscourseSource, sourceSupportsTopicAction } from '../../sourceCatalog';
 import { pollParticipationLabel, pollTotalVotes } from '../../topicPollDisplay';
 import { androidRipple, createStyles, type ReaderTheme } from '../../theme';
 import { AppButton, triggerPressFeedback } from '../../components/AppControls';
@@ -70,7 +71,8 @@ export function TopicPolls({
   if (!polls.length) {
     return null;
   }
-  const canVotePollSource = source === 'nodeseek' || source === 'linuxdo' || source === 'yaohuo';
+  const canVotePollSource = sourceSupportsTopicAction(source, 'vote');
+  const showPollSubmit = canVotePollSource;
   return (
     <View style={styles.pollStack}>
       {polls.map((poll, index) => {
@@ -79,9 +81,9 @@ export function TopicPolls({
         const totalVotes = pollTotalVotes(poll);
         const selectedOptionIds = pollSelections[pollKey] || poll.options.filter((option) => option.selected).map((option) => option.id);
         const selectedSet = new Set(selectedOptionIds);
-        const linuxDoPollReady = source !== 'linuxdo' || Boolean(poll.postId && poll.name);
+        const discoursePollReady = !isDiscourseSource(source) || Boolean(poll.postId && poll.name);
         const pollReadonly = Boolean(poll.readonly || !canVotePollSource);
-        const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !linuxDoPollReady);
+        const pollOptionDisabled = actionBusy || pollReadonly || Boolean(poll.closed || poll.voted || !canWritePollSource || !discoursePollReady);
         const selectionRangeStatus = pollSelectionRangeStatus(poll, selectedOptionIds.length);
         const pollStatus = poll.closed
           ? '已关闭'
@@ -91,7 +93,7 @@ export function TopicPolls({
               ? '只读结果'
               : !canWritePollSource
                 ? '未登录'
-                : !linuxDoPollReady
+                : !discoursePollReady
                   ? '信息不完整'
                   : '可投票';
         const pollMetaItems = [
@@ -108,7 +110,7 @@ export function TopicPolls({
               ? '只读结果'
               : !canWritePollSource
                 ? '登录后投票'
-                : !linuxDoPollReady
+                : !discoursePollReady
                   ? '刷新后投票'
                   : selectionRangeStatus || '提交投票';
         const submitDisabled = pollOptionDisabled || !selectedOptionIds.length || Boolean(selectionRangeStatus);
@@ -171,7 +173,7 @@ export function TopicPolls({
                 ))}
                 <Text style={styles.pollStatePill}>{pollStatus}</Text>
               </View>
-              {canVotePollSource ? (
+              {showPollSubmit ? (
                 <View style={styles.pollSubmitRow}>
                   <AppButton
                     compact

@@ -46,4 +46,60 @@ describe('cookie cleanup helpers', () => {
     expect(store.setFromResponse).toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^sid=;/));
     expect(store.setFromResponse).not.toHaveBeenCalledWith('https://www.nodeseek.com', expect.stringMatching(/^cf_clearance=;/));
   });
+
+  it('[REG-ACCOUNT-015] clears cookies from reachable urls even when another cookie store read fails', async () => {
+    const store = {
+      get: vi.fn(async (url: string) => {
+        if (url.includes('www.')) {
+          throw new Error('primary cookie store unavailable');
+        }
+        return { session: { name: 'session', value: 'delete' } };
+      }),
+      setFromResponse: vi.fn(async () => true),
+      flush: vi.fn(async () => undefined)
+    };
+
+    await expect(clearCookieUrls(store, [
+      'https://www.nodeseek.com',
+      'https://nodeseek.com'
+    ])).rejects.toThrow('primary cookie store unavailable');
+
+    expect(store.setFromResponse).toHaveBeenCalledWith(
+      'https://nodeseek.com',
+      expect.stringMatching(/^session=;/)
+    );
+    expect(store.flush).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-ACCOUNT-015] flushes successful cookie deletions before reporting another deletion failure', async () => {
+    const store = {
+      get: vi.fn(async () => ({
+        session: { name: 'session', value: 'delete' },
+        user: { name: 'user', value: 'delete' }
+      })),
+      setFromResponse: vi.fn(async (_url: string, cookie: string) => {
+        if (cookie.startsWith('session=')) {
+          throw new Error('session deletion failed');
+        }
+        return true;
+      }),
+      flush: vi.fn(async () => undefined)
+    };
+
+    await expect(clearCookieUrls(store, ['https://www.nodeseek.com'])).rejects.toThrow('session deletion failed');
+
+    expect(store.setFromResponse).toHaveBeenCalledTimes(2);
+    expect(store.flush).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-ACCOUNT-015] treats an unconfirmed native cookie deletion as a cleanup failure', async () => {
+    const store = {
+      get: vi.fn(async () => ({ session: { name: 'session', value: 'delete' } })),
+      setFromResponse: vi.fn(async () => false),
+      flush: vi.fn(async () => undefined)
+    };
+
+    await expect(clearCookieUrls(store, ['https://www.nodeseek.com'])).rejects.toThrow('Cookie 删除未确认');
+    expect(store.flush).toHaveBeenCalledTimes(1);
+  });
 });

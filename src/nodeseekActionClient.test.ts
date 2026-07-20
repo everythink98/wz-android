@@ -13,6 +13,28 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('runNodeSeekAction', () => {
+  it('[REG-ACCOUNT-013] classifies a missing stored cookie as an expired NodeSeek session', async () => {
+    const fetcher = vi.fn();
+
+    await expect(runNodeSeekAction({
+      cookieHeader: '',
+      request: buildNodeSeekAttendanceRequest({ random: false }),
+      fetcher
+    })).rejects.toMatchObject({
+      source: 'nodeseek',
+      loginRequired: true
+    });
+    await expect(fetchNodeSeekVoteInfo({
+      cookieHeader: '',
+      pollId: '2443',
+      fetcher
+    })).rejects.toMatchObject({
+      source: 'nodeseek',
+      loginRequired: true
+    });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('[REG-WRITE-007] reads the authoritative NodeSeek poll snapshot with vote headers', async () => {
     const fetcher = vi.fn(async () => jsonResponse({
       vote: {

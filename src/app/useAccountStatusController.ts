@@ -38,29 +38,37 @@ type RefreshAccountStatusOptions = { silent?: boolean };
 
 export function useAccountStatusController({
   clearYaohuoLoginState,
+  currentNodeSeekCredentialGeneration,
   currentYaohuoCredentialGeneration,
+  linuxDoWebViewCookieHeaderRef,
   linuxDoUserAgentRef,
   loadNodeSeekCookieForSource,
   fetcher,
   nodeSeekUserAgentRef,
   notify,
+  refreshXiaoyinsiAuthorization,
   resetLinuxDoLevelState,
   saveNodeSeekCookieHeader,
+  setLinuxDoWebViewCookieHeader,
   dispatchSiteSessionEvent
 }: {
-  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<void>;
+  clearYaohuoLoginState: (options?: CredentialClearOptions) => Promise<boolean>;
+  currentNodeSeekCredentialGeneration: () => number;
   currentYaohuoCredentialGeneration: () => number;
   dispatchSiteSessionEvent: (event: ScopedSiteSessionEvent) => void;
+  linuxDoWebViewCookieHeaderRef: { current: string };
   linuxDoUserAgentRef: { current: string };
   loadNodeSeekCookieForSource: (source: FeedSource | Source, options?: CredentialLoadOptions) => Promise<string | undefined>;
   fetcher: Fetcher;
   nodeSeekUserAgentRef: { current: string };
   notify: (message: string) => void;
+  refreshXiaoyinsiAuthorization: () => Promise<boolean | null>;
   resetLinuxDoLevelState: () => void;
   saveNodeSeekCookieHeader: (
     cookies: Record<string, { name?: string; value?: string; domain?: string }>,
     options?: { generation?: number; userId?: number | null; diagnosticTrace?: DiagnosticTrace }
   ) => Promise<string>;
+  setLinuxDoWebViewCookieHeader: (cookieHeader: string) => void;
 }) {
   const statusAbortRef = useRef<AbortController | null>(null);
   const statusBusyRef = useRef(false);
@@ -91,33 +99,57 @@ export function useAccountStatusController({
       const diagnosticFetcher = withDiagnosticFetcher(trace, fetcher);
       const yaohuoGeneration = currentYaohuoCredentialGeneration();
       const linuxDoGeneration = currentLinuxDoAccessGeneration();
-      const yaohuoCookie = await SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY);
-      let nodeSeekGeneration: number | undefined;
+      let nodeSeekGeneration = currentNodeSeekCredentialGeneration();
       let nodeSeekCredentialUserId: number | null = null;
-      const nodeSeekCookie = await loadNodeSeekCookieForSource('nodeseek', {
-        captureGeneration: (generation) => { nodeSeekGeneration = generation; },
-        captureNodeSeekUserId: (userId) => { nodeSeekCredentialUserId = userId; },
-        diagnosticTrace: trace
-      });
+      const [yaohuoCredentialCheck, nodeSeekCredentialCheck, linuxDoCredentialCheck] = await Promise.allSettled([
+        SecureStore.getItemAsync(YAOHUO_COOKIE_STORAGE_KEY),
+        loadNodeSeekCookieForSource('nodeseek', {
+          captureGeneration: (generation) => { nodeSeekGeneration = generation; },
+          captureNodeSeekUserId: (userId) => { nodeSeekCredentialUserId = userId; },
+          diagnosticTrace: trace
+        }),
+        loadLinuxDoAccess()
+      ] as const);
+      if (controller.signal.aborted) {
+        finishTrace('canceled', { reason: 'canceled' });
+        return;
+      }
+      const yaohuoCookie = yaohuoCredentialCheck.status === 'fulfilled' ? yaohuoCredentialCheck.value : null;
+      const nodeSeekCookie = nodeSeekCredentialCheck.status === 'fulfilled' ? nodeSeekCredentialCheck.value : undefined;
       const nodeSeekSummary = summarizeNodeSeekCookies(parseNodeSeekDocumentCookie(nodeSeekCookie || ''));
-      let linuxDoAccess = await loadLinuxDoAccess();
+      let linuxDoAccess = linuxDoCredentialCheck.status === 'fulfilled' ? linuxDoCredentialCheck.value : null;
       let access = linuxDoAccessSummary(linuxDoAccess);
+      const nodeSeekCredentialCurrent = currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
+      const linuxDoCredentialCurrent = currentLinuxDoAccessGeneration() === linuxDoGeneration;
+      const yaohuoCredentialCurrent = currentYaohuoCredentialGeneration() === yaohuoGeneration;
       markDiagnosticStage(trace, 'credential', {
         source: 'nodeseek',
         generation: nodeSeekGeneration ?? 0,
-        hasCredential: nodeSeekSummary.count > 0
+        hasCredential: nodeSeekSummary.count > 0,
+        ...(nodeSeekCredentialCheck.status === 'rejected' ? {
+          state: 'error' as const,
+          reason: normalizeDiagnosticReason(nodeSeekCredentialCheck.reason)
+        } : {})
       });
       markDiagnosticStage(trace, 'credential', {
         source: 'linuxdo',
         generation: linuxDoGeneration,
-        hasCredential: Boolean(linuxDoAccess?.cookieHeader)
+        hasCredential: Boolean(linuxDoAccess?.cookieHeader),
+        ...(linuxDoCredentialCheck.status === 'rejected' ? {
+          state: 'error' as const,
+          reason: normalizeDiagnosticReason(linuxDoCredentialCheck.reason)
+        } : {})
       });
       markDiagnosticStage(trace, 'credential', {
         source: 'yaohuo',
         generation: yaohuoGeneration,
-        hasCredential: Boolean(yaohuoCookie)
+        hasCredential: Boolean(yaohuoCookie),
+        ...(yaohuoCredentialCheck.status === 'rejected' ? {
+          state: 'error' as const,
+          reason: normalizeDiagnosticReason(yaohuoCredentialCheck.reason)
+        } : {})
       });
-      const linuxDoLoginPromise = linuxDoAccess?.cookieHeader && access.loggedIn
+      const linuxDoLoginPromise = linuxDoCredentialCurrent && linuxDoAccess?.cookieHeader && access.loggedIn
         ? checkLinuxDoLoginAccess({
           cookieHeader: linuxDoAccess.cookieHeader,
           fetcher: diagnosticFetcher,
@@ -125,7 +157,7 @@ export function useAccountStatusController({
           signal: controller.signal
         })
         : Promise.resolve(undefined);
-      const nodeSeekCurrentUserPromise = nodeSeekSummary.loggedIn
+      const nodeSeekCurrentUserPromise = nodeSeekCredentialCurrent && nodeSeekSummary.loggedIn
         ? getCurrentUserProfile({
           source: 'nodeseek',
           fetcher: diagnosticFetcher,
@@ -135,19 +167,23 @@ export function useAccountStatusController({
           signal: controller.signal
         })
         : Promise.resolve(null);
-      const linuxDoCurrentUserPromise = linuxDoAccess?.cookieHeader && access.loggedIn
+      const linuxDoCurrentUserPromise = linuxDoCredentialCurrent && linuxDoAccess?.cookieHeader && access.loggedIn
         ? getCurrentUserProfile({
           source: 'linuxdo',
           fetcher: diagnosticFetcher,
-          linuxDoCookie: linuxDoAccess.cookieHeader,
-          linuxDoUserAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current,
+          discourseAuth: {
+            linuxdo: {
+              cookieHeader: linuxDoAccess.cookieHeader,
+              userAgent: linuxDoAccess.userAgent || linuxDoUserAgentRef.current
+            }
+          },
           signal: controller.signal
         })
         : Promise.resolve(null);
-      const yaohuoStatusPromise = yaohuoCookie
+      const yaohuoStatusPromise = yaohuoCredentialCurrent && yaohuoCookie
         ? checkYaohuoLogin({ yaohuoCookie, yaohuoFetcher: diagnosticFetcher, signal: controller.signal })
         : Promise.resolve({ ok: false, loginRequired: true, message: '未登录' });
-      const yaohuoCurrentUserPromise = yaohuoCookie
+      const yaohuoCurrentUserPromise = yaohuoCredentialCurrent && yaohuoCookie
         ? yaohuoStatusPromise.then((check) => {
           if (check.ok && !check.loginRequired && 'currentUser' in check && check.currentUser) {
             return check.currentUser;
@@ -163,18 +199,20 @@ export function useAccountStatusController({
           });
         })
         : Promise.resolve(null);
+      const xiaoyinsiAuthorizationPromise = refreshXiaoyinsiAuthorization();
       markDiagnosticStage(trace, 'transport', {
         source: 'all',
         channel: 'direct',
         state: 'start',
-        count: 5
+        count: 6
       });
-      const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck] = await Promise.allSettled([
+      const [yaohuoCheck, linuxDoLoginCheck, nodeSeekCurrentUserCheck, linuxDoCurrentUserCheck, yaohuoCurrentUserCheck, xiaoyinsiAuthorizationCheck] = await Promise.allSettled([
         yaohuoStatusPromise,
         linuxDoLoginPromise,
         nodeSeekCurrentUserPromise,
         linuxDoCurrentUserPromise,
-        yaohuoCurrentUserPromise
+        yaohuoCurrentUserPromise,
+        xiaoyinsiAuthorizationPromise
       ] as const);
       if (controller.signal.aborted) {
         finishTrace('canceled', { reason: 'canceled' });
@@ -189,97 +227,193 @@ export function useAccountStatusController({
           linuxDoLoginCheck,
           nodeSeekCurrentUserCheck,
           linuxDoCurrentUserCheck,
-          yaohuoCurrentUserCheck
+          yaohuoCurrentUserCheck,
+          xiaoyinsiAuthorizationCheck
         ].filter((result) => result.status === 'rejected').length
       });
-      const failedSites: string[] = [];
+      let nodeSeekReadCurrent = currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
+      let linuxDoReadCurrent = currentLinuxDoAccessGeneration() === linuxDoGeneration;
+      let yaohuoReadCurrent = currentYaohuoCredentialGeneration() === yaohuoGeneration;
+      const failedSites: string[] = [
+        ...(nodeSeekReadCurrent && nodeSeekCredentialCheck.status === 'rejected' ? ['NodeSeek'] : []),
+        ...(linuxDoReadCurrent && linuxDoCredentialCheck.status === 'rejected' ? ['linux.do'] : []),
+        ...(yaohuoReadCurrent && yaohuoCredentialCheck.status === 'rejected' ? ['妖火'] : [])
+      ];
+      let linuxDoCleanupError: unknown;
+      let yaohuoCleanupError: unknown;
       const yaohuoOk = yaohuoCheck.status === 'fulfilled' && yaohuoCheck.value.ok && !yaohuoCheck.value.loginRequired;
-      if (nodeSeekSummary.loggedIn && nodeSeekCurrentUserCheck.status === 'rejected') {
+      if (nodeSeekReadCurrent && nodeSeekSummary.loggedIn && nodeSeekCurrentUserCheck.status === 'rejected') {
         failedSites.push('NodeSeek');
       }
-      if (yaohuoOk && yaohuoCurrentUserCheck.status === 'rejected') {
+      if (yaohuoReadCurrent && yaohuoOk && yaohuoCurrentUserCheck.status === 'rejected') {
         failedSites.push('妖火');
       }
       const linuxDoLogin = linuxDoLoginCheck.status === 'fulfilled' ? linuxDoLoginCheck.value : undefined;
-      if (linuxDoLoginCheck.status === 'rejected') {
+      if (linuxDoReadCurrent && linuxDoLoginCheck.status === 'rejected') {
         failedSites.push('linux.do');
       }
-      if (isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
+      if (linuxDoReadCurrent && isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
         failedSites.push('linux.do');
       }
-      if (access.loggedIn && !linuxDoLogin?.loginRequired && linuxDoCurrentUserCheck.status === 'rejected') {
+      if (linuxDoReadCurrent && access.loggedIn && !linuxDoLogin?.loginRequired && linuxDoCurrentUserCheck.status === 'rejected') {
         failedSites.push('linux.do');
       }
-      if (linuxDoLogin?.loginRequired) {
+      if (linuxDoReadCurrent && linuxDoLogin?.loginRequired) {
         markDiagnosticStage(trace, 'credential', {
           source: 'linuxdo',
           generation: linuxDoGeneration,
           state: 'expired'
         });
-        linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration, linuxDoAccess?.cookieHeader);
+        try {
+          linuxDoAccess = await clearLinuxDoAccessForGeneration(linuxDoGeneration, linuxDoAccess?.cookieHeader);
+        } catch (error) {
+          linuxDoCleanupError = error;
+          markDiagnosticStage(trace, 'persist', {
+            source: 'linuxdo',
+            generation: linuxDoGeneration,
+            store: 'multi-store',
+            state: 'partial',
+            reason: normalizeDiagnosticReason(error)
+          });
+        }
         if (controller.signal.aborted) {
           finishTrace('canceled', { reason: 'canceled' });
           return;
         }
         access = linuxDoAccessSummary(linuxDoAccess);
+        linuxDoReadCurrent = currentLinuxDoAccessGeneration() === linuxDoGeneration;
+        if (linuxDoReadCurrent && !linuxDoCleanupError) {
+          const cookieHeader = linuxDoAccess?.cookieHeader || '';
+          linuxDoWebViewCookieHeaderRef.current = cookieHeader;
+          setLinuxDoWebViewCookieHeader(cookieHeader);
+        }
         markDiagnosticStage(trace, 'apply', {
           source: 'linuxdo',
           generation: linuxDoGeneration,
           hasCredential: Boolean(linuxDoAccess?.cookieHeader),
-          state: 'applied'
+          state: linuxDoCleanupError ? 'partial' : 'applied'
         });
-        resetLinuxDoLevelState();
+        if (linuxDoReadCurrent) {
+          resetLinuxDoLevelState();
+        }
       }
       const yaohuoExpired = yaohuoCheck.status === 'fulfilled' && 'reason' in yaohuoCheck.value && yaohuoCheck.value.reason === 'expired';
-      if (yaohuoExpired) {
+      if (yaohuoReadCurrent && yaohuoExpired) {
         markDiagnosticStage(trace, 'credential', {
           source: 'yaohuo',
           generation: yaohuoGeneration,
           state: 'expired'
         });
-        await clearYaohuoLoginState({ generation: yaohuoGeneration });
+        try {
+          await clearYaohuoLoginState({
+            generation: yaohuoGeneration,
+            expiredMessage: '妖火登录已失效'
+          });
+        } catch (error) {
+          yaohuoCleanupError = error;
+          markDiagnosticStage(trace, 'persist', {
+            source: 'yaohuo',
+            generation: yaohuoGeneration,
+            store: 'multi-store',
+            state: 'partial',
+            reason: normalizeDiagnosticReason(error)
+          });
+        }
         if (controller.signal.aborted) {
           finishTrace('canceled', { reason: 'canceled' });
           return;
         }
+        yaohuoReadCurrent = currentYaohuoCredentialGeneration() === yaohuoGeneration;
         markDiagnosticStage(trace, 'apply', {
           source: 'yaohuo',
           generation: yaohuoGeneration,
-          hasCredential: false,
-          state: 'applied'
+          hasCredential: Boolean(yaohuoCleanupError && yaohuoCookie),
+          state: yaohuoCleanupError ? 'partial' : 'applied'
         });
       }
       const checkedAt = new Date().toISOString();
       const nodeSeekCurrentUser = nodeSeekCurrentUserCheck.status === 'fulfilled' ? nodeSeekCurrentUserCheck.value : null;
-      markDiagnosticStage(trace, 'apply', {
-        source: 'nodeseek',
-        hasCredential: nodeSeekSummary.count > 0,
-        hasCurrentUser: Boolean(nodeSeekCurrentUser),
-        isLoggedIn: nodeSeekSummary.loggedIn
-      });
-      dispatchSiteSessionEvent({
-        site: 'nodeseek',
-        type: 'cookie-loaded',
-        cookieSummary: nodeSeekSummary.names,
-        hasVerification: nodeSeekSummary.count > 0,
-        loggedIn: nodeSeekSummary.loggedIn,
-        currentUser: nodeSeekCurrentUser,
-        at: checkedAt
-      });
+      const nodeSeekCredentialFailed = nodeSeekCredentialCheck.status === 'rejected';
+      const nodeSeekIdentityFailed = nodeSeekSummary.loggedIn && nodeSeekCurrentUserCheck.status === 'rejected';
+      let nodeSeekPersistenceError: unknown;
       const nodeSeekCurrentUserId = Number(nodeSeekCurrentUser?.id);
-      if (nodeSeekCookie && Number.isInteger(nodeSeekCurrentUserId) && nodeSeekCurrentUserId > 0) {
+      if (nodeSeekReadCurrent && nodeSeekCookie && Number.isInteger(nodeSeekCurrentUserId) && nodeSeekCurrentUserId > 0) {
         markDiagnosticStage(trace, 'persist', {
           source: 'nodeseek',
-          generation: nodeSeekGeneration ?? 0,
+          generation: nodeSeekGeneration,
           hasCurrentUser: true
         });
-        await saveNodeSeekCookieHeader(parseNodeSeekDocumentCookie(nodeSeekCookie), {
-          generation: nodeSeekGeneration,
-          userId: nodeSeekCurrentUserId,
-          diagnosticTrace: trace
-        });
+        try {
+          await saveNodeSeekCookieHeader(parseNodeSeekDocumentCookie(nodeSeekCookie), {
+            generation: nodeSeekGeneration,
+            userId: nodeSeekCurrentUserId,
+            diagnosticTrace: trace
+          });
+        } catch (error) {
+          nodeSeekPersistenceError = error;
+        }
+        nodeSeekReadCurrent = currentNodeSeekCredentialGeneration() === nodeSeekGeneration;
       }
-      if (yaohuoCheck.status === 'rejected') {
+      if (!nodeSeekReadCurrent) {
+        markDiagnosticStage(trace, 'apply', {
+          source: 'nodeseek',
+          generation: nodeSeekGeneration,
+          state: 'stale'
+        });
+      } else if (nodeSeekPersistenceError) {
+        failedSites.push('NodeSeek');
+        markDiagnosticStage(trace, 'persist', {
+          source: 'nodeseek',
+          generation: nodeSeekGeneration,
+          store: 'multi-store',
+          state: 'partial',
+          reason: normalizeDiagnosticReason(nodeSeekPersistenceError)
+        });
+        dispatchSiteSessionEvent({
+          site: 'nodeseek',
+          type: 'check-failed',
+          message: 'NodeSeek 身份已确认，但凭据更新未保存，请重试刷新。',
+          at: checkedAt
+        });
+      } else {
+        const nodeSeekCheckFailed = nodeSeekCredentialFailed || nodeSeekIdentityFailed;
+        markDiagnosticStage(trace, 'apply', {
+          source: 'nodeseek',
+          hasCredential: nodeSeekSummary.count > 0,
+          hasCurrentUser: Boolean(nodeSeekCurrentUser),
+          isLoggedIn: nodeSeekSummary.loggedIn,
+          ...(nodeSeekCheckFailed ? { state: 'failed' as const } : {})
+        });
+        dispatchSiteSessionEvent(nodeSeekCheckFailed
+          ? {
+            site: 'nodeseek',
+            type: 'check-failed',
+            message: nodeSeekCredentialCheck.status === 'rejected'
+              ? errorMessage(nodeSeekCredentialCheck.reason)
+              : nodeSeekCurrentUserCheck.status === 'rejected'
+                ? errorMessage(nodeSeekCurrentUserCheck.reason)
+                : 'NodeSeek 状态暂时无法确认',
+            at: checkedAt
+          }
+          : {
+            site: 'nodeseek',
+            type: 'cookie-loaded',
+            cookieSummary: nodeSeekSummary.names,
+            hasVerification: nodeSeekSummary.count > 0,
+            loggedIn: nodeSeekSummary.loggedIn,
+            currentUser: nodeSeekCurrentUser,
+            at: checkedAt
+          });
+      }
+      const yaohuoCredentialFailed = yaohuoCredentialCheck.status === 'rejected';
+      const yaohuoIdentityFailed = yaohuoOk && yaohuoCurrentUserCheck.status === 'rejected';
+      if (!yaohuoReadCurrent) {
+        markDiagnosticStage(trace, 'apply', {
+          source: 'yaohuo',
+          generation: yaohuoGeneration,
+          state: 'stale'
+        });
+      } else if (yaohuoCredentialFailed || yaohuoCheck.status === 'rejected' || yaohuoIdentityFailed) {
         failedSites.push('妖火');
         markDiagnosticStage(trace, 'apply', {
           source: 'yaohuo',
@@ -291,10 +425,19 @@ export function useAccountStatusController({
         dispatchSiteSessionEvent({
           site: 'yaohuo',
           type: 'check-failed',
-          message: errorMessage(yaohuoCheck.reason),
+          message: yaohuoCredentialCheck.status === 'rejected'
+            ? errorMessage(yaohuoCredentialCheck.reason)
+            : yaohuoCheck.status === 'rejected'
+              ? errorMessage(yaohuoCheck.reason)
+              : yaohuoCurrentUserCheck.status === 'rejected'
+                ? errorMessage(yaohuoCurrentUserCheck.reason)
+                : '妖火身份暂时无法确认',
           at: checkedAt
         });
       } else {
+        if (yaohuoCleanupError) {
+          failedSites.push('妖火');
+        }
         const yaohuoSummary = summarizeYaohuoCookies(yaohuoCookieMapFromHeader(yaohuoCookie || ''));
         markDiagnosticStage(trace, 'apply', {
           source: 'yaohuo',
@@ -303,7 +446,11 @@ export function useAccountStatusController({
           isLoggedIn: yaohuoOk
         });
         dispatchSiteSessionEvent(yaohuoExpired
-          ? { site: 'yaohuo', type: 'login-expired', message: '妖火登录已失效' }
+          ? {
+            site: 'yaohuo',
+            type: 'login-expired',
+            message: yaohuoCleanupError ? '妖火登录已失效，本机 Cookie 清理未完成，请重试。' : '妖火登录已失效'
+          }
           : {
             site: 'yaohuo',
             type: 'cookie-loaded',
@@ -314,7 +461,17 @@ export function useAccountStatusController({
             at: checkedAt
           });
       }
-      if (linuxDoLoginCheck.status === 'rejected' || isLinuxDoLoginCheckUnknown(linuxDoLogin)) {
+      const linuxDoCredentialFailed = linuxDoCredentialCheck.status === 'rejected';
+      const linuxDoIdentityFailed = access.loggedIn
+        && Boolean(linuxDoLogin?.ok)
+        && linuxDoCurrentUserCheck.status === 'rejected';
+      if (!linuxDoReadCurrent) {
+        markDiagnosticStage(trace, 'apply', {
+          source: 'linuxdo',
+          generation: linuxDoGeneration,
+          state: 'stale'
+        });
+      } else if (linuxDoCredentialFailed || linuxDoLoginCheck.status === 'rejected' || isLinuxDoLoginCheckUnknown(linuxDoLogin) || linuxDoIdentityFailed) {
         markDiagnosticStage(trace, 'apply', {
           source: 'linuxdo',
           hasCredential: Boolean(linuxDoAccess?.cookieHeader),
@@ -325,10 +482,32 @@ export function useAccountStatusController({
         dispatchSiteSessionEvent({
           site: 'linuxdo',
           type: 'check-failed',
-          message: linuxDoLoginCheck.status === 'rejected'
-            ? errorMessage(linuxDoLoginCheck.reason)
-            : linuxDoLogin?.message || 'linux.do 状态暂时无法确认',
+          message: linuxDoCredentialCheck.status === 'rejected'
+            ? errorMessage(linuxDoCredentialCheck.reason)
+            : linuxDoLoginCheck.status === 'rejected'
+              ? errorMessage(linuxDoLoginCheck.reason)
+              : linuxDoIdentityFailed
+                ? errorMessage(linuxDoCurrentUserCheck.reason)
+                : linuxDoLogin?.message || 'linux.do 状态暂时无法确认',
           at: checkedAt
+        });
+      } else if (linuxDoLogin?.loginRequired) {
+        if (linuxDoCleanupError) {
+          failedSites.push('linux.do');
+        }
+        markDiagnosticStage(trace, 'apply', {
+          source: 'linuxdo',
+          hasCredential: Boolean(linuxDoAccess?.cookieHeader),
+          hasCurrentUser: false,
+          isLoggedIn: false,
+          state: linuxDoCleanupError ? 'partial' : 'expired'
+        });
+        dispatchSiteSessionEvent({
+          site: 'linuxdo',
+          type: 'login-expired',
+          message: linuxDoCleanupError
+            ? 'linux.do 登录已失效，本机 Cookie 清理未完成，请重试。'
+            : linuxDoLogin.message || 'linux.do 登录已失效'
         });
       } else {
         const hasLinuxDoLogin = access.loggedIn && Boolean(linuxDoLogin?.ok);
@@ -347,6 +526,9 @@ export function useAccountStatusController({
           currentUser: linuxDoCurrentUserCheck.status === 'fulfilled' ? linuxDoCurrentUserCheck.value : null,
           at: checkedAt
         });
+      }
+      if (xiaoyinsiAuthorizationCheck.status === 'rejected' || xiaoyinsiAuthorizationCheck.value === null) {
+        failedSites.push('小隐寺');
       }
       const uniqueFailedSites = Array.from(new Set(failedSites));
       markDiagnosticStage(trace, 'apply', {
@@ -382,15 +564,19 @@ export function useAccountStatusController({
     }
   }, [
     clearYaohuoLoginState,
+    currentNodeSeekCredentialGeneration,
     currentYaohuoCredentialGeneration,
     dispatchSiteSessionEvent,
     fetcher,
+    linuxDoWebViewCookieHeaderRef,
     linuxDoUserAgentRef,
     loadNodeSeekCookieForSource,
     nodeSeekUserAgentRef,
     notify,
+    refreshXiaoyinsiAuthorization,
     resetLinuxDoLevelState,
-    saveNodeSeekCookieHeader
+    saveNodeSeekCookieHeader,
+    setLinuxDoWebViewCookieHeader
   ]);
 
   const abortAccountStatusRequests = useCallback(() => {

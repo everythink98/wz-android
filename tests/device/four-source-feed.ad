@@ -66,3 +66,17 @@ back --system
 wait id="feed-list-ready-yaohuo" 60000
 wait id="feed-topic-first" 10000
 wait "id=\"feed-source-yaohuo\" label=\"妖火，已选择\"" 10000
+press id="feed-source-xiaoyinsi"
+wait "id=\"feed-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000
+wait id="feed-list-ready-xiaoyinsi" 60000
+wait id="feed-topic-first" 10000
+press label="列表筛选"
+press text="热门"
+wait id="feed-list-ready-xiaoyinsi" 60000
+wait id="feed-topic-first" 10000
+press id="feed-topic-first"
+wait id="topic-detail-loaded" 60000
+back --system
+wait id="feed-list-ready-xiaoyinsi" 60000
+wait id="feed-topic-first" 10000
+wait "id=\"feed-source-xiaoyinsi\" label=\"小隐寺，已选择\"" 10000

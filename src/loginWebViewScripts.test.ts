@@ -1,6 +1,6 @@
 // @vitest-environment-options {"url":"https://www.nodeimage.com/"}
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NODEIMAGE_API_KEY_PROBE_SCRIPT, NODESEEK_LOGIN_PROBE_SCRIPT, nodeImageApiKeyProbeScript } from './loginWebViewScripts';
+import { LINUXDO_WEBVIEW_PROBE_SCRIPT, NODEIMAGE_API_KEY_PROBE_SCRIPT, NODESEEK_LOGIN_PROBE_SCRIPT, nodeImageApiKeyProbeScript } from './loginWebViewScripts';
 
 async function runNodeSeekLoginProbe(url: string, html: string, fetchMock: typeof fetch = vi.fn(async () => new Response('{}')) as unknown as typeof fetch) {
   window.history.pushState(null, '', url);
@@ -108,6 +108,39 @@ describe('NodeSeek login WebView probe script', () => {
       userId: null
     });
     expect(payload.loggedIn).toBeUndefined();
+  });
+});
+
+function runLinuxDoLoginProbe(html: string) {
+  window.history.pushState(null, '', '/latest');
+  document.body.innerHTML = html;
+  const postMessage = vi.fn();
+  Object.defineProperty(window, 'ReactNativeWebView', {
+    configurable: true,
+    value: { postMessage }
+  });
+
+  window.eval(LINUXDO_WEBVIEW_PROBE_SCRIPT);
+
+  return JSON.parse(postMessage.mock.calls[0]?.[0] || '{}');
+}
+
+describe('linux.do login WebView probe script', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['logged-in', '<header class="d-header"><li class="current-user"><button>头像</button></li></header>'],
+    ['logged-out', '<header class="d-header"><button class="login-button">登录</button></header>'],
+    ['unknown', '<main>普通页面</main>']
+  ])('reports %s only from explicit linux.do header markers', (status, html) => {
+    expect(runLinuxDoLoginProbe(html)).toMatchObject({
+      type: 'linuxdo-webview',
+      status,
+      ...(status === 'unknown' ? {} : { loggedIn: status === 'logged-in' })
+    });
   });
 });
 

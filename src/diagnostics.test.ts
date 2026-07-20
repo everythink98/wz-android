@@ -177,6 +177,22 @@ describe('diagnostic traces', () => {
     }));
   });
 
+  it.each([
+    'xiaoyinsi-discourse-categories',
+    'xiaoyinsi-discourse-feed',
+    'xiaoyinsi-discourse-replies',
+    'xiaoyinsi-discourse-search',
+    'xiaoyinsi-discourse-topic',
+    'xiaoyinsi-discourse-user'
+  ])('keeps the allowlisted 小隐寺 parser variant %s', (parserVariant) => {
+    const events = captureEvents();
+    const trace = beginDiagnosticTrace('topic', 'parse-topic');
+
+    markDiagnosticStage(trace, 'parse', { parserVariant });
+
+    expect(events().at(-1)).toEqual(expect.objectContaining({ parserVariant }));
+  });
+
   it('upgrades a successful terminal event to the most severe hinted outcome', () => {
     const events = captureEvents();
     const trace = beginDiagnosticTrace('topic', 'open');

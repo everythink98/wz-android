@@ -299,6 +299,16 @@ export const LINUXDO_BROWSER_FETCH_SCRIPT = `
 true;
 `;
 
+export function hasTrustedBrowserFetchMessageOrigin(sourceUrl: string | undefined, payloadUrl: string | undefined) {
+  try {
+    const source = new URL(String(sourceUrl || ''));
+    const payload = new URL(String(payloadUrl || ''));
+    return source.protocol === 'https:' && source.origin === payload.origin;
+  } catch {
+    return false;
+  }
+}
+
 export function useHiddenBrowserFetchController({
   completeLinuxDoBrowserFetch,
   completeNodeSeekBrowserFetch
@@ -340,7 +350,10 @@ export function useHiddenBrowserFetchController({
         failureReason?: 'content-too-large' | 'unreadable' | 'script-error' | 'network' | 'renderer' | 'canceled' | 'stale';
         httpErrorStatus?: number;
       };
-      if (data.type === 'nodeseek-browser-fetch') {
+      if (
+        data.type === 'nodeseek-browser-fetch'
+        && hasTrustedBrowserFetchMessageOrigin(event.nativeEvent.url, data.url)
+      ) {
         completeNodeSeekBrowserFetch(data);
       }
     } catch {
@@ -360,7 +373,10 @@ export function useHiddenBrowserFetchController({
         challenge?: boolean;
         error?: string;
       };
-      if (data.type === 'linuxdo-browser-fetch') {
+      if (
+        data.type === 'linuxdo-browser-fetch'
+        && hasTrustedBrowserFetchMessageOrigin(event.nativeEvent.url, data.url)
+      ) {
         completeLinuxDoBrowserFetch(data);
       }
     } catch {

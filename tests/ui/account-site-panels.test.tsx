@@ -74,7 +74,8 @@ jest.mock('react-native-webview', () => {
       ReactModule.createElement(NativeText, { testID: 'mock-login-webview-uri' }, props.source?.uri || ''),
       button('模拟 WebView 开始加载', () => props.onLoadStart?.()),
       button('模拟 WebView 加载完成', () => props.onLoadEnd?.({ nativeEvent: {} })),
-      button('模拟 Replay readiness', () => props.onMessage?.({ nativeEvent: { data: 'wz:nodeseek-webview-ready' } })),
+      button('模拟 Replay readiness', () => props.onMessage?.({ nativeEvent: { data: 'wz:nodeseek-webview-ready', url: 'https://www.nodeseek.com/' } })),
+      button('模拟伪造 Replay readiness', () => props.onMessage?.({ nativeEvent: { data: 'wz:nodeseek-webview-ready', url: 'https://evil.example/frame' } })),
       button('模拟 WebView 加载失败', () => props.onError?.({ nativeEvent: { description: '断网' } })),
       button('模拟 WebView 渲染进程退出', () => props.onRenderProcessGone?.())
     );
@@ -262,7 +263,7 @@ describe('Account site panels', () => {
       <LinuxDoLevelPanel
         busy={false}
         error=""
-        linuxDoSession={session('linuxdo', 'anonymous')}
+        siteSession={session('linuxdo', 'anonymous')}
         profile={null}
         styles={styles}
         theme={theme}
@@ -279,7 +280,7 @@ describe('Account site panels', () => {
       <LinuxDoLevelPanel
         busy={false}
         error=""
-        linuxDoSession={session('linuxdo', 'logged-in')}
+        siteSession={session('linuxdo', 'logged-in')}
         profile={levelProfile}
         styles={styles}
         theme={theme}
@@ -351,6 +352,14 @@ describe('Account site panels', () => {
     await fireEvent.press(view.getByLabelText('模拟 Replay readiness'));
 
     expect(view.getByText('NodeSeek 页面加载失败：断网')).toBeTruthy();
+    expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
+  });
+
+  it('does not expose Replay readiness for a forged third-party frame message', async () => {
+    const view = await render(<NodeSeekLoginPanel {...nodeSeekProps({ loadingLoginPage: true, showLoginPanel: true })} />);
+
+    await fireEvent.press(view.getByLabelText('模拟伪造 Replay readiness'));
+
     expect(view.queryByTestId('nodeseek-login-webview-ready')).toBeNull();
   });
 

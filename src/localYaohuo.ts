@@ -166,13 +166,18 @@ function normalizeYaohuoRelativeHour(period: string, rawHour?: number) {
 }
 
 function profileStats(root: ReturnType<typeof parseHtml>, text: string) {
-  const topicCount = profileStructuredStatValue(root, 'posts') || profileStatValue(text, '主题|帖子|贴子|发帖');
-  const replyCount = profileStructuredStatValue(root, 'replies') || profileStatValue(text, '回复|回帖');
+  const topicCount = profileStructuredStatValue(root, 'posts') ?? profileStatValue(text, '主题|帖子|贴子|发帖');
+  const replyCount = profileStructuredStatValue(root, 'replies') ?? profileStatValue(text, '回复|回帖');
   return {
-    topicCount: topicCount || undefined,
-    replyCount: replyCount || undefined,
-    postCount: topicCount && replyCount ? topicCount + replyCount : undefined
+    topicCount,
+    replyCount,
+    postCount: topicCount !== undefined && replyCount !== undefined ? topicCount + replyCount : undefined
   };
+}
+
+function profileStatNumber(value: unknown) {
+  const text = String(value ?? '').replace(/,/g, '').trim();
+  return /^\d+$/.test(text) ? Number(text) : undefined;
 }
 
 function profileStructuredStatValue(root: ReturnType<typeof parseHtml>, className: string) {
@@ -181,23 +186,17 @@ function profileStructuredStatValue(root: ReturnType<typeof parseHtml>, classNam
     if (!classes.includes(className)) {
       continue;
     }
-    const value = parsePositiveInteger(elementText(element.querySelector('.value')));
-    if (value) {
-      return value;
-    }
+    return profileStatNumber(elementText(element.querySelector('.value')));
   }
-  return 0;
+  return undefined;
 }
 
 function profileStatValue(text: string, labels: string) {
   const pattern = new RegExp(`(?:^|[^\\d])(?:${labels})\\s*(?:[:：]?\\s*|[（(]\\s*)([\\d,]{1,6})(?!\\d)`, 'g');
   for (const match of text.matchAll(pattern)) {
-    const value = parsePositiveInteger(match[1]);
-    if (value) {
-      return value;
-    }
+    return profileStatNumber(match[1]);
   }
-  return 0;
+  return undefined;
 }
 
 function cleanYaohuoLevelLabel(value: unknown) {

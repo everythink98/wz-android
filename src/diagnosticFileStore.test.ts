@@ -138,7 +138,8 @@ const metadata: DiagnosticExportMetadata = {
   screenWidth: 1080,
   theme: 'dark',
   versionCode: 58,
-  yaohuoSession: 'anonymous'
+  yaohuoSession: 'anonymous',
+  xiaoyinsiSession: 'authorizing'
 };
 
 beforeEach(() => {
@@ -184,7 +185,8 @@ describe('diagnostic file store', () => {
       currentScreen: 'unknown',
       deviceModel: 'unknown',
       schemaVersion: 1,
-      type: 'diagnostic-metadata'
+      type: 'diagnostic-metadata',
+      xiaoyinsiSession: 'authorizing'
     }));
     expect(lines.slice(1).map((line) => JSON.parse(line))).toEqual([
       { sequence: 1 },

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildLinuxDoImageUploadRequest, linuxDoImageUrlFromUploadResponse } from './linuxdoActions';
+import { buildDiscourseActionRequest, discourseImageUrlFromUploadResponse } from './discourseActions';
 
 describe('linux.do image upload requests', () => {
   it('builds a Discourse composer upload request without forcing a multipart boundary', () => {
-    const request = buildLinuxDoImageUploadRequest({
+    const request = buildDiscourseActionRequest({
+      type: 'upload',
       file: {
         uri: 'file:///cache/demo.png',
         name: 'demo.png',
@@ -26,20 +27,20 @@ describe('linux.do image upload requests', () => {
   });
 
   it('reads Discourse upload URLs from known response shapes', () => {
-    expect(linuxDoImageUrlFromUploadResponse({
+    expect(discourseImageUrlFromUploadResponse({
       markdown: '![demo.png](upload://abc.png)'
-    })).toBe('upload://abc.png');
+    }, 'https://linux.do', 'linux.do')).toBe('upload://abc.png');
 
-    expect(linuxDoImageUrlFromUploadResponse({
+    expect(discourseImageUrlFromUploadResponse({
       short_url: 'upload://abc.png'
-    })).toBe('upload://abc.png');
+    }, 'https://linux.do', 'linux.do')).toBe('upload://abc.png');
 
-    expect(linuxDoImageUrlFromUploadResponse({
+    expect(discourseImageUrlFromUploadResponse({
       url: '//linux.do/uploads/default/original/1X/a.png'
-    })).toBe('https://linux.do/uploads/default/original/1X/a.png');
+    }, 'https://linux.do', 'linux.do')).toBe('https://linux.do/uploads/default/original/1X/a.png');
 
-    expect(linuxDoImageUrlFromUploadResponse({
+    expect(discourseImageUrlFromUploadResponse({
       url: '/uploads/default/original/1X/a.png'
-    })).toBe('https://linux.do/uploads/default/original/1X/a.png');
+    }, 'https://linux.do', 'linux.do')).toBe('https://linux.do/uploads/default/original/1X/a.png');
   });
 });

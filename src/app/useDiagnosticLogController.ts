@@ -8,6 +8,7 @@ import {
   normalizeDiagnosticReason,
   type DiagnosticReason
 } from '../diagnostics';
+import { useCommittedRef } from './useCommittedRef';
 
 export function useDiagnosticLogController({
   getCurrentScreen,
@@ -19,8 +20,7 @@ export function useDiagnosticLogController({
   notify: (message: string) => void;
 }) {
   const diagnosticBusyRef = useRef(false);
-  const metadataRef = useRef(metadata);
-  metadataRef.current = metadata;
+  const metadataRef = useCommittedRef(metadata);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
 
   const exportDiagnosticLogFile = useCallback(async () => {

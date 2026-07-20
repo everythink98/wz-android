@@ -1,3 +1,5 @@
+import { sessionSources, sourceValues as registeredSources } from './sourceCatalog';
+
 export type DiagnosticArea =
   | 'app'
   | 'navigation'
@@ -109,7 +111,7 @@ const operationValues = closedValues(
   'apply', 'attendance', 'bookmark', 'browser-fetch', 'categories', 'check', 'collection',
   'cookie-store-read',
   'clear', 'clear-login-only', 'delete', 'download', 'edit', 'export', 'favorite',
-  'getCategories', 'getFeed', 'getReplies',
+  'getCategories', 'getFeed', 'getLevelProfile', 'getReplies',
   'getReply', 'getTopic', 'getUserProfile', 'guard', 'hardware-back', 'image-upload',
   'import', 'interaction', 'js-error', 'load', 'load-more', 'load-more-replies',
   'load-more-topics', 'load-stored', 'load-summary', 'mutate', 'open', 'page-state', 'parse-topic',
@@ -119,10 +121,10 @@ const operationValues = closedValues(
   'toggle-quote', 'topic-back', 'transport-fallback', 'uncaught-error', 'user-back',
   'vote', 'webview-transport'
 );
-const sourceValues = closedValues('all', 'linuxdo', 'nodeseek', 'unknown', 'v2ex', 'yaohuo');
+const sourceValues = closedValues('all', ...registeredSources, 'unknown');
 const screenValues = closedValues('feed', 'library', 'more', 'search', 'topic', 'user', 'unknown');
 const sessionStateValues = closedValues(
-  'anonymous', 'expired', 'logged-in', 'verification-required', 'verified', 'verifying'
+  'anonymous', 'expired', 'logged-in', 'verification-required', 'verified', 'verifying', 'authorizing'
 );
 const stateValues = closedValues(
   ...sessionStateValues,
@@ -171,11 +173,13 @@ const parserVariantValues = closedValues(
   'html-window-feed', 'multi-page-replies',
   'rendered-categories', 'rendered-list', 'rendered-replies', 'rendered-search',
   'rendered-topic', 'search-empty-query', 'sov2ex-search', 'static-categories',
+  'xiaoyinsi-discourse-categories', 'xiaoyinsi-discourse-feed', 'xiaoyinsi-discourse-replies',
+  'xiaoyinsi-discourse-search', 'xiaoyinsi-discourse-topic', 'xiaoyinsi-discourse-user',
   'unsupported-replies'
 );
 const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   source: sourceValues,
-  site: closedValues('linuxdo', 'nodeseek', 'yaohuo'),
+  site: closedValues(...sessionSources),
   variant: parserVariantValues,
   channel: closedValues('data', 'direct', 'managed', 'native', 'remote', 'unsupported', 'webview'),
   state: stateValues,
@@ -210,7 +214,7 @@ const categoricalFieldValues: Readonly<Record<string, ReadonlySet<string>>> = {
   section: closedValues('favorites', 'history', 'replies', 'topics', 'users'),
   protocol: closedValues('http', 'socks5'),
   eventType: closedValues(
-    'check-failed', 'cleared', 'cookie-loaded', 'login-detected', 'login-expired',
+    'authorization-started', 'check-failed', 'cleared', 'cookie-loaded', 'login-detected', 'login-expired',
     'verification-required', 'verification-started', 'verification-succeeded'
   ),
   result: closedValues('blocked', 'canceled', 'failure', 'noop', 'partial', 'stale', 'success'),
@@ -556,7 +560,7 @@ function endpointTypeFromPath(pathname: string, method?: string) {
   const path = pathname.toLowerCase();
   const requestMethod = safeMethod(method);
   if (/upload|nodeimage|image/.test(path)) return 'upload';
-  if (/login|signin|session|csrf|challenge|captcha|auth/.test(path)) return 'auth';
+  if (/login|signin|session|csrf|challenge|captcha|auth|user-api-key/.test(path)) return 'auth';
   if (requestMethod !== 'GET' && requestMethod !== 'HEAD' && requestMethod !== 'OPTIONS') return 'action';
   if (/search|sov2ex|google/.test(path)) return 'search';
   if (/categor|\/nodes?(?:\/|$)|\/site\.json$|board/.test(path)) return 'categories';
@@ -578,6 +582,7 @@ function endpointClass(value: string, method?: string) {
       || host === 'nodeseek.com' || host.endsWith('.nodeseek.com')
       || host === 'v2ex.com' || host.endsWith('.v2ex.com')
       || host === 'yaohuo.me' || host.endsWith('.yaohuo.me')
+      || host === 'forum.xiaoyinsi.com' || host.endsWith('.forum.xiaoyinsi.com')
     ) {
       return endpointTypeFromPath(url.pathname, method);
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { dateTime } from './appUtils';
 import { createEmptyReaderData } from './readerData';
-import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, removeReply, shouldFetchAggregatedBaseFeed, shouldReuseFeedStateForRequest } from './feedLogic';
+import { applyFeedFilter, feedRequestKey, mergeFeedResponses, mergeReplies, mergeTopics, nextFeedPageState, removeReply, shouldReuseFeedStateForRequest } from './feedLogic';
 import type { Reply, Topic } from './types';
 
 describe('Android feed logic helpers', () => {
@@ -226,7 +226,7 @@ describe('Android feed logic helpers', () => {
     expect(next.page).toBe(5);
   });
 
-  it('reuses a feed state only for the same source and category with cached items', () => {
+  it('REG-XIAOYINSI-015 reuses a feed state only for the same source, category, and filter', () => {
     const linuxDoAll = feedRequestKey('linuxdo', '');
     const linuxDoCategory = feedRequestKey('linuxdo', '开发调优');
     const linuxDoNewAll = feedRequestKey('linuxdo', '', 'new-all');
@@ -236,6 +236,8 @@ describe('Android feed logic helpers', () => {
     const nodeSeekNewReplies = feedRequestKey('nodeseek', '', 'replyTime');
     const v2exAll = feedRequestKey('v2ex', '', 'all');
     const v2exHot = feedRequestKey('v2ex', '', 'hot');
+    const xiaoyinsiLatest = feedRequestKey('xiaoyinsi', '', 'latest');
+    const xiaoyinsiHot = feedRequestKey('xiaoyinsi', '', 'hot');
 
     expect(shouldReuseFeedStateForRequest({
       items: [topic],
@@ -270,6 +272,10 @@ describe('Android feed logic helpers', () => {
       items: [topic],
       requestKey: v2exAll
     }, v2exHot)).toBe(false);
+    expect(shouldReuseFeedStateForRequest({
+      items: [topic],
+      requestKey: xiaoyinsiLatest
+    }, xiaoyinsiHot)).toBe(false);
   });
 
   it('stops feed pagination when a load-more response does not advance', () => {
@@ -339,11 +345,4 @@ describe('Android feed logic helpers', () => {
     expect(next.nextCursor).toBe('cursor-before');
   });
 
-  it('skips the non-yaohuo aggregate feed after its cursor is exhausted while yaohuo can continue', () => {
-    expect(shouldFetchAggregatedBaseFeed({ page: 1, hasYaohuoCookie: true })).toBe(true);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, cursor: 'base-cursor', hasYaohuoCookie: true })).toBe(true);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true })).toBe(false);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: true, retryWithoutCursor: true })).toBe(true);
-    expect(shouldFetchAggregatedBaseFeed({ page: 2, hasYaohuoCookie: false })).toBe(true);
-  });
 });

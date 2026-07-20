@@ -1,7 +1,9 @@
-import type { FeedSource, Source, UserProfile } from './types';
+import { sessionSources, type SessionSource } from './sourceCatalog';
+import type { FeedSource, UserProfile } from './types';
 
-export type SessionSite = Extract<Source, 'nodeseek' | 'linuxdo' | 'yaohuo'>;
-export type SiteSessionStatus = 'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'expired';
+export type SessionSite = SessionSource;
+export { sessionSources };
+export type SiteSessionStatus = 'anonymous' | 'verified' | 'logged-in' | 'verification-required' | 'verifying' | 'authorizing' | 'expired';
 
 export type SiteSessionState = {
   site: SessionSite;
@@ -36,6 +38,7 @@ export type SiteSessionEvent =
   | { type: 'login-detected'; cookieSummary?: string[]; currentUser?: UserProfile | null; at?: string }
   | { type: 'verification-required'; message?: string; at?: string }
   | { type: 'verification-started'; at?: string }
+  | { type: 'authorization-started'; at?: string }
   | { type: 'verification-succeeded'; cookieSummary?: string[]; loggedIn?: boolean; currentUser?: UserProfile | null; at: string }
   | { type: 'login-expired'; message?: string; at?: string }
   | { type: 'check-failed'; message: string; at?: string }
@@ -51,17 +54,16 @@ function createSiteState(site: SessionSite, status: SiteSessionStatus, cookieSum
     site,
     status,
     cookieSummary: cleanCookieSummary(cookieSummary),
-    isVerifying: status === 'verifying',
+    isVerifying: status === 'verifying' || status === 'authorizing',
     ...(lastVerifiedAt ? { lastVerifiedAt } : {})
   };
 }
 
 export function createSiteSessionStates(states?: Partial<SiteSessionStates>): SiteSessionStates {
-  return {
-    nodeseek: states?.nodeseek || createSiteState('nodeseek', 'anonymous'),
-    linuxdo: states?.linuxdo || createSiteState('linuxdo', 'anonymous'),
-    yaohuo: states?.yaohuo || createSiteState('yaohuo', 'anonymous')
-  };
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    states?.[site] || createSiteState(site, 'anonymous')
+  ])) as SiteSessionStates;
 }
 
 function currentUserForSite(site: SessionSite, currentUser: UserProfile | null | undefined, loggedIn?: boolean) {
@@ -75,14 +77,13 @@ function currentUserForSite(site: SessionSite, currentUser: UserProfile | null |
 }
 
 export function applyDevAnonymousOverrides(states: SiteSessionStates, overrides: DevAnonymousOverrides = {}): SiteSessionStates {
-  if (!overrides.nodeseek && !overrides.linuxdo && !overrides.yaohuo) {
+  if (!sessionSources.some((site) => overrides[site])) {
     return states;
   }
-  return {
-    nodeseek: overrides.nodeseek ? createSiteState('nodeseek', 'anonymous') : states.nodeseek,
-    linuxdo: overrides.linuxdo ? createSiteState('linuxdo', 'anonymous') : states.linuxdo,
-    yaohuo: overrides.yaohuo ? createSiteState('yaohuo', 'anonymous') : states.yaohuo
-  };
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    overrides[site] ? createSiteState(site, 'anonymous') : states[site]
+  ])) as SiteSessionStates;
 }
 
 export function isDevAnonymousSource(source: FeedSource, site: SessionSite, overrides: DevAnonymousOverrides = {}) {
@@ -145,6 +146,15 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
       currentUser: undefined
     };
   }
+  if (event.type === 'authorization-started') {
+    return {
+      ...state,
+      status: 'authorizing',
+      isVerifying: true,
+      currentUser: undefined,
+      lastError: undefined
+    };
+  }
   if (event.type === 'verification-succeeded') {
     const currentUser = currentUserForSite(state.site, event.currentUser, event.loggedIn);
     return {
@@ -169,7 +179,9 @@ export function reduceSiteSessionState(state: SiteSessionState, event: SiteSessi
   if (event.type === 'check-failed') {
     return {
       ...state,
+      status: state.status === 'authorizing' ? 'anonymous' : state.status,
       isVerifying: false,
+      ...(state.status === 'authorizing' ? { currentUser: undefined } : {}),
       lastError: event.message
     };
   }
@@ -193,6 +205,9 @@ function siteStatusLabel(state: SiteSessionState) {
   }
   if (state.status === 'verifying') {
     return '验证中';
+  }
+  if (state.status === 'authorizing') {
+    return '授权中';
   }
   if (state.status === 'verification-required') {
     return '需要验证';
@@ -241,9 +256,8 @@ export function nodeSeekUserIdForSession(state: SiteSessionViewModel, webLoginUs
 }
 
 export function createSiteSessionViewModels(states: SiteSessionStates): SiteSessionViewModels {
-  return {
-    nodeseek: createSiteSessionViewModel(states.nodeseek),
-    linuxdo: createSiteSessionViewModel(states.linuxdo),
-    yaohuo: createSiteSessionViewModel(states.yaohuo)
-  };
+  return Object.fromEntries(sessionSources.map((site) => [
+    site,
+    createSiteSessionViewModel(states[site])
+  ])) as SiteSessionViewModels;
 }

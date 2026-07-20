@@ -81,7 +81,8 @@ const SOURCE_BADGE_COLORS: Record<Source, { dark: string; light: string }> = {
   v2ex: { light: '#6D8AA8', dark: '#9FB6CF' },
   linuxdo: { light: '#B08A5E', dark: '#D4B790' },
   nodeseek: { light: '#1677FF', dark: '#5B9CFF' },
-  yaohuo: { light: '#A8788E', dark: '#D0A6B6' }
+  yaohuo: { light: '#A8788E', dark: '#D0A6B6' },
+  xiaoyinsi: { light: '#7C6AA6', dark: '#B9AADE' }
 };
 
 function chipToneStyle(color: string, theme: ReaderTheme): TextStyle {

@@ -68,7 +68,8 @@ describe('site session prompts', () => {
     expect(searchSessionNoticeItems('all', sessions)).toEqual([
       { source: 'nodeseek', label: 'NodeSeek', notice: { kind: 'logged-in', message: '已登录搜索。', tone: 'neutral' } },
       { source: 'linuxdo', label: 'linux.do', notice: { kind: 'anonymous', message: '未登录搜索使用 Google，结果可能不完整。', tone: 'neutral' } },
-      { source: 'yaohuo', label: '妖火', notice: { kind: 'login-expired', message: '妖火登录已失效，请重新登录。', tone: 'danger' } }
+      { source: 'yaohuo', label: '妖火', notice: { kind: 'login-expired', message: '妖火登录已失效，请重新登录。', tone: 'danger' } },
+      { source: 'xiaoyinsi', label: '小隐寺', notice: { kind: 'anonymous', message: '匿名可阅读，授权后才能互动。', tone: 'neutral' } }
     ]);
     expect(searchSessionNoticeItems('nodeseek', sessions)).toEqual([
       { source: 'nodeseek', label: 'NodeSeek', notice: { kind: 'logged-in', message: '已登录搜索。', tone: 'neutral' } }

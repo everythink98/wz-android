@@ -8,7 +8,6 @@ import {
   accessRequirementFromObject,
   accessRequirementFromNoticeText,
   accessRequirementFromText,
-  decodeHtml,
   elementText,
   isRecord,
   parsePositiveInteger,
@@ -197,7 +196,7 @@ function v2exReplyTargetAuthor(value: unknown) {
 
 function parseV2exThanksCount(value: unknown) {
   const raw = String(value || '');
-  const text = decodeHtml(raw.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+  const text = textContentFromHtml(raw);
   const hasThanksText = /(thanks?|感谢|谢)/i.test(text);
   const hasHeartIcon = /(?:^|[/_-])heart/i.test(raw);
   if (!hasThanksText && !hasHeartIcon) {

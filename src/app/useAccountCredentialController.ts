@@ -7,6 +7,7 @@ import {
   emptyCredentialSummaries,
   type CredentialSummaries
 } from '../credentialVault';
+import type { CredentialSite } from '../credentialVault';
 import {
   isTrustedLoginFormMessageSource,
   LOGIN_FORM_ADAPTERS,
@@ -30,7 +31,7 @@ import {
   type LoginWebViewFailureReason
 } from './accountCredentialDiagnostics';
 
-export type AccountCredentialFillAttempt = { site: SessionSite; attempt: number };
+export type AccountCredentialFillAttempt = { site: CredentialSite; attempt: number };
 type WebViewRef = RefObject<WebView | null>;
 
 export function useAccountCredentialController({
@@ -40,6 +41,7 @@ export function useAccountCredentialController({
   changeYaohuoLoginPanel,
   linuxDoWebViewRef,
   notify,
+  onOpenXiaoyinsiAuthorization,
   openUser,
   refreshAccountStatus,
   setYaohuoLoginPrompt,
@@ -53,6 +55,7 @@ export function useAccountCredentialController({
   changeYaohuoLoginPanel: (visible: boolean) => void;
   linuxDoWebViewRef: WebViewRef;
   notify: (message: string) => void;
+  onOpenXiaoyinsiAuthorization: () => void;
   openUser: (user: Extract<AccountCenterCommand, { type: 'open-user' }>['user']) => Promise<unknown>;
   refreshAccountStatus: () => Promise<unknown>;
   setYaohuoLoginPrompt: (message: string) => void;
@@ -61,11 +64,11 @@ export function useAccountCredentialController({
   yaohuoWebViewRef: WebViewRef;
 }) {
   const [credentialSummaries, setCredentialSummaries] = useState<CredentialSummaries>(emptyCredentialSummaries);
-  const [credentialLoginSite, setCredentialLoginSite] = useState<SessionSite | null>(null);
-  const [pendingCredentialFillSite, setPendingCredentialFillSite] = useState<SessionSite | null>(null);
+  const [credentialLoginSite, setCredentialLoginSite] = useState<CredentialSite | null>(null);
+  const [pendingCredentialFillSite, setPendingCredentialFillSite] = useState<CredentialSite | null>(null);
   const [credentialFillAttempt, setCredentialFillAttempt] = useState<AccountCredentialFillAttempt | null>(null);
-  const credentialLoginSiteRef = useRef<SessionSite | null>(null);
-  const pendingCredentialFillSiteRef = useRef<SessionSite | null>(null);
+  const credentialLoginSiteRef = useRef<CredentialSite | null>(null);
+  const pendingCredentialFillSiteRef = useRef<CredentialSite | null>(null);
   const credentialFillTraceRef = useRef<CredentialFillTraceState | null>(null);
   const credentialFillAttemptRef = useRef(0);
   const summaryLoadGenerationRef = useRef(0);
@@ -83,9 +86,11 @@ export function useAccountCredentialController({
       }
     );
     if (!result.ok) {
-      if (!('stale' in result)) {
-        notify(`读取保存的登录信息失败：${errorMessage(result.error)}`);
+      if ('stale' in result) {
+        return false;
       }
+      setCredentialSummaries((current) => ({ ...current, ...result.summaries }));
+      notify(`读取保存的登录信息失败：${errorMessage(result.error)}`);
       return false;
     }
     setCredentialSummaries(result.summaries);
@@ -93,7 +98,7 @@ export function useAccountCredentialController({
   }, [notify]);
 
   const finishCredentialFillTrace = useCallback((
-    site: SessionSite,
+    site: CredentialSite,
     outcome: DiagnosticOutcome,
     fields: DiagnosticFields = {},
     expectedTrace?: DiagnosticTrace
@@ -106,7 +111,7 @@ export function useAccountCredentialController({
     credentialFillTraceRef.current = null;
   }, []);
 
-  const clearCredentialLoginIntent = useCallback((site: SessionSite) => {
+  const clearCredentialLoginIntent = useCallback((site: CredentialSite) => {
     finishCredentialFillTrace(site, 'canceled', { reason: 'canceled' });
     if (credentialLoginSiteRef.current === site) {
       credentialLoginSiteRef.current = null;
@@ -120,7 +125,7 @@ export function useAccountCredentialController({
   }, [finishCredentialFillTrace]);
 
   const finishCredentialFillForLoginFailure = useCallback((
-    site: SessionSite,
+    site: CredentialSite,
     attempt: number,
     reason: LoginWebViewFailureReason
   ) => {
@@ -144,6 +149,11 @@ export function useAccountCredentialController({
   }, [reloadCredentialSummaries]);
 
   const openAccountLogin = useCallback((site: SessionSite, fill: boolean) => {
+    if (site === 'xiaoyinsi') {
+      changeScreen('more');
+      onOpenXiaoyinsiAuthorization();
+      return;
+    }
     const previousSite = credentialLoginSiteRef.current;
     if (previousSite && previousSite !== site) {
       clearCredentialLoginIntent(previousSite);
@@ -200,6 +210,7 @@ export function useAccountCredentialController({
     changeYaohuoLoginPanel,
     clearCredentialLoginIntent,
     finishCredentialFillTrace,
+    onOpenXiaoyinsiAuthorization,
     setYaohuoLoginPrompt,
     webViewBlockMessage
   ]);

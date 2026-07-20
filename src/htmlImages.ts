@@ -1,4 +1,4 @@
-import { FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
+import { escapeQuotedHtmlTagDelimiters, FORUM_VIDEO_STICKER_TAG, isAllowedDataImageUrl, parseHtml, textContentFromHtml } from './localHtml';
 import { DEFAULT_NODESEEK_ANDROID_USER_AGENT } from './nodeseekCookies';
 
 export interface ImagePreviewList {
@@ -436,7 +436,7 @@ function escapeHtmlText(value: string) {
 }
 
 function paragraphHasTextOutsideImages(html: string) {
-  const withoutImages = html.replace(/<img\b[^>]*>/gi, ' ');
+  const withoutImages = escapeQuotedHtmlTagDelimiters(html).replace(/<img\b[^>]*>/gi, ' ');
   return textContentFromHtml(withoutImages).length > 0;
 }
 
@@ -552,10 +552,11 @@ function upgradeForumStickerMedia(root: { querySelectorAll?: (selector: string) 
 }
 
 function stickerRowHtmlFromParagraph(html: string) {
-  const pieces = html.split(/<br\s*\/?>/i)
+  const normalizedHtml = escapeQuotedHtmlTagDelimiters(html);
+  const pieces = normalizedHtml.split(/<br\s*\/?>/i)
     .map((piece) => piece.trim())
     .filter(Boolean);
-  const sourcePieces = pieces.length ? pieces : [html.trim()].filter(Boolean);
+  const sourcePieces = pieces.length ? pieces : [normalizedHtml.trim()].filter(Boolean);
   let changed = false;
   const result = sourcePieces.map((piece) => {
     if (isStickerMediaOnlyHtml(piece)) {

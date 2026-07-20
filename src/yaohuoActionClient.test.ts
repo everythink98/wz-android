@@ -144,6 +144,26 @@ describe('runYaohuoAction', () => {
     expect(result.message).toBe('删除成功');
   });
 
+  it('[REG-WRITE-012] does not report a reply deleted when its confirmation link is missing', async () => {
+    const fetcher = vi.fn(async (url: string) => htmlResponse(`
+      <html><body>
+        <div>论坛回复 删除操作</div>
+        <button type="submit">确认删除</button>
+      </body></html>
+    `, 200, url));
+
+    const result = await runYaohuoAction({
+      cookieHeader: 'sidyaohuo=secret',
+      request: buildYaohuoDeleteReplyRequest({
+        deletePath: '/bbs/Book_re_del.aspx?action=go&siteid=1000&classid=177&page=1&reid=32656658&id=1560268'
+      }),
+      fetcher
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result.message).toBe('操作结果无法确认，请刷新原帖核对');
+  });
+
   it('does not report long full pages without a tip as submitted', async () => {
     const fetcher = vi.fn(async () => htmlResponse(`
       <html>

@@ -17,6 +17,34 @@ const topic: TopicDetail = {
 };
 
 describe('topic session controller', () => {
+  it('[REG-XIAOYINSI-008] applies a lower authoritative reply total after submission', async () => {
+    const detail: TopicDetail = {
+      ...topic,
+      source: 'xiaoyinsi',
+      id: '84',
+      url: 'https://forum.xiaoyinsi.com/t/topic/84',
+      replyCount: 100
+    };
+    const hook = await renderHook(() => useTopicSessionController({
+      invalidateTopicActionRequests: jest.fn(),
+      notify: jest.fn()
+    }));
+
+    await act(() => {
+      hook.result.current.commands.topic.beginLoad(detail, 'xiaoyinsi:84');
+      hook.result.current.commands.topic.resolveLoad(detail, 0);
+      hook.result.current.commands.topic.finishLoad();
+    });
+    await act(() => hook.result.current.commands.replies.resolve({
+      replies: [],
+      replyCount: 7,
+      requestTopicKey: 'xiaoyinsi:84'
+    }));
+
+    expect(hook.result.current.state.topicDetail?.replyCount).toBe(7);
+    expect(hook.result.current.state.selectedTopic?.replyCount).toBe(7);
+  });
+
   it('[REG-WRITE-006] keeps an action completed while reading settings is open when restoring the Topic route', async () => {
     const hook = await renderHook(() => useTopicSessionController({
       invalidateTopicActionRequests: jest.fn(),

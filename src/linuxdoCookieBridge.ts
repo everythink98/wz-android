@@ -277,12 +277,27 @@ async function readStoredLinuxDoAccess() {
   if (!raw) {
     return null;
   }
+  let parsed: Partial<LinuxDoAccess>;
   try {
-    const parsed = JSON.parse(raw) as Partial<LinuxDoAccess>;
-    return parsed.cookieHeader ? parsed as LinuxDoAccess : null;
+    parsed = JSON.parse(raw) as Partial<LinuxDoAccess>;
   } catch {
-    return null;
+    throw new Error('linux.do 登录配置已损坏，请重新登录。');
   }
+  if (
+    typeof parsed.cookieHeader !== 'string'
+    || !parsed.cookieHeader.trim()
+    || (parsed.source !== undefined && parsed.source !== 'webview')
+  ) {
+    throw new Error('linux.do 登录配置已损坏，请重新登录。');
+  }
+  return {
+    cookieHeader: parsed.cookieHeader,
+    savedAt: typeof parsed.savedAt === 'string' && parsed.savedAt ? parsed.savedAt : new Date(0).toISOString(),
+    source: 'webview' as const,
+    ...(typeof parsed.userAgent === 'string' && sanitizeLinuxDoUserAgent(parsed.userAgent)
+      ? { userAgent: sanitizeLinuxDoUserAgent(parsed.userAgent) }
+      : {})
+  };
 }
 
 function linuxDoLoginCookieValues(cookieHeader?: string) {
@@ -336,7 +351,15 @@ export async function loadLinuxDoAccess() {
     return null;
   }
   const generation = linuxDoAccessWriteGate.generation;
-  const access = await readStoredLinuxDoAccess();
+  let access: LinuxDoAccess | null;
+  try {
+    access = await readStoredLinuxDoAccess();
+  } catch (error) {
+    if (generation !== linuxDoAccessWriteGate.generation) {
+      return null;
+    }
+    throw error;
+  }
   if (generation !== linuxDoAccessWriteGate.generation) {
     return null;
   }

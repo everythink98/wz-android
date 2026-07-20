@@ -56,8 +56,19 @@ describe('Android feature helpers', () => {
     expect(highlightHtml('<p>Hello <strong>VPS</strong></p>', 'vps hello')).toBe('<p><mark>Hello</mark> <strong><mark>VPS</mark></strong></p>');
   });
 
+  it('[REG-TOPIC-009] never inserts search highlights into quoted html attributes containing greater-than signs', () => {
+    expect(highlightHtml(
+      '<p><a title="VPS > private link">visible link</a></p>',
+      'link'
+    )).toBe('<p><a title="VPS > private link">visible <mark>link</mark></a></p>');
+  });
+
   it('copies rendered reply text without html while keeping visible line breaks', () => {
     expect(stripHtml('<p>Hello <a href="https://example.com">link</a></p><ul><li>One</li><li>Two</li></ul><pre><code>const x = 1;\n\nconsole.log(x);</code></pre><p><img src="x.png"><img alt="图示" src="y.png"></p>')).toBe('Hello link\nOne\nTwo\nconst x = 1;\n\nconsole.log(x);\n图示');
+  });
+
+  it('[REG-TOPIC-010] never copies quoted html attribute fragments containing greater-than signs', () => {
+    expect(stripHtml('<p><a title="VPS > private link">visible link</a></p>')).toBe('visible link');
   });
 
   it('filters library records and groups them by recency', () => {

@@ -1,4 +1,5 @@
 import type { Reply, Source } from './types';
+import type { DiscourseSource } from './sourceCatalog';
 
 export interface QuotedPostReference {
   source: Source;
@@ -35,12 +36,13 @@ export function quotedPostReferenceFromReply(
     : null;
 }
 
-export function linuxDoQuotedPostReferenceFromAttributes(
+export function discourseQuotedPostReferenceFromAttributes(
+  source: DiscourseSource,
   attributes: Record<string, string | undefined>,
   fallbackTopicId?: string
 ): QuotedPostReference | null {
   return quotedPostReferenceFromReply(
-    'linuxdo',
+    source,
     attributes['data-topic'] || fallbackTopicId,
     positivePostNumber(attributes['data-post']) || undefined
   );

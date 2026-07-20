@@ -1,7 +1,8 @@
 import type { Source } from '../../types';
+import { sourceSupportsTopicAction } from '../../sourceCatalog';
 
 export type ReplyComposerFormatAction = 'bold' | 'italic' | 'heading' | 'link' | 'image' | 'quote' | 'code' | 'list';
-export type ReplyComposerAccessory = 'nodeseek-sticker' | 'linuxdo-emoji' | 'yaohuo-face';
+export type ReplyComposerAccessory = 'nodeseek-sticker' | 'discourse-emoji' | 'yaohuo-face';
 
 type ReplyComposerToolbarItem =
   | { type: 'format'; action: ReplyComposerFormatAction; label: string }
@@ -9,7 +10,8 @@ type ReplyComposerToolbarItem =
 
 const REPLY_COMPOSER_ACCESSORIES: Partial<Record<Source, ReplyComposerAccessory>> = {
   nodeseek: 'nodeseek-sticker',
-  linuxdo: 'linuxdo-emoji',
+  linuxdo: 'discourse-emoji',
+  xiaoyinsi: 'discourse-emoji',
   yaohuo: 'yaohuo-face'
 };
 
@@ -37,7 +39,7 @@ export function replaceReplyComposerSelection(content: string, selection: Select
 }
 
 export function replyComposerKeepsAccessoryOpenAfterExpressionInsert(accessory: ReplyComposerAccessory) {
-  return accessory === 'nodeseek-sticker' || accessory === 'linuxdo-emoji';
+  return accessory === 'nodeseek-sticker' || accessory === 'discourse-emoji';
 }
 
 export function replyComposerExpressionGridKey(accessory: ReplyComposerAccessory, categoryLabel = '') {
@@ -108,7 +110,7 @@ export function applyReplyComposerFormat({
 }
 
 function replyComposerFormatActions(source?: Source): Array<{ action: ReplyComposerFormatAction; label: string }> {
-  if (source !== 'nodeseek' && source !== 'linuxdo' && source !== 'yaohuo') {
+  if (!sourceSupportsTopicAction(source, 'reply')) {
     return [];
   }
   return [

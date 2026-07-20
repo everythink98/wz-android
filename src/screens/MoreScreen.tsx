@@ -1,5 +1,5 @@
 import { memo, type RefObject, useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { Activity, Bug, DatabaseBackup, Server, Settings, Wrench } from 'lucide-react-native';
 import { CURRENT_APP_VERSION, type AppUpdateDownloadProgress, type AppUpdateInfo } from '../appUpdate';
@@ -7,7 +7,7 @@ import type { ReaderSettings } from '../readerData';
 import type { NetworkProxyProfile, NetworkProxyState, NetworkProxyStatus } from '../networkProxy';
 import type { LinuxDoLevelProfile } from '../sources/sourceGateway';
 import type { LoginNavigationRequest } from '../appTypes';
-import type { DevAnonymousOverrides, SessionSite, SiteSessionViewModels } from '../siteSessionState';
+import { sessionSources, type DevAnonymousOverrides, type SessionSite, type SiteSessionViewModels } from '../siteSessionState';
 import { createStyles, type ReaderTheme } from '../theme';
 import { AppButton, ExpandablePanel, MenuButton } from '../components/AppControls';
 import {
@@ -21,6 +21,18 @@ import { NetworkProxyModal } from './more/NetworkProxyModal';
 import { AccountCenterPanel, type AccountCenterCommand } from './more/AccountCenterPanel';
 import type { CredentialSummaries } from './more/accountCenter';
 import type { AccountCredentialFillAttempt } from '../app/useAccountCredentialController';
+import type { XiaoyinsiAuthPhase } from '../app/useXiaoyinsiAuthController';
+import type { XiaoyinsiPendingAuthorization } from '../xiaoyinsiAuth';
+import type { XiaoyinsiLevelProfile } from '../localXiaoyinsi';
+import { XiaoyinsiAuthPanel } from './more/XiaoyinsiAuthPanel';
+
+const moreScreenStyles = StyleSheet.create({
+  accountFooterAction: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 4,
+    paddingTop: 4
+  }
+});
 
 function appearanceSummary(settings: ReaderSettings) {
   const themeLabel = settings.theme === 'dark' ? '深色' : '浅色';
@@ -42,6 +54,9 @@ export const MoreScreen = memo(function MoreScreen({
   linuxDoLevelBusy,
   linuxDoLevelError,
   linuxDoLevelProfile,
+  xiaoyinsiLevelBusy,
+  xiaoyinsiLevelError,
+  xiaoyinsiLevelProfile,
   nodeImageApiKeyBusy,
   nodeImageApiKeySaved,
   nodeSeekUserId,
@@ -70,6 +85,7 @@ export const MoreScreen = memo(function MoreScreen({
   networkProxyState,
   networkProxySummary,
   webViewBlockMessage,
+  xiaoyinsiAuth,
   onAccountCenterCommand,
   onCheckAppUpdate,
   onDownloadAppUpdate,
@@ -81,6 +97,7 @@ export const MoreScreen = memo(function MoreScreen({
   onClearNodeImageApiKey,
   onCheckYaohuoLogin,
   onRefreshLinuxDoLevel,
+  onRefreshXiaoyinsiLevel,
   onClearLogin,
   onClearYaohuoLogin,
   handleNodeSeekLoginNavigation,
@@ -120,6 +137,9 @@ export const MoreScreen = memo(function MoreScreen({
   linuxDoLevelBusy: boolean;
   linuxDoLevelError: string;
   linuxDoLevelProfile: LinuxDoLevelProfile | null;
+  xiaoyinsiLevelBusy: boolean;
+  xiaoyinsiLevelError: string;
+  xiaoyinsiLevelProfile: XiaoyinsiLevelProfile | null;
   nodeImageApiKeyBusy: boolean;
   nodeImageApiKeySaved: boolean;
   nodeSeekUserId: number | null;
@@ -148,6 +168,16 @@ export const MoreScreen = memo(function MoreScreen({
   networkProxyState: NetworkProxyState;
   networkProxySummary: string;
   webViewBlockMessage: string;
+  xiaoyinsiAuth: {
+    message: string;
+    pending: XiaoyinsiPendingAuthorization | null;
+    phase: XiaoyinsiAuthPhase;
+    secondsRemaining: number;
+    onBegin: () => void;
+    onCancel: () => void;
+    onOpenBrowser: () => void;
+    onRevoke: () => void;
+  };
   onAccountCenterCommand: (command: AccountCenterCommand) => void | Promise<void>;
   onCheckAppUpdate: () => void;
   onDownloadAppUpdate: () => void;
@@ -159,6 +189,7 @@ export const MoreScreen = memo(function MoreScreen({
   onClearNodeImageApiKey: () => void;
   onCheckYaohuoLogin: () => void;
   onRefreshLinuxDoLevel: () => void;
+  onRefreshXiaoyinsiLevel: () => void;
   onClearLogin: () => void;
   onClearYaohuoLogin: () => void;
   handleNodeSeekLoginNavigation: (request: LoginNavigationRequest) => boolean;
@@ -189,27 +220,54 @@ export const MoreScreen = memo(function MoreScreen({
   const [accountExpanded, setAccountExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
+  const [xiaoyinsiLevelExpanded, setXiaoyinsiLevelExpanded] = useState(false);
   const nodeSeekSession = sessionViewModels.nodeseek;
   const linuxDoSession = sessionViewModels.linuxdo;
   const yaohuoSession = sessionViewModels.yaohuo;
+  const xiaoyinsiSession = sessionViewModels.xiaoyinsi;
   const updateNotes = appUpdateInfo?.notes.trim();
   const appUpdateStatus = appUpdateMessage === `当前版本 ${CURRENT_APP_VERSION}` || (appUpdateInfo && appUpdateMessage === `发现新版 ${appUpdateInfo.version}`) ? '' : appUpdateMessage;
   const appUpdateProgressWidth = appUpdateDownloadProgress && appUpdateDownloadProgress.percent !== null ? `${appUpdateDownloadProgress.percent}%` as `${number}%` : null;
   const appVersionMeta = appUpdateInfo
     ? `当前版本 ${CURRENT_APP_VERSION} · 最新版本 ${appUpdateInfo.version}`
     : `多网站第三方客户端 · 当前版本 ${CURRENT_APP_VERSION}`;
-  const devAnonymousActiveCount = (devAnonymousOverrides.nodeseek ? 1 : 0) + (devAnonymousOverrides.yaohuo ? 1 : 0) + (devAnonymousOverrides.linuxdo ? 1 : 0);
+  const devAnonymousActiveCount = sessionSources.filter((site) => devAnonymousOverrides[site]).length;
   const devAnonymousMeta = devAnonymousActiveCount ? `已开启 ${devAnonymousActiveCount} 项` : '临时匿名 · 不删除 Cookie';
+  const xiaoyinsiAuthForcedOpen = xiaoyinsiAuth.phase === 'requesting'
+    || xiaoyinsiAuth.phase === 'waiting'
+    || xiaoyinsiAuth.phase === 'cleanup';
+  const accountSessionViewModels = xiaoyinsiAuth.phase === 'cleanup'
+    ? {
+      ...sessionViewModels,
+      xiaoyinsi: {
+        ...xiaoyinsiSession,
+        status: 'authorizing' as const,
+        statusLabel: '待清理',
+        summaryLabel: '本机清理未完成',
+        cookieSummary: [],
+        isVerified: false,
+        isLoggedIn: false,
+        isVerifying: true,
+        canWrite: false,
+        currentUser: undefined
+      }
+    }
+    : sessionViewModels;
   useEffect(() => {
-    if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel) {
+    if (showLoginPanel || showYaohuoLoginPanel || showLinuxDoPanel || xiaoyinsiAuthForcedOpen) {
       setAccountExpanded(true);
     }
-  }, [showLinuxDoPanel, showLoginPanel, showYaohuoLoginPanel]);
+  }, [showLinuxDoPanel, showLoginPanel, showYaohuoLoginPanel, xiaoyinsiAuthForcedOpen]);
   useEffect(() => {
     if (levelExpanded && linuxDoSession.canWrite && !linuxDoLevelProfile && !linuxDoLevelBusy && !linuxDoLevelError) {
       onRefreshLinuxDoLevel();
     }
   }, [levelExpanded, linuxDoLevelBusy, linuxDoLevelError, linuxDoLevelProfile, linuxDoSession.canWrite, onRefreshLinuxDoLevel]);
+  useEffect(() => {
+    if (xiaoyinsiLevelExpanded && xiaoyinsiSession.canWrite && !xiaoyinsiLevelProfile && !xiaoyinsiLevelBusy && !xiaoyinsiLevelError) {
+      onRefreshXiaoyinsiLevel();
+    }
+  }, [onRefreshXiaoyinsiLevel, xiaoyinsiLevelBusy, xiaoyinsiLevelError, xiaoyinsiLevelExpanded, xiaoyinsiLevelProfile, xiaoyinsiSession.canWrite]);
   const levelMeta = !linuxDoSession.canWrite
     ? '登录后查看'
     : linuxDoLevelBusy
@@ -217,6 +275,13 @@ export const MoreScreen = memo(function MoreScreen({
       : linuxDoLevelProfile
         ? `LV ${linuxDoLevelProfile.currentLevel}${linuxDoLevelProfile.targetLevel !== null ? ` → LV ${linuxDoLevelProfile.targetLevel}` : ''}`
         : linuxDoLevelError || '点击读取';
+  const xiaoyinsiLevelMeta = !xiaoyinsiSession.canWrite
+    ? '授权后查看'
+    : xiaoyinsiLevelBusy
+      ? '读取中'
+      : xiaoyinsiLevelProfile
+        ? `LV ${xiaoyinsiLevelProfile.currentLevel}${xiaoyinsiLevelProfile.targetLevel !== null ? ` → LV ${xiaoyinsiLevelProfile.targetLevel}` : ''}`
+        : xiaoyinsiLevelError || '点击读取';
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>更多</Text>
@@ -263,10 +328,10 @@ export const MoreScreen = memo(function MoreScreen({
       <AccountCenterPanel
         credentials={credentialSummaries}
         expanded={accountExpanded}
-        forcedSite={showLoginPanel ? 'nodeseek' : showYaohuoLoginPanel ? 'yaohuo' : showLinuxDoPanel ? 'linuxdo' : null}
+        forcedSite={showLoginPanel ? 'nodeseek' : showYaohuoLoginPanel ? 'yaohuo' : showLinuxDoPanel ? 'linuxdo' : xiaoyinsiAuthForcedOpen ? 'xiaoyinsi' : null}
         pendingFillSite={pendingCredentialFillSite}
         nodeSeekUserId={nodeSeekUserId}
-        sessions={sessionViewModels}
+        sessions={accountSessionViewModels}
         siteContent={{
           nodeseek: (
             <NodeSeekLoginPanel
@@ -309,7 +374,7 @@ export const MoreScreen = memo(function MoreScreen({
                 <LinuxDoLevelPanel
                   busy={linuxDoLevelBusy}
                   error={linuxDoLevelError}
-                  linuxDoSession={linuxDoSession}
+                  siteSession={linuxDoSession}
                   profile={linuxDoLevelProfile}
                   styles={styles}
                   theme={theme}
@@ -344,6 +409,40 @@ export const MoreScreen = memo(function MoreScreen({
               onSetLoadingYaohuoLoginPage={onSetLoadingYaohuoLoginPage}
               onShowYaohuoLoginPanelChange={onShowYaohuoLoginPanelChange}
             />
+          ),
+          xiaoyinsi: (
+            <>
+              <XiaoyinsiAuthPanel
+                message={xiaoyinsiAuth.message}
+                pending={xiaoyinsiAuth.pending}
+                phase={xiaoyinsiAuth.phase}
+                secondsRemaining={xiaoyinsiAuth.secondsRemaining}
+                session={xiaoyinsiSession}
+                styles={styles}
+                theme={theme}
+                onBegin={xiaoyinsiAuth.onBegin}
+                onCancel={xiaoyinsiAuth.onCancel}
+                onOpenBrowser={xiaoyinsiAuth.onOpenBrowser}
+                onRevoke={xiaoyinsiAuth.onRevoke}
+              />
+              <View style={[moreScreenStyles.accountFooterAction, { borderTopColor: theme.line }]}>
+                <MenuButton nested icon={Activity} label="查看等级" value={xiaoyinsiLevelMeta} expanded={xiaoyinsiLevelExpanded} styles={styles} theme={theme} onPress={() => setXiaoyinsiLevelExpanded((value) => !value)} />
+                {xiaoyinsiLevelExpanded ? (
+                  <LinuxDoLevelPanel
+                    busy={xiaoyinsiLevelBusy}
+                    error={xiaoyinsiLevelError}
+                    loginButtonLabel="授权登录"
+                    loginMessage="需要先完成小隐寺授权，等级数据只使用 App 保存的 User API Key 读取。"
+                    profile={xiaoyinsiLevelProfile}
+                    siteSession={xiaoyinsiSession}
+                    styles={styles}
+                    theme={theme}
+                    onOpenLogin={xiaoyinsiAuth.onBegin}
+                    onRefresh={onRefreshXiaoyinsiLevel}
+                  />
+                ) : null}
+              </View>
+            </>
           )
         }}
         statusBusy={statusBusy}
@@ -394,6 +493,7 @@ export const MoreScreen = memo(function MoreScreen({
               <AppButton tiny variant={devAnonymousOverrides.nodeseek ? 'primary' : 'ghost'} label="NodeSeek" styles={styles} onPress={() => onToggleDevAnonymousOverride('nodeseek')} />
               <AppButton tiny variant={devAnonymousOverrides.yaohuo ? 'primary' : 'ghost'} label="妖火" styles={styles} onPress={() => onToggleDevAnonymousOverride('yaohuo')} />
               <AppButton tiny variant={devAnonymousOverrides.linuxdo ? 'primary' : 'ghost'} label="linux.do" styles={styles} onPress={() => onToggleDevAnonymousOverride('linuxdo')} />
+              <AppButton tiny variant={devAnonymousOverrides.xiaoyinsi ? 'primary' : 'ghost'} label="小隐寺" styles={styles} onPress={() => onToggleDevAnonymousOverride('xiaoyinsi')} />
             </View>
           </View>
         </ExpandablePanel>

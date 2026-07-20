@@ -1,10 +1,16 @@
 import { sourceLabel } from '../../appUtils';
-import type { CredentialSummaries, CredentialSummary } from '../../credentialVault';
-import type { SessionSite, SiteSessionViewModels } from '../../siteSessionState';
+import type { CredentialSummaries, CredentialProtection } from '../../credentialVault';
+import { sessionSources, type SessionSite, type SiteSessionViewModels } from '../../siteSessionState';
 import type { UserProfile } from '../../types';
 
 export type { CredentialSummaries } from '../../credentialVault';
 export type AccountPrimaryAction = 'open-user' | 'open-login' | 'open-login-with-fill' | 'none';
+
+export type SiteAccountCredentialView = {
+  state: 'missing' | 'invalidated' | 'saved';
+  hasCredential: boolean;
+  protection: CredentialProtection | null;
+};
 
 export type SiteAccountView = {
   site: SessionSite;
@@ -12,7 +18,8 @@ export type SiteAccountView = {
   identityLabel: string;
   rowSummary: string;
   statusLabel: string;
-  credential: CredentialSummary;
+  credential: SiteAccountCredentialView;
+  supportsCredentialFill: boolean;
   isLoggedIn: boolean;
   primaryAction: AccountPrimaryAction;
   primaryLabel: string;
@@ -21,9 +28,15 @@ export type SiteAccountView = {
   user?: UserProfile;
 };
 
-const sites = ['nodeseek', 'linuxdo', 'yaohuo'] as const satisfies readonly SessionSite[];
-
 function primaryActionFor(view: SiteSessionViewModels[SessionSite], hasCredential: boolean) {
+  if (view.site === 'xiaoyinsi') {
+    if (view.status === 'authorizing') {
+      return { action: 'none' as const, label: '授权中', disabled: true };
+    }
+    if (!view.isLoggedIn) {
+      return { action: 'open-login' as const, label: view.status === 'expired' ? '重新授权' : '授权登录', disabled: false };
+    }
+  }
   if (view.status === 'verifying') {
     return { action: 'none' as const, label: '验证中', disabled: true };
   }
@@ -55,9 +68,12 @@ export function createSiteAccountViews(
   credentials: CredentialSummaries,
   nodeSeekUserId: number | null = null
 ): SiteAccountView[] {
-  return sites.map((site) => {
+  return sessionSources.map((site) => {
     const session = sessions[site];
-    const credential = credentials[site];
+    const supportsCredentialFill = site !== 'xiaoyinsi';
+    const credential: SiteAccountCredentialView = supportsCredentialFill
+      ? credentials[site]
+      : { state: 'missing', hasCredential: false, protection: null };
     const user = session.currentUser;
     const identityLabel = user?.displayName
       || user?.username
@@ -69,7 +85,7 @@ export function createSiteAccountViews(
       : credential.hasCredential
         ? '可自动填入'
         : '未设置自动填入';
-    const statusAndCredential = `${session.summaryLabel} · ${credentialLabel}`;
+    const statusAndCredential = supportsCredentialFill ? `${session.summaryLabel} · ${credentialLabel}` : session.summaryLabel;
     return {
       site,
       label: sourceLabel(site),
@@ -77,11 +93,12 @@ export function createSiteAccountViews(
       rowSummary: user || session.isLoggedIn ? `${identityLabel} · ${statusAndCredential}` : statusAndCredential,
       statusLabel: session.summaryLabel,
       credential,
+      supportsCredentialFill,
       isLoggedIn: session.isLoggedIn,
       primaryAction: primary.action,
       primaryLabel: primary.label,
       primaryDisabled: primary.disabled,
-      needsAttention: credential.state === 'invalidated'
+      needsAttention: (supportsCredentialFill && credential.state === 'invalidated')
         || session.status === 'expired'
         || session.status === 'verification-required',
       ...(user ? { user } : {})
@@ -93,5 +110,5 @@ export function accountCenterSummary(views: SiteAccountView[]) {
   const needsAttention = views.filter((view) => view.needsAttention).length;
   const loggedIn = views.filter((view) => view.isLoggedIn).length;
   const saved = views.filter((view) => view.credential.hasCredential).length;
-  return `待处理 ${needsAttention} · 网站登录 ${loggedIn}/3 · 自动填入 ${saved}/3`;
+  return `待处理 ${needsAttention} · 网站登录 ${loggedIn}/4 · 自动填入 ${saved}/3`;
 }

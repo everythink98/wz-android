@@ -38,6 +38,9 @@ import {
   normalizeDiagnosticReason
 } from '../diagnostics';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+import { isDiscourseSource } from '../sourceCatalog';
+import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
+import { useCommitRefValue } from './useCommittedRef';
 
 const NODESEEK_DETAIL_TIMEOUT_MS = 30000;
 const LINUXDO_DETAIL_TIMEOUT_MS = 30000;
@@ -110,6 +113,7 @@ export function useTopicController({
   const topicRequestOwnerRef = useRef(createRequestOwner('topic'));
   const repliesRequestOwnerRef = useRef(createRequestOwner('topic-replies'));
   const replyVisitedPageKeysRef = useRef<Record<string, Set<string>>>({});
+  const lastSuccessfulTopicRequestIdRef = useRef(0);
   const openTopicRef = useRef<((topic: Topic, nocache?: boolean, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const loadMoreRepliesRef = useRef<((suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
   const refreshTopicRepliesRef = useRef<((
@@ -119,8 +123,9 @@ export function useTopicController({
   const toggleLoadedQuotedPostRef = useRef<((
     options: ToggleTopicBodyQuoteOptions,
     suppressLinuxDoVerification?: boolean,
-    onVerificationRequired?: () => void
-  ) => Promise<void>) | null>(null);
+    recoveryGeneration?: number
+  ) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
+  const quotedPostRequestGenerationsRef = useRef<Record<string, number>>({});
   const currentTopic = topicDetail || selectedTopic;
   const currentTopicKey = screen === 'topic' && currentTopic ? topicKey(currentTopic) : null;
   const topicFavorite = useMemo(() => (
@@ -179,14 +184,30 @@ export function useTopicController({
       requestOwner,
       requestTopicKey: nextTopicKey
     });
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentTopicRecovery = () => isCurrentTopicLoadRequest({
+      getCurrentTopicKey: topicCommands.getCurrentKey,
+      ownerRef: topicRequestOwnerRef,
+      requestId: recoveryRequestId,
+      requestIdRef: topicRequestIdRef,
+      requestOwner: recoveryRequestOwner,
+      requestTopicKey: nextTopicKey
+    });
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: requestOwner.key,
-      isCurrent: isCurrentTopicRequest,
+      isCurrent: isCurrentTopicRecovery,
       resume: async () => {
-        if (!isCurrentTopicRequest()) {
+        if (!isCurrentTopicRecovery()) {
           return 'stale';
         }
-        return await openTopicRef.current?.(topic, true, true) ?? 'stale';
+        const resumedRequest = openTopicRef.current?.(topic, true, true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = topicRequestOwnerRef.current;
+        recoveryRequestId = topicRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     repliesRequestIdRef.current += 1;
@@ -221,12 +242,16 @@ export function useTopicController({
         finishDiagnosticTrace(trace, 'stale', { source: topic.source, reason: 'stale' });
         return 'stale';
       }
+      if (sourceDiagnosticSummary(detail)?.isParseEmpty) {
+        throw new Error('主题内容解析为空，无法显示，请重试。');
+      }
       const displayDetail = topicWithAuthorFallback(detail, topic) || detail;
       const previousReplyCount = readerDataRef.current.history[topicKey(displayDetail)]?.topic.replyCount;
       topicCommands.resolveLoad(
         displayDetail,
         typeof previousReplyCount === 'number' && displayDetail.replyCount > previousReplyCount ? displayDetail.replyCount - previousReplyCount : 0
       );
+      lastSuccessfulTopicRequestIdRef.current = requestId;
       markDiagnosticStage(trace, 'apply', {
         itemCount: detail.replies?.length || 0,
         hasContent: Boolean(detail.contentHtml?.trim())
@@ -274,7 +299,7 @@ export function useTopicController({
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(message);
         }
-        return isCanceledRequest(error) ? 'stale' : 'completed';
+        return isCanceledRequest(error) ? 'stale' : 'failed';
       } else {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
         return 'stale';
@@ -316,7 +341,7 @@ export function useTopicController({
     topicSnapshot
   ]);
 
-  openTopicRef.current = openTopic;
+  useCommitRefValue(openTopicRef, openTopic);
 
   const refreshTopicReplies = useCallback(async (
     options: TopicRepliesRefreshOptions = {},
@@ -355,9 +380,22 @@ export function useTopicController({
     }
     if (detail.source === 'v2ex') {
       markDiagnosticStage(trace, 'guard', { state: 'topic-refresh-delegated' });
-      await openTopic(detail, true);
-      finishRefreshTrace('success', { state: 'topic-refresh-delegated' });
-      return 'completed';
+      const previousSuccessfulRequestId = lastSuccessfulTopicRequestIdRef.current;
+      const outcome = await openTopic(detail, true);
+      const refreshed = outcome === 'completed'
+        && lastSuccessfulTopicRequestIdRef.current > previousSuccessfulRequestId;
+      finishRefreshTrace(
+        outcome === 'stale' ? 'stale' : outcome === 'verification-required' ? 'blocked' : refreshed ? 'success' : 'failure',
+        {
+          state: 'topic-refresh-delegated',
+          ...(outcome === 'stale'
+            ? { reason: 'stale' as const }
+            : outcome === 'verification-required'
+              ? { reason: 'verification_required' as const }
+              : refreshed ? {} : { reason: 'unknown' as const })
+        }
+      );
+      return outcome;
     }
     const requestTopicKey = topicKey(detail);
     const requestId = ++repliesRequestIdRef.current;
@@ -370,6 +408,16 @@ export function useTopicController({
       requestOwner,
       requestTopicKey
     });
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentRepliesRecovery = () => isCurrentTopicRepliesRequest({
+      getCurrentTopicKey: topicCommands.getCurrentKey,
+      ownerRef: repliesRequestOwnerRef,
+      requestId: recoveryRequestId,
+      requestIdRef: repliesRequestIdRef,
+      requestOwner: recoveryRequestOwner,
+      requestTopicKey
+    });
     const recoveryOptions: TopicRepliesRefreshOptions = {
       silent,
       afterSubmit,
@@ -380,12 +428,18 @@ export function useTopicController({
     };
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: requestOwner.key,
-      isCurrent: isCurrentRepliesRequest,
+      isCurrent: isCurrentRepliesRecovery,
       resume: async () => {
-        if (!isCurrentRepliesRequest()) {
+        if (!isCurrentRepliesRecovery()) {
           return 'stale';
         }
-        return await refreshTopicRepliesRef.current?.(recoveryOptions, true) ?? 'stale';
+        const resumedRequest = refreshTopicRepliesRef.current?.(recoveryOptions, true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = repliesRequestOwnerRef.current;
+        recoveryRequestId = repliesRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     repliesAbortRef.current?.abort();
@@ -418,16 +472,22 @@ export function useTopicController({
         finishRefreshTrace('stale', { reason: 'stale' });
         return 'stale';
       }
+      if (sourceDiagnosticSummary(data)?.isParseEmpty) {
+        throw new Error('评论内容解析为空，无法更新，请重试。');
+      }
       const refreshedItems = removeReply(data.items, excludeReply);
       const mergedReplies = mergeReplies(topicReplyCommands.getCurrent(), refreshedItems);
       const displayedReplies = shouldApplyEditedReplyFallback(refreshedItems, editedReplyContent, detail.source)
         ? applyEditedReplyContent(mergedReplies, editedReplyContent, detail.source)
         : mergedReplies;
       const replyCount = afterSubmit && !targetReply && !excludeReply
-        ? replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length)
-        : undefined;
+        ? data.totalCount ?? replyCountAfterNewReplySubmit(detail.replyCount || 0, displayedReplies.length)
+        : data.totalCount;
+      const replyCountUpdate = typeof replyCount === 'number'
+        ? { replyCount, requestTopicKey }
+        : {};
       if (afterSubmit && !targetReply && !excludeReply) {
-        topicReplyCommands.resolve({ replies: displayedReplies, replyCount, requestTopicKey });
+        topicReplyCommands.resolve({ replies: displayedReplies, ...replyCountUpdate });
       }
       if (!afterSubmit) {
         const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
@@ -439,10 +499,11 @@ export function useTopicController({
           replies: displayedReplies,
           hasMore: canLoadNext,
           nextPage: data.nextPage ?? null,
-          nextOffset: data.nextOffset ?? null
+          nextOffset: data.nextOffset ?? null,
+          ...replyCountUpdate
         });
       } else if (targetReply || excludeReply) {
-        topicReplyCommands.resolve({ replies: displayedReplies });
+        topicReplyCommands.resolve({ replies: displayedReplies, ...replyCountUpdate });
       }
       if (!silent) {
         notify(`评论已更新${refreshedItems.length ? `，读取 ${refreshedItems.length} 条` : ''}`);
@@ -491,7 +552,7 @@ export function useTopicController({
       } else {
         finishRefreshTrace('stale', { reason: 'stale' });
       }
-      return isCanceledRequest(error) || !isCurrentRepliesRequest() ? 'stale' : 'completed';
+      return isCanceledRequest(error) || !isCurrentRepliesRequest() ? 'stale' : 'failed';
     } finally {
       if (isCurrentRepliesRequest()) {
         topicReplyCommands.finishLoad();
@@ -522,7 +583,7 @@ export function useTopicController({
     topicReplies,
   ]);
 
-  refreshTopicRepliesRef.current = refreshTopicReplies;
+  useCommitRefValue(refreshTopicRepliesRef, refreshTopicReplies);
 
   const loadMoreReplies = useCallback(async (
     suppressLinuxDoVerification = false
@@ -554,14 +615,30 @@ export function useTopicController({
       requestOwner,
       requestTopicKey
     });
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentRepliesRecovery = () => isCurrentTopicRepliesRequest({
+      getCurrentTopicKey: topicCommands.getCurrentKey,
+      ownerRef: repliesRequestOwnerRef,
+      requestId: recoveryRequestId,
+      requestIdRef: repliesRequestIdRef,
+      requestOwner: recoveryRequestOwner,
+      requestTopicKey
+    });
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: requestOwner.key,
-      isCurrent: isCurrentRepliesRequest,
+      isCurrent: isCurrentRepliesRecovery,
       resume: async () => {
-        if (!isCurrentRepliesRequest()) {
+        if (!isCurrentRepliesRecovery()) {
           return 'stale';
         }
-        return await loadMoreRepliesRef.current?.(true) ?? 'stale';
+        const resumedRequest = loadMoreRepliesRef.current?.(true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = repliesRequestOwnerRef.current;
+        recoveryRequestId = repliesRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     let controller: AbortController | null = null;
@@ -586,6 +663,9 @@ export function useTopicController({
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
         return 'stale';
       }
+      if (sourceDiagnosticSummary(data)?.isParseEmpty) {
+        throw new Error('评论内容解析为空，无法加载下一页，请重试。');
+      }
       const currentReplies = topicReplyCommands.getCurrent();
       const mergedReplies = mergeReplies(currentReplies, data.items);
       const visitedPages = replyVisitedPageKeysRef.current[requestTopicKey] || new Set<string>();
@@ -598,7 +678,8 @@ export function useTopicController({
         replies: mergedReplies,
         hasMore: canLoadNext,
         nextPage: data.nextPage ?? null,
-        nextOffset: data.nextOffset ?? null
+        nextOffset: data.nextOffset ?? null,
+        ...(typeof data.totalCount === 'number' ? { replyCount: data.totalCount, requestTopicKey } : {})
       });
       markDiagnosticStage(trace, 'apply', {
         beforeCount: currentReplies.length,
@@ -644,7 +725,7 @@ export function useTopicController({
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
         }
-        return isCanceledRequest(error) ? 'stale' : 'completed';
+        return isCanceledRequest(error) ? 'stale' : 'failed';
       } else {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
         return 'stale';
@@ -678,22 +759,25 @@ export function useTopicController({
     topicDetail
   ]);
 
-  refreshTopicRepliesRef.current = refreshTopicReplies;
+  useCommitRefValue(loadMoreRepliesRef, loadMoreReplies);
 
-  loadMoreRepliesRef.current = loadMoreReplies;
-
-  const refreshWholeTopic = useCallback(() => {
+  const refreshWholeTopic = useCallback(async () => {
     const detail = topicDetail || selectedTopic;
     if (detail) {
-      void openTopic(detail, true);
+      const previousSuccessfulRequestId = lastSuccessfulTopicRequestIdRef.current;
+      const outcome = await openTopic(detail, true);
+      return outcome === 'completed' && lastSuccessfulTopicRequestIdRef.current > previousSuccessfulRequestId
+        ? 'completed' as const
+        : outcome === 'completed' ? 'failed' as const : outcome;
     }
+    return 'stale' as const;
   }, [openTopic, selectedTopic, topicDetail]);
 
   const toggleLoadedQuotedPost = useCallback(async (
     options: ToggleTopicBodyQuoteOptions,
     suppressLinuxDoVerification = false,
-    onVerificationRequired?: () => void
-  ) => {
+    recoveryGeneration?: number
+  ): Promise<LinuxDoReadResumeOutcome> => {
     const { instanceKey, reference, quotedPost } = options;
     const detail = topicDetail || selectedTopic;
     const trace = beginDiagnosticTrace('reply', 'toggle-quote', {
@@ -702,94 +786,104 @@ export function useTopicController({
     });
     const referenceKey = quotedPostReferenceKey(reference);
     const key = instanceKey;
+    const requestGeneration = recoveryGeneration
+      ?? (quotedPostRequestGenerationsRef.current[key] || 0) + 1;
+    if (recoveryGeneration === undefined) {
+      quotedPostRequestGenerationsRef.current[key] = requestGeneration;
+    }
     if (topicQuotes.isExpanded(key)) {
       topicQuotes.changeExpanded(key, false);
       markDiagnosticStage(trace, 'apply', { state: 'collapsed' });
       finishDiagnosticTrace(trace, 'success', { state: 'collapsed' });
-      return;
+      return 'completed';
     }
 
     if (quotedPost || topicQuotes.getLoaded(referenceKey)) {
       topicQuotes.changeExpanded(key, true);
       markDiagnosticStage(trace, 'apply', { state: 'cached-quote' });
       finishDiagnosticTrace(trace, 'success', { state: 'cached-quote' });
-      return;
+      return 'completed';
     }
 
-    if (!detail || reference.source !== 'linuxdo') {
+    if (!detail || !isDiscourseSource(reference.source)) {
       markDiagnosticStage(trace, 'guard', { state: detail ? 'unsupported-source' : 'missing-topic' });
       finishDiagnosticTrace(trace, 'blocked', { reason: detail ? 'unsupported' : 'not_ready' });
       notify('引用楼层未加载');
       topicQuotes.changeExpanded(key, true);
-      return;
+      return 'failed';
     }
     const requestTopicKey = topicKey(detail);
-    const isCurrentQuotedPostRequest = () => topicCommands.getCurrentKey() === requestTopicKey;
+    const isCurrentQuotedPostFlow = () => (
+      topicCommands.getCurrentKey() === requestTopicKey
+      && quotedPostRequestGenerationsRef.current[key] === requestGeneration
+    );
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: `topic-quote:${requestTopicKey}:${referenceKey}`,
-      isCurrent: isCurrentQuotedPostRequest,
+      isCurrent: isCurrentQuotedPostFlow,
       resume: async () => {
-        if (!isCurrentQuotedPostRequest()) {
+        if (!isCurrentQuotedPostFlow()) {
           return 'stale';
         }
-        let stillRequiresVerification = false;
-        await toggleLoadedQuotedPostRef.current?.(
-          options,
-          true,
-          () => { stillRequiresVerification = true; }
-        );
-        if (stillRequiresVerification) {
-          return 'verification-required';
-        }
-        return isCurrentQuotedPostRequest() ? 'completed' : 'stale';
+        return await toggleLoadedQuotedPostRef.current?.(options, true, requestGeneration) ?? 'stale';
       }
     };
 
     topicQuotes.changeLoading(key, true);
     const controller = new AbortController();
     topicQuotes.replaceRequest(key, controller);
+    const isCurrentQuotedPostRequest = () => (
+      isCurrentQuotedPostFlow()
+      && !controller.signal.aborted
+      && topicQuotes.isRequest(key, controller)
+    );
     try {
       const loaded = await sourceGateway.getReply({
         source: reference.source,
         id: reference.topicId,
         floor: reference.postNumber,
         signal: controller.signal
-      }, { isCurrent: () => topicCommands.getCurrentKey() === requestTopicKey, trace });
-      if (topicCommands.getCurrentKey() !== requestTopicKey) {
+      }, { isCurrent: isCurrentQuotedPostRequest, trace });
+      if (!isCurrentQuotedPostRequest()) {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
-        return;
+        return 'stale';
+      }
+      if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
+        throw new Error('引用内容解析为空，无法展开，请重试。');
       }
       topicQuotes.remember(referenceKey, loaded);
       topicQuotes.changeExpanded(key, true);
       markDiagnosticStage(trace, 'apply', { state: 'quote-expanded' });
       finishDiagnosticTrace(trace, 'success');
       notify(`引用已展开 #${reference.postNumber}`);
+      return 'completed';
     } catch (error) {
-      if (topicCommands.getCurrentKey() === requestTopicKey) {
+      if (isCurrentQuotedPostRequest()) {
         const sourceError = sourceErrorFromUnknown(reference.source, error);
         if (sourceError.kind === 'verification-required') {
           finishDiagnosticTrace(trace, 'blocked', { reason: 'verification_required' });
-          if (suppressLinuxDoVerification) {
-            onVerificationRequired?.();
-          } else {
+          if (!suppressLinuxDoVerification) {
             await showLinuxDoVerification(sourceError.message, linuxDoRecovery);
           }
-          return;
+          return 'verification-required';
         }
         if (isCanceledRequest(error)) {
           finishDiagnosticTrace(trace, 'canceled', { reason: 'canceled' });
+          return 'stale';
         } else {
           finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
           notify(sourceError.message);
+          return 'failed';
         }
       } else {
         finishDiagnosticTrace(trace, 'stale', { reason: 'stale' });
+        return 'stale';
       }
     } finally {
-      if (topicQuotes.isRequest(key, controller)) {
+      const ownsActiveRequest = topicQuotes.isRequest(key, controller);
+      if (ownsActiveRequest) {
         topicQuotes.clearRequest(key, controller);
       }
-      if (topicCommands.getCurrentKey() === requestTopicKey) {
+      if (ownsActiveRequest && isCurrentQuotedPostFlow()) {
         topicQuotes.changeLoading(key, false);
       }
     }
@@ -810,7 +904,7 @@ export function useTopicController({
     topicDetail,
   ]);
 
-  toggleLoadedQuotedPostRef.current = toggleLoadedQuotedPost;
+  useCommitRefValue(toggleLoadedQuotedPostRef, toggleLoadedQuotedPost);
 
   const toggleTopicBodyQuote = useCallback((options: ToggleTopicBodyQuoteOptions) => (
     toggleLoadedQuotedPost(options)

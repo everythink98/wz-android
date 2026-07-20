@@ -5,6 +5,7 @@ const reactStateOverrides = vi.hoisted(() => ({ values: [] as unknown[] }));
 vi.mock('react', () => ({
   useCallback: <T,>(callback: T) => callback,
   useEffect: () => undefined,
+  useLayoutEffect: (effect: () => void) => effect(),
   useMemo: <T,>(factory: () => T) => factory(),
   useRef: <T,>(value: T) => ({ current: value }),
   useState: <T,>(initial: T | (() => T)) => {
@@ -19,6 +20,7 @@ vi.mock('react', () => ({
 
 import { LinuxDoCloudflareError } from '../cloudflareChallenge';
 import { createEmptyReaderData } from '../readerData';
+import { annotateSourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../siteSessionState';
 import type { SourceGateway } from '../sources/sourceGateway';
 import type { UserProfile } from '../types';
@@ -55,6 +57,7 @@ describe('user source recovery routing', () => {
     };
     const getUserProfile = vi.fn()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockResolvedValueOnce(user);
     const showLinuxDoVerification = vi.fn();
     const controller = useUserController({
@@ -73,8 +76,10 @@ describe('user source recovery routing', () => {
 
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
     expect(recovery).toMatchObject({ key: expect.stringContaining('user:linuxdo:alice') });
+    await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(recovery.isCurrent()).toBe(true);
     await expect(recovery.resume()).resolves.toBe('completed');
-    expect(getUserProfile).toHaveBeenCalledTimes(2);
+    expect(getUserProfile).toHaveBeenCalledTimes(3);
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
@@ -98,6 +103,7 @@ describe('user source recovery routing', () => {
     reactStateOverrides.values = [null, user, false, false, false, null];
     const getUserProfile = vi.fn()
       .mockRejectedValueOnce(new LinuxDoCloudflareError())
+      .mockRejectedValueOnce(new LinuxDoCloudflareError())
       .mockResolvedValueOnce({
         ...user,
         hasMoreTopics: false,
@@ -120,10 +126,100 @@ describe('user source recovery routing', () => {
 
     await expect(controller[method]()).resolves.toBe('verification-required');
     const recovery = showLinuxDoVerification.mock.calls[0]?.[1];
+    await expect(recovery.resume()).resolves.toBe('verification-required');
+    expect(recovery.isCurrent()).toBe(true);
     await expect(recovery.resume()).resolves.toBe('completed');
 
     expect(getUserProfile).toHaveBeenNthCalledWith(1, expect.objectContaining({ cursor, cursorType }), expect.any(Object));
     expect(getUserProfile).toHaveBeenNthCalledWith(2, expect.objectContaining({ cursor, cursorType }), expect.any(Object));
+    expect(getUserProfile).toHaveBeenNthCalledWith(3, expect.objectContaining({ cursor, cursorType }), expect.any(Object));
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
+  });
+
+  it('REG-USER-001 releases a superseded topic cursor when reply pagination takes ownership', async () => {
+    const user: UserProfile = {
+      source: 'linuxdo',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice',
+      url: 'https://linux.do/u/alice',
+      topics: [],
+      replies: [],
+      hasMoreTopics: true,
+      nextTopicsCursor: 'topics-cursor',
+      hasMoreReplies: true,
+      nextRepliesCursor: 'replies-cursor'
+    };
+    reactStateOverrides.values = [null, user, false, false, false, null];
+    const firstTopicsPage = Promise.withResolvers<UserProfile>();
+    const getUserProfile = vi.fn(async ({ cursorType }: { cursorType?: 'topics' | 'replies' }) => {
+      if (cursorType === 'topics' && getUserProfile.mock.calls.length === 1) {
+        return firstTopicsPage.promise;
+      }
+      return {
+        ...user,
+        hasMoreTopics: false,
+        nextTopicsCursor: null,
+        hasMoreReplies: false,
+        nextRepliesCursor: null
+      };
+    });
+    const controller = useUserController({
+      notify: vi.fn(),
+      onOpenUserScreen: vi.fn(),
+      readerData: createEmptyReaderData(),
+      screen: 'user',
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { getUserProfile } as unknown as SourceGateway
+    });
+
+    const topicsRequest = controller.loadMoreUserTopics();
+    await vi.waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(1));
+    await expect(controller.loadMoreUserReplies()).resolves.toBe('completed');
+    firstTopicsPage.resolve(user);
+    await expect(topicsRequest).resolves.toBe('stale');
+
+    await expect(controller.loadMoreUserTopics()).resolves.toBe('completed');
+    expect(getUserProfile).toHaveBeenCalledTimes(3);
+    expect(getUserProfile).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: 'topics-cursor', cursorType: 'topics' }),
+      expect.any(Object)
+    );
+  });
+
+  it('REG-SOURCE-002 does not accept a user profile whose identity and entries all failed to parse', async () => {
+    const user: UserProfile = {
+      source: 'nodeseek',
+      id: 'alice',
+      username: 'alice',
+      displayName: 'Alice',
+      url: 'https://www.nodeseek.com/space/1',
+      topics: []
+    };
+    const parsedEmpty = annotateSourceDiagnosticSummary({ ...user, displayName: '', topics: [] }, {
+      parserVariant: 'html-user',
+      candidateCount: 1,
+      validCount: 0,
+      droppedCount: 1,
+      isExpectedEmpty: false
+    });
+    const notify = vi.fn();
+    const controller = useUserController({
+      notify,
+      onOpenUserScreen: vi.fn(),
+      readerData: createEmptyReaderData(),
+      screen: 'user',
+      sessionViewModels: createSiteSessionViewModels(createSiteSessionStates()),
+      showLinuxDoVerification: vi.fn(),
+      showNodeSeekVerification: vi.fn(),
+      showYaohuoLogin: vi.fn(),
+      sourceGateway: { getUserProfile: vi.fn(async () => parsedEmpty) } as unknown as SourceGateway
+    });
+
+    await expect(controller.openUser(user)).resolves.toBe('failed');
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('解析为空'));
   });
 });

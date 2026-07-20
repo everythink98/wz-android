@@ -61,6 +61,19 @@ afterEach(() => {
 });
 
 describe('Network proxy modal', () => {
+  it('[REG-PROXY-003] exposes an explicit direct-connection reset after proxy recovery fails', async () => {
+    const onSetEnabled = jest.fn(async (_enabled: boolean) => undefined);
+    const view = await render(proxyModal({
+      applyError: '代理配置读取失败，已阻止网络请求',
+      applyStatus: 'failed',
+      onSetEnabled
+    }));
+
+    await fireEvent.press(view.getByLabelText('重置为直连'));
+
+    await waitFor(() => expect(onSetEnabled).toHaveBeenCalledWith(false));
+  });
+
   it('shows field errors and does not save an empty proxy profile', async () => {
     const onUpsertProfile = jest.fn(async (_profile: NetworkProxyProfile) => undefined);
     const view = await render(proxyModal({ onUpsertProfile }));

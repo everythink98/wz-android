@@ -25,10 +25,12 @@ import { nodeSeekUserIdFromValue } from '../userNavigation';
 import { createRequestOwner, isCurrentOwnedRequest, startOwnedRequest } from '../requestOwnership';
 import { authHintForSource } from '../siteSessionPrompts';
 import { sourceErrorFromUnknown } from '../sourceErrors';
+import { sourceDiagnosticSummary } from '../sourceAdapterDiagnostics';
 import type { SiteSessionViewModels } from '../siteSessionState';
 import type { Source, SourceErrorInfo, UserProfile, UserReplyActivity } from '../types';
 import type { Screen } from '../appTypes';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
+import { useCommitRefValue } from './useCommittedRef';
 
 function mergeUserReplies(existing: UserReplyActivity[] = [], incoming: UserReplyActivity[] = []) {
   const seen = new Set(existing.map((reply) => `${reply.source}:${reply.id}`));
@@ -102,6 +104,8 @@ export function useUserController({
   const userAbortRef = useRef<AbortController | null>(null);
   const userLoadingMoreTopicCursorRef = useRef<string | null>(null);
   const userLoadingMoreReplyCursorRef = useRef<string | null>(null);
+  const userTopicsPaginationRequestIdRef = useRef(0);
+  const userRepliesPaginationRequestIdRef = useRef(0);
   const userVisitedTopicCursorsRef = useRef<Set<string>>(new Set());
   const userVisitedReplyCursorsRef = useRef<Set<string>>(new Set());
   const openUserRef = useRef<((user: UserProfile, nocache?: boolean, suppressLinuxDoVerification?: boolean) => Promise<LinuxDoReadResumeOutcome>) | null>(null);
@@ -128,6 +132,8 @@ export function useUserController({
     setUserLoadingMoreReplies(false);
     userLoadingMoreTopicCursorRef.current = null;
     userLoadingMoreReplyCursorRef.current = null;
+    userTopicsPaginationRequestIdRef.current += 1;
+    userRepliesPaginationRequestIdRef.current += 1;
     userVisitedTopicCursorsRef.current = new Set();
     userVisitedReplyCursorsRef.current = new Set();
   }, []);
@@ -174,7 +180,7 @@ export function useUserController({
       return 'completed';
     }
     notify(sourceError.message);
-    return 'completed';
+    return 'failed';
   }, [notify, sessionViewModels, showLinuxDoVerification, showNodeSeekVerification, showYaohuoLogin]);
 
   const openUser = useCallback(async (
@@ -213,14 +219,26 @@ export function useUserController({
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${requestUser.source}:${requestUser.id || requestUser.username}:${nocache ? 'nocache' : 'cache'}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentUserRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, userRequestOwnerRef)
+      && recoveryRequestId === userRequestIdRef.current
+    );
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: requestOwner.key,
-      isCurrent: isCurrentUserRequest,
+      isCurrent: isCurrentUserRecovery,
       resume: async () => {
-        if (!isCurrentUserRequest()) {
+        if (!isCurrentUserRecovery()) {
           return 'stale';
         }
-        return await openUserRef.current?.(requestUser, true, true) ?? 'stale';
+        const resumedRequest = openUserRef.current?.(requestUser, true, true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = userRequestOwnerRef.current;
+        recoveryRequestId = userRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     setSelectedUser(requestUser);
@@ -239,6 +257,8 @@ export function useUserController({
     setUserLoadingMoreReplies(false);
     userLoadingMoreTopicCursorRef.current = null;
     userLoadingMoreReplyCursorRef.current = null;
+    userTopicsPaginationRequestIdRef.current += 1;
+    userRepliesPaginationRequestIdRef.current += 1;
     userVisitedTopicCursorsRef.current = new Set();
     userVisitedReplyCursorsRef.current = new Set();
     const controller = startAbortableRequest(userAbortRef);
@@ -255,6 +275,9 @@ export function useUserController({
           reason: controller.signal.aborted ? 'canceled' : 'superseded'
         });
         return 'stale';
+      }
+      if (sourceDiagnosticSummary(profile)?.isParseEmpty) {
+        throw new Error('用户主页解析为空，无法显示，请重试。');
       }
       markDiagnosticStage(trace, 'apply', {
         source: requestUser.source,
@@ -321,7 +344,7 @@ export function useUserController({
     userProfile
   ]);
 
-  openUserRef.current = openUser;
+  useCommitRefValue(openUserRef, openUser);
 
   const loadMoreUserTopics = useCallback(async (
     suppressLinuxDoVerification = false
@@ -351,17 +374,30 @@ export function useUserController({
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more:${current.nextTopicsCursor}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentUserRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, userRequestOwnerRef)
+      && recoveryRequestId === userRequestIdRef.current
+    );
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: requestOwner.key,
-      isCurrent: isCurrentUserRequest,
+      isCurrent: isCurrentUserRecovery,
       resume: async () => {
-        if (!isCurrentUserRequest()) {
+        if (!isCurrentUserRecovery()) {
           return 'stale';
         }
-        return await loadMoreUserTopicsRef.current?.(true) ?? 'stale';
+        const resumedRequest = loadMoreUserTopicsRef.current?.(true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = userRequestOwnerRef.current;
+        recoveryRequestId = userRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     const controller = startAbortableRequest(userAbortRef);
+    const paginationRequestId = ++userTopicsPaginationRequestIdRef.current;
     userLoadingMoreTopicCursorRef.current = current.nextTopicsCursor;
     setUserLoadingMoreTopics(true);
     setUserError(null);
@@ -381,6 +417,9 @@ export function useUserController({
         });
         return 'stale';
       }
+      if (sourceDiagnosticSummary(nextProfile)?.isParseEmpty) {
+        throw new Error('用户帖子解析为空，无法加载下一页，请重试。');
+      }
       const expectedAfterCount = mergeTopics(current.topics, nextProfile.topics).length;
       markDiagnosticStage(trace, 'apply', {
         source: current.source,
@@ -389,13 +428,17 @@ export function useUserController({
         itemCount: nextProfile.topics.length,
         hasMore: Boolean(nextProfile.hasMoreTopics)
       });
+      userVisitedTopicCursorsRef.current.add(current.nextTopicsCursor);
+      const canLoadNext = Boolean(
+        nextProfile.hasMoreTopics
+        && nextProfile.nextTopicsCursor
+        && !userVisitedTopicCursorsRef.current.has(nextProfile.nextTopicsCursor)
+      );
       setUserProfile((previous) => {
         if (!previous || previous.source !== current.source || previous.id !== current.id) {
           return previous;
         }
         const mergedTopics = mergeTopics(previous.topics, nextProfile.topics);
-        userVisitedTopicCursorsRef.current.add(current.nextTopicsCursor || '');
-        const canLoadNext = Boolean(nextProfile.hasMoreTopics && nextProfile.nextTopicsCursor && !userVisitedTopicCursorsRef.current.has(nextProfile.nextTopicsCursor));
         return {
           ...previous,
           topics: mergedTopics,
@@ -442,7 +485,7 @@ export function useUserController({
           reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
         });
       }
-      if (isCurrentUserRequest()) {
+      if (userTopicsPaginationRequestIdRef.current === paginationRequestId) {
         setUserLoadingMoreTopics(false);
         userLoadingMoreTopicCursorRef.current = null;
       }
@@ -457,7 +500,7 @@ export function useUserController({
     userProfile
   ]);
 
-  loadMoreUserTopicsRef.current = loadMoreUserTopics;
+  useCommitRefValue(loadMoreUserTopicsRef, loadMoreUserTopics);
 
   const loadMoreUserReplies = useCallback(async (
     suppressLinuxDoVerification = false
@@ -487,17 +530,30 @@ export function useUserController({
     const requestId = ++userRequestIdRef.current;
     const requestOwner = startOwnedRequest(userRequestOwnerRef, `user:${current.source}:${current.id || current.username}:more-replies:${current.nextRepliesCursor}`);
     const isCurrentUserRequest = () => isCurrentOwnedRequest(requestOwner, userRequestOwnerRef) && requestId === userRequestIdRef.current;
+    let recoveryRequestOwner = requestOwner;
+    let recoveryRequestId = requestId;
+    const isCurrentUserRecovery = () => (
+      isCurrentOwnedRequest(recoveryRequestOwner, userRequestOwnerRef)
+      && recoveryRequestId === userRequestIdRef.current
+    );
     const linuxDoRecovery: LinuxDoReadRecovery = {
       key: requestOwner.key,
-      isCurrent: isCurrentUserRequest,
+      isCurrent: isCurrentUserRecovery,
       resume: async () => {
-        if (!isCurrentUserRequest()) {
+        if (!isCurrentUserRecovery()) {
           return 'stale';
         }
-        return await loadMoreUserRepliesRef.current?.(true) ?? 'stale';
+        const resumedRequest = loadMoreUserRepliesRef.current?.(true);
+        if (!resumedRequest) {
+          return 'stale';
+        }
+        recoveryRequestOwner = userRequestOwnerRef.current;
+        recoveryRequestId = userRequestIdRef.current;
+        return await resumedRequest;
       }
     };
     const controller = startAbortableRequest(userAbortRef);
+    const paginationRequestId = ++userRepliesPaginationRequestIdRef.current;
     userLoadingMoreReplyCursorRef.current = current.nextRepliesCursor;
     setUserLoadingMoreReplies(true);
     setUserError(null);
@@ -517,6 +573,9 @@ export function useUserController({
         });
         return 'stale';
       }
+      if (sourceDiagnosticSummary(nextProfile)?.isParseEmpty) {
+        throw new Error('用户回复解析为空，无法加载下一页，请重试。');
+      }
       const expectedAfterCount = mergeUserReplies(current.replies || [], nextProfile.replies || []).length;
       markDiagnosticStage(trace, 'apply', {
         source: current.source,
@@ -525,13 +584,17 @@ export function useUserController({
         itemCount: nextProfile.replies?.length || 0,
         hasMore: Boolean(nextProfile.hasMoreReplies)
       });
+      userVisitedReplyCursorsRef.current.add(current.nextRepliesCursor);
+      const canLoadNext = Boolean(
+        nextProfile.hasMoreReplies
+        && nextProfile.nextRepliesCursor
+        && !userVisitedReplyCursorsRef.current.has(nextProfile.nextRepliesCursor)
+      );
       setUserProfile((previous) => {
         if (!previous || previous.source !== current.source || previous.id !== current.id) {
           return previous;
         }
         const mergedReplies = mergeUserReplies(previous.replies || [], nextProfile.replies || []);
-        userVisitedReplyCursorsRef.current.add(current.nextRepliesCursor || '');
-        const canLoadNext = Boolean(nextProfile.hasMoreReplies && nextProfile.nextRepliesCursor && !userVisitedReplyCursorsRef.current.has(nextProfile.nextRepliesCursor));
         return {
           ...previous,
           replies: mergedReplies,
@@ -578,7 +641,7 @@ export function useUserController({
           reason: isCurrentUserRequest() ? 'unknown' : controller.signal.aborted ? 'canceled' : 'superseded'
         });
       }
-      if (isCurrentUserRequest()) {
+      if (userRepliesPaginationRequestIdRef.current === paginationRequestId) {
         setUserLoadingMoreReplies(false);
         userLoadingMoreReplyCursorRef.current = null;
       }
@@ -593,7 +656,7 @@ export function useUserController({
     userProfile
   ]);
 
-  loadMoreUserRepliesRef.current = loadMoreUserReplies;
+  useCommitRefValue(loadMoreUserRepliesRef, loadMoreUserReplies);
 
   return {
     currentUserFollowed,

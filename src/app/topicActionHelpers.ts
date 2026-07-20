@@ -4,7 +4,7 @@ import {
   completeOptimisticAction,
   type OptimisticActionState
 } from '../topicActionState';
-import { clearLinuxDoAccess, clearLinuxDoAccessForGeneration, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
+import { clearLinuxDoAccess, clearLinuxDoAccessForGeneration, currentLinuxDoAccessGeneration, parseLinuxDoDocumentCookie, summarizeLinuxDoCookies } from '../linuxdoCookieBridge';
 import { errorMessage } from '../appUtils';
 import type { SiteSessionEvent } from '../siteSessionState';
 
@@ -38,15 +38,36 @@ export async function clearExpiredLinuxDoLogin({
   resetLinuxDoLevelState: () => void;
   updateLinuxDoSession: (event: SiteSessionEvent) => void;
 }) {
-  const remainingAccess = generation === undefined
-    ? await clearLinuxDoAccess()
-    : await clearLinuxDoAccessForGeneration(generation, cookieHeader);
+  const isCurrent = () => generation === undefined || currentLinuxDoAccessGeneration() === generation;
+  if (!isCurrent()) {
+    return false;
+  }
+  let remainingAccess: Awaited<ReturnType<typeof clearLinuxDoAccess>>;
+  try {
+    remainingAccess = generation === undefined
+      ? await clearLinuxDoAccess()
+      : await clearLinuxDoAccessForGeneration(generation, cookieHeader);
+  } catch (cleanupError) {
+    if (!isCurrent()) {
+      return false;
+    }
+    updateLinuxDoSession({
+      type: 'login-expired',
+      message: `${errorMessage(error)} 本机 Cookie 清理未完成，请重试。`
+    });
+    resetLinuxDoLevelState();
+    throw cleanupError;
+  }
+  if (!isCurrent()) {
+    return false;
+  }
   const remainingCookies = parseLinuxDoDocumentCookie(remainingAccess?.cookieHeader || '');
   const remainingSummary = summarizeLinuxDoCookies(remainingCookies);
   updateLinuxDoSession(remainingAccess?.cookieHeader
     ? { type: 'cookie-loaded', cookieSummary: remainingSummary.names, hasVerification: remainingSummary.hasClearance, loggedIn: false, at: new Date().toISOString() }
     : { type: 'login-expired', message: errorMessage(error) });
   resetLinuxDoLevelState();
+  return true;
 }
 
 export async function runSingleTopicAction<T>({
@@ -71,6 +92,30 @@ export async function runSingleTopicAction<T>({
     const next = { ...pendingActions.current };
     delete next[key];
     pendingActions.current = next;
+  }
+}
+
+export async function shareTopicWithClipboardFallback({
+  copy,
+  notify,
+  share
+}: {
+  copy: () => Promise<void>;
+  notify: (message: string) => void;
+  share: () => Promise<void>;
+}) {
+  try {
+    await share();
+    return true;
+  } catch {
+    try {
+      await copy();
+      notify('链接已复制');
+      return true;
+    } catch {
+      notify('分享失败，且无法复制链接，请重试。');
+      return false;
+    }
   }
 }
 
