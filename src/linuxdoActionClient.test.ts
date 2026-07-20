@@ -92,7 +92,9 @@ describe('linux.do action client', () => {
   });
 
   it('checks linux.do login access with the saved login cookies', async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({ csrf: 'csrf-token' }), {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      current_user: { username: 'alice' }
+    }), {
       headers: { 'content-type': 'application/json' }
     }));
 
@@ -103,7 +105,7 @@ describe('linux.do action client', () => {
     });
 
     expect(result).toEqual({ ok: true, message: '登录可用' });
-    expect(fetcher).toHaveBeenCalledWith('https://linux.do/session/csrf', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('https://linux.do/session/current.json', expect.objectContaining({
       headers: expect.objectContaining({
         Cookie: 'cf_clearance=clearance; _t=login; _forum_session=session',
         'User-Agent': 'LinuxDo WebView UA'
@@ -111,7 +113,56 @@ describe('linux.do action client', () => {
     }));
   });
 
-  it('marks linux.do login expired when CSRF access is unauthorized', async () => {
+  it('REG-LINUXDO-004 rejects stale login cookies when the current session is anonymous', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      csrf: 'anonymous-csrf-token',
+      current_user: null
+    }), { status: 200 }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=expired; _forum_session=anonymous',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      loginRequired: true,
+      message: 'linux.do 登录已失效，请重新登录'
+    });
+  });
+
+  it('keeps an inconclusive linux.do rate limit distinct from expired login', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请求过于频繁'] }), { status: 429 }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: '请求过于频繁'
+    });
+  });
+
+  it('keeps a Cloudflare challenge distinct from expired login', async () => {
+    const fetcher = vi.fn(async () => new Response('<title>Just a moment...</title>', {
+      status: 403,
+      headers: { 'content-type': 'text/html' }
+    }));
+
+    const result = await checkLinuxDoLoginAccess({
+      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
+      fetcher
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      message: 'linux.do 需要完成 Cloudflare 验证'
+    });
+  });
+
+  it('marks linux.do login expired when current-session access is unauthorized', async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: ['请先登录'] }), { status: 401 }));
 
     const result = await checkLinuxDoLoginAccess({

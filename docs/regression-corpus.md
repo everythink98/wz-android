@@ -503,6 +503,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 把任一普通失败分支恢复为 completed，或让 verification controller 在 failed 时 dispatch success，编号测试必须关闭面板或错误记录 success 并失败。 |
 | 明确不覆盖范围 | 不自动重放写操作，不人为断网或清 Cookie 制造 challenge；无法自然触发时设备证据记 `NOT_VERIFIED`。 |
 
+## `REG-LINUXDO-004` 过期 Cookie 被误判为已登录并阻断搜索
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`ACCOUNT-02`、`SEARCH-01`、`SEARCH-02`、`SEARCH-03`、`SEARCH-04`、`WRITE-01`、`WRITE-03` |
+| 用户症状 | linux.do 原站已经显示“登录”，App 账号中心仍显示已登录；搜索继续调用登录接口并报限流，匿名 Google fallback 没有启用，写入口也可能继续按旧 Cookie 展示。 |
+| 触发条件 | 服务端会话已失效，但本机仍保存 `_t`/`_forum_session`；账号刷新用匿名也可访问的 `/session/csrf` 判定登录，前台 WebView 只回传 Cookie、不回传明确登录标记。 |
+| 根因 seam | `checkLinuxDoLoginAccess` 的服务端身份 oracle、`LINUXDO_WEBVIEW_PROBE_SCRIPT` 的页面登录探针，以及 `useVerificationController` 的 generation-safe 过期态提交。 |
+| 必须保持的行为 | 只有 `/session/current.json` 返回带用户名的当前用户才确认登录；匿名 200 与非 CF 的 401/403 判定失效，429、网络错误和 CF 保持未知。WebView 明确出现 Discourse 登录按钮时清除旧登录 Cookie、保留 clearance、提交 `login-expired`；模糊页面不得猜测。清理失败仍显示失效，新 generation 不得被旧检查清除。搜索随后走既有匿名 fallback，写入口按 canonical session 关闭。 |
+| 精确失败 oracle | `src/linuxdoActionClient.test.ts` 固定匿名 200、登录用户、429 与 CF；`src/loginWebViewScripts.test.ts` 固定 logged-in/logged-out/unknown 三态；`src/app/useVerificationController.test.ts` 固定明确退出后条件清理、失效终态和清理失败边界。修复前匿名响应得到 `ok:true`，WebView 消息没有状态且不会清理。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：请求契约、页面脚本和 controller 状态提交必须一起通过；仅检查 `_t`、CSRF、搜索错误文案或 App 启动都不能证明真实登录。 |
+| Replay 或真实验收路径 | 仅在当前设备自然处于失效态时验收：覆盖安装并冷启动；若服务端身份检查已有明确结论，账号中心直接显示失效，否则进入账号中心 → linux.do → 检测或重新登录，在 App 内原站明确显示登录按钮后点“检测状态”。随后账号中心应显示 linux.do 已失效，搜索不再进入登录专属路径。不得清 App 数据、Cookie 或重置模拟器制造状态；动态登录态不写入 Replay。 |
+| 负向验证方式 | 把账号探针恢复为 `/session/csrf`，或删除 WebView `status` 上报/过期分支，编号测试必须分别恢复假登录或不清理。 |
+| 明确不覆盖范围 | 不自动重新登录，不输入或保存新凭据，不保证 Google 当天可达或有结果，也不以普通网络/限流/CF 错误推断退出。 |
+
 ## `REG-ACCOUNT-001` 身份读取失败覆盖已确认账号状态
 
 | 字段 | 内容 |

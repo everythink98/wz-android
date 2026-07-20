@@ -170,7 +170,28 @@ export async function checkLinuxDoLoginAccess({
     };
   }
   try {
-    await getCsrfToken({ cookieHeader: cleanCookie, fetcher, signal, timeoutMs, userAgent });
+    const response = await fetchWithTimeout(`${LINUXDO_BASE_URL}/session/current.json`, {
+      headers: {
+        ...LINUXDO_ACTION_HEADERS,
+        Cookie: cleanCookie,
+        'User-Agent': userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT
+      }
+    }, { fetcher, signal, timeoutMs });
+    const data = await readJsonResponse(response);
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw linuxDoLoginRequiredError();
+      }
+      throw new Error(linuxDoResponseMessage(data, `linux.do 请求失败：HTTP ${response.status}`));
+    }
+    const user = data.current_user && typeof data.current_user === 'object'
+      ? data.current_user as Record<string, unknown>
+      : data.user && typeof data.user === 'object'
+        ? data.user as Record<string, unknown>
+        : null;
+    if (typeof user?.username !== 'string' || !user.username.trim()) {
+      throw linuxDoLoginRequiredError();
+    }
     return {
       ok: true,
       message: '登录可用'

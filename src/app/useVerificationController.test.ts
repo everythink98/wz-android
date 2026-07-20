@@ -17,7 +17,9 @@ vi.mock('react-native', () => ({
 
 const linuxDoMocks = vi.hoisted(() => ({
   canAcceptLinuxDoAccessUpdate: vi.fn(() => true),
+  clearLinuxDoAccessForGeneration: vi.fn(),
   clearLinuxDoClearance: vi.fn(async () => null),
+  currentLinuxDoAccessGeneration: vi.fn(() => 7),
   loadLinuxDoAccess: vi.fn(),
   readLinuxDoCookiesFromStores: vi.fn(),
   saveLinuxDoAccess: vi.fn()
@@ -28,7 +30,9 @@ vi.mock('../linuxdoCookieBridge', () => ({
   canAcceptLinuxDoAccessUpdate: linuxDoMocks.canAcceptLinuxDoAccessUpdate,
   canStoreLinuxDoAccess: () => true,
   canStoreLinuxDoClearance: () => true,
+  clearLinuxDoAccessForGeneration: linuxDoMocks.clearLinuxDoAccessForGeneration,
   clearLinuxDoClearance: linuxDoMocks.clearLinuxDoClearance,
+  currentLinuxDoAccessGeneration: linuxDoMocks.currentLinuxDoAccessGeneration,
   linuxDoAccessSummary: () => ({ hasClearance: true, loggedIn: true }),
   linuxDoClearanceValue: () => 'CLEARANCE_VALUE_SECRET',
   loadLinuxDoAccess: linuxDoMocks.loadLinuxDoAccess,
@@ -229,6 +233,80 @@ describe('linux.do visible verification diagnostics', () => {
     await explicitCheck;
 
     expect(resume).toHaveBeenCalledTimes(2);
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('REG-LINUXDO-004 expires stale login immediately when the visible page reports logged out without clearance', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'STORED_EXPIRED_COOKIE_SECRET'
+    });
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({});
+    linuxDoMocks.clearLinuxDoAccessForGeneration.mockResolvedValue({
+      cookieHeader: 'cf_clearance=RETAINED_CLEARANCE_SECRET',
+      savedAt: '2026-07-20T00:00:00.000Z',
+      source: 'webview'
+    });
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(80);
+    const check = controller.checkLinuxDoCookie();
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          documentKey: 'logged-out-document',
+          status: 'logged-out',
+          loggedIn: false,
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET',
+          userAgent: 'WEBVIEW_MESSAGE_USER_AGENT_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
+
+    expect(linuxDoMocks.clearLinuxDoAccessForGeneration).toHaveBeenCalledWith(7, 'STORED_EXPIRED_COOKIE_SECRET');
+    expect(linuxDoMocks.saveLinuxDoAccess).not.toHaveBeenCalled();
+    expect(updateLinuxDoSession).toHaveBeenCalledWith({
+      type: 'login-expired',
+      message: 'linux.do 登录已失效，请重新登录。'
+    });
+    expect(showLinuxDoPanelRef.current).toBe(true);
+  });
+
+  it('keeps the expired state when stale login cleanup fails', async () => {
+    vi.useFakeTimers();
+    linuxDoMocks.loadLinuxDoAccess.mockResolvedValue({
+      cookieHeader: 'STORED_EXPIRED_COOKIE_SECRET'
+    });
+    linuxDoMocks.readLinuxDoCookiesFromStores.mockResolvedValue({
+      cf_clearance: { name: 'PRIVATE_COOKIE_NAME', value: 'COOKIE_VALUE_SECRET' }
+    });
+    linuxDoMocks.clearLinuxDoAccessForGeneration.mockRejectedValueOnce(new Error('storage failed'));
+    const { controller, linuxDoWebViewSessionRef, showLinuxDoPanelRef, updateLinuxDoSession } = createController();
+
+    await controller.showLinuxDoVerification();
+    await vi.advanceTimersByTimeAsync(80);
+    const check = controller.checkLinuxDoCookie();
+    controller.handleLinuxDoMessage({
+      nativeEvent: {
+        data: JSON.stringify({
+          type: 'linuxdo-webview',
+          status: 'logged-out',
+          loggedIn: false,
+          cookie: 'WEBVIEW_MESSAGE_COOKIE_SECRET'
+        })
+      }
+    } as never, linuxDoWebViewSessionRef.current);
+    await vi.advanceTimersByTimeAsync(250);
+    await check;
+
+    expect(updateLinuxDoSession).toHaveBeenCalledWith({
+      type: 'login-expired',
+      message: 'linux.do 登录已失效，本机 Cookie 清理未完成，请重试。'
+    });
     expect(showLinuxDoPanelRef.current).toBe(true);
   });
 
