@@ -21,7 +21,7 @@ import {
 } from '../sourceErrors';
 import { authNoticeForSource, authNoticeForSourceError, searchSessionNoticeItems } from '../siteSessionPrompts';
 import type { SiteSessionViewModels } from '../siteSessionState';
-import type { Category, FeedSource, Source } from '../types';
+import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source } from '../types';
 import type { SearchGroup } from '../searchListItems';
 import {
   createSearchHistoryWriteQueue,
@@ -38,6 +38,7 @@ import {
 } from '../searchControllerResults';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import {
+  appQueryClient,
   emptyForumCredentialScope,
   forumQueryKeys,
   type ForumCredentialScope
@@ -102,6 +103,63 @@ function mergeSearchPages(pages: RemoteSearchSourceResult[], error: unknown): Se
     };
   }
   return merged;
+}
+
+type SearchTagCandidatesRequest = {
+  categoryId?: string;
+  query: string;
+  selectedTags: string[];
+  source: DiscourseSource;
+};
+
+type SearchUserCandidatesRequest = {
+  categoryId?: string;
+  source: DiscourseSource;
+  term: string;
+};
+
+export function useSearchCandidateQueries({
+  credentialScope,
+  searchDiscourseTags,
+  searchDiscourseUsers,
+  tagRequest,
+  userRequest
+}: {
+  credentialScope: ForumCredentialScope;
+  searchDiscourseTags: (options: SearchTagCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseTagOption[]>;
+  searchDiscourseUsers: (options: SearchUserCandidatesRequest & { signal?: AbortSignal }) => Promise<DiscourseUserOption[]>;
+  tagRequest: SearchTagCandidatesRequest | null;
+  userRequest: SearchUserCandidatesRequest | null;
+}) {
+  const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
+    queryKey: forumQueryKeys.searchTags({
+      categoryId: tagRequest?.categoryId,
+      query: tagRequest?.query || '',
+      scope: credentialScope,
+      selectedTags: tagRequest?.selectedTags || [],
+      source: tagRequest?.source || 'linuxdo'
+    }),
+    enabled: Boolean(tagRequest),
+    placeholderData: (previousData) => previousData,
+    queryFn: ({ signal }) => tagRequest
+      ? searchDiscourseTags({ ...tagRequest, signal })
+      : Promise.resolve([])
+  }, appQueryClient);
+
+  const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
+    queryKey: forumQueryKeys.searchUsers({
+      categoryId: userRequest?.categoryId,
+      scope: credentialScope,
+      source: userRequest?.source || 'linuxdo',
+      term: userRequest?.term || ''
+    }),
+    enabled: Boolean(userRequest),
+    queryFn: ({ signal }) => userRequest
+      ? searchDiscourseUsers({ ...userRequest, signal })
+      : Promise.resolve([])
+  }, appQueryClient);
+
+  return { tagCandidatesQuery, userCandidatesQuery };
 }
 
 export function useSearchController({

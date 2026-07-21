@@ -3,7 +3,6 @@ import { ActivityIndicator, Keyboard, KeyboardAvoidingView, Modal, Pressable, Sc
 import { FlashList, type FlashListRef, type ListRenderItem, type ViewToken } from '@shopify/flash-list';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { ChevronDown, ChevronRight, ChevronUp, History, Search, SlidersHorizontal, X } from 'lucide-react-native';
-import { useQuery } from '@tanstack/react-query';
 import type { Category, DiscourseTagOption, DiscourseUserOption, FeedSource, Source, Topic } from '../types';
 import type { DiscourseSource } from '../sourceCatalog';
 import { topicKey } from '../readerData';
@@ -34,8 +33,8 @@ import { MemoizedTopicCard } from '../components/TopicCard';
 import { TOPIC_LIST_PERFORMANCE_PROPS } from '../components/listPerformance';
 import type { SearchSessionNoticeItem } from '../siteSessionPrompts';
 import { searchSessionNoticeLightTone } from '../siteSessionPrompts';
-import { appQueryClient, forumQueryKeys } from '../app/serverState';
 import type { ForumCredentialScope } from '../app/serverState';
+import { useSearchCandidateQueries } from '../app/useSearchController';
 
 const SEARCH_PAGINATION_VIEWABILITY_CONFIG = {
   itemVisiblePercentThreshold: 50,
@@ -310,54 +309,27 @@ function SearchFilterSheet({
     return () => clearTimeout(timer);
   }, [userPickerVisible, userQuery]);
 
-  const tagCandidatesQuery = useQuery<DiscourseTagOption[]>({
-    queryKey: forumQueryKeys.searchTags({
-      categoryId: discourseDraft?.category || undefined,
-      query: debouncedTagQuery || '',
-      scope: credentialScope,
-      selectedTags: discourseDraft?.tags || [],
-      source: discourseDraft?.source || 'linuxdo'
-    }),
-    enabled: visible && tagPickerVisible && Boolean(discourseDraft) && debouncedTagQuery !== null,
-    placeholderData: (previousData) => previousData,
-    queryFn: async ({ signal }) => {
-      if (!discourseDraft || debouncedTagQuery === null) {
-        return [] as DiscourseTagOption[];
-      }
-      return onSearchDiscourseTags({
+  const normalizedUserQuery = userQuery.trim();
+  const { tagCandidatesQuery, userCandidatesQuery } = useSearchCandidateQueries({
+    credentialScope,
+    searchDiscourseTags: onSearchDiscourseTags,
+    searchDiscourseUsers: onSearchDiscourseUsers,
+    tagRequest: visible && tagPickerVisible && discourseDraft && debouncedTagQuery !== null
+      ? {
         source: discourseDraft.source,
         query: debouncedTagQuery,
         categoryId: discourseDraft.category || undefined,
-        selectedTags: discourseDraft.tags,
-        signal
-      });
-    }
-  }, appQueryClient);
-
-  const normalizedUserQuery = userQuery.trim();
-  const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
-    queryKey: forumQueryKeys.searchUsers({
-      categoryId: discourseDraft?.category || undefined,
-      scope: credentialScope,
-      source: discourseDraft?.source || 'linuxdo',
-      term: debouncedUserQuery || ''
-    }),
-    enabled: visible
-      && userPickerVisible
-      && Boolean(discourseDraft)
-      && Boolean(debouncedUserQuery),
-    queryFn: ({ signal }) => {
-      if (!discourseDraft || !debouncedUserQuery) {
-        return Promise.resolve([]);
+        selectedTags: discourseDraft.tags
       }
-      return onSearchDiscourseUsers({
+      : null,
+    userRequest: visible && userPickerVisible && discourseDraft && debouncedUserQuery
+      ? {
         source: discourseDraft.source,
         term: debouncedUserQuery,
-        categoryId: discourseDraft.category || undefined,
-        signal
-      });
-    }
-  }, appQueryClient);
+        categoryId: discourseDraft.category || undefined
+      }
+      : null
+  });
 
   const tagDebouncing = tagPickerVisible && debouncedTagQuery !== tagQuery;
   const tagOptions = tagDebouncing || tagCandidatesQuery.isPlaceholderData

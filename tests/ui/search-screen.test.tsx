@@ -13,6 +13,10 @@ import { emptyForumCredentialScope } from '../../src/app/serverState';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 
+jest.mock('@react-native-async-storage/async-storage', () => (
+  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
+));
+
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
   const { View: NativeView } = require('react-native') as typeof import('react-native');
