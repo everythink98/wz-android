@@ -191,7 +191,10 @@ type ManagedGetReplyOptions = Omit<GetReplyOptions, ManagedReadKeys>;
 type ManagedGetUserProfileOptions = Omit<GetUserProfileOptions, ManagedReadKeys>;
 type ManagedTagOptionSearchOptions = Omit<DiscourseTagOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
 type ManagedUserOptionSearchOptions = Omit<DiscourseUserOptionReadOptions, 'auth' | 'fetcher'> & { source: DiscourseSource };
-type ManagedSemanticTopicSearchOptions = Omit<NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>, 'fetcher'> & { query: string; source: 'linuxdo' };
+type ManagedSemanticTopicSearchOptions = Omit<
+  NonNullable<Parameters<typeof searchLinuxDoSemanticDirect>[1]>,
+  'fetcher' | 'linuxDoAccess'
+> & { query: string; source: 'linuxdo' };
 type ManagedLinuxDoLevelProfileOptions = Omit<Parameters<typeof getLocalLinuxDoLevelProfile>[0], 'cookieHeader' | 'fetcher' | 'userAgent'> & {
   source: 'linuxdo';
 };
@@ -530,9 +533,10 @@ export function createSourceGateway(dependencies: SourceGatewayDependencies) {
         }), context);
     },
     searchSemanticTopics({ query, source, ...options }: ManagedSemanticTopicSearchOptions, context?: SourceGatewayReadContext) {
-      return read(source, 'searchSemanticTopics', ({ fetcher }) => searchLinuxDoSemanticDirect(query, {
+      return read(source, 'searchSemanticTopics', ({ fetcher, linuxDoAccess }) => searchLinuxDoSemanticDirect(query, {
         ...options,
-        fetcher
+        fetcher,
+        linuxDoAccess
       }), context);
     },
     getLinuxDoLevelProfile({ source, ...options }: ManagedLinuxDoLevelProfileOptions, context?: SourceGatewayReadContext): Promise<LinuxDoLevelProfile> {

@@ -18,9 +18,9 @@ import {
 import { isCloudflareChallengeResponse, LinuxDoCloudflareError } from './cloudflareChallenge';
 import { googleResultTargetUrl, googleSiteSearchUrl, hasGoogleSiteSearchNextPage } from './googleSearchFallback';
 import {
+  canStoreLinuxDoLogin,
   DEFAULT_LINUXDO_ANDROID_USER_AGENT,
-  linuxDoAccessSummary,
-  loadLinuxDoAccess
+  parseLinuxDoDocumentCookie
 } from './linuxdoCookieBridge';
 import {
   LINUXDO_BASE_URL as BASE_URL,
@@ -39,8 +39,6 @@ import { discoursePollPlaceholder } from './discourseContent';
 
 const LIST_PAGE_SIZE = 30;
 const SEARCH_PAGE_SIZE = 50;
-const TOPIC_STREAM_CACHE_LIMIT = 100;
-const topicStreamCache = new Map<string, { stream: unknown[]; embeddedPostCount: number }>();
 let csrfTokenCache: string | null = null;
 let emojiUrlCache: DiscourseEmojiUrlMap | null = null;
 
@@ -48,6 +46,7 @@ interface LinuxDoOptions {
   cursor?: string | null;
   cursorType?: 'topics' | 'replies';
   fetcher?: Fetcher;
+  linuxDoAccess?: { cookieHeader?: string; userAgent?: string };
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -434,9 +433,12 @@ async function hydrateEditableReplyContent(replies: Reply[], options: LinuxDoOpt
   }));
 }
 
-async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string) {
-  const access = await loadLinuxDoAccess();
-  const accessSummary = linuxDoAccessSummary(access);
+function linuxDoHeaders(
+  access: LinuxDoOptions['linuxDoAccess'],
+  referer = `${BASE_URL}/latest`,
+  csrfToken?: string
+) {
+  const loggedIn = canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(access?.cookieHeader));
   return {
     Accept: 'application/json, text/javascript, */*; q=0.01',
     Referer: referer,
@@ -445,7 +447,7 @@ async function linuxDoHeaders(referer = `${BASE_URL}/latest`, csrfToken?: string
     'User-Agent': access?.userAgent || DEFAULT_LINUXDO_ANDROID_USER_AGENT,
     ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     'X-Requested-With': 'XMLHttpRequest',
-    ...(accessSummary.loggedIn ? { 'Discourse-Logged-In': 'true' } : {}),
+    ...(loggedIn ? { 'Discourse-Logged-In': 'true' } : {}),
     ...(access?.cookieHeader ? { Cookie: access.cookieHeader } : {})
   };
 }
@@ -465,7 +467,7 @@ async function fetchLinuxDoJson<T>(
     }
   }
   const response = await fetchWithTimeout(url.toString(), {
-    headers: await linuxDoHeaders(requestOptions.referer, requestOptions.csrfToken)
+    headers: linuxDoHeaders(options.linuxDoAccess, requestOptions.referer, requestOptions.csrfToken)
   }, options);
   const text = await response.text();
   if (isCloudflareChallengeResponse({ status: response.status, headers: response.headers, bodyText: text })) {
@@ -508,30 +510,6 @@ function topicStreamState(data: unknown) {
   const stream = Array.isArray(postStream.stream) ? postStream.stream : [];
   const embeddedPosts = Array.isArray(postStream.posts) ? postStream.posts : [];
   return { stream, embeddedPostCount: embeddedPosts.length };
-}
-
-function cacheTopicStream(id: string, data: unknown) {
-  const state = topicStreamState(data);
-  if (state.stream.length) {
-    topicStreamCache.delete(id);
-    topicStreamCache.set(id, state);
-    while (topicStreamCache.size > TOPIC_STREAM_CACHE_LIMIT) {
-      const oldestKey = topicStreamCache.keys().next().value;
-      if (oldestKey === undefined) {
-        break;
-      }
-      topicStreamCache.delete(oldestKey);
-    }
-  }
-}
-
-function cachedTopicStream(id: string) {
-  const cached = topicStreamCache.get(id);
-  if (cached) {
-    topicStreamCache.delete(id);
-    topicStreamCache.set(id, cached);
-  }
-  return cached;
 }
 
 export async function getLinuxDoFeed(options: LinuxDoOptions & {
@@ -720,8 +698,6 @@ export async function getLinuxDoTopic(id: string, options: LinuxDoOptions & { re
   const replyHasMore = totalPosts > replies.length + 1;
   const polls = discoursePolls(firstPost);
   const firstPostBoostCount = isRecord(firstPost) ? boostCountFromPost(firstPost) : undefined;
-  cacheTopicStream(id, data);
-  cacheTopicStream(topic.id, data);
   const result = {
     ...topic,
     contentHtml: sanitizeLinuxDoContentHtml(firstPostFields.cookedHtml, polls),
@@ -759,14 +735,11 @@ export async function getLinuxDoReplies(id: string, options: LinuxDoOptions & {
 } = {}): Promise<RepliesResponse> {
   const page = options.page || 1;
   const limit = options.limit || 30;
-  let cached = page === 1 ? undefined : cachedTopicStream(id);
-  if (!cached) {
-    const data = await topicData(id, options);
-    cacheTopicStream(id, data);
-    cached = cachedTopicStream(id) || topicStreamState(data);
-  }
-  const stream = cached.stream;
-  const firstPageReplyCount = cached.embeddedPostCount ? Math.min(limit, Math.max(cached.embeddedPostCount - 1, 0)) : limit;
+  const streamState = topicStreamState(await topicData(id, options));
+  const stream = streamState.stream;
+  const firstPageReplyCount = streamState.embeddedPostCount
+    ? Math.min(limit, Math.max(streamState.embeddedPostCount - 1, 0))
+    : limit;
   const previousReplyCount = page > 1
     ? typeof options.offset === 'number' ? options.offset : firstPageReplyCount + ((page - 2) * limit)
     : 0;
@@ -975,8 +948,8 @@ export async function searchLinuxDo(query: string, options: LinuxDoSearchOptions
   const limit = options.limit || 30;
   const page = options.page || 1;
   const cleanQuery = query.trim();
-  const access = await loadLinuxDoAccess();
-  if (!options.authenticated || !linuxDoAccessSummary(access).loggedIn) {
+  const access = options.linuxDoAccess;
+  if (!options.authenticated || !canStoreLinuxDoLogin(parseLinuxDoDocumentCookie(access?.cookieHeader))) {
     return searchLinuxDoGoogle(cleanQuery, options);
   }
   const searchReferer = `${BASE_URL}/search?expanded=true&q=${encodeURIComponent(cleanQuery)}`;

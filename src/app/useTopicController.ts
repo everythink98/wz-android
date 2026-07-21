@@ -13,11 +13,18 @@ import {
   updateFavoriteTopic,
   type ReaderData
 } from '../readerData';
-import { mergeReplies, removeReply } from '../feedLogic';
+import { isSameReply, mergeReplies, removeReply } from '../feedLogic';
 import { isCanceledRequest } from '../appUtils';
-import { replyLoadMoreLimit } from '../androidFeatureHelpers';
+import {
+  replyCountAfterNewReplySubmit,
+  replyLoadMoreLimit,
+  replyRefreshTarget
+} from '../androidFeatureHelpers';
 import { topicWithAuthorFallback } from '../userNavigation';
-import { applyEditedReplyContent } from './topicActionControllerHelpers';
+import {
+  applyEditedReplyContent,
+  shouldApplyEditedReplyFallback
+} from './topicActionControllerHelpers';
 import type { TopicSessionController } from './useTopicSessionController';
 import {
   sourceErrorFromUnknown,
@@ -570,10 +577,10 @@ export function useTopicController({
     const result = await detailQuery.refetch();
     if (result.error) return readOutcome(selectedTopic.source, result.error);
     if (result.data) {
-      queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => ({
-        pages: [topicReplyPage(result.data), ...(current?.pages.slice(1) || [])],
-        pageParams: [{ page: 1, offset: 0 }, ...(current?.pageParams.slice(1) || [])]
-      }));
+      queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(
+        repliesQueryKey,
+        firstReplyData(result.data)
+      );
     }
     notify('主题已更新');
     return 'completed';
@@ -603,24 +610,157 @@ export function useTopicController({
       );
       return outcome;
     }
-    const result = await repliesQuery.refetch();
-    if (result.error) return readOutcome(selectedTopic.source, result.error);
-    if (options.excludeReply || options.editedReplyContent) {
-      queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => current ? {
-        ...current,
-        pages: current.pages.map((page) => ({
-          ...page,
-          items: applyEditedReplyContent(
-            removeReply(page.items, options.excludeReply),
-            options.editedReplyContent || { commentId: -1, contentMarkdown: '' },
-            selectedTopic.source
-          )
-        }))
-      } : current);
+    if (!options.afterSubmit) {
+      const result = await repliesQuery.refetch();
+      if (result.error) return readOutcome(selectedTopic.source, result.error);
+      if (options.excludeReply || options.editedReplyContent) {
+        queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => current ? {
+          ...current,
+          pages: current.pages.map((page) => ({
+            ...page,
+            items: applyEditedReplyContent(
+              removeReply(page.items, options.excludeReply),
+              options.editedReplyContent || { commentId: -1, contentMarkdown: '' },
+              selectedTopic.source
+            )
+          }))
+        } : current);
+      }
+      if (!options.silent) notify('评论已更新');
+      return 'completed';
     }
-    if (!options.silent) notify('评论已更新');
-    return 'completed';
-  }, [notify, queryClient, refreshWholeTopic, repliesQuery.refetch, repliesQueryKey, selectedTopic, topicDetail]);
+
+    const targetIndex = options.targetReply
+      ? topicReplies.findIndex((reply) => isSameReply(reply, options.targetReply))
+      : -1;
+    const expectedReplyCount = Math.max(topicDetail.replyCount || 0, topicReplies.length) + 1;
+    const target = replyRefreshTarget({
+      source: selectedTopic.source,
+      afterSubmit: true,
+      expectedReplyCount,
+      replyNextPage,
+      replyNextOffset,
+      loadedReplyCount: topicReplies.length,
+      ...(targetIndex >= 0 ? { targetReplyIndex: targetIndex } : {})
+    });
+    const limit = target.limit ?? replyLoadMoreLimit({
+      source: selectedTopic.source,
+      replyNextPage: target.page,
+      replyNextOffset: target.offset
+    });
+    const refreshKey = forumQueryKeys.replyRefresh(repliesQueryKey, target.page, target.offset, limit);
+    const trace = options.diagnosticTrace || beginDiagnosticTrace('reply', 'refresh', {
+      source: selectedTopic.source,
+      topicRef: diagnosticRef('topic', `${selectedTopic.source}:${selectedTopic.id}`),
+      page: target.page,
+      mode: 'after-submit'
+    });
+    const ownsTrace = !options.diagnosticTrace;
+    const fetchRefreshPage = async (): Promise<ReplyPage> => {
+      const loaded = await queryClient.fetchQuery({
+        queryKey: refreshKey,
+        staleTime: 0,
+        queryFn: ({ signal }) => sourceGateway.getReplies({
+          source: selectedTopic.source,
+          id: selectedTopic.id,
+          categoryId: topicDetail.categoryId,
+          page: target.page,
+          limit,
+          offset: target.offset,
+          signal
+        }, { trace })
+      });
+      if (sourceDiagnosticSummary(loaded)?.isParseEmpty) {
+        throw new Error('评论内容解析为空，无法更新，请重试。');
+      }
+      return {
+        ...loaded,
+        requestedPage: target.page,
+        requestedOffset: target.offset
+      };
+    };
+    const applyRefreshPage = (page: ReplyPage) => {
+      const refreshedItems = removeReply(page.items, options.excludeReply);
+      queryClient.setQueryData<InfiniteData<ReplyPage, ReplyPageParam>>(repliesQueryKey, (current) => {
+        const pages = current?.pages.slice() || [];
+        const pageParams = current?.pageParams.slice() || [];
+        const pageIndex = pageParams.findIndex((param) => (
+          param.page === target.page && (param.offset ?? null) === (target.offset ?? null)
+        ));
+        const refreshedPage = { ...page, items: refreshedItems };
+        if (pageIndex >= 0) {
+          pages[pageIndex] = refreshedPage;
+          pageParams[pageIndex] = { page: target.page, offset: target.offset };
+        } else {
+          pages.push(refreshedPage);
+          pageParams.push({ page: target.page, offset: target.offset });
+        }
+        const filteredPages = pages.map((currentPage) => ({
+          ...currentPage,
+          items: removeReply(currentPage.items, options.excludeReply)
+        }));
+        if (shouldApplyEditedReplyFallback(refreshedItems, options.editedReplyContent, selectedTopic.source)) {
+          return {
+            pages: filteredPages.map((currentPage) => ({
+              ...currentPage,
+              items: applyEditedReplyContent(currentPage.items, options.editedReplyContent!, selectedTopic.source)
+            })),
+            pageParams
+          };
+        }
+        return { pages: filteredPages, pageParams };
+      });
+      const replyCount = !options.targetReply && !options.excludeReply
+        ? page.totalCount ?? replyCountAfterNewReplySubmit(topicDetail.replyCount || 0, topicReplies.length + refreshedItems.length)
+        : page.totalCount;
+      if (typeof replyCount === 'number') {
+        queryClient.setQueryData<TopicDetail>(topicQueryKey, (current) => current ? { ...current, replyCount } : current);
+      }
+    };
+    try {
+      const page = await fetchRefreshPage();
+      applyRefreshPage(page);
+      queryClient.removeQueries({ queryKey: refreshKey, exact: true });
+      if (ownsTrace) {
+        finishDiagnosticTrace(trace, 'success', { itemCount: page.items.length, hasMore: Boolean(page.hasMore) });
+      } else {
+        markDiagnosticStage(trace, 'apply', { state: 'refresh-success', itemCount: page.items.length });
+      }
+      if (!options.silent) notify('评论已更新');
+      return 'completed';
+    } catch (error) {
+      if (ownsTrace) finishDiagnosticTrace(trace, 'failure', { reason: normalizeDiagnosticReason(error) });
+      handleReadError(selectedTopic.source, error, {
+        queryKey: refreshKey,
+        resume: async () => {
+          try {
+            const page = await fetchRefreshPage();
+            applyRefreshPage(page);
+            queryClient.removeQueries({ queryKey: refreshKey, exact: true });
+            return 'completed';
+          } catch (retryError) {
+            return readOutcome(selectedTopic.source, retryError);
+          }
+        }
+      }, () => onNodeSeekTopicVerificationRequired(sourceErrorFromUnknown(selectedTopic.source, error).message));
+      return readOutcome(selectedTopic.source, error);
+    }
+  }, [
+    handleReadError,
+    notify,
+    onNodeSeekTopicVerificationRequired,
+    queryClient,
+    refreshWholeTopic,
+    repliesQuery.refetch,
+    repliesQueryKey,
+    replyNextOffset,
+    replyNextPage,
+    selectedTopic,
+    sourceGateway,
+    topicDetail,
+    topicQueryKey,
+    topicReplies
+  ]);
 
   const loadMoreReplies = useCallback(async (): Promise<LinuxDoReadResumeOutcome> => {
     if (!selectedTopic) return 'stale';

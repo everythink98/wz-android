@@ -308,6 +308,27 @@ describe('小隐寺授权 controller', () => {
     expect(events.at(-1)).toMatchObject({ area: 'session', operation: 'refresh', outcome: 'success' });
   });
 
+  it('[REG-ACCOUNT-018] reports a failed Xiaoyinsi level refresh while retaining trusted data', async () => {
+    mockLoadCredentials.mockResolvedValue({ apiKey: 'key', clientId: 'client' });
+    const { hook, notify, sourceGateway } = await renderController();
+    await waitFor(() => expect(hook.result.current.phase).toBe('authorized'));
+
+    await act(async () => {
+      await expect(hook.result.current.refreshLevel()).resolves.toBe(true);
+    });
+    await waitFor(() => expect(hook.result.current.levelProfile).toEqual(levelProfile));
+    jest.mocked(sourceGateway.getLevelProfile).mockRejectedValueOnce(new Error('小隐寺等级刷新失败'));
+    await act(async () => {
+      await expect(hook.result.current.refreshLevel()).resolves.toBe(false);
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.levelProfile).toEqual(levelProfile);
+      expect(hook.result.current.levelError).toBe('小隐寺等级刷新失败');
+    });
+    expect(notify.mock.calls.filter(([message]) => message === '小隐寺等级已更新。')).toHaveLength(1);
+  });
+
   it('[REG-ACCOUNT-016] returns a read-only authorization event without publishing it to workflow state', async () => {
     Object.defineProperty(AppState, 'currentState', { configurable: true, value: 'background', writable: true });
     mockLoadPending.mockResolvedValue(pending);

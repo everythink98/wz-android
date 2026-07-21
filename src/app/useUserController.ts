@@ -332,7 +332,12 @@ export function useUserController({
         username: requested.username,
         scope: credentialScope
       });
-      void queryClient.invalidateQueries({ queryKey: key, exact: true, refetchType: 'active' });
+      await queryClient.invalidateQueries({ queryKey: key, exact: true, refetchType: 'active' });
+      const profile = queryClient.getQueryData<UserProfile>(key);
+      if (profile) {
+        queryClient.setQueryData(forumQueryKeys.userLane(key, 'topics'), firstLaneData(profile));
+        queryClient.setQueryData(forumQueryKeys.userLane(key, 'replies'), firstLaneData(profile));
+      }
     }
     return 'completed';
   }, [credentialScope, notify, onOpenUserScreen, queryClient]);
@@ -386,7 +391,7 @@ export function useUserController({
     loadMoreUserTopics,
     openUser,
     selectedUser,
-    userBusy: profileQuery.isPending && enabled,
+    userBusy: profileQuery.isFetching && enabled,
     userError,
     userLoadingMoreReplies: repliesQuery.isFetchingNextPage,
     userLoadingMoreTopics: topicsQuery.isFetchingNextPage,

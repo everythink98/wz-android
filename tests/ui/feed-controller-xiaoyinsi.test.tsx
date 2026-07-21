@@ -282,6 +282,78 @@ describe('小隐寺 Feed controller', () => {
     expect(linuxAttempts).toBe(3);
   });
 
+  it('[REG-FEED-006] retries a failed multi-page refresh instead of advancing to a later page', async () => {
+    const firstTopic = {
+      source: 'linuxdo' as const,
+      id: 'first',
+      title: '第一页主题',
+      author: 'alice',
+      url: 'https://linux.do/t/first',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const secondTopic = { ...firstTopic, id: 'second', title: '第二页主题', url: 'https://linux.do/t/second' };
+    let requestCount = 0;
+    const getFeed = jest.fn(async ({ source, page = 1 }: { source: string; page?: number }) => {
+      if (source !== 'linuxdo') return { items: [], errors: {}, hasMore: false, nextPage: null };
+      requestCount += 1;
+      if (requestCount === 4) {
+        return {
+          items: [],
+          errors: {
+            linuxdo: {
+              kind: 'verification-required' as const,
+              message: '刷新第二页需要验证',
+              verificationRequired: true
+            }
+          },
+          hasMore: true,
+          nextPage: 3
+        };
+      }
+      if (page === 1) return { items: [firstTopic], errors: {}, hasMore: true, nextPage: 2 };
+      if (page === 2) return { items: [secondTopic], errors: {}, hasMore: true, nextPage: 3 };
+      return {
+        items: [{ ...secondTopic, id: 'third', title: '不应跳到第三页' }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    const sourceGateway = {
+      getCategories: jest.fn(async () => ({ items: [], errors: {} })),
+      getFeed,
+      hasYaohuoCredential: jest.fn(async () => false)
+    } as unknown as SourceGateway;
+    const showLinuxDoVerification = jest.fn();
+    const hook = await renderHook(() => useFeedController({
+      notify: jest.fn(),
+      readerData: createEmptyReaderData(),
+      readerDataLoaded: true,
+      showLinuxDoVerification,
+      showNodeSeekVerification: jest.fn(),
+      showYaohuoLogin: jest.fn(),
+      sourceGateway
+    }));
+
+    await act(async () => hook.result.current.changeFeedSource('linuxdo'));
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic]));
+    await act(async () => { await hook.result.current.loadFeed(); });
+    await waitFor(() => expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]));
+    await act(async () => { await hook.result.current.refreshFeed(); });
+    await waitFor(() => expect(showLinuxDoVerification).toHaveBeenCalledTimes(1));
+    const recovery = showLinuxDoVerification.mock.calls[0]?.[1] as LinuxDoReadRecovery;
+
+    await act(async () => {
+      await expect(recovery.resume()).resolves.toBe('completed');
+    });
+
+    expect(getFeed.mock.calls
+      .filter(([request]) => request.source === 'linuxdo')
+      .map(([request]) => request.page || 1)).toEqual([1, 2, 1, 2, 1, 2]);
+    expect(hook.result.current.activeFeedState.items).toEqual([firstTopic, secondTopic]);
+  });
+
   it('[REG-FEED-005] reports a single-source category error instead of treating it as an empty category list', async () => {
     const sourceGateway = {
       getCategories: jest.fn(async ({ source }: { source: string }) => source === 'all'

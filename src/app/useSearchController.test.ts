@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SEARCH_FILTERS } from '../searchFilters';
 import {
-  createNodeSeekRetrySearchOptions,
-  createSearchMoreRequestSnapshot,
   createSearchHistoryWriteQueue,
   enqueueSearchHistoryWrite,
-  firstRemoteSearchAction,
   groupFromRemoteSearchResult,
   hasNextSearchPage,
   linuxDoAiFailureState,
   mergeLinuxDoAiTopics,
-  remoteSearchActionForSource,
   snapshotSearchFilters,
   type RemoteSearchSourceResult
 } from '../searchControllerResults';
@@ -22,7 +18,7 @@ describe('search controller result helpers', () => {
     expect(hasNextSearchPage(false, 3, 2)).toBe(false);
   });
 
-  it('keeps successful groups while surfacing the first required action', () => {
+  it('projects each remote result into its user-visible group', () => {
     const results: RemoteSearchSourceResult[] = [
       {
         kind: 'success',
@@ -46,23 +42,6 @@ describe('search controller result helpers', () => {
     ];
 
     expect(results.map(groupFromRemoteSearchResult).map((group) => group.source)).toEqual(['v2ex', 'yaohuo']);
-    expect(firstRemoteSearchAction(results)).toEqual({ type: 'yaohuo-login', message: '妖火需要登录后使用此功能。' });
-  });
-
-  it('does not auto-open login or verification panels for aggregated search', () => {
-    const results: RemoteSearchSourceResult[] = [{
-      kind: 'action-required',
-      action: { type: 'nodeseek-verification', message: 'NodeSeek 需要验证' },
-      group: {
-        source: 'nodeseek', label: 'NodeSeek', items: [],
-        error: 'NodeSeek 需要验证', hasMore: false, nextPage: null
-      }
-    }];
-
-    expect(remoteSearchActionForSource('all', results)).toBeUndefined();
-    expect(remoteSearchActionForSource('nodeseek', results)).toEqual({
-      type: 'nodeseek-verification', message: 'NodeSeek 需要验证'
-    });
   });
 
   it('serializes search history writes so the latest state wins', async () => {
@@ -79,37 +58,6 @@ describe('search controller result helpers', () => {
     await Promise.all([first, second]);
 
     expect(writes).toEqual(['with A', 'without A']);
-  });
-
-  it('snapshots NodeSeek verification retry search inputs', () => {
-    const filters = snapshotSearchFilters(DEFAULT_SEARCH_FILTERS);
-    filters.nodeseek.category = 'tech';
-    const retry = createNodeSeekRetrySearchOptions({
-      filters,
-      query: 'codex',
-      searchSource: 'nodeseek'
-    });
-    filters.nodeseek.category = 'changed';
-
-    expect(retry.filters.nodeseek.category).toBe('tech');
-    expect(retry).toMatchObject({ query: 'codex', source: 'nodeseek', sourceOverride: 'nodeseek' });
-  });
-
-  it('uses the submitted query for search pagination', () => {
-    const filters = snapshotSearchFilters(DEFAULT_SEARCH_FILTERS);
-    filters.nodeseek.category = 'tech';
-
-    expect(createSearchMoreRequestSnapshot({
-      filters,
-      page: 2,
-      searchSource: 'nodeseek',
-      source: 'nodeseek',
-      submittedQuery: ' codex '
-    })).toMatchObject({
-      activeFilter: { source: 'nodeseek', category: 'tech' },
-      query: 'codex',
-      sort: 'relevance'
-    });
   });
 
   it('REG-SEARCH-001 keeps submitted linux.do candidates independent from later drafts', () => {

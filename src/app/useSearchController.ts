@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useInfiniteQuery, useQueries, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { aggregateSearchSources, type DiscourseSource } from '../sourceCatalog';
 import { mergeTopics, type SearchSort } from '../feedLogic';
@@ -392,8 +392,7 @@ export function useSearchController({
           signal,
           submittedSearch ? remoteSearchSort('all', submittedSearch.filters) : 'relevance'
         );
-        const existing = queryClient.getQueryData<RemoteSearchSourceResult>(aggregateKeys[index]);
-        if (existing?.kind === 'success' && result.kind !== 'success') {
+        if (result.kind !== 'success') {
           throw new SearchPageError(1, result);
         }
         return result;
@@ -414,9 +413,7 @@ export function useSearchController({
         submittedSort,
         submittedFilter
       );
-      const existing = queryClient.getQueryData<InfiniteData<RemoteSearchSourceResult, number>>(singleSearchKey);
-      const hasTrustedData = existing?.pages.some((page) => page.kind === 'success');
-      if (result.kind !== 'success' && (pageParam > 1 || hasTrustedData)) {
+      if (result.kind !== 'success') {
         throw new SearchPageError(pageParam, result);
       }
       return result;
@@ -429,14 +426,24 @@ export function useSearchController({
 
   const aggregateGroups = useMemo(() => aggregateSearchSources.map((source, index): SearchGroup => {
     const query = aggregateQueries[index];
-    if (query.data) {
-      return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
-    }
     if (query.error instanceof SearchPageError) {
-      return { ...groupFromRemoteSearchResult(query.error.result), loading: false };
+      const failed = groupFromRemoteSearchResult(query.error.result);
+      if (query.data) {
+        return {
+          ...groupFromRemoteSearchResult(query.data),
+          authNotice: failed.authNotice,
+          error: failed.error,
+          errorKind: failed.errorKind,
+          loading: false
+        };
+      }
+      return { ...failed, loading: false };
     }
     if (query.error) {
       return searchGroupForUnexpectedError(source, query.error, sessionViewModels);
+    }
+    if (query.data) {
+      return { ...groupFromRemoteSearchResult(query.data), loading: query.isFetching };
     }
     return {
       source,
@@ -451,7 +458,7 @@ export function useSearchController({
     if (merged) {
       return {
         ...merged,
-        loading: singleSearchQuery.isPending,
+        loading: singleSearchQuery.isFetching && !singleSearchQuery.isFetchingNextPage,
         loadingMore: singleSearchQuery.isFetchingNextPage
       };
     }
@@ -462,7 +469,7 @@ export function useSearchController({
       return searchGroupForUnexpectedError(submittedSource, singleSearchQuery.error, sessionViewModels);
     }
     return null;
-  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.isFetchingNextPage, singleSearchQuery.isPending, sessionViewModels, submittedSource]);
+  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.isFetching, singleSearchQuery.isFetchingNextPage, sessionViewModels, submittedSource]);
   const baseSearchGroups = submittedSearch?.source === 'all'
     ? aggregateGroups
     : singleGroup ? [singleGroup] : [];
@@ -493,7 +500,10 @@ export function useSearchController({
         finishDiagnosticTrace(trace, 'success', { source: 'linuxdo', itemCount: result.items.length });
         return result;
       } catch (error) {
-        finishDiagnosticTrace(trace, 'failure', { source: 'linuxdo', reason: normalizeDiagnosticReason(error) });
+        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
+          source: 'linuxdo',
+          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        });
         throw error;
       }
     }
@@ -529,12 +539,12 @@ export function useSearchController({
       return;
     }
     if (source !== submittedSource) return;
-    if (singleSearchQuery.error instanceof SearchPageError && singleSearchQuery.error.page > 1) {
+    if (singleSearchQuery.isFetchNextPageError) {
       void singleSearchQuery.fetchNextPage({ cancelRefetch: false });
     } else {
       void singleSearchQuery.refetch({ cancelRefetch: false });
     }
-  }, [aggregateQueries, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
+  }, [aggregateQueries, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.refetch, submittedSearch?.source, submittedSource]);
 
   const loadMoreSearchSource = useCallback(async (source: Source, page: number): Promise<LinuxDoReadResumeOutcome> => {
     if (submittedSearch?.source === 'all' || source !== submittedSource || singleSearchQuery.isFetchingNextPage) {
@@ -542,37 +552,48 @@ export function useSearchController({
     }
     const last = singleSearchQuery.data?.pages.at(-1);
     const group = last ? groupFromRemoteSearchResult(last) : null;
-    const retryPage = singleSearchQuery.error instanceof SearchPageError ? singleSearchQuery.error.page : group?.nextPage;
+    const retryPage = singleSearchQuery.isFetchNextPageError && singleSearchQuery.error instanceof SearchPageError
+      ? singleSearchQuery.error.page
+      : group?.nextPage;
     if (retryPage !== page) return 'stale';
     const result = await singleSearchQuery.fetchNextPage({ cancelRefetch: false });
     return result.isError ? 'failed' : 'completed';
-  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
+  }, [singleSearchQuery.data?.pages, singleSearchQuery.error, singleSearchQuery.fetchNextPage, singleSearchQuery.isFetchNextPageError, singleSearchQuery.isFetchingNextPage, submittedSearch?.source, submittedSource]);
 
   useEffect(() => {
-    const results = submittedSearch?.source === 'all'
-      ? aggregateQueries.map((query) => query.data || (query.error instanceof SearchPageError ? query.error.result : null))
-      : [singleSearchQuery.error instanceof SearchPageError
-        ? singleSearchQuery.error.result
-        : singleSearchQuery.data?.pages.at(-1)];
+    if (
+      !submittedSearch
+      || submittedSearch.source === 'all'
+      || searchQuery.trim() !== submittedSearch.query
+    ) return;
+    const results = [singleSearchQuery.error instanceof SearchPageError
+      ? singleSearchQuery.error.result
+      : singleSearchQuery.data?.pages.at(-1)];
     results.forEach((result) => {
       if (!result || result.kind !== 'action-required') return;
       if (handledSearchActionsRef.current.has(result)) return;
       handledSearchActionsRef.current.add(result);
       if (result.action.type === 'linuxdo-verification') {
         if (submittedSearch?.source !== 'linuxdo') return;
-        const loadMore = singleSearchQuery.error instanceof SearchPageError && singleSearchQuery.error.page > 1;
+        const loadMore = singleSearchQuery.isFetchNextPageError;
         const recovery: LinuxDoReadRecovery = {
           queryKey: singleSearchKey,
           resume: async () => {
             const resumed = loadMore
               ? await singleSearchQuery.fetchNextPage({ cancelRefetch: false })
               : await singleSearchQuery.refetch({ cancelRefetch: false });
-            if (resumed.isError) return sourceReadRecoveryOutcome('linuxdo', resumed.error);
-            const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
-            if (resumedResult?.kind === 'action-required' && resumedResult.action.type === 'linuxdo-verification') {
-              handledSearchActionsRef.current.add(resumedResult);
-              return 'verification-required';
+            if (resumed.isError) {
+              if (
+                resumed.error instanceof SearchPageError
+                && resumed.error.result.kind === 'action-required'
+                && resumed.error.result.action.type === 'linuxdo-verification'
+              ) {
+                handledSearchActionsRef.current.add(resumed.error.result);
+                return 'verification-required';
+              }
+              return sourceReadRecoveryOutcome('linuxdo', resumed.error);
             }
+            const resumedResult = loadMore ? resumed.data?.pages.at(-1) : resumed.data?.pages[0];
             return resumedResult?.kind === 'success' ? 'completed' : 'failed';
           }
         };
@@ -584,18 +605,19 @@ export function useSearchController({
       }
     });
   }, [
-    aggregateQueries,
     requireNodeSeekSearchVerification,
     retrySearchSource,
     showLinuxDoVerification,
     showYaohuoLogin,
     singleSearchKey,
-    singleSearchQuery.dataUpdatedAt,
+    singleSearchQuery.data?.pages,
     singleSearchQuery.error,
     singleSearchQuery.errorUpdatedAt,
     singleSearchQuery.fetchNextPage,
+    singleSearchQuery.isFetchNextPageError,
     singleSearchQuery.refetch,
-    submittedSearch?.source
+    searchQuery,
+    submittedSearch
   ]);
 
   const runSearch = useCallback(async (options?: SearchRunInput): Promise<LinuxDoReadResumeOutcome> => {
@@ -678,7 +700,10 @@ export function useSearchController({
       finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
       return items;
     } catch (error) {
-      finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
+      finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
+        source,
+        reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+      });
       throw error;
     }
   }, [sourceGateway]);
@@ -694,7 +719,10 @@ export function useSearchController({
       finishDiagnosticTrace(trace, 'success', { source, itemCount: items.length });
       return items;
     } catch (error) {
-      finishDiagnosticTrace(trace, 'failure', { source, reason: normalizeDiagnosticReason(error) });
+      finishDiagnosticTrace(trace, options.signal?.aborted ? 'canceled' : 'failure', {
+        source,
+        reason: options.signal?.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+      });
       throw error;
     }
   }, [sourceGateway]);
@@ -727,7 +755,7 @@ export function useSearchController({
       ? false
       : submittedSearch.source === 'all'
         ? aggregateQueries.some((query) => query.isPending)
-        : singleSearchQuery.isPending,
+        : singleSearchQuery.isFetching,
     searchFilters,
     searchGroups,
     searchDiscourseTags,

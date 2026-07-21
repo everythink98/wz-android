@@ -57,6 +57,7 @@ import {
   loadLinuxDoAccess
 } from '../../src/linuxdoCookieBridge';
 import { useAccountStatusController } from '../../src/app/useAccountStatusController';
+import type { XiaoyinsiAuthorizationReadResult } from '../../src/app/useXiaoyinsiAuthController';
 import { appQueryClient, emptyForumCredentialScope } from '../../src/app/serverState';
 import type { CredentialLoadOptions } from '../../src/app/sessionControllerHelpers';
 import { createSiteSessionStates, createSiteSessionViewModels } from '../../src/siteSessionState';
@@ -94,6 +95,11 @@ const xiaoyinsiUser: UserProfile = {
   url: 'https://forum.xiaoyinsi.com/u/carol',
   topics: []
 };
+
+type ReadXiaoyinsiAuthorization = (
+  trace?: Parameters<Parameters<typeof useAccountStatusController>[0]['readXiaoyinsiAuthorization']>[0],
+  options?: { signal?: AbortSignal }
+) => Promise<XiaoyinsiAuthorizationReadResult>;
 
 async function renderStatusController({
   clearYaohuoLoginState = jest.fn(async () => true),
@@ -374,5 +380,42 @@ describe('account status queries', () => {
     expect(readXiaoyinsiAuthorization).toHaveBeenCalledWith(expect.any(Object), {
       signal: expect.any(Object)
     });
+  });
+
+  it('[REG-ACCOUNT-017] preserves the last confirmed Xiaoyinsi identity when refresh fails', async () => {
+    const readXiaoyinsiAuthorization = jest.fn<ReadXiaoyinsiAuthorization>()
+      .mockResolvedValueOnce({
+        authenticated: true,
+        sessionEvent: {
+          type: 'cookie-loaded' as const,
+          loggedIn: true,
+          currentUser: xiaoyinsiUser,
+          at: '2026-07-20T00:00:00.000Z'
+        }
+      })
+      .mockResolvedValueOnce({
+        authenticated: null,
+        sessionEvent: {
+          type: 'check-failed' as const,
+          message: '小隐寺状态暂时无法确认',
+          at: '2026-07-20T00:01:00.000Z'
+        }
+      });
+    const { hook, notify } = await renderStatusController({ readXiaoyinsiAuthorization });
+
+    await act(async () => { await hook.result.current.refreshAccountStatus(); });
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
+      status: 'logged-in',
+      currentUser: xiaoyinsiUser
+    }));
+
+    await act(async () => { await hook.result.current.refreshAccountStatus(); });
+
+    await waitFor(() => expect(hook.result.current.accountSessionViewModels.xiaoyinsi).toMatchObject({
+      status: 'logged-in',
+      currentUser: xiaoyinsiUser,
+      lastError: '小隐寺状态暂时无法确认'
+    }));
+    expect(notify).toHaveBeenLastCalledWith('账号状态部分刷新失败：小隐寺');
   });
 });

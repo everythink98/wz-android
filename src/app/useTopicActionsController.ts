@@ -45,6 +45,7 @@ import {
   type OptimisticActionState
 } from '../topicActionState';
 import type { Reply, Source, TopicDetail, TopicPoll } from '../types';
+import type { TopicRepliesRefreshOptions } from '../appTypes';
 import { topicKey } from '../readerData';
 import {
   DEFAULT_NODESEEK_ANDROID_USER_AGENT,
@@ -120,12 +121,8 @@ type MutationVariables = {
   trace: DiagnosticTrace;
   applyOptimistic?: () => void;
   applyResult?: (result: unknown) => void;
+  afterSuccess?: (result: unknown) => Promise<boolean>;
   successMessage?: string | ((result: unknown) => string);
-};
-
-type MutationContext = {
-  previousDetail?: TopicDetail;
-  previousReplies?: ReplyCache;
 };
 
 type AttendanceMutationVariables = {
@@ -190,6 +187,7 @@ export function useTopicActionsController({
   loadYaohuoCookieForSource,
   nodeSeekWebViewUserAgentRef,
   notify,
+  refreshTopicReplies,
   showYaohuoLogin,
   siteSessionViewModels,
   topicDetail,
@@ -208,6 +206,7 @@ export function useTopicActionsController({
   loadYaohuoCookieForSource: (source: 'yaohuo', options?: CredentialLoadOptions) => Promise<string | undefined>;
   nodeSeekWebViewUserAgentRef: Ref<string>;
   notify: (message: string) => void;
+  refreshTopicReplies: (options?: TopicRepliesRefreshOptions) => Promise<unknown>;
   showYaohuoLogin: (message?: string) => void;
   siteSessionViewModels: SiteSessionViewModels;
   topicDetail: TopicDetail | null;
@@ -233,49 +232,60 @@ export function useTopicActionsController({
     isSessionSource(source) && siteSessionViewModels[source].canWrite
   ])) as Record<Source, boolean>;
 
-  const mutation = useMutation<unknown, unknown, MutationVariables, MutationContext>({
+  const mutation = useMutation<unknown, unknown, MutationVariables>({
     mutationKey,
     scope: { id: mutationScope },
-    mutationFn: (variables) => variables.task(),
-    onMutate: async (variables) => {
+    mutationFn: async (variables) => {
       await Promise.all([
         queryClient.cancelQueries({ queryKey: variables.detailKey, exact: true }),
         queryClient.cancelQueries({ queryKey: variables.repliesKey, exact: true })
       ]);
-      const context = {
-        previousDetail: queryClient.getQueryData<TopicDetail>(variables.detailKey),
-        previousReplies: queryClient.getQueryData<ReplyCache>(variables.repliesKey)
-      };
+      const previousDetail = variables.applyOptimistic
+        ? queryClient.getQueryData<TopicDetail>(variables.detailKey)
+        : undefined;
+      const previousReplies = variables.applyOptimistic
+        ? queryClient.getQueryData<ReplyCache>(variables.repliesKey)
+        : undefined;
       variables.applyOptimistic?.();
       markDiagnosticStage(variables.trace, 'apply', {
         source: variables.source,
         state: variables.applyOptimistic ? 'optimistic' : 'pending',
         localApplied: Boolean(variables.applyOptimistic)
       });
-      return context;
+      try {
+        return await variables.task();
+      } catch (error) {
+        const failure = mutationFailure(error);
+        const credentialIsCurrent = credentialValue(variables.source, credentialScopeRef.current) === variables.credential;
+        if (variables.applyOptimistic && credentialIsCurrent && failure.outcome !== 'stale') {
+          if (previousDetail) queryClient.setQueryData(variables.detailKey, previousDetail);
+          if (previousReplies) queryClient.setQueryData(variables.repliesKey, previousReplies);
+          markDiagnosticStage(variables.trace, 'rollback', { source: variables.source, state: 'local' });
+        }
+        throw error;
+      }
     },
-    onSuccess: (result, variables) => {
+    onSuccess: async (result, variables) => {
       if (credentialValue(variables.source, credentialScopeRef.current) !== variables.credential) {
         finishDiagnosticTrace(variables.trace, 'stale', { source: variables.source, reason: 'stale' });
         return;
       }
       variables.applyResult?.(result);
+      const refreshed = await variables.afterSuccess?.(result);
       const message = typeof variables.successMessage === 'function'
         ? variables.successMessage(result)
         : variables.successMessage;
       if (message) notify(message);
-      finishDiagnosticTrace(variables.trace, 'success', { source: variables.source, serverConfirmed: true });
+      finishDiagnosticTrace(variables.trace, refreshed === false ? 'partial' : 'success', {
+        source: variables.source,
+        serverConfirmed: true,
+        ...(refreshed === false ? { reason: 'refresh_failed' } : {})
+      });
     },
-    onError: (error, variables, context) => {
+    onError: (error, variables) => {
       const failure = mutationFailure(error);
       const credentialIsCurrent = credentialValue(variables.source, credentialScopeRef.current) === variables.credential;
-      if (credentialIsCurrent && failure.outcome !== 'stale') {
-        if (context?.previousDetail) queryClient.setQueryData(variables.detailKey, context.previousDetail);
-        if (context?.previousReplies) queryClient.setQueryData(variables.repliesKey, context.previousReplies);
-        if (variables.applyOptimistic) {
-          markDiagnosticStage(variables.trace, 'rollback', { source: variables.source, state: 'local' });
-        }
-      }
+      if (credentialIsCurrent && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, credentialIsCurrent ? failure.outcome : 'stale', {
         source: variables.source,
         reason: credentialIsCurrent ? failure.reason : 'stale'
@@ -304,10 +314,34 @@ export function useTopicActionsController({
     return { detailKey, repliesKey: forumQueryKeys.replies(detailKey) };
   }, []);
 
+  const refreshRepliesAfterWrite = useCallback(async (
+    actionTopic: TopicDetail,
+    trace: DiagnosticTrace,
+    options: TopicRepliesRefreshOptions
+  ) => {
+    if (topicCommands.getCurrentKey() !== topicKey(actionTopic)) {
+      const { detailKey, repliesKey } = cacheKeys(actionTopic);
+      queryClient.removeQueries({ queryKey: repliesKey, exact: true });
+      queryClient.removeQueries({ queryKey: detailKey, exact: true });
+      markDiagnosticStage(trace, 'apply', { source: actionTopic.source, state: 'cache-removed' });
+      return true;
+    }
+    const outcome = await refreshTopicReplies({ ...options, diagnosticTrace: trace });
+    return outcome === 'completed' || outcome === true;
+  }, [cacheKeys, queryClient, refreshTopicReplies, topicCommands]);
+
   const executeMutation = useCallback(async (
     actionTopic: TopicDetail,
     variables: Omit<MutationVariables, 'credential' | 'detailKey' | 'repliesKey' | 'source' | 'topicId'>
   ) => {
+    const duplicate = queryClient.getMutationCache().getAll().some((entry) => {
+      const pending = entry.state.variables as MutationVariables | undefined;
+      return entry.state.status === 'pending'
+        && pending?.actionKey === variables.actionKey
+        && pending.source === actionTopic.source
+        && pending.topicId === actionTopic.id;
+    });
+    if (duplicate) return false;
     const keys = cacheKeys(actionTopic);
     try {
       await mutation.mutateAsync({
@@ -321,7 +355,7 @@ export function useTopicActionsController({
     } catch {
       return false;
     }
-  }, [cacheKeys, mutation.mutateAsync]);
+  }, [cacheKeys, credentialScopeRef, mutation.mutateAsync, queryClient]);
 
   const runNodeSeekRequest = useCallback(async (request: NodeSeekActionRequest, trace: DiagnosticTrace) => {
     if (!sourceActionAvailability.nodeseek) {
@@ -389,6 +423,7 @@ export function useTopicActionsController({
     onError: (error, variables) => {
       const current = credentialScopeRef.current.nodeseek === variables.credential;
       const failure = mutationFailure(error);
+      if (current && !(error instanceof HandledMutationError)) notify(failure.message);
       finishDiagnosticTrace(variables.trace, current ? failure.outcome : 'stale', {
         source: 'nodeseek',
         reason: current ? failure.reason : 'stale'
@@ -565,6 +600,12 @@ export function useTopicActionsController({
           void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
           if (topicCommands.getCurrentKey() === actionTopicKey) topicComposer.completeSubmission();
         },
+        afterSuccess: () => refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+          silent: true,
+          afterSubmit: true,
+          targetReply: replyEditTarget,
+          editedReplyContent: edit
+        }),
         successMessage: '回复已更新'
       });
       return;
@@ -602,9 +643,13 @@ export function useTopicActionsController({
         void queryClient.invalidateQueries({ queryKey: detailKey, exact: true });
         void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
       },
+      afterSuccess: () => refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+        silent: true,
+        afterSubmit: true
+      }),
       successMessage: '回复已提交'
     });
-  }, [cacheKeys, executeMutation, notify, queryClient, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
+  }, [cacheKeys, executeMutation, notify, queryClient, refreshRepliesAfterWrite, replyContent, replyEditTarget, replyFace, replyTarget, runDiscourseRequest, runNodeSeekRequest, runYaohuoRequest, selectedTopic, topicCommands, topicComposer, topicDetail]);
 
   const deleteReplyConfirmed = useCallback(async (reply: Reply, trace: DiagnosticTrace) => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);
@@ -656,9 +701,15 @@ export function useTopicActionsController({
         const { repliesKey } = cacheKeys(actionTopic as TopicDetail);
         void queryClient.invalidateQueries({ queryKey: repliesKey, exact: true });
       },
+      afterSuccess: () => refreshRepliesAfterWrite(actionTopic as TopicDetail, trace, {
+        silent: true,
+        afterSubmit: true,
+        targetReply: reply,
+        excludeReply: reply
+      }),
       successMessage: '回复已删除'
     });
-  }, [cacheKeys, executeMutation, notify, queryClient, runDiscourseRequest, runYaohuoRequest, selectedTopic, topicDetail]);
+  }, [cacheKeys, executeMutation, notify, queryClient, refreshRepliesAfterWrite, runDiscourseRequest, runYaohuoRequest, selectedTopic, topicDetail]);
 
   const deleteReply = useCallback((reply: Reply) => {
     const trace = beginDiagnosticTrace('reply', 'delete', detail ? { source: detail.source } : {});
@@ -761,7 +812,7 @@ export function useTopicActionsController({
     } catch {
       // Error reporting and diagnostics are owned by the mutation callbacks.
     }
-  }, [attendanceMutation.mutateAsync]);
+  }, [attendanceMutation.mutateAsync, credentialScopeRef]);
 
   const interact = useCallback(async (type: InteractionType, commentId?: number) => {
     const actionTopic = currentTopicActionTopic(topicDetail, selectedTopic);

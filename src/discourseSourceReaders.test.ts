@@ -87,6 +87,23 @@ describe('Discourse source reader registration', () => {
     });
   });
 
+  it('[REG-SOURCE-004] forwards the gateway-owned linux.do access into the adapter request', async () => {
+    readers.getLinuxDoFeed.mockResolvedValueOnce({ items: [] });
+    const access = { cookieHeader: '_t=session', userAgent: 'android' };
+
+    await getDiscourseSourceFeed('linuxdo', {
+      auth: { linuxdo: access },
+      filter: 'latest',
+      page: 2
+    });
+
+    expect(readers.getLinuxDoFeed).toHaveBeenCalledWith({
+      linuxDoAccess: access,
+      linuxDoFilter: 'latest',
+      page: 2
+    });
+  });
+
   it('keeps site authentication inside the registered adapter boundary', async () => {
     readers.getLinuxDoCurrentUserProfile.mockResolvedValueOnce({ source: 'linuxdo' });
     readers.getXiaoyinsiReply.mockResolvedValueOnce({ floor: 2 });

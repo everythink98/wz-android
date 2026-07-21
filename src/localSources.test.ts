@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@react-native-cookies/cookies', () => ({
   default: {
@@ -37,7 +37,6 @@ import {
   setDiagnosticWriter,
   withDiagnosticFetcher
 } from './diagnostics';
-import * as SecureStore from 'expo-secure-store';
 
 const nodeSeekPayload = Buffer.from(JSON.stringify({
   rotateTopics: [{
@@ -108,25 +107,15 @@ function html(value: string) {
   });
 }
 
-function mockStoredLinuxDoLoginAccess(cookieHeader = 'cf_clearance=clearance; _t=login; _forum_session=session') {
-  vi.mocked(SecureStore.getItemAsync).mockImplementation(async (key: string) => (
-    key === 'linuxdo-clearance'
-      ? JSON.stringify({
-        cookieHeader,
-        savedAt: '2026-05-26T00:00:00.000Z',
-        source: 'webview',
-        userAgent: 'LinuxDo WebView UA'
-      })
-      : null
-  ));
+function testLinuxDoAccess(cookieHeader = 'cf_clearance=clearance; _t=login; _forum_session=session') {
+  return { cookieHeader, userAgent: 'LinuxDo WebView UA' };
+}
+
+function testLinuxDoDiscourseAuth(cookieHeader?: string) {
+  return { linuxdo: testLinuxDoAccess(cookieHeader) };
 }
 
 describe('Android local sources', () => {
-  beforeEach(() => {
-    vi.mocked(SecureStore.getItemAsync).mockReset();
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(null);
-  });
-
   afterEach(() => {
     setDiagnosticWriter(null);
   });
@@ -2001,25 +1990,30 @@ describe('Android local sources', () => {
     expect(profile).toMatchObject({ topicCount: 0, replyCount: 0, postCount: 0 });
   });
 
-  it('reuses the cached linux.do reply stream after reading topic details', async () => {
+  it('[REG-TOPIC-024] resolves later linux.do reply pages from the current server stream', async () => {
+    let topicJsonCalls = 0;
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('/posts.json')) {
+        if (!input.includes('40') || !input.includes('50')) {
+          throw new Error(`stale reply stream request: ${input}`);
+        }
         return json({
           post_stream: {
             posts: [
-              { id: 4, post_number: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
-              { id: 5, post_number: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
+              { id: 40, post_number: 4, username: 'reply 4', cooked: '<p>4</p>', created_at: '2026-05-20T00:04:00.000Z' },
+              { id: 50, post_number: 5, username: 'reply 5', cooked: '<p>5</p>', created_at: '2026-05-20T00:05:00.000Z' }
             ]
           }
         });
       }
+      topicJsonCalls += 1;
       return json({
         id: 900,
-        title: 'linux.do cached topic',
+        title: 'linux.do topic',
         created_at: '2026-05-20T00:00:00.000Z',
         posts_count: 5,
         post_stream: {
-          stream: [1, 2, 3, 4, 5],
+          stream: topicJsonCalls === 1 ? [1, 2, 3, 4, 5] : [1, 2, 3, 40, 50],
           posts: [
             { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' },
             { id: 2, post_number: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' },
@@ -2040,7 +2034,7 @@ describe('Android local sources', () => {
     });
 
     expect(replies.items.map((item) => item.floor)).toEqual([4, 5]);
-    expect(fetcher.mock.calls.filter((call) => String(call[0]).includes('/t/900.json'))).toHaveLength(1);
+    expect(fetcher.mock.calls.filter((call) => String(call[0]).includes('/t/900.json'))).toHaveLength(2);
     expect(fetcher.mock.calls.map((call) => call[0]).join('\n')).toContain('https://linux.do/t/900/posts.json');
   });
 
@@ -2357,48 +2351,6 @@ describe('Android local sources', () => {
       commentId: 2002,
       contentHtml: expect.stringContaining('visible reply')
     });
-  });
-
-  it('evicts least recently used linux.do reply streams after the cache limit', async () => {
-    const topicJsonCalls: string[] = [];
-    const fetcher = vi.fn(async (input: string) => {
-      if (input.includes('/posts.json')) {
-        return json({
-          post_stream: {
-            posts: [
-              { id: 2, post_number: 2, username: 'reply 2', cooked: '<p>2</p>', created_at: '2026-05-20T00:02:00.000Z' }
-            ]
-          }
-        });
-      }
-      const id = String(input).match(/\/t\/(\d+)\.json/)?.[1] || '0';
-      topicJsonCalls.push(id);
-      return json({
-        id: Number(id),
-        title: `linux.do cached topic ${id}`,
-        created_at: '2026-05-20T00:00:00.000Z',
-        posts_count: 2,
-        post_stream: {
-          stream: [1, 2],
-          posts: [
-            { id: 1, post_number: 1, username: 'alice', cooked: '<p>body</p>', created_at: '2026-05-20T00:00:00.000Z' }
-          ]
-        }
-      });
-    });
-
-    for (let id = 8000; id < 8100; id += 1) {
-      await getTopic({ source: 'linuxdo', id: String(id), fetcher });
-    }
-    await getReplies({ source: 'linuxdo', id: '8000', page: 2, offset: 0, limit: 1, fetcher });
-
-    topicJsonCalls.length = 0;
-    await getTopic({ source: 'linuxdo', id: '8100', fetcher });
-    await getReplies({ source: 'linuxdo', id: '8001', page: 2, offset: 0, limit: 1, fetcher });
-    await getReplies({ source: 'linuxdo', id: '8000', page: 2, offset: 0, limit: 1, fetcher });
-
-    expect(topicJsonCalls.filter((id) => id === '8001')).toHaveLength(1);
-    expect(topicJsonCalls.filter((id) => id === '8000')).toHaveLength(0);
   });
 
   it('uses NodeSeek updatedDate as last reply time when embedded topic comments are empty', async () => {
@@ -2836,8 +2788,7 @@ describe('Android local sources', () => {
     expect(fetcher.mock.calls.map((call) => String(call[0])).join('\n')).not.toContain('https://linux.do/search');
   });
 
-  it('[REG-LINUXDO-005] ignores stale login cookies until the account session is confirmed', async () => {
-    mockStoredLinuxDoLoginAccess();
+  it('[REG-LINUXDO-005] ignores supplied login access until the account session is confirmed', async () => {
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       const url = new URL(input);
       expect(url.hostname).toBe('www.google.com');
@@ -2854,6 +2805,7 @@ describe('Android local sources', () => {
       source: 'linuxdo',
       query: 'codex',
       fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
       linuxDoAuthenticated: false
     });
 
@@ -2913,7 +2865,6 @@ describe('Android local sources', () => {
   });
 
   it('keeps empty linux.do search responses empty instead of falling back to latest topics', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/session/csrf.json')) {
         return json({ csrf: 'csrf-token' });
@@ -2924,7 +2875,13 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'fallback keyword', fetcher, linuxDoAuthenticated: true });
+    const search = await searchTopics({
+      source: 'linuxdo',
+      query: 'fallback keyword',
+      fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(),
+      linuxDoAuthenticated: true
+    });
 
     expect(search.items).toEqual([]);
     const calls = fetcher.mock.calls.map((call) => call[0]).join('\n');
@@ -2933,7 +2890,6 @@ describe('Android local sources', () => {
   });
 
   it('REG-SEARCH-003 maps Discourse search post authors and paginates results', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       expect(url.pathname).toBe('/search');
@@ -2961,8 +2917,14 @@ describe('Android local sources', () => {
       });
     });
 
-    const first = await searchTopics({ source: 'linuxdo', query: 'keyword', limit: 1, fetcher, linuxDoAuthenticated: true });
-    const second = await searchTopics({ source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher, linuxDoAuthenticated: true });
+    const first = await searchTopics({
+      source: 'linuxdo', query: 'keyword', limit: 1, fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
+    const second = await searchTopics({
+      source: 'linuxdo', query: 'keyword', page: first.nextPage ?? 2, limit: 1, fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
 
     expect(first.items).toEqual([expect.objectContaining({
       id: '501',
@@ -2977,7 +2939,6 @@ describe('Android local sources', () => {
   });
 
   it('keeps official linux.do search results even when they do not contain the full query text', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
@@ -3009,13 +2970,15 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: '安卓手机免', fetcher, linuxDoAuthenticated: true });
+    const search = await searchTopics({
+      source: 'linuxdo', query: '安卓手机免', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
 
     expect(search.items.map((item) => item.id)).toEqual(['901', '902']);
   });
 
   it('matches the official linux.do search request from the logged-in page', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string, _init?: RequestInit) => {
       const url = new URL(input);
       if (url.pathname === '/session/csrf.json') {
@@ -3038,7 +3001,10 @@ describe('Android local sources', () => {
       });
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
+    const search = await searchTopics({
+      source: 'linuxdo', query: 'keyword', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
 
     expect(search.items.map((item) => item.id)).toEqual(['605']);
     const calls = fetcher.mock.calls.map((call) => String(call[0])).join('\n');
@@ -3058,7 +3024,6 @@ describe('Android local sources', () => {
   });
 
   it('maps linux.do search result category ids through site categories', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
@@ -3086,7 +3051,10 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
+    const search = await searchTopics({
+      source: 'linuxdo', query: 'keyword', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
 
     expect(search.items[0]).toMatchObject({
       id: '701',
@@ -3097,7 +3065,6 @@ describe('Android local sources', () => {
   });
 
   it('keeps linux.do search results in the official relevance order', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => {
       if (input.includes('linux.do/search?')) {
         return json({
@@ -3125,18 +3092,15 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
+    const search = await searchTopics({
+      source: 'linuxdo', query: 'keyword', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
 
     expect(search.items.map((item) => item.id)).toEqual(['801', '802']);
   });
 
-  it('sends saved linux.do login cookies when searching', async () => {
-    vi.mocked(SecureStore.getItemAsync).mockResolvedValue(JSON.stringify({
-      cookieHeader: 'cf_clearance=clearance; _t=login; _forum_session=session',
-      savedAt: '2026-05-26T00:00:00.000Z',
-      source: 'webview',
-      userAgent: 'LinuxDo WebView UA'
-    }));
+  it('sends gateway-supplied linux.do login access when searching', async () => {
     const fetcher = vi.fn(async (input: string, init?: RequestInit) => {
       if (input.includes('/session/csrf.json')) {
         return json({ csrf: 'csrf-token' });
@@ -3157,7 +3121,10 @@ describe('Android local sources', () => {
       throw new Error(`unexpected ${input} ${JSON.stringify(init)}`);
     });
 
-    const search = await searchTopics({ source: 'linuxdo', query: 'keyword', fetcher, linuxDoAuthenticated: true });
+    const search = await searchTopics({
+      source: 'linuxdo', query: 'keyword', fetcher,
+      discourseAuth: testLinuxDoDiscourseAuth(), linuxDoAuthenticated: true
+    });
 
     expect(search.items.map((item) => item.id)).toEqual(['601']);
     const [input, init] = fetcher.mock.calls.find((call) => new URL(String(call[0])).pathname === '/search') || [];
@@ -4871,7 +4838,6 @@ describe('Android local sources', () => {
   });
 
   it('passes linux.do site filters through Discourse search syntax', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async (input: string) => (
       input.includes('/session/csrf.json') ? json({ csrf: 'csrf-token' }) : json({ topics: [], posts: [] })
     ));
@@ -4879,6 +4845,7 @@ describe('Android local sources', () => {
     await searchTopics({
       source: 'linuxdo',
       query: 'AI',
+      discourseAuth: testLinuxDoDiscourseAuth(),
       linuxDoAuthenticated: true,
       categories: [{ source: 'linuxdo', id: '4', name: '开发调优', slug: 'dev' }],
       filter: {
@@ -5137,7 +5104,6 @@ describe('Android local sources', () => {
   });
 
   it('loads selectable linux.do tags with category and current selections', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async () => json({
       results: [
         { id: '人工智能', name: '人工智能', count: 12 },
@@ -5150,7 +5116,8 @@ describe('Android local sources', () => {
       categoryId: '4',
       selectedTags: ['快问快答'],
       limit: 20,
-      fetcher
+      fetcher,
+      linuxDoAccess: testLinuxDoAccess()
     });
 
     expect(tags).toEqual([
@@ -5174,13 +5141,15 @@ describe('Android local sources', () => {
   });
 
   it('loads selectable linux.do authors without groups', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async () => json({
       users: [{ id: 7, username: 'alice', name: 'Alice', avatar_template: '/user_avatar/linux.do/alice/{size}/1.png' }],
       groups: [{ id: 2, name: 'staff' }]
     }));
 
-    const users = await searchLinuxDoUsers({ term: 'ali', categoryId: '4', limit: 20, fetcher });
+    const users = await searchLinuxDoUsers({
+      term: 'ali', categoryId: '4', limit: 20, fetcher,
+      linuxDoAccess: testLinuxDoAccess()
+    });
 
     expect(users).toEqual([{
       id: '7',
@@ -5197,7 +5166,6 @@ describe('Android local sources', () => {
   });
 
   it('loads linux.do semantic results with an AI marker', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async () => json({
       topics: [{
         id: 88,
@@ -5211,7 +5179,10 @@ describe('Android local sources', () => {
       users: []
     }));
 
-    const result = await searchLinuxDoSemantic('AI tags:人工智能', { fetcher });
+    const result = await searchLinuxDoSemantic('AI tags:人工智能', {
+      fetcher,
+      linuxDoAccess: testLinuxDoAccess()
+    });
 
     expect(result.items).toEqual([expect.objectContaining({ id: '88', isAiGenerated: true })]);
     expect(result.hasMore).toBe(false);
@@ -5222,10 +5193,12 @@ describe('Android local sources', () => {
   });
 
   it('keeps a zero-result linux.do semantic response distinct from an API failure', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async () => json({ topics: [], posts: [], users: [] }));
 
-    const result = await searchLinuxDoSemantic('nothing', { fetcher });
+    const result = await searchLinuxDoSemantic('nothing', {
+      fetcher,
+      linuxDoAccess: testLinuxDoAccess()
+    });
 
     expect(result.items).toEqual([]);
     expect(result.errors).toEqual({});
@@ -5233,21 +5206,25 @@ describe('Android local sources', () => {
   });
 
   it.each([403, 404, 429])('preserves HTTP %s from the linux.do semantic endpoint', async (status) => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ errors: [`HTTP ${status}`] }), {
       status,
       headers: { 'content-type': 'application/json' }
     }));
 
-    await expect(searchLinuxDoSemantic('AI', { fetcher })).rejects.toMatchObject({ status });
+    await expect(searchLinuxDoSemantic('AI', {
+      fetcher,
+      linuxDoAccess: testLinuxDoAccess()
+    })).rejects.toMatchObject({ status });
   });
 
   it('preserves a network failure from the linux.do semantic endpoint', async () => {
-    mockStoredLinuxDoLoginAccess();
     const fetcher = vi.fn(async () => {
       throw new Error('network down');
     });
 
-    await expect(searchLinuxDoSemantic('AI', { fetcher })).rejects.toThrow('network down');
+    await expect(searchLinuxDoSemantic('AI', {
+      fetcher,
+      linuxDoAccess: testLinuxDoAccess()
+    })).rejects.toThrow('network down');
   });
 });

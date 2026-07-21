@@ -683,6 +683,21 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 让小隐寺 Query 再次只返回 `{ failed }` 并由授权检查 dispatch，编号测试应继续看到预置的旧登录身份。 |
 | 明确不覆盖范围 | 不改变 Device Code、SecureStore、撤销授权或写操作被动复核的 workflow 事件语义。 |
 
+## `REG-ACCOUNT-017` 小隐寺状态检查失败覆盖可信身份
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-01`、`MORE-02`、`WRITE-01`、`WRITE-03` |
+| 用户症状 | 账号中心已经确认小隐寺登录后，一次临时网络或服务错误会把账号立即显示成未登录，并同步撤掉依赖账户投影的写入口。 |
+| 触发条件 | 小隐寺 Account Query 先成功得到身份，随后同一 Query key 的只读检查返回 `authenticated=null` 与 `check-failed`。 |
+| 根因 seam | `src/app/useAccountStatusController.ts` 把检查失败包装成成功 Query data，并从初始匿名状态归约 `check-failed`，因此覆盖了 TanStack Query 原本应保留的最后可信 data。 |
+| 必须保持的行为 | 明确 `authenticated=false` 仍可提交匿名状态；普通检查失败必须让 Query 进入 error，保留上一份成功 data/currentUser，仅在小隐寺卡片挂本次错误并把该站计入部分刷新失败。 |
+| 精确失败 oracle | `tests/ui/account-status-controller.test.tsx` 的 `REG-ACCOUNT-017` 先返回已登录的 `carol`，再返回 `authenticated=null/check-failed`，要求最终仍为 `logged-in`、保留同一用户、显示失败文案且通知只列出小隐寺。修复前稳定退成 `anonymous`。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须在真实 `QueryClientProvider` 下跨两次 refetch 观察 data/error 并存；单测 reducer 或只测一次请求不足。 |
+| Replay 或真实验收路径 | 更多 → 账号中心 → 刷新；自然失败时核对旧身份和站点错误并存。不得断网、撤销授权或清凭据制造失败。 |
+| 负向验证方式 | 把 `authenticated=null` 再次作为 `{ failed, session }` 成功返回，编号测试必须从预期 `logged-in` 精确失败为 `anonymous`。 |
+| 明确不覆盖范围 | 不把服务端明确匿名或明确授权失效当成普通失败；不改变授权、撤销和 Device Code workflow。 |
+
 ## `REG-PROXY-001` 代理配置读取失败后静默直连
 
 | 字段 | 内容 |
@@ -1388,6 +1403,36 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | 负向验证方式 | 删除 `submittedSearch` 门禁并直接返回 `singleSearchQuery.isPending`，编号测试应在发出任何 transport 前失败。 |
 | 明确不覆盖范围 | 不保证动态站点一定有结果，也不改变重复 refetch、分页或来源错误的既有语义。 |
 
+## `REG-SEARCH-007` 聚合搜索自动打开单站登录或验证面板
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-04`、`ACCOUNT-02` |
+| 用户症状 | 用户执行“全部”搜索时，某站需要登录或验证会突然打开该站 WebView/验证面板，打断其他站结果的渐进展示。 |
+| 触发条件 | 聚合 Query 中 NodeSeek、linux.do 或妖火返回 `action-required`，Search controller 的 effect 扫描全部来源结果。 |
+| 根因 seam | `src/app/useSearchController.ts` 的生产 effect 没有聚合门禁；旧单元测试只调用生产链路未使用的 action helper，因此在错误实现下仍通过。 |
+| 必须保持的行为 | 聚合、后台 AI 和预取只在对应来源区块显示可理解且可重试的状态，不自动打开任何登录/验证面板；用户主动执行单站前台搜索时仍可打开并精确恢复。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SEARCH-007` 通过真实 Controller 同时让 linux.do、NodeSeek 和妖火要求动作，等待五个 Query 结算后断言三个面板回调均为零。修复前 NodeSeek 回调稳定为一次。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须运行 effect 和 Query 状态；对脱离生产链路的纯 helper 断言不构成证据。 |
+| Replay 或真实验收路径 | 搜索 → 全部；自然遇到受限来源时确认状态留在区块内且其他站继续完成。不清 Cookie 或主动制造 challenge。 |
+| 负向验证方式 | 删除 effect 的 `source === 'all'` 门禁，编号测试必须看到 NodeSeek 验证回调。 |
+| 明确不覆盖范围 | 不禁止用户主动进入单站后打开所需面板，也不自动重放后台失败请求。 |
+
+## `REG-SEARCH-008` 聚合刷新失败隐藏错误并伪装旧结果成功
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-04` |
+| 用户症状 | “全部”中某站已有预览时再次搜索或重试，该站刷新失败后仍只显示旧结果，没有错误或重试入口，看起来像本次刷新成功。 |
+| 触发条件 | 同一聚合 Query key 先成功，随后普通错误或 `parse_empty`；TanStack Query 同时保留旧 `data` 并提供本次 `error`。 |
+| 根因 seam | `src/app/useSearchController.ts` 的 aggregate group 投影先返回 `query.data`，导致 `SearchPageError.result` 永远不可见。 |
+| 必须保持的行为 | 旧预览继续可读；同一区块同时显示本次来源错误和重试入口，不落地失败响应中的 partial items，不自动重试，也不影响其他来源。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SEARCH-008` 让 NodeSeek 聚合 Query 先返回一条可信结果，再刷新失败；要求原条目仍在且 `error/errorKind` 来自失败响应。修复前条目保留但两个错误字段均为 `undefined`。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须在真实 `QueryClientProvider` 下覆盖 refetch 后 data/error 并存状态。 |
+| Replay 或真实验收路径 | “全部”重复搜索；自然失败时检查旧预览与来源错误并存。动态验收不强制制造站点失败。 |
+| 负向验证方式 | 将 aggregate 投影恢复为先判断 `query.data`，编号测试必须因错误字段缺失失败。 |
+| 明确不覆盖范围 | 不为“全部”增加分页，不改变来源顺序或每站最多两条预览，也不把失败响应的条目当作可信 data。 |
+
 ## `REG-TOPIC-008` linux.do 正文用户链接被外部打开
 
 | 字段 | 内容 |
@@ -1837,6 +1882,246 @@ Jest 的 `it.failing` 只用于保留已确认但本轮不获准修复的精确�
 | Replay 或真实验收路径 | 自然失效时检查授权入口；不得撤销真实授权制造场景，真实写入仍需逐次授权。 |
 | 负向验证方式 | 移除 recheck false 的 auth open，编号测试没有入口；把所有 403 都当退出则负向用例失败。 |
 | 明确不覆盖范围 | 不自动撤销、删除或重新生成 Device Code，不重试可能非幂等的写请求。 |
+
+## `REG-ACCOUNT-018` 等级刷新失败被保留的旧数据误报为成功
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `ACCOUNT-04` |
+| 用户症状 | linux.do 或小隐寺等级已经成功加载过一次后，再次刷新失败仍提示成功并继续展示旧等级，用户无法知道本次请求失败。 |
+| 触发条件 | 同一 Query key 先成功、后 refetch reject；TanStack Query 同时保留可信 `data` 和本次 `error`。 |
+| 根因 seam | `src/app/useAccountController.ts` 与 `src/app/useXiaoyinsiAuthController.ts` 的刷新结果投影先判断 retained data，再判断当前 error。 |
+| 必须保持的行为 | 旧等级可继续只读展示，但本次刷新必须返回失败并提示当前错误；不得发成功提示，也不得清除可信旧数据。linux.do 与小隐寺必须保持相同 error-first 语义。 |
+| 精确失败 oracle | `tests/ui/account-controller.test.tsx` 和 `tests/ui/xiaoyinsi-auth-controller.test.tsx` 的 `REG-ACCOUNT-018` 都先成功建立可信等级，再让 refetch 失败；要求保留旧 profile、返回失败并只提示刷新错误。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须观察真实 Query 的 data/error 并存状态和 controller 通知结果。 |
+| Replay 或真实验收路径 | 账号中心只读展开 linux.do 与小隐寺等级；自然网络失败时核对旧数据与错误并存。不得为制造失败而撤销授权或清登录。 |
+| 负向验证方式 | 把刷新逻辑恢复为先依据 `query.data` 返回成功，两个编号测试都会因误报成功或缺失错误提示失败。 |
+| 明确不覆盖范围 | 不固定动态等级数值，不把暂时失败解释为退出，也不自动重试或重新授权。 |
+
+## `REG-FEED-006` 多页 Feed 刷新失败后跳过失败页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-04` |
+| 用户症状 | 已加载多页的单站 Feed 刷新时后续页失败，用户再次加载却直接请求更后面的页，失败页内容永久缺失。 |
+| 触发条件 | Infinite Query 已有至少两页；同 key refetch 的第二页失败，随后用户触发分页。 |
+| 根因 seam | `src/app/useFeedController.ts` 把任意 Query error 当成 load-more error，没有用 `isFetchNextPageError` 区分 refetch 与分页失败。 |
+| 必须保持的行为 | refetch 后续页失败时保留原可信页和对应 cursor；下一次操作重试失败页，不能推进到更后 cursor、混入半页结果或误判没有更多。 |
+| 精确失败 oracle | `tests/ui/feed-controller-xiaoyinsi.test.tsx` 的 `REG-FEED-006` 建立两页缓存，让多页 refetch 的后续页失败，再触发加载；要求请求序列重试同一页而不是前进。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 Infinite Query 的 refetch/error/fetchNextPage 状态转换。 |
+| Replay 或真实验收路径 | 单站 Feed 加载至少两页后刷新；若自然遇到后续页失败，旧列表仍可读且重试不得出现楼层缺口。动态站点不强制制造失败。 |
+| 负向验证方式 | 将 controller 恢复为用通用 `isError` 判定分页失败，编号测试会观察到请求越过失败 cursor。 |
+| 明确不覆盖范围 | 不增加后台自动重试，不固定动态主题数量，也不改变首屏刷新失败保留可信数据的既有语义。 |
+
+## `REG-SEARCH-009` 搜索失败响应进入可信 Query data
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-01`、`SEARCH-02`、`SEARCH-04` |
+| 用户症状 | 某来源首次搜索失败或要求登录/验证时，页面可能把它当作成功空结果，错误状态不稳定，失败对象还会留在 Query cache。 |
+| 触发条件 | Gateway 返回含来源 error 或 action-required 的 `SearchResponse`，但没有可提交的成功结果。 |
+| 根因 seam | `src/app/useSearchController.ts` 的聚合与单站 queryFn 直接 return 业务失败对象，而不是 reject `SearchPageError`。 |
+| 必须保持的行为 | 初始失败和 action-required 必须使对应 Query 失败，`state.data` 不得建立；已有可信 data 的 refetch 失败仍由 Query 保留旧 data，同时暴露当前 error。失败响应中的 partial items 与 cursor 不落地。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SEARCH-009` 让单站首次返回 ordinary error，要求可见错误、Query data 为 `undefined` 且 state.error 存在；`REG-SEARCH-007` 同时固定 action-required 不成为聚合可信 data。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须读取真实 QueryClient cache 与 controller 可见状态，纯 response helper 不足以证明缓存所有权。 |
+| Replay 或真实验收路径 | 搜索页逐站提交；自然失败或受限时确认不是“无结果”成功态，并可从原来源重试。不得清 Cookie 制造 challenge。 |
+| 负向验证方式 | 将任一 queryFn 改回直接 return 失败 `SearchResponse`，编号测试会看到 Query data 被写入或 error 为空。 |
+| 明确不覆盖范围 | 不保证来源一定返回结果，不自动打开聚合面板，也不改变成功空结果的合法语义。 |
+
+## `REG-SEARCH-010` 多页搜索刷新失败后跳到下一 cursor
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-02`、`SEARCH-04` |
+| 用户症状 | 单站搜索已加载多页后刷新，后续页失败；用户继续滚动会跳过失败页请求下一 cursor，结果出现永久缺口。 |
+| 触发条件 | Infinite Query 已缓存多页；同 key refetch 的第二页失败后再次触发分页。 |
+| 根因 seam | `src/app/useSearchController.ts` 把 refetch error 误当成 `fetchNextPage` error，并从旧末页推导更后 cursor。 |
+| 必须保持的行为 | 保留全部可信旧页和失败页 cursor；重试只请求同一失败 cursor，不能落地失败 response 的 partial items，也不能越过失败页。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SEARCH-010` 建立多页搜索缓存，让 refetch 后续页失败，再加载更多；要求 transport cursor 序列重试失败 cursor 而不是请求下一值。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 Infinite Query 的多页 refetch 与 fetchNextPage error 分类。 |
+| Replay 或真实验收路径 | 单站搜索滚动至少两页后刷新；自然失败时确认旧结果仍在、尾部可重试且无页缺口。 |
+| 负向验证方式 | 将分页错误门禁从 `isFetchNextPageError` 改回通用 error，编号测试会观察到 cursor 前进。 |
+| 明确不覆盖范围 | 不自动重试动态来源，不固定页大小，也不改变首次搜索失败或普通成功分页。 |
+
+## `REG-SEARCH-011` 同 key 搜索刷新不显示忙碌
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-02` |
+| 用户症状 | 单站同条件重新搜索时旧结果仍在，但提交按钮和来源区块都不显示请求进行中，用户可能重复提交。 |
+| 触发条件 | Query 已有可信 data；同一 key 执行 refetch，`isPending=false` 但 `isFetching=true`。 |
+| 根因 seam | `src/app/useSearchController.ts` 的 busy/loading 投影只读取初次 pending，没有覆盖 retained-data refetch。 |
+| 必须保持的行为 | 初次请求与同 key refetch 都显示忙碌；旧结果可以继续可读，结算后 busy 收口。未提交的 disabled Query 仍按 `REG-SEARCH-006` 保持不忙。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SEARCH-011` 先完成搜索，再用 pending Promise 阻塞同 key replacement；要求期间 `searchBusy` 和来源 loading 为真，结算后恢复为假。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须覆盖 TanStack Query 的 retained data + isFetching 状态。 |
+| Replay 或真实验收路径 | 单站以同一关键词重复提交，观察请求期间忙碌提示和旧结果可读，完成后正常收口。 |
+| 负向验证方式 | 将 busy 投影改回只使用 `isPending`，编号测试会在 replacement pending 时收到 false。 |
+| 明确不覆盖范围 | 不增加全屏 Loading，不禁止合法的来源切换，也不改变 AI 后台预取的独立忙碌状态。 |
+
+## `REG-SEARCH-012` 旧搜索结果为新输入打开动作面板
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `SEARCH-04` |
+| 用户症状 | 用户提交关键词 A 后立即把输入改成 B，A 的迟到登录/验证结果仍突然打开面板，看起来像 B 触发。 |
+| 触发条件 | 单站前台请求 pending 时输入被替换，但已提交 Query 的 action-required 随后结算。 |
+| 根因 seam | `src/app/useSearchController.ts` 的 action effect 只看 Query 结果与来源，没有确认当前输入仍归属于该次 submitted search。 |
+| 必须保持的行为 | 只有当前输入仍等于已提交查询时，单站 action-required 才能打开对应面板；输入变化、来源变化、聚合和后台 AI 都只保留可理解状态，不触发旧副作用。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SEARCH-012` 提交 pending NodeSeek 搜索、替换输入后才结算验证要求；要求 verification 回调始终为零。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 effect、输入状态和迟到 Query 结算顺序。 |
+| Replay 或真实验收路径 | 单站搜索请求中修改输入；若自然遇到登录/验证，只允许仍属当前提交的请求打开面板。不得主动破坏会话制造受限状态。 |
+| 负向验证方式 | 删除 input/submitted query 所有权比较，编号测试会收到一次 NodeSeek verification 回调。 |
+| 明确不覆盖范围 | 不取消用户仍在查看的合法当前请求，也不禁止主动进入单站后恢复当前验证。 |
+
+## `REG-SOURCE-003` 主动取消被诊断为来源失败
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-04`、`SEARCH-02`、`SEARCH-04` |
+| 用户症状 | 切换来源、条件或离开页面取消请求后，诊断把 transport 的 abort rejection 记录成网络失败，污染问题定位并可能触发错误 UI。 |
+| 触发条件 | Query signal 已 abort；底层 transport 以普通 reject 而非标准 AbortError 结算。 |
+| 根因 seam | `src/app/useFeedController.ts` 与 `src/app/useSearchController.ts` 的 catch 只按 error 类型归类，没有优先读取请求 signal 的当前状态。 |
+| 必须保持的行为 | signal 已 abort 的请求始终以 canceled 结算诊断，不落地数据或来源错误；未取消的真实 reject 仍是 failure，后续新请求可独立成功。 |
+| 精确失败 oracle | `tests/ui/search-controller-ai.test.tsx` 的 `REG-SOURCE-003` 让取消后的 semantic transport 以普通 Error reject，要求诊断 outcome 为 `canceled`；同组还固定未取消失败与后续成功不被吞掉。Feed 使用同一 signal-first catch 契约并由完整 UI 回归覆盖。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要 Query cancellation、transport rejection 和诊断 writer 的真实时序。 |
+| Replay 或真实验收路径 | Feed/Search 快速切换来源或筛选，只读确认新请求结果归属正确；诊断中被替换请求为 canceled。动态验收不人为断网。 |
+| 负向验证方式 | 移除 catch 中的 `signal.aborted` 优先判断，编号测试会把取消请求记录为 failure。 |
+| 明确不覆盖范围 | 不把未取消的超时、解析失败或服务端错误降级成 canceled，也不隐藏当前请求的真实用户错误。 |
+
+## `REG-SOURCE-004` linux.do 受管请求并行维护两条认证链
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `FEED-01`、`FEED-02`、`FEED-04`、`SEARCH-01`、`SEARCH-03`、`SEARCH-04`、`TOPIC-01`、`TOPIC-03`、`USER-01` |
+| 用户症状 | 同一次 linux.do 请求中 Gateway 已识别登录态，adapter 却再次读取 SecureStore；两次读取不一致或第二次失败时，请求可能匿名发送、误报存储错误，或与 Query key 的认证身份不一致。 |
+| 触发条件 | 受管 `SourceGateway` 调用 `discourseSourceReaders`，后者进入 `localLinuxdo` 后又自行加载 access。 |
+| 根因 seam | `src/sources/sourceGateway.ts` → `src/discourseSourceReaders.ts` → `src/localLinuxdo.ts` 的认证上下文没有显式贯穿，导致 Gateway 与 adapter 同时拥有 credential read。 |
+| 必须保持的行为 | Gateway 是受管请求唯一的认证读取者；它加载的同一 `linuxDoAccess` 必须显式传到 Feed、Search、Topic、Replies、User、候选与语义搜索 adapter。adapter 不得隐式回读 SecureStore，也不得在缺失时猜测另一份身份。 |
+| 精确失败 oracle | `src/discourseSourceReaders.test.ts` 的 `REG-SOURCE-004` 传入 gateway-owned access，要求 linux.do adapter 精确收到同一对象；`src/sources/sourceGatewayContract.test.ts` 固定受管调用边界；`src/forumApi.test.ts` 与 `src/localSources.test.ts` 的聚合/登录搜索、候选和语义搜索全部显式注入 access，并固定匿名请求不携带它。修复前 adapter 调用中该字段为 `undefined`，旧直调测试会因错误走 Google fallback 失败。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：直接固定跨模块参数所有权；完整 Gateway/controller 回归负责消费者兼容。 |
+| Replay 或真实验收路径 | 保留自然 linux.do 登录态，只读执行 Feed、Search、Topic 和用户页；各入口身份与账号中心一致。不得输出 Cookie，也不得清登录制造对照。 |
+| 负向验证方式 | 删除 reader 的 `linuxDoAccess` 转发或恢复 `localLinuxdo` 内部 SecureStore 读取，编号测试必须因 adapter 缺少同一 access 失败。 |
+| 明确不覆盖范围 | 不证明远端 Cookie 永久有效，不改变会话确认规则，也不允许调用方绕过 Gateway 伪造已登录身份。 |
+
+## `REG-TOPIC-024` linux.do 回复页复用模块全局旧 stream
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-03` |
+| 用户症状 | linux.do 主题的回复 stream 已在服务端变化后，后续分页仍按旧 post id 列表读取，可能缺少新回复或请求已不存在的楼层。 |
+| 触发条件 | 同一 topic 在模块级缓存有效期内再次读取回复页，而服务端 `post_stream.stream` 已更新。 |
+| 根因 seam | `src/localLinuxdo.ts` 的 `topicStreamCache` 成为 TanStack Query 之外、未按会话和请求生命周期约束的第二份服务端状态所有者。 |
+| 必须保持的行为 | 每次回复页读取都从当前 topic stream 推导目标 post ids；TanStack Query 是唯一跨请求缓存所有者。取消、错误和会话边界仍由当前 Query 管理，不新增 adapter 全局缓存。 |
+| 精确失败 oracle | `src/localSources.test.ts` 的 `REG-TOPIC-024` 让同一 topic 的后续读取返回更新后的 stream，要求第二次 `/posts.json` 使用当前 ids；旧缓存实现稳定继续请求旧 ids。 |
+| 最低可靠自动测试层 | `UNIT_PASS`：确定性 fixture 足以固定 stream 到 posts 请求的映射与调用次数。 |
+| Replay 或真实验收路径 | linux.do 主题只读刷新回复并分页，确认楼层连续；动态 stream 变化不作为必造前提。 |
+| 负向验证方式 | 恢复模块级 stream cache，编号测试会因第二次请求仍含旧 post ids 失败。 |
+| 明确不覆盖范围 | 不改变远端 stream 格式、页大小或 Topic Query 自身缓存策略，也不自动制造新回复。 |
+
+## `REG-TOPIC-025` 完整刷新拼接新首屏与旧回复页
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `TOPIC-04` |
+| 用户症状 | 主题完整刷新后首屏是新内容，后续回复和 cursor 却来自刷新前快照，造成重复、缺楼或继续从错误位置分页。 |
+| 触发条件 | 回复 Infinite Query 已加载多页；用户执行“完整刷新”，详情返回新的首屏回复。 |
+| 根因 seam | `src/app/useTopicController.ts` 只替换 replies cache 的第一页，保留旧 pages、pageParams 和 next cursor。 |
+| 必须保持的行为 | 完整刷新必须把详情返回的首屏作为新的唯一回复快照，丢弃所有旧后续页与 cursor；之后分页从新首屏权威 cursor 继续。仅刷新评论和写后定向刷新保留各自独立语义。 |
+| 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 的 `REG-TOPIC-025` 预置旧第二页与 cursor，再让完整刷新返回新首屏；要求最终只有新首屏回复，旧第二页和旧 cursor 均消失。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须观察详情 Query 与回复 Infinite Query 的 cache 提交。 |
+| Replay 或真实验收路径 | 已分页 Topic 打开菜单执行完整刷新，确认回复从新首屏开始且继续分页无重复。只读刷新，不产生原站写入。 |
+| 负向验证方式 | 将完整刷新恢复为只替换 `pages[0]`，编号测试会继续看到旧第二页或 cursor。 |
+| 明确不覆盖范围 | 不改变“仅刷新评论”的定位策略，不保证动态主题刷新前后内容相同，也不执行评论写入。 |
+
+## `REG-USER-007` 用户页刷新保留旧分页快照且不显示忙碌
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `USER-01` |
+| 用户症状 | 用户页已经加载多页后刷新，页面没有忙碌反馈；刷新完成仍混有旧后续页和旧 cursor，可能显示已删除内容或跳过新内容。 |
+| 触发条件 | Profile/Infinite Query 已有多页数据；同一用户执行刷新。 |
+| 根因 seam | `src/app/useUserController.ts` 的 refresh 只 invalidates 首屏 seed，并以 pending 而非 fetching 投影 busy，未用新 profile 替换完整分页快照。 |
+| 必须保持的行为 | 刷新期间暴露 busy；新 profile 作为 topics/replies 两条 lane 的权威首屏，替换全部旧 pages 和 cursor。刷新失败保留可信旧快照并显示错误。 |
+| 精确失败 oracle | `tests/ui/user-controller-session.test.tsx` 的 `REG-USER-007` 建立旧多页缓存，用 pending replacement 固定 busy，再结算新首屏；要求旧后续页消失且两个 lane 的 cursor 来自新快照。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 Profile Query、两条 Infinite Query seed 和 controller busy 的协同。 |
+| Replay 或真实验收路径 | 用户页分别加载主题/回复后执行只读刷新，确认忙碌态、首屏归属和继续分页。 |
+| 负向验证方式 | 恢复只更新第一页或 busy 只看 `isPending`，编号测试会看到旧页/cursor 或刷新期间 false。 |
+| 明确不覆盖范围 | 不固定远端统计和列表数量，不改变关注本机状态，也不把刷新失败解释为用户不存在。 |
+
+## `REG-WRITE-017` 写成功后定向回复刷新在 Query 重构中丢失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-02`、`TOPIC-03` |
+| 用户症状 | 回复、编辑或删除已由服务器确认后，当前回复区不出现目标楼层或仍显示旧内容；如果简单整页刷新又会丢失已加载分页和当前位置。 |
+| 触发条件 | write mutation 成功后需要按新增楼层、编辑楼层或排除已删除楼层刷新特定回复页。 |
+| 根因 seam | 请求改为 TanStack Query 唯一所有者时，旧 controller 的 targeted refresh seam 被删除，但 mutation success 没有等价的 Query-native 提交。 |
+| 必须保持的行为 | 服务器确认后通过独立 Query key 读取目标页，并原子合并/替换 replies InfiniteData；新增回复推导尾页，编辑/删除按 target 或 exclude 定位，保留无关已加载页和 cursor。跟进刷新失败只报告 partial，不回滚已确认写入或重发非幂等请求。 |
+| 精确失败 oracle | `tests/ui/topic-session-controller.test.tsx` 的 `REG-WRITE-017` 预置已加载回复页，提交后返回权威尾页；要求目标回复和总数更新、既有页保留且无重复。`tests/ui/topic-actions-controller.test.tsx` 的 `REG-LINUXDO-003` 另固定写已确认但跟进刷新失败为 partial。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须覆盖 mutation success、临时 Query、InfiniteData 合并和可见 controller 状态。 |
+| Replay 或真实验收路径 | 默认只检查写入口，不提交真实内容；获得逐次写授权后记录原状态，提交一次并核对目标楼层、分页与 partial 提示，按可逆性清理。 |
+| 负向验证方式 | 移除 `afterSuccess` 的 Query 定向刷新或改为覆盖全部 pages，编号测试会缺少权威回复或丢失既有页。 |
+| 明确不覆盖范围 | 不自动重试非幂等写请求，不把跟进读取失败伪装成写失败，也不授权真实回复、编辑或删除。 |
+
+## `REG-WRITE-018` 串行 mutation 在排队前共享同一 optimistic snapshot
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-03` |
+| 用户症状 | 用户快速执行同一 Topic 的两个互动，第一个成功、第二个失败时，第二个 rollback 可能恢复到两个操作之前，复活已经确认撤销的状态或覆盖已确认结果。 |
+| 触发条件 | 相同 TanStack mutation scope 的两个操作连续入队；`onMutate` 在 scope 串行 transport 之前就执行 snapshot 和 optimistic patch。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 把 cancel/snapshot/optimistic/rollback 放在 Mutation scope 之外，两个 queued mutation 观察到重叠基线。 |
+| 必须保持的行为 | 同 scope 的取消、snapshot、optimistic patch、transport 和 rollback 必须按顺序进入串行区；后一个操作只能基于前一个已结算状态建立 snapshot。不同 Topic scope 仍可独立结算。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-018` 阻塞第一个 transport 后排入第二个，要求第二个 optimistic patch 直到其 transport 启动才应用；第二个失败 rollback 不覆盖第一个已确认状态。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要真实 MutationCache scope、Query cache patch 与两个 pending transport 的时序。 |
+| Replay 或真实验收路径 | 默认不快速触发真实互动；若获逐次授权，只对可逆操作记录初态并逐个等待结算，最后恢复原态。并发边界由自动测试证明。 |
+| 负向验证方式 | 把 snapshot/optimistic patch 移回 `onMutate`，编号测试会在第一个 transport 尚未结算时提前看到第二个 patch 或错误 rollback。 |
+| 明确不覆盖范围 | 不让不同 Topic 全局串行，不重试非幂等操作，也不改变各站 optimistic 字段计算。 |
+
+## `REG-WRITE-019` rerender 前重复提交进入两个非幂等队列
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01` |
+| 用户症状 | 用户快速双击回复提交，在 React 来得及重渲染 busy 之前，两次相同回复都进入队列，可能在原站生成重复内容。 |
+| 触发条件 | 第一次 reply mutation 已在 MutationCache pending，但当前 render 闭包中的 busy 仍是旧值；第二次调用紧接发生。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 只依赖渲染时派生的 busy 防重，没有在执行瞬间检查 exact mutation identity 的 pending 状态。 |
+| 必须保持的行为 | 同 source/topic/action 的非幂等提交只允许一个 pending mutation；第二次在 transport 入队前明确拒绝。其他 action 或 Topic 不受误伤，确认写入不自动重试。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-019` 在同一 act 中连续调用两次 reply，阻塞首个 transport；要求 action client 只调用一次，第二次 promise 被拒绝且 MutationCache 没有第二个 queued transport。 |
+| 最低可靠自动测试层 | `UI_PASS`：必须覆盖 render 闭包与 MutationCache 当前状态之间的竞态。 |
+| Replay 或真实验收路径 | 不用真实双击写入验证；获授权后的单次回复只提交一次并等待终态，重复提交保护由自动测试证明。 |
+| 负向验证方式 | 删除执行前的 exact pending mutation 检查，编号测试会观察到第二个 transport 入队。 |
+| 明确不覆盖范围 | 不把所有不同 action 合并为一个锁，不提供服务端幂等键，也不授权真实内容提交。 |
+
+## `REG-WRITE-020` mutation 前置错误无提示地消失
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`WRITE-03`、`WRITE-04` |
+| 用户症状 | SecureStore 读取、凭据准备或其他 action wrapper 之前的异常发生时，操作没有成功也没有错误提示，用户只能看到按钮恢复。 |
+| 触发条件 | 错误在站点 action client 及其 typed failure handler 之前抛出，因此既没有 wrapper 通知，也没有成功提示。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 的 generic mutation `onError` 假定所有错误都已由内部 wrapper 处理。 |
+| 必须保持的行为 | 未经处理的 raw Error 必须恰好提示一次；已转成 `HandledActionError` 的登录、授权、服务器或 partial 错误不重复提示。失败仍执行对应 rollback，成功提示绝不能出现。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-020` 让 SecureStore credential preparation reject，要求用户收到原错误、没有成功提示；既有 typed failure 用例固定不双重通知。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要 mutation lifecycle、wrapper 分类与 notify spy 一起证明“零次/一次/不重复”。 |
+| Replay 或真实验收路径 | 只在自然凭据故障时核对可理解提示；不得破坏 SecureStore、删除登录或发真实写请求制造场景。 |
+| 负向验证方式 | 移除 generic raw-error notify，编号测试会收到零次提示；对所有错误无条件 notify 会让既有 handled-error 用例重复。 |
+| 明确不覆盖范围 | 不输出敏感凭据，不把登录失效降级为普通错误，也不自动重试非幂等操作。 |
+
+## `REG-WRITE-021` 离开 Topic 后结算的写入保留旧 route cache
+
+| 字段 | 内容 |
+| --- | --- |
+| 能力 ID | `WRITE-01`、`NAV-03` |
+| 用户症状 | 在 Topic A 提交回复后立即导航到 Topic B，A 的请求随后成功；以后返回 A 时，因为 `refetchOnMount=false`，旧详情和回复 cache 可能继续显示写入前状态。 |
+| 触发条件 | mutation 归属 A，结算时活动 route 已切换；跟进刷新只操作当前 route 或因不匹配直接跳过。 |
+| 根因 seam | `src/app/useTopicActionsController.ts` 的 after-success refresh 没有处理 mutation identity 与当前 Topic identity 分离后的 inactive cache。 |
+| 必须保持的行为 | 同一 Topic 仍活动时执行定向刷新；已导航离开时精确移除旧 Topic 的 detail/replies cache，使下次进入重新读取。不得清除当前或其他 Topic，也不得回滚服务器已确认写入。 |
+| 精确失败 oracle | `tests/ui/topic-actions-controller.test.tsx` 的 `REG-WRITE-021` 预置 Topic A cache，阻塞回复 transport，切换活动 detail 后才结算；要求 A 的 exact detail/replies key 被移除，当前 Topic cache 保持。 |
+| 最低可靠自动测试层 | `UI_PASS`：需要 mutation identity、活动 route ref 与 Query cache 的真实结算时序。 |
+| Replay 或真实验收路径 | 默认不提交真实回复；获授权时可在单次提交后导航离开再返回，核对权威内容并按可逆性清理。 |
+| 负向验证方式 | 删除 route mismatch 时的 exact cache removal，编号测试会继续读取 Topic A 的旧 cache。 |
+| 明确不覆盖范围 | 不预取已离开的 Topic，不清全站缓存，也不保证远端写入的即时索引延迟。 |
 
 ## `REG-TEST-001` Smoke 绿灯被当成功能完整通过
 

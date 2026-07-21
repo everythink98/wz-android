@@ -114,6 +114,9 @@ export const forumQueryKeys = {
     topicId
   }] as const,
   replies: (topicQueryKey: readonly unknown[]) => [...topicQueryKey, 'replies'] as const,
+  replyRefresh: (repliesQueryKey: readonly unknown[], page: number, offset: number | null, limit: number) => (
+    [...repliesQueryKey, 'refresh', { limit, offset, page }] as const
+  ),
   reply: ({
     postNumber,
     scope,

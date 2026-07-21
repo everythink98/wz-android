@@ -438,13 +438,13 @@ export function useAccountStatusController({
             if (!result.sessionEvent) {
               return canceledStatusQuery();
             }
-            const failed = result.authenticated === null;
-            finishDiagnosticTrace(trace, failed ? 'failure' : 'success', {
-              source: 'xiaoyinsi',
-              ...(failed ? { reason: 'refresh_failed' } : {})
-            });
+            if (result.authenticated === null) {
+              throw new Error(result.sessionEvent.type === 'check-failed'
+                ? result.sessionEvent.message || '小隐寺状态暂时无法确认'
+                : '小隐寺状态暂时无法确认');
+            }
+            finishDiagnosticTrace(trace, 'success', { source: 'xiaoyinsi' });
             return {
-              failed,
               session: sessionFromEvents('xiaoyinsi', [{
                 ...result.sessionEvent,
                 site: 'xiaoyinsi'

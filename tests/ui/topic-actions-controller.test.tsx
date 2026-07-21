@@ -141,6 +141,7 @@ async function renderActions({
   ensureNodeImageApiKey = jest.fn(async () => null),
   loadYaohuoCookieForSource = jest.fn(async () => 'sidyaohuo=test'),
   notify = jest.fn(),
+  refreshTopicReplies = jest.fn(async () => 'completed'),
   showYaohuoLogin = jest.fn(),
   siteSessionViewModels,
   siteSessionStates,
@@ -156,6 +157,7 @@ async function renderActions({
   ensureNodeImageApiKey?: (options?: { forceRefresh?: boolean; clearOnCancel?: boolean }) => Promise<string | null>;
   loadYaohuoCookieForSource?: () => Promise<string | undefined>;
   notify?: (message: string) => void;
+  refreshTopicReplies?: () => Promise<unknown>;
   showYaohuoLogin?: (message?: string) => void;
   siteSessionViewModels?: SiteSessionViewModels;
   siteSessionStates?: SiteSessionStates;
@@ -184,6 +186,7 @@ async function renderActions({
       loadYaohuoCookieForSource,
       nodeSeekWebViewUserAgentRef: { current: 'safe-agent' },
       notify,
+      refreshTopicReplies,
       showYaohuoLogin,
       siteSessionViewModels: siteSessionViewModels || createSiteSessionViewModels(
         siteSessionStates || loggedInStates(topicDetail.source as ActionSource)
@@ -301,6 +304,107 @@ describe('topic action query mutations', () => {
     expect(mockRunNodeSeekAction.mock.calls.every(([options]) => options.signal === undefined)).toBe(true);
   });
 
+  it('[REG-WRITE-019] rejects a duplicate reply submit before a second scoped transport is queued', async () => {
+    const transport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
+    seedTopicCache();
+    const hook = await renderActions();
+    let first!: Promise<void>;
+    let duplicate!: Promise<void>;
+
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('one reply');
+    });
+    await act(async () => {
+      first = hook.result.current.actions.submitReply();
+      duplicate = hook.result.current.actions.submitReply();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      transport.resolve({ success: true });
+      await Promise.all([first, duplicate]);
+    });
+
+    expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('[REG-WRITE-020] reports an unexpected credential preparation failure to the user', async () => {
+    mockGetItem.mockRejectedValueOnce(new Error('安全存储读取失败'));
+    const notify = jest.fn();
+    seedTopicCache();
+    const hook = await renderActions({ notify });
+
+    await act(async () => {
+      await hook.result.current.actions.collectOnNodeSeekSite();
+    });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith('安全存储读取失败');
+    expect(notify).not.toHaveBeenCalledWith('原站收藏已提交');
+  });
+
+  it('[REG-WRITE-021] removes an old topic cache when a confirmed reply settles after navigation', async () => {
+    const transport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction.mockImplementationOnce(async () => transport.promise);
+    const refreshTopicReplies = jest.fn(async () => 'completed');
+    const { detailKey, repliesKey } = seedTopicCache();
+    const hook = await renderActions({ refreshTopicReplies });
+    let submission!: Promise<void>;
+
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('reply after navigation');
+    });
+    await act(async () => {
+      submission = hook.result.current.actions.submitReply();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      hook.result.current.topicSession.commands.topic.select({ ...detail, id: '99', url: 'https://www.nodeseek.com/post-99-1' });
+      transport.resolve({ success: true });
+      await submission;
+    });
+
+    expect(refreshTopicReplies).not.toHaveBeenCalled();
+    expect(appQueryClient.getQueryData(detailKey)).toBeUndefined();
+    expect(appQueryClient.getQueryData(repliesKey)).toBeUndefined();
+  });
+
+  it('REG-LINUXDO-003 records a confirmed reply with a failed follow-up refresh as partial', async () => {
+    const lines: string[] = [];
+    setDiagnosticWriter((line) => { lines.push(line); });
+    const refreshTopicReplies = jest.fn(async (_options?: unknown) => 'failed');
+    const notify = jest.fn();
+    const linuxDetail = detailFor('linuxdo', { canCreatePost: true, polls: [] });
+    seedTopicCache(linuxDetail);
+    const hook = await renderActions({ notify, refreshTopicReplies, topicDetail: linuxDetail });
+    await act(async () => {
+      hook.result.current.topicSession.commands.composer.changeContent('confirmed reply');
+    });
+
+    await act(async () => {
+      await hook.result.current.actions.submitReply();
+    });
+
+    expect(mockDiscourseExecute).toHaveBeenCalledTimes(1);
+    expect(refreshTopicReplies).toHaveBeenCalledWith(expect.objectContaining({
+      afterSubmit: true,
+      diagnosticTrace: expect.any(Object),
+      silent: true
+    }));
+    expect(notify).toHaveBeenCalledWith('回复已提交');
+    expect(lines.map((line) => JSON.parse(line) as DiagnosticEvent)).toContainEqual(expect.objectContaining({
+      area: 'reply',
+      operation: 'submit',
+      phase: 'finish',
+      outcome: 'partial',
+      reason: 'refresh_failed'
+    }));
+  });
+
   it('[REG-WRITE-015] uses the fixed NodeSeek global mutation identity for attendance after leaving another source', async () => {
     const linuxDetail = detailFor('linuxdo');
     mockRunNodeSeekAction.mockResolvedValueOnce({ success: true });
@@ -336,6 +440,49 @@ describe('topic action query mutations', () => {
       await interaction;
     });
     expect(appQueryClient.getQueryData<TopicDetail>(detailKey)?.upvoted).toBe(false);
+  });
+
+  it('[REG-WRITE-018] snapshots optimistic mutations only when their scoped transport starts', async () => {
+    const firstTransport = Promise.withResolvers<unknown>();
+    const secondTransport = Promise.withResolvers<unknown>();
+    mockRunNodeSeekAction
+      .mockImplementationOnce(async () => firstTransport.promise)
+      .mockImplementationOnce(async () => secondTransport.promise);
+    const { detailKey } = seedTopicCache();
+    const hook = await renderActions();
+    let interaction!: Promise<void>;
+    let collection!: Promise<void>;
+
+    await act(async () => {
+      interaction = hook.result.current.actions.interact('upvote', detail.commentId);
+      collection = hook.result.current.actions.collectOnNodeSeekSite();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(1));
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({
+      upvoted: true,
+      collected: false
+    });
+
+    await act(async () => {
+      firstTransport.reject(new Error('first failed'));
+      await interaction;
+    });
+    await waitFor(() => expect(mockRunNodeSeekAction).toHaveBeenCalledTimes(2));
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({
+      upvoted: false,
+      collected: true
+    });
+
+    await act(async () => {
+      secondTransport.reject(new Error('second failed'));
+      await collection;
+    });
+    expect(appQueryClient.getQueryData<TopicDetail>(detailKey)).toMatchObject({
+      upvoted: false,
+      collected: false
+    });
   });
 
   it('does not repopulate a cleared cache with a late result from an old credential scope', async () => {

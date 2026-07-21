@@ -390,6 +390,7 @@ export function useXiaoyinsiAuthController({
 
   const refreshLevel = useCallback(async () => {
     const result = await levelQuery.refetch({ cancelRefetch: false });
+    if (result.error) return false;
     if (result.data) {
       notify('小隐寺等级已更新。');
       return true;

@@ -1464,6 +1464,7 @@ export function AppRoot() {
     nodeSeekWebViewUserAgentRef,
     ensureNodeImageApiKey,
     notify,
+    refreshTopicReplies,
     showYaohuoLogin,
     siteSessionViewModels: accountSessionViewModels,
     topicDetail,

@@ -148,6 +148,32 @@ describe('account credential workflows with query-backed level state', () => {
     await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
   });
 
+  it('[REG-ACCOUNT-018] reports a failed linux.do level refresh even when trusted data already exists', async () => {
+    const profile = { username: 'alice' } as LinuxDoLevelProfile;
+    const getLevelProfile = jest.fn<SourceGateway['getLinuxDoLevelProfile']>()
+      .mockResolvedValueOnce(profile)
+      .mockRejectedValueOnce(new Error('linux.do 等级刷新失败'));
+    const notify = jest.fn();
+    const hook = await renderAccountController({
+      notify,
+      sourceGateway: { getLinuxDoLevelProfile: getLevelProfile }
+    } as never);
+
+    await act(async () => {
+      await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(true);
+    });
+    await waitFor(() => expect(hook.result.current.linuxDoLevelProfile).toEqual(profile));
+    await act(async () => {
+      await expect(hook.result.current.refreshLinuxDoLevel()).resolves.toBe(false);
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.linuxDoLevelProfile).toEqual(profile);
+      expect(hook.result.current.linuxDoLevelError).toBe('linux.do 等级刷新失败');
+    });
+    expect(notify.mock.calls.filter(([message]) => message === 'linux.do 等级已更新。')).toHaveLength(1);
+  });
+
   it('REG-ACCOUNT-009 does not cache or report a linux.do level response from superseded credentials', async () => {
     let generation = 4;
     const transport = Promise.withResolvers<LinuxDoLevelProfile>();

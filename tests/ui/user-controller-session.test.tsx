@@ -137,6 +137,75 @@ describe('user query controller', () => {
     expect(getUserProfile.mock.calls.map(([request]) => request.cursorType)).toEqual([undefined, 'topics', 'replies']);
   });
 
+  it('[REG-USER-007] refreshes the profile as a fresh pagination snapshot and exposes its busy state', async () => {
+    const firstTopic = {
+      source: 'nodeseek' as const,
+      id: 'topic-1',
+      title: '旧首屏主题',
+      author: 'alice',
+      url: 'https://www.nodeseek.com/post-1-1',
+      createdAt: '2026-07-20T00:00:00.000Z',
+      replyCount: 0
+    };
+    const staleSecondTopic = {
+      ...firstTopic,
+      id: 'topic-2',
+      title: '旧第二页主题',
+      url: 'https://www.nodeseek.com/post-2-1'
+    };
+    const refreshedTopic = {
+      ...firstTopic,
+      id: 'topic-3',
+      title: '刷新后的首屏主题',
+      url: 'https://www.nodeseek.com/post-3-1'
+    };
+    const refresh = Promise.withResolvers<UserProfile>();
+    const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()
+      .mockResolvedValueOnce({
+        ...user,
+        topics: [firstTopic],
+        hasMoreTopics: true,
+        nextTopicsCursor: 'topics-2'
+      })
+      .mockResolvedValueOnce({
+        ...user,
+        topics: [staleSecondTopic],
+        hasMoreTopics: false,
+        nextTopicsCursor: null
+      })
+      .mockImplementationOnce(async () => refresh.promise);
+    const hook = await renderUserController({ getUserProfile });
+
+    await act(async () => { await hook.result.current.openUser(user); });
+    await waitFor(() => expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('topics-2'));
+    await act(async () => { await hook.result.current.loadMoreUserTopics(); });
+    await waitFor(() => expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-1', 'topic-2']));
+
+    let refreshOpen!: Promise<unknown>;
+    await act(async () => {
+      refreshOpen = hook.result.current.openUser(user, true);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getUserProfile).toHaveBeenCalledTimes(3));
+    expect(hook.result.current.userBusy).toBe(true);
+
+    await act(async () => {
+      refresh.resolve({
+        ...user,
+        topics: [refreshedTopic],
+        hasMoreTopics: true,
+        nextTopicsCursor: 'fresh-topics-2'
+      });
+      await refreshOpen;
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.userBusy).toBe(false);
+      expect(hook.result.current.userProfile?.topics.map(({ id }) => id)).toEqual(['topic-3']);
+      expect(hook.result.current.userProfile?.nextTopicsCursor).toBe('fresh-topics-2');
+    });
+  });
+
   it('isolates a replacement credential scope from the previous cached profile', async () => {
     const replacement = Promise.withResolvers<UserProfile>();
     const getUserProfile = jest.fn<SourceGateway['getUserProfile']>()

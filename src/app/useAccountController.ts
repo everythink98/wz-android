@@ -771,12 +771,15 @@ export function useAccountController({
 
   const refreshLinuxDoLevel = useCallback(async () => {
     const result = await linuxDoLevelQuery.refetch({ cancelRefetch: false });
+    if (result.error) {
+      if (isLinuxDoCloudflareError(result.error)) {
+        showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
+      }
+      return false;
+    }
     if (result.data) {
       notify('linux.do 等级已更新。');
       return true;
-    }
-    if (isLinuxDoCloudflareError(result.error)) {
-      showLinuxDoVerification('linux.do 等级读取需要完成 Cloudflare 验证');
     }
     return false;
   }, [linuxDoLevelQuery.refetch, notify, showLinuxDoVerification]);

@@ -164,6 +164,58 @@ describe('topic query controller', () => {
     expect(hook.result.current.controller.replyHasMore).toBe(true);
   });
 
+  it('[REG-TOPIC-025] resets stale reply pages and cursors after a whole-topic refresh', async () => {
+    const oldSecondReply: Reply = {
+      author: 'carol', floor: 2, commentId: 11, contentHtml: '<p>old second</p>', createdAt: '2026-07-20T00:02:00.000Z'
+    };
+    const refreshedFirstReply: Reply = {
+      author: 'bob', floor: 1, commentId: 20, contentHtml: '<p>refreshed first</p>', createdAt: '2026-07-20T01:01:00.000Z'
+    };
+    const refreshedSecondReply: Reply = {
+      author: 'dave', floor: 2, commentId: 21, contentHtml: '<p>refreshed second</p>', createdAt: '2026-07-20T01:02:00.000Z'
+    };
+    const initialDetail = {
+      ...firstDetail,
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: 1
+    };
+    const refreshedDetail = {
+      ...firstDetail,
+      replies: [refreshedFirstReply],
+      replyHasMore: true,
+      replyNextPage: 5,
+      replyNextOffset: 1
+    };
+    const getTopic = jest.fn<SourceGateway['getTopic']>()
+      .mockResolvedValueOnce(initialDetail)
+      .mockResolvedValueOnce(refreshedDetail);
+    const getReplies = jest.fn<SourceGateway['getReplies']>(async ({ page }) => page === 2
+      ? { items: [oldSecondReply], hasMore: false, nextPage: null, nextOffset: null }
+      : { items: [refreshedSecondReply], hasMore: false, nextPage: null, nextOffset: null });
+    const hook = await renderTopicController({ sourceGateway: { getReplies, getTopic } });
+
+    await act(async () => { await hook.result.current.controller.openTopic(firstTopic); });
+    await waitFor(() => expect(hook.result.current.controller.replyHasMore).toBe(true));
+    await act(async () => { await hook.result.current.controller.loadMoreReplies(); });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([firstReply, oldSecondReply]));
+
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshWholeTopic()).resolves.toBe('completed');
+    });
+    await waitFor(() => {
+      expect(hook.result.current.controller.topicReplies).toEqual([refreshedFirstReply]);
+      expect(hook.result.current.controller.replyHasMore).toBe(true);
+    });
+
+    await act(async () => { await hook.result.current.controller.loadMoreReplies(); });
+    expect(getReplies.mock.calls.map(([request]) => request.page)).toEqual([2, 5]);
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toEqual([
+      refreshedFirstReply,
+      refreshedSecondReply
+    ]));
+  });
+
   it('[REG-TOPIC-023] retries the exact failed reply page after linux.do verification', async () => {
     const linuxTopic = { ...firstTopic, source: 'linuxdo' as const, url: 'https://linux.do/t/1' };
     const linuxDetail = {
@@ -241,6 +293,65 @@ describe('topic query controller', () => {
 
     await waitFor(() => expect(hook.result.current.controller.topicDetail?.replyCount).toBe(7));
     expect(hook.result.current.controller.topicReplies).toEqual([authoritativeReply]);
+  });
+
+  it('[REG-WRITE-017] refreshes the inferred tail after a reply submit without discarding loaded pages', async () => {
+    const initialReplies = Array.from({ length: 10 }, (_, index): Reply => ({
+      author: `user-${index + 1}`,
+      floor: index + 1,
+      commentId: 100 + index,
+      contentHtml: `<p>${index + 1}</p>`,
+      createdAt: `2026-07-20T00:${String(index + 1).padStart(2, '0')}:00.000Z`
+    }));
+    const detail = {
+      ...firstDetail,
+      replies: initialReplies,
+      replyCount: 20,
+      replyHasMore: true,
+      replyNextPage: 2,
+      replyNextOffset: 10
+    };
+    const submittedReply: Reply = {
+      author: 'alice',
+      floor: 21,
+      commentId: 121,
+      contentHtml: '<p>new reply</p>',
+      createdAt: '2026-07-20T00:21:00.000Z'
+    };
+    const getReplies = jest.fn<SourceGateway['getReplies']>(async () => ({
+      items: [submittedReply],
+      hasMore: false,
+      nextPage: null,
+      nextOffset: null,
+      totalCount: 21
+    }));
+    const hook = await renderTopicController({
+      sourceGateway: {
+        getTopic: jest.fn<SourceGateway['getTopic']>(async () => detail),
+        getReplies
+      }
+    });
+
+    await act(async () => { await hook.result.current.controller.openTopic(firstTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicReplies).toHaveLength(10));
+    await act(async () => {
+      await expect(hook.result.current.controller.refreshTopicReplies({ afterSubmit: true })).resolves.toBe('completed');
+    });
+
+    expect(getReplies).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'nodeseek',
+      id: '1',
+      page: 3,
+      offset: 20,
+      limit: 10,
+      signal: expect.any(Object)
+    }), expect.any(Object));
+    await waitFor(() => {
+      expect(hook.result.current.controller.topicReplies.map(({ floor }) => floor)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 21
+      ]);
+      expect(hook.result.current.controller.topicDetail?.replyCount).toBe(21);
+    });
   });
 
   it('[REG-TOPIC-005] records a failed V2EX comments refresh as failure and keeps the trusted detail', async () => {

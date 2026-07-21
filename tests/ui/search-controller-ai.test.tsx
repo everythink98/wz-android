@@ -80,7 +80,9 @@ function renderSearchController(
   notify = jest.fn<(message: string) => void>(),
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>(),
   getCredentialScope: () => ForumCredentialScope = () => emptyForumCredentialScope,
-  sessionViewModels: SiteSessionViewModels = loggedInSessions
+  sessionViewModels: SiteSessionViewModels = loggedInSessions,
+  showNodeSeekVerification = jest.fn<(message?: string) => void>(),
+  showYaohuoLogin = jest.fn<(message?: string) => void>()
 ) {
   appQueryClient.clear();
   return renderHook(() => useSearchController({
@@ -89,8 +91,8 @@ function renderSearchController(
     notify,
     sessionViewModels,
     showLinuxDoVerification,
-    showNodeSeekVerification: jest.fn(),
-    showYaohuoLogin: jest.fn(),
+    showNodeSeekVerification,
+    showYaohuoLogin,
     sourceGateway
   }), { wrapper: QueryTestWrapper });
 }
@@ -128,6 +130,86 @@ describe('linux.do AI search controller', () => {
 
     await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(hook.result.current.searchBusy).toBe(false));
+  });
+
+  it('[REG-SEARCH-011] exposes a same-key source refetch as busy until the replacement settles', async () => {
+    const replacement = Promise.withResolvers<SearchResponse>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>()
+      .mockResolvedValueOnce({
+        items: [standardTopic],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      })
+      .mockImplementationOnce(async () => replacement.promise);
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+    await prepareLinuxDoSearch(hook, 'same key');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'same key', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items).toEqual([standardTopic]));
+
+    await act(async () => {
+      void hook.result.current.runSearch({ query: 'same key', source: 'linuxdo' });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(2));
+    expect(hook.result.current.searchBusy).toBe(true);
+    expect(hook.result.current.searchGroups[0]?.loading).toBe(true);
+
+    await act(async () => {
+      replacement.resolve({ items: [standardTopic], errors: {}, hasMore: false, nextPage: null });
+      await replacement.promise;
+    });
+    await waitFor(() => {
+      expect(hook.result.current.searchBusy).toBe(false);
+      expect(hook.result.current.searchGroups[0]?.loading).toBe(false);
+    });
+  });
+
+  it('[REG-SEARCH-012] does not open an action panel for a result whose input was just replaced', async () => {
+    const pending = Promise.withResolvers<SearchResponse>();
+    const showNodeSeekVerification = jest.fn<(message?: string) => void>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => pending.promise);
+    const hook = await renderSearchController(
+      createGateway({ searchTopics }),
+      jest.fn(),
+      jest.fn(),
+      () => emptyForumCredentialScope,
+      loggedInSessions,
+      showNodeSeekVerification
+    );
+    await act(async () => {
+      hook.result.current.setSearchSource('nodeseek');
+      hook.result.current.setSearchQuery('old query');
+    });
+    await waitFor(() => expect(hook.result.current.searchQuery).toBe('old query'));
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'old query', source: 'nodeseek' });
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      hook.result.current.setSearchQuery('replacement');
+      pending.resolve({
+        items: [],
+        errors: {
+          nodeseek: {
+            kind: 'verification-required',
+            message: '旧请求需要验证',
+            verificationRequired: true
+          }
+        },
+        hasMore: false,
+        nextPage: null
+      });
+      await pending.promise;
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(hook.result.current.searchQuery).toBe('replacement');
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
   });
 
   it('[REG-LINUXDO-005] selects anonymous search until linux.do identity is confirmed', async () => {
@@ -352,24 +434,32 @@ describe('linux.do AI search controller', () => {
     expect(showLinuxDoVerification).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps linux.do verification local in aggregated search', async () => {
+  it('[REG-SEARCH-007] does not auto-open login or verification panels for aggregated search', async () => {
     const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
-    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => ({
-      items: [],
-      errors: source === 'linuxdo' ? {
-        linuxdo: {
-          kind: 'verification-required',
-          message: 'linux.do 需要验证',
-          verificationRequired: true
-        }
-      } : {},
-      hasMore: false,
-      nextPage: null
-    }));
+    const showNodeSeekVerification = jest.fn<(message?: string) => void>();
+    const showYaohuoLogin = jest.fn<(message?: string) => void>();
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => {
+      if (source === 'yaohuo') {
+        throw Object.assign(new Error('妖火需要登录'), { kind: 'login-required' });
+      }
+      return {
+        items: [],
+        errors: source === 'linuxdo' || source === 'nodeseek' ? {
+          [source]: {
+            kind: 'verification-required' as const,
+            message: `${source} 需要验证`,
+            verificationRequired: true
+          }
+        } : {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
     const hook = await renderSearchController(createGateway({
       searchSemanticTopics: jest.fn<SourceGateway['searchSemanticTopics']>(),
       searchTopics
-    }), jest.fn(), showLinuxDoVerification);
+    }), jest.fn(), showLinuxDoVerification, () => emptyForumCredentialScope, loggedInSessions,
+    showNodeSeekVerification, showYaohuoLogin);
     await act(async () => {
       hook.result.current.setSearchQuery('codex');
     });
@@ -379,8 +469,84 @@ describe('linux.do AI search controller', () => {
       await hook.result.current.runSearch({ query: 'codex', source: 'all' });
     });
 
+    await waitFor(() => expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')?.error)
+      .toBe('nodeseek 需要验证'));
     expect(searchTopics).toHaveBeenCalledTimes(5);
     expect(showLinuxDoVerification).not.toHaveBeenCalled();
+    expect(showNodeSeekVerification).not.toHaveBeenCalled();
+    expect(showYaohuoLogin).not.toHaveBeenCalled();
+    const nodeSeekQuery = appQueryClient.getQueryCache().findAll({
+      queryKey: ['forum', 'nodeseek', 'search']
+    }).at(-1);
+    expect(nodeSeekQuery?.state.data).toBeUndefined();
+    expect(nodeSeekQuery?.state.error).toEqual(expect.any(Error));
+  });
+
+  it('[REG-SEARCH-009] keeps an initial source failure out of trusted Query data', async () => {
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async () => ({
+      items: [],
+      errors: {
+        nodeseek: { kind: 'ordinary', message: 'NodeSeek 首次搜索失败' }
+      },
+      hasMore: false,
+      nextPage: null
+    }));
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'nodeseek' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe('NodeSeek 首次搜索失败'));
+
+    const query = appQueryClient.getQueryCache().findAll({
+      queryKey: ['forum', 'nodeseek', 'search']
+    }).at(-1);
+    expect(query?.state.data).toBeUndefined();
+    expect(query?.state.error).toEqual(expect.any(Error));
+  });
+
+  it('[REG-SEARCH-008] keeps trusted aggregate results visible with a retryable refresh error', async () => {
+    let nodeSeekAttempts = 0;
+    const nodeSeekTopic = {
+      ...standardTopic,
+      source: 'nodeseek' as const,
+      id: 'ns-1',
+      url: 'https://www.nodeseek.com/post-1-1'
+    };
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ source }) => {
+      if (source !== 'nodeseek') {
+        return { items: [], errors: {}, hasMore: false, nextPage: null };
+      }
+      nodeSeekAttempts += 1;
+      return nodeSeekAttempts === 1
+        ? { items: [nodeSeekTopic], errors: {}, hasMore: false, nextPage: null }
+        : {
+            items: [],
+            errors: { nodeseek: { kind: 'ordinary' as const, message: 'NodeSeek 刷新失败' } },
+            hasMore: false,
+            nextPage: null
+          };
+    });
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
+      items: [nodeSeekTopic],
+      error: undefined
+    }));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'codex', source: 'all' });
+    });
+
+    await waitFor(() => expect(hook.result.current.searchGroups.find(({ source }) => source === 'nodeseek')).toMatchObject({
+      items: [nodeSeekTopic],
+      error: 'NodeSeek 刷新失败',
+      errorKind: 'ordinary'
+    }));
+    expect(searchTopics).toHaveBeenCalledTimes(10);
   });
 
   it('REG-SEARCH-004 judges a whole-source retry by that source instead of unrelated aggregate errors', async () => {
@@ -730,6 +896,62 @@ describe('linux.do AI search controller', () => {
         hasMore: false,
         nextPage: null
       }));
+  });
+
+  it('[REG-SEARCH-010] retries a failed multi-page refresh instead of skipping to the next cursor', async () => {
+    const secondPageTopic = {
+      ...standardTopic,
+      id: '2',
+      title: '第二页',
+      url: 'https://linux.do/t/2'
+    };
+    let requestCount = 0;
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>(async ({ page = 1 }) => {
+      requestCount += 1;
+      if (requestCount === 4) {
+        return {
+          items: [],
+          errors: { linuxdo: { kind: 'ordinary' as const, message: '刷新第二页失败' } },
+          hasMore: true,
+          nextPage: 3
+        };
+      }
+      if (page === 1) {
+        return { items: [standardTopic], errors: {}, hasMore: true, nextPage: 2 };
+      }
+      if (page === 2) {
+        return { items: [secondPageTopic], errors: {}, hasMore: true, nextPage: 3 };
+      }
+      return {
+        items: [{ ...secondPageTopic, id: '3', title: '不应跳到第三页' }],
+        errors: {},
+        hasMore: false,
+        nextPage: null
+      };
+    });
+    const hook = await renderSearchController(createGateway({ searchTopics }));
+    await prepareLinuxDoSearch(hook, 'refresh pagination');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'refresh pagination', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.nextPage).toBe(2));
+    await act(async () => {
+      await hook.result.current.loadMoreSearchSource('linuxdo', 2);
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.items.map(({ id }) => id)).toEqual(['1', '2']));
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'refresh pagination', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(hook.result.current.searchGroups[0]?.error).toBe('刷新第二页失败'));
+    await act(async () => {
+      hook.result.current.retrySearchSource('linuxdo');
+    });
+    await waitFor(() => expect(searchTopics).toHaveBeenCalledTimes(6));
+
+    expect(searchTopics.mock.calls.map(([request]) => request.page)).toEqual([1, 2, 1, 2, 1, 2]);
+    expect(hook.result.current.searchGroups[0]?.items.map(({ id }) => id)).toEqual(['1', '2']);
   });
 
   it('REG-SEARCH-005 does not append partial items from a failed search page', async () => {
@@ -1100,6 +1322,42 @@ describe('linux.do AI search controller', () => {
       .map((line) => JSON.parse(line))
       .filter(({ operation, phase }) => operation === 'searchSemanticTopics' && phase === 'finish')
       .map(({ outcome }) => outcome)).toEqual(['canceled', 'success', 'failure', 'success']);
+  });
+
+  it('[REG-SOURCE-003] records a transport rejection caused by Query cancellation as canceled', async () => {
+    const diagnosticLines: string[] = [];
+    setDiagnosticWriter((line) => { diagnosticLines.push(line); });
+    const searchTopics = jest.fn<SourceGateway['searchTopics']>().mockResolvedValue({
+      items: [standardTopic],
+      errors: {},
+      hasMore: false,
+      nextPage: null
+    });
+    const searchSemanticTopics = jest.fn<SourceGateway['searchSemanticTopics']>()
+      .mockImplementationOnce(async ({ signal }) => new Promise<SearchResponse>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('transport aborted')), { once: true });
+      }))
+      .mockResolvedValueOnce({ items: [aiOnlyTopic], errors: {}, hasMore: false, nextPage: null });
+    const hook = await renderSearchController(createGateway({ searchSemanticTopics, searchTopics }));
+    await prepareLinuxDoSearch(hook, 'first cancellation');
+
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'first cancellation', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      hook.result.current.setSearchQuery('replacement');
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await hook.result.current.runSearch({ query: 'replacement', source: 'linuxdo' });
+    });
+    await waitFor(() => expect(searchSemanticTopics).toHaveBeenCalledTimes(2));
+
+    expect(diagnosticLines
+      .map((line) => JSON.parse(line))
+      .filter(({ operation, phase }) => operation === 'searchSemanticTopics' && phase === 'finish')
+      .map(({ outcome }) => outcome)).toEqual(['canceled', 'success']);
   });
 
   it('does not expose or request AI search for latest-order results', async () => {

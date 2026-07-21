@@ -176,7 +176,10 @@ export function useFeedController({
         });
         return data;
       } catch (error) {
-        finishDiagnosticTrace(trace, 'failure', { source: 'all', reason: normalizeDiagnosticReason(error) });
+        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
+          source: 'all',
+          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        });
         throw error;
       }
     }
@@ -197,7 +200,10 @@ export function useFeedController({
         finishDiagnosticTrace(trace, 'success', { source: feedSource, itemCount: data.items.length });
         return data;
       } catch (error) {
-        finishDiagnosticTrace(trace, 'failure', { source: feedSource, reason: normalizeDiagnosticReason(error) });
+        finishDiagnosticTrace(trace, signal.aborted ? 'canceled' : 'failure', {
+          source: feedSource,
+          reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error)
+        });
         throw error;
       }
     }
@@ -247,10 +253,12 @@ export function useFeedController({
       } catch (error) {
         const sourceError = sourceErrorFromUnknown(feedSource, error);
         finishDiagnosticTrace(trace,
-          sourceError.kind === 'verification-required' || sourceError.kind === 'login-required' || sourceError.kind === 'permission-denied'
+          signal.aborted
+            ? 'canceled'
+            : sourceError.kind === 'verification-required' || sourceError.kind === 'login-required' || sourceError.kind === 'permission-denied'
             ? 'blocked'
             : 'failure',
-          { source: feedSource, reason: normalizeDiagnosticReason(error) }
+          { source: feedSource, reason: signal.aborted ? 'canceled' : normalizeDiagnosticReason(error) }
         );
         throw error instanceof FeedQueryError
           ? error
@@ -264,7 +272,7 @@ export function useFeedController({
   const mergedFeed = useMemo(() => mergeFeedPages(pages), [pages]);
   const lastPage = pages.at(-1);
   const nextPage = lastPage ? nextFeedPage(lastPage) : undefined;
-  const loadMoreError = feedQuery.error instanceof FeedQueryError && feedQuery.error.pageParam.page > 1;
+  const loadMoreError = feedQuery.isFetchNextPageError;
   const activeFeedState = useMemo<FeedSourceState>(() => ({
     hasMore: Boolean(nextPage),
     items: mergedFeed.items,
