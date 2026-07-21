@@ -158,7 +158,20 @@ export function useSearchCandidateQueries({
       : Promise.resolve([])
   });
 
-  return { tagCandidatesQuery, userCandidatesQuery };
+  return {
+    tags: {
+      error: tagCandidatesQuery.isError,
+      loading: tagCandidatesQuery.isFetching,
+      options: tagCandidatesQuery.isPlaceholderData ? [] : tagCandidatesQuery.data || [],
+      retry: tagCandidatesQuery.refetch
+    },
+    users: {
+      error: userCandidatesQuery.isError,
+      loading: userCandidatesQuery.isFetching,
+      options: userCandidatesQuery.data || [],
+      retry: userCandidatesQuery.refetch
+    }
+  };
 }
 
 export function useSearchController({

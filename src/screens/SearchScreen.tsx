@@ -310,7 +310,7 @@ function SearchFilterSheet({
   }, [userPickerVisible, userQuery]);
 
   const normalizedUserQuery = userQuery.trim();
-  const { tagCandidatesQuery, userCandidatesQuery } = useSearchCandidateQueries({
+  const candidates = useSearchCandidateQueries({
     credentialScope,
     searchDiscourseTags: onSearchDiscourseTags,
     searchDiscourseUsers: onSearchDiscourseUsers,
@@ -332,17 +332,15 @@ function SearchFilterSheet({
   });
 
   const tagDebouncing = tagPickerVisible && debouncedTagQuery !== tagQuery;
-  const tagOptions = tagDebouncing || tagCandidatesQuery.isPlaceholderData
-    ? []
-    : tagCandidatesQuery.data || [];
-  const tagLoading = tagDebouncing || tagCandidatesQuery.isFetching;
-  const tagError = !tagDebouncing && tagCandidatesQuery.isError ? '标签候选加载失败' : '';
+  const tagOptions = tagDebouncing ? [] : candidates.tags.options;
+  const tagLoading = tagDebouncing || candidates.tags.loading;
+  const tagError = !tagDebouncing && candidates.tags.error ? '标签候选加载失败' : '';
   const userDebouncing = userPickerVisible
     && Boolean(normalizedUserQuery)
     && debouncedUserQuery !== normalizedUserQuery;
-  const userOptions = userDebouncing ? [] : userCandidatesQuery.data || [];
-  const userLoading = userDebouncing || userCandidatesQuery.isFetching;
-  const userError = !userDebouncing && userCandidatesQuery.isError ? '作者候选加载失败' : '';
+  const userOptions = userDebouncing ? [] : candidates.users.options;
+  const userLoading = userDebouncing || candidates.users.loading;
+  const userError = !userDebouncing && candidates.users.error ? '作者候选加载失败' : '';
 
   const toggleTag = useCallback((name: string) => {
     setFilterError('');
@@ -751,7 +749,7 @@ function SearchFilterSheet({
             {tagError ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{tagError}</Text>
-                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => { void tagCandidatesQuery.refetch(); }} />
+                <AppButton compact label="重试标签候选" variant="ghost" styles={styles} onPress={() => { void candidates.tags.retry(); }} />
               </View>
             ) : null}
             {!tagLoading && !tagError && !tagOptions.length ? <EmptyText text="没有匹配标签" styles={styles} /> : null}
@@ -870,7 +868,7 @@ function SearchFilterSheet({
             {userError ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{userError}</Text>
-                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => { void userCandidatesQuery.refetch(); }} />
+                <AppButton compact label="重试作者候选" variant="ghost" styles={styles} onPress={() => { void candidates.users.retry(); }} />
               </View>
             ) : null}
             {!userQuery.trim() ? <EmptyText text="输入用户名后选择" styles={styles} /> : null}
