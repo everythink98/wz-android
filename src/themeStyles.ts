@@ -2158,6 +2158,104 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       marginTop: 2,
       paddingTop: 16
     },
+    topicAcceptedAnswer: {
+      width: '100%',
+      overflow: 'hidden',
+      backgroundColor: theme.surface,
+      borderColor: alphaColor(theme.primary, theme.dark ? 0.34 : 0.20),
+      borderLeftWidth: 3,
+      borderRadius: 8,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderRightWidth: StyleSheet.hairlineWidth,
+      borderBottomWidth: StyleSheet.hairlineWidth
+    },
+    topicAcceptedAnswerHeader: {
+      minHeight: 48,
+      alignItems: 'center',
+      backgroundColor: alphaColor(theme.primary, theme.dark ? 0.14 : 0.065),
+      borderBottomColor: alphaColor(theme.primary, theme.dark ? 0.24 : 0.14),
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: 13,
+      paddingVertical: 9
+    },
+    topicAcceptedAnswerHeaderLead: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 7
+    },
+    topicAcceptedAnswerTitle: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 14,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 19
+    },
+    topicAcceptedAnswerToggle: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 4
+    },
+    topicAcceptedAnswerToggleText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '600',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    topicAcceptedAnswerBody: {
+      gap: 9,
+      paddingHorizontal: 13,
+      paddingBottom: 10,
+      paddingTop: 11
+    },
+    topicAcceptedAnswerAuthorRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: 10
+    },
+    topicAcceptedAnswerAuthorMeta: {
+      flex: 1,
+      minWidth: 0,
+      gap: 1
+    },
+    topicAcceptedAnswerAuthor: {
+      color: theme.ink,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '600',
+      lineHeight: 18
+    },
+    topicAcceptedAnswerTime: {
+      color: theme.muted,
+      fontFamily: appFontFamily,
+      fontSize: 11,
+      lineHeight: 15
+    },
+    topicAcceptedAnswerPreview: {
+      maxHeight: 164,
+      overflow: 'hidden'
+    },
+    topicAcceptedAnswerReadMore: {
+      minHeight: 44,
+      alignItems: 'center',
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: 1,
+      paddingTop: 8
+    },
+    topicAcceptedAnswerReadMoreText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      fontWeight: '600',
+      lineHeight: 18
+    },
     htmlTableScroll: {
       marginBottom: 12,
       marginTop: 10
@@ -2517,6 +2615,52 @@ export function createStyles(theme: ReaderTheme, settings: ReaderSettings, windo
       backgroundColor: 'transparent',
       paddingHorizontal: 0,
       paddingVertical: 18
+    },
+    replyAcceptedNotice: {
+      minHeight: 28,
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      borderLeftColor: theme.primary,
+      borderLeftWidth: 2,
+      flexDirection: 'row',
+      gap: 6,
+      paddingLeft: 9,
+      paddingVertical: 4
+    },
+    replyAcceptedNoticeText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    replyAcceptedSolution: {
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      borderTopColor: theme.line,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      flexDirection: 'row',
+      gap: 5,
+      paddingTop: 9
+    },
+    replyAcceptedSolutionText: {
+      color: theme.primary,
+      fontFamily: appFontFamily,
+      fontSize: 12,
+      fontWeight: '700',
+      includeFontPadding: false,
+      lineHeight: 16
+    },
+    replySystemEvent: {
+      paddingVertical: 12
+    },
+    replySystemEventText: {
+      color: theme.ink,
+      flexShrink: 1,
+      fontFamily: appFontFamily,
+      fontSize: 13,
+      lineHeight: 18
     },
     replyHead: {
       alignItems: 'center',

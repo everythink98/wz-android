@@ -263,6 +263,18 @@ describe('Topic real child components', () => {
     expect(view.getByLabelText('登录后投票').props.accessibilityState.disabled).toBe(true);
   });
 
+  it('[REG-TOPIC-026] renders duplicated accepted-answer polls as results without a login action', async () => {
+    const view = await render(
+      <TopicPolls {...pollProps({ canWritePollSource: false, source: undefined })} />
+    );
+
+    expect(view.getByText('只读结果')).toBeTruthy();
+    expect(view.getByText('3 人参与')).toBeTruthy();
+    expect(view.queryByText('未登录')).toBeNull();
+    expect(view.queryByLabelText('登录后投票')).toBeNull();
+    expect(view.queryByText('提交投票')).toBeNull();
+  });
+
   it('renders reply content and routes quote, user and NodeSeek actions through callbacks', async () => {
     const onInteract = jest.fn();
     const onOpenUser = jest.fn();
@@ -343,6 +355,96 @@ describe('Topic real child components', () => {
     expect(view.getByText('完整帖子正文')).toBeTruthy();
     expect(view.queryByText('错误主题内容')).toBeNull();
   });
+
+  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+    '[REG-TOPIC-026] renders an accepted %s reply as the solved answer without replacing normal reply behavior',
+    async (source) => {
+      const reply: Reply = {
+        ...replyProps().reply,
+        acceptedAnswer: true,
+        contentHtml: '<p>答案正文</p>',
+        quotedFloors: [],
+        replyTargetAuthor: undefined
+      };
+      const view = await render(
+        <ReplyItem {...replyProps({ reply, source })} />
+      );
+
+      expect(view.getByLabelText('已采纳的解决方案')).toBeTruthy();
+      expect(view.getByText('已解决')).toBeTruthy();
+      expect(view.getByLabelText('解决方案')).toBeTruthy();
+      expect(view.queryByText('✓ 解决方案')).toBeNull();
+      expect(view.getByText('答案正文')).toBeTruthy();
+      expect(view.getByText('#2')).toBeTruthy();
+      expect(view.getByLabelText('回复')).toBeTruthy();
+      expect(view.queryByText('已采纳')).toBeNull();
+    }
+  );
+
+  it.each([
+    ['linuxdo', 'closed.enabled', '关闭了主题'],
+    ['xiaoyinsi', 'closed.disabled', '重新打开了主题']
+  ] as Array<['linuxdo' | 'xiaoyinsi', string, string]>)(
+    '[REG-TOPIC-026] renders a %s system post as the compact “%s” event',
+    async (source, actionCode, expectedAction) => {
+      const reply: Reply = {
+        ...replyProps().reply,
+        actionCode,
+        author: 'CyrilXu',
+        authorLevelLabel: 'Lv1',
+        canDelete: true,
+        canEdit: true,
+        canLike: true,
+        contentHtml: '',
+        floor: 3,
+        quotedFloors: [],
+        reactionSummary: [{ id: 'heart', count: 1 }],
+        replyTargetAuthor: undefined,
+        systemAction: true
+      };
+      const view = await render(
+        <ReplyItem
+          {...replyProps({ canUseDiscourseActions: true, reply, replyFloor: 3, source })}
+        />
+      );
+
+      expect(view.getByLabelText(new RegExp(`系统事件.*${expectedAction}`))).toBeTruthy();
+      expect(view.getByText(expectedAction)).toBeTruthy();
+      expect(view.queryByText('Lv1')).toBeNull();
+      expect(view.queryByText('系统')).toBeNull();
+      expect(view.queryByText('#3')).toBeNull();
+      expect(view.queryByLabelText('回复')).toBeNull();
+      expect(view.queryByLabelText('编辑回复')).toBeNull();
+      expect(view.queryByLabelText('点赞')).toBeNull();
+      expect(view.queryByLabelText('删除回复')).toBeNull();
+      expect(view.queryByLabelText('heart 1')).toBeNull();
+    }
+  );
+
+  it.each([
+    ['xiaoyinsi', '<p>移动了主题</p>', '移动了主题'],
+    ['linuxdo', '', '更新了主题'],
+    ['xiaoyinsi', '<p>topic.mystery</p>', '更新了主题'],
+    ['linuxdo', '<p>执行 topic.mystery</p>', '更新了主题']
+  ] as Array<['linuxdo' | 'xiaoyinsi', string, string]>)(
+    '[REG-TOPIC-026] gives an unknown %s system action a readable fallback',
+    async (source, contentHtml, expectedAction) => {
+      const reply: Reply = {
+        ...replyProps().reply,
+        actionCode: 'topic.mystery',
+        contentHtml,
+        quotedFloors: [],
+        replyTargetAuthor: undefined,
+        systemAction: true
+      };
+      const view = await render(
+        <ReplyItem {...replyProps({ reply, source })} />
+      );
+
+      expect(view.getByText(expectedAction)).toBeTruthy();
+      expect(view.queryByText('topic.mystery')).toBeNull();
+    }
+  );
 
   it('keeps the topic-body quote preview separate from its complete post', async () => {
     const onOpenReference = jest.fn();

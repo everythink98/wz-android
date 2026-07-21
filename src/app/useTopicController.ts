@@ -183,7 +183,10 @@ export function useTopicController({
     },
     snapshot: topicSnapshot
   } = topicSession;
-  const [quoteRequests, setQuoteRequests] = useState<Record<string, QuotedPostReference>>({});
+  const [quoteRequests, setQuoteRequests] = useState<Record<string, {
+    prefetch: boolean;
+    reference: QuotedPostReference;
+  }>>({});
   const unreadBaselineRef = useRef<Record<string, number>>({});
   const recordedTopicUpdateRef = useRef('');
   const handledTopicErrorRef = useRef(0);
@@ -427,9 +430,14 @@ export function useTopicController({
 
   const quoteReferences = useMemo(() => {
     const unique = new Map<string, QuotedPostReference>();
-    Object.values(quoteRequests).forEach((reference) => unique.set(quotedPostReferenceKey(reference), reference));
+    Object.values(quoteRequests).forEach(({ reference }) => unique.set(quotedPostReferenceKey(reference), reference));
     return [...unique.values()];
   }, [quoteRequests]);
+  const interactiveQuoteReferenceKeys = useMemo(() => new Set(
+    Object.values(quoteRequests)
+      .filter(({ prefetch }) => !prefetch)
+      .map(({ reference }) => quotedPostReferenceKey(reference))
+  ), [quoteRequests]);
   const quoteQueries = useQueries({
     queries: quoteReferences.map((reference) => ({
       queryKey: forumQueryKeys.reply({
@@ -440,10 +448,14 @@ export function useTopicController({
       }),
       enabled: enabled && isDiscourseSource(reference.source),
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
-        const trace = beginDiagnosticTrace('reply', 'toggle-quote', {
-          source: reference.source,
-          topicRef: diagnosticRef('topic', `${reference.source}:${reference.topicId}`)
-        });
+        const trace = beginDiagnosticTrace(
+          'reply',
+          interactiveQuoteReferenceKeys.has(quotedPostReferenceKey(reference)) ? 'toggle-quote' : 'prefetch-post',
+          {
+            source: reference.source,
+            topicRef: diagnosticRef('topic', `${reference.source}:${reference.topicId}`)
+          }
+        );
         try {
           const loaded = await sourceGateway.getReply({
             source: reference.source,
@@ -480,7 +492,7 @@ export function useTopicController({
   }, [quoteQueries, quoteReferences]);
   const loadingQuotedFloors = useMemo<Record<string, boolean>>(() => {
     const loading: Record<string, boolean> = {};
-    Object.entries(quoteRequests).forEach(([instanceKey, reference]) => {
+    Object.entries(quoteRequests).forEach(([instanceKey, { reference }]) => {
       const result = quoteResults.get(quotedPostReferenceKey(reference));
       if (result?.isPending || result?.isFetching) loading[instanceKey] = true;
     });
@@ -491,6 +503,7 @@ export function useTopicController({
     quoteReferences.forEach((reference, index) => {
       const result = quoteQueries[index];
       const referenceKey = quotedPostReferenceKey(reference);
+      if (!interactiveQuoteReferenceKeys.has(referenceKey)) return;
       if (!result?.error || handledQuoteErrorsRef.current[referenceKey] === result.errorUpdatedAt) return;
       handledQuoteErrorsRef.current[referenceKey] = result.errorUpdatedAt;
       const queryKey = forumQueryKeys.reply({
@@ -511,14 +524,14 @@ export function useTopicController({
         }
       });
     });
-  }, [credentialScope, handleReadError, queryClient, quoteQueries, quoteReferences, selectedTopicKey, topicCommands]);
+  }, [credentialScope, handleReadError, interactiveQuoteReferenceKeys, queryClient, quoteQueries, quoteReferences, selectedTopicKey, topicCommands]);
 
   const cancelTopicQueries = useCallback((topic: Topic | null = selectedTopic) => {
     if (topic) {
       const key = forumQueryKeys.topic({ source: topic.source, topicId: topic.id, scope: credentialScope });
       void queryClient.cancelQueries({ queryKey: key });
     }
-    Object.values(quoteRequests).forEach((reference) => {
+    Object.values(quoteRequests).forEach(({ reference }) => {
       void queryClient.cancelQueries({
         queryKey: forumQueryKeys.reply({
           source: reference.source,
@@ -774,16 +787,19 @@ export function useTopicController({
 
   const toggleLoadedQuotedPost = useCallback(async ({
     instanceKey,
+    prefetch = false,
     quotedPost,
     reference
   }: ToggleTopicBodyQuoteOptions): Promise<LinuxDoReadResumeOutcome> => {
-    if (topicQuotes.isExpanded(instanceKey)) {
+    if (!prefetch && topicQuotes.isExpanded(instanceKey)) {
       topicQuotes.changeExpanded(instanceKey, false);
       return 'completed';
     }
     if (!isDiscourseSource(reference.source) && !quotedPost) {
-      topicQuotes.changeExpanded(instanceKey, true);
-      notify('引用楼层未加载');
+      if (!prefetch) {
+        topicQuotes.changeExpanded(instanceKey, true);
+        notify('引用楼层未加载');
+      }
       return 'failed';
     }
     const queryKey = forumQueryKeys.reply({
@@ -792,9 +808,16 @@ export function useTopicController({
       postNumber: reference.postNumber,
       scope: credentialScope
     });
+    const queryState = queryClient.getQueryState(queryKey);
+    if (!quotedPost && queryState?.status === 'error') {
+      handledQuoteErrorsRef.current[quotedPostReferenceKey(reference)] = queryState.errorUpdatedAt;
+      void queryClient.refetchQueries({ queryKey, exact: true });
+    }
     if (quotedPost) queryClient.setQueryData(queryKey, quotedPost);
-    setQuoteRequests((current) => ({ ...current, [instanceKey]: reference }));
-    topicQuotes.changeExpanded(instanceKey, true);
+    setQuoteRequests((current) => ({ ...current, [instanceKey]: { prefetch, reference } }));
+    if (!prefetch) {
+      topicQuotes.changeExpanded(instanceKey, true);
+    }
     return 'completed';
   }, [credentialScope, notify, queryClient, topicQuotes]);
 

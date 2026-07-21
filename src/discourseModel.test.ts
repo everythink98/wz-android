@@ -135,8 +135,7 @@ describe('portable Discourse fields', () => {
       hidden: true,
       post_folding_status: { status: 'folded' },
       needs_category_expert_approval: true,
-      post_type: 2,
-      action_code: 'closed.enabled',
+      post_type: 1,
       actions_summary: [{ id: 2, acted: true, can_act: false }],
       reactions: [{ id: 'heart', count: 2 }, { id: '', count: 5 }]
     })).toMatchObject({
@@ -153,8 +152,6 @@ describe('portable Discourse fields', () => {
       wiki: true,
       hidden: true,
       folded: true,
-      systemAction: true,
-      actionCode: 'closed.enabled',
       reactionSummary: [{ id: 'heart', count: 2 }]
     });
     expect(discoursePostFields({
@@ -199,5 +196,40 @@ describe('portable Discourse fields', () => {
       cooked: '<p>body</p>',
       created_at: '2026-01-02T03:04:05Z'
     })).toBeNull();
+  });
+
+  it('[REG-TOPIC-026] keeps an accepted reply separate from an empty Discourse system event', () => {
+    const acceptedReply = discoursePostFields({
+      id: 23,
+      post_number: 2,
+      username: 'alice',
+      cooked: '<p>accepted answer</p>',
+      created_at: '2026-01-02T03:04:05Z',
+      accepted_answer: true,
+      post_type: 1
+    });
+    const systemEvent = discoursePostFields({
+      id: 24,
+      post_number: 3,
+      username: 'moderator',
+      cooked: '',
+      created_at: '2026-01-02T04:05:06Z',
+      post_type: 3,
+      action_code: 'closed.enabled'
+    });
+
+    expect(acceptedReply).toMatchObject({
+      acceptedAnswer: true,
+      cookedHtml: '<p>accepted answer</p>',
+      floor: 2
+    });
+    expect(acceptedReply).not.toHaveProperty('systemAction');
+    expect(systemEvent).toMatchObject({
+      actionCode: 'closed.enabled',
+      cookedHtml: '',
+      floor: 3,
+      systemAction: true
+    });
+    expect(systemEvent).not.toHaveProperty('acceptedAnswer');
   });
 });

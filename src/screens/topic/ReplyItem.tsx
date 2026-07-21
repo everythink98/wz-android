@@ -3,7 +3,7 @@ import { Pressable, Text, ToastAndroid, View } from 'react-native';
 import { useMappingHelper } from '@shopify/flash-list';
 import { Image as ExpoImage } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
-import { Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
+import { CheckCircle, Drumstick, MessageCircle, Pencil, ThumbsDown, ThumbsUp, Trash2 } from 'lucide-react-native';
 import type { Reply, Source, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import { highlightHtml, stripHtml } from '../../androidFeatureHelpers';
 import { formatDateTime } from '../../appUtils';
@@ -104,6 +104,17 @@ function NodeSeekActionPlaceholder({ styles }: { styles: ReturnType<typeof creat
       style={[styles.detailActionButton, styles.replyDetailActionButton, styles.replyCompactActionButton, { opacity: 0 }]}
     />
   );
+}
+
+function systemActionText(reply: Pick<Reply, 'actionCode' | 'contentHtml'>) {
+  if (reply.actionCode === 'closed.enabled') {
+    return '关闭了主题';
+  }
+  if (reply.actionCode === 'closed.disabled') {
+    return '重新打开了主题';
+  }
+  const contentText = stripHtml(reply.contentHtml).trim();
+  return contentText && (!reply.actionCode || !contentText.includes(reply.actionCode)) ? contentText : '更新了主题';
 }
 
 export function ReplyItem({
@@ -222,8 +233,36 @@ export function ReplyItem({
       .then(() => ToastAndroid.show('评论已复制', ToastAndroid.SHORT))
       .catch(() => ToastAndroid.show('复制失败', ToastAndroid.SHORT));
   }, [expandedQuotes, loadedQuotedReplies, quotedFloors, repliesByFloor, reply.contentHtml, replyFloor, source, topicId]);
+  if (reply.systemAction) {
+    const actionText = systemActionText(reply);
+    const author = reply.author || '系统';
+    const createdAt = formatDateTime(reply.createdAt);
+    return (
+      <View
+        accessible
+        accessibilityLabel={`系统事件，${author} 于 ${createdAt} ${actionText}`}
+        style={[styles.replyCard, styles.replyHead, styles.replySystemEvent]}
+      >
+        <Avatar small name={author} uri={reply.authorAvatar} styles={styles} />
+        <View style={styles.replyAuthorBlock}>
+          <View style={styles.replyAuthorNameRow}>
+            <Text style={styles.replyAuthor} numberOfLines={1}>{author}</Text>
+            <Text style={styles.replySystemEventText}>{actionText}</Text>
+          </View>
+          <Text style={styles.replyTime}>{createdAt}</Text>
+        </View>
+        {isNew ? <Text style={styles.replyNewBadge}>新增</Text> : null}
+      </View>
+    );
+  }
   return (
     <View style={styles.replyCard}>
+      {reply.acceptedAnswer ? (
+        <View accessible accessibilityLabel="已采纳的解决方案" style={styles.replyAcceptedNotice}>
+          <CheckCircle color={theme.primary} size={16} strokeWidth={2.2} />
+          <Text style={styles.replyAcceptedNoticeText}>已解决</Text>
+        </View>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         disabled={!replyUser}
@@ -242,14 +281,12 @@ export function ReplyItem({
             {isTopicAuthorReply ? <Text style={styles.replyOpBadge}>OP</Text> : null}
             {reply.hot ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>热门</Text> : null}
             {reply.pinned ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('accent', theme)]}>置顶</Text> : null}
-            {reply.acceptedAnswer ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('success', theme)]}>已采纳</Text> : null}
             {reply.wiki ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('info', theme)]}>Wiki</Text> : null}
             {reply.hidden ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('danger', theme)]}>已隐藏</Text> : null}
             {reply.folded ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>已折叠</Text> : null}
             {reply.siteExtension?.source === 'linuxdo' && reply.siteExtension.needsApproval
               ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('warning', theme)]}>待审批</Text>
               : null}
-            {reply.systemAction ? <Text style={[styles.replyContextBadge, replyContextBadgeStyle('neutral', theme)]}>系统</Text> : null}
           </View>
           <Text style={styles.replyTime}>{formatDateTime(reply.createdAt)}</Text>
         </View>
@@ -449,6 +486,12 @@ export function ReplyItem({
             {discourseReplyReactionStats.map((stat, index) => (
               <DiscourseReactionPill compact key={getMappingKey(stat.id, index)} stat={stat} styles={styles} />
             ))}
+          </View>
+        ) : null}
+        {reply.acceptedAnswer ? (
+          <View accessible accessibilityLabel="解决方案" style={styles.replyAcceptedSolution}>
+            <CheckCircle color={theme.primary} size={16} strokeWidth={2.2} />
+            <Text style={styles.replyAcceptedSolutionText}>解决方案</Text>
           </View>
         ) : null}
         {source === 'nodeseek' && !canWrite && nodeSeekReplyReactionStats.length ? (

@@ -6,6 +6,7 @@ import type { Reply, SourceErrorInfo, Topic, TopicDetail, TopicPoll } from '../.
 import type { ReplyFilter } from '../../src/appTypes';
 import { filterTopicSessionReplies } from '../../src/app/useTopicSessionController';
 import { useHtmlRenderingController } from '../../src/app/useHtmlRenderingController';
+import { discoursePollPlaceholder } from '../../src/discourseContent';
 import { buildHtmlRenderingStyles } from '../../src/htmlRenderingStyles';
 import { createEmptyReaderData } from '../../src/readerData';
 import { TopicScreen, YaohuoFavoriteStateProvider } from '../../src/screens/topic/TopicScreenBody';
@@ -14,6 +15,7 @@ import { createTopicImageDeriver } from '../../src/topicDerivedData';
 import type { InteractionType } from '../../src/topicActionState';
 
 const mockGetDiscourseSourceEmojiUrls = jest.fn(async () => ({}));
+const mockScrollToIndex = jest.fn();
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
@@ -37,9 +39,12 @@ jest.mock('@shopify/flash-list', () => {
         renderItem?: (info: { item: unknown; index: number }) => React.ReactNode;
         testID?: string;
       },
-      ref: React.ForwardedRef<{ scrollToOffset: () => void }>
+      ref: React.ForwardedRef<{ scrollToIndex: (options: unknown) => void; scrollToOffset: () => void }>
     ) {
-      ReactModule.useImperativeHandle(ref, () => ({ scrollToOffset: () => undefined }));
+      ReactModule.useImperativeHandle(ref, () => ({
+        scrollToIndex: (options: unknown) => mockScrollToIndex(options),
+        scrollToOffset: () => undefined
+      }));
       return ReactModule.createElement(
         NativeView,
         { accessibilityLabel, testID },
@@ -85,6 +90,7 @@ jest.mock('lucide-react-native', () => {
   const Icon = () => null;
   return {
     BookMarked: Icon,
+    CheckCircle: Icon,
     ChevronDown: Icon,
     ChevronLeft: Icon,
     ChevronRight: Icon,
@@ -291,7 +297,10 @@ function TopicFilterHarness({
   canUseXiaoyinsiActions = false,
   canUseYaohuoActions = false,
   filteredCommentQuery,
+  expandedQuotes = {},
+  loadedQuotedReplies = {},
   loadingMoreReplies = false,
+  loadingQuotedFloors = {},
   onLoadMoreReplies = jest.fn(),
   onInteract = jest.fn(),
   onRefreshWholeTopic = jest.fn(),
@@ -301,8 +310,10 @@ function TopicFilterHarness({
   onVerifyNodeSeek = jest.fn(),
   onVotePoll = jest.fn(),
   onDiscourseBookmark = jest.fn(),
+  onToggleTopicBodyQuote = jest.fn(),
   replyHasMore = false,
   selectedTopic = topic,
+  topicReplies = sourceReplies,
   topicDetail = topic,
   topicError = null,
   topicFavorite = false,
@@ -314,7 +325,10 @@ function TopicFilterHarness({
   canUseXiaoyinsiActions?: boolean;
   canUseYaohuoActions?: boolean;
   filteredCommentQuery?: string;
+  expandedQuotes?: Record<string, boolean>;
+  loadedQuotedReplies?: Record<string, Reply>;
   loadingMoreReplies?: boolean;
+  loadingQuotedFloors?: Record<string, boolean>;
   onLoadMoreReplies?: () => void;
   onInteract?: (type: InteractionType, commentId?: number) => void;
   onRefreshWholeTopic?: () => void;
@@ -324,8 +338,10 @@ function TopicFilterHarness({
   onVerifyNodeSeek?: () => void;
   onVotePoll?: (poll: TopicPoll, optionIds: string[]) => void;
   onDiscourseBookmark?: () => void;
+  onToggleTopicBodyQuote?: React.ComponentProps<typeof TopicScreen>['onToggleTopicBodyQuote'];
   replyHasMore?: boolean;
   selectedTopic?: Topic;
+  topicReplies?: Reply[];
   topicDetail?: TopicDetail | null;
   topicError?: SourceErrorInfo | null;
   topicFavorite?: boolean;
@@ -342,8 +358,8 @@ function TopicFilterHarness({
     replyFilter,
     topicDetail,
     topicImageDeriver,
-    topicReplies: sourceReplies
-  }), [effectiveCommentQuery, replyFilter, topicDetail]);
+    topicReplies
+  }), [effectiveCommentQuery, replyFilter, topicDetail, topicReplies]);
 
   return (
     <View>
@@ -363,7 +379,7 @@ function TopicFilterHarness({
         }}
         commentQuery={commentQuery}
         contentWidth={720}
-        expandedQuotes={{}}
+        expandedQuotes={expandedQuotes}
         htmlBaseStyle={htmlStyles.htmlBaseStyle}
         htmlClassesStyles={htmlStyles.htmlClassesStyles}
         htmlIgnoredStyles={htmlStyles.htmlIgnoredStyles}
@@ -371,9 +387,9 @@ function TopicFilterHarness({
         htmlRenderersProps={{}}
         htmlTagsStyles={htmlStyles.htmlTagsStyles}
         inlineSizedImageUrls={{}}
-        loadedQuotedReplies={{}}
+        loadedQuotedReplies={loadedQuotedReplies}
         loadingMoreReplies={loadingMoreReplies}
-        loadingQuotedFloors={{}}
+        loadingQuotedFloors={loadingQuotedFloors}
         optimisticActions={{}}
         quoteStateVersion={0}
         replies={replies}
@@ -386,7 +402,7 @@ function TopicFilterHarness({
         replyHighlightQuery={effectiveCommentQuery}
         replyTarget={null}
         selectedTopic={selectedTopic}
-        sourceReplies={sourceReplies}
+        sourceReplies={topicReplies}
         styles={styles}
         theme={theme}
         topic={topicDetail}
@@ -418,7 +434,7 @@ function TopicFilterHarness({
         onSubmitReply={jest.fn()}
         onToggleFavorite={onToggleFavorite}
         onToggleReplyQuote={jest.fn()}
-        onToggleTopicBodyQuote={jest.fn()}
+        onToggleTopicBodyQuote={onToggleTopicBodyQuote}
         onTopicScroll={jest.fn()}
         onUploadReplyImage={jest.fn()}
         onVerifyLinuxDo={jest.fn()}
@@ -432,6 +448,196 @@ function TopicFilterHarness({
 }
 
 describe('Topic reply filters', () => {
+  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+    '[REG-TOPIC-026] renders the accepted %s answer inside the opening post before the reply list',
+    async (source) => {
+      const acceptedReply: Reply = {
+        ...sourceReplies[1],
+        acceptedAnswer: true,
+        author: 'CyrilXu',
+        contentHtml: '<p>采纳答案正文</p>'
+      };
+      const topicReplies = [sourceReplies[0], acceptedReply, sourceReplies[2]];
+      const solvedTopic: TopicDetail = {
+        ...topic,
+        acceptedAnswerFloor: 2,
+        contentHtml: '<p>提问正文</p>',
+        id: `${source}-solved-topic`,
+        replies: topicReplies,
+        solved: true,
+        source,
+        url: source === 'linuxdo'
+          ? 'https://linux.do/t/topic/206'
+          : 'https://forum.xiaoyinsi.com/t/topic/206'
+      };
+      mockScrollToIndex.mockClear();
+      const view = await render(
+        <TopicFilterHarness
+          selectedTopic={solvedTopic}
+          topicDetail={solvedTopic}
+          topicReplies={topicReplies}
+        />
+      );
+
+      expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
+      expect(view.getByText('已采纳答案')).toBeTruthy();
+      expect(view.getByText('CyrilXu')).toBeTruthy();
+      expect(view.getByText('<p>采纳答案正文</p>')).toBeTruthy();
+      expect(view.getByText('查看完整答案 · #2')).toBeTruthy();
+      const rendered = JSON.stringify(view.toJSON());
+      expect(rendered.indexOf('提问正文')).toBeLessThan(rendered.indexOf('topic-accepted-answer'));
+      expect(rendered.indexOf('topic-accepted-answer')).toBeLessThan(rendered.indexOf('回复列表'));
+
+      await fireEvent.press(view.getByLabelText('收起已采纳答案'));
+      expect(view.queryByText('<p>采纳答案正文</p>')).toBeNull();
+      expect(view.getByLabelText('展开已采纳答案')).toBeTruthy();
+
+      await fireEvent.press(view.getByLabelText('展开已采纳答案'));
+      await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
+      expect(mockScrollToIndex).toHaveBeenCalledWith(expect.objectContaining({
+        animated: true,
+        index: 2
+      }));
+    }
+  );
+
+  it.each(['linuxdo', 'xiaoyinsi'] as const)(
+    '[REG-TOPIC-026] loads the accepted %s answer by floor when it is outside the current reply page',
+    async (source) => {
+      const acceptedFloor = 42;
+      const solvedTopic: TopicDetail = {
+        ...topic,
+        acceptedAnswerFloor: acceptedFloor,
+        id: `${source}-paged-solved-topic`,
+        replies: [sourceReplies[0]],
+        solved: true,
+        source,
+        url: source === 'linuxdo'
+          ? 'https://linux.do/t/topic/208'
+          : 'https://forum.xiaoyinsi.com/t/topic/208'
+      };
+      const referenceKey = `${source}:${solvedTopic.id}:${acceptedFloor}`;
+      const instanceKey = `accepted-answer:${solvedTopic.id}:${referenceKey}`;
+      const onToggleTopicBodyQuote = jest.fn<React.ComponentProps<typeof TopicScreen>['onToggleTopicBodyQuote']>();
+      const view = await render(
+        <TopicFilterHarness
+          onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+          selectedTopic={solvedTopic}
+          topicDetail={solvedTopic}
+          topicReplies={[sourceReplies[0]]}
+        />
+      );
+
+      expect(view.getByTestId('topic-accepted-answer')).toBeTruthy();
+      await waitFor(() => expect(onToggleTopicBodyQuote).toHaveBeenCalledWith({
+        instanceKey,
+        prefetch: true,
+        reference: {
+          source,
+          topicId: solvedTopic.id,
+          postNumber: acceptedFloor
+        }
+      }));
+
+      const loadedAnswer: Reply = {
+        ...sourceReplies[1],
+        acceptedAnswer: true,
+        contentHtml: `<p>后分页采纳答案正文</p>${discoursePollPlaceholder('accepted-answer-poll')}`,
+        floor: acceptedFloor,
+        polls: [{ ...topicPoll, name: 'accepted-answer-poll' }],
+        quotedAuthors: { 7: 'quoted-user' },
+        quotedFloors: [7],
+        quotedPreviews: { 7: '采纳答案引用摘要' }
+      };
+      await view.rerender(
+        <TopicFilterHarness
+          loadedQuotedReplies={{ [referenceKey]: loadedAnswer }}
+          onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+          selectedTopic={solvedTopic}
+          topicDetail={solvedTopic}
+          topicReplies={[sourceReplies[0]]}
+        />
+      );
+
+      expect(view.getByText('<p>后分页采纳答案正文</p>')).toBeTruthy();
+      expect(view.getByText('采纳答案引用摘要')).toBeTruthy();
+      expect(view.getByText('只读投票')).toBeTruthy();
+      expect(view.getByTestId('topic-poll-undefined')).toBeTruthy();
+      expect(view.getByText(`查看完整答案 · #${acceptedFloor}`)).toBeTruthy();
+      await fireEvent.press(view.getByLabelText(`查看完整解决方案，第 ${acceptedFloor} 楼`));
+      expect(view.queryByText(`查看完整答案 · #${acceptedFloor}`)).toBeNull();
+      expect(view.getByText('<p>后分页采纳答案正文</p>')).toBeTruthy();
+    }
+  );
+
+  it('[REG-TOPIC-026] does not load an accepted answer hidden behind an access notice', async () => {
+    const restrictedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: 42,
+      accessRequirement: {
+        type: 'permission',
+        label: '需权限',
+        detail: '暂无权限查看此内容'
+      },
+      contentHtml: '<p>暂无权限查看此内容</p>',
+      id: 'linuxdo-restricted-solved-topic',
+      replies: [],
+      solved: true,
+      source: 'linuxdo'
+    };
+    const onToggleTopicBodyQuote = jest.fn<React.ComponentProps<typeof TopicScreen>['onToggleTopicBodyQuote']>();
+    const view = await render(
+      <TopicFilterHarness
+        onToggleTopicBodyQuote={onToggleTopicBodyQuote}
+        selectedTopic={restrictedTopic}
+        topicDetail={restrictedTopic}
+        topicReplies={[]}
+      />
+    );
+
+    expect(view.queryByTestId('topic-accepted-answer')).toBeNull();
+    expect(onToggleTopicBodyQuote).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-026] restores the reply list before locating an accepted answer hidden by filters', async () => {
+    const acceptedReply: Reply = {
+      ...sourceReplies[1],
+      acceptedAnswer: true,
+      contentHtml: '<p>被筛选隐藏的采纳答案</p>'
+    };
+    const topicReplies = [sourceReplies[0], acceptedReply, sourceReplies[2]];
+    const solvedTopic: TopicDetail = {
+      ...topic,
+      acceptedAnswerFloor: 2,
+      id: 'xiaoyinsi-filtered-solved-topic',
+      replies: topicReplies,
+      solved: true,
+      source: 'xiaoyinsi'
+    };
+    mockScrollToIndex.mockClear();
+    const view = await render(
+      <TopicFilterHarness
+        selectedTopic={solvedTopic}
+        topicDetail={solvedTopic}
+        topicReplies={topicReplies}
+      />
+    );
+
+    await fireEvent.press(view.getByLabelText('只看楼主'));
+    await fireEvent.changeText(view.getByPlaceholderText('评论内查找'), '不会命中答案');
+    expect(view.getByTestId('active-filter').props.children).toBe('author');
+    expect(view.getByLabelText('查看完整解决方案，第 2 楼')).toBeTruthy();
+
+    await fireEvent.press(view.getByLabelText('查看完整解决方案，第 2 楼'));
+
+    await waitFor(() => expect(view.getByTestId('active-filter').props.children).toBe('all'));
+    await waitFor(() => expect(view.getByPlaceholderText('评论内查找').props.value).toBe(''));
+    await waitFor(() => expect(mockScrollToIndex).toHaveBeenCalledWith({
+      animated: true,
+      index: 2
+    }));
+  });
+
   it('[REG-XIAOYINSI-017] retries the emoji catalog after a same-topic refresh', async () => {
     const xiaoyinsiTopic: TopicDetail = {
       ...topic,

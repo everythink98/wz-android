@@ -9,6 +9,7 @@ export interface QuotedPostReference {
 
 export interface ToggleTopicBodyQuoteOptions {
   instanceKey: string;
+  prefetch?: boolean;
   reference: QuotedPostReference;
   quotedPost?: Reply;
 }

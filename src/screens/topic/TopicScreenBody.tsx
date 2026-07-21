@@ -20,7 +20,7 @@ import {
   type CustomBlockRenderer,
   type TNode
 } from 'react-native-render-html';
-import { BookMarked, ChevronDown, ChevronLeft, ChevronRight, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
+import { BookMarked, CheckCircle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drumstick, MoreHorizontal, Star, ThumbsDown, ThumbsUp, X } from 'lucide-react-native';
 import type { Reply, Source, SourceErrorInfo, Topic, TopicDetail, TopicPoll, UserProfile } from '../../types';
 import type { HtmlBaseStyle, HtmlClassesStyles, HtmlIgnoredStyles, HtmlRenderers, HtmlRenderersProps, HtmlTagsStyles, ReplyEditTarget, ReplyFilter, ReplyTarget } from '../../appTypes';
 import { formatDateTime, forumAccessRequirementText, sourceLabel } from '../../appUtils';
@@ -48,6 +48,7 @@ import { replyImageUploadSupported } from '../../replyImageUpload';
 import {
   discourseQuotedPostReferenceFromAttributes,
   quotedPostReferenceKey,
+  quotedPostReferenceFromReply,
   topicQuotedPostInstanceKey,
   type ToggleReplyQuoteOptions,
   type ToggleTopicBodyQuoteOptions
@@ -109,6 +110,170 @@ function YaohuoFavoriteButton({
       disabled={actionBusy || !stateKnown}
       onPress={currentState?.onPress || (() => undefined)}
     />
+  );
+}
+
+function AcceptedAnswerPreview({
+  contentWidth,
+  floor,
+  inlineSizedImageUrls,
+  loading,
+  onLoad,
+  onReadMore,
+  reply,
+  styles,
+  theme,
+  topicBaseUrl,
+  topicImageDeriver
+}: {
+  contentWidth: number;
+  floor: number;
+  inlineSizedImageUrls: Record<string, true>;
+  loading: boolean;
+  onLoad?: () => void;
+  onReadMore?: () => void;
+  reply?: Reply;
+  styles: ReturnType<typeof createStyles>;
+  theme: ReaderTheme;
+  topicBaseUrl?: string;
+  topicImageDeriver: TopicImageDeriver;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const [fullAnswerVisible, setFullAnswerVisible] = useState(false);
+  const contentParts = useMemo(
+    () => reply ? splitDiscourseContentHtml(reply.contentHtml, reply.polls) : [],
+    [reply]
+  );
+  const quotedFloors = useMemo(
+    () => Array.from(new Set(reply?.quotedFloors || [])),
+    [reply?.quotedFloors]
+  );
+  const ToggleIcon = expanded ? ChevronUp : ChevronDown;
+
+  return (
+    <View style={styles.topicAcceptedAnswer} testID="topic-accepted-answer">
+      <Pressable
+        accessibilityLabel={expanded ? '收起已采纳答案' : '展开已采纳答案'}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        android_ripple={androidRipple(theme.primarySoft)}
+        style={styles.topicAcceptedAnswerHeader}
+        onPress={() => {
+          triggerPressFeedback();
+          setExpanded((current) => !current);
+        }}
+      >
+        <View style={styles.topicAcceptedAnswerHeaderLead}>
+          <CheckCircle color={theme.primary} size={18} strokeWidth={2.2} />
+          <Text style={styles.topicAcceptedAnswerTitle}>已采纳答案</Text>
+        </View>
+        <View style={styles.topicAcceptedAnswerToggle}>
+          <Text style={styles.topicAcceptedAnswerToggleText}>{expanded ? '收起' : '展开'}</Text>
+          <ToggleIcon color={theme.primary} size={16} strokeWidth={2.2} />
+        </View>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.topicAcceptedAnswerBody}>
+          {reply ? (
+            <>
+              <View style={styles.topicAcceptedAnswerAuthorRow}>
+                <Avatar small name={reply.author} uri={reply.authorAvatar} styles={styles} />
+                <View style={styles.topicAcceptedAnswerAuthorMeta}>
+                  <Text style={styles.topicAcceptedAnswerAuthor} numberOfLines={1}>{reply.author || '未知作者'}</Text>
+                  <Text style={styles.topicAcceptedAnswerTime}>{formatDateTime(reply.createdAt)}{floor ? ` · #${floor}` : ''}</Text>
+                </View>
+              </View>
+              <View style={!fullAnswerVisible ? styles.topicAcceptedAnswerPreview : undefined}>
+                {quotedFloors.length ? (
+                  <View style={styles.quoteStack}>
+                    {quotedFloors.map((quotedFloor) => (
+                      <View key={`accepted-quote-${quotedFloor}`} style={[styles.quoteBox, styles.replyQuoteBox]}>
+                        <View style={styles.quoteHeader}>
+                          <View style={styles.quoteAuthorSummary}>
+                            <View style={styles.quoteAuthorTextBlock}>
+                              <Text style={styles.quoteAuthorText} numberOfLines={1}>
+                                {reply.quotedAuthors?.[quotedFloor] || '引用内容'}
+                              </Text>
+                              <Text style={styles.replyMeta}>引用 #{quotedFloor}</Text>
+                            </View>
+                          </View>
+                        </View>
+                        {reply.quotedPreviews?.[quotedFloor] ? (
+                          <Text style={styles.quotePreviewText}>{reply.quotedPreviews[quotedFloor]}</Text>
+                        ) : null}
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                {contentParts.map((part) => part.type === 'poll' ? (
+                  <TopicPolls
+                    actionBusy={false}
+                    canWritePollSource={false}
+                    embeddedInArticle
+                    key={`accepted-poll-${part.poll.name || part.poll.id || stableTextHash(JSON.stringify(part.poll))}`}
+                    keyPrefix={`accepted-answer-${floor}`}
+                    onTogglePollSelection={() => undefined}
+                    onVotePoll={() => undefined}
+                    pollSelections={{}}
+                    polls={[part.poll]}
+                    styles={styles}
+                    theme={theme}
+                  />
+                ) : (
+                  <MemoizedTopicContentBlock
+                    key={`accepted-html-${stableTextHash(part.html)}`}
+                    baseUrl={topicBaseUrl}
+                    contentWidth={Math.max(220, contentWidth - 24)}
+                    inlineSizedImageUrls={inlineSizedImageUrls}
+                    html={part.html}
+                    trimTrailingBlockSpacing
+                    topicImageDeriver={topicImageDeriver}
+                  />
+                ))}
+              </View>
+            </>
+          ) : (
+            <View accessibilityLiveRegion="polite" style={styles.topicAcceptedAnswerAuthorMeta}>
+              <Text style={styles.topicAcceptedAnswerAuthor}>{loading ? '正在读取解决方案' : '解决方案正文暂未载入'}</Text>
+              <Text style={styles.topicAcceptedAnswerTime}>采纳答案位于第 {floor} 楼</Text>
+            </View>
+          )}
+          {reply && floor && (onReadMore || !fullAnswerVisible) ? (
+            <Pressable
+              accessibilityLabel={`查看完整解决方案，第 ${floor} 楼`}
+              accessibilityRole="button"
+              android_ripple={androidRipple(theme.primarySoft)}
+              style={styles.topicAcceptedAnswerReadMore}
+              onPress={() => {
+                triggerPressFeedback();
+                if (onReadMore) {
+                  onReadMore();
+                } else {
+                  setFullAnswerVisible(true);
+                }
+              }}
+            >
+              <Text style={styles.topicAcceptedAnswerReadMoreText}>查看完整答案 · #{floor}</Text>
+              <ChevronRight color={theme.primary} size={17} strokeWidth={2.2} />
+            </Pressable>
+          ) : !reply && onLoad && !loading ? (
+            <Pressable
+              accessibilityLabel={`读取已采纳答案，第 ${floor} 楼`}
+              accessibilityRole="button"
+              android_ripple={androidRipple(theme.primarySoft)}
+              style={styles.topicAcceptedAnswerReadMore}
+              onPress={() => {
+                triggerPressFeedback();
+                onLoad();
+              }}
+            >
+              <Text style={styles.topicAcceptedAnswerReadMoreText}>读取答案 · #{floor}</Text>
+              <ChevronRight color={theme.primary} size={17} strokeWidth={2.2} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -525,6 +690,57 @@ export const TopicScreen = memo(function TopicScreen({
     reply,
     replyFloor: reply.floor ?? 0
   })), [replies]);
+  const acceptedAnswer = useMemo(() => {
+    if (!topic || topicShowsAccessNotice || !isDiscourseSource(topic.source)) {
+      return null;
+    }
+    const flaggedReply = sourceReplies.find((reply) => reply.acceptedAnswer)
+      || topic.replies.find((reply) => reply.acceptedAnswer);
+    const acceptedFloor = flaggedReply?.floor ?? topic.acceptedAnswerFloor;
+    const reference = quotedPostReferenceFromReply(topic.source, topic.id, acceptedFloor);
+    if (!reference) {
+      return null;
+    }
+    const referenceKey = quotedPostReferenceKey(reference);
+    const candidate = (acceptedFloor
+      ? sourceReplies.find((reply) => reply.floor === acceptedFloor)
+        || topic.replies.find((reply) => reply.floor === acceptedFloor)
+        || loadedQuotedReplies[referenceKey]
+      : undefined) || flaggedReply;
+    return {
+      floor: reference.postNumber,
+      instanceKey: `accepted-answer:${topic.id}:${referenceKey}`,
+      reference,
+      reply: candidate && !candidate.systemAction && candidate.contentHtml.trim() ? candidate : undefined
+    };
+  }, [loadedQuotedReplies, sourceReplies, topic, topicShowsAccessNotice]);
+  const acceptedAnswerReply = acceptedAnswer?.reply;
+  const acceptedAnswerLoading = Boolean(
+    acceptedAnswer && loadingQuotedFloors[acceptedAnswer.instanceKey]
+  );
+  const acceptedAnswerLoadAttemptRef = useRef('');
+  const loadAcceptedAnswer = useCallback(() => {
+    if (!acceptedAnswer) {
+      return;
+    }
+    acceptedAnswerLoadAttemptRef.current = acceptedAnswer.instanceKey;
+    onToggleTopicBodyQuote({
+      instanceKey: acceptedAnswer.instanceKey,
+      prefetch: true,
+      reference: acceptedAnswer.reference
+    });
+  }, [acceptedAnswer, onToggleTopicBodyQuote]);
+  useEffect(() => {
+    if (
+      !acceptedAnswer
+      || acceptedAnswer.reply
+      || acceptedAnswerLoading
+      || acceptedAnswerLoadAttemptRef.current === acceptedAnswer.instanceKey
+    ) {
+      return;
+    }
+    loadAcceptedAnswer();
+  }, [acceptedAnswer, acceptedAnswerLoading, loadAcceptedAnswer]);
   const canWriteTopicPollSource = Boolean(
     topic
     && sourceSupportsTopicAction(topic.source, 'vote')
@@ -544,6 +760,33 @@ export const TopicScreen = memo(function TopicScreen({
     replyItems,
     topicShowsAccessNotice
   }), [canShowReplies, replyItems, topicShowsAccessNotice]);
+  const acceptedAnswerListIndex = useMemo(() => {
+    if (!acceptedAnswerReply) {
+      return -1;
+    }
+    return replyListItems.findIndex((listItem) => listItem.type === 'reply'
+      && listItem.reply.floor === acceptedAnswerReply.floor);
+  }, [acceptedAnswerReply, replyListItems]);
+  const acceptedAnswerIsInSourceReplies = Boolean(
+    acceptedAnswer && sourceReplies.some((reply) => reply.floor === acceptedAnswer.floor)
+  );
+  const pendingAcceptedAnswerScrollRef = useRef(false);
+  const scrollToAcceptedAnswer = useCallback(() => {
+    if (acceptedAnswerListIndex < 0) {
+      pendingAcceptedAnswerScrollRef.current = true;
+      onCommentQueryChange('');
+      onReplyFilterChange('all');
+      return;
+    }
+    topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
+  }, [acceptedAnswerListIndex, onCommentQueryChange, onReplyFilterChange, topicScrollRef]);
+  useEffect(() => {
+    if (!pendingAcceptedAnswerScrollRef.current || acceptedAnswerListIndex < 0) {
+      return;
+    }
+    pendingAcceptedAnswerScrollRef.current = false;
+    topicScrollRef.current?.scrollToIndex({ animated: true, index: acceptedAnswerListIndex });
+  }, [acceptedAnswerListIndex, topicScrollRef]);
   const armReplyAutoLoad = useCallback(() => {
     autoLoadRepliesArmedRef.current = true;
   }, []);
@@ -561,6 +804,7 @@ export const TopicScreen = memo(function TopicScreen({
   useEffect(() => {
     setTopicMenuOpen(false);
     autoLoadRepliesArmedRef.current = false;
+    pendingAcceptedAnswerScrollRef.current = false;
   }, [item?.id, item?.source]);
   const runTopicMenuAction = useCallback((action: () => void) => {
     triggerPressFeedback();
@@ -1064,6 +1308,25 @@ export const TopicScreen = memo(function TopicScreen({
           </View>
         </View>,
         'topic-polls'
+      ) : null}
+      {acceptedAnswer && !topicShowsAccessNotice ? renderTopicListItemFrame(
+        <View style={[styles.replyListItem, topicColumnStyle]}>
+          <AcceptedAnswerPreview
+            key={acceptedAnswer.instanceKey}
+            contentWidth={contentWidth}
+            floor={acceptedAnswer.floor}
+            inlineSizedImageUrls={inlineSizedImageUrls}
+            loading={acceptedAnswerLoading}
+            reply={acceptedAnswerReply}
+            styles={styles}
+            theme={theme}
+            topicBaseUrl={topicBaseUrl}
+            topicImageDeriver={topicImageDeriver}
+            onLoad={loadAcceptedAnswer}
+            onReadMore={acceptedAnswerReply && acceptedAnswerIsInSourceReplies ? scrollToAcceptedAnswer : undefined}
+          />
+        </View>,
+        `topic-accepted-answer-${acceptedAnswer.floor}`
       ) : null}
       {topicHasPostActions ? renderTopicListItemFrame(
         <View style={[styles.topicPostActionArea, topicColumnStyle]}>

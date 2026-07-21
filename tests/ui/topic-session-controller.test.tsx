@@ -34,10 +34,12 @@ const firstDetail: TopicDetail = {
 
 function renderTopicController({
   getCredentialScope = () => emptyForumCredentialScope,
+  notify = jest.fn(),
   sourceGateway,
   showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>()
 }: {
   getCredentialScope?: () => ForumCredentialScope;
+  notify?: (message: string) => void;
   sourceGateway: Partial<SourceGateway>;
   showLinuxDoVerification?: (message?: string, recovery?: LinuxDoReadRecovery) => void;
 }) {
@@ -46,13 +48,13 @@ function renderTopicController({
     const [screen, setScreen] = useState<Screen>('feed');
     const screenRef = useRef<Screen>(screen);
     screenRef.current = screen;
-    const session = useTopicSessionController({ notify: jest.fn() });
+    const session = useTopicSessionController({ notify });
     const controller = useTopicController({
       changeScreen: setScreen,
       commitReaderData: jest.fn(),
       credentialScope: getCredentialScope(),
       getCurrentScreen: () => screenRef.current,
-      notify: jest.fn(),
+      notify,
       onNodeSeekTopicVerificationRequired: jest.fn(),
       pushTopicScreen: jest.fn(),
       readerData,
@@ -432,6 +434,166 @@ describe('topic query controller', () => {
     expect(hook.result.current.session.snapshot()).not.toHaveProperty('loadedQuotedReplies');
     expect(hook.result.current.session.snapshot()).not.toHaveProperty('topicDetail');
   });
+
+  it('[REG-TOPIC-026] prefetches an accepted answer without expanding a quote or notifying', async () => {
+    const solvedTopic: Topic = {
+      ...firstTopic,
+      source: 'xiaoyinsi',
+      id: '206',
+      url: 'https://forum.xiaoyinsi.com/t/topic/206'
+    };
+    const solvedDetail: TopicDetail = {
+      ...firstDetail,
+      ...solvedTopic,
+      acceptedAnswerFloor: 9,
+      replies: [],
+      solved: true
+    };
+    const acceptedReply: Reply = {
+      acceptedAnswer: true,
+      author: 'bob',
+      commentId: 99,
+      contentHtml: '<p>解决方案</p>',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 9
+    };
+    const notify = jest.fn();
+    const getReply = jest.fn<SourceGateway['getReply']>(async () => acceptedReply);
+    const hook = await renderTopicController({
+      notify,
+      sourceGateway: {
+        getTopic: jest.fn<SourceGateway['getTopic']>(async () => solvedDetail),
+        getReply
+      }
+    });
+    const instanceKey = 'accepted-answer:xiaoyinsi:206:9';
+
+    await act(async () => { await hook.result.current.controller.openTopic(solvedTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(solvedDetail));
+    notify.mockClear();
+    await act(async () => {
+      await hook.result.current.controller.toggleTopicBodyQuote({
+        instanceKey,
+        prefetch: true,
+        reference: { source: 'xiaoyinsi', topicId: '206', postNumber: 9 }
+      });
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['xiaoyinsi:206:9']).toEqual(acceptedReply));
+    expect(getReply).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.session.state.expandedQuotes[instanceKey]).toBeUndefined();
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it('[REG-TOPIC-026] keeps a failed accepted-answer prefetch silent', async () => {
+    const solvedTopic: Topic = {
+      ...firstTopic,
+      source: 'linuxdo',
+      id: '207',
+      url: 'https://linux.do/t/topic/207'
+    };
+    const solvedDetail: TopicDetail = { ...firstDetail, ...solvedTopic, replies: [], solved: true };
+    const notify = jest.fn();
+    const showLinuxDoVerification = jest.fn<(message?: string, recovery?: LinuxDoReadRecovery) => void>();
+    const getReply = jest.fn<SourceGateway['getReply']>(async () => {
+      throw new LinuxDoCloudflareError();
+    });
+    const hook = await renderTopicController({
+      notify,
+      showLinuxDoVerification,
+      sourceGateway: {
+        getTopic: jest.fn<SourceGateway['getTopic']>(async () => solvedDetail),
+        getReply
+      }
+    });
+    const instanceKey = 'accepted-answer:linuxdo:207:9';
+
+    await act(async () => { await hook.result.current.controller.openTopic(solvedTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(solvedDetail));
+    notify.mockClear();
+    await act(async () => {
+      await hook.result.current.controller.toggleTopicBodyQuote({
+        instanceKey,
+        prefetch: true,
+        reference: { source: 'linuxdo', topicId: '207', postNumber: 9 }
+      });
+    });
+    await waitFor(() => expect(getReply).toHaveBeenCalledTimes(1));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(hook.result.current.session.state.expandedQuotes[instanceKey]).toBeUndefined();
+    expect(notify).not.toHaveBeenCalled();
+    expect(showLinuxDoVerification).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['without a local post', false, 2],
+    ['with a paged local post', true, 1]
+  ] as Array<[string, boolean, number]>)(
+    '[REG-TOPIC-026] recovers a failed prefetch interactively %s',
+    async (_case, withLocalPost, expectedCalls) => {
+    const solvedTopic: Topic = {
+      ...firstTopic,
+      source: 'xiaoyinsi',
+      id: '208',
+      url: 'https://forum.xiaoyinsi.com/t/topic/208'
+    };
+    const solvedDetail: TopicDetail = { ...firstDetail, ...solvedTopic, replies: [], solved: true };
+    const acceptedReply: Reply = {
+      acceptedAnswer: true,
+      author: 'bob',
+      commentId: 100,
+      contentHtml: '<p>恢复后的解决方案</p>',
+      createdAt: '2026-07-20T00:01:00.000Z',
+      floor: 9
+    };
+    const notify = jest.fn();
+    let replyAttempt = 0;
+    const getReply = jest.fn<SourceGateway['getReply']>(async () => {
+      replyAttempt += 1;
+      if (replyAttempt === 1) {
+        throw new Error('prefetch failed');
+      }
+      return acceptedReply;
+    });
+    const hook = await renderTopicController({
+      notify,
+      sourceGateway: {
+        getTopic: jest.fn<SourceGateway['getTopic']>(async () => solvedDetail),
+        getReply
+      }
+    });
+    const reference = { source: 'xiaoyinsi' as const, topicId: '208', postNumber: 9 };
+    const acceptedInstanceKey = 'accepted-answer:xiaoyinsi:208:9';
+    const quoteInstanceKey = 'topic:208:xiaoyinsi:208:9';
+
+    await act(async () => { await hook.result.current.controller.openTopic(solvedTopic); });
+    await waitFor(() => expect(hook.result.current.controller.topicDetail).toEqual(solvedDetail));
+    notify.mockClear();
+    await act(async () => {
+      await hook.result.current.controller.toggleTopicBodyQuote({
+        instanceKey: acceptedInstanceKey,
+        prefetch: true,
+        reference
+      });
+    });
+    await waitFor(() => expect(getReply).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await hook.result.current.controller.toggleTopicBodyQuote({
+        instanceKey: quoteInstanceKey,
+        quotedPost: withLocalPost ? acceptedReply : undefined,
+        reference
+      });
+    });
+
+    await waitFor(() => expect(hook.result.current.controller.loadedQuotedReplies['xiaoyinsi:208:9']).toEqual(acceptedReply));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(getReply).toHaveBeenCalledTimes(expectedCalls);
+    expect(hook.result.current.session.state.expandedQuotes[quoteInstanceKey]).toBe(true);
+    expect(notify).not.toHaveBeenCalled();
+    }
+  );
 
   it('cancels only the active Topic detail, replies, and quote queries when leaving the route', async () => {
     let detailSignal: AbortSignal | undefined;
