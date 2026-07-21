@@ -38,7 +38,6 @@ import {
 } from '../searchControllerResults';
 import type { LinuxDoReadRecovery, LinuxDoReadResumeOutcome } from './useVerificationController';
 import {
-  appQueryClient,
   emptyForumCredentialScope,
   forumQueryKeys,
   type ForumCredentialScope
@@ -144,7 +143,7 @@ export function useSearchCandidateQueries({
     queryFn: ({ signal }) => tagRequest
       ? searchDiscourseTags({ ...tagRequest, signal })
       : Promise.resolve([])
-  }, appQueryClient);
+  });
 
   const userCandidatesQuery = useQuery<DiscourseUserOption[]>({
     queryKey: forumQueryKeys.searchUsers({
@@ -157,7 +156,7 @@ export function useSearchCandidateQueries({
     queryFn: ({ signal }) => userRequest
       ? searchDiscourseUsers({ ...userRequest, signal })
       : Promise.resolve([])
-  }, appQueryClient);
+  });
 
   return { tagCandidatesQuery, userCandidatesQuery };
 }

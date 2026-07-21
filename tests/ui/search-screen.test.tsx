@@ -1,5 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render as renderNative, waitFor } from '@testing-library/react-native';
 import React, { useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 import { createEmptyReaderData } from '../../src/readerData';
@@ -10,12 +10,17 @@ import { createStyles, createTheme } from '../../src/theme';
 import { createTopicListItemStateIndex } from '../../src/topicListItemState';
 import type { Category, FeedSource, Source, Topic } from '../../src/types';
 import { emptyForumCredentialScope } from '../../src/app/serverState';
+import { QueryTestWrapper } from './QueryTestWrapper';
 
 const mockSearchScrollToOffset = jest.fn<(options: { offset: number; animated: boolean }) => void>();
 
 jest.mock('@react-native-async-storage/async-storage', () => (
   require('@react-native-async-storage/async-storage/jest/async-storage-mock')
 ));
+
+function render(element: React.ReactElement) {
+  return renderNative(element, { wrapper: QueryTestWrapper });
+}
 
 jest.mock('@shopify/flash-list', () => {
   const ReactModule = require('react') as typeof React;
